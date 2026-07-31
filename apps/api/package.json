@@ -1,0 +1,36 @@
+{
+  "name": "@scry/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "worker": "tsx src/worker.ts",
+    "start": "tsx src/main.ts",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-fastify": "^11.0.0",
+    "@scry/artifact": "workspace:*",
+    "@scry/contracts": "workspace:*",
+    "@scry/executor": "workspace:*",
+    "bullmq": "^5.58.0",
+    "ioredis": "^5.7.0",
+    "jose": "^6.2.5",
+    "pg": "^8.13.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.3",
+    "vitest": "^4.0.15"
+  }
+}

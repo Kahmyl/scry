@@ -1,0 +1,14 @@
+.git
+.DS_Store
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules
+**/dist
+**/.vite
+**/*.tsbuildinfo
+apps/api/artifacts
+coverage
+test-results
+playwright-report
+*.log

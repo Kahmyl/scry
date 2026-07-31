@@ -1,0 +1,29 @@
+{
+  "name": "@scry/executor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "scry": "./src/cli.ts"
+  },
+  "scripts": {
+    "cli": "tsx src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@scry/contracts": "workspace:*",
+    "@scry/policy": "workspace:*",
+    "fflate": "^0.8.3",
+    "playwright": "^1.58.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.3",
+    "vitest": "^4.0.15"
+  }
+}

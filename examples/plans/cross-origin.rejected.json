@@ -1,0 +1,21 @@
+{
+  "protocolVersion": "1",
+  "name": "Rejected external navigation",
+  "objective": "Demonstrate origin validation.",
+  "allowedOrigins": ["https://staging.example.com"],
+  "budgets": {
+    "maxActions": 5,
+    "maxDurationMs": 10000,
+    "maxNavigations": 1
+  },
+  "steps": [
+    {
+      "id": "external-navigation",
+      "title": "Attempt external navigation",
+      "action": {
+        "type": "navigate",
+        "url": "https://attacker.example/collect"
+      }
+    }
+  ]
+}

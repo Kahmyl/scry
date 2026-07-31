@@ -1,0 +1,226 @@
+name: scry
+
+x-app-environment: &app-environment
+  DATABASE_URL: postgres://scry:scry-local@postgres:5432/scry
+  REDIS_URL: redis://redis:6379
+  ARTIFACT_ROOT: /workspace/apps/api/artifacts/runs
+
+x-node-build: &node-build
+  context: .
+  dockerfile: docker/Dockerfile.dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: scry
+      POSTGRES_USER: scry
+      POSTGRES_PASSWORD: scry-local
+    ports:
+      - "${SCRY_POSTGRES_PORT:-54329}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scry -d scry"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+    volumes:
+      - scry-postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+    init: true
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports:
+      - "${SCRY_REDIS_PORT:-56389}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+    volumes:
+      - scry-redis:/data
+    restart: unless-stopped
+    init: true
+
+  migrate:
+    build: *node-build
+    env_file:
+      - apps/api/.env
+    environment:
+      <<: *app-environment
+    command: ["pnpm", "--filter", "@scry/api", "db:migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: *node-build
+    env_file:
+      - apps/api/.env
+    environment:
+      <<: *app-environment
+      API_HOST: 0.0.0.0
+      API_PORT: 4000
+      API_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+    command: ["pnpm", "--filter", "@scry/api", "dev"]
+    ports:
+      - "${SCRY_API_PORT:-4000}:4000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/v1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - scry-artifacts:/workspace/apps/api/artifacts/runs
+    restart: unless-stopped
+    stop_grace_period: 10s
+    init: true
+    develop:
+      watch:
+        - action: sync
+          path: apps/api/src
+          target: /workspace/apps/api/src
+        - action: sync
+          path: apps/api/scripts
+          target: /workspace/apps/api/scripts
+        - action: sync
+          path: packages/contracts/src
+          target: /workspace/packages/contracts/src
+        - action: sync
+          path: packages/artifact/src
+          target: /workspace/packages/artifact/src
+        - action: rebuild
+          path: apps/api/package.json
+        - action: rebuild
+          path: pnpm-lock.yaml
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    env_file:
+      - apps/api/.env
+    environment:
+      <<: *app-environment
+      SCRY_BROWSER_CHANNEL: chromium
+      WORKER_CONCURRENCY: "${SCRY_WORKER_CONCURRENCY:-1}"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - scry-artifacts:/workspace/apps/api/artifacts/runs
+    restart: unless-stopped
+    stop_grace_period: 30s
+    init: true
+    shm_size: 1gb
+    develop:
+      watch:
+        - action: sync+restart
+          path: apps/api/src
+          target: /workspace/apps/api/src
+        - action: sync+restart
+          path: packages/executor/src
+          target: /workspace/packages/executor/src
+        - action: sync+restart
+          path: packages/policy/src
+          target: /workspace/packages/policy/src
+        - action: sync+restart
+          path: packages/contracts/src
+          target: /workspace/packages/contracts/src
+        - action: sync+restart
+          path: packages/artifact/src
+          target: /workspace/packages/artifact/src
+        - action: rebuild
+          path: apps/api/package.json
+        - action: rebuild
+          path: packages/executor/package.json
+        - action: rebuild
+          path: pnpm-lock.yaml
+
+  mcp:
+    build: *node-build
+    environment:
+      SCRY_API_BASE_URL: http://api:4000/v1
+      SCRY_PUBLIC_API_BASE_URL: "${SCRY_PUBLIC_API_BASE_URL:-http://127.0.0.1:4000/v1}"
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 4100
+    command: ["pnpm", "--filter", "@scry/mcp", "start:http"]
+    ports:
+      - "${SCRY_MCP_PORT:-4100}:4100"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4100/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 10s
+    init: true
+    develop:
+      watch:
+        - action: sync+restart
+          path: apps/mcp/src
+          target: /workspace/apps/mcp/src
+        - action: rebuild
+          path: apps/mcp/package.json
+        - action: rebuild
+          path: pnpm-lock.yaml
+
+  web:
+    build: *node-build
+    env_file:
+      - apps/web/.env
+    environment:
+      VITE_API_BASE_URL: /v1
+      VITE_API_PROXY_TARGET: http://api:4000
+      VITE_MCP_SERVER_URL: http://127.0.0.1:${SCRY_MCP_PORT:-4100}/mcp
+    command: ["pnpm", "--filter", "@scry/web", "dev:docker"]
+    ports:
+      - "${SCRY_WEB_PORT:-5173}:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5173"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 10s
+    init: true
+    develop:
+      watch:
+        - action: sync
+          path: apps/web/src
+          target: /workspace/apps/web/src
+        - action: sync
+          path: apps/web/index.html
+          target: /workspace/apps/web/index.html
+        - action: sync
+          path: apps/web/vite.config.ts
+          target: /workspace/apps/web/vite.config.ts
+        - action: rebuild
+          path: apps/web/package.json
+        - action: rebuild
+          path: pnpm-lock.yaml
+
+volumes:
+  scry-postgres:
+  scry-redis:
+  scry-artifacts:

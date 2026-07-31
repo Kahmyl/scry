@@ -1,0 +1,11 @@
+[mcp_servers.scry]
+command = "/bin/zsh"
+args = ["-lc", "set -a; source apps/mcp/.env; set +a; exec pnpm --filter @scry/mcp start"]
+cwd = "/Users/habib/Documents/monorepo/scry"
+startup_timeout_sec = 15
+tool_timeout_sec = 60
+default_tools_approval_mode = "writes"
+enabled = true
+
+[mcp_servers.scry.env]
+SCRY_API_BASE_URL = "http://127.0.0.1:4000/v1"
