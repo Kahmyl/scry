@@ -23,7 +23,9 @@ export type PlanRiskDiagnostic = {
     | "SECRET_CAPTURE_WITHOUT_PROTECTED_BOUNDARY"
     | "NON_SECRET_IDENTIFIER_CAPTURE"
     | "DUPLICATE_CAPTURED_SECRET_REFERENCE"
-    | "CAPTURED_SECRET_REFERENCE_UNAVAILABLE";
+    | "CAPTURED_SECRET_REFERENCE_UNAVAILABLE"
+    | "DUPLICATE_CAPTURED_VALUE_REFERENCE"
+    | "CAPTURED_VALUE_REFERENCE_UNAVAILABLE";
   message: string;
   suggestion: string;
   stepId: string;
@@ -36,9 +38,21 @@ export function analyzePlanRisks(plan: TestPlan): {
   if (plan.protocolVersion === "1") return { errors: [], warnings: [] };
   const diagnostics: PlanRiskDiagnostic[] = [];
   const capturedSecretReferences = new Set<string>();
+  const capturedValueReferences = new Set<string>();
   let unsettledReactionStep: string | undefined;
   const reactionTypes = new Set(["navigate", "click", "press", "select", "check"]);
   for (const [index, step] of plan.steps.entries()) {
+    if (step.action.type === "captureValue") {
+      if (capturedValueReferences.has(step.action.reference)) {
+        diagnostics.push(error(
+          "DUPLICATE_CAPTURED_VALUE_REFERENCE",
+          step.id,
+          `Captured public-value reference "${step.action.reference}" is already used.`,
+          "Give each captured public value a unique reference.",
+        ));
+      }
+      capturedValueReferences.add(step.action.reference);
+    }
     if (step.action.type === "captureSecret") {
       if (capturedSecretReferences.has(step.action.reference)) {
         diagnostics.push(error(
@@ -60,17 +74,21 @@ export function analyzePlanRisks(plan: TestPlan): {
           "Target the one-time secret value (for example, Client secret). Record public identifiers as ordinary non-secret evidence.",
         ));
       }
-      const previous = plan.steps[index - 1];
-      const beginsProtectedBlock = previous && (
-        reactionTypes.has(previous.action.type)
-        || previous.action.type === "captureSecret"
+      let boundaryIndex = index - 1;
+      while (boundaryIndex >= 0 && plan.steps[boundaryIndex]!.action.type === "captureValue") {
+        boundaryIndex -= 1;
+      }
+      const boundary = plan.steps[boundaryIndex];
+      const beginsProtectedBlock = boundary && (
+        reactionTypes.has(boundary.action.type)
+        || boundary.action.type === "captureSecret"
       );
       if (!beginsProtectedBlock) {
         diagnostics.push(error(
           "SECRET_CAPTURE_WITHOUT_PROTECTED_BOUNDARY",
           step.id,
           "A generated secret could become visible before Scry starts its visual privacy overlay.",
-          "Place captureSecret immediately after the action that reveals the value. Consecutive captureSecret steps may follow it.",
+          "Place captureSecret in the capture block immediately after the revealing action. Public captureValue steps may precede it.",
         ));
       }
     }
@@ -84,6 +102,18 @@ export function analyzePlanRisks(plan: TestPlan): {
         step.id,
         `Captured secret reference "${step.action.capturedSecretRef}" is not produced by an earlier step.`,
         "Place the matching captureSecret step before this fill action and use the same unique reference.",
+      ));
+    }
+    if (
+      step.action.type === "fill"
+      && step.action.capturedValueRef
+      && !capturedValueReferences.has(step.action.capturedValueRef)
+    ) {
+      diagnostics.push(error(
+        "CAPTURED_VALUE_REFERENCE_UNAVAILABLE",
+        step.id,
+        `Captured public-value reference "${step.action.capturedValueRef}" is not produced by an earlier step.`,
+        "Place the matching captureValue step before this fill action.",
       ));
     }
     const isReaction = reactionTypes.has(step.action.type);

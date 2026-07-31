@@ -231,6 +231,11 @@ export function createScryMcpServer(client = new ScryApiClient()) {
             reference: "generated_api_secret",
             credentialName: "Generated API credential",
           },
+          captureGeneratedPublicValue: {
+            type: "captureValue",
+            target: { strategy: "label", value: "Client ID" },
+            reference: "generated_client_id",
+          },
           reuseCapturedValueInSameRun: {
             type: "fill",
             target: { strategy: "label", value: "API secret" },
@@ -261,7 +266,7 @@ export function createScryMcpServer(client = new ScryApiClient()) {
         rules: [
           "Use credential UUIDs only; never place passwords or tokens in literal values.",
           "Use captureSecret for a generated one-time value. Scry keeps screenshots, video, and trace available while blacking out protected fields and the one-time reveal interval; it also redacts DOM/network/trace text, stores the value encrypted, authorizes it for future runs, and allows same-run reuse through capturedSecretRef. Evidence reports mark visual redaction explicitly.",
-          "Do not use captureSecret for public identifiers such as Client ID or Application ID. Target only the generated one-time secret value; record public identifiers as ordinary non-secret evidence.",
+          "Use captureValue for generated public identifiers such as Client ID or Application ID, including when they must be reused later via capturedValueRef. Use captureSecret only for the one-time secret value.",
           "Readiness is required before final evidence after navigate, click, press, select, or check. Prefer destination-specific text or content over technical settling.",
           "A transient capture requires justification and cannot support a completed-state defect claim.",
           "During one unfinished objective, a failure never justifies a new Flow. After a final report has closed that objective, create a new Flow for the next independently meaningful test objective.",
@@ -293,36 +298,26 @@ export function createScryMcpServer(client = new ScryApiClient()) {
       annotations: readAnnotations,
     },
     async ({ projectId, environmentId, plan }) => {
-      const [environments, credentials] = await Promise.all([
-        client.get<Array<{ id: string; policy: unknown; secretRefs: string[] }>>(
-          `/projects/${projectId}/environments`,
-        ),
-        client.get<Array<{ id: string }>>(`/projects/${projectId}/credentials`),
-      ]);
+      const environments = await client.get<Array<{ id: string; policy: unknown; secretRefs: string[] }>>(
+        `/projects/${projectId}/environments`,
+      );
       const environment = environments.find((item) => item.id === environmentId);
       if (!environment) throw new Error("Environment does not belong to the project.");
       const policy = executionPolicyV1Schema.parse(environment.policy);
       const violations: Array<{ code: string; message: string }> = [
         ...validatePlanAgainstPolicy(plan, policy),
       ];
-      const activeCredentialIds = new Set(credentials.map((credential) => credential.id));
-      const environmentCredentialIds = new Set(environment.secretRefs ?? []);
       const secretRefs = [...new Set(plan.steps.flatMap((step) =>
         step.action.type === "fill" && step.action.secretRef ? [step.action.secretRef] : [],
       ))];
-      for (const secretRef of secretRefs) {
-        if (!activeCredentialIds.has(secretRef)) {
-          violations.push({
-            code: "CREDENTIAL_UNAVAILABLE",
-            message: `Protected credential "${secretRef}" is invalid or unavailable for this project.`,
-          });
-        } else if (!environmentCredentialIds.has(secretRef)) {
-          violations.push({
-            code: "CREDENTIAL_NOT_ALLOWED",
-            message: `Protected credential "${secretRef}" is not available in the selected Flow environment.`,
-          });
-        }
-      }
+      const credentialValidation = await client.post<{
+        valid: boolean;
+        errors?: Array<{ code: string; message: string }>;
+      }>(`/environments/${environmentId}/validate-credentials`, {
+        projectId,
+        secretRefs,
+      });
+      violations.push(...(credentialValidation.errors ?? []));
       const risks = analyzePlanRisks(plan);
       const errors = [
         ...violations.map((violation) => ({ severity: "error" as const, ...violation, suggestion: "Update the plan or selected environment policy." })),
@@ -478,25 +473,20 @@ export function createScryMcpServer(client = new ScryApiClient()) {
       if (actuallyRemoved.length > 0 && !removalJustification.trim()) {
         throw new Error("Flow revision rejected: removing existing steps requires removalJustification.");
       }
-      await client.patch(`/specifications/${specificationId}`, { name, description });
-      const version = await client.post<{ id: string }>(
-        `/specifications/${specificationId}/versions`,
-        { objective, expectedOutcomes, preconditions, prohibitedSideEffects },
-      );
-      const planVersion = await client.post<{ id: string; version: number }>(
-        "/plans/versions",
-        { specificationVersionId: version.id, plan },
+      const revision = await client.post<{ specificationVersionId: string; planVersionId: string; planVersion: number }>(
+        `/specifications/${specificationId}/revisions`,
+        { name, description, content: { objective, expectedOutcomes, preconditions, prohibitedSideEffects }, plan },
       );
       return result(
         {
           specificationId,
-          specificationVersionId: version.id,
-          planVersionId: planVersion.id,
-          planVersion: planVersion.version,
+          specificationVersionId: revision.specificationVersionId,
+          planVersionId: revision.planVersionId,
+          planVersion: revision.planVersion,
           preservedStepCount: existing.latestPlan.steps.length - actuallyRemoved.length,
           removedStepCount: actuallyRemoved.length,
         },
-        `Revised existing Flow ${name} with executable plan version ${planVersion.version}. Preserved ${existing.latestPlan.steps.length - actuallyRemoved.length} steps and explicitly removed ${actuallyRemoved.length}.`,
+        `Revised existing Flow ${name} atomically with executable plan version ${revision.planVersion}. Preserved ${existing.latestPlan.steps.length - actuallyRemoved.length} steps and explicitly removed ${actuallyRemoved.length}.`,
       );
     },
   );
@@ -549,26 +539,30 @@ export function createScryMcpServer(client = new ScryApiClient()) {
         ...flow.latestPlan,
         steps: flow.latestPlan.steps.map((step) => replacementById.get(step.id)?.correctedStep ?? step),
       });
-      const version = await client.post<{ id: string }>(
-        `/specifications/${specificationId}/versions`,
-        flow.latestContent,
-      );
-      const planVersion = await client.post<{ id: string; version: number }>(
-        "/plans/versions",
-        { specificationVersionId: version.id, plan: combinedPlan },
-      );
+      const risks = analyzePlanRisks(combinedPlan);
+      if (risks.errors.length > 0) {
+        throw new Error(`Flow correction rejected: ${JSON.stringify({ errors: risks.errors, warnings: risks.warnings })}`);
+      }
+      const revision = await client.post<{
+        specificationVersionId: string;
+        planVersionId: string;
+        planVersion: number;
+      }>(`/specifications/${specificationId}/revisions`, {
+        content: flow.latestContent,
+        plan: combinedPlan,
+      });
       return result(
         {
           specificationId,
-          specificationVersionId: version.id,
-          planVersionId: planVersion.id,
-          planVersion: planVersion.version,
+          specificationVersionId: revision.specificationVersionId,
+          planVersionId: revision.planVersionId,
+          planVersion: revision.planVersion,
           preservedStepCount: flow.latestPlan.steps.length - replacements.length,
           replacedStepCount: replacements.length,
           replacements: replacements.map(({ stepId, reason }) => ({ stepId, reason })),
           combinedPlan,
         },
-        `Corrected ${replacements.length} named step(s) in ${flow.name}; preserved ${flow.latestPlan.steps.length - replacements.length} unrelated steps. Validate the returned combinedPlan before running.`,
+        `Corrected ${replacements.length} named step(s) in ${flow.name} atomically as plan version ${revision.planVersion}; preserved ${flow.latestPlan.steps.length - replacements.length} unrelated steps.`,
       );
     },
   );
@@ -669,25 +663,21 @@ export function createScryMcpServer(client = new ScryApiClient()) {
           ...additionalProhibitedSideEffects,
         ]),
       };
-      const version = await client.post<{ id: string }>(
-        `/specifications/${specificationId}/versions`,
-        combinedContent,
-      );
-      const planVersion = await client.post<{ id: string; version: number }>(
-        "/plans/versions",
-        { specificationVersionId: version.id, plan: combinedPlan },
+      const revision = await client.post<{ specificationVersionId: string; planVersionId: string; planVersion: number }>(
+        `/specifications/${specificationId}/revisions`,
+        { content: combinedContent, plan: combinedPlan },
       );
       return result(
         {
           specificationId,
-          specificationVersionId: version.id,
-          planVersionId: planVersion.id,
-          planVersion: planVersion.version,
+          specificationVersionId: revision.specificationVersionId,
+          planVersionId: revision.planVersionId,
+          planVersion: revision.planVersion,
           preservedStepCount: flow.latestPlan.steps.length,
           appendedStepCount: appendedSteps.length,
           combinedPlan,
         },
-        `Extended ${flow.name}: preserved ${flow.latestPlan.steps.length} earlier steps and appended ${appendedSteps.length}. Validate the returned combinedPlan, then run plan version ${planVersion.version}.`,
+        `Extended ${flow.name} atomically: preserved ${flow.latestPlan.steps.length} earlier steps and appended ${appendedSteps.length}. Run plan version ${revision.planVersion}.`,
       );
     },
   );

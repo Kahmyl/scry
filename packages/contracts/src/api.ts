@@ -32,6 +32,10 @@ export const createEnvironmentSchema = z
   .strict();
 
 export const updateEnvironmentSchema = createEnvironmentSchema.omit({ name: true });
+export const validateCredentialReferencesSchema = z.object({
+  projectId: uuidSchema,
+  secretRefs: z.array(uuidSchema).max(100),
+}).strict();
 
 export const createTestSpecificationSchema = z
   .object({
@@ -67,6 +71,15 @@ export const createPlanVersionSchema = z
   })
   .strict();
 
+export const createAtomicRevisionSchema = z
+  .object({
+    name: nameSchema.optional(),
+    description: z.string().trim().max(2_000).optional(),
+    content: createSpecificationVersionSchema,
+    plan: testPlanSchema,
+  })
+  .strict();
+
 export const createRunSchema = z
   .object({
     environmentId: uuidSchema,
@@ -86,10 +99,12 @@ export const createRunSchema = z
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 export type CreateEnvironmentInput = z.infer<typeof createEnvironmentSchema>;
 export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentSchema>;
+export type ValidateCredentialReferencesInput = z.infer<typeof validateCredentialReferencesSchema>;
 export type CreateTestSpecificationInput = z.infer<typeof createTestSpecificationSchema>;
 export type UpdateTestSpecificationInput = z.infer<typeof updateTestSpecificationSchema>;
 export type CreateCredentialInput = z.infer<typeof createCredentialSchema>;
 export type UpdateCredentialInput = z.infer<typeof updateCredentialSchema>;
 export type CreateSpecificationVersionInput = z.infer<typeof createSpecificationVersionSchema>;
 export type CreatePlanVersionInput = z.infer<typeof createPlanVersionSchema>;
+export type CreateAtomicRevisionInput = z.infer<typeof createAtomicRevisionSchema>;
 export type CreateRunInput = z.infer<typeof createRunSchema>;

@@ -131,7 +131,7 @@ export class ExecutionRepository {
         AND credential.id = $2
         AND credential.deleted_at IS NULL
        WHERE run.id = $1
-         AND COALESCE(run.environment_snapshot->'secretRefs', '[]'::jsonb) ? $2`,
+         AND COALESCE(run.environment_snapshot->'secretRefs', '[]'::jsonb) ? ($2::uuid)::text`,
       [runId, credentialId],
     );
     if (!result.rowCount) throw new NotFoundException("Saved credential is missing or unavailable");

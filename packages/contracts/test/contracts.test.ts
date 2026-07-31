@@ -121,6 +121,21 @@ describe("protocol v1", () => {
 });
 
 describe("protocol v2 observation readiness", () => {
+  it("supports capturing and reusing generated public values without secret semantics", () => {
+    const plan = testPlanV2Schema.parse({
+      protocolVersion: "2",
+      name: "Generated client ID",
+      objective: "Reuse a public generated identifier",
+      allowedOrigins: ["https://example.com"],
+      budgets: { maxActions: 3, maxDurationMs: 10_000, maxNavigations: 1 },
+      steps: [
+        { id: "generate", title: "Generate", action: { type: "click", target: { strategy: "role", role: "button", name: "Generate" } }, after: { timeoutMs: 2_000, conditions: [{ type: "visible", target: { strategy: "label", value: "Client ID" } }] } },
+        { id: "capture-id", title: "Capture ID", action: { type: "captureValue", target: { strategy: "label", value: "Client ID" }, reference: "client_id" } },
+        { id: "reuse-id", title: "Reuse ID", action: { type: "fill", target: { strategy: "label", value: "Client ID input" }, capturedValueRef: "client_id" } },
+      ],
+    });
+    expect(analyzePlanRisks(plan).errors).toEqual([]);
+  });
   const validPlanV2 = {
     ...validPlan,
     protocolVersion: "2",

@@ -74,6 +74,8 @@ describe("Scry MCP server", () => {
             budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
             steps: [{ id: "open-login", title: "Open login", action: { type: "navigate", url: "/login" } }],
           } }]
+        : url.pathname.endsWith("/revisions")
+        ? { specificationVersionId, planVersionId, planVersion: 2 }
         : url.pathname.endsWith("/versions") && url.pathname.includes("/specifications/")
         ? { id: specificationVersionId }
         : url.pathname.endsWith("/plans/versions")
@@ -113,9 +115,7 @@ describe("Scry MCP server", () => {
 
     expect(requests).toEqual([
       { method: "GET", path: `/v1/projects/${projectId}/specifications` },
-      { method: "PATCH", path: `/v1/specifications/${specificationId}` },
-      { method: "POST", path: `/v1/specifications/${specificationId}/versions` },
-      { method: "POST", path: "/v1/plans/versions" },
+      { method: "POST", path: `/v1/specifications/${specificationId}/revisions` },
     ]);
     expect(response.structuredContent).toEqual({
       specificationId,
@@ -206,8 +206,8 @@ describe("Scry MCP server", () => {
         }]), { status: 200 }));
       }
       postedBodies.push(JSON.parse(String(init?.body)));
-      const body = url.pathname.includes("/specifications/")
-        ? { id: specificationVersionId }
+      const body = url.pathname.endsWith("/revisions")
+        ? { specificationVersionId, planVersionId, planVersion: 2 }
         : { id: planVersionId, version: 2 };
       return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
     }));
@@ -243,7 +243,7 @@ describe("Scry MCP server", () => {
         ],
       },
     });
-    expect(postedBodies).toHaveLength(2);
+    expect(postedBodies).toHaveLength(1);
     await client.close();
     await server.close();
   });
@@ -274,8 +274,8 @@ describe("Scry MCP server", () => {
         latestPlan,
       }]), { status: 200 }));
       return Promise.resolve(new Response(JSON.stringify(
-        url.pathname.includes("/specifications/")
-          ? { id: specificationVersionId }
+        url.pathname.endsWith("/revisions")
+          ? { specificationVersionId, planVersionId, planVersion: 7 }
           : { id: planVersionId, version: 7 },
       ), { status: 200 }));
     }));
@@ -425,8 +425,14 @@ describe("Scry MCP server", () => {
     const environmentId = "22222222-2222-4222-8222-222222222222";
     const credentialId = "33333333-3333-4333-8333-333333333333";
     const origin = "https://staging.example.com";
-    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request) => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
+      if ((init?.method ?? "GET") === "POST") {
+        return Promise.resolve(new Response(JSON.stringify({
+          valid: false,
+          errors: [{ code: "CREDENTIAL_UNAVAILABLE", message: `Protected credential "${credentialId}" is invalid or unavailable for this project.` }],
+        }), { status: 200 }));
+      }
       return Promise.resolve(new Response(JSON.stringify(url.endsWith("/credentials") ? [] : [{
         id: environmentId,
         secretRefs: [credentialId],

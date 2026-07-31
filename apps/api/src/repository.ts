@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import { analyzePlanRisks } from "@scry/contracts";
 import type {
   CreateEnvironmentInput,
+  CreateAtomicRevisionInput,
   CreateCredentialInput,
   CreatePlanVersionInput,
   CreateProjectInput,
@@ -11,6 +12,7 @@ import type {
   CreateSpecificationVersionInput,
   CreateTestSpecificationInput,
   UpdateEnvironmentInput,
+  ValidateCredentialReferencesInput,
   UpdateTestSpecificationInput,
   UpdateCredentialInput,
 } from "@scry/contracts";
@@ -209,6 +211,40 @@ export class ScryRepository {
     return result.rows[0]!;
   }
 
+  async validateCredentialReferences(
+    principal: Principal,
+    environmentId: string,
+    input: ValidateCredentialReferencesInput,
+  ) {
+    await this.requireProject(principal, input.projectId);
+    const environment = await this.database.query<{ secretRefs: string[] }>(
+      `SELECT secret_refs AS "secretRefs" FROM environments
+       WHERE id = $1 AND project_id = $2`,
+      [environmentId, input.projectId],
+    );
+    if (!environment.rowCount) throw new NotFoundException("Environment not found");
+    const allowed = new Set(environment.rows[0]!.secretRefs);
+    const unavailable = input.secretRefs.find((reference) => !allowed.has(reference));
+    if (unavailable) {
+      return { valid: false, errors: [{
+          code: "CREDENTIAL_NOT_AUTHORIZED",
+          message: `Protected credential "${unavailable}" is not authorized in the selected environment.`,
+      }] };
+    }
+    const active = await this.database.query<{ id: string }>(
+      `SELECT id::text FROM project_credentials
+       WHERE project_id = $1 AND deleted_at IS NULL AND id = ANY($2::uuid[])`,
+      [input.projectId, input.secretRefs],
+    );
+    const activeIds = new Set(active.rows.map(({ id }) => String(id)));
+    const missing = input.secretRefs.find((reference) => !activeIds.has(reference));
+    if (missing) return { valid: false, errors: [{
+      code: "CREDENTIAL_UNAVAILABLE",
+      message: `Protected credential "${missing}" is invalid or unavailable for this project.`,
+    }] };
+    return { valid: true };
+  }
+
   async updateSpecification(principal: Principal, specificationId: string, input: UpdateTestSpecificationInput) {
     this.requireWriteAccess(principal);
     const workspaceId = principal.kind === "user" ? principal.workspaceId : null;
@@ -306,6 +342,57 @@ export class ScryRepository {
     });
   }
 
+  async createAtomicRevision(
+    principal: Principal,
+    specificationId: string,
+    input: CreateAtomicRevisionInput,
+  ) {
+    this.requireWriteAccess(principal);
+    const risks = analyzePlanRisks(input.plan);
+    if (risks.errors.length > 0) {
+      throw new BadRequestException({
+        message: "Plan has conclusive-evidence validation errors",
+        errors: risks.errors,
+        warnings: risks.warnings,
+      });
+    }
+    return this.database.transaction(async (client) => {
+      await this.requireSpecification(client, principal, specificationId);
+      if (input.name !== undefined || input.description !== undefined) {
+        await client.query(
+          `UPDATE test_specifications
+           SET name = COALESCE($2, name), description = COALESCE($3, description), updated_at = now()
+           WHERE id = $1`,
+          [specificationId, input.name ?? null, input.description ?? null],
+        );
+      }
+      const specificationVersion = await client.query(
+        `INSERT INTO specification_versions(specification_id, version, content)
+         SELECT $1, COALESCE(MAX(version), 0) + 1, $2::jsonb
+         FROM specification_versions WHERE specification_id = $1
+         RETURNING id, version`,
+        [specificationId, JSON.stringify(input.content)],
+      );
+      const planVersion = await client.query(
+        `INSERT INTO plan_versions(specification_version_id, version, protocol_version, plan)
+         SELECT $1, COALESCE(MAX(pv.version), 0) + 1, $2, $3::jsonb
+         FROM specification_versions sibling
+         LEFT JOIN plan_versions pv ON pv.specification_version_id = sibling.id
+         WHERE sibling.specification_id = $4
+         RETURNING id, version`,
+        [specificationVersion.rows[0]!.id, input.plan.protocolVersion, JSON.stringify(input.plan), specificationId],
+      );
+      return {
+        specificationId,
+        specificationVersionId: specificationVersion.rows[0]!.id,
+        specificationVersion: specificationVersion.rows[0]!.version,
+        planVersionId: planVersion.rows[0]!.id,
+        planVersion: planVersion.rows[0]!.version,
+        warnings: risks.warnings,
+      };
+    });
+  }
+
   async createRun(principal: Principal, projectId: string, input: CreateRunInput) {
     this.requireWriteAccess(principal);
     await this.requireProject(principal, projectId);
@@ -390,9 +477,22 @@ export class ScryRepository {
               runs.environment_snapshot AS "environmentSnapshot",
               runs.policy_snapshot AS "policySnapshot",
               runs.execution_snapshot AS "executionSnapshot",
+              CASE
+                WHEN runs.state = 'finalizing' THEN 'finalizing'
+                WHEN latest_event.type = 'step.evidence_started' THEN 'capturing_evidence'
+                WHEN runs.state = 'running' THEN 'executing_steps'
+                ELSE runs.state
+              END AS "currentPhase",
               runs.created_at AS "createdAt", runs.updated_at AS "updatedAt"
        FROM runs
        JOIN projects p ON p.id = runs.project_id
+       LEFT JOIN LATERAL (
+         SELECT events.type
+         FROM attempts attempt
+         JOIN run_events events ON events.attempt_id = attempt.id
+         WHERE attempt.run_id = runs.id
+         ORDER BY events.created_at DESC, events.sequence DESC LIMIT 1
+       ) latest_event ON true
        WHERE runs.id = $1 AND ($2::uuid IS NULL OR p.workspace_id = $2)`,
       [runId, workspaceId],
     );

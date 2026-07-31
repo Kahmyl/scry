@@ -59,17 +59,24 @@ export const actionSchema = z.discriminatedUnion("type", [
       value: z.string().max(20_000).optional(),
       secretRef: credentialReference.optional(),
       capturedSecretRef: identifier.optional(),
+      capturedValueRef: identifier.optional(),
       timeoutMs: timeout,
     })
     .strict()
-    .refine((value) => [value.value, value.secretRef, value.capturedSecretRef].filter((item) => item !== undefined).length === 1, {
-      message: "fill requires exactly one of value, secretRef, or capturedSecretRef",
+    .refine((value) => [value.value, value.secretRef, value.capturedSecretRef, value.capturedValueRef].filter((item) => item !== undefined).length === 1, {
+      message: "fill requires exactly one of value, secretRef, capturedSecretRef, or capturedValueRef",
     }),
   z.object({
     type: z.literal("captureSecret"),
     target: locatorSchema,
     reference: identifier,
     credentialName: z.string().trim().min(1).max(200),
+    timeoutMs: timeout,
+  }).strict(),
+  z.object({
+    type: z.literal("captureValue"),
+    target: locatorSchema,
+    reference: identifier,
     timeoutMs: timeout,
   }).strict(),
   z.object({ type: z.literal("select"), target: locatorSchema, value: nonEmptyText, timeoutMs: timeout }).strict(),

@@ -60,6 +60,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   const policyViolations: PolicyViolationRecord[] = [];
   const redactor = new SecretRedactor();
   const capturedSecrets = new Map<string, string>();
+  const capturedValues = new Map<string, string>();
   const usesProtectedValues = options.plan.steps.some((step) =>
     step.action.type === "captureSecret"
     || (step.action.type === "fill" && Boolean(step.action.secretRef || step.action.capturedSecretRef))
@@ -169,8 +170,10 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       });
 
       try {
-        const nextStep = options.plan.steps[index + 1];
-        if (!sensitiveOverlayActive && nextStep?.action.type === "captureSecret") {
+        const upcomingCaptureBlock = options.plan.steps.slice(index + 1).find((candidate) =>
+          candidate.action.type !== "captureValue"
+        );
+        if (!sensitiveOverlayActive && upcomingCaptureBlock?.action.type === "captureSecret") {
           await showSensitiveOverlay(page);
           sensitiveOverlayActive = true;
         }
@@ -182,6 +185,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           timeoutController.signal,
           redactor,
           capturedSecrets,
+          capturedValues,
         );
         const actionCompletedAt = new Date();
         if (
@@ -266,18 +270,22 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           : usesProtectedValues
             ? { visualRedaction: "protected-elements-masked" }
             : undefined;
+        if (step.action.type === "screenshot" || step.evidence.length > 0) {
+          await emit("step.evidence_started", { stepId: step.id, evidence: step.evidence });
+        }
         if (step.action.type === "screenshot") {
-          await page.screenshot({
-            path: path.join(options.outputDirectory, "screenshots", `${step.action.name}.png`),
-            fullPage: step.action.fullPage,
-          });
+          const screenshotPath = path.join(options.outputDirectory, "screenshots", `${step.action.name}.png`);
+          const fallback = await captureScreenshotWithFallback(page, screenshotPath, step.action.fullPage);
           const artifact = await availableArtifact(
             "screenshot",
             "image/png",
-            path.join(options.outputDirectory, "screenshots", `${step.action.name}.png`),
+            screenshotPath,
             `screenshots/${step.action.name}.png`,
           );
-          if (observation) artifact.observation = observation;
+          artifact.observation = {
+            ...observation,
+            screenshotMode: fallback ? "viewport-fallback" : step.action.fullPage ? "full-page" : "viewport",
+          };
           result.artifacts.push(artifact);
           await emit("artifact.created", {
             stepId: step.id,
@@ -315,6 +323,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         });
       } catch (error) {
         if (timeoutController.signal.aborted) throw error;
+        if (error instanceof InfrastructureDependencyError) throw error;
         result.status = "failed";
         result.error = redactor.redact(errorMessage(error));
         markRemainingAssertionsUnevaluated(result);
@@ -470,6 +479,7 @@ async function executeAction(
   signal: AbortSignal,
   redactor: SecretRedactor,
   capturedSecrets: Map<string, string>,
+  capturedValues: Map<string, string>,
 ) {
   throwIfAborted(signal);
   switch (action.type) {
@@ -486,16 +496,34 @@ async function executeAction(
       await (await resolveUniqueLocator(page, action.target)).click(optionalTimeout(action.timeoutMs));
       return;
     case "fill": {
-      const value =
-        action.value ??
-        (action.capturedSecretRef
-          ? capturedSecrets.get(action.capturedSecretRef)
-          : await (options.secretResolver ?? missingSecretResolver)(action.secretRef!));
+      let value = action.value
+        ?? (action.capturedValueRef ? capturedValues.get(action.capturedValueRef) : undefined)
+        ?? (action.capturedSecretRef ? capturedSecrets.get(action.capturedSecretRef) : undefined);
+      if (value === undefined && action.secretRef) {
+        try {
+          value = await (options.secretResolver ?? missingSecretResolver)(action.secretRef);
+        } catch (error) {
+          throw new InfrastructureDependencyError(
+            `Protected credential resolution failed: ${errorMessage(error)}`,
+          );
+        }
+      }
       if (value === undefined) throw new Error(`Captured secret "${action.capturedSecretRef}" is unavailable`);
       if (action.secretRef || action.capturedSecretRef) redactor.add(value);
       const locator = await resolveUniqueLocator(page, action.target);
       if (action.secretRef || action.capturedSecretRef) await maskSensitiveLocator(locator);
       await locator.fill(value, optionalTimeout(action.timeoutMs));
+      return;
+    }
+    case "captureValue": {
+      const locator = await resolveUniqueLocator(page, action.target);
+      await locator.waitFor({ state: "visible", ...optionalTimeout(action.timeoutMs) });
+      const value = await locator.evaluate((element) => {
+        if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) return element.value;
+        return element.textContent ?? "";
+      });
+      if (!value.trim()) throw new Error("Generated public value was empty");
+      capturedValues.set(action.reference, value.trim());
       return;
     }
     case "captureSecret": {
@@ -650,26 +678,65 @@ async function captureRequestedEvidence(
 ) {
   if (evidence.includes("screenshot")) {
     const file = path.join(root, "screenshots", `${stepId}.png`);
-    await page.screenshot({ path: file, fullPage: true });
-    const artifact = await availableArtifact("screenshot", "image/png", file, `screenshots/${stepId}.png`);
-    if (observation) artifact.observation = observation;
-    result.artifacts.push(artifact);
+    try {
+      const fallback = await captureScreenshotWithFallback(page, file, true);
+      const artifact = await availableArtifact("screenshot", "image/png", file, `screenshots/${stepId}.png`);
+      artifact.observation = { ...observation, screenshotMode: fallback ? "viewport-fallback" : "full-page" };
+      result.artifacts.push(artifact);
+    } catch (error) {
+      result.evidenceFailures ??= [];
+      result.evidenceFailures.push({ kind: "screenshot", error: errorMessage(error) });
+      result.artifacts.push({ id: randomUUID(), kind: "screenshot", status: "failed", contentType: "image/png" });
+    }
   }
   if (evidence.includes("dom")) {
-    const file = path.join(root, "dom", `${stepId}.html`);
-    await writeFile(file, redactor.redact(await page.content()), "utf8");
-    const artifact = await availableArtifact("dom", "text/html", file, `dom/${stepId}.html`);
-    if (observation) artifact.observation = observation;
-    result.artifacts.push(artifact);
+    try {
+      const file = path.join(root, "dom", `${stepId}.html`);
+      await writeFile(file, redactor.redact(await page.content()), "utf8");
+      const artifact = await availableArtifact("dom", "text/html", file, `dom/${stepId}.html`);
+      if (observation) artifact.observation = observation;
+      result.artifacts.push(artifact);
+    } catch (error) {
+      result.evidenceFailures ??= [];
+      result.evidenceFailures.push({ kind: "dom", error: errorMessage(error) });
+      result.artifacts.push({ id: randomUUID(), kind: "dom", status: "failed", contentType: "text/html" });
+    }
   }
   if (evidence.includes("network")) {
-    await Promise.allSettled([...pendingNetworkBodies]);
-    const file = path.join(root, "network", `${stepId}.json`);
-    await writeJson(file, redactor.redactValue({ requests: networkRecords }));
-    const artifact = await availableArtifact("network", "application/json", file, `network/${stepId}.json`);
-    if (observation) artifact.observation = observation;
-    result.artifacts.push(artifact);
+    try {
+      await Promise.allSettled([...pendingNetworkBodies]);
+      const file = path.join(root, "network", `${stepId}.json`);
+      await writeJson(file, redactor.redactValue({ requests: networkRecords }));
+      const artifact = await availableArtifact("network", "application/json", file, `network/${stepId}.json`);
+      if (observation) artifact.observation = observation;
+      result.artifacts.push(artifact);
+    } catch (error) {
+      result.evidenceFailures ??= [];
+      result.evidenceFailures.push({ kind: "network", error: errorMessage(error) });
+      result.artifacts.push({ id: randomUUID(), kind: "network", status: "failed", contentType: "application/json" });
+    }
   }
+}
+
+async function captureScreenshotWithFallback(page: Page, file: string, fullPage: boolean) {
+  if (!fullPage) {
+    await page.screenshot({ path: file, fullPage: false, timeout: 10_000 });
+    return false;
+  }
+  const dimensions = await page.evaluate(() => ({
+    width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth ?? 0),
+    height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0),
+  }));
+  if (dimensions.width * dimensions.height <= 40_000_000) {
+    try {
+      await page.screenshot({ path: file, fullPage: true, timeout: 10_000 });
+      return false;
+    } catch {
+      // Chromium can reject or stall on extremely complex pages despite modest dimensions.
+    }
+  }
+  await page.screenshot({ path: file, fullPage: false, timeout: 10_000 });
+  return true;
 }
 
 async function captureFailureScreenshot(
@@ -1223,6 +1290,10 @@ function throwIfAborted(signal: AbortSignal) {
 
 async function missingSecretResolver(reference: string): Promise<string> {
   throw new Error(`No secret resolver configured for reference: ${reference}`);
+}
+
+class InfrastructureDependencyError extends Error {
+  override name = "InfrastructureDependencyError";
 }
 
 function errorMessage(error: unknown) {

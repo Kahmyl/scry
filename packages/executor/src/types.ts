@@ -47,6 +47,7 @@ export type StepExecutionResult = {
   error?: string;
   assertions: AssertionExecutionResult[];
   artifacts: Artifact[];
+  evidenceFailures?: Array<{ kind: Artifact["kind"]; error: string }>;
   readiness?: {
     status: "passed" | "failed" | "not_configured";
     startedAt: string;

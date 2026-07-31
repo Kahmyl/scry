@@ -12,6 +12,7 @@ describe("protected execution credentials", () => {
 
     await expect(repository.resolveCredential("run-id", credentialId)).resolves.toBe("allowed-secret");
     expect(query.mock.calls[0]?.[0]).toContain("environment_snapshot->'secretRefs'");
+    expect(query.mock.calls[0]?.[0]).toContain("? ($2::uuid)::text");
     expect(query.mock.calls[0]?.[1]).toEqual(["run-id", credentialId]);
   });
 

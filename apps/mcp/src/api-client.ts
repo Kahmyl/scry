@@ -48,10 +48,11 @@ export class ScryApiClient {
     const response = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     const body = await response.json().catch(() => undefined);
     if (!response.ok) {
-      const detail =
-        body && typeof body === "object" && "message" in body
+      const detail = body && typeof body === "object"
+        ? (Object.keys(body).length === 1 && "message" in body
           ? String(body.message)
-          : `HTTP ${response.status}`;
+          : JSON.stringify(body))
+        : `HTTP ${response.status}`;
       throw new Error(`Scry API request failed: ${detail}`);
     }
     return body as T;

@@ -34,6 +34,7 @@ export function classifyAction(action: Action): ActionCapability {
   if (action.type === "navigate") return "navigation";
   if (action.type === "fill" && (action.secretRef || action.capturedSecretRef)) return "secret_input";
   if (action.type === "captureSecret") return "secret_input";
+  if (action.type === "captureValue") return "observation";
   if (action.type === "waitFor" || action.type === "scroll") return "observation";
   if (action.type === "screenshot") return "evidence";
   return "interaction";

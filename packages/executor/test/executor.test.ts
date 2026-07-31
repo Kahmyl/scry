@@ -84,7 +84,7 @@ beforeAll(async () => {
     }
     if (request.url === "/generated-secret") {
       response.writeHead(200, { "content-type": "text/html" });
-      response.end('<label>Client secret <input value="generated-secret-value"></label><label>API secret <input></label><script>console.log("generated-secret-value");fetch("/leaky-diagnostic?value=generated-secret-value")</script>');
+      response.end('<label>Client ID <input value="public-client-id"></label><label>Client secret <input value="generated-secret-value"></label><label>API secret <input></label><script>console.log("generated-secret-value");fetch("/leaky-diagnostic?value=generated-secret-value")</script>');
       return;
     }
     if (request.url?.startsWith("/leaky-diagnostic")) {
@@ -824,6 +824,32 @@ describe("executePlan", () => {
     expect(redactedDom).toContain("data-scry-redacted=\"true\"");
     expect(redactedDom).toContain("background: rgb(0, 0, 0) !important");
     expect(redactedDom).toContain("-webkit-text-fill-color: transparent !important");
+  }, 30_000);
+
+  it("classifies credential resolver failures as Scry infrastructure failures", async () => {
+    const outputDirectory = await mkdtemp(path.join(tmpdir(), "scry-credential-infrastructure-"));
+    const plan = testPlanV2Schema.parse({
+      protocolVersion: "2",
+      name: "Credential infrastructure failure",
+      objective: "Classify protected storage failures correctly.",
+      allowedOrigins: [origin],
+      budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
+      steps: [
+        { id: "open", title: "Open", action: { type: "navigate", url: "/generated-secret" }, after: { timeoutMs: 2_000, conditions: [{ type: "visible", target: { strategy: "label", value: "API secret" } }] } },
+        { id: "fill", title: "Fill", action: { type: "fill", target: { strategy: "label", value: "API secret" }, secretRef: "11111111-1111-4111-8111-111111111111" } },
+      ],
+    });
+    const policy = executionPolicyV1Schema.parse({ policyVersion: "1", allowedOrigins: [origin], allowPrivateNetwork: true, maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 });
+    const report = await executePlan({
+      plan,
+      policy,
+      outputDirectory,
+      browserChannel,
+      secretResolver: async () => { throw new Error("database operator mismatch"); },
+    });
+    expect(report.state).toBe("infrastructure_error");
+    expect(report.outcomeClassification).toBe("infrastructure_failure");
+    expect(report.error).toContain("Protected credential resolution failed");
   }, 30_000);
 
   it("captures bounded redacted JSON error bodies in network evidence", async () => {

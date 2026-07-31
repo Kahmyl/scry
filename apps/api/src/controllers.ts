@@ -15,6 +15,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   createEnvironmentSchema,
+  createAtomicRevisionSchema,
   createCredentialSchema,
   createPlanVersionSchema,
   createProjectSchema,
@@ -24,7 +25,9 @@ import {
   updateEnvironmentSchema,
   updateTestSpecificationSchema,
   updateCredentialSchema,
+  validateCredentialReferencesSchema,
   type CreateEnvironmentInput,
+  type CreateAtomicRevisionInput,
   type CreateCredentialInput,
   type CreatePlanVersionInput,
   type CreateProjectInput,
@@ -34,6 +37,7 @@ import {
   type UpdateEnvironmentInput,
   type UpdateTestSpecificationInput,
   type UpdateCredentialInput,
+  type ValidateCredentialReferencesInput,
 } from "@scry/contracts";
 
 import { ScryRepository } from "./repository.js";
@@ -189,6 +193,15 @@ export class SpecificationsController {
   ) {
     return this.repository.createSpecificationVersion(principal, specificationId, input);
   }
+
+  @Post(":specificationId/revisions")
+  revise(
+    @Param("specificationId") specificationId: string,
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodValidationPipe(createAtomicRevisionSchema)) input: CreateAtomicRevisionInput,
+  ) {
+    return this.repository.createAtomicRevision(principal, specificationId, input);
+  }
 }
 
 @Controller("environments")
@@ -203,6 +216,15 @@ export class EnvironmentsController {
     input: UpdateEnvironmentInput,
   ) {
     return this.repository.updateEnvironment(principal, environmentId, input);
+  }
+
+  @Post(":environmentId/validate-credentials")
+  validateCredentials(
+    @Param("environmentId") environmentId: string,
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodValidationPipe(validateCredentialReferencesSchema)) input: ValidateCredentialReferencesInput,
+  ) {
+    return this.repository.validateCredentialReferences(principal, environmentId, input);
   }
 }
 

@@ -50,6 +50,7 @@ export const runEventSchema = z
       "step.started",
       "step.passed",
       "step.failed",
+      "step.evidence_started",
       "policy.rejected",
       "artifact.created",
       "diagnostic.console",
