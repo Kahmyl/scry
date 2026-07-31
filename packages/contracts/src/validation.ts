@@ -20,7 +20,10 @@ export type PlanRiskDiagnostic = {
     | "BROAD_SELECTOR"
     | "READINESS_CONSUMES_RUN_BUDGET"
     | "SECRET_CAPTURE_SCREENSHOT_RISK"
-    | "SECRET_CAPTURE_WITHOUT_PROTECTED_BOUNDARY";
+    | "SECRET_CAPTURE_WITHOUT_PROTECTED_BOUNDARY"
+    | "NON_SECRET_IDENTIFIER_CAPTURE"
+    | "DUPLICATE_CAPTURED_SECRET_REFERENCE"
+    | "CAPTURED_SECRET_REFERENCE_UNAVAILABLE";
   message: string;
   suggestion: string;
   stepId: string;
@@ -32,10 +35,31 @@ export function analyzePlanRisks(plan: TestPlan): {
 } {
   if (plan.protocolVersion === "1") return { errors: [], warnings: [] };
   const diagnostics: PlanRiskDiagnostic[] = [];
+  const capturedSecretReferences = new Set<string>();
   let unsettledReactionStep: string | undefined;
   const reactionTypes = new Set(["navigate", "click", "press", "select", "check"]);
   for (const [index, step] of plan.steps.entries()) {
     if (step.action.type === "captureSecret") {
+      if (capturedSecretReferences.has(step.action.reference)) {
+        diagnostics.push(error(
+          "DUPLICATE_CAPTURED_SECRET_REFERENCE",
+          step.id,
+          `Captured secret reference "${step.action.reference}" is already used by an earlier capture step.`,
+          "Give every generated secret a unique reference so one protected value cannot silently replace another.",
+        ));
+      }
+      capturedSecretReferences.add(step.action.reference);
+      const targetName = "value" in step.action.target
+        ? step.action.target.value
+        : step.action.target.name;
+      if (targetName && /\b(?:client|application|account)\s*(?:id|identifier)\b/i.test(targetName)) {
+        diagnostics.push(error(
+          "NON_SECRET_IDENTIFIER_CAPTURE",
+          step.id,
+          `The protected capture target "${targetName}" appears to be a public identifier, not a generated secret.`,
+          "Target the one-time secret value (for example, Client secret). Record public identifiers as ordinary non-secret evidence.",
+        ));
+      }
       const previous = plan.steps[index - 1];
       const beginsProtectedBlock = previous && (
         reactionTypes.has(previous.action.type)
@@ -49,6 +73,18 @@ export function analyzePlanRisks(plan: TestPlan): {
           "Place captureSecret immediately after the action that reveals the value. Consecutive captureSecret steps may follow it.",
         ));
       }
+    }
+    if (
+      step.action.type === "fill"
+      && step.action.capturedSecretRef
+      && !capturedSecretReferences.has(step.action.capturedSecretRef)
+    ) {
+      diagnostics.push(error(
+        "CAPTURED_SECRET_REFERENCE_UNAVAILABLE",
+        step.id,
+        `Captured secret reference "${step.action.capturedSecretRef}" is not produced by an earlier step.`,
+        "Place the matching captureSecret step before this fill action and use the same unique reference.",
+      ));
     }
     const isReaction = reactionTypes.has(step.action.type);
     const capturesFinalEvidence =

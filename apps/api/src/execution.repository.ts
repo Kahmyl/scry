@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import type { Artifact, OutcomeClassification, RunEvent, RunState } from "@scry/contracts";
 
 import { Database } from "./database.js";
@@ -129,7 +130,8 @@ export class ExecutionRepository {
          ON credential.project_id = run.project_id
         AND credential.id = $2
         AND credential.deleted_at IS NULL
-       WHERE run.id = $1`,
+       WHERE run.id = $1
+         AND COALESCE(run.environment_snapshot->'secretRefs', '[]'::jsonb) ? $2`,
       [runId, credentialId],
     );
     if (!result.rowCount) throw new NotFoundException("Saved credential is missing or unavailable");
@@ -144,14 +146,24 @@ export class ExecutionRepository {
         [runId],
       );
       if (!run.rowCount) throw new NotFoundException("Run not found");
+      const duplicateName = await client.query(
+        `SELECT 1 FROM project_credentials
+         WHERE project_id = $1 AND name = $2 AND deleted_at IS NULL`,
+        [run.rows[0]!.project_id, name],
+      );
+      const generatedCredentialId = randomUUID();
+      const storedName = duplicateName.rowCount
+        ? `${name.slice(0, 185)} (${generatedCredentialId.slice(0, 8)})`
+        : name;
       const credential = await client.query(
         `INSERT INTO project_credentials(
-           project_id, name, ciphertext, initialization_vector, authentication_tag
-         ) VALUES ($1, $2, $3, $4, $5)
+           id, project_id, name, ciphertext, initialization_vector, authentication_tag
+         ) VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id`,
         [
+          generatedCredentialId,
           run.rows[0]!.project_id,
-          name,
+          storedName,
           encrypted.ciphertext,
           encrypted.initializationVector,
           encrypted.authenticationTag,

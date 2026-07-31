@@ -132,18 +132,19 @@ export class ScryRepository {
       await this.database.query(
         `SELECT ts.id, ts.project_id AS "projectId", ts.name, ts.description,
                 ts.created_at AS "createdAt",
-                sv.id AS "latestVersionId", sv.version AS "latestVersion",
-                sv.content AS "latestContent",
-                pv.id AS "latestPlanVersionId", pv.plan AS "latestPlan"
+                complete.id AS "latestVersionId", complete.version AS "latestVersion",
+                complete.content AS "latestContent",
+                complete.plan_version_id AS "latestPlanVersionId", complete.plan AS "latestPlan"
          FROM test_specifications ts
          LEFT JOIN LATERAL (
-           SELECT * FROM specification_versions
-           WHERE specification_id = ts.id ORDER BY version DESC LIMIT 1
-         ) sv ON true
-         LEFT JOIN LATERAL (
-           SELECT * FROM plan_versions
-           WHERE specification_version_id = sv.id ORDER BY version DESC LIMIT 1
-         ) pv ON true
+           SELECT sv.id, sv.version, sv.content,
+                  pv.id AS plan_version_id, pv.plan
+           FROM specification_versions sv
+           JOIN plan_versions pv ON pv.specification_version_id = sv.id
+           WHERE sv.specification_id = ts.id
+           ORDER BY pv.version DESC
+           LIMIT 1
+         ) complete ON true
          WHERE ts.project_id = $1 ORDER BY ts.updated_at DESC`,
         [projectId],
       )

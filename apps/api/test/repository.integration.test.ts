@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { ScryRepository } from "../src/repository.js";
+
 const databaseUrl = process.env.SCRY_TEST_DATABASE_URL;
 const describeDatabase = databaseUrl ? describe : describe.skip;
 const pool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : undefined;
@@ -114,5 +116,50 @@ describeDatabase("PostgreSQL persistence", () => {
         [attempt.id],
       ),
     ).rejects.toThrow();
+  });
+
+  it("keeps the latest executable Flow visible after an incomplete revision", async () => {
+    const project = (
+      await pool!.query(
+        "INSERT INTO projects(name) VALUES ($1) RETURNING id",
+        [`Recoverable Flow ${randomUUID()}`],
+      )
+    ).rows[0];
+    const specification = (
+      await pool!.query(
+        "INSERT INTO test_specifications(project_id, name) VALUES ($1, $2) RETURNING id",
+        [project.id, "Credential journey"],
+      )
+    ).rows[0];
+    const executable = (
+      await pool!.query(
+        `INSERT INTO specification_versions(specification_id, version, content)
+         VALUES ($1, 1, $2) RETURNING id`,
+        [specification.id, { objective: "Capture the generated secret" }],
+      )
+    ).rows[0];
+    const plan = { protocolVersion: "1", name: "Credential journey", steps: [] };
+    const planVersion = (
+      await pool!.query(
+        `INSERT INTO plan_versions(specification_version_id, version, protocol_version, plan)
+         VALUES ($1, 1, '1', $2) RETURNING id`,
+        [executable.id, plan],
+      )
+    ).rows[0];
+    await pool!.query(
+      `INSERT INTO specification_versions(specification_id, version, content)
+       VALUES ($1, 2, $2)`,
+      [specification.id, { objective: "Incomplete correction" }],
+    );
+
+    const repository = new ScryRepository({ query: pool!.query.bind(pool) } as never);
+    const flows = await repository.listSpecifications({ kind: "service", subject: "scry-service" }, project.id);
+
+    expect(flows[0]).toMatchObject({
+      latestVersion: 1,
+      latestContent: { objective: "Capture the generated secret" },
+      latestPlanVersionId: planVersion.id,
+      latestPlan: plan,
+    });
   });
 });

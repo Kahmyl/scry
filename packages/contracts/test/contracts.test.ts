@@ -229,6 +229,53 @@ describe("protocol v2 observation readiness", () => {
     expect(JSON.stringify(plan)).not.toContain("actual-secret-value");
   });
 
+  it("rejects protected capture of a public client identifier", () => {
+    const plan = testPlanV2Schema.parse({
+      ...validPlanV2,
+      steps: [{
+        id: "capture-client-id",
+        title: "Capture client ID",
+        action: {
+          type: "captureSecret",
+          target: { strategy: "label", value: "Client ID" },
+          reference: "generated_client_id",
+          credentialName: "Generated client ID",
+        },
+      }],
+    });
+    expect(analyzePlanRisks(plan).errors).toContainEqual(expect.objectContaining({
+      code: "NON_SECRET_IDENTIFIER_CAPTURE",
+      stepId: "capture-client-id",
+    }));
+  });
+
+  it("rejects missing and duplicate generated-secret references before execution", () => {
+    const plan = testPlanV2Schema.parse({
+      ...validPlanV2,
+      steps: [
+        {
+          id: "capture-first",
+          title: "Capture first secret",
+          action: { type: "captureSecret", target: { strategy: "label", value: "Client secret" }, reference: "api_secret", credentialName: "First API secret" },
+        },
+        {
+          id: "capture-duplicate",
+          title: "Capture another secret",
+          action: { type: "captureSecret", target: { strategy: "label", value: "Signing secret" }, reference: "api_secret", credentialName: "Signing secret" },
+        },
+        {
+          id: "fill-missing",
+          title: "Use missing secret",
+          action: { type: "fill", target: { strategy: "label", value: "Webhook secret" }, capturedSecretRef: "missing_secret" },
+        },
+      ],
+    });
+    expect(analyzePlanRisks(plan).errors.map(({ code }) => code)).toEqual(expect.arrayContaining([
+      "DUPLICATE_CAPTURED_SECRET_REFERENCE",
+      "CAPTURED_SECRET_REFERENCE_UNAVAILABLE",
+    ]));
+  });
+
   it("allows visually redacted screenshot evidence in generated-secret capture runs", () => {
     const plan = testPlanV2Schema.parse({
       ...validPlanV2,

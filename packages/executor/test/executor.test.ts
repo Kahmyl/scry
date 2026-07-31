@@ -84,7 +84,12 @@ beforeAll(async () => {
     }
     if (request.url === "/generated-secret") {
       response.writeHead(200, { "content-type": "text/html" });
-      response.end('<label>Client secret <input value="generated-secret-value"></label><label>API secret <input></label>');
+      response.end('<label>Client secret <input value="generated-secret-value"></label><label>API secret <input></label><script>console.log("generated-secret-value");fetch("/leaky-diagnostic?value=generated-secret-value")</script>');
+      return;
+    }
+    if (request.url?.startsWith("/leaky-diagnostic")) {
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(JSON.stringify({ detail: "generated-secret-value" }));
       return;
     }
     if (request.url === "/api-error") {
@@ -790,7 +795,7 @@ describe("executePlan", () => {
       steps: [
         { id: "open", title: "Open", action: { type: "navigate", url: "/generated-secret" }, after: { mode: "all", timeoutMs: 2_000, conditions: [{ type: "visible", target: { strategy: "label", value: "Client secret" } }] } },
         { id: "capture", title: "Protect secret", action: { type: "captureSecret", target: { strategy: "label", value: "Client secret" }, reference: "api_secret", credentialName: "Generated API secret" } },
-        { id: "reuse", title: "Reuse secret", action: { type: "fill", target: { strategy: "label", value: "API secret" }, capturedSecretRef: "api_secret" }, evidence: ["dom", "screenshot"] },
+        { id: "reuse", title: "Reuse secret", action: { type: "fill", target: { strategy: "label", value: "API secret" }, capturedSecretRef: "api_secret" }, evidence: ["dom", "network", "screenshot"] },
       ],
     });
     const policy = executionPolicyV1Schema.parse({ policyVersion: "1", allowedOrigins: [origin], allowPrivateNetwork: true, maxActions: 3, maxDurationMs: 10_000, maxNavigations: 1 });
@@ -812,6 +817,8 @@ describe("executePlan", () => {
     expect(report.artifacts.find((artifact) => artifact.kind === "screenshot")?.observation)
       .toMatchObject({ visualRedaction: "protected-elements-masked" });
     expect(await readFile(path.join(outputDirectory, "attempt.json"), "utf8")).not.toContain("generated-secret-value");
+    expect(await readFile(path.join(outputDirectory, "events.jsonl"), "utf8")).not.toContain("generated-secret-value");
+    expect(await readFile(path.join(outputDirectory, "network", "reuse.json"), "utf8")).not.toContain("generated-secret-value");
     const redactedDom = await readFile(path.join(outputDirectory, "dom", "reuse.html"), "utf8");
     expect(redactedDom).not.toContain("generated-secret-value");
     expect(redactedDom).toContain("data-scry-redacted=\"true\"");

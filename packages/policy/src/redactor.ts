@@ -23,7 +23,7 @@ export class SecretRedactor {
     if (Array.isArray(value)) return value.map((item) => this.redactValue(item)) as T;
     if (value && typeof value === "object") {
       return Object.fromEntries(
-        Object.entries(value).map(([key, item]) => [key, this.redactValue(item)]),
+        Object.entries(value).map(([key, item]) => [this.redact(key), this.redactValue(item)]),
       ) as T;
     }
     return value;

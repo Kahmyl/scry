@@ -151,8 +151,8 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       await emit("policy.rejected", violation);
     };
     await attachRequestInterception(context, page, requestPolicy, rejectPolicy);
-    attachDiagnostics(page, diagnostics, emit, redactor);
-    attachNetworkCapture(page, networkRecords, redactor, networkActivity, pendingNetworkBodies);
+    attachDiagnostics(page, diagnostics, emit, redactor, () => sensitiveOverlayActive);
+    attachNetworkCapture(page, networkRecords, redactor, networkActivity, pendingNetworkBodies, () => sensitiveOverlayActive);
     attachCapabilityGuards(context, page, options, rejectPolicy);
 
     for (const [index, step] of options.plan.steps.entries()) {
@@ -699,12 +699,13 @@ function attachDiagnostics(
   diagnostics: DiagnosticRecord[],
   emit: (type: RunEvent["type"], payload: Record<string, unknown>) => Promise<void>,
   redactor: SecretRedactor,
+  isProtectedCaptureActive: () => boolean = () => false,
 ) {
   page.on("console", (message) => {
     const diagnostic: DiagnosticRecord = {
       type: "console",
       occurredAt: new Date().toISOString(),
-      message: redactor.redact(message.text()),
+      message: isProtectedCaptureActive() ? PROTECTED_CAPTURE_REDACTION : redactor.redact(message.text()),
     };
     diagnostics.push(diagnostic);
     void emit("diagnostic.console", diagnostic);
@@ -713,7 +714,7 @@ function attachDiagnostics(
     const diagnostic: DiagnosticRecord = {
       type: "page_error",
       occurredAt: new Date().toISOString(),
-      message: redactor.redact(error.message),
+      message: isProtectedCaptureActive() ? PROTECTED_CAPTURE_REDACTION : redactor.redact(error.message),
     };
     diagnostics.push(diagnostic);
     void emit("diagnostic.page_error", diagnostic);
@@ -722,8 +723,8 @@ function attachDiagnostics(
     const diagnostic: DiagnosticRecord = {
       type: "request_failed",
       occurredAt: new Date().toISOString(),
-      message: redactor.redact(request.failure()?.errorText ?? "Request failed"),
-      url: redactor.redact(request.url()),
+      message: isProtectedCaptureActive() ? PROTECTED_CAPTURE_REDACTION : redactor.redact(request.failure()?.errorText ?? "Request failed"),
+      url: isProtectedCaptureActive() ? PROTECTED_CAPTURE_REDACTION : redactor.redact(request.url()),
       method: request.method(),
     };
     diagnostics.push(diagnostic);
@@ -737,26 +738,33 @@ function attachNetworkCapture(
   redactor: SecretRedactor,
   activity?: { active: Map<string, { url: string; resourceType: string }> },
   pendingBodies = new Set<Promise<void>>(),
+  isProtectedCaptureActive: () => boolean = () => false,
 ) {
   page.on("request", (request) => {
     activity?.active.set(request.url(), { url: request.url(), resourceType: request.resourceType() });
+    const protectedCaptureActive = isProtectedCaptureActive();
     records.push({
       type: "request",
       occurredAt: new Date().toISOString(),
       method: request.method(),
-      url: redactor.redact(request.url()),
+      url: protectedCaptureActive ? PROTECTED_CAPTURE_REDACTION : redactor.redact(request.url()),
       resourceType: request.resourceType(),
     });
   });
   page.on("response", (response) => {
+    const protectedCaptureActive = isProtectedCaptureActive();
     const record: Record<string, unknown> = {
       type: "response",
       occurredAt: new Date().toISOString(),
       method: response.request().method(),
-      url: redactor.redact(response.url()),
+      url: protectedCaptureActive ? PROTECTED_CAPTURE_REDACTION : redactor.redact(response.url()),
       status: response.status(),
     };
     records.push(record);
+    if (protectedCaptureActive) {
+      record.responseBodyOmitted = "protected_capture_interval";
+      return;
+    }
     if (response.status() < 400) return;
     const contentType = response.headers()["content-type"]?.toLowerCase() ?? "";
     if (!contentType.includes("json") && !contentType.startsWith("text/")) return;
@@ -786,6 +794,7 @@ function attachNetworkCapture(
 }
 
 const MAX_NETWORK_ERROR_BODY_BYTES = 64 * 1024;
+const PROTECTED_CAPTURE_REDACTION = "[REDACTED DURING PROTECTED CAPTURE]";
 
 async function installVisualRedactionStyles(context: BrowserContext) {
   await context.addInitScript(() => {

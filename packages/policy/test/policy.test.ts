@@ -26,10 +26,12 @@ describe("runtime policy helpers", () => {
       redactor.redactValue({
         message: "received a+b@example.invalid",
         url: "https://example.test/?email=a%2Bb%40example.invalid",
+        "a+b@example.invalid": "secret used as a property name",
       }),
     ).toEqual({
       message: "received [REDACTED]",
       url: "https://example.test/?email=[REDACTED]",
+      "[REDACTED]": "secret used as a property name",
     });
   });
 

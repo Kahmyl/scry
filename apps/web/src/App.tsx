@@ -6,6 +6,8 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Code2,
   ExternalLink,
@@ -104,6 +106,8 @@ const terminalStates: RunState[] = [
   "timed_out",
   "infrastructure_error",
 ];
+const FLOW_PAGE_SIZE = 9;
+const RUN_PAGE_SIZE = 10;
 
 export function App({
   userEmail = "hello@scry.dev",
@@ -569,6 +573,8 @@ function Specifications({ projectId, onRunStarted }: { projectId: string; onRunS
   const [refresh, setRefresh] = useState(0);
   const [starting, setStarting] = useState("");
   const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     void Promise.all([
@@ -581,6 +587,17 @@ function Specifications({ projectId, onRunStarted }: { projectId: string; onRunS
       setCredentials(c);
     });
   }, [projectId, refresh]);
+
+  const visibleSpecs = specs.filter((spec) => {
+    const searchable = `${spec.name} ${spec.latestContent?.objective ?? spec.description}`.toLowerCase();
+    return searchable.includes(query.trim().toLowerCase());
+  });
+  const pageCount = Math.max(1, Math.ceil(visibleSpecs.length / FLOW_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pagedSpecs = visibleSpecs.slice((currentPage - 1) * FLOW_PAGE_SIZE, currentPage * FLOW_PAGE_SIZE);
+
+  useEffect(() => setPage(1), [projectId, query]);
+  useEffect(() => setPage((current) => Math.min(current, pageCount)), [pageCount]);
 
   const runSpecification = async (specification: Specification) => {
     const environment =
@@ -615,12 +632,12 @@ function Specifications({ projectId, onRunStarted }: { projectId: string; onRunS
         action={<button className="primary-button" onClick={() => setDialog("new")}><Plus size={16} /> New Flow</button>}
       />
       <div className="toolbar">
-        <div className="search-box"><Search size={16} /><input placeholder="Search Flows…" /></div>
-        <div className="toolbar-meta">{specs.length} total</div>
+        <div className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search Flows…" /></div>
+        <div className="toolbar-meta">{query ? `${visibleSpecs.length} of ` : ""}{specs.length} total</div>
       </div>
       {error && <div className="form-error page-form-error"><AlertTriangle size={15} /> {error}</div>}
       <div className="spec-grid">
-        {specs.map((spec) => (
+        {pagedSpecs.map((spec) => (
           <article className="spec-card" key={spec.id}>
             <div className="spec-top">
               <div className="spec-icon"><Code2 size={19} /></div>
@@ -653,12 +670,13 @@ function Specifications({ projectId, onRunStarted }: { projectId: string; onRunS
             </div>
           </article>
         ))}
-        {!specs.length && (
+        {!visibleSpecs.length && (
           <div className="panel empty-large">
-            <EmptyBlock icon={<FileCode2 />} title="Build your first Flow" copy="Describe the journey, add its Sequence, and define the expected behavior." />
+            <EmptyBlock icon={<FileCode2 />} title={specs.length ? "No matching Flows" : "Build your first Flow"} copy={specs.length ? "Try a different name or objective." : "Describe the journey, add its Sequence, and define the expected behavior."} />
           </div>
         )}
       </div>
+      <Pagination page={currentPage} pageSize={FLOW_PAGE_SIZE} total={visibleSpecs.length} itemName="Flows" onChange={setPage} />
       {dialog && (
         <SpecDialog
           projectId={projectId}
@@ -687,6 +705,7 @@ function Runs({
   const [runs, setRuns] = useState<Run[]>([]);
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
 
   const load = useCallback(() => {
     void api<Run[]>(`/projects/${projectId}/runs`).then(setRuns);
@@ -707,6 +726,12 @@ function Runs({
   const activeCount = runs.filter((run) => ["queued", "preparing", "running", "finalizing"].includes(run.state)).length;
   const failedCount = runs.filter((run) => run.needsAttention).length;
   const passedCount = runs.filter((run) => run.state === "passed").length;
+  const pageCount = Math.max(1, Math.ceil(visible.length / RUN_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pagedRuns = visible.slice((currentPage - 1) * RUN_PAGE_SIZE, currentPage * RUN_PAGE_SIZE);
+
+  useEffect(() => setPage(1), [projectId, filter, query]);
+  useEffect(() => setPage((current) => Math.min(current, pageCount)), [pageCount]);
 
   return (
     <>
@@ -732,7 +757,7 @@ function Runs({
         <div className="run-table header">
           <span>Flow</span><span>Run settings</span><span>Started</span><span>Status</span><span />
         </div>
-        {visible.map((run) => (
+        {pagedRuns.map((run) => (
           <button className="run-table row" key={run.id} onClick={() => onOpenReport(run.id)}>
             <span><strong>{run.planName || "Untitled plan"}</strong><small>#{run.id.slice(0, 8)} · attempt {run.attemptCount || "—"}</small></span>
             <span><strong>Flow destinations</strong><small>{run.executionSnapshot?.viewport?.width} × {run.executionSnapshot?.viewport?.height}</small></span>
@@ -742,8 +767,38 @@ function Runs({
           </button>
         ))}
         {!visible.length && <EmptyBlock icon={<Activity />} title="No matching runs" copy="Runs will appear as soon as a plan is submitted to the execution queue." />}
+        <Pagination page={currentPage} pageSize={RUN_PAGE_SIZE} total={visible.length} itemName="runs" onChange={setPage} />
       </div>
     </>
+  );
+}
+
+function Pagination({
+  page,
+  pageSize,
+  total,
+  itemName,
+  onChange,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  itemName: string;
+  onChange: (page: number) => void;
+}) {
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  if (total <= pageSize) return null;
+  const first = (page - 1) * pageSize + 1;
+  const last = Math.min(page * pageSize, total);
+  return (
+    <nav className="pagination" aria-label={`${itemName} pagination`}>
+      <span>Showing {first}–{last} of {total} {itemName}</span>
+      <div>
+        <button type="button" onClick={() => onChange(page - 1)} disabled={page === 1} aria-label={`Previous ${itemName} page`}><ChevronLeft size={15} /></button>
+        <strong>Page {page} of {pageCount}</strong>
+        <button type="button" onClick={() => onChange(page + 1)} disabled={page === pageCount} aria-label={`Next ${itemName} page`}><ChevronRight size={15} /></button>
+      </div>
+    </nav>
   );
 }
 

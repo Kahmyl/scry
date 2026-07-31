@@ -261,6 +261,7 @@ export function createScryMcpServer(client = new ScryApiClient()) {
         rules: [
           "Use credential UUIDs only; never place passwords or tokens in literal values.",
           "Use captureSecret for a generated one-time value. Scry keeps screenshots, video, and trace available while blacking out protected fields and the one-time reveal interval; it also redacts DOM/network/trace text, stores the value encrypted, authorizes it for future runs, and allows same-run reuse through capturedSecretRef. Evidence reports mark visual redaction explicitly.",
+          "Do not use captureSecret for public identifiers such as Client ID or Application ID. Target only the generated one-time secret value; record public identifiers as ordinary non-secret evidence.",
           "Readiness is required before final evidence after navigate, click, press, select, or check. Prefer destination-specific text or content over technical settling.",
           "A transient capture requires justification and cannot support a completed-state defect claim.",
           "During one unfinished objective, a failure never justifies a new Flow. After a final report has closed that objective, create a new Flow for the next independently meaningful test objective.",
