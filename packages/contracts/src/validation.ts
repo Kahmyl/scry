@@ -171,10 +171,10 @@ export function analyzePlanRisks(plan: TestPlan): {
       }
     }
     const locators = [
-      ...(step.action.type !== "navigate" && step.action.type !== "scroll" && step.action.type !== "screenshot" && step.action.type !== "press" ? [step.action.target] : []),
+      ...("target" in step.action ? [step.action.target] : []),
       ...(step.after?.conditions.flatMap((condition) => "target" in condition ? [condition.target] : []) ?? []),
     ];
-    if (locators.some((locator) => locator.strategy === "css" && ["*", "body", "html"].includes(locator.value.trim()))) {
+    if (locators.some((locator) => locator?.strategy === "css" && ["*", "body", "html"].includes(locator.value.trim()))) {
       diagnostics.push(warning(
         "BROAD_SELECTOR",
         step.id,

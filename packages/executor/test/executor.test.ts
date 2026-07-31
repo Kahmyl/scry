@@ -9,11 +9,19 @@ import {
   testPlanV2Schema,
 } from "@scry/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { unzipSync } from "fflate";
 
-import { executePlan } from "../src/index.js";
+import {
+  executePlan,
+  type HumanInteractionController,
+  type HumanInteractionHandle,
+  type HumanInteractionRequest,
+} from "../src/index.js";
 
 let server: Server;
 let origin: string;
+let humanAuthenticated = false;
+let humanHandoffActive = false;
 const browserChannel = process.env.SCRY_BROWSER_CHANNEL ?? "chromium";
 
 beforeAll(async () => {
@@ -31,6 +39,54 @@ beforeAll(async () => {
     if (request.url === "/login") {
       response.writeHead(200, { "content-type": "text/html" });
       response.end("<h1>Sign in</h1>");
+      return;
+    }
+    if (request.url === "/interactive-login") {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end(`<!doctype html><h1>Sign in</h1><script>
+        const poll = setInterval(async () => {
+          const state = await fetch('/human-auth-state').then((response) => response.json());
+          if (state.handoffActive) {
+            console.log(state.protectedConsole);
+            await fetch('/protected-poll?credential=' + encodeURIComponent(state.credential));
+          }
+          if (state.authenticated) {
+            clearInterval(poll);
+            history.replaceState({}, '', '/dashboard');
+            document.body.innerHTML = '<h1>Dashboard</h1>';
+          }
+        }, 40);
+      </script>`);
+      return;
+    }
+    if (request.url === "/human-auth-state") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        authenticated: humanAuthenticated,
+        handoffActive: humanHandoffActive,
+        ...(humanHandoffActive ? {
+          credential: "protected-human-secret",
+          protectedConsole: "protected-human-console",
+        } : {}),
+      }));
+      return;
+    }
+    if (request.url === "/start-human-handoff") {
+      humanHandoffActive = true;
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (request.url === "/complete-human-auth") {
+      humanAuthenticated = true;
+      humanHandoffActive = false;
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (request.url?.startsWith("/protected-poll")) {
+      response.writeHead(200, { "content-type": "text/plain" });
+      response.end("protected-human-secret");
       return;
     }
     if (request.url === "/download") {
@@ -120,6 +176,48 @@ afterAll(async () => {
     server.close((error) => (error ? reject(error) : resolve())),
   );
 });
+
+class TestHumanController implements HumanInteractionController {
+  readonly requests: HumanInteractionRequest[] = [];
+  readonly outcomes: string[] = [];
+  rejectionCount = 0;
+  private takeover: { instructions: string } | undefined;
+
+  constructor(private readonly rejectFirstReturn = false, private readonly returnDelayMs = 0) {}
+
+  requestTakeover(instructions = "Inspect the page") {
+    this.takeover = { instructions };
+  }
+
+  consumeTakeoverRequest() {
+    const request = this.takeover;
+    this.takeover = undefined;
+    return request;
+  }
+
+  async open(request: HumanInteractionRequest): Promise<HumanInteractionHandle> {
+    this.requests.push(request);
+    await fetch(`${origin}/start-human-handoff`);
+    let commands = 0;
+    return {
+      nextCommand: async () => {
+        commands += 1;
+        if (this.returnDelayMs) await new Promise((resolve) => setTimeout(resolve, this.returnDelayMs));
+        if (!this.rejectFirstReturn || commands > 1) {
+          await fetch(`${origin}/complete-human-auth`);
+          await new Promise((resolve) => setTimeout(resolve, 120));
+        }
+        return { type: "return_control" };
+      },
+      returnRejected: () => {
+        this.rejectionCount += 1;
+      },
+      close: (outcome) => {
+        this.outcomes.push(outcome);
+      },
+    };
+  }
+}
 
 describe("executePlan", () => {
   it("allows a navigation to finish on a permitted same-origin redirect", async () => {
@@ -859,5 +957,180 @@ describe("executePlan", () => {
     expect(report.artifacts.some((artifact) => artifact.kind === "trace")).toBe(true);
     expect(report.artifacts.some((artifact) => artifact.kind === "video")).toBe(true);
     expect(report.artifacts.some((artifact) => artifact.kind === "screenshot")).toBe(false);
+  }, 30_000);
+
+  it("pauses for planned human interaction, rejects an early return, and resumes with segmented evidence", async () => {
+    humanAuthenticated = false;
+    humanHandoffActive = false;
+    const outputDirectory = await mkdtemp(path.join(tmpdir(), "scry-human-handoff-"));
+    const controller = new TestHumanController(true);
+    const plan = testPlanV2Schema.parse({
+      protocolVersion: "2",
+      name: "Interactive sign in",
+      objective: "Let a customer sign in without exposing credentials.",
+      allowedOrigins: [origin],
+      budgets: { maxActions: 3, maxDurationMs: 5_000, maxNavigations: 1 },
+      steps: [
+        {
+          id: "open",
+          title: "Open sign in",
+          action: { type: "navigate", url: "/interactive-login" },
+          after: { conditions: [{ type: "visible", target: { strategy: "role", role: "heading", name: "Sign in" } }] },
+        },
+        {
+          id: "human-login",
+          title: "Complete sign in",
+          action: {
+            type: "requestUserInteraction",
+            reason: "login",
+            instructions: "Sign in and complete MFA.",
+            timeoutMs: 4_000,
+            resumeWhen: { timeoutMs: 200, conditions: [{ type: "url", expected: "/dashboard", match: "path" }] },
+          },
+        },
+        {
+          id: "verify",
+          title: "Verify dashboard",
+          action: { type: "waitFor", target: { strategy: "role", role: "heading", name: "Dashboard" }, state: "visible" },
+          assertions: [{ type: "visible", target: { strategy: "role", role: "heading", name: "Dashboard" } }],
+          evidence: ["dom", "network", "screenshot"],
+        },
+      ],
+    });
+    const policy = executionPolicyV1Schema.parse({
+      policyVersion: "1",
+      allowedOrigins: [origin],
+      allowPrivateNetwork: true,
+      maxActions: 3,
+      maxDurationMs: 5_000,
+      maxNavigations: 1,
+    });
+
+    const report = await executePlan({ plan, policy, outputDirectory, browserChannel, humanInteractionController: controller });
+
+    expect(report.state).toBe("passed");
+    expect(controller.rejectionCount).toBe(1);
+    expect(controller.outcomes).toEqual(["completed"]);
+    expect(report.artifacts.filter((artifact) => artifact.kind === "trace")).toHaveLength(2);
+    expect(report.artifacts.some((artifact) => artifact.kind === "video")).toBe(false);
+    const events = await readFile(path.join(outputDirectory, "events.jsonl"), "utf8");
+    expect(events).toContain("interaction.return_rejected");
+    expect(events).toContain("evidence.suspended");
+    expect(events).toContain("evidence.resumed");
+    const persistedEvidence = [
+      await readFile(path.join(outputDirectory, "attempt.json"), "utf8"),
+      events,
+      await readFile(path.join(outputDirectory, "dom", "verify.html"), "utf8"),
+      await readFile(path.join(outputDirectory, "network", "verify.json"), "utf8"),
+    ].join("\n");
+    expect(persistedEvidence).not.toContain("protected-human-secret");
+    expect(persistedEvidence).not.toContain("protected-human-console");
+    for (const artifact of report.artifacts.filter((item) => item.kind === "trace")) {
+      const archive = unzipSync(await readFile(path.join(outputDirectory, artifact.relativePath!)));
+      const traceText = Object.values(archive).map((value) => Buffer.from(value).toString("utf8")).join("\n");
+      expect(traceText).not.toContain("protected-human-secret");
+      expect(traceText).not.toContain("protected-human-console");
+    }
+  }, 30_000);
+
+  it("classifies an explicit handoff without a controller as infrastructure failure", async () => {
+    const outputDirectory = await mkdtemp(path.join(tmpdir(), "scry-human-unavailable-"));
+    const plan = testPlanV2Schema.parse({
+      protocolVersion: "2",
+      name: "Unavailable handoff",
+      objective: "Fail safely without a controller.",
+      allowedOrigins: [origin],
+      budgets: { maxActions: 1, maxDurationMs: 5_000, maxNavigations: 1 },
+      steps: [{
+        id: "human-login",
+        title: "Complete sign in",
+        action: {
+          type: "requestUserInteraction",
+          reason: "login",
+          instructions: "Sign in.",
+          resumeWhen: { conditions: [{ type: "url", expected: "/dashboard", match: "path" }] },
+        },
+      }],
+    });
+    const policy = executionPolicyV1Schema.parse({ policyVersion: "1", allowedOrigins: [origin], allowPrivateNetwork: true, maxActions: 1, maxDurationMs: 5_000, maxNavigations: 1 });
+    const report = await executePlan({ plan, policy, outputDirectory, browserChannel });
+    expect(report.state).toBe("infrastructure_error");
+    expect(report.error).toContain("no controller is configured");
+  }, 30_000);
+
+  it("honors a queued user takeover and excludes human wait from the active run budget", async () => {
+    humanAuthenticated = false;
+    humanHandoffActive = false;
+    const outputDirectory = await mkdtemp(path.join(tmpdir(), "scry-user-takeover-"));
+    const controller = new TestHumanController(false, 1_200);
+    controller.requestTakeover();
+    const plan = testPlanV1Schema.parse({
+      protocolVersion: "1",
+      name: "Voluntary takeover",
+      objective: "Pause at a safe action boundary.",
+      allowedOrigins: [origin],
+      budgets: { maxActions: 1, maxDurationMs: 1_000, maxNavigations: 1 },
+      steps: [{ id: "open", title: "Open", action: { type: "navigate", url: "/success" }, assertions: [{ type: "visible", target: { strategy: "role", role: "heading", name: "Welcome aboard" } }] }],
+    });
+    const policy = executionPolicyV1Schema.parse({ policyVersion: "1", allowedOrigins: [origin], allowPrivateNetwork: true, maxActions: 1, maxDurationMs: 1_000, maxNavigations: 1 });
+    const report = await executePlan({ plan, policy, outputDirectory, browserChannel, humanInteractionController: controller });
+    expect(report.state).toBe("passed");
+    expect(report.durationMs).toBeGreaterThanOrEqual(1_200);
+    expect(controller.requests[0]?.kind).toBe("takeover");
+    expect(report.artifacts.some((artifact) => artifact.kind === "video")).toBe(false);
+  }, 30_000);
+
+  it("expires a human interaction on its separate deadline", async () => {
+    const outputDirectory = await mkdtemp(path.join(tmpdir(), "scry-human-expiry-"));
+    const controller: HumanInteractionController = {
+      consumeTakeoverRequest: () => undefined,
+      open: async () => ({
+        nextCommand: (signal) => new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+      }),
+    };
+    const plan = testPlanV2Schema.parse({
+      protocolVersion: "2",
+      name: "Expiring handoff",
+      objective: "Bound abandoned human interaction.",
+      allowedOrigins: [origin],
+      budgets: { maxActions: 1, maxDurationMs: 5_000, maxNavigations: 1 },
+      steps: [{
+        id: "human",
+        title: "Wait for user",
+        action: {
+          type: "requestUserInteraction",
+          reason: "other",
+          instructions: "Review the page.",
+          timeoutMs: 1_000,
+          resumeWhen: { conditions: [{ type: "url", expected: "/", match: "path" }] },
+        },
+      }],
+    });
+    const policy = executionPolicyV1Schema.parse({ policyVersion: "1", allowedOrigins: [origin], allowPrivateNetwork: true, maxActions: 1, maxDurationMs: 5_000, maxNavigations: 1 });
+    const report = await executePlan({ plan, policy, outputDirectory, browserChannel, humanInteractionController: controller });
+    expect(report.state).toBe("timed_out");
+    expect(await readFile(path.join(outputDirectory, "events.jsonl"), "utf8")).toContain("interaction.expired");
+  }, 30_000);
+
+  it("cancels the run when the human controller cancels the interaction", async () => {
+    const outputDirectory = await mkdtemp(path.join(tmpdir(), "scry-human-cancel-"));
+    const controller: HumanInteractionController = {
+      consumeTakeoverRequest: () => ({ instructions: "Take control" }),
+      open: async () => ({ nextCommand: async () => ({ type: "cancel", reason: "Customer stopped the session" }) }),
+    };
+    const plan = testPlanV1Schema.parse({
+      protocolVersion: "1",
+      name: "Cancelled takeover",
+      objective: "Allow the customer to stop safely.",
+      allowedOrigins: [origin],
+      budgets: { maxActions: 1, maxDurationMs: 5_000, maxNavigations: 1 },
+      steps: [{ id: "open", title: "Open", action: { type: "navigate", url: "/success" } }],
+    });
+    const policy = executionPolicyV1Schema.parse({ policyVersion: "1", allowedOrigins: [origin], allowPrivateNetwork: true, maxActions: 1, maxDurationMs: 5_000, maxNavigations: 1 });
+    const report = await executePlan({ plan, policy, outputDirectory, browserChannel, humanInteractionController: controller });
+    expect(report.state).toBe("cancelled");
+    expect(report.error).toContain("Customer stopped the session");
   }, 30_000);
 });

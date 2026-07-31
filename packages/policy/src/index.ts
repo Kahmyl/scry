@@ -1,7 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
-import type { Action, ExecutionPolicyV1, TestPlan } from "@scry/contracts";
+import type { ActionV2, ExecutionPolicyV1, TestPlan } from "@scry/contracts";
 
 export { SecretRedactor } from "./redactor.js";
 
@@ -28,9 +28,11 @@ export type ActionCapability =
   | "interaction"
   | "secret_input"
   | "observation"
-  | "evidence";
+  | "evidence"
+  | "human_interaction";
 
-export function classifyAction(action: Action): ActionCapability {
+export function classifyAction(action: ActionV2): ActionCapability {
+  if (action.type === "requestUserInteraction") return "human_interaction";
   if (action.type === "navigate") return "navigation";
   if (action.type === "fill" && (action.secretRef || action.capturedSecretRef)) return "secret_input";
   if (action.type === "captureSecret") return "secret_input";

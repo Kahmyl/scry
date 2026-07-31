@@ -5,6 +5,7 @@ export const runStateSchema = z.enum([
   "queued",
   "preparing",
   "running",
+  "awaiting_user",
   "finalizing",
   "passed",
   "failed",
@@ -51,6 +52,14 @@ export const runEventSchema = z
       "step.passed",
       "step.failed",
       "policy.rejected",
+      "interaction.requested",
+      "interaction.started",
+      "interaction.return_rejected",
+      "interaction.completed",
+      "interaction.expired",
+      "control.changed",
+      "evidence.suspended",
+      "evidence.resumed",
       "artifact.created",
       "diagnostic.console",
       "diagnostic.page_error",
@@ -91,3 +100,12 @@ export type RunEvent = z.infer<typeof runEventSchema>;
 export type AttemptResult = z.infer<typeof attemptResultSchema>;
 export type Artifact = z.infer<typeof artifactSchema>;
 export type OutcomeClassification = z.infer<typeof outcomeClassificationSchema>;
+
+export const browserControlStateSchema = z.enum([
+  "agent",
+  "handoff_pending",
+  "user",
+  "resuming",
+]);
+
+export type BrowserControlState = z.infer<typeof browserControlStateSchema>;

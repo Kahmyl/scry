@@ -120,6 +120,47 @@ describe("protocol v1", () => {
   });
 });
 
+describe("protocol v2 human interaction", () => {
+  const interactivePlan = {
+    protocolVersion: "2",
+    name: "Interactive login",
+    objective: "Allow a customer to complete login.",
+    allowedOrigins: ["https://staging.example.com"],
+    budgets: { maxActions: 3, maxDurationMs: 60_000, maxNavigations: 1 },
+    steps: [{
+      id: "human-login",
+      title: "Complete login",
+      action: {
+        type: "requestUserInteraction",
+        reason: "login",
+        instructions: "Sign in and complete MFA.",
+        resumeWhen: {
+          conditions: [{ type: "url", expected: "/dashboard", match: "path" }],
+        },
+      },
+    }],
+  } as const;
+
+  it("accepts explicit handoff only in protocol v2 and defaults to five minutes", () => {
+    const parsed = testPlanV2Schema.parse(interactivePlan);
+    expect(parsed.steps[0]?.action).toMatchObject({
+      type: "requestUserInteraction",
+      timeoutMs: 300_000,
+    });
+    expect(testPlanV1Schema.safeParse({ ...interactivePlan, protocolVersion: "1" }).success).toBe(false);
+  });
+
+  it("requires resume readiness and caps handoffs at thirty minutes", () => {
+    const missingReadiness = structuredClone(interactivePlan) as any;
+    delete missingReadiness.steps[0].action.resumeWhen;
+    expect(testPlanV2Schema.safeParse(missingReadiness).success).toBe(false);
+
+    const tooLong = structuredClone(interactivePlan) as any;
+    tooLong.steps[0].action.timeoutMs = 1_800_001;
+    expect(testPlanV2Schema.safeParse(tooLong).success).toBe(false);
+  });
+});
+
 describe("protocol v2 observation readiness", () => {
   const validPlanV2 = {
     ...validPlan,

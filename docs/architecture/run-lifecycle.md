@@ -12,6 +12,11 @@ stateDiagram-v2
     preparing --> cancelled
     preparing --> infrastructure_error
     running --> finalizing
+    running --> awaiting_user
+    awaiting_user --> running
+    awaiting_user --> cancelled
+    awaiting_user --> timed_out
+    awaiting_user --> infrastructure_error
     running --> cancelled
     running --> timed_out
     running --> infrastructure_error

@@ -145,6 +145,18 @@ export const readinessSchema = z.object({
   conditions: z.array(readinessConditionSchema).min(1).max(20),
 }).strict();
 
+export const requestUserInteractionActionSchema = z
+  .object({
+    type: z.literal("requestUserInteraction"),
+    reason: z.enum(["login", "mfa", "captcha", "consent", "other"]),
+    instructions: z.string().trim().min(1).max(2_000),
+    resumeWhen: readinessSchema,
+    timeoutMs: z.number().int().min(1_000).max(1_800_000).default(300_000),
+  })
+  .strict();
+
+export const actionV2Schema = z.union([actionSchema, requestUserInteractionActionSchema]);
+
 export const stepSchema = z
   .object({
     id: identifier,
@@ -157,6 +169,7 @@ export const stepSchema = z
   .strict();
 
 export const stepV2Schema = stepSchema.extend({
+  action: actionV2Schema,
   after: readinessSchema.optional(),
   captureIntent: z.enum(["final", "transient"]).default("final"),
   transientJustification: z.string().trim().min(10).max(500).optional(),
@@ -304,6 +317,8 @@ export type TestStep = z.infer<typeof stepSchema>;
 export type TestStepV2 = z.infer<typeof stepV2Schema>;
 export type PlanLocator = z.infer<typeof locatorSchema>;
 export type Action = z.infer<typeof actionSchema>;
+export type ActionV2 = z.infer<typeof actionV2Schema>;
+export type RequestUserInteractionAction = z.infer<typeof requestUserInteractionActionSchema>;
 export type Assertion = z.infer<typeof assertionSchema>;
 export type Readiness = z.infer<typeof readinessSchema>;
 export type ReadinessCondition = z.infer<typeof readinessConditionSchema>;

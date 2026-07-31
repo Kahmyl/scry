@@ -6,7 +6,7 @@ import {
   attemptResultSchema,
   runEventSchema,
   validatePlanAgainstPolicy,
-  type Action,
+  type ActionV2,
   type Artifact,
   type Assertion,
   type Readiness,
@@ -36,6 +36,8 @@ import type {
   DiagnosticRecord,
   ExecuteOptions,
   ExecutionReport,
+  HumanInteractionHandle,
+  HumanInteractionRequest,
   PolicyViolationRecord,
   StepExecutionResult,
 } from "./types.js";
@@ -50,7 +52,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   const attemptId = options.attemptId ?? randomUUID();
   const startedAt = new Date();
   const eventPath = path.join(options.outputDirectory, "events.jsonl");
-  const tracePath = path.join(options.outputDirectory, "trace.zip");
   const videoPath = path.join(options.outputDirectory, "video", "run.webm");
   const steps = initializeSteps(options);
   const diagnostics: DiagnosticRecord[] = [];
@@ -77,6 +78,9 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   let fatalError: string | undefined;
   let eventWriteChain = Promise.resolve();
   let sensitiveOverlayActive = false;
+  let evidenceSuspended = false;
+  let traceActive = false;
+  let traceSegment = 0;
 
   await ensureOutputDirectories(options.outputDirectory);
   await writeFile(eventPath, "", "utf8");
@@ -98,11 +102,11 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   };
 
   const timeoutController = new AbortController();
-  const timeout = setTimeout(() => {
+  const activeBudget = new ActiveExecutionBudget(options.plan.budgets.maxDurationMs, () => {
     timedOut = true;
     timeoutController.abort(new Error("Run duration budget exceeded"));
     void stopBrowser(context, browser);
-  }, options.plan.budgets.maxDurationMs);
+  });
   const cancel = () => {
     cancelled = true;
     timeoutController.abort(options.signal?.reason ?? new Error("Run cancelled"));
@@ -122,14 +126,18 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     const viewport = options.viewport ?? { width: 1280, height: 720 };
     context = await browser.newContext({
       viewport,
-      recordVideo: {
-        dir: path.join(options.outputDirectory, "video"),
-        size: viewport,
-      },
+      ...(options.humanInteractionController ? {} : {
+        recordVideo: {
+          dir: path.join(options.outputDirectory, "video"),
+          size: viewport,
+        },
+      }),
       serviceWorkers: "block",
       acceptDownloads: false,
     });
+    traceSegment += 1;
     await context.tracing.start({ screenshots: true, snapshots: true, sources: false });
+    traceActive = true;
     await installVisualRedactionStyles(context);
     page = await context.newPage();
     let policyVersion = 0;
@@ -151,9 +159,148 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       await emit("policy.rejected", violation);
     };
     await attachRequestInterception(context, page, requestPolicy, rejectPolicy);
-    attachDiagnostics(page, diagnostics, emit, redactor, () => sensitiveOverlayActive);
-    attachNetworkCapture(page, networkRecords, redactor, networkActivity, pendingNetworkBodies, () => sensitiveOverlayActive);
+    attachDiagnostics(page, diagnostics, emit, redactor, () => sensitiveOverlayActive, () => evidenceSuspended);
+    attachNetworkCapture(page, networkRecords, redactor, networkActivity, pendingNetworkBodies, () => sensitiveOverlayActive, () => evidenceSuspended);
     attachCapabilityGuards(context, page, options, rejectPolicy);
+
+    const stopTraceSegment = async () => {
+      if (!context || !traceActive) return;
+      const segment = traceSegment;
+      const relativePath = `trace-segment-${String(segment).padStart(3, "0")}.zip`;
+      const tracePath = path.join(options.outputDirectory, relativePath);
+      await context.tracing.stop({ path: tracePath });
+      traceActive = false;
+      await sanitizeTraceArchive(tracePath, redactor);
+      const artifact = await availableArtifact("trace", "application/zip", tracePath, relativePath);
+      if (usesProtectedValues) artifact.observation = { visualRedaction: "protected-elements-masked" };
+      runArtifacts.push(artifact);
+      await emit("artifact.created", { artifact, path: relativePath });
+    };
+
+    const resumeTrace = async () => {
+      if (!context || traceActive) return;
+      traceSegment += 1;
+      await context.tracing.start({ screenshots: true, snapshots: true, sources: false });
+      traceActive = true;
+    };
+
+    const performInteraction = async (request: Omit<HumanInteractionRequest, "interactionId" | "requestedAt" | "deadlineAt">) => {
+      const controller = options.humanInteractionController;
+      if (!controller) throw new HandoffInfrastructureError("Human interaction is unavailable: no controller is configured");
+      const interactionId = randomUUID();
+      const timeoutMs = Math.min(1_800_000, Math.max(1_000, request.timeoutMs ?? 300_000));
+      const requestedAt = new Date();
+      const fullRequest: HumanInteractionRequest = {
+        ...request,
+        interactionId,
+        requestedAt: requestedAt.toISOString(),
+        deadlineAt: new Date(requestedAt.getTime() + timeoutMs).toISOString(),
+      };
+      await emit("interaction.requested", interactionEventPayload(fullRequest));
+      await emit("control.changed", { interactionId, from: "agent", to: "handoff_pending" });
+      evidenceSuspended = true;
+      await Promise.allSettled([...pendingNetworkBodies]);
+      try {
+        await stopTraceSegment();
+      } catch (error) {
+        throw new HandoffInfrastructureError(`Could not suspend evidence safely: ${errorMessage(error)}`);
+      }
+      await emit("evidence.suspended", { interactionId });
+      activeBudget.pause();
+      let handle: HumanInteractionHandle | undefined;
+      let outcome: "completed" | "expired" | "cancelled" | "failed" = "failed";
+      try {
+        try {
+          handle = await withInteractionDeadline(
+            () => controller.open(fullRequest),
+            timeoutController.signal,
+            Math.max(0, new Date(fullRequest.deadlineAt).getTime() - Date.now()),
+          );
+        } catch (error) {
+          if (error instanceof InteractionExpiredError || timeoutController.signal.aborted) throw error;
+          throw new HandoffInfrastructureError(`Human interaction controller failed: ${errorMessage(error)}`);
+        }
+        await emit("interaction.started", interactionEventPayload(fullRequest));
+        await emit("control.changed", { interactionId, from: "handoff_pending", to: "user" });
+        while (true) {
+          const remainingMs = Math.max(0, new Date(fullRequest.deadlineAt).getTime() - Date.now());
+          const command = await nextInteractionCommand(handle, timeoutController.signal, remainingMs);
+          if (command.type === "cancel") {
+            outcome = "cancelled";
+            cancelled = true;
+            timeoutController.abort(new Error(command.reason ?? "Human interaction was cancelled"));
+            throw new InteractionCancelledError(command.reason ?? "Human interaction was cancelled");
+          }
+          await emit("control.changed", { interactionId, from: "user", to: "resuming" });
+          if (fullRequest.resumeWhen) {
+            try {
+              const readinessRemainingMs = Math.max(0, new Date(fullRequest.deadlineAt).getTime() - Date.now());
+              if (readinessRemainingMs <= 0) throw new InteractionExpiredError();
+              const matchedConditions = await executeReadiness(
+                page!,
+                { ...fullRequest.resumeWhen, timeoutMs: Math.min(fullRequest.resumeWhen.timeoutMs, readinessRemainingMs) },
+                options.plan.allowedOrigins[0]!,
+                networkRecords,
+                networkActivity.active,
+              );
+              await emit("interaction.completed", { interactionId, matchedConditions });
+            } catch (error) {
+              if (error instanceof InteractionExpiredError || Date.now() >= new Date(fullRequest.deadlineAt).getTime()) {
+                throw new InteractionExpiredError();
+              }
+              const message = "Resume condition was not satisfied";
+              await emit("interaction.return_rejected", { interactionId, message, matchedConditions: [] });
+              await handle.returnRejected?.({ message, matchedConditions: [] });
+              await emit("control.changed", { interactionId, from: "resuming", to: "user" });
+              continue;
+            }
+          } else {
+            await emit("interaction.completed", { interactionId, matchedConditions: [] });
+          }
+          outcome = "completed";
+          break;
+        }
+      } catch (error) {
+        if (error instanceof InteractionExpiredError) {
+          outcome = "expired";
+          await emit("interaction.expired", { interactionId });
+          timedOut = true;
+          timeoutController.abort(error);
+        }
+        if (
+          !(error instanceof InteractionExpiredError)
+          && !(error instanceof InteractionCancelledError)
+          && !(error instanceof HandoffInfrastructureError)
+          && !timeoutController.signal.aborted
+        ) {
+          throw new HandoffInfrastructureError(`Human interaction controller failed: ${errorMessage(error)}`);
+        }
+        throw error;
+      } finally {
+        await handle?.close?.(outcome);
+        activeBudget.resume();
+      }
+      evidenceSuspended = false;
+      try {
+        await resumeTrace();
+      } catch (error) {
+        throw new HandoffInfrastructureError(`Could not resume evidence safely: ${errorMessage(error)}`);
+      }
+      await emit("evidence.resumed", { interactionId });
+      await emit("control.changed", { interactionId, from: "resuming", to: "agent" });
+    };
+
+    const performQueuedTakeover = async (stepId?: string) => {
+      const takeover = options.humanInteractionController?.consumeTakeoverRequest();
+      if (!takeover) return;
+      await performInteraction({
+        kind: "takeover",
+        reason: takeover.reason ?? "other",
+        instructions: takeover.instructions ?? "User requested control of the browser",
+        timeoutMs: takeover.timeoutMs ?? 300_000,
+        ...(stepId ? { stepId } : {}),
+      });
+    };
 
     for (const [index, step] of options.plan.steps.entries()) {
       const v2Step = options.plan.protocolVersion === "2" ? options.plan.steps[index]! : undefined;
@@ -169,20 +316,32 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       });
 
       try {
+        await performQueuedTakeover(step.id);
         const nextStep = options.plan.steps[index + 1];
         if (!sensitiveOverlayActive && nextStep?.action.type === "captureSecret") {
           await showSensitiveOverlay(page);
           sensitiveOverlayActive = true;
         }
         const policyVersionBeforeStep = policyVersion;
-        await executeAction(
-          page,
-          step.action,
-          options,
-          timeoutController.signal,
-          redactor,
-          capturedSecrets,
-        );
+        if (step.action.type === "requestUserInteraction") {
+          await performInteraction({
+            kind: "planned",
+            reason: step.action.reason,
+            instructions: step.action.instructions,
+            timeoutMs: step.action.timeoutMs,
+            resumeWhen: step.action.resumeWhen,
+            stepId: step.id,
+          });
+        } else {
+          await executeAction(
+            page,
+            step.action,
+            options,
+            timeoutController.signal,
+            redactor,
+            capturedSecrets,
+          );
+        }
         const actionCompletedAt = new Date();
         if (
           sensitiveOverlayActive
@@ -192,6 +351,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           await hideSensitiveOverlay(page);
           sensitiveOverlayActive = false;
         }
+        await performQueuedTakeover(step.id);
         if (options.plan.protocolVersion === "1" && (
           step.action.type === "click" ||
           step.action.type === "press" ||
@@ -248,6 +408,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               matchedConditions: [],
             };
           }
+          await performQueuedTakeover(step.id);
           if (
             v2Step?.captureIntent === "final"
             && (step.action.type === "screenshot" || step.evidence.includes("screenshot") || step.evidence.includes("dom"))
@@ -296,6 +457,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             assertionResult.error = errorMessage(error);
             throw error;
           }
+          await performQueuedTakeover(step.id);
         }
         await captureRequestedEvidence(
           page,
@@ -308,6 +470,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           pendingNetworkBodies,
           observation,
         );
+        await performQueuedTakeover(step.id);
         result.status = "passed";
         await emit("step.passed", {
           stepId: step.id,
@@ -315,10 +478,11 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         });
       } catch (error) {
         if (timeoutController.signal.aborted) throw error;
+        if (error instanceof HandoffInfrastructureError) throw error;
         result.status = "failed";
         result.error = redactor.redact(errorMessage(error));
         markRemainingAssertionsUnevaluated(result);
-        await captureFailureScreenshot(page, options.outputDirectory, step.id, result);
+        if (!evidenceSuspended) await captureFailureScreenshot(page, options.outputDirectory, step.id, result);
         await emit("step.failed", {
           stepId: step.id,
           error: result.error,
@@ -346,17 +510,24 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     }
     terminalState = timedOut ? "timed_out" : cancelled ? "cancelled" : "infrastructure_error";
   } finally {
-    clearTimeout(timeout);
+    activeBudget.dispose();
     options.signal?.removeEventListener("abort", cancel);
     await emit("attempt.finalizing", { state: terminalState });
     if (context) {
       try {
-        await context.tracing.stop({ path: tracePath });
-        await sanitizeTraceArchive(tracePath, redactor);
-        const artifact = await availableArtifact("trace", "application/zip", tracePath, "trace.zip");
-        if (usesProtectedValues) artifact.observation = { visualRedaction: "protected-elements-masked" };
-        runArtifacts.push(artifact);
-        await emit("artifact.created", { artifact, path: "trace.zip" });
+        if (traceActive) {
+          const relativePath = options.humanInteractionController
+            ? `trace-segment-${String(traceSegment).padStart(3, "0")}.zip`
+            : "trace.zip";
+          const tracePath = path.join(options.outputDirectory, relativePath);
+          await context.tracing.stop({ path: tracePath });
+          traceActive = false;
+          await sanitizeTraceArchive(tracePath, redactor);
+          const artifact = await availableArtifact("trace", "application/zip", tracePath, relativePath);
+          if (usesProtectedValues) artifact.observation = { visualRedaction: "protected-elements-masked" };
+          runArtifacts.push(artifact);
+          await emit("artifact.created", { artifact, path: relativePath });
+        }
       } catch {
         runArtifacts.push({
           id: randomUUID(),
@@ -367,7 +538,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       }
       await context.close().catch(() => undefined);
       try {
-        const video = page?.video();
+        const video = options.humanInteractionController ? undefined : page?.video();
         if (video) {
           const recordedPath = await video.path();
           if (recordedPath !== videoPath) await rename(recordedPath, videoPath);
@@ -448,7 +619,7 @@ function initializeSteps(options: ExecuteOptions): StepExecutionResult[] {
   }));
 }
 
-function executableAssertions(stepId: string, action: Action, assertions: Assertion[]) {
+function executableAssertions(stepId: string, action: ActionV2, assertions: Assertion[]) {
   if (action.type !== "navigate" || !/^(step-\d+-navigate|visit-\d+)$/.test(stepId)) {
     return assertions;
   }
@@ -465,7 +636,7 @@ function executableAssertions(stepId: string, action: Action, assertions: Assert
 
 async function executeAction(
   page: Page,
-  action: Action,
+  action: Exclude<ActionV2, { type: "requestUserInteraction" }>,
   options: ExecuteOptions,
   signal: AbortSignal,
   redactor: SecretRedactor,
@@ -700,8 +871,10 @@ function attachDiagnostics(
   emit: (type: RunEvent["type"], payload: Record<string, unknown>) => Promise<void>,
   redactor: SecretRedactor,
   isProtectedCaptureActive: () => boolean = () => false,
+  isCaptureSuspended: () => boolean = () => false,
 ) {
   page.on("console", (message) => {
+    if (isCaptureSuspended()) return;
     const diagnostic: DiagnosticRecord = {
       type: "console",
       occurredAt: new Date().toISOString(),
@@ -711,6 +884,7 @@ function attachDiagnostics(
     void emit("diagnostic.console", diagnostic);
   });
   page.on("pageerror", (error) => {
+    if (isCaptureSuspended()) return;
     const diagnostic: DiagnosticRecord = {
       type: "page_error",
       occurredAt: new Date().toISOString(),
@@ -720,6 +894,7 @@ function attachDiagnostics(
     void emit("diagnostic.page_error", diagnostic);
   });
   page.on("requestfailed", (request) => {
+    if (isCaptureSuspended()) return;
     const diagnostic: DiagnosticRecord = {
       type: "request_failed",
       occurredAt: new Date().toISOString(),
@@ -739,9 +914,11 @@ function attachNetworkCapture(
   activity?: { active: Map<string, { url: string; resourceType: string }> },
   pendingBodies = new Set<Promise<void>>(),
   isProtectedCaptureActive: () => boolean = () => false,
+  isCaptureSuspended: () => boolean = () => false,
 ) {
   page.on("request", (request) => {
     activity?.active.set(request.url(), { url: request.url(), resourceType: request.resourceType() });
+    if (isCaptureSuspended()) return;
     const protectedCaptureActive = isProtectedCaptureActive();
     records.push({
       type: "request",
@@ -752,6 +929,7 @@ function attachNetworkCapture(
     });
   });
   page.on("response", (response) => {
+    if (isCaptureSuspended()) return;
     const protectedCaptureActive = isProtectedCaptureActive();
     const record: Record<string, unknown> = {
       type: "response",
@@ -1231,6 +1409,113 @@ function errorMessage(error: unknown) {
 
 function optionalTimeout(timeoutMs: number | undefined): { timeout?: number } {
   return timeoutMs === undefined ? {} : { timeout: timeoutMs };
+}
+
+function interactionEventPayload(request: HumanInteractionRequest) {
+  return {
+    interactionId: request.interactionId,
+    kind: request.kind,
+    reason: request.reason,
+    instructions: request.instructions,
+    requestedAt: request.requestedAt,
+    deadlineAt: request.deadlineAt,
+    timeoutMs: request.timeoutMs,
+    ...(request.stepId ? { stepId: request.stepId } : {}),
+  };
+}
+
+async function nextInteractionCommand(
+  handle: HumanInteractionHandle,
+  parentSignal: AbortSignal,
+  timeoutMs: number,
+) {
+  return withInteractionDeadline((signal) => handle.nextCommand(signal), parentSignal, timeoutMs);
+}
+
+async function withInteractionDeadline<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  parentSignal: AbortSignal,
+  timeoutMs: number,
+) {
+  if (timeoutMs <= 0) throw new InteractionExpiredError();
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort(parentSignal.reason);
+  parentSignal.addEventListener("abort", abortFromParent, { once: true });
+  const timeout = setTimeout(
+    () => controller.abort(new InteractionExpiredError()),
+    timeoutMs,
+  );
+  const aborted = new Promise<never>((_resolve, reject) => {
+    if (controller.signal.aborted) reject(controller.signal.reason);
+    else controller.signal.addEventListener("abort", () => reject(controller.signal.reason), { once: true });
+  });
+  try {
+    return await Promise.race([operation(controller.signal), aborted]);
+  } finally {
+    clearTimeout(timeout);
+    parentSignal.removeEventListener("abort", abortFromParent);
+  }
+}
+
+class InteractionExpiredError extends Error {
+  constructor() {
+    super("Human interaction timed out");
+    this.name = "InteractionExpiredError";
+  }
+}
+
+class InteractionCancelledError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InteractionCancelledError";
+  }
+}
+
+class HandoffInfrastructureError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "HandoffInfrastructureError";
+  }
+}
+
+class ActiveExecutionBudget {
+  private remainingMs: number;
+  private startedAt = Date.now();
+  private timeout: NodeJS.Timeout | undefined;
+  private paused = false;
+
+  constructor(durationMs: number, private readonly expire: () => void) {
+    this.remainingMs = durationMs;
+    this.schedule();
+  }
+
+  pause() {
+    if (this.paused) return;
+    this.remainingMs = Math.max(0, this.remainingMs - (Date.now() - this.startedAt));
+    if (this.timeout) clearTimeout(this.timeout);
+    this.timeout = undefined;
+    this.paused = true;
+  }
+
+  resume() {
+    if (!this.paused) return;
+    this.paused = false;
+    this.schedule();
+  }
+
+  dispose() {
+    if (this.timeout) clearTimeout(this.timeout);
+    this.timeout = undefined;
+  }
+
+  private schedule() {
+    if (this.remainingMs <= 0) {
+      this.expire();
+      return;
+    }
+    this.startedAt = Date.now();
+    this.timeout = setTimeout(this.expire, this.remainingMs);
+  }
 }
 
 async function stopBrowser(context: BrowserContext | undefined, browser: Browser | undefined) {

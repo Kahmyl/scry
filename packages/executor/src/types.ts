@@ -2,6 +2,7 @@ import type {
   Artifact,
   AttemptResult,
   ExecutionPolicyV1,
+  Readiness,
   RunEvent,
   TestPlan,
   OutcomeClassification,
@@ -10,6 +11,41 @@ import type { RuntimePolicyViolationCode } from "@scry/policy";
 
 export type SecretResolver = (reference: string) => Promise<string>;
 export type SecretCapture = (name: string, value: string) => Promise<{ credentialId: string }>;
+
+export type HumanInteractionRequest = {
+  interactionId: string;
+  kind: "planned" | "takeover";
+  reason: "login" | "mfa" | "captcha" | "consent" | "other";
+  instructions: string;
+  requestedAt: string;
+  deadlineAt: string;
+  timeoutMs: number;
+  resumeWhen?: Readiness;
+  stepId?: string;
+};
+
+export type HumanInteractionCommand =
+  | { type: "return_control" }
+  | { type: "cancel"; reason?: string };
+
+export type HumanInteractionOutcome = "completed" | "expired" | "cancelled" | "failed";
+
+export interface HumanInteractionHandle {
+  nextCommand(signal: AbortSignal): Promise<HumanInteractionCommand>;
+  returnRejected?(details: { message: string; matchedConditions: string[] }): void | Promise<void>;
+  close?(outcome: HumanInteractionOutcome): void | Promise<void>;
+}
+
+export type HumanTakeoverRequest = {
+  reason?: HumanInteractionRequest["reason"];
+  instructions?: string;
+  timeoutMs?: number;
+};
+
+export interface HumanInteractionController {
+  consumeTakeoverRequest(): HumanTakeoverRequest | undefined;
+  open(request: HumanInteractionRequest): Promise<HumanInteractionHandle>;
+}
 
 export type ExecuteOptions = {
   plan: TestPlan;
@@ -25,6 +61,7 @@ export type ExecuteOptions = {
   signal?: AbortSignal;
   onEvent?: (event: RunEvent) => void | Promise<void>;
   readinessTimeoutMultiplier?: number;
+  humanInteractionController?: HumanInteractionController;
 };
 
 export type ExecutionReport = AttemptResult & {
