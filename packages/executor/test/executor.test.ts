@@ -87,6 +87,16 @@ beforeAll(async () => {
       response.end('<label>Client secret <input value="generated-secret-value"></label><label>API secret <input></label>');
       return;
     }
+    if (request.url === "/api-error") {
+      response.writeHead(400, { "content-type": "application/problem+json" });
+      response.end(JSON.stringify({ code: "INVALID_OWNER", detail: "Rejected super-secret-value" }));
+      return;
+    }
+    if (request.url === "/error-console") {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end('<label>API secret <input></label><button onclick="fetch(\'/api-error\')">Run POST</button>');
+      return;
+    }
     response.writeHead(200, { "content-type": "text/html" });
     response.end(`<!doctype html>
       <label>Email <input aria-label="Email" oninput="console.log(this.value)"></label>
@@ -243,9 +253,13 @@ describe("executePlan", () => {
 
     expect(report.state).toBe("passed");
     expect(report.requiredAssertions).toEqual({ passed: 2, failed: 0, unevaluated: 0 });
-    expect(report.artifacts.some((artifact) => artifact.kind === "trace")).toBe(false);
-    expect(report.artifacts.some((artifact) => artifact.kind === "video")).toBe(false);
-    expect(report.artifacts.some((artifact) => artifact.kind === "screenshot")).toBe(false);
+    expect(report.artifacts.some((artifact) => artifact.kind === "trace")).toBe(true);
+    expect(report.artifacts.some((artifact) => artifact.kind === "video")).toBe(true);
+    expect(report.artifacts.some((artifact) => artifact.kind === "screenshot")).toBe(true);
+    expect(report.artifacts.find((artifact) => artifact.kind === "screenshot")?.observation)
+      .toMatchObject({ visualRedaction: "protected-elements-masked" });
+    expect(report.artifacts.find((artifact) => artifact.kind === "video")?.observation)
+      .toMatchObject({ visualRedaction: "protected-elements-masked" });
     expect(await readFile(path.join(outputDirectory, "attempt.json"), "utf8")).not.toContain(
       "test@example.invalid",
     );
@@ -538,7 +552,8 @@ describe("executePlan", () => {
     ).join("\n");
     expect(persistedText).not.toContain(secret);
     expect(persistedText).toContain("[REDACTED]");
-    expect(report.artifacts.some((artifact) => artifact.kind === "trace" || artifact.kind === "video")).toBe(false);
+    expect(report.artifacts.some((artifact) => artifact.kind === "trace")).toBe(true);
+    expect(report.artifacts.some((artifact) => artifact.kind === "video")).toBe(true);
   }, 30_000);
 
   it("rejects an allowed-origin URL when it resolves to a private destination", async () => {
@@ -775,7 +790,7 @@ describe("executePlan", () => {
       steps: [
         { id: "open", title: "Open", action: { type: "navigate", url: "/generated-secret" }, after: { mode: "all", timeoutMs: 2_000, conditions: [{ type: "visible", target: { strategy: "label", value: "Client secret" } }] } },
         { id: "capture", title: "Protect secret", action: { type: "captureSecret", target: { strategy: "label", value: "Client secret" }, reference: "api_secret", credentialName: "Generated API secret" } },
-        { id: "reuse", title: "Reuse secret", action: { type: "fill", target: { strategy: "label", value: "API secret" }, capturedSecretRef: "api_secret" }, evidence: ["dom"] },
+        { id: "reuse", title: "Reuse secret", action: { type: "fill", target: { strategy: "label", value: "API secret" }, capturedSecretRef: "api_secret" }, evidence: ["dom", "screenshot"] },
       ],
     });
     const policy = executionPolicyV1Schema.parse({ policyVersion: "1", allowedOrigins: [origin], allowPrivateNetwork: true, maxActions: 3, maxDurationMs: 10_000, maxNavigations: 1 });
@@ -791,8 +806,51 @@ describe("executePlan", () => {
     });
     expect(report.state).toBe("passed");
     expect(stored).toEqual({ name: "Generated API secret", value: "generated-secret-value" });
-    expect(report.artifacts.some((artifact) => artifact.kind === "trace" || artifact.kind === "video")).toBe(false);
+    expect(report.artifacts.some((artifact) => artifact.kind === "trace")).toBe(true);
+    expect(report.artifacts.some((artifact) => artifact.kind === "video")).toBe(true);
+    expect(report.artifacts.some((artifact) => artifact.kind === "screenshot")).toBe(true);
+    expect(report.artifacts.find((artifact) => artifact.kind === "screenshot")?.observation)
+      .toMatchObject({ visualRedaction: "protected-elements-masked" });
     expect(await readFile(path.join(outputDirectory, "attempt.json"), "utf8")).not.toContain("generated-secret-value");
-    expect(await readFile(path.join(outputDirectory, "dom", "reuse.html"), "utf8")).not.toContain("generated-secret-value");
+    const redactedDom = await readFile(path.join(outputDirectory, "dom", "reuse.html"), "utf8");
+    expect(redactedDom).not.toContain("generated-secret-value");
+    expect(redactedDom).toContain("data-scry-redacted=\"true\"");
+    expect(redactedDom).toContain("background: rgb(0, 0, 0) !important");
+    expect(redactedDom).toContain("-webkit-text-fill-color: transparent !important");
+  }, 30_000);
+
+  it("captures bounded redacted JSON error bodies in network evidence", async () => {
+    const outputDirectory = await mkdtemp(path.join(tmpdir(), "scry-network-error-body-"));
+    const secret = "super-secret-value";
+    const plan = testPlanV2Schema.parse({
+      protocolVersion: "2",
+      name: "Inspect safe API error",
+      objective: "Record a structured API failure without leaking credentials.",
+      allowedOrigins: [origin],
+      budgets: { maxActions: 3, maxDurationMs: 10_000, maxNavigations: 1 },
+      steps: [
+        { id: "open", title: "Open console", action: { type: "navigate", url: "/error-console" }, after: { mode: "all", timeoutMs: 1_000, conditions: [{ type: "visible", target: { strategy: "role", role: "button", name: "Run POST" } }] } },
+        { id: "secret", title: "Enter secret", action: { type: "fill", target: { strategy: "label", value: "API secret" }, secretRef: "11111111-1111-4111-8111-111111111111" } },
+        {
+          id: "run",
+          title: "Run request",
+          action: { type: "click", target: { strategy: "role", role: "button", name: "Run POST" } },
+          after: { mode: "all", timeoutMs: 2_000, conditions: [{ type: "request", urlPattern: "/api-error", method: "GET", status: { min: 400, max: 499 } }] },
+          evidence: ["network"],
+          captureIntent: "transient",
+          transientJustification: "Capture the redacted API error response.",
+        },
+      ],
+    });
+    const policy = executionPolicyV1Schema.parse({ policyVersion: "1", allowedOrigins: [origin], allowPrivateNetwork: true, maxActions: 3, maxDurationMs: 10_000, maxNavigations: 1 });
+    const report = await executePlan({ plan, policy, outputDirectory, browserChannel, secretResolver: async () => secret });
+    expect(report.state).toBe("passed");
+    const evidence = await readFile(path.join(outputDirectory, "network", "run.json"), "utf8");
+    expect(evidence).toContain("INVALID_OWNER");
+    expect(evidence).toContain("[REDACTED]");
+    expect(evidence).not.toContain(secret);
+    expect(report.artifacts.some((artifact) => artifact.kind === "trace")).toBe(true);
+    expect(report.artifacts.some((artifact) => artifact.kind === "video")).toBe(true);
+    expect(report.artifacts.some((artifact) => artifact.kind === "screenshot")).toBe(false);
   }, 30_000);
 });

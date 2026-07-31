@@ -24,6 +24,7 @@ import {
   type Browser,
   type BrowserContext,
   type CDPSession,
+  type Locator,
   type Page,
 } from "playwright";
 
@@ -54,6 +55,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   const steps = initializeSteps(options);
   const diagnostics: DiagnosticRecord[] = [];
   const networkRecords: Array<Record<string, unknown>> = [];
+  const pendingNetworkBodies = new Set<Promise<void>>();
   const networkActivity = { active: new Map<string, { url: string; resourceType: string }>() };
   const policyViolations: PolicyViolationRecord[] = [];
   const redactor = new SecretRedactor();
@@ -74,6 +76,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   let activeStepId: string | undefined;
   let fatalError: string | undefined;
   let eventWriteChain = Promise.resolve();
+  let sensitiveOverlayActive = false;
 
   await ensureOutputDirectories(options.outputDirectory);
   await writeFile(eventPath, "", "utf8");
@@ -119,16 +122,15 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     const viewport = options.viewport ?? { width: 1280, height: 720 };
     context = await browser.newContext({
       viewport,
-      ...(!usesProtectedValues ? { recordVideo: {
+      recordVideo: {
         dir: path.join(options.outputDirectory, "video"),
         size: viewport,
-      } } : {}),
+      },
       serviceWorkers: "block",
       acceptDownloads: false,
     });
-    if (!usesProtectedValues) {
-      await context.tracing.start({ screenshots: true, snapshots: true, sources: false });
-    }
+    await context.tracing.start({ screenshots: true, snapshots: true, sources: false });
+    await installVisualRedactionStyles(context);
     page = await context.newPage();
     let policyVersion = 0;
     const rejectPolicy = async (
@@ -150,7 +152,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     };
     await attachRequestInterception(context, page, requestPolicy, rejectPolicy);
     attachDiagnostics(page, diagnostics, emit, redactor);
-    attachNetworkCapture(page, networkRecords, redactor, networkActivity);
+    attachNetworkCapture(page, networkRecords, redactor, networkActivity, pendingNetworkBodies);
     attachCapabilityGuards(context, page, options, rejectPolicy);
 
     for (const [index, step] of options.plan.steps.entries()) {
@@ -167,6 +169,11 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       });
 
       try {
+        const nextStep = options.plan.steps[index + 1];
+        if (!sensitiveOverlayActive && nextStep?.action.type === "captureSecret") {
+          await showSensitiveOverlay(page);
+          sensitiveOverlayActive = true;
+        }
         const policyVersionBeforeStep = policyVersion;
         await executeAction(
           page,
@@ -177,6 +184,14 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           capturedSecrets,
         );
         const actionCompletedAt = new Date();
+        if (
+          sensitiveOverlayActive
+          && step.action.type === "captureSecret"
+          && options.plan.steps[index + 1]?.action.type !== "captureSecret"
+        ) {
+          await hideSensitiveOverlay(page);
+          sensitiveOverlayActive = false;
+        }
         if (options.plan.protocolVersion === "1" && (
           step.action.type === "click" ||
           step.action.type === "press" ||
@@ -240,13 +255,18 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             result.stabilization = await stabilizeApplication(page, networkActivity.active, 3_000, 500);
           }
         }
-        const observation = options.plan.protocolVersion === "2" ? {
-          millisecondsSinceAction: Date.now() - actionCompletedAt.getTime(),
-          captureIntent: v2Step?.captureIntent ?? "final",
-          readiness: result.readiness,
-          stabilization: result.stabilization,
-        } : undefined;
-        if (step.action.type === "screenshot" && !usesProtectedValues) {
+        const observation = options.plan.protocolVersion === "2"
+          ? {
+              millisecondsSinceAction: Date.now() - actionCompletedAt.getTime(),
+              captureIntent: v2Step?.captureIntent ?? "final",
+              readiness: result.readiness,
+              stabilization: result.stabilization,
+              ...(usesProtectedValues ? { visualRedaction: "protected-elements-masked" } : {}),
+            }
+          : usesProtectedValues
+            ? { visualRedaction: "protected-elements-masked" }
+            : undefined;
+        if (step.action.type === "screenshot") {
           await page.screenshot({
             path: path.join(options.outputDirectory, "screenshots", `${step.action.name}.png`),
             fullPage: step.action.fullPage,
@@ -281,12 +301,11 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           page,
           options.outputDirectory,
           step.id,
-          usesProtectedValues
-            ? step.evidence.filter((kind) => kind !== "screenshot")
-            : step.evidence,
+          step.evidence,
           result,
           networkRecords,
           redactor,
+          pendingNetworkBodies,
           observation,
         );
         result.status = "passed";
@@ -299,9 +318,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         result.status = "failed";
         result.error = redactor.redact(errorMessage(error));
         markRemainingAssertionsUnevaluated(result);
-        if (!usesProtectedValues) {
-          await captureFailureScreenshot(page, options.outputDirectory, step.id, result);
-        }
+        await captureFailureScreenshot(page, options.outputDirectory, step.id, result);
         await emit("step.failed", {
           stepId: step.id,
           error: result.error,
@@ -333,10 +350,11 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     options.signal?.removeEventListener("abort", cancel);
     await emit("attempt.finalizing", { state: terminalState });
     if (context) {
-      if (!usesProtectedValues) try {
+      try {
         await context.tracing.stop({ path: tracePath });
         await sanitizeTraceArchive(tracePath, redactor);
         const artifact = await availableArtifact("trace", "application/zip", tracePath, "trace.zip");
+        if (usesProtectedValues) artifact.observation = { visualRedaction: "protected-elements-masked" };
         runArtifacts.push(artifact);
         await emit("artifact.created", { artifact, path: "trace.zip" });
       } catch {
@@ -348,7 +366,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         });
       }
       await context.close().catch(() => undefined);
-      if (!usesProtectedValues) try {
+      try {
         const video = page?.video();
         if (video) {
           const recordedPath = await video.path();
@@ -359,6 +377,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             videoPath,
             "video/run.webm",
           );
+          if (usesProtectedValues) artifact.observation = { visualRedaction: "protected-elements-masked" };
           runArtifacts.push(artifact);
           await emit("artifact.created", { artifact, path: "video/run.webm" });
         }
@@ -474,12 +493,15 @@ async function executeAction(
           : await (options.secretResolver ?? missingSecretResolver)(action.secretRef!));
       if (value === undefined) throw new Error(`Captured secret "${action.capturedSecretRef}" is unavailable`);
       if (action.secretRef || action.capturedSecretRef) redactor.add(value);
-      await (await resolveUniqueLocator(page, action.target)).fill(value, optionalTimeout(action.timeoutMs));
+      const locator = await resolveUniqueLocator(page, action.target);
+      if (action.secretRef || action.capturedSecretRef) await maskSensitiveLocator(locator);
+      await locator.fill(value, optionalTimeout(action.timeoutMs));
       return;
     }
     case "captureSecret": {
       const locator = await resolveUniqueLocator(page, action.target);
       await locator.waitFor({ state: "visible", ...optionalTimeout(action.timeoutMs) });
+      await maskSensitiveLocator(locator);
       const value = await locator.evaluate((element) => {
         if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) return element.value;
         return element.textContent ?? "";
@@ -623,6 +645,7 @@ async function captureRequestedEvidence(
   result: StepExecutionResult,
   networkRecords: Array<Record<string, unknown>>,
   redactor: SecretRedactor,
+  pendingNetworkBodies: Set<Promise<void>>,
   observation?: Record<string, unknown>,
 ) {
   if (evidence.includes("screenshot")) {
@@ -640,6 +663,7 @@ async function captureRequestedEvidence(
     result.artifacts.push(artifact);
   }
   if (evidence.includes("network")) {
+    await Promise.allSettled([...pendingNetworkBodies]);
     const file = path.join(root, "network", `${stepId}.json`);
     await writeJson(file, redactor.redactValue({ requests: networkRecords }));
     const artifact = await availableArtifact("network", "application/json", file, `network/${stepId}.json`);
@@ -712,6 +736,7 @@ function attachNetworkCapture(
   records: Array<Record<string, unknown>>,
   redactor: SecretRedactor,
   activity?: { active: Map<string, { url: string; resourceType: string }> },
+  pendingBodies = new Set<Promise<void>>(),
 ) {
   page.on("request", (request) => {
     activity?.active.set(request.url(), { url: request.url(), resourceType: request.resourceType() });
@@ -724,17 +749,143 @@ function attachNetworkCapture(
     });
   });
   page.on("response", (response) => {
-    records.push({
+    const record: Record<string, unknown> = {
       type: "response",
       occurredAt: new Date().toISOString(),
       method: response.request().method(),
       url: redactor.redact(response.url()),
       status: response.status(),
-    });
+    };
+    records.push(record);
+    if (response.status() < 400) return;
+    const contentType = response.headers()["content-type"]?.toLowerCase() ?? "";
+    if (!contentType.includes("json") && !contentType.startsWith("text/")) return;
+    const declaredLength = Number(response.headers()["content-length"] ?? 0);
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_NETWORK_ERROR_BODY_BYTES) {
+      record.responseBodyOmitted = "declared_body_too_large";
+      return;
+    }
+    let capture: Promise<void>;
+    capture = response.body().then((body) => {
+      const truncated = body.byteLength > MAX_NETWORK_ERROR_BODY_BYTES;
+      const text = body.subarray(0, MAX_NETWORK_ERROR_BODY_BYTES).toString("utf8");
+      try {
+        record.responseBody = redactor.redactValue(JSON.parse(text));
+      } catch {
+        record.responseBody = redactor.redact(text);
+      }
+      if (truncated) record.responseBodyTruncated = true;
+    }).catch(() => {
+      record.responseBodyOmitted = "unavailable";
+    }).finally(() => pendingBodies.delete(capture));
+    pendingBodies.add(capture);
   });
   const complete = (request: { url(): string }) => activity?.active.delete(request.url());
   page.on("requestfinished", complete);
   page.on("requestfailed", complete);
+}
+
+const MAX_NETWORK_ERROR_BODY_BYTES = 64 * 1024;
+
+async function installVisualRedactionStyles(context: BrowserContext) {
+  await context.addInitScript(() => {
+    const install = () => {
+      if (document.getElementById("scry-visual-redaction-style")) return;
+      const style = document.createElement("style");
+      style.id = "scry-visual-redaction-style";
+      style.textContent = `
+        [data-scry-redacted="true"] {
+          color: transparent !important;
+          -webkit-text-fill-color: transparent !important;
+          background: #000 !important;
+          border-color: #000 !important;
+          caret-color: transparent !important;
+          text-shadow: none !important;
+        }
+        #scry-sensitive-overlay {
+          position: fixed !important;
+          inset: 0 !important;
+          z-index: 2147483647 !important;
+          display: grid !important;
+          place-items: center !important;
+          color: #fff !important;
+          background: #000 !important;
+          font: 600 16px/1.4 system-ui, sans-serif !important;
+          pointer-events: none !important;
+        }
+      `;
+      document.documentElement.appendChild(style);
+      try {
+        if (sessionStorage.getItem("scry-sensitive-overlay") === "1" && !document.getElementById("scry-sensitive-overlay")) {
+          const overlay = document.createElement("div");
+          overlay.id = "scry-sensitive-overlay";
+          overlay.setAttribute("role", "presentation");
+          overlay.setAttribute("aria-hidden", "true");
+          overlay.textContent = "Protected information hidden by Scry";
+          Object.assign(overlay.style, {
+            position: "fixed",
+            inset: "0",
+            zIndex: "2147483647",
+            display: "grid",
+            placeItems: "center",
+            color: "#fff",
+            background: "#000",
+            font: "600 16px/1.4 system-ui, sans-serif",
+            pointerEvents: "none",
+          });
+          document.documentElement.appendChild(overlay);
+        }
+      } catch {
+        // Sandboxed documents may deny storage; the current-page overlay still applies.
+      }
+    };
+    install();
+    document.addEventListener("DOMContentLoaded", install, { once: true });
+  });
+}
+
+async function maskSensitiveLocator(locator: Locator) {
+  await locator.evaluate((element) => {
+    element.setAttribute("data-scry-redacted", "true");
+    const htmlElement = element as HTMLElement;
+    htmlElement.style.setProperty("color", "transparent", "important");
+    htmlElement.style.setProperty("-webkit-text-fill-color", "transparent", "important");
+    htmlElement.style.setProperty("background", "#000", "important");
+    htmlElement.style.setProperty("border-color", "#000", "important");
+    htmlElement.style.setProperty("caret-color", "transparent", "important");
+    htmlElement.style.setProperty("text-shadow", "none", "important");
+  });
+}
+
+async function showSensitiveOverlay(page: Page) {
+  await page.evaluate(() => {
+    try { sessionStorage.setItem("scry-sensitive-overlay", "1"); } catch { /* no-op */ }
+    if (document.getElementById("scry-sensitive-overlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "scry-sensitive-overlay";
+    overlay.setAttribute("role", "presentation");
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.textContent = "Protected information hidden by Scry";
+    Object.assign(overlay.style, {
+      position: "fixed",
+      inset: "0",
+      zIndex: "2147483647",
+      display: "grid",
+      placeItems: "center",
+      color: "#fff",
+      background: "#000",
+      font: "600 16px/1.4 system-ui, sans-serif",
+      pointerEvents: "none",
+    });
+    document.documentElement.appendChild(overlay);
+  });
+}
+
+async function hideSensitiveOverlay(page: Page) {
+  await page.evaluate(() => {
+    try { sessionStorage.removeItem("scry-sensitive-overlay"); } catch { /* no-op */ }
+    document.getElementById("scry-sensitive-overlay")?.remove();
+  });
 }
 
 class ReadinessTimeoutError extends Error {

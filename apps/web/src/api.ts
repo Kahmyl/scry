@@ -1,5 +1,7 @@
-export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/v1";
 import { supabase } from "./supabase.js";
+import { publicConfig } from "./runtime-config.js";
+
+export const API_BASE = publicConfig.apiBaseUrl;
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = await authenticatedHeaders(init?.headers);

@@ -35,6 +35,7 @@ describe("Scry MCP server", () => {
       "validate_test_plan",
       "submit_test_spec",
       "revise_flow",
+      "replace_flow_steps",
       "extend_flow",
       "start_run",
       "get_run_status",
@@ -55,6 +56,7 @@ describe("Scry MCP server", () => {
   });
 
   it("revises an existing Flow by appending versions instead of creating a duplicate", async () => {
+    const projectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const specificationId = "11111111-1111-4111-8111-111111111111";
     const specificationVersionId = "22222222-2222-4222-8222-222222222222";
     const planVersionId = "33333333-3333-4333-8333-333333333333";
@@ -63,7 +65,16 @@ describe("Scry MCP server", () => {
       const url = new URL(String(input));
       const method = init?.method ?? "GET";
       requests.push({ method, path: url.pathname });
-      const body = url.pathname.endsWith("/versions") && url.pathname.includes("/specifications/")
+      const body = method === "GET"
+        ? [{ id: specificationId, latestPlan: {
+            protocolVersion: "1",
+            name: "Login journey",
+            objective: "Reach the dashboard.",
+            allowedOrigins: ["https://staging.example.com"],
+            budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
+            steps: [{ id: "open-login", title: "Open login", action: { type: "navigate", url: "/login" } }],
+          } }]
+        : url.pathname.endsWith("/versions") && url.pathname.includes("/specifications/")
         ? { id: specificationVersionId }
         : url.pathname.endsWith("/plans/versions")
           ? { id: planVersionId, version: 2 }
@@ -79,6 +90,7 @@ describe("Scry MCP server", () => {
     const response = await client.callTool({
       name: "revise_flow",
       arguments: {
+        projectId,
         specificationId,
         name: "Login journey",
         description: "Verify login",
@@ -100,6 +112,7 @@ describe("Scry MCP server", () => {
     });
 
     expect(requests).toEqual([
+      { method: "GET", path: `/v1/projects/${projectId}/specifications` },
       { method: "PATCH", path: `/v1/specifications/${specificationId}` },
       { method: "POST", path: `/v1/specifications/${specificationId}/versions` },
       { method: "POST", path: "/v1/plans/versions" },
@@ -109,6 +122,8 @@ describe("Scry MCP server", () => {
       specificationVersionId,
       planVersionId,
       planVersion: 2,
+      preservedStepCount: 1,
+      removedStepCount: 0,
     });
     await client.close();
     await server.close();
@@ -229,6 +244,119 @@ describe("Scry MCP server", () => {
       },
     });
     expect(postedBodies).toHaveLength(2);
+    await client.close();
+    await server.close();
+  });
+
+  it("replaces only named Flow steps and preserves the rest", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const specificationId = "22222222-2222-4222-8222-222222222222";
+    const specificationVersionId = "33333333-3333-4333-8333-333333333333";
+    const planVersionId = "44444444-4444-4444-8444-444444444444";
+    const latestPlan = {
+      protocolVersion: "2",
+      name: "Complete login journey",
+      objective: "Sign in and reach the dashboard.",
+      allowedOrigins: ["https://staging.example.com"],
+      budgets: { maxActions: 3, maxDurationMs: 10_000, maxNavigations: 1 },
+      steps: [
+        { id: "open", title: "Open", action: { type: "navigate", url: "/" }, after: { mode: "all", timeoutMs: 5_000, conditions: [{ type: "domStable", quietWindowMs: 500 }] } },
+        { id: "submit", title: "Submit", action: { type: "click", target: { strategy: "role", role: "button", name: "Login" } }, after: { mode: "all", timeoutMs: 5_000, conditions: [{ type: "url", expected: "/dashboard", match: "path" }] } },
+        { id: "verify", title: "Verify", action: { type: "waitFor", target: { strategy: "text", value: "Dashboard" }, state: "visible" } },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if ((init?.method ?? "GET") === "GET") return Promise.resolve(new Response(JSON.stringify([{
+        id: specificationId,
+        name: "Complete login journey",
+        latestContent: { objective: latestPlan.objective, expectedOutcomes: ["Dashboard is visible"], preconditions: [], prohibitedSideEffects: [] },
+        latestPlan,
+      }]), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify(
+        url.pathname.includes("/specifications/")
+          ? { id: specificationVersionId }
+          : { id: planVersionId, version: 7 },
+      ), { status: 200 }));
+    }));
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createScryMcpServer(new ScryApiClient("http://scry.test/v1"));
+    const client = new Client({ name: "scry-test", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const response = await client.callTool({
+      name: "replace_flow_steps",
+      arguments: {
+        projectId,
+        specificationId,
+        replacements: [{
+          stepId: "submit",
+          reason: "Observed the accessible button name.",
+          correctedStep: {
+            id: "submit",
+            title: "Submit",
+            action: { type: "click", target: { strategy: "role", role: "button", name: "Sign in" } },
+            after: { mode: "all", timeoutMs: 5_000, conditions: [{ type: "url", expected: "/dashboard", match: "path" }] },
+          },
+        }],
+      },
+    });
+    expect(response.structuredContent).toMatchObject({
+      planVersion: 7,
+      preservedStepCount: 2,
+      replacedStepCount: 1,
+      combinedPlan: { steps: [{ id: "open" }, { id: "submit", action: { target: { name: "Sign in" } } }, { id: "verify" }] },
+    });
+    await client.close();
+    await server.close();
+  });
+
+  it("rejects a full Flow revision that silently removes existing steps", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const specificationId = "22222222-2222-4222-8222-222222222222";
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([{
+      id: specificationId,
+      latestPlan: {
+        protocolVersion: "1",
+        name: "Complete journey",
+        objective: "Complete both checkpoints.",
+        allowedOrigins: ["https://staging.example.com"],
+        budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
+        steps: [
+          { id: "open", title: "Open", action: { type: "navigate", url: "/" } },
+          { id: "verify", title: "Verify", action: { type: "waitFor", target: { strategy: "text", value: "Complete" }, state: "visible" } },
+        ],
+      },
+    }]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createScryMcpServer(new ScryApiClient("http://scry.test/v1"));
+    const client = new Client({ name: "scry-test", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const response = await client.callTool({
+      name: "revise_flow",
+      arguments: {
+        projectId,
+        specificationId,
+        name: "Complete journey",
+        description: "",
+        objective: "Complete both checkpoints.",
+        expectedOutcomes: ["Journey completes"],
+        plan: {
+          protocolVersion: "1",
+          name: "Complete journey",
+          objective: "Complete both checkpoints.",
+          allowedOrigins: ["https://staging.example.com"],
+          budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
+          steps: [{ id: "open", title: "Open", action: { type: "navigate", url: "/" } }],
+        },
+      },
+    });
+    expect(response.isError).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     await client.close();
     await server.close();
   });

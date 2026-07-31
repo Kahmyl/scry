@@ -19,7 +19,8 @@ export type PlanRiskDiagnostic = {
     | "TECHNICAL_READINESS_ONLY"
     | "BROAD_SELECTOR"
     | "READINESS_CONSUMES_RUN_BUDGET"
-    | "SECRET_CAPTURE_SCREENSHOT_RISK";
+    | "SECRET_CAPTURE_SCREENSHOT_RISK"
+    | "SECRET_CAPTURE_WITHOUT_PROTECTED_BOUNDARY";
   message: string;
   suggestion: string;
   stepId: string;
@@ -31,20 +32,23 @@ export function analyzePlanRisks(plan: TestPlan): {
 } {
   if (plan.protocolVersion === "1") return { errors: [], warnings: [] };
   const diagnostics: PlanRiskDiagnostic[] = [];
-  const usesProtectedValues = plan.steps.some((step) =>
-    step.action.type === "captureSecret"
-    || (step.action.type === "fill" && Boolean(step.action.secretRef || step.action.capturedSecretRef))
-  );
   let unsettledReactionStep: string | undefined;
   const reactionTypes = new Set(["navigate", "click", "press", "select", "check"]);
   for (const [index, step] of plan.steps.entries()) {
-    if (usesProtectedValues && (step.action.type === "screenshot" || step.evidence.includes("screenshot"))) {
-      diagnostics.push(error(
-        "SECRET_CAPTURE_SCREENSHOT_RISK",
-        step.id,
-        "Screenshots are unsafe in a run that displays or enters a protected value because pixels cannot be reliably redacted.",
-        "Remove screenshot actions and screenshot evidence from this Flow. Scry automatically disables video and trace for protected-value runs and redacts textual evidence.",
-      ));
+    if (step.action.type === "captureSecret") {
+      const previous = plan.steps[index - 1];
+      const beginsProtectedBlock = previous && (
+        reactionTypes.has(previous.action.type)
+        || previous.action.type === "captureSecret"
+      );
+      if (!beginsProtectedBlock) {
+        diagnostics.push(error(
+          "SECRET_CAPTURE_WITHOUT_PROTECTED_BOUNDARY",
+          step.id,
+          "A generated secret could become visible before Scry starts its visual privacy overlay.",
+          "Place captureSecret immediately after the action that reveals the value. Consecutive captureSecret steps may follow it.",
+        ));
+      }
     }
     const isReaction = reactionTypes.has(step.action.type);
     const capturesFinalEvidence =

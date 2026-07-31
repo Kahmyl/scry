@@ -1,7 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
+import { publicConfig } from "./runtime-config.js";
 
-const url = import.meta.env.VITE_SUPABASE_URL;
-const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const url = publicConfig.supabaseUrl;
+const publishableKey = publicConfig.supabasePublishableKey;
 
 export const isSupabaseConfigured = Boolean(url && publishableKey);
 
@@ -16,4 +17,4 @@ export const supabase = isSupabaseConfigured
   : null;
 
 export const supabaseConfigurationMessage =
-  "Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY to apps/web/.env.local.";
+  "Configure the Supabase URL and publishable key for this deployment.";

@@ -68,6 +68,38 @@ pnpm docker:down
 pnpm docker:reset # destructive: removes local database, Redis, and artifacts
 ```
 
+## Deployment
+
+Scry follows Elumra's hosted deployment pattern. The combined application image
+is published as `kahmyl/scry`, and the complete Caddy-backed Compose application
+is published as the `kahmyl/scry-stack` OCI artifact. The host does not need a
+repository clone.
+
+You need an AMD64 Linux server with Docker Engine, Docker Compose 2.34 or later,
+a domain pointing to the server, and inbound ports 80 and 443 open. Create an
+empty deployment directory and its environment:
+
+```bash
+mkdir -p /opt/scry
+cd /opt/scry
+
+# Create .env using .env.auth.example as the template, then start:
+docker compose \
+  --env-file .env \
+  -f oci://docker.io/kahmyl/scry-stack:latest \
+  up -d
+```
+
+Caddy obtains and renews TLS automatically. It is the only public service and
+routes `/v1/*` to the API, `/mcp` to the MCP server, and everything else to the
+web app. PostgreSQL, Redis, API, worker, MCP, and migrations stay on the private
+Compose network. Supabase browser settings are injected at container runtime;
+no `VITE_*` GitHub variables are required.
+
+Pushes to `main` and version tags publish both artifacts through
+`.github/workflows/docker-publish.yml`. Configure only `DOCKERHUB_USERNAME` and
+`DOCKERHUB_TOKEN` as GitHub Actions secrets.
+
 Compose loads browser-safe variables from `apps/web/.env` and server-only
 variables from `apps/api/.env`. Never put `SCRY_SERVICE_TOKEN`, credential
 encryption keys, or browser-run credentials in the web environment.

@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   testPlanSchema,
   testPlanV2Schema,
+  stepV2Schema,
   analyzePlanRisks,
   validatePlanAgainstPolicy,
   executionPolicyV1Schema,
@@ -27,7 +28,7 @@ export function createScryMcpServer(client = new ScryApiClient()) {
     { name: "scry", version: "0.1.0" },
     {
       instructions:
-        "Scry executes deterministic browser plans; it does not plan tests. Author protocol v2 by default. Before guessing exact copy on an unfamiliar page, run a bounded reconnaissance step with transient screenshot and DOM evidence, inspect those artifacts, then revise the same Flow with observed semantic targets. Every reaction-triggering action that produces final evidence must define semantic readiness in after; readiness means inspectable, assertions mean correct, and evidence is captured only afterward. Use transient capture with justification only for intentional intermediate states. Validate and resolve every error before saving or running. Choose the Flow operation by journey continuity. Use start_run or rerun_exact_plan when the plan is unchanged, extend_flow for a dependent continuation, revise_flow for a complete corrected replacement, and submit_test_spec for an independently meaningful journey. A failed run alone never justifies a new Flow. A repeated readiness timeout proves only that the configured ready state was not observed twice; it never validates that expectation or confirms a product defect. Only a reproduced assertion failure after successful semantic readiness may be classified as confirmed_product_failure.",
+        "Scry executes deterministic browser plans; it does not plan tests. Author protocol v2 by default. Before guessing exact copy on an unfamiliar page, run bounded reconnaissance with transient evidence. Within one unfinished journey, preserve every successful step: use extend_flow to append, replace_flow_steps to correct named steps, and rerun_exact_plan when unchanged. Never shrink or replace the full plan merely because a later action failed. Use revise_flow only for an explicitly reviewed complete replacement; removing steps requires their exact IDs and a reason. After a journey has reached a final report, use submit_test_spec for the next independently meaningful objective. Every reaction-triggering action that produces final evidence must define semantic readiness in after; readiness means inspectable, assertions mean correct, and evidence is captured only afterward. A repeated readiness timeout never confirms a product defect. Only a reproduced assertion failure after successful semantic readiness may be classified as confirmed_product_failure.",
     },
   );
 
@@ -67,7 +68,7 @@ export function createScryMcpServer(client = new ScryApiClient()) {
     {
       title: "Find existing Flows",
       description:
-        "List a project's existing Flows and their latest saved versions. Always call this before submit_test_spec. Reuse a matching Flow with revise_flow instead of creating a duplicate.",
+        "List existing Flows and their latest complete plans. During an unfinished journey, preserve the matching Flow with replace_flow_steps or extend_flow. After a final report, create a new Flow only for the next independently meaningful objective.",
       inputSchema: { projectId: id },
       annotations: readAnnotations,
     },
@@ -77,7 +78,7 @@ export function createScryMcpServer(client = new ScryApiClient()) {
         { flows },
         flows.length === 0
           ? "No Flows exist in this project. Create one with submit_test_spec."
-          : `Found ${flows.length} existing Flows. Revise a matching Flow with revise_flow; create a new one only for a genuinely different journey.`,
+          : `Found ${flows.length} existing Flows. Preserve an unfinished matching journey with replace_flow_steps or extend_flow; create a new Flow only for a new independently meaningful objective.`,
       );
     },
   );
@@ -202,7 +203,7 @@ export function createScryMcpServer(client = new ScryApiClient()) {
         protocolVersion: "2",
         workflow: [
           "List projects, then call list_flows before deciding whether to create anything.",
-          "If the journey already exists, validate the corrected plan and call revise_flow. Only call submit_test_spec when no existing Flow represents the journey.",
+          "If the journey is still in progress, correct named steps with replace_flow_steps or append dependent work with extend_flow. Never submit a reduced full-plan replacement.",
           "For an unfamiliar destination, first capture an intentional transient screenshot and DOM after bounded settling, inspect them with list_run_artifacts and get_artifact, then revise the same Flow using observed roles and names. Do not guess exact UI copy repeatedly.",
           "Store missing private values and authorize their IDs in an environment.",
           "Start a run from the selected plan version, poll status, then read its report. A run is an execution and never requires a new Flow.",
@@ -211,12 +212,14 @@ export function createScryMcpServer(client = new ScryApiClient()) {
           newJourney: "list_flows -> validate_test_plan -> submit_test_spec -> start_run",
           continueSameJourney:
             "list_flows -> extend_flow (preserves old steps and appends new steps) -> validate the returned combined plan -> start_run",
-          correctOrExtendExistingJourney:
-            "list_flows -> revise_flow with the complete corrected plan -> validate_test_plan -> start_run",
+          correctExistingJourney:
+            "list_flows -> replace_flow_steps (preserves every unrelated step) -> validate returned combinedPlan -> start_run",
+          deliberatelyRemoveOrRestructure:
+            "list_flows -> revise_flow with projectId + complete plan + exact removedStepIds + removalJustification -> validate_test_plan -> start_run",
           applicationChangedButPlanDidNot: "rerun_exact_plan",
           inspectExecution: "get_run_status -> get_test_report",
           reconnaissance:
-            "revise the existing Flow with captureIntent transient + justification + domStable/networkQuiet readiness + screenshot/DOM evidence -> run -> list_run_artifacts -> get_artifact -> revise the same Flow with observed semantic targets",
+            "retain the complete Flow, use replace_flow_steps for the uncertain step with captureIntent transient + justification, run it, inspect artifacts, then replace only that same step with the observed semantic target",
         },
         actions: {
           navigate: { type: "navigate", url: "/login" },
@@ -257,12 +260,13 @@ export function createScryMcpServer(client = new ScryApiClient()) {
         evidenceKinds: ["screenshot", "dom", "network"],
         rules: [
           "Use credential UUIDs only; never place passwords or tokens in literal values.",
-          "Use captureSecret for a generated one-time value. Scry disables trace and video for every run that captures or fills protected values, redacts subsequent DOM/network evidence, stores the value encrypted, authorizes it for future runs, and allows same-run reuse through capturedSecretRef. Never request screenshots in a protected-value run.",
+          "Use captureSecret for a generated one-time value. Scry keeps screenshots, video, and trace available while blacking out protected fields and the one-time reveal interval; it also redacts DOM/network/trace text, stores the value encrypted, authorizes it for future runs, and allows same-run reuse through capturedSecretRef. Evidence reports mark visual redaction explicitly.",
           "Readiness is required before final evidence after navigate, click, press, select, or check. Prefer destination-specific text or content over technical settling.",
           "A transient capture requires justification and cannot support a completed-state defect claim.",
-          "Flow creation is exceptional. A failure never justifies a new Flow, even after repeated failed revisions or runs.",
+          "During one unfinished objective, a failure never justifies a new Flow. After a final report has closed that objective, create a new Flow for the next independently meaningful test objective.",
           "Use extend_flow when later actions depend on earlier actions and one run should record the whole journey. It appends; it does not overwrite.",
-          "Use revise_flow to correct or replace actions. Because revise_flow accepts a complete plan, include every step that must remain.",
+          "Use replace_flow_steps for ordinary corrections; it preserves order and all unrelated steps automatically.",
+          "Use revise_flow only for a deliberately reviewed full restructure. It rejects undeclared removals and requires a reason for every removed step ID.",
           "Create a separate Flow when it is independently runnable and independently meaningful, even if it tests the same product area from another starting context or goal.",
           "Never create a second Flow solely to fix a locator, assertion, URL, credential reference, or failed run.",
           "Do not revise a Flow merely to execute it again. Use start_run for its saved plan version, or rerun_exact_plan for an unchanged prior run.",
@@ -337,7 +341,7 @@ export function createScryMcpServer(client = new ScryApiClient()) {
     {
       title: "Create a new Flow",
       description:
-        "Exceptionally create a genuinely distinct user journey. This tool rechecks the complete Flow list and rejects unreviewed or duplicate Flows. A failed run, corrected plan, additional coverage, or retry is never a reason to call this tool; use revise_flow, start_run, or rerun_exact_plan.",
+        "Create a genuinely distinct journey or the next independently meaningful objective after a prior journey has reached its final report. During an unfinished journey, a failed run, locator correction, dependent continuation, or retry is not a reason to create another Flow; use replace_flow_steps, extend_flow, start_run, or rerun_exact_plan.",
       inputSchema: {
         projectId: id,
         reviewedExistingFlowIds: z
@@ -424,8 +428,9 @@ export function createScryMcpServer(client = new ScryApiClient()) {
     {
       title: "Revise an existing Flow",
       description:
-        "Update an existing Flow and append a new immutable specification and plan version. Use this for changed steps, locators, assertions, URLs, credential references, or requirements. It preserves the Flow identity and does not start a run.",
+        "Perform a deliberately reviewed full-plan restructure. Undeclared removals are rejected and every removed step requires its exact ID plus a justification. Prefer replace_flow_steps for ordinary corrections and extend_flow for continuation.",
       inputSchema: {
+        projectId: id,
         specificationId: id,
         name: z.string().trim().min(1).max(200),
         description: z.string().trim().max(2_000).default(""),
@@ -437,10 +442,13 @@ export function createScryMcpServer(client = new ScryApiClient()) {
           .max(50)
           .default([]),
         plan: testPlanSchema,
+        removedStepIds: z.array(z.string().trim().min(1).max(128)).max(500).default([]),
+        removalJustification: z.string().trim().max(2_000).default(""),
       },
       annotations: writeAnnotations,
     },
     async ({
+      projectId,
       specificationId,
       name,
       description,
@@ -449,7 +457,26 @@ export function createScryMcpServer(client = new ScryApiClient()) {
       preconditions,
       prohibitedSideEffects,
       plan,
+      removedStepIds,
+      removalJustification,
     }) => {
+      type ExistingFlow = { id: string; latestPlan?: z.infer<typeof testPlanSchema> };
+      const flows = await client.get<ExistingFlow[]>(`/projects/${projectId}/specifications`);
+      const existing = flows.find((flow) => flow.id === specificationId);
+      if (!existing?.latestPlan) throw new Error("Flow cannot be revised because its latest plan is unavailable.");
+      const nextIds = new Set(plan.steps.map((step) => step.id));
+      const actuallyRemoved = existing.latestPlan.steps
+        .map((step) => step.id)
+        .filter((stepId) => !nextIds.has(stepId));
+      const declaredRemoved = unique(removedStepIds).sort();
+      if (actuallyRemoved.sort().join("\n") !== declaredRemoved.join("\n")) {
+        throw new Error(
+          `Flow revision rejected: it removes [${actuallyRemoved.join(", ") || "none"}], but removedStepIds declares [${declaredRemoved.join(", ") || "none"}]. Use replace_flow_steps for corrections or extend_flow for continuation.`,
+        );
+      }
+      if (actuallyRemoved.length > 0 && !removalJustification.trim()) {
+        throw new Error("Flow revision rejected: removing existing steps requires removalJustification.");
+      }
       await client.patch(`/specifications/${specificationId}`, { name, description });
       const version = await client.post<{ id: string }>(
         `/specifications/${specificationId}/versions`,
@@ -465,8 +492,82 @@ export function createScryMcpServer(client = new ScryApiClient()) {
           specificationVersionId: version.id,
           planVersionId: planVersion.id,
           planVersion: planVersion.version,
+          preservedStepCount: existing.latestPlan.steps.length - actuallyRemoved.length,
+          removedStepCount: actuallyRemoved.length,
         },
-        `Revised existing Flow ${name} with executable plan version ${planVersion.version}. Use this planVersionId for the next run.`,
+        `Revised existing Flow ${name} with executable plan version ${planVersion.version}. Preserved ${existing.latestPlan.steps.length - actuallyRemoved.length} steps and explicitly removed ${actuallyRemoved.length}.`,
+      );
+    },
+  );
+
+  server.registerTool(
+    "replace_flow_steps",
+    {
+      title: "Correct specific Flow steps",
+      description:
+        "Replace only named steps in the latest Flow version while preserving order and every unrelated step. Use this after a locator, action, readiness condition, or assertion was wrong. It cannot remove steps; use extend_flow separately to append continuation steps.",
+      inputSchema: {
+        projectId: id,
+        specificationId: id,
+        replacements: z.array(z.object({
+          stepId: z.string().trim().min(1).max(128),
+          correctedStep: stepV2Schema,
+          reason: z.string().trim().min(1).max(1_000),
+        }).strict()).min(1).max(100),
+      },
+      annotations: writeAnnotations,
+    },
+    async ({ projectId, specificationId, replacements }) => {
+      type Plan = z.infer<typeof testPlanV2Schema>;
+      type Content = {
+        objective: string;
+        expectedOutcomes: string[];
+        preconditions?: string[];
+        prohibitedSideEffects?: string[];
+      };
+      type Flow = { id: string; name: string; latestContent?: Content; latestPlan?: Plan };
+      const flows = await client.get<Flow[]>(`/projects/${projectId}/specifications`);
+      const flow = flows.find((candidate) => candidate.id === specificationId);
+      if (!flow?.latestPlan || !flow.latestContent) {
+        throw new Error("Flow cannot be corrected because its latest saved version is unavailable.");
+      }
+      if (flow.latestPlan.protocolVersion !== "2") {
+        throw new Error("Flow must be revised to protocol v2 before individual steps can be corrected.");
+      }
+      const replacementById = new Map(replacements.map((replacement) => [replacement.stepId, replacement]));
+      if (replacementById.size !== replacements.length) throw new Error("Each replacement stepId must be unique.");
+      const existingIds = new Set(flow.latestPlan.steps.map((step) => step.id));
+      const missing = replacements.map((item) => item.stepId).filter((stepId) => !existingIds.has(stepId));
+      if (missing.length > 0) throw new Error(`Cannot replace unknown Flow steps: ${missing.join(", ")}.`);
+      for (const replacement of replacements) {
+        if (replacement.correctedStep.id !== replacement.stepId) {
+          throw new Error(`Corrected step ID must remain "${replacement.stepId}" to preserve timeline identity.`);
+        }
+      }
+      const combinedPlan = testPlanV2Schema.parse({
+        ...flow.latestPlan,
+        steps: flow.latestPlan.steps.map((step) => replacementById.get(step.id)?.correctedStep ?? step),
+      });
+      const version = await client.post<{ id: string }>(
+        `/specifications/${specificationId}/versions`,
+        flow.latestContent,
+      );
+      const planVersion = await client.post<{ id: string; version: number }>(
+        "/plans/versions",
+        { specificationVersionId: version.id, plan: combinedPlan },
+      );
+      return result(
+        {
+          specificationId,
+          specificationVersionId: version.id,
+          planVersionId: planVersion.id,
+          planVersion: planVersion.version,
+          preservedStepCount: flow.latestPlan.steps.length - replacements.length,
+          replacedStepCount: replacements.length,
+          replacements: replacements.map(({ stepId, reason }) => ({ stepId, reason })),
+          combinedPlan,
+        },
+        `Corrected ${replacements.length} named step(s) in ${flow.name}; preserved ${flow.latestPlan.steps.length - replacements.length} unrelated steps. Validate the returned combinedPlan before running.`,
       );
     },
   );

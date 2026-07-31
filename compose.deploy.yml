@@ -1,0 +1,157 @@
+name: scry
+
+x-api-environment: &api-environment
+  NODE_ENV: production
+  DATABASE_URL: postgres://scry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/scry
+  REDIS_URL: redis://redis:6379
+  ARTIFACT_ROOT: /workspace/apps/api/artifacts/runs
+  SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL}
+  SCRY_SERVICE_TOKEN: ${SCRY_SERVICE_TOKEN:?Set SCRY_SERVICE_TOKEN}
+  SCRY_CREDENTIAL_ENCRYPTION_KEY: ${SCRY_CREDENTIAL_ENCRYPTION_KEY:?Set SCRY_CREDENTIAL_ENCRYPTION_KEY}
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SCRY_DOMAIN: ${SCRY_DOMAIN:?Set SCRY_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+      - api
+      - mcp
+
+  web:
+    image: kahmyl/scry:${SCRY_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: ["node", "apps/web/scripts/serve-dist.mjs"]
+    environment:
+      WEB_PORT: "3000"
+      SCRY_PUBLIC_API_BASE_URL: /v1
+      SCRY_PUBLIC_MCP_SERVER_URL: /mcp
+      SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?Set SUPABASE_PUBLISHABLE_KEY}
+    depends_on:
+      api:
+        condition: service_started
+      mcp:
+        condition: service_started
+
+  api:
+    image: kahmyl/scry:${SCRY_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      <<: *api-environment
+      API_HOST: 0.0.0.0
+      API_PORT: "4000"
+      API_CORS_ORIGINS: https://${SCRY_DOMAIN:?Set SCRY_DOMAIN}
+    command: ["pnpm", "--filter", "@scry/api", "start"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - artifacts:/workspace/apps/api/artifacts/runs
+
+  worker:
+    image: kahmyl/scry:${SCRY_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: ["pnpm", "--filter", "@scry/api", "worker"]
+    environment:
+      <<: *api-environment
+      SCRY_BROWSER_CHANNEL: chromium
+      WORKER_CONCURRENCY: ${SCRY_WORKER_CONCURRENCY:-1}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - artifacts:/workspace/apps/api/artifacts/runs
+    shm_size: 1gb
+    stop_grace_period: 30s
+
+  migrate:
+    image: kahmyl/scry:${SCRY_IMAGE_TAG:-latest}
+    restart: "no"
+    command: ["pnpm", "--filter", "@scry/api", "db:migrate"]
+    environment:
+      DATABASE_URL: postgres://scry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/scry
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  mcp:
+    image: kahmyl/scry:${SCRY_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: ["pnpm", "--filter", "@scry/mcp", "start:http"]
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "4100"
+      MCP_ALLOWED_ORIGINS: https://${SCRY_DOMAIN:?Set SCRY_DOMAIN}
+      SCRY_API_BASE_URL: http://api:4000/v1
+      SCRY_PUBLIC_API_BASE_URL: https://${SCRY_DOMAIN:?Set SCRY_DOMAIN}/v1
+      SCRY_SERVICE_TOKEN: ${SCRY_SERVICE_TOKEN:?Set SCRY_SERVICE_TOKEN}
+    depends_on:
+      api:
+        condition: service_started
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: scry
+      POSTGRES_USER: scry
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scry -d scry"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
+  artifacts:
+  caddy_data:
+  caddy_config:
+
+configs:
+  caddyfile:
+    content: |
+      ${SCRY_DOMAIN:?Set SCRY_DOMAIN} {
+        handle /v1/* {
+          reverse_proxy api:4000
+        }
+        handle /mcp {
+          reverse_proxy mcp:4100
+        }
+        handle {
+          reverse_proxy web:3000
+        }
+        encode zstd gzip
+      }

@@ -229,7 +229,7 @@ describe("protocol v2 observation readiness", () => {
     expect(JSON.stringify(plan)).not.toContain("actual-secret-value");
   });
 
-  it("rejects screenshot evidence in generated-secret capture runs", () => {
+  it("allows visually redacted screenshot evidence in generated-secret capture runs", () => {
     const plan = testPlanV2Schema.parse({
       ...validPlanV2,
       steps: [{
@@ -244,12 +244,10 @@ describe("protocol v2 observation readiness", () => {
         evidence: ["screenshot"],
       }],
     });
-    expect(analyzePlanRisks(plan).errors.map((item) => item.code)).toContain(
-      "SECRET_CAPTURE_SCREENSHOT_RISK",
-    );
+    expect(analyzePlanRisks(plan).errors.map((item) => item.code)).not.toContain("SECRET_CAPTURE_SCREENSHOT_RISK");
   });
 
-  it("rejects screenshot evidence when a stored protected value is filled", () => {
+  it("allows visually redacted screenshot evidence when a stored protected value is filled", () => {
     const plan = testPlanV2Schema.parse({
       ...validPlanV2,
       steps: [{
@@ -263,8 +261,28 @@ describe("protocol v2 observation readiness", () => {
         evidence: ["screenshot"],
       }],
     });
+    expect(analyzePlanRisks(plan).errors.map((item) => item.code)).not.toContain("SECRET_CAPTURE_SCREENSHOT_RISK");
+  });
+
+  it("requires generated-secret capture to immediately follow its reveal action", () => {
+    const plan = testPlanV2Schema.parse({
+      ...validPlanV2,
+      steps: [
+        validPlanV2.steps[0]!,
+        {
+          id: "intervening-observation",
+          title: "Observe unrelated content",
+          action: { type: "waitFor", target: { strategy: "text", value: "Credential created" }, state: "visible" },
+        },
+        {
+          id: "capture-generated-secret",
+          title: "Protect generated API secret",
+          action: { type: "captureSecret", target: { strategy: "label", value: "Client secret" }, reference: "api_secret", credentialName: "API secret" },
+        },
+      ],
+    });
     expect(analyzePlanRisks(plan).errors.map((item) => item.code)).toContain(
-      "SECRET_CAPTURE_SCREENSHOT_RISK",
+      "SECRET_CAPTURE_WITHOUT_PROTECTED_BOUNDARY",
     );
   });
 });

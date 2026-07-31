@@ -1,0 +1,90 @@
+name: Publish Scry to Docker Hub
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  APP_IMAGE: kahmyl/scry
+  STACK_IMAGE: kahmyl/scry-stack
+
+jobs:
+  publish:
+    name: Publish application and stack
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Generate application image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.APP_IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and publish the combined Scry image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=scry
+          cache-to: type=gha,mode=max,scope=scry
+
+      - name: Select stack tag
+        id: stack
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Require OCI-capable Docker Compose
+        shell: bash
+        run: |
+          compose_version="$(docker compose version --short)"
+          printf 'Docker Compose %s\n' "$compose_version"
+          minimum="2.34.0"
+          if [ "$(printf '%s\n' "$minimum" "$compose_version" | sort -V | head -n1)" != "$minimum" ]; then
+            echo "Docker Compose 2.34.0 or later is required to publish OCI artifacts."
+            exit 1
+          fi
+
+      - name: Publish the Compose application as an OCI artifact
+        env:
+          SCRY_DOMAIN: scry.example.com
+          POSTGRES_PASSWORD: publish-placeholder
+          SCRY_SERVICE_TOKEN: publish-placeholder
+          SCRY_CREDENTIAL_ENCRYPTION_KEY: publish-placeholder
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_PUBLISHABLE_KEY: publish-placeholder
+          SCRY_IMAGE_TAG: ${{ steps.stack.outputs.tag }}
+        run: |
+          docker compose -f compose.deploy.yml publish -y \
+            "${STACK_IMAGE}:${{ steps.stack.outputs.tag }}"

@@ -63,6 +63,7 @@ import {
   type RunState,
   type Specification,
 } from "./api.js";
+import { publicConfig } from "./runtime-config.js";
 
 type View = "overview" | "specifications" | "runs" | "reports" | "settings" | "workspace" | "account" | "integrations";
 type SequenceActionType = "navigate" | "fill" | "click" | "waitFor" | "screenshot";
@@ -770,6 +771,7 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
   const failed = report.assertions.filter((assertion) => assertion.status === "failed").length;
   const screenshots = report.artifacts.filter((artifact) => artifact.kind === "screenshot" && artifact.status === "available");
   const videos = report.artifacts.filter((artifact) => artifact.kind === "video" && artifact.status === "available");
+  const visuallyRedacted = report.artifacts.some((artifact) => artifact.observation?.visualRedaction === "protected-elements-masked");
   const diagnostics = report.events.filter((event) => event.type.startsWith("diagnostic."));
   const policyEvents = report.events.filter((event) => event.type === "policy.rejected");
   const fatalPolicy = [...policyEvents].reverse().find((event) => event.payload.disposition !== "blocked_subresource");
@@ -831,6 +833,16 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
         </div>
       </section>
       {error && <div className="global-error"><AlertTriangle size={16} /> {error}</div>}
+      {visuallyRedacted && (
+        <section className="resolution-summary">
+          <div className="resolution-summary-icon"><ShieldCheck size={22} /></div>
+          <div>
+            <span className="eyebrow">PROTECTED EVIDENCE</span>
+            <h2>Sensitive values are blacked out in visual artifacts</h2>
+            <p>The run remains fully recorded, while credential fields and one-time secret reveal intervals are masked. Textual artifacts are separately redacted.</p>
+          </div>
+        </section>
+      )}
       {run.resolvedAt && (
         <section className="resolution-summary">
           <div className="resolution-summary-icon"><CheckCircle2 size={22} /></div>
@@ -1032,7 +1044,7 @@ function Integrations() {
   const [setupMethod, setSetupMethod] = useState<"app" | "cli">("app");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const endpoint = import.meta.env.VITE_MCP_SERVER_URL ?? `${window.location.protocol}//${window.location.hostname}:4100/mcp`;
+  const endpoint = new URL(publicConfig.mcpServerUrl, window.location.origin).toString();
 
   const load = useCallback(() => {
     void api<McpAccessToken[]>("/mcp-tokens").then(setTokens).catch((cause) => setError(message(cause)));
