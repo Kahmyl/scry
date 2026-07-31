@@ -25,7 +25,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /workspace
 RUN corepack enable
 
-COPY --from=deps /workspace/package.json /workspace/pnpm-workspace.yaml ./
+COPY --from=deps /workspace/package.json /workspace/pnpm-workspace.yaml /workspace/tsconfig.base.json ./
 COPY --from=deps /workspace/node_modules ./node_modules
 COPY --from=deps /workspace/apps ./apps
 COPY --from=deps /workspace/packages ./packages
