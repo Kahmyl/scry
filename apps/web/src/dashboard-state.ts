@@ -8,6 +8,12 @@ export type DashboardView =
   | "account"
   | "integrations";
 
+export const dashboardAuthority = {
+  authoringSurface: "mcp",
+  retainedHumanControls: ["active_run_cancel", "calibration_approval", "credential_management", "mcp_token_management", "project_setup", "session_revocation"],
+  prohibitedDashboardMutations: ["mission_authoring", "objective_authoring", "flow_authoring", "execution_plan_authoring", "run_start", "run_rerun"],
+} as const;
+
 export const dashboardPaths: Record<DashboardView, string> = {
   overview: "/dashboard",
   missions: "/dashboard/missions",

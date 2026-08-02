@@ -1,0 +1,12 @@
+import { readFile } from "node:fs/promises";
+const profile=JSON.parse(await readFile(new URL("../docs/architecture/praxis-performance-profile.json",import.meta.url),"utf8"));
+const failures=[];
+const semanticP50Limit=Math.ceil(profile.baseline.semanticP50Ms+Math.max(profile.baseline.semanticP50Ms*.05,5));
+const semanticP95Limit=Math.ceil(profile.baseline.semanticP95Ms+Math.max(profile.baseline.semanticP95Ms*.05,20));
+const visualP95Limit=Math.ceil(profile.baseline.visualP95Ms+Math.max(profile.baseline.visualP95Ms*.10,100));
+if(profile.limits.semanticP50Ms!==semanticP50Limit)failures.push("semantic p50 limit does not match policy");
+if(profile.limits.semanticP95Ms!==semanticP95Limit)failures.push("semantic p95 limit does not match policy");
+if(profile.limits.visualP95Ms!==visualP95Limit)failures.push("visual p95 limit does not match policy");
+if(profile.limits.retainedMemoryGrowthPercent!==10)failures.push("memory limit must be 10 percent");
+if(profile.limits.cancellationMs!==250)failures.push("cancellation limit must be 250ms");
+if(failures.length){process.stderr.write(`${failures.join("\n")}\n`);process.exit(1);}process.stdout.write(`Praxis performance profile verified for ${profile.referenceEnvironment}.\n`);

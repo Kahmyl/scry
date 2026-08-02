@@ -17,7 +17,7 @@ export class LegacyPraxisAdapter implements PraxisTransactionAdapter<PraxisGroun
     this.verifier = new PraxisVerifier(page, resolveInput);
   }
   async observe() { /* Observation is bounded by the unified grounding engine in Milestone 2. */ }
-  async ground(request: PraxisRequest, signal: AbortSignal) { const target = await this.grounding.resolve(request, signal); return { target, resolution: target.resolution, providerTimings: [...target.providerTimings] }; }
+  async ground(request: PraxisRequest, signal: AbortSignal) { const target = await this.grounding.resolve(request, signal); return { target, resolution: target.resolution, providerTimings: [...target.providerTimings], escalationLevel: target.escalationLevel }; }
   async revalidate(target: PraxisGroundedTarget) { try { await target.handle.use(async () => target.legacyRevalidate()); } catch (error) { if (error instanceof PraxisStaleTargetError) throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", { provenance: "application", retry: "requires_reobservation", mutationOutcome: "not_applied", safeActions: ["reobserve"] }); throw error; } }
   async armEffect(target: PraxisGroundedTarget, request: PraxisRequest) { this.verifier.armEffect(target, request); }
   async dispatch(target: PraxisGroundedTarget, request: PraxisRequest, signal: AbortSignal) { return this.dispatcher.dispatch(target, request, signal); }

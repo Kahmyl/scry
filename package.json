@@ -18,6 +18,8 @@
     "verify:agent-skills": "node scripts/verify-agent-skills.mjs",
     "verify:praxis-inventory": "node scripts/verify-praxis-interaction-inventory.mjs",
     "baseline:praxis": "node scripts/praxis-baseline.mjs",
+    "verify:praxis-performance": "node scripts/verify-praxis-performance.mjs",
+    "verify:dashboard-read-only": "pnpm --filter @scry/web build && node scripts/verify-dashboard-read-only.mjs",
     "schema:fingerprint": "node scripts/schema-fingerprint.mjs",
     "test": "pnpm --recursive test",
     "typecheck": "pnpm --recursive typecheck"
