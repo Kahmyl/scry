@@ -211,6 +211,7 @@ async function processRun(job: Job<RunJob>) {
       recordContextProvenance: (input) => executions.recordContextProvenance(job.data.runId, input),
       recoverAcquisition: async (input) => await executions.protectedRecoveryDecision(job.data.runId,input.operationId) as { action: "retry"|"request_secure_assistance"|"revoke"|"abandon"|"expired"; correctedScope?: import("@scry/contracts").SemanticScope }|undefined ?? { action: "retry" },
       groundingHistory: (intentDigest) => executions.groundingHistory(job.data.runId,intentDigest),
+      onPraxisResult: (result) => executions.recordPraxisResult(job.data.runId, attempt.id, result),
       onEvent: async (event) => {
         const phase = phaseForEvent(event.type);
         if (phase) await executions.setRunPhase(job.data.runId, phase);

@@ -2,6 +2,7 @@ import type { PraxisRequest, PraxisVerification } from "@scry/contracts";
 import type { Page } from "playwright";
 import { PraxisDispatcher, PraxisGroundingEngine, type PraxisGroundedTarget, PraxisVerifier } from "./praxis-runtime.js";
 import { PraxisStaleTargetError } from "./praxis-observation.js";
+import { analyzePraxisQuality } from "./praxis-quality.js";
 import { PraxisAdapterError, type PraxisTransactionAdapter } from "./praxis-transaction.js";
 
 export type PraxisInputResolver = (reference: string, classification: "public"|"known_secret"|"captured_secret"|"captured_public") => Promise<string>;
@@ -22,4 +23,5 @@ export class LegacyPraxisAdapter implements PraxisTransactionAdapter<PraxisGroun
   async dispatch(target: PraxisGroundedTarget, request: PraxisRequest, signal: AbortSignal) { return this.dispatcher.dispatch(target, request, signal); }
   async verifyLocal(target: PraxisGroundedTarget, request: PraxisRequest): Promise<PraxisVerification["local"]> { return this.verifier.local(target, request); }
   async verifyEffect(target: PraxisGroundedTarget, request: PraxisRequest): Promise<PraxisVerification["effect"]> { return this.verifier.effect(target, request); }
+  async qualityFindings(target: PraxisGroundedTarget, request: PraxisRequest) { return analyzePraxisQuality(target, request); }
 }

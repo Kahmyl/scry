@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { praxisFailureSchema, praxisLifecycleEventSchema, praxisRequestSchema, praxisResultSchema, praxisSuccessSchema } from "../src/praxis.js";
+import { praxisDurableTransactionSchema, praxisFailureSchema, praxisLifecycleEventSchema, praxisRequestSchema, praxisResultSchema, praxisRunObservationSchema, praxisSuccessSchema } from "../src/praxis.js";
 
 const intent = { concept:"save",requiredCapabilities:["pointer_activatable"],preferredEvidence:{roles:["button"],names:["Save"],labels:[],descriptions:[],placeholders:[],inputTypes:[]},scope:{kind:"page"},relations:[],prohibited:["hidden","disabled"],risk:"ordinary",confidence:{requiredFamilies:[],minimum:.5,minimumMargin:.05,minimumFamilyCount:2} } as const;
 const request = { schemaVersion:1,transactionId:"tx-1",operationId:"save",intent,operation:{type:"activate"},expectedEffect:{type:"none"},risk:"ordinary",policy:{allowedOrigins:["https://example.test"],actionTimeoutMs:1_000,totalTimeoutMs:2_000},privacy:{state:"normal",allowedChannels:["dom","accessibility"],suppressedChannels:[]},context:{pageId:"page-1",origin:"https://example.test",documentEpoch:0} } as const;
@@ -27,5 +27,11 @@ describe("Praxis contracts",()=>{
   it("round-trips deterministically and validates lifecycle events",()=>{
     expect(praxisRequestSchema.parse(JSON.parse(JSON.stringify(request)))).toEqual(request);
     expect(praxisLifecycleEventSchema.parse({schemaVersion:1,transactionId:"tx-1",operationId:"save",type:"praxis.phase_changed",phase:"grounding",occurredAt:new Date().toISOString(),payload:{}}).phase).toBe("grounding");
+  });
+  it("validates durable transaction and legacy-empty run projections",()=>{
+    const result={schemaVersion:1,status:"succeeded",transactionId:"tx-1",operationId:"save",phase:"succeeded",mutationOutcome:"applied",resolution,verification,timing,qualityFindings:[],report:report("succeeded","applied")} as const;
+    const durable={transactionId:"tx-1",operationId:"save",stepId:null,schemaVersion:1,runtimeVersion:"1",result,startedAt:new Date().toISOString(),completedAt:new Date().toISOString()};
+    expect(praxisDurableTransactionSchema.parse(durable)).toEqual(durable);
+    expect(praxisRunObservationSchema.parse({contractVersion:1,runtimeVersions:[],status:"complete",transactions:[],findings:[]})).toMatchObject({transactions:[],findings:[]});
   });
 });

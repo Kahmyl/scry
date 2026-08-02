@@ -99,8 +99,20 @@ export const praxisFailureSchema = praxisFailureBaseSchema.superRefine((value, c
 export const praxisResultSchema = z.union([praxisSuccessSchema, praxisFailureSchema]);
 export const praxisLifecycleEventSchema = z.object({
   schemaVersion: z.literal(1), transactionId: identifier, operationId: identifier,
-  type: z.enum(["praxis.transaction_started", "praxis.phase_changed", "praxis.transaction_succeeded", "praxis.transaction_failed"]),
+  type: z.enum(["praxis.transaction_started", "praxis.phase_changed", "praxis.observation_completed", "praxis.resolved", "praxis.rejected", "praxis.dispatch_started", "praxis.dispatch_completed", "praxis.verification_completed", "praxis.transaction_succeeded", "praxis.transaction_failed", "praxis.quality_finding"]),
   phase: praxisPhaseSchema, occurredAt: z.string().datetime(), payload: z.record(z.string(), z.union([z.string().max(500), z.number(), z.boolean(), z.null()])),
+}).strict();
+export const praxisDurableTransactionSchema = z.object({
+  transactionId: identifier, operationId: identifier, stepId: identifier.nullish(), schemaVersion: z.literal(1), runtimeVersion: identifier,
+  result: praxisResultSchema, startedAt: z.string().datetime(), completedAt: z.string().datetime().nullish(),
+}).strict();
+export const praxisDurableQualityFindingSchema = z.object({
+  id: identifier, transactionId: identifier, stepId: identifier.nullish(), intentDigest: digest,
+  finding: praxisQualityFindingSchema, artifactRefs: z.array(z.string().regex(/^scry:\/\/artifact\/[0-9a-f-]+$/)).max(100), createdAt: z.string().datetime(),
+}).strict();
+export const praxisRunObservationSchema = z.object({
+  contractVersion: z.literal(1), runtimeVersions: z.array(identifier).max(20), status: z.enum(["pending", "complete", "unavailable", "failed"]),
+  transactions: z.array(praxisDurableTransactionSchema).max(10_000), findings: z.array(praxisDurableQualityFindingSchema).max(10_000),
 }).strict();
 
 export type PraxisPhase = z.infer<typeof praxisPhaseSchema>;
@@ -119,3 +131,6 @@ export type PraxisResult = z.infer<typeof praxisResultSchema>;
 export type PraxisResolution = z.infer<typeof praxisResolutionSchema>;
 export type PraxisVerification = z.infer<typeof praxisVerificationSchema>;
 export type PraxisLifecycleEvent = z.infer<typeof praxisLifecycleEventSchema>;
+export type PraxisDurableTransaction = z.infer<typeof praxisDurableTransactionSchema>;
+export type PraxisDurableQualityFinding = z.infer<typeof praxisDurableQualityFindingSchema>;
+export type PraxisRunObservation = z.infer<typeof praxisRunObservationSchema>;
