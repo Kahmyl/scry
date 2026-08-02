@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { reconcileProjectSelection, resolveDashboardView } from "./dashboard-state.js";
+import { dashboardAuthority, reconcileProjectSelection, resolveDashboardView } from "./dashboard-state.js";
 
 describe("dashboard state", () => {
   it("keeps the dashboard separate from Missions", () => {
@@ -21,5 +21,12 @@ describe("dashboard state", () => {
 
   it("preserves a valid project selection", () => {
     expect(reconcileProjectSelection([{ id: "project-1" }, { id: "project-2" }], "project-2")).toBe("project-2");
+  });
+
+  it("makes MCP authoritative while retaining explicit human safety controls", () => {
+    expect(dashboardAuthority.authoringSurface).toBe("mcp");
+    expect(dashboardAuthority.prohibitedDashboardMutations).toContain("run_rerun");
+    expect(dashboardAuthority.retainedHumanControls).toContain("active_run_cancel");
+    expect(dashboardAuthority.retainedHumanControls).toContain("calibration_approval");
   });
 });
