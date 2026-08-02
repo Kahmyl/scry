@@ -6,7 +6,7 @@
   "scripts": {
     "db:migrate": "pnpm --filter @scry/api db:migrate",
     "dev:api": "pnpm --filter @scry/api dev",
-    "docker:up": "docker compose up --build --wait",
+    "docker:up": "pnpm verify:release-fingerprint && docker compose up --build --wait",
     "docker:dev": "docker compose up --build --watch",
     "docker:watch": "docker compose watch --no-up",
     "docker:down": "docker compose down",
@@ -21,6 +21,7 @@
     "verify:praxis-performance": "node scripts/verify-praxis-performance.mjs",
     "verify:dashboard-read-only": "pnpm --filter @scry/web build && node scripts/verify-dashboard-read-only.mjs",
     "schema:fingerprint": "node scripts/schema-fingerprint.mjs",
+    "verify:release-fingerprint": "node scripts/verify-release-fingerprint.mjs",
     "test": "pnpm --recursive test",
     "typecheck": "pnpm --recursive typecheck"
   },
