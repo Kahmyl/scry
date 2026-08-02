@@ -9,6 +9,9 @@ import { NestFactory } from "@nestjs/core";
 import {
   executionPolicySchema,
   currentPlanSchema,
+  PRAXIS_CONTRACT_VERSION,
+  PRAXIS_RUNTIME_VERSION,
+  PRAXIS_SCORING_POLICY_VERSION,
   type Artifact,
 } from "@scry/contracts";
 import { executePlan, probeFlowPlan, verifyBrowserObservationRuntime, type BrowserStorageState, type ExecuteOptions, type ExecutionReport } from "@scry/executor";
@@ -48,13 +51,14 @@ const heartbeatMs = Number(process.env.WORKER_HEARTBEAT_MS ?? 2_000);
 const staleMs = Number(process.env.WORKER_STALE_MS ?? 15_000);
 const releaseId = process.env.SCRY_RELEASE_ID ?? "development";
 const schemaFingerprint = process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline";
+const praxisVersions = { contractVersion: PRAXIS_CONTRACT_VERSION, runtimeVersion: PRAXIS_RUNTIME_VERSION, scoringPolicyVersion: PRAXIS_SCORING_POLICY_VERSION };
 const observationRuntime = await verifyBrowserObservationRuntime(process.env.SCRY_BROWSER_CHANNEL??"chrome");
 if (!observationRuntime.healthy) throw new Error(`OBSERVATION_RUNTIME_UNAVAILABLE:${observationRuntime.forbiddenIdentifiers.join(",")}`);
 await database.query(`INSERT INTO browser_runtime_manifests(release_id,schema_fingerprint,runtime_hash,capability_manifest_hash,health,ready) VALUES($1,$2,$3,$4,$5::jsonb,$6) ON CONFLICT(release_id,schema_fingerprint,runtime_hash) DO UPDATE SET capability_manifest_hash=EXCLUDED.capability_manifest_hash,health=EXCLUDED.health,ready=EXCLUDED.ready,created_at=now()`,[releaseId,schemaFingerprint,observationRuntime.runtimeHash,observationRuntime.capabilityManifestHash,JSON.stringify({...observationRuntime.health,diagnostics:observationRuntime.diagnostics}),observationRuntime.healthy]);
 
-await executions.heartbeatWorker(workerId, releaseId, schemaFingerprint);
+await executions.heartbeatWorker(workerId, releaseId, schemaFingerprint, praxisVersions);
 const workerHeartbeat = setInterval(() => {
-  void executions.heartbeatWorker(workerId, releaseId, schemaFingerprint);
+  void executions.heartbeatWorker(workerId, releaseId, schemaFingerprint, praxisVersions);
 }, Math.min(staleMs, 10_000));
 
 await recoverStaleRuns();
@@ -221,7 +225,6 @@ async function processRun(job: Job<RunJob>) {
           occurredAt: event.occurredAt,
           payload: event.payload,
         });
-        if (event.type === "grounding.resolved" || event.type === "grounding.rejected") await executions.recordGroundingDiagnostic(job.data.runId,event.payload);
       },
     };
     const report = await executePlan(executionOptions as Parameters<typeof executePlan>[0]);

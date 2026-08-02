@@ -1,3 +1,5 @@
+import { PRAXIS_CONTRACT_VERSION, PRAXIS_RUNTIME_VERSION, PRAXIS_SCORING_POLICY_VERSION } from "@scry/contracts";
+
 export class ScryApiClient {
   private capabilitiesPromise?: Promise<ScryCapabilities>;
   constructor(
@@ -37,6 +39,13 @@ export class ScryApiClient {
     const expectedSchema = process.env.SCRY_SCHEMA_FINGERPRINT;
     if ((expectedRelease && capabilities.releaseId !== expectedRelease) || (expectedSchema && capabilities.schemaFingerprint !== expectedSchema)) {
       throw new Error("SCRY_RELEASE_MISMATCH");
+    }
+    if (!capabilities.praxis
+      || capabilities.praxis.contractVersion !== PRAXIS_CONTRACT_VERSION
+      || capabilities.praxis.runtimeVersion !== PRAXIS_RUNTIME_VERSION
+      || capabilities.praxis.scoringPolicyVersion !== PRAXIS_SCORING_POLICY_VERSION
+      || capabilities.praxis.cutoff !== true) {
+      throw new Error("SCRY_PRAXIS_VERSION_MISMATCH");
     }
     return capabilities;
   }
@@ -86,5 +95,5 @@ export type ScryCapabilities = {
   groundingCapabilities?: string[];
   intelligenceCapabilities?: { modelAssistance: boolean; visualGrounding: string };
   missionContext?: { requiredForWrites:boolean;transport:"explicit";phases:string[] };
-  praxis?: { contractVersion:number;runtimeVersion:string;scoringPolicyVersion:number;evidenceChannels:string[];strategies:string[];hardBoundaries:string[] };
+  praxis?: { contractVersion:number;runtimeVersion:string;scoringPolicyVersion:number;cutoff:boolean;evidenceChannels:string[];strategies:string[];hardBoundaries:string[] };
 };

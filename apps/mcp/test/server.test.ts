@@ -7,6 +7,7 @@ import { createScryMcpServer } from "../src/server.js";
 
 afterEach(() => vi.unstubAllGlobals());
 const context={missionId:"dddddddd-dddd-4ddd-8ddd-dddddddddddd",objectiveId:"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",agentSessionId:"ffffffff-ffff-4fff-8fff-ffffffffffff"};
+const admittedCapabilities = { releaseId: "development", schemaFingerprint: "development-baseline", supportedActions: [], evidenceChannels: [], artifactCapabilities: [], collectorCapabilities: [], praxis: { contractVersion: 1, runtimeVersion: "1", scoringPolicyVersion: 1, cutoff: true, evidenceChannels: [], strategies: [], hardBoundaries: [] } };
 
 describe("current Scry MCP surface", () => {
   it("exposes only current Flow, run, and artifact tools", async () => {
@@ -15,7 +16,7 @@ describe("current Scry MCP surface", () => {
     expect((await client.listTools()).tools.map(({ name }) => name)).toEqual([
       "get_capabilities", "list_projects","start_mission","resume_mission","attach_to_mission","get_mission","list_missions","update_mission","end_agent_session","get_mission_activity","create_execution_plan","validate_execution_plan","activate_execution_plan","get_orchestration_status","start_ready_objectives","pause_mission_orchestration","resume_mission_orchestration","cancel_mission_orchestration","grant_mission_execution_authorization","relate_mission_activity","create_mission_objective","update_mission_objective","attach_flow_to_mission", "list_environments", "create_test_environment",
       "list_project_credentials", "create_project_credential", "authorize_environment_credentials", "list_flows", "ensure_calibration", "list_calibrations", "get_calibration", "approve_calibration", "retry_calibration", "cancel_calibration", "bind_calibration", "validate_test_plan", "create_flow_draft", "update_flow_draft", "get_flow_draft", "list_mission_flow_drafts", "abandon_flow_draft", "start_probe_session", "get_probe_session", "cancel_probe_session", "compile_flow_draft", "publish_flow_draft", "list_authentication_contracts", "list_authenticated_session_leases", "revoke_authenticated_session_lease",
-      "start_run", "get_run","get_grounding_diagnostics","get_protected_recovery","act_on_protected_recovery","accept_objective_evidence","classify_run","set_mission_resume_pointer","publish_mission_report", "get_artifact", "search_artifact", "extract_artifact_html",
+      "start_run", "get_run","get_protected_recovery","act_on_protected_recovery","accept_objective_evidence","classify_run","set_mission_resume_pointer","publish_mission_report", "get_artifact", "search_artifact", "extract_artifact_html",
     ]);
     await client.close(); await server.close();
   });
@@ -78,7 +79,7 @@ describe("current Scry MCP surface", () => {
       const url = new URL(String(input));
       requests.push({ path: url.pathname, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
       const response = url.pathname.endsWith("/capabilities")
-        ? { releaseId: "development", schemaFingerprint: "development-baseline", supportedActions: [], evidenceChannels: [], artifactCapabilities: [], collectorCapabilities: [] }
+        ? admittedCapabilities
         : { runId: "11111111-1111-4111-8111-111111111111", state: "queued" };
       return Promise.resolve(new Response(JSON.stringify(response), { status: 200 }));
     }));
@@ -100,7 +101,7 @@ describe("current Scry MCP surface", () => {
     const fetchMock = vi.fn().mockImplementation((input: string | URL | Request) => {
       const url = new URL(String(input));
       const body = url.pathname.endsWith("/capabilities")
-        ? { releaseId: "development", schemaFingerprint: "development-baseline", supportedActions: [], evidenceChannels: [], artifactCapabilities: [], collectorCapabilities: [] }
+        ? admittedCapabilities
         : { valid: true, errors: [], warnings: [] };
       return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
     });

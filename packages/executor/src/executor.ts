@@ -31,7 +31,7 @@ import {
 
 import { availableArtifact, ensureOutputDirectories, writeJson } from "./artifacts.js";
 import { playwrightBrowserChannel, visualRedactionInitScript } from "./browser-runtime-artifacts.js";
-import { armExpectedEffect, checkGroundedTarget, clickGroundedTarget, fillGroundedTarget, registerGroundingHistoryProvider, registerGroundingObserver, resolveTargetLocator, selectGroundedTarget, verifyExpectedEffect } from "./grounding.js";
+import { registerGroundingHistoryProvider, resolveTargetLocator } from "./grounding.js";
 import { requirePraxisSuccess, type PraxisConsumerContext } from "./praxis-consumer.js";
 import { RecordingCoordinator } from "./recording-coordinator.js";
 import { PrivacyGate, type PrivacyCollector } from "./privacy-gate.js";
@@ -186,7 +186,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     });
     await installVisualRedactionStyles(context);
     page = await context.newPage();
-    registerGroundingObserver(page, (diagnostic) => emit(diagnostic.outcome === "resolved" ? "grounding.resolved" : "grounding.rejected", { stepId: activeStepId ?? "preflight", ...diagnostic }));
     if (options.groundingHistory) registerGroundingHistoryProvider(page, options.groundingHistory);
     safeProvenance = new BrowserSessionProvenance(randomUUID(), "safe");
     let policyEpoch = 0;
@@ -290,7 +289,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             persistPublicValue: options.publicValueCapture,
             resolveKnownSecret: options.secretResolver ?? missingSecretResolver,
             prepareCapsule: async (capsule) => {
-              registerGroundingObserver(capsule.page, (diagnostic) => emit(diagnostic.outcome === "resolved" ? "grounding.resolved" : "grounding.rejected", { stepId: step.id, protected: true, ...diagnostic }));
               if (options.groundingHistory) registerGroundingHistoryProvider(capsule.page, options.groundingHistory);
               await attachRequestInterception(capsule.context, capsule.page, requestPolicy, rejectPolicy);
               attachCapabilityGuards(capsule.context, capsule.page, options, rejectPolicy);
@@ -655,11 +653,8 @@ async function executeAction(
       await waitForApplicationRender(page, action.timeoutMs);
       return;
     case "click":
-      { if (praxisEnabled("action") && praxisContext) { await requirePraxisSuccess({ page, intent: action.target, operation: { type: "activate" }, expectedEffect: action.expectedEffect, context: praxisContext, signal }); return; }
-      const beforeUrl = page.url();
-      const expectedEffect = armExpectedEffect(page, action.expectedEffect, action.timeoutMs);
-      await clickGroundedTarget(page, action.target, optionalTimeout(action.timeoutMs));
-      await verifyExpectedEffect(page, action.expectedEffect, beforeUrl, action.timeoutMs, expectedEffect);
+      {
+      await requirePraxisSuccess({ page, intent: action.target, operation: { type: "activate" }, expectedEffect: action.expectedEffect, context: requirePraxisContext(praxisContext), signal });
       return;
       }
     case "fill": {
@@ -702,52 +697,40 @@ async function executeAction(
           await privacyGate.seal({ code: "KNOWN_SECRET_FILL_FAILED" }).catch(() => undefined);
           throw error;
         }
-      } else if (praxisEnabled("action") && praxisContext) await requirePraxisSuccess({ page, intent: action.target, operation: { type: "enter_text", input: { reference: "resolved-input", classification: action.capturedValueRef ? "captured_public" : "public" } }, context: praxisContext, signal, resolveInput: async () => value! });
-      else await fillGroundedTarget(page, action.target, value, optionalTimeout(action.timeoutMs));
+      } else await requirePraxisSuccess({ page, intent: action.target, operation: { type: "enter_text", input: { reference: "resolved-input", classification: action.capturedValueRef ? "captured_public" : "public" } }, context: requirePraxisContext(praxisContext), signal, resolveInput: async () => value! });
       return;
     }
     case "select":
-      if (praxisEnabled("action") && praxisContext) await requirePraxisSuccess({ page, intent: action.target, operation: { type: "select_option", input: { reference: "selected-option", classification: "public" } }, context: praxisContext, signal, resolveInput: async () => action.value });
-      else await selectGroundedTarget(page, action.target, action.value, optionalTimeout(action.timeoutMs));
+      await requirePraxisSuccess({ page, intent: action.target, operation: { type: "select_option", input: { reference: "selected-option", classification: "public" } }, context: requirePraxisContext(praxisContext), signal, resolveInput: async () => action.value });
       return;
     case "check":
-      if (praxisEnabled("action") && praxisContext) await requirePraxisSuccess({ page, intent: action.target, operation: { type: "set_checked", checked: action.checked }, context: praxisContext, signal });
-      else await checkGroundedTarget(page, action.target, action.checked, optionalTimeout(action.timeoutMs));
+      await requirePraxisSuccess({ page, intent: action.target, operation: { type: "set_checked", checked: action.checked }, context: requirePraxisContext(praxisContext), signal });
       return;
     case "press":
-      if (action.target && praxisEnabled("action") && praxisContext && approvedKey(action.key)) {
-        await requirePraxisSuccess({ page, intent: action.target, operation: { type: "press_key", key: action.key }, context: praxisContext, signal });
+      if (action.target && approvedKey(action.key)) {
+        await requirePraxisSuccess({ page, intent: action.target, operation: { type: "press_key", key: action.key }, context: requirePraxisContext(praxisContext), signal });
       } else if (action.target) {
-        await (await resolveTargetLocator(page, action.target)).press(action.key, optionalTimeout(action.timeoutMs));
+        throw new Error("PRAXIS_UNSUPPORTED_TARGET_KEY");
       } else {
         await page.keyboard.press(action.key);
       }
       return;
     case "scroll":
-      if (action.target && praxisEnabled("action") && praxisContext) {
-        await requirePraxisSuccess({ page, intent: action.target, operation: { type: "scroll", direction: action.deltaY >= 0 ? "down" : "up" }, context: praxisContext, signal });
-      } else if (action.target) {
-        await (await resolveTargetLocator(page, action.target)).evaluate(
-          (element, deltaY) => element.scrollBy(0, deltaY),
-          action.deltaY,
-        );
+      if (action.target) {
+        await requirePraxisSuccess({ page, intent: action.target, operation: { type: "scroll", direction: action.deltaY >= 0 ? "down" : "up" }, context: requirePraxisContext(praxisContext), signal });
       } else {
         await page.mouse.wheel(0, action.deltaY);
       }
       return;
     case "waitFor":
-      if (praxisEnabled("action") && praxisContext) { await requirePraxisSuccess({ page, intent: action.target, operation: { type: "wait_for_state", state: action.state }, context: praxisContext, signal }); return; }
-      await (await resolveTargetLocator(page, action.target)).waitFor({
-        state: action.state,
-        ...optionalTimeout(action.timeoutMs),
-      });
+      await requirePraxisSuccess({ page, intent: action.target, operation: { type: "wait_for_state", state: action.state }, context: requirePraxisContext(praxisContext), signal });
       return;
     case "screenshot":
       return;
   }
 }
 
-function praxisEnabled(slice: string) { return !new Set((process.env.SCRY_PRAXIS_LEGACY_CONSUMERS ?? "").split(",").map((value) => value.trim()).filter(Boolean)).has(slice); }
+function requirePraxisContext(context: PraxisConsumerContext | undefined): PraxisConsumerContext { if (!context) throw new Error("PRAXIS_CONTEXT_REQUIRED"); return context; }
 function approvedKey(key: string): key is "Enter"|"Space"|"Escape"|"Tab"|"ArrowUp"|"ArrowDown"|"ArrowLeft"|"ArrowRight" { return ["Enter","Space","Escape","Tab","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(key); }
 
 async function waitForApplicationRender(page: Page, timeoutMs = 10_000) {
@@ -791,48 +774,21 @@ async function waitForApplicationRender(page: Page, timeoutMs = 10_000) {
 }
 
 async function executeAssertion(page: Page, assertion: Assertion, baseOrigin: string, praxisContext?: PraxisConsumerContext, signal: AbortSignal = new AbortController().signal) {
-  if (praxisEnabled("assertion") && praxisContext && assertion.type !== "url" && !(assertion.type === "text" && !assertion.exact)) {
+  if (assertion.type !== "url" && !(assertion.type === "text" && !assertion.exact)) {
     const expectedEffect = assertion.type === "visible" ? { type: "visibility_change" as const, target: assertion.target, visible: true }
       : assertion.type === "hidden" ? { type: "visibility_change" as const, target: assertion.target, visible: false }
       : assertion.type === "enabled" ? { type: "state_change" as const, target: assertion.target, enabled: true }
       : { type: "value_change" as const, target: assertion.target, expected: assertion.expected };
-    await requirePraxisSuccess({ page, intent: assertion.target, operation: { type: "inspect" }, expectedEffect, context: praxisContext, signal });
+    await requirePraxisSuccess({ page, intent: assertion.target, operation: { type: "inspect" }, expectedEffect, context: requirePraxisContext(praxisContext), signal });
     return;
   }
   switch (assertion.type) {
-    case "visible":
-      await (await resolveTargetLocator(page, assertion.target)).waitFor({
-        state: "visible",
-        ...optionalTimeout(assertion.timeoutMs),
-      });
-      return;
-    case "enabled": {
-      const locator = await resolveTargetLocator(page, assertion.target);
-      await locator.waitFor({ state: "visible", ...optionalTimeout(assertion.timeoutMs) });
-      if (!(await locator.isEnabled())) throw new Error("Expected target to be enabled");
-      return;
-    }
-    case "hidden":
-      await (await resolveTargetLocator(page, assertion.target)).waitFor({
-        state: "hidden",
-        ...optionalTimeout(assertion.timeoutMs),
-      });
-      return;
     case "text": {
       const locator = await resolveTargetLocator(page, assertion.target);
       await locator.waitFor({ state: "visible", ...optionalTimeout(assertion.timeoutMs) });
       const actual = (await locator.textContent()) ?? "";
       const matches = assertion.exact ? actual.trim() === assertion.expected : actual.includes(assertion.expected);
       if (!matches) throw new Error(`Expected text "${assertion.expected}", received "${actual.trim()}"`);
-      return;
-    }
-    case "value": {
-      const actual = await (await resolveTargetLocator(page, assertion.target)).inputValue({
-        ...optionalTimeout(assertion.timeoutMs),
-      });
-      if (actual !== assertion.expected) {
-        throw new Error(`Expected value "${assertion.expected}", received "${actual}"`);
-      }
       return;
     }
     case "url": {

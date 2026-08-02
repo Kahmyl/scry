@@ -2,6 +2,10 @@ import { z } from "zod";
 
 import { evidenceFamilySchema, expectedEffectSchema, interactionAdapterSchema, interactionTargetIntentSchema, driftClassificationSchema } from "./grounding.js";
 
+export const PRAXIS_CONTRACT_VERSION = 1 as const;
+export const PRAXIS_RUNTIME_VERSION = "1" as const;
+export const PRAXIS_SCORING_POLICY_VERSION = 1 as const;
+
 const identifier = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,199}$/);
 const code = z.string().regex(/^[A-Z][A-Z0-9_]*$/);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);

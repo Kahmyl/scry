@@ -2,7 +2,7 @@ import { chromium, type Browser, type Page } from "playwright";
 import { afterAll,beforeAll,describe,expect,it } from "vitest";
 import type { InteractionTargetIntent, PraxisOperation, PraxisRequest } from "@scry/contracts";
 import { checkGroundedTarget, clickGroundedTarget, fillGroundedTarget, registerGroundingHistoryProvider, resolveTarget, selectGroundedTarget, verifyExpectedEffect } from "../src/grounding.js";
-import { LegacyPraxisAdapter } from "../src/praxis-legacy-adapter.js";
+import { PraxisAdapter } from "../src/praxis-adapter.js";
 import { PraxisTransactionCoordinator } from "../src/praxis-transaction.js";
 
 let browser:Browser;
@@ -11,7 +11,7 @@ afterAll(async()=>{await browser?.close();});
 const identity=(name:string,role:"button"|"textbox"|"combobox"|"checkbox"|"value"="button"):InteractionTargetIntent=>({concept:name.toLowerCase().replace(/\W+/g,"_"),requiredCapabilities:role==="textbox"?["focusable","accepts_text","editable"]:role==="combobox"?["selects_option"]:role==="checkbox"?["toggleable"]:role==="value"?["readable_value"]:["pointer_activatable"],preferredEvidence:{roles:[role],names:[name],labels:[],descriptions:[],placeholders:[],inputTypes:[]},scope:{kind:"page"},relations:[],prohibited:["hidden","disabled"],risk:"ordinary",confidence:{requiredFamilies:[],minimum:.35,minimumMargin:.05,minimumFamilyCount:1}});
 const request=(operation:PraxisOperation,intent:InteractionTargetIntent,expectedEffect:PraxisRequest["expectedEffect"]={type:"none"}):PraxisRequest=>({schemaVersion:1,transactionId:`tx-${operation.type}`,operationId:operation.type,intent,operation,expectedEffect,risk:intent.risk,policy:{allowedOrigins:["https://example.test"],actionTimeoutMs:1_000,totalTimeoutMs:2_000},privacy:{state:"normal",allowedChannels:["dom","accessibility"],suppressedChannels:[]},context:{pageId:"page",origin:"https://example.test",documentEpoch:0}});
 async function page(html:string){const value=await browser.newPage();await value.setContent(html);return value;}
-async function praxis(target:Page,input:PraxisRequest,values:Record<string,string>={}){return new PraxisTransactionCoordinator(new LegacyPraxisAdapter(target,async reference=>values[reference]??"")).execute(input,new AbortController().signal);}
+async function praxis(target:Page,input:PraxisRequest,values:Record<string,string>={}){return new PraxisTransactionCoordinator(new PraxisAdapter(target,async reference=>values[reference]??"")).execute(input,new AbortController().signal);}
 
 describe("legacy Praxis adapter parity",()=>{
   it("matches legacy click behavior without a second dispatch",async()=>{const html=`<button onclick="out.textContent=(Number(out.textContent)||0)+1">Save</button><output id=out>0</output>`;const legacy=await page(html),wrapped=await page(html);try{await clickGroundedTarget(legacy,identity("Save"));const result=await praxis(wrapped,request({type:"activate"},identity("Save")));expect(await wrapped.locator("output").textContent()).toBe(await legacy.locator("output").textContent());expect(await wrapped.locator("output").textContent()).toBe("1");expect(result.status).toBe("succeeded");}finally{await legacy.close();await wrapped.close();}});

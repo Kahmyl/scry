@@ -893,7 +893,6 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
   const privacyEvents = report.events.filter((event) => event.type === "privacy.state_changed");
   const protectedTransactionEvents = report.events.filter((event) => ["privacy.operation_completed", "privacy.operation_failed", "privacy.credential_compromised"].includes(event.type));
   const diagnostics = report.events.filter((event) => event.type.startsWith("diagnostic."));
-  const groundingEvents = report.events.filter((event) => event.type === "grounding.resolved" || event.type === "grounding.rejected");
   const policyEvents = report.events.filter((event) => event.type === "policy.rejected");
   const fatalPolicy = [...policyEvents].reverse().find((event) => event.payload.disposition !== "blocked_subresource");
   const failedAssertion = allAssertions.find((assertion) => assertion.status === "failed");
@@ -1121,7 +1120,7 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
             )}
           </div>
           <div className="panel">
-            <PanelHeader title="Diagnostics" kicker={`${diagnostics.length + policyEvents.length + groundingEvents.length} SIGNALS`} />
+            <PanelHeader title="Diagnostics" kicker={`${diagnostics.length + policyEvents.length + report.praxis.transactions.length} SIGNALS`} />
             <div className="diagnostics">
               {policyEvents.map((event) => (
                 <div key={event.id}>
@@ -1139,8 +1138,7 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
                   <div><strong>{event.type.replace("diagnostic.", "")}</strong><span>{String(event.payload.message ?? "")}</span>{Boolean(event.payload.url) && <code>{String(event.payload.url)}</code>}</div>
                 </div>
               ))}
-              {groundingEvents.map((event)=><div key={event.id}><ScanSearch size={15}/><div><strong>{event.type==="grounding.resolved"?`${String(event.payload.resolutionSource??"semantic").toUpperCase()} TARGET RESOLVED`:String(event.payload.code??"TARGET REJECTED")}</strong><span>{Math.round(Number(event.payload.confidence??0)*100)}% confidence · {Number(event.payload.visualCandidateCount??0)} visual candidates · {String(event.payload.drift??"unchanged")} drift</span>{Boolean(event.payload.visualFingerprint)&&<code>Visual fingerprint {String(event.payload.visualFingerprint).slice(0,12)}…</code>}</div></div>)}
-              {!diagnostics.length && !policyEvents.length && !groundingEvents.length && <div className="clean-signal"><ShieldCheck size={20} /><strong>Clean session</strong><span>No console, page, policy, grounding, or failed-request signals.</span></div>}
+              {!diagnostics.length && !policyEvents.length && !report.praxis.transactions.length && <div className="clean-signal"><ShieldCheck size={20} /><strong>Clean session</strong><span>No console, page, policy, Praxis, or failed-request signals.</span></div>}
             </div>
           </div>
         </aside>

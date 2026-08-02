@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ExpectedEffect, InteractionTargetIntent, PraxisLifecycleEvent, PraxisOperation, PraxisRequest, PraxisResult } from "@scry/contracts";
 import type { Page } from "playwright";
-import { LegacyPraxisAdapter, type PraxisInputResolver } from "./praxis-legacy-adapter.js";
+import { PraxisAdapter, type PraxisInputResolver } from "./praxis-adapter.js";
 import { PraxisDocumentEpoch } from "./praxis-observation.js";
 import { PraxisTransactionCoordinator } from "./praxis-transaction.js";
 
@@ -30,7 +30,7 @@ export type PraxisConsumerInput = {
 
 export async function executePraxisConsumer(input: PraxisConsumerInput): Promise<PraxisResult> {
   const request = await buildPraxisRequest(input);
-  const result = await new PraxisTransactionCoordinator(new LegacyPraxisAdapter(input.page, input.resolveInput), input.context.emit).execute(request, input.signal);
+  const result = await new PraxisTransactionCoordinator(new PraxisAdapter(input.page, input.resolveInput), input.context.emit).execute(request, input.signal);
   await input.context.record?.(result);
   return result;
 }

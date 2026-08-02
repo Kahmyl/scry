@@ -1,7 +1,7 @@
 import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { InteractionTargetIntent, PraxisOperation, PraxisRequest } from "@scry/contracts";
-import { LegacyPraxisAdapter } from "../src/praxis-legacy-adapter.js";
+import { PraxisAdapter } from "../src/praxis-adapter.js";
 import { PraxisMutationLease, selectPraxisStrategy } from "../src/praxis-runtime.js";
 import { PraxisDocumentEpoch } from "../src/praxis-observation.js";
 import { PraxisTransactionCoordinator } from "../src/praxis-transaction.js";
@@ -31,14 +31,14 @@ describe("Praxis strategy, dispatch, and verification", () => {
 
   it("dispatches once and verifies the exact intended text", async () => {
     await page.setContent("<input aria-label=Name>");
-    const result = await new PraxisTransactionCoordinator(new LegacyPraxisAdapter(page, async () => "Ada")).execute(request({ type: "enter_text", input: { reference: "name", classification: "public" } }, intent("Name", "textbox")), new AbortController().signal);
+    const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page, async () => "Ada")).execute(request({ type: "enter_text", input: { reference: "name", classification: "public" } }, intent("Name", "textbox")), new AbortController().signal);
     expect(result.status).toBe("succeeded");
     expect(await page.locator("input").inputValue()).toBe("Ada");
   });
 
   it("does not dispatch through a handle invalidated before revalidation", async () => {
     await page.setContent("<button onclick='this.dataset.count=String(Number(this.dataset.count||0)+1)'>Save</button>");
-    const adapter = new LegacyPraxisAdapter(page);
+    const adapter = new PraxisAdapter(page);
     const original = adapter.revalidate.bind(adapter);
     adapter.revalidate = async (target) => { await page.locator("body").evaluate((body) => body.append(document.createElement("span"))); PraxisDocumentEpoch.bump(page); await original(target); };
     const result = await new PraxisTransactionCoordinator(adapter).execute(request({ type: "activate" }), new AbortController().signal);

@@ -388,3 +388,5 @@ CREATE INDEX worker_heartbeats_recent_idx ON worker_heartbeats(heartbeat_at DESC
 CREATE INDEX run_checkpoints_run_idx ON run_checkpoints(run_id, created_at);
 CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id, created_at DESC);
 \ir authoring-execution-cutover.sql
+\ir praxis-reporting.sql
+\ir praxis-cutoff.sql

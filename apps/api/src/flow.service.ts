@@ -9,6 +9,9 @@ import {
   type CurrentPlan,
   type ValidatePlanInput,
   type BindCalibrationInput,
+  PRAXIS_CONTRACT_VERSION,
+  PRAXIS_RUNTIME_VERSION,
+  PRAXIS_SCORING_POLICY_VERSION,
 } from "@scry/contracts";
 import { browserObservationRuntimeHealth, protectedTransactionDigest } from "@scry/executor";
 import type { PoolClient, QueryResultRow } from "pg";
@@ -38,7 +41,7 @@ export class FlowService {
       collectorCapabilities: ["segmented-video", "segmented-trace", "privacy-gate", "separate-browser-protected-capsule", "context-provenance", "fenced-mutation-ledger", "checkpoint-restoration"],
       groundingCapabilities: ["actionable-control-inventory-v2","capability-universal-gate","independent-evidence-fusion","typed-observation-failures","typed-interaction-adapters","local-state-verification","deterministic-ocr-anchors","geometry-evidence","open-shadow-dom","risk-thresholds","effect-verification","environment-history","drift-rejection","typed-acquisition","bounded-protected-recovery"],
       groundingManifest: { browserObservationRuntime:"available",semanticObserver:observer.healthy?"available":"unavailable",accessibilityMapping:"available",ocr:"available",geometry:"available",shadowDom:"available",visualCanvas:"available",adapters:["gauntlet.clipboard","gauntlet.network","gauntlet.safe-exit","gauntlet.revocation"],runtimeHash:observer.runtimeHash,capabilityManifestHash:observer.capabilityManifestHash,health:observer.health,diagnostics:observer.diagnostics },
-      praxis: { contractVersion: 1, runtimeVersion: "1", scoringPolicyVersion: 1, evidenceChannels: ["native_control","accessibility","textual","structural","runtime","visual","historical"], strategies: ["native_activate","native_fill","native_select","native_check","computed_activate","focus_keyboard","content_editable","verified_pointer","canvas_coordinate","scroll","inspect","application_adapter"], hardBoundaries: ["no_selectors","no_raw_locators","no_arbitrary_coordinates","no_protected_values_in_reports","unknown_mutation_never_retry_safe"] },
+      praxis: { contractVersion: PRAXIS_CONTRACT_VERSION, runtimeVersion: PRAXIS_RUNTIME_VERSION, scoringPolicyVersion: PRAXIS_SCORING_POLICY_VERSION, cutoff: true, evidenceChannels: ["native_control","accessibility","textual","structural","runtime","visual","historical"], strategies: ["native_activate","native_fill","native_select","native_check","computed_activate","focus_keyboard","content_editable","verified_pointer","canvas_coordinate","scroll","inspect","application_adapter"], hardBoundaries: ["no_selectors","no_raw_locators","no_arbitrary_coordinates","no_protected_values_in_reports","unknown_mutation_never_retry_safe","no_legacy_consumer_rollback"] },
       intelligenceCapabilities: { modelAssistance: false, visualGrounding: "deterministic-local" },
       adapterCapabilities: ["gauntlet.clipboard", "gauntlet.network", "gauntlet.safe-exit", "gauntlet.revocation"],
       limits: { maxPlanSteps: 500, maxArtifactTextPageBytes: 262_144 },
