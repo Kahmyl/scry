@@ -29,6 +29,34 @@ describe("Praxis strategy, dispatch, and verification", () => {
     first(); await waiting; expect(secondAcquired).toBe(true);
   });
 
+  it("owns the mutation lane before observation so concurrent transactions re-ground in order", async () => {
+    await page.setContent("<section aria-label='A'><button>A</button></section><section aria-label='B'><button>B</button></section><output>0</output><script>for(const b of document.querySelectorAll('button'))b.onclick=()=>document.querySelector('output').textContent=String(Number(document.querySelector('output').textContent)+1)</script>");
+    const scoped = (name: string): InteractionTargetIntent => ({ ...intent(name), scope: { kind: "region", name } });
+    const context = (ordinal: number) => ({ channel: "action" as const, ordinal, allowedOrigins: ["https://example.test"], timeoutMs: 2_000 });
+    const [first, second] = await Promise.all([
+      executePraxisConsumer({ page, intent: scoped("A"), operation: { type: "activate" }, context: context(1), signal: new AbortController().signal }),
+      executePraxisConsumer({ page, intent: scoped("B"), operation: { type: "activate" }, context: context(2), signal: new AbortController().signal }),
+    ]);
+    expect([first.status, second.status]).toEqual(["succeeded", "succeeded"]);
+    expect(await page.locator("output").textContent()).toBe("2");
+  });
+
+  it("grounds, dispatches, and verifies a control in its owning frame document", async () => {
+    await page.setContent(`<iframe srcdoc="<button onclick=&quot;parent.document.body.dataset.hit='yes'&quot;>Framed action</button>"></iframe>`);
+    const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(request({ type: "activate" }, intent("Framed action")), new AbortController().signal);
+    expect(result.status).toBe("succeeded");
+    expect(await page.locator("body").getAttribute("data-hit")).toBe("yes");
+    if (result.status === "succeeded") expect(result.resolution.target.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("does not report activation when frame detachment suppresses the click event", async () => {
+    await page.mouse.move(0, 0);
+    await page.setContent(`<iframe id="target" style="margin:200px" srcdoc="<button onpointerover=&quot;parent.document.querySelector('#target').remove()&quot; onclick=&quot;parent.document.body.dataset.hit='yes'&quot;>Detach action</button>"></iframe>`);
+    const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(request({ type: "activate" }, intent("Detach action")), new AbortController().signal);
+    expect(result).toMatchObject({ status: "inconclusive", code: "PRAXIS_DISPATCH_FAILED", mutationOutcome: "unknown", retry: "unsafe", safeActions: ["do_not_retry"] });
+    expect(await page.locator("body").getAttribute("data-hit")).toBeNull();
+  });
+
   it("dispatches once and verifies the exact intended text", async () => {
     await page.setContent("<input aria-label=Name>");
     const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page, async () => "Ada")).execute(request({ type: "enter_text", input: { reference: "name", classification: "public" } }, intent("Name", "textbox")), new AbortController().signal);
@@ -36,14 +64,41 @@ describe("Praxis strategy, dispatch, and verification", () => {
     expect(await page.locator("input").inputValue()).toBe("Ada");
   });
 
-  it("does not dispatch through a handle invalidated before revalidation", async () => {
+  it("refreshes once when an SPA replaces the control immediately beside dispatch", async () => {
+    await page.setContent(`<button onclick="document.body.dataset.count=String(Number(document.body.dataset.count||0)+1)">Continue</button>`);
+    class DispatchAdjacentReplacementAdapter extends PraxisAdapter { private replaced=false;override async dispatch(...args:Parameters<PraxisAdapter["dispatch"]>){if(!this.replaced){this.replaced=true;await page.locator("button").evaluate((old)=>old.replaceWith(old.cloneNode(true)));}return super.dispatch(...args);}}
+    const result = await new PraxisTransactionCoordinator(new DispatchAdjacentReplacementAdapter(page)).execute(request({ type: "activate" }, intent("Continue")), new AbortController().signal);
+    expect(result).toMatchObject({ status: "succeeded", mutationOutcome: "applied" });
+    if (result.status === "succeeded") expect(result.timing.providerTimings).toHaveLength(2);
+    expect(await page.locator("body").getAttribute("data-count")).toBe("1");
+  });
+
+  it("refuses repeated target instability without crossing the mutation boundary", async () => {
+    await page.setContent(`<button onclick="document.body.dataset.count=String(Number(document.body.dataset.count||0)+1)">Continue</button><script>globalThis.replacer=setInterval(()=>{const old=document.querySelector('button');old?.replaceWith(old.cloneNode(true))},2)</script>`);
+    const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(request({ type: "activate" }, intent("Continue")), new AbortController().signal);
+    await page.evaluate(() => clearInterval((globalThis as typeof globalThis & { replacer:number }).replacer));
+    expect(result).toMatchObject({ status: "failed", mutationOutcome: "not_started" });
+    if (result.status !== "succeeded") { expect(["PRAXIS_TARGET_CHANGED_BEFORE_ACTION","PRAXIS_NO_CAPABILITY_COMPATIBLE_CONTROL"]).toContain(result.code);expect(result.diagnostics.mutationBoundaryCrossed).toBe(false); }
+    expect(await page.locator("body").getAttribute("data-count")).toBeNull();
+  });
+
+  it("does not focus or activate a reactive control before the mutation boundary", async () => {
+    await page.setContent(`<button onfocus="document.body.dataset.focusPhase=document.body.dataset.phase" onclick="document.body.dataset.clickPhase=document.body.dataset.phase">Continue</button>`);
+    const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page), async (event) => { await page.locator("body").evaluate((body, phase) => { body.dataset.phase=phase; }, event.phase); }).execute(request({ type: "activate" }, intent("Continue")), new AbortController().signal);
+    expect(result.status).toBe("succeeded");
+    expect(await page.locator("body").getAttribute("data-focus-phase")).toBe("dispatching");
+    expect(await page.locator("body").getAttribute("data-click-phase")).toBe("dispatching");
+  });
+
+  it("re-observes once before dispatch when a render invalidates the grounded handle", async () => {
     await page.setContent("<button onclick='this.dataset.count=String(Number(this.dataset.count||0)+1)'>Save</button>");
     const adapter = new PraxisAdapter(page);
     const original = adapter.revalidate.bind(adapter);
-    adapter.revalidate = async (target) => { await page.locator("body").evaluate((body) => body.append(document.createElement("span"))); PraxisDocumentEpoch.bump(page); await original(target); };
+    let invalidated = false;
+    adapter.revalidate = async (target, request, signal) => { if (!invalidated) { invalidated = true; await page.locator("body").evaluate((body) => body.append(document.createElement("span"))); PraxisDocumentEpoch.bump(page); } return original(target, request, signal); };
     const result = await new PraxisTransactionCoordinator(adapter).execute(request({ type: "activate" }), new AbortController().signal);
-    expect(result).toMatchObject({ status: "failed", code: "PRAXIS_TARGET_CHANGED_BEFORE_ACTION", mutationOutcome: "not_applied", retry: "requires_reobservation" });
-    expect(await page.locator("button").getAttribute("data-count")).toBeNull();
+    expect(result).toMatchObject({ status: "succeeded", mutationOutcome: "applied" });
+    expect(await page.locator("button").getAttribute("data-count")).toBe("1");
   });
 
   it("derives an idempotent transaction identity for a consumer operation", async () => {
