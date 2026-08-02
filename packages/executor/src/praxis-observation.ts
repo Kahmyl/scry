@@ -151,7 +151,7 @@ export class PraxisObservationCache {
     cache.set(key, { key, snapshot });
     while (cache.size > MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
   }
-  static key(input: { scope: unknown; privacyState: string; providers: readonly string[]; epoch: number }) {
+  static key(input: { scope: unknown; privacyState: string; providers: readonly string[]; epoch: number; policyVersion?:number;adapterVersion?:string;viewport?:{width:number;height:number}|null }) {
     return createHash("sha256").update(stable(input)).digest("hex");
   }
 }

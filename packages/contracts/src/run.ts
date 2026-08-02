@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { praxisRunObservationSchema } from "./praxis.js";
 
 export const runStateSchema = z.enum([
   "queued",
@@ -253,6 +254,7 @@ export const runObservationSchema = z.object({
   })),
   artifactTimeline: artifactTimelineSchema,
   privacy: z.object({ intervals: z.array(z.record(z.string(), z.unknown())), operations: z.array(z.record(z.string(), z.unknown())), credentialIncidents: z.array(z.record(z.string(), z.unknown())) }),
+  praxis: praxisRunObservationSchema.default({ contractVersion: 1, runtimeVersions: [], status: "complete", transactions: [], findings: [] }),
   failure: z.object({ provenance: z.enum(["product", "plan", "policy", "infrastructure", "privacy", "executor"]), code: z.string(), message: z.string().optional(), stepId: z.string().optional(), channel: z.string().optional() }).nullish(),
   sections: z.object({ attempts: runObservationSectionStatusSchema, steps: runObservationSectionStatusSchema, events: runObservationSectionStatusSchema, artifacts: runObservationSectionStatusSchema, timeline: runObservationSectionStatusSchema }),
   integrity: z.object({ status: z.enum(["complete", "partial", "failed"]), issues: z.array(z.object({ code: z.string(), message: z.string() })) }),

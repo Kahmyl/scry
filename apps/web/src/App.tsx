@@ -204,7 +204,7 @@ export function App({
           ) : runId ? (
             <ReportView runId={runId} onBack={() => navigate(viewPaths.runs)} onOpenReport={(id) => navigate(`/dashboard/runs/${id}`)} />
           ) : missionId && missionFlowsMatch ? (
-            <Flows projectId={projectId} scopedMissionId={missionId} onBack={()=>navigate(`/dashboard/missions/${missionId}`)} onRunStarted={(id) => navigate(`/dashboard/runs/${id}`)} onNavigateMissions={() => navigate(viewPaths.missions)} />
+            <Flows projectId={projectId} scopedMissionId={missionId} onBack={()=>navigate(`/dashboard/missions/${missionId}`)} />
           ) : missionId ? (
             <MissionDetailPage missionId={missionId} onBack={()=>navigate(viewPaths.missions)} onOpenFlows={()=>navigate(`/dashboard/missions/${missionId}/flows`)} onOpenRun={(id)=>navigate(`/dashboard/runs/${id}`)} onOpenReport={(id)=>navigate(`/dashboard/reports/${id}`)}/>
           ) : view === "missions" ? (
@@ -433,10 +433,10 @@ function Topbar({
 }
 
 function Missions({projectId,onOpen}:{projectId:string;onOpen:(id:string)=>void}){
-  const [missions,setMissions]=useState<MissionSummary[]>([]);const [open,setOpen]=useState(false);const [loading,setLoading]=useState(true);const [error,setError]=useState("");
+  const [missions,setMissions]=useState<MissionSummary[]>([]);const [loading,setLoading]=useState(true);const [error,setError]=useState("");
   const load=useCallback(()=>{setLoading(true);void api<MissionSummary[]>(`/projects/${projectId}/missions`).then(setMissions).catch((e)=>setError(message(e))).finally(()=>setLoading(false));},[projectId]);
   useEffect(load,[load]);if(loading)return <PageSkeleton/>;
-  return <><PageTitle eyebrow="MISSION CONTROL" title="Missions" copy="Every instruction, objective, execution, accepted result, and next action in one durable journey." action={<button className="primary-button" onClick={()=>setOpen(true)}><Plus size={16}/> New Mission</button>}/>{error&&<div className="form-error page-form-error">{error}</div>}<div className="spec-grid mission-grid">{missions.map(m=>{const total=m.objectiveCount||0;const done=m.terminalObjectiveCount||0;return <button className="spec-card mission-card" key={m.id} onClick={()=>onOpen(m.id)}><div className="spec-top"><div className="spec-icon"><Eye size={19}/></div><span className={m.status==="completed"?"ready-tag":"draft-tag"}>{m.status.replace("_"," ")}</span></div><h3>{m.title}</h3><p>{m.originalInstruction}</p><div className="mission-progress"><span style={{width:`${total?Math.round(done/total*100):0}%`}}/></div><div className="spec-facts"><span><CheckCircle2 size={14}/>{done} of {total} objectives</span><span><FileText size={14}/>{m.acceptedEvidenceCount} evidence</span></div><div className="spec-footer"><span>{m.resumePointer?.explanation??m.lastMeaningfulActivity??"Ready for planning"}</span><ArrowRight size={16}/></div></button>})}{!missions.length&&<div className="panel empty-large"><EmptyBlock icon={<Eye/>} title="Start the first Mission" copy="Capture the instruction first, then organize its Flows and Runs into objectives."/></div>}</div>{open&&<CreateMissionDialog projectId={projectId} onClose={()=>setOpen(false)} onCreated={(id)=>{setOpen(false);load();onOpen(id);}}/>}</>;
+  return <><PageTitle eyebrow="MISSION OBSERVATION" title="Missions" copy="Inspect instructions, objectives, executions, accepted results, and next actions. Use MCP to author or orchestrate Mission work."/>{error&&<div className="form-error page-form-error">{error}</div>}<div className="spec-grid mission-grid">{missions.map(m=>{const total=m.objectiveCount||0;const done=m.terminalObjectiveCount||0;return <button className="spec-card mission-card" key={m.id} onClick={()=>onOpen(m.id)}><div className="spec-top"><div className="spec-icon"><Eye size={19}/></div><span className={m.status==="completed"?"ready-tag":"draft-tag"}>{m.status.replace("_"," ")}</span></div><h3>{m.title}</h3><p>{m.originalInstruction}</p><div className="mission-progress"><span style={{width:`${total?Math.round(done/total*100):0}%`}}/></div><div className="spec-facts"><span><CheckCircle2 size={14}/>{done} of {total} objectives</span><span><FileText size={14}/>{m.acceptedEvidenceCount} evidence</span></div><div className="spec-footer"><span>{m.resumePointer?.explanation??m.lastMeaningfulActivity??"No pending action"}</span><ArrowRight size={16}/></div></button>})}{!missions.length&&<div className="panel empty-large"><EmptyBlock icon={<Eye/>} title="No Missions yet" copy="Use the Scry MCP surface to create and orchestrate the first Mission."/></div>}</div></>;
 }
 
 function CreateMissionDialog({projectId,onClose,onCreated}:{projectId:string;onClose:()=>void;onCreated:(id:string)=>void}){
@@ -579,34 +579,34 @@ function Overview({
         <PageTitle
           eyebrow="PROJECT OVERVIEW"
           title="Dashboard"
-          copy="Start a Mission to organize the objectives, Flows, Runs, and evidence for one piece of work."
+          copy="This dashboard observes work authored and orchestrated through the Scry MCP surface."
         />
         <section className="panel onboarding-panel">
           <div className="onboarding-intro">
             <div className="onboarding-orbit"><Eye size={28} /></div>
             <div>
               <span className="eyebrow lime">GETTING STARTED</span>
-              <h2>Create the journey you want to test</h2>
-              <p>Add its destinations in the order they are needed. Every URL must contribute to the same connected user journey.</p>
+              <h2>Connect an MCP agent to begin</h2>
+              <p>The agent authors Missions, objectives, Flows, and Runs. Return here to inspect evidence, reports, approvals, and safety state.</p>
             </div>
-            <button className="primary-button onboarding-primary" onClick={() => onNavigate("missions")}>
-              Start Mission <ArrowRight size={16} />
+            <button className="primary-button onboarding-primary" onClick={() => onNavigate("integrations")}>
+              MCP setup <ArrowRight size={16} />
             </button>
           </div>
           <div className="setup-journey">
-            <button className="current" onClick={() => onNavigate("missions")}>
+            <button className="current" onClick={() => onNavigate("integrations")}>
               <span>1</span>
-              <div><strong>Start a Mission</strong><small>Capture the instruction and its first objective.</small></div>
+              <div><strong>Connect MCP</strong><small>Give an intelligent client controlled access to Scry.</small></div>
               <ArrowRight size={16} />
             </button>
-            <button onClick={() => onNavigate("missions")}>
+            <button disabled>
               <span>2</span>
-              <div><strong>Build the Sequence</strong><small>Add related destinations in the order they are visited.</small></div>
+              <div><strong>Author with the agent</strong><small>Create Missions, objectives, and browser journeys through MCP.</small></div>
               <ArrowRight size={16} />
             </button>
             <button disabled>
               <span>3</span>
-              <div><strong>Run and review</strong><small>Execute in Chrome and inspect durable evidence.</small></div>
+              <div><strong>Observe and approve</strong><small>Inspect durable evidence and complete required human ceremonies here.</small></div>
               <ArrowRight size={16} />
             </button>
           </div>
@@ -648,7 +648,7 @@ function Overview({
               ))}
             </div>
           ) : (
-            <EmptyBlock icon={<Activity />} title="No runs yet" copy="Create a Flow and launch its first controlled browser journey." />
+            <EmptyBlock icon={<Activity />} title="No runs yet" copy="Runs authored through MCP will appear here with their durable evidence." />
           )}
         </div>
         <div className="panel">
@@ -661,7 +661,7 @@ function Overview({
                 {mission.status === "completed" ? <Check size={15} /> : <Clock3 size={15} />}
               </div>
             ))}
-            {!missions.length && <EmptyBlock icon={<Eye />} title="No Missions yet" copy="Start a Mission to organize objectives, Flows, Runs, and evidence." />}
+            {!missions.length && <EmptyBlock icon={<Eye />} title="No Missions yet" copy="Missions authored through MCP will appear here." />}
           </div>
         </div>
       </section>
@@ -669,40 +669,27 @@ function Overview({
   );
 }
 
-function Flows({ projectId, scopedMissionId, onBack, onRunStarted, onNavigateMissions }: { projectId: string; scopedMissionId: string; onBack: () => void; onRunStarted: (id: string) => void; onNavigateMissions: () => void }) {
+function Flows({ projectId, scopedMissionId, onBack }: { projectId: string; scopedMissionId: string; onBack: () => void }) {
   const [specs, setSpecs] = useState<Flow[]>([]);
-  const [environments, setEnvironments] = useState<Environment[]>([]);
-  const [credentials, setCredentials] = useState<Credential[]>([]);
-  const [dialog, setDialog] = useState<Flow | "new" | null>(null);
-  const [refresh, setRefresh] = useState(0);
-  const [starting, setStarting] = useState("");
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [missions,setMissions]=useState<MissionSummary[]>([]);
-  const [missionId,setMissionId]=useState(scopedMissionId);
-  const [objectiveId,setObjectiveId]=useState("");
 
   useEffect(() => {
     let active = true;
     void Promise.all([
       api<Flow[]>(`/projects/${projectId}/flows?visibility=all`),
-      api<Environment[]>(`/projects/${projectId}/environments`),
-      api<Credential[]>(`/projects/${projectId}/credentials`),
       api<MissionSummary[]>(`/projects/${projectId}/missions`),
-    ]).then(([s, e, c,m]) => {
+    ]).then(([s,m]) => {
       if (!active) return;
       setSpecs(Array.isArray(s) ? s : []);
-      setEnvironments(Array.isArray(e) ? e : []);
-      setCredentials(Array.isArray(c) ? c : []);
-      setMissions(m);setMissionId(scopedMissionId);
+      setMissions(m);
     }).catch((cause) => {
       if (active) setError(message(cause));
     });
     return () => { active = false; };
-  }, [projectId, refresh, scopedMissionId]);
-  useEffect(()=>{if(!missionId){setObjectiveId("");return;}void api<MissionDetail>(`/missions/${missionId}`).then(value=>setObjectiveId(value.objectives[0]?.id??""));},[missionId,refresh]);
-  const getContext=async(flow?:Flow)=>{const link=flow?.missionLinks?.[0];const contextMissionId=link?.missionId??missionId;const contextObjectiveId=link?.objectiveId??objectiveId;if(!contextMissionId||!contextObjectiveId)throw new Error("Start a Mission before creating or running a Flow.");const session=await post<{agentSessionId:string}>(`/missions/${contextMissionId}/agent-sessions`,{provider:"human",instructionSnapshot:"Dashboard Flow operation",idempotencyKey:`web-session-${crypto.randomUUID()}`});return{missionId:contextMissionId,objectiveId:contextObjectiveId,agentSessionId:session.agentSessionId};};
+  }, [projectId, scopedMissionId]);
 
   const mission=missions.find(item=>item.id===scopedMissionId);
   const missionSpecs=specs.filter(spec=>spec.missionLinks?.some(link=>link.missionId===scopedMissionId));
@@ -718,46 +705,19 @@ function Flows({ projectId, scopedMissionId, onBack, onRunStarted, onNavigateMis
   useEffect(() => setPage(1), [projectId, query]);
   useEffect(() => setPage((current) => Math.min(current, pageCount)), [pageCount]);
 
-  const runFlow = async (flow: Flow) => {
-    const environment =
-      environments.find((item) => item.name === `flow:${flow.id}`) ??
-      environments.find((item) => !item.name.startsWith("flow:"));
-    if (!environment || !flow.latestRevisionId) return;
-    setStarting(flow.id);
-    setError("");
-    try {
-      const context=await getContext(flow);
-      const run = await post<{ runId: string }>(`/projects/${projectId}/runs`, {
-        ...context,role:"candidate",
-        environmentId: environment.id,
-        flowRevisionId: flow.latestRevisionId,
-        browser: "chromium",
-        viewport: { width: 1280, height: 720 },
-        seed: 1,
-        idempotencyKey: `web-run-${crypto.randomUUID()}`,
-      });
-      onRunStarted(run.runId);
-    } catch (cause) {
-      setError(message(cause));
-    } finally {
-      setStarting("");
-    }
-  };
-
   return (
     <>
       <button className="back-button mission-back" onClick={onBack}><ChevronLeft size={15}/> Back to Mission</button>
       <PageTitle
         eyebrow="MISSION FLOWS"
         title={mission?.title??"Flows"}
-        copy="The browser journeys, ordered Sequences, and expected outcomes used by this Mission."
-        action={<button className="primary-button" onClick={() => missions.length ? setDialog("new") : onNavigateMissions()}><Plus size={16} /> {missions.length ? "New Flow" : "Start Mission"}</button>}
+        copy="Inspect the browser journeys, ordered Sequences, and expected outcomes used by this Mission. Use MCP to author, revise, probe, publish, or run Flows."
       />
       <div className="toolbar">
         <div className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search Flows…" /></div>
         <div className="toolbar-meta">{query ? `${visibleSpecs.length} of ` : ""}{missionSpecs.length} in this Mission</div>
       </div>
-      {!missions.length && <div className="flow-context-empty"><Eye size={17}/><div><strong>Start with a Mission</strong><span>Flows are created and executed in the context of a Mission objective.</span></div><button onClick={onNavigateMissions}>Go to Missions <ArrowRight size={14}/></button></div>}
+      {!missions.length && <div className="flow-context-empty"><Eye size={17}/><div><strong>No Mission context</strong><span>Mission and Flow authoring is available through MCP.</span></div></div>}
       {error && <div className="form-error page-form-error"><AlertTriangle size={15} /> {error}</div>}
       <div className="spec-grid">
         {pagedSpecs.map((spec) => (
@@ -778,44 +738,17 @@ function Flows({ projectId, scopedMissionId, onBack, onRunStarted, onNavigateMis
             </div>
             <div className="spec-footer spec-footer-actions">
               <span>{spec.latestContent?.expectedOutcomes?.length ?? 0} proof checks</span>
-              <div>
-                <button className="flow-edit-button" onClick={() => setDialog(spec)} title="Edit Flow">
-                  <Pencil size={14} /> Edit
-                </button>
-                <button
-                  className="flow-run-button"
-                  onClick={() => void runFlow(spec)}
-                  disabled={!spec.latestRevisionId || !environmentFor(spec, environments) || !!starting}
-                  title={!environmentFor(spec, environments) ? "This Flow needs a valid Sequence" : !spec.latestRevisionId ? "This Flow needs an executable Sequence" : "Run Flow"}
-                >
-                  {starting === spec.id ? <LoaderCircle className="spin" size={14} /> : <Play size={14} />} Run
-                </button>
-              </div>
+              <span className="ready-tag">Observation only</span>
             </div>
           </article>
         ))}
         {!visibleSpecs.length && (
           <div className="panel empty-large">
-            <EmptyBlock icon={<FileCode2 />} title={missionSpecs.length ? "No matching Flows" : "Build this Mission’s first Flow"} copy={missionSpecs.length ? "Try a different Flow name or objective." : "Describe a journey for this Mission, add its Sequence, and define the expected behavior."} />
+            <EmptyBlock icon={<FileCode2 />} title={missionSpecs.length ? "No matching Flows" : "No Flows for this Mission"} copy={missionSpecs.length ? "Try a different Flow name or objective." : "Flows authored through MCP will appear here for inspection."} />
           </div>
         )}
       </div>
       <Pagination page={currentPage} pageSize={FLOW_PAGE_SIZE} total={visibleSpecs.length} itemName="Flows" onChange={setPage} />
-      {dialog && (
-        <FlowDialog
-          projectId={projectId}
-          flow={dialog === "new" ? undefined : dialog}
-          environment={dialog === "new" ? undefined : environmentFor(dialog, environments)}
-          credentials={credentials}
-          getContext={getContext}
-          onCredentialCreated={(credential) => setCredentials((items) => [...items, credential].sort((a, b) => a.name.localeCompare(b.name)))}
-          onClose={() => setDialog(null)}
-          onCreated={() => {
-            setDialog(null);
-            setRefresh((value) => value + 1);
-          }}
-        />
-      )}
     </>
   );
 }
@@ -977,17 +910,12 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
     ? new Date(currentAttempt.completedAt).getTime() - new Date(currentAttempt.startedAt).getTime()
     : undefined;
 
-  const mutate = async (kind: "rerun" | "cancel") => {
-    setBusy(kind);
+  const cancelRun = async () => {
+    setBusy("cancel");
     setError("");
     try {
-      if (kind === "rerun") {
-        const next = await post<{ id: string }>(`/runs/${runId}/rerun`);
-        onOpenReport(next.id);
-      } else {
-        await post(`/runs/${runId}/cancel`);
-        load();
-      }
+      await post(`/runs/${runId}/cancel`);
+      load();
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -1007,21 +935,31 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
         </div>
         <div className="report-actions">
           {!terminalStates.includes(run.state) && (
-            <button className="secondary-button danger" onClick={() => void mutate("cancel")} disabled={!!busy}>
+            <button className="secondary-button danger" onClick={() => void cancelRun()} disabled={!!busy}>
               <Square size={14} /> Cancel
             </button>
           )}
-          <button
-            className="primary-button"
-            onClick={() => void mutate("rerun")}
-            disabled={!!busy || !terminalStates.includes(run.state)}
-            title="Creates a new immutable run. A successful rerun resolves earlier failures in this rerun chain."
-          >
-            {busy === "rerun" ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />} Rerun exact plan
-          </button>
         </div>
       </section>
       {error && <div className="global-error"><AlertTriangle size={16} /> {error}</div>}
+      <section className="panel">
+        <PanelHeader title="Praxis interactions" kicker={`${report.praxis.transactions.length} TRANSACTIONS · ${report.praxis.findings.length} FINDINGS`} />
+        <div className="diagnostics">
+          {report.praxis.transactions.map((transaction) => <div key={transaction.transactionId}>
+            <Activity size={15} />
+            <div>
+              <strong>{transaction.operationId} · {transaction.result.status}</strong>
+              <span>{transaction.result.report.summary} · mutation {transaction.result.mutationOutcome} · {Math.round(transaction.result.timing.totalMs)} ms</span>
+              {transaction.result.mutationOutcome === "unknown" && <code>Do not retry without reconciliation</code>}
+            </div>
+          </div>)}
+          {report.praxis.findings.map(({ id, finding }) => <div key={id}>
+            <AlertTriangle size={15} />
+            <div><strong>{finding.code} · {finding.severity}</strong><span>{finding.remediation}</span></div>
+          </div>)}
+          {!report.praxis.transactions.length && !report.praxis.findings.length && <div className="clean-signal"><Eye size={20}/><strong>{report.praxis.status === "complete" ? "No Praxis records" : "Praxis records unavailable"}</strong><span>Legacy runs remain fully observable through their existing events and diagnostics.</span></div>}
+        </div>
+      </section>
       {report.integrity.status === "failed" && (
         <section className="failure-summary">
           <div className="failure-summary-icon"><AlertTriangle size={22} /></div>
@@ -2408,20 +2346,17 @@ function MissionDetailPage({missionId,onBack,onOpenFlows,onOpenRun,onOpenReport}
   const[activities,setActivities]=useState<Array<{id:string;type:string;summary:string;occurredAt:string;technical:boolean}>>([]);
   const[technical,setTechnical]=useState(false);
   const[error,setError]=useState("");
-  const[editing,setEditing]=useState(false);
   const[authoringOpen,setAuthoringOpen]=useState(false);
-  const[busy,setBusy]=useState(false);
   const load=useCallback(()=>{void Promise.all([api<MissionDetail>(`/missions/${missionId}`),api<typeof activities>(`/missions/${missionId}/activities?technical=${technical}`)]).then(([mission,nextActivities])=>{setData(mission);setActivities(nextActivities);}).catch(cause=>setError(message(cause)));},[missionId,technical]);
   useEffect(load,[load]);
   if(!data)return <PageSkeleton/>;
   const statusLabel=data.status.replaceAll("_"," ");
   const statusTone=data.status==="completed"?"success":["failed","blocked"].includes(data.status)?"danger":"active";
-  const mutate=async(action:"edit"|"cancel",values?:{title:string;originalInstruction:string})=>{setBusy(true);setError("");try{const session=await post<{agentSessionId:string}>(`/missions/${missionId}/agent-sessions`,{provider:"human",instructionSnapshot:action==="edit"?"Edit Mission definition":"Close abandoned Mission",idempotencyKey:`web-mission-${action}-${crypto.randomUUID()}`});if(action==="edit")await patch(`/missions/${missionId}`,{missionId,agentSessionId:session.agentSessionId,...values});else await post(`/missions/${missionId}/cancel`,{missionId,agentSessionId:session.agentSessionId,explanation:"Closed explicitly from Mission detail."});await post(`/agent-sessions/${session.agentSessionId}/end`,{status:"completed"});setEditing(false);load();}catch(cause){setError(message(cause));}finally{setBusy(false);}};
   return <div className="mission-detail">
     <button className="back-button mission-back" onClick={onBack}><ChevronLeft size={15}/> Back to Missions</button>
     <section className={`mission-hero mission-hero-${statusTone}`}>
       <div className="mission-hero-copy"><div className="mission-hero-meta"><span className={`mission-status mission-status-${statusTone}`}>{statusLabel}</span><span>{data.terminalObjectiveCount} of {data.objectiveCount} objectives resolved</span></div><h1>{data.title}</h1><p>{data.originalInstruction}</p></div>
-      <div className="page-title-actions"><button className="secondary-button" onClick={()=>setEditing(true)}><Pencil size={15}/> Edit</button><button className="secondary-button" onClick={onOpenFlows}><FileCode2 size={15}/> Flows ({data.flows.length})</button>{data.resumePointer&&<button className="primary-button" onClick={()=>data.resumePointer?.runId?onOpenRun(data.resumePointer.runId):undefined}>Continue Mission <ArrowRight size={15}/></button>}{data.latestReportId&&<button className="secondary-button" onClick={()=>onOpenReport(data.latestReportId!)}>View report</button>}{!["completed","cancelled"].includes(data.status)&&<button className="secondary-button danger" disabled={busy} onClick={()=>window.confirm("Close this Mission? Its history and evidence will be preserved.")&&void mutate("cancel")}>Close Mission</button>}</div>
+      <div className="page-title-actions"><button className="secondary-button" onClick={onOpenFlows}><FileCode2 size={15}/> Flows ({data.flows.length})</button>{data.resumePointer?.runId&&<button className="secondary-button" onClick={()=>onOpenRun(data.resumePointer!.runId!)}>Inspect current Run <ArrowRight size={15}/></button>}{data.latestReportId&&<button className="secondary-button" onClick={()=>onOpenReport(data.latestReportId!)}>View report</button>}</div>
       <div className="mission-summary-strip"><div><span>Progress</span><strong>{data.terminalObjectiveCount}/{data.objectiveCount}</strong></div><div><span>Accepted evidence</span><strong>{data.acceptedEvidenceCount}</strong></div><div className="mission-next-action"><span>Next action</span><strong>{data.resumePointer?.explanation??"No pending action"}</strong></div></div>
     </section>
     {error&&<div className="form-error">{error}</div>}
@@ -2431,7 +2366,6 @@ function MissionDetailPage({missionId,onBack,onOpenFlows,onOpenRun,onOpenReport}
     </section>
     {data.authoring.length>0&&<section className="panel mission-authoring-panel"><button className="mission-authoring-toggle" onClick={()=>setAuthoringOpen(value=>!value)} aria-expanded={authoringOpen}><span><Wrench size={17}/><span><small>AUTHORING ACTIVITY</small><strong>{data.authoring.reduce((total,draft)=>total+draft.probes.length,0)} Probe Session{data.authoring.reduce((total,draft)=>total+draft.probes.length,0)===1?"":"s"}</strong></span></span><span>Drafts, calibration, and compilation do not count as failed Runs <ChevronDown className={authoringOpen?"expanded":""} size={18}/></span></button>{authoringOpen&&<div className="mission-authoring-list">{data.authoring.map(draft=><article key={draft.id}><div><strong>{draft.name}</strong><span>Draft v{draft.version} · {draft.state.replaceAll("_"," ")}</span></div><div className="mission-authoring-pills"><span>{draft.probes.length} probes</span><span>{draft.compilations[0]?.status?.replaceAll("_"," ")??"not compiled"}</span></div>{draft.probes.map(probe=><div className="mission-authoring-probe" key={probe.id}><span>{probe.level.replaceAll("_"," ")}</span><strong>{probe.state}</strong><small>{probe.result?.allResolved===true?"All contracts resolved":probe.result?.diagnostics?.length?`${probe.result.diagnostics.length} authoring issue${probe.result.diagnostics.length===1?"":"s"}`:"Awaiting diagnostic result"}</small></div>)}</article>)}</div>}</section>}
     <section className="panel mission-evidence-panel"><PanelHeader title="Accepted evidence" kicker="AUTHORITATIVE SET"/>{data.acceptedEvidence.length?<div className="mission-evidence-list">{data.acceptedEvidence.map(evidence=>{const objective=data.objectives.find(candidate=>candidate.id===evidence.objectiveId);return <button key={evidence.id} onClick={()=>onOpenRun(evidence.runId)}><span><small>{objective?.title??"Objective"}</small><strong>{evidence.conclusion}</strong></span><span>Run {evidence.runId.slice(0,8)} <ArrowRight size={14}/></span></button>})}</div>:<EmptyBlock icon={<ShieldCheck/>} title="No accepted evidence yet" copy="Candidate Runs remain reviewable and do not become Mission conclusions until explicitly accepted."/>}</section>
-    {editing&&<EditMissionDialog mission={data} busy={busy} onClose={()=>setEditing(false)} onSave={values=>void mutate("edit",values)}/>}
   </div>;
 }
 
