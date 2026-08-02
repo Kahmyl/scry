@@ -2,11 +2,16 @@ import type { AcquisitionIntent, ExtractionDiagnostic, ProtectedTransaction } fr
 import type { Locator, Page } from "playwright";
 import { armExpectedEffect, clickGroundedTarget, GroundingError, resolveTarget, resolveTargetLocator, verifyExpectedEffect } from "./grounding.js";
 import { acquireProtectedVisualText } from "./visual-grounding.js";
+import { requirePraxisSuccess } from "./praxis-consumer.js";
 
 type CandidateState = ExtractionDiagnostic & { method?: AcquisitionIntent["permittedMethods"][number] };
 
-export async function executeProtectedReveal(page: Page, operation: ProtectedTransaction) {
+export async function executeProtectedReveal(page: Page, operation: ProtectedTransaction, allowedOrigins: string[], signal: AbortSignal = new AbortController().signal) {
   const action = operation.mutation.action;
+  if (action.target && (action.type === "click" || approvedKey(action.key))) {
+    await requirePraxisSuccess({ page, intent: action.target, operation: action.type === "click" ? { type: "activate" } : { type: "press_key", key: action.key }, expectedEffect: action.expectedEffect, context: { stepId: operation.operationId, channel: "protected", ordinal: 0, allowedOrigins, timeoutMs: action.timeoutMs ?? 10_000, privacy: { state: "protected", allowedChannels: ["public_dom","accessibility"], suppressedChannels: ["visual","ocr"] } }, signal });
+    return;
+  }
   const beforeUrl = page.url();
   const expectedEffect = armExpectedEffect(page, action.expectedEffect, action.timeoutMs);
   if (action.type === "click") await clickGroundedTarget(page, action.target, timeout(action.timeoutMs));
@@ -14,6 +19,7 @@ export async function executeProtectedReveal(page: Page, operation: ProtectedTra
   else await page.keyboard.press(action.key);
   await verifyExpectedEffect(page, action.expectedEffect, beforeUrl, action.timeoutMs, expectedEffect);
 }
+function approvedKey(key: string): key is "Enter"|"Space"|"Escape"|"Tab"|"ArrowUp"|"ArrowDown"|"ArrowLeft"|"ArrowRight" { return ["Enter","Space","Escape","Tab","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(key); }
 
 export async function acquireValue(page: Page, acquisition: AcquisitionIntent, timeoutMs: number) {
   const deadline = Date.now() + timeoutMs;

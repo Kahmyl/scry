@@ -32,6 +32,7 @@ import {
 import { availableArtifact, ensureOutputDirectories, writeJson } from "./artifacts.js";
 import { playwrightBrowserChannel, visualRedactionInitScript } from "./browser-runtime-artifacts.js";
 import { armExpectedEffect, checkGroundedTarget, clickGroundedTarget, fillGroundedTarget, registerGroundingHistoryProvider, registerGroundingObserver, resolveTargetLocator, selectGroundedTarget, verifyExpectedEffect } from "./grounding.js";
+import { requirePraxisSuccess, type PraxisConsumerContext } from "./praxis-consumer.js";
 import { RecordingCoordinator } from "./recording-coordinator.js";
 import { PrivacyGate, type PrivacyCollector } from "./privacy-gate.js";
 import { capturePublicGeneratedValue } from "./public-value-capture.js";
@@ -309,7 +310,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               calibrationBoundaryReached = true;
             },
             verifyAssertions: async (targetPage, assertions) => {
-              for (const assertion of assertions) await executeAssertion(targetPage, assertion, options.plan.allowedOrigins[0]!);
+              for (const [assertionIndex, assertion] of assertions.entries()) await executeAssertion(targetPage, assertion, options.plan.allowedOrigins[0]!, { runId, attemptId, stepId: step.id, channel: "assertion", ordinal: assertionIndex, allowedOrigins: options.plan.allowedOrigins, timeoutMs: assertion.timeoutMs ?? 10_000 }, timeoutController.signal);
             },
             reconcile: async () => "unknown",
             ...(options.recordContextProvenance ? { onContextProvenance: options.recordContextProvenance } : {}),
@@ -342,6 +343,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             capturedValues,
             privacyGate,
             emit,
+            { runId, attemptId, stepId: step.id, channel: "action", ordinal: index, allowedOrigins: options.plan.allowedOrigins, timeoutMs: "timeoutMs" in step.action ? step.action.timeoutMs ?? 10_000 : 10_000 },
           );
         }
         result.action = { status: "passed" };
@@ -439,7 +441,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         for (const [assertionIndex, assertion] of assertions.entries()) {
           const assertionResult = result.assertions[assertionIndex]!;
           try {
-            await executeAssertion(page, assertion, options.plan.allowedOrigins[0]!);
+            await executeAssertion(page, assertion, options.plan.allowedOrigins[0]!, { runId, attemptId, stepId: step.id, channel: "assertion", ordinal: assertionIndex, allowedOrigins: options.plan.allowedOrigins, timeoutMs: assertion.timeoutMs ?? 10_000 }, timeoutController.signal);
             assertionResult.status = "passed";
           } catch (error) {
             assertionResult.status = "failed";
@@ -630,6 +632,7 @@ async function executeAction(
   capturedValues: Map<string, string>,
   privacyGate?: PrivacyGate,
   emitEvent?: (type: RunEvent["type"], payload: Record<string, unknown>) => Promise<void>,
+  praxisContext?: PraxisConsumerContext,
 ) {
   throwIfAborted(signal);
   switch (action.type) {
@@ -652,7 +655,8 @@ async function executeAction(
       await waitForApplicationRender(page, action.timeoutMs);
       return;
     case "click":
-      { const beforeUrl = page.url();
+      { if (praxisEnabled("action") && praxisContext) { await requirePraxisSuccess({ page, intent: action.target, operation: { type: "activate" }, expectedEffect: action.expectedEffect, context: praxisContext, signal }); return; }
+      const beforeUrl = page.url();
       const expectedEffect = armExpectedEffect(page, action.expectedEffect, action.timeoutMs);
       await clickGroundedTarget(page, action.target, optionalTimeout(action.timeoutMs));
       await verifyExpectedEffect(page, action.expectedEffect, beforeUrl, action.timeoutMs, expectedEffect);
@@ -698,24 +702,31 @@ async function executeAction(
           await privacyGate.seal({ code: "KNOWN_SECRET_FILL_FAILED" }).catch(() => undefined);
           throw error;
         }
-      } else await fillGroundedTarget(page, action.target, value, optionalTimeout(action.timeoutMs));
+      } else if (praxisEnabled("action") && praxisContext) await requirePraxisSuccess({ page, intent: action.target, operation: { type: "enter_text", input: { reference: "resolved-input", classification: action.capturedValueRef ? "captured_public" : "public" } }, context: praxisContext, signal, resolveInput: async () => value! });
+      else await fillGroundedTarget(page, action.target, value, optionalTimeout(action.timeoutMs));
       return;
     }
     case "select":
-      await selectGroundedTarget(page, action.target, action.value, optionalTimeout(action.timeoutMs));
+      if (praxisEnabled("action") && praxisContext) await requirePraxisSuccess({ page, intent: action.target, operation: { type: "select_option", input: { reference: "selected-option", classification: "public" } }, context: praxisContext, signal, resolveInput: async () => action.value });
+      else await selectGroundedTarget(page, action.target, action.value, optionalTimeout(action.timeoutMs));
       return;
     case "check":
-      await checkGroundedTarget(page, action.target, action.checked, optionalTimeout(action.timeoutMs));
+      if (praxisEnabled("action") && praxisContext) await requirePraxisSuccess({ page, intent: action.target, operation: { type: "set_checked", checked: action.checked }, context: praxisContext, signal });
+      else await checkGroundedTarget(page, action.target, action.checked, optionalTimeout(action.timeoutMs));
       return;
     case "press":
-      if (action.target) {
+      if (action.target && praxisEnabled("action") && praxisContext && approvedKey(action.key)) {
+        await requirePraxisSuccess({ page, intent: action.target, operation: { type: "press_key", key: action.key }, context: praxisContext, signal });
+      } else if (action.target) {
         await (await resolveTargetLocator(page, action.target)).press(action.key, optionalTimeout(action.timeoutMs));
       } else {
         await page.keyboard.press(action.key);
       }
       return;
     case "scroll":
-      if (action.target) {
+      if (action.target && praxisEnabled("action") && praxisContext) {
+        await requirePraxisSuccess({ page, intent: action.target, operation: { type: "scroll", direction: action.deltaY >= 0 ? "down" : "up" }, context: praxisContext, signal });
+      } else if (action.target) {
         await (await resolveTargetLocator(page, action.target)).evaluate(
           (element, deltaY) => element.scrollBy(0, deltaY),
           action.deltaY,
@@ -725,6 +736,7 @@ async function executeAction(
       }
       return;
     case "waitFor":
+      if (praxisEnabled("action") && praxisContext) { await requirePraxisSuccess({ page, intent: action.target, operation: { type: "wait_for_state", state: action.state }, context: praxisContext, signal }); return; }
       await (await resolveTargetLocator(page, action.target)).waitFor({
         state: action.state,
         ...optionalTimeout(action.timeoutMs),
@@ -734,6 +746,9 @@ async function executeAction(
       return;
   }
 }
+
+function praxisEnabled(slice: string) { return !new Set((process.env.SCRY_PRAXIS_LEGACY_CONSUMERS ?? "").split(",").map((value) => value.trim()).filter(Boolean)).has(slice); }
+function approvedKey(key: string): key is "Enter"|"Space"|"Escape"|"Tab"|"ArrowUp"|"ArrowDown"|"ArrowLeft"|"ArrowRight" { return ["Enter","Space","Escape","Tab","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(key); }
 
 async function waitForApplicationRender(page: Page, timeoutMs = 10_000) {
   const mountSelector = await page.evaluate(() => {
@@ -775,7 +790,15 @@ async function waitForApplicationRender(page: Page, timeoutMs = 10_000) {
   await page.waitForLoadState("networkidle", { timeout: 2_000 }).catch(() => undefined);
 }
 
-async function executeAssertion(page: Page, assertion: Assertion, baseOrigin: string) {
+async function executeAssertion(page: Page, assertion: Assertion, baseOrigin: string, praxisContext?: PraxisConsumerContext, signal: AbortSignal = new AbortController().signal) {
+  if (praxisEnabled("assertion") && praxisContext && assertion.type !== "url" && !(assertion.type === "text" && !assertion.exact)) {
+    const expectedEffect = assertion.type === "visible" ? { type: "visibility_change" as const, target: assertion.target, visible: true }
+      : assertion.type === "hidden" ? { type: "visibility_change" as const, target: assertion.target, visible: false }
+      : assertion.type === "enabled" ? { type: "state_change" as const, target: assertion.target, enabled: true }
+      : { type: "value_change" as const, target: assertion.target, expected: assertion.expected };
+    await requirePraxisSuccess({ page, intent: assertion.target, operation: { type: "inspect" }, expectedEffect, context: praxisContext, signal });
+    return;
+  }
   switch (assertion.type) {
     case "visible":
       await (await resolveTargetLocator(page, assertion.target)).waitFor({

@@ -8,6 +8,7 @@ import { extractProtectedValue, executeProtectedReveal } from "./protected-extra
 import { resolveTarget, resolveTargetLocator } from "./grounding.js";
 import { CalibrationRequiredError, protectedTransactionDigest, transactionInputDigest, transactionInputSchemaDigest } from "./calibration.js";
 import type { PrivacyGate } from "./privacy-gate.js";
+import { requirePraxisSuccess } from "./praxis-consumer.js";
 
 export type MutationLedgerState = "planned" | "dispatch_authorized" | "dispatching" | "dispatched" | "acknowledged" | "reconciled_succeeded" | "reconciled_not_applied" | "outcome_unknown";
 export type ProtectedTransactionStore = {
@@ -129,7 +130,7 @@ export class ProtectedTransactionKernel {
       capsule.provenance.transition("tainted");
       await d.onContextProvenance?.({ contextId: capsule.provenance.contextId, provenance: "tainted", operationId: transaction.operationId });
       await d.store.record({ operationId: transaction.operationId, fencingToken: claim.fencingToken, phase: "mutation_dispatching" });
-      await abortable(executeProtectedReveal(capsule.page, transaction), d.signal);
+      await abortable(executeProtectedReveal(capsule.page, transaction, d.allowedOrigins, d.signal), d.signal);
       if (!(await d.store.transition({ operationId: transaction.operationId, fencingToken: claim.fencingToken, expected: "dispatching", next: "dispatched" }))) throw new PhaseError("MUTATION_LEDGER_CONFLICT", "mutation_dispatch", "manual_review");
       await d.store.transition({ operationId: transaction.operationId, fencingToken: claim.fencingToken, expected: "dispatched", next: "acknowledged" });
       facts.mutation.dispatch = "acknowledged";
@@ -279,30 +280,29 @@ async function executePreparation(page: Page, transaction: ProtectedTransaction,
   for (const action of transaction.preparation.actions) {
     try {
     if (action.type === "navigate") { await page.goto(action.url, { waitUntil: "domcontentloaded", ...timeout(action.timeoutMs) }); continue; }
-    if (action.type === "clickNavigation") { await (await resolveTargetLocator(page, action.target)).click(timeout(action.timeoutMs)); continue; }
+    if (action.type === "clickNavigation") { await requirePraxisSuccess({page,intent:action.target,operation:{type:"activate"},context:protectedContext(transaction,action.timeoutMs,dependencies.allowedOrigins),signal:dependencies.signal??new AbortController().signal}); continue; }
     if (action.type === "clickPublicInput") {
       const input = transaction.inputs[action.input];
       if (!input || input.classification !== "public" || typeof input.value !== "string") throw new PhaseError("PUBLIC_NAVIGATION_INPUT_INVALID", "preparation", "safe_to_retry");
       await page.getByText(input.value, { exact: action.exact }).click(timeout(action.timeoutMs));
       continue;
     }
-    if (action.type === "waitFor") { await (await resolveTargetLocator(page, action.target)).waitFor({ state: action.state, ...timeout(action.timeoutMs) }); continue; }
+    if (action.type === "waitFor") { await requirePraxisSuccess({page,intent:action.target,operation:{type:"wait_for_state",state:action.state},context:protectedContext(transaction,action.timeoutMs,dependencies.allowedOrigins),signal:dependencies.signal??new AbortController().signal}); continue; }
     if (action.type === "assertion") { await dependencies.verifyAssertions(page, [action.assertion]); continue; }
     const input = transaction.inputs[action.input];
     if (!input) throw new PhaseError("TRANSACTION_INPUT_MISSING", "preparation", "safe_to_retry");
-    const locator = await resolveTargetLocator(page, action.target);
     if (action.type === "fillKnownSecret") {
       if (input.classification !== "known_secret") throw new PhaseError("TRANSACTION_INPUT_CLASSIFICATION_MISMATCH", "preparation", "do_not_retry");
       const secret = await dependencies.resolveKnownSecret(input.credentialRef);
       dependencies.redactor.add(secret);
-      await locator.fill(secret, timeout(action.timeoutMs));
+      await requirePraxisSuccess({page,intent:action.target,operation:{type:"enter_text",input:{reference:input.credentialRef,classification:"known_secret"}},context:protectedContext(transaction,action.timeoutMs,dependencies.allowedOrigins),signal:dependencies.signal??new AbortController().signal,resolveInput:async()=>secret});
     } else {
       if (input.classification !== "public") throw new PhaseError("TRANSACTION_INPUT_CLASSIFICATION_MISMATCH", "preparation", "do_not_retry");
-      if (action.type === "fillPublicInput") await locator.fill(String(input.value), timeout(action.timeoutMs));
-      if (action.type === "selectPublicInput") await locator.selectOption(String(input.value), timeout(action.timeoutMs));
+      if (action.type === "fillPublicInput") await requirePraxisSuccess({page,intent:action.target,operation:{type:"enter_text",input:{reference:action.input,classification:"public"}},context:protectedContext(transaction,action.timeoutMs,dependencies.allowedOrigins),signal:dependencies.signal??new AbortController().signal,resolveInput:async()=>String(input.value)});
+      if (action.type === "selectPublicInput") await requirePraxisSuccess({page,intent:action.target,operation:{type:"select_option",input:{reference:action.input,classification:"public"}},context:protectedContext(transaction,action.timeoutMs,dependencies.allowedOrigins),signal:dependencies.signal??new AbortController().signal,resolveInput:async()=>String(input.value)});
       if (action.type === "checkPublicInput") {
         if (typeof input.value !== "boolean") throw new PhaseError("TRANSACTION_INPUT_TYPE_MISMATCH", "preparation", "do_not_retry");
-        if (input.value) await locator.check(timeout(action.timeoutMs)); else await locator.uncheck(timeout(action.timeoutMs));
+        await requirePraxisSuccess({page,intent:action.target,operation:{type:"set_checked",checked:input.value},context:protectedContext(transaction,action.timeoutMs,dependencies.allowedOrigins),signal:dependencies.signal??new AbortController().signal});
       }
     }
     } catch (error) {
@@ -311,6 +311,8 @@ async function executePreparation(page: Page, transaction: ProtectedTransaction,
     }
   }
 }
+
+function protectedContext(transaction:ProtectedTransaction,timeoutMs:number|undefined,allowedOrigins:string[]){return{stepId:transaction.operationId,channel:"protected" as const,ordinal:0,allowedOrigins,timeoutMs:timeoutMs??10_000,privacy:{state:"protected",allowedChannels:["public_dom","accessibility"],suppressedChannels:["visual","ocr"]}};}
 
 async function verifyTransactionAssertions(
   page: Page,
