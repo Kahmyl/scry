@@ -1,4 +1,4 @@
-# Praxis Milestones 0–1 baseline
+# Praxis Milestones 0–3 baseline
 
 ## Status
 
@@ -7,6 +7,8 @@
 - Recorded: 2026-08-02
 - Milestone 0 gate: accepted
 - Milestone 1 internal gate: accepted
+- Milestone 2 internal gate: accepted
+- Milestone 3 internal gate: accepted
 - Milestone 1 external exposure: none
 
 Milestones 0 and 1 establish the accepted baseline and internal transaction skeleton. They do not remove locators, delete acknowledged bypasses, alter production execution, or enforce the final Praxis-only interaction cutoff. Consumer migration and hard enforcement begin in later milestones.
@@ -60,6 +62,19 @@ pnpm typecheck
 - Interaction inventory: 10 modules with discovered low-level operations covered; 15 modules classified in total.
 - API, MCP, persistence, event, dashboard, and database contracts: unchanged by the Praxis skeleton.
 - One full-suite run observed the existing SPA replacement scenario fail under concurrent suite load; the scenario immediately passed 5 of 5 isolated repetitions and the subsequent complete repository gate passed. This is retained as order/load-sensitive test evidence, not concealed by a product behavior change.
+
+## Milestones 2–3 verification evidence
+
+- Unified observation: versioned runtime identity, document epochs, opaque non-serializable handles, bounded sanitized caching, provider metadata, privacy gating, and provider timings are internal to the executor.
+- Unified grounding: native, accessibility, textual, structural, and geometry/visual evidence are extracted behind deterministic providers; scoring policy version 1 preserves the accepted correlation and confidence behavior.
+- Unified interaction: the Milestone 1 seam now uses one typed strategy selector, page mutation lease, dispatcher, exact local-state verifier, and effect verifier. The compatibility adapter contains no direct browser-control operations.
+- Focused Praxis suites: 30 passed across coordinator, observation, runtime, and legacy parity coverage.
+- Executor tests: 230 passed across 20 files.
+- Repository tests: web 15, artifact 3, contracts 29, policy 12, MCP 12, executor 230, and API 48 passed with 2 API tests intentionally skipped.
+- Repository-wide typecheck: passed.
+- Compatibility and latency corpus: 152 passed, 0 failed, 53,316 ms; corpus digest remained `946de43c84fd3f84d46106492b55b4a03dfd12e334e4468e4d6ac5b90fe1c8dc`. The accepted Milestone 0 run was 53,083 ms, a 0.44% difference.
+- Interaction inventory: 11 modules with discovered low-level operations covered; 18 modules classified. New unclassified browser-control owners fail repository verification.
+- API, MCP, persistence, durable events, database, dashboard, protected acquisition, and production consumer routing remain unchanged.
 
 ## Acceptance rule
 

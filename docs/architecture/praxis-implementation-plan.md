@@ -10,6 +10,7 @@
 - **Authoring surface:** MCP is authoritative for Mission and Flow writes
 - **Dashboard surface:** observational, reporting, and explicit human approval only
 - **Primary concern:** reliable, safe, low-latency interaction with standards-compliant, customized, and poorly implemented web applications
+- **Implemented gates:** Milestones 0–3 accepted internally; production consumer migration begins in Milestone 4
 
 ## Executive decision
 
