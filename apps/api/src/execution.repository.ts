@@ -16,13 +16,17 @@ import { encryptCredential } from "./credential.crypto.js";
 export class ExecutionRepository {
   constructor(@Inject(Database) private readonly database: Database) {}
 
-  async heartbeatWorker(workerId: string, releaseId: string, schemaFingerprint: string) {
+  async heartbeatWorker(workerId: string, releaseId: string, schemaFingerprint: string, praxis: { contractVersion: number; runtimeVersion: string; scoringPolicyVersion: number }) {
     await this.database.query(
-      `INSERT INTO worker_heartbeats(worker_id, release_id, schema_fingerprint, heartbeat_at)
-       VALUES ($1, $2, $3, now())
+      `INSERT INTO worker_heartbeats(worker_id, release_id, schema_fingerprint, praxis_contract_version, praxis_runtime_version, praxis_scoring_policy_version, heartbeat_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now())
        ON CONFLICT (worker_id) DO UPDATE SET release_id = EXCLUDED.release_id,
-         schema_fingerprint = EXCLUDED.schema_fingerprint, heartbeat_at = now()`,
-      [workerId, releaseId, schemaFingerprint],
+         schema_fingerprint = EXCLUDED.schema_fingerprint,
+         praxis_contract_version = EXCLUDED.praxis_contract_version,
+         praxis_runtime_version = EXCLUDED.praxis_runtime_version,
+         praxis_scoring_policy_version = EXCLUDED.praxis_scoring_policy_version,
+         heartbeat_at = now()`,
+      [workerId, releaseId, schemaFingerprint, praxis.contractVersion, praxis.runtimeVersion, praxis.scoringPolicyVersion],
     );
   }
 

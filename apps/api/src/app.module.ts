@@ -30,8 +30,6 @@ import { ReleaseAdmissionService } from "./release-admission.service.js";
 import { MissionController } from "./mission.controller.js";
 import { MissionService } from "./mission.service.js";
 import { OrchestrationService } from "./orchestration.service.js";
-import { GroundingController } from "./grounding.controller.js";
-import { GroundingService } from "./grounding.service.js";
 import { AuthoringController } from "./authoring.controller.js";
 import { AuthoringService } from "./authoring.service.js";
 import { ProbeRuntimeRepository } from "./probe-runtime.repository.js";
@@ -48,7 +46,6 @@ import { ProbeRuntimeRepository } from "./probe-runtime.repository.js";
     ArtifactController,
     CalibrationController,
     MissionController,
-    GroundingController,
     AuthoringController,
   ],
   providers: [
@@ -68,7 +65,6 @@ import { ProbeRuntimeRepository } from "./probe-runtime.repository.js";
     ReleaseAdmissionService,
     MissionService,
     OrchestrationService,
-    GroundingService,
     AuthoringService,
     ProbeRuntimeRepository,
     { provide: APP_GUARD, useClass: AuthGuard },

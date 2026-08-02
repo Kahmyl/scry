@@ -53,6 +53,15 @@ describe("ScryApiClient", () => {
     );
   });
 
+  it("fails closed when the API does not advertise the cutoff Praxis versions", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      releaseId: "development", schemaFingerprint: "development-baseline",
+      praxis: { contractVersion: 1, runtimeVersion: "0", scoringPolicyVersion: 1, cutoff: true },
+    }), { status: 200 })));
+    await expect(new ScryApiClient("http://scry.test/api").requireCurrentRelease())
+      .rejects.toThrow("SCRY_PRAXIS_VERSION_MISMATCH");
+  });
+
   it("retrieves authenticated artifacts and uses the public artifact URL", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response("evidence", { status: 200, headers: { "content-type": "text/plain" } }),

@@ -154,8 +154,6 @@ export const runEventSchema = z
       "checkpoint.restored",
       "checkpoint.failed",
       "calibration.boundary_reached",
-      "grounding.resolved",
-      "grounding.rejected",
       "recording.segment_started",
       "recording.segment_stopped",
       "recording.gap_started",

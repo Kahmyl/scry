@@ -32,7 +32,7 @@ export class PraxisGroundedTarget {
   actionPoint() { return this.#grounded.actionPoint; }
   arm(value: Promise<void> | undefined) { this.#armed = value; }
   armed() { return this.#armed; }
-  async legacyRevalidate() { await this.#grounded.revalidate(); }
+  async revalidate() { await this.#grounded.revalidate(); }
   toJSON() { return { handle: this.handle, resolution: this.resolution, strategy: this.strategy, beforeUrl: this.beforeUrl }; }
 }
 
@@ -54,7 +54,7 @@ export class PraxisGroundingEngine {
       drift: grounded.diagnostic.drift,
       strategy: grounded.adapter,
     };
-    const providerTimings = [{ provider: "legacy-unified-grounding", durationMs: performance.now() - started, outcome: "succeeded" as const }];
+    const providerTimings = [{ provider: "praxis-unified-grounding", durationMs: performance.now() - started, outcome: "succeeded" as const }];
     const providerIds = PRAXIS_PROVIDER_CATALOG.map((provider) => `${provider.id}@${provider.version}`);
     const cacheKey = PraxisObservationCache.key({ scope: request.intent.scope, privacyState: request.privacy.state, providers: providerIds, epoch, policyVersion: 1, adapterVersion: grounded.adapter, viewport: this.page.viewportSize() });
     PraxisObservationCache.set(this.page, cacheKey, { ...observationIdentity(this.page, request.intent.scope, request.privacy.state, epoch), controls: [{ runtimeId: fingerprint.digest, fingerprint: fingerprint.digest, capabilitiesDigest: fingerprint.capabilityDigest, evidence: [] }], providerTimings });

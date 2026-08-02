@@ -6,6 +6,7 @@ import { ReleaseAdmissionService } from "../src/release-admission.service.js";
 
 const releaseId = "verification-release";
 const schemaFingerprint = "verification-schema";
+const praxis = { praxisContractVersion: 1, praxisRuntimeVersion: "1", praxisScoringPolicyVersion: 1 };
 
 afterEach(() => {
   delete process.env.SCRY_RELEASE_ID;
@@ -24,12 +25,12 @@ describe("release admission", () => {
     const database = {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [{ schemaFingerprint }] })
-        .mockResolvedValueOnce({ rows: [{ workerId: "current", releaseId, schemaFingerprint }] })
+        .mockResolvedValueOnce({ rows: [{ workerId: "current", releaseId, schemaFingerprint, ...praxis }] })
         .mockResolvedValueOnce({ rows: [{ ready: true,runtimeHash,capabilityManifestHash }] })
         .mockResolvedValueOnce({ rows: [{ schemaFingerprint }] })
         .mockResolvedValueOnce({ rows: [
-          { workerId: "current", releaseId, schemaFingerprint },
-          { workerId: "old", releaseId: "old-release", schemaFingerprint: "old-schema" },
+          { workerId: "current", releaseId, schemaFingerprint, ...praxis },
+          { workerId: "old", releaseId: "old-release", schemaFingerprint: "old-schema", praxisContractVersion: 0, praxisRuntimeVersion: "legacy", praxisScoringPolicyVersion: 0 },
         ] })
         .mockResolvedValueOnce({ rows: [{ ready: true,runtimeHash,capabilityManifestHash }] }),
     };
@@ -54,9 +55,19 @@ describe("release admission", () => {
     configureRelease();
     const database={query:vi.fn()
       .mockResolvedValueOnce({rows:[{schemaFingerprint}]})
-      .mockResolvedValueOnce({rows:[{workerId:"current",releaseId,schemaFingerprint}]})
+      .mockResolvedValueOnce({rows:[{workerId:"current",releaseId,schemaFingerprint,...praxis}]})
       .mockResolvedValueOnce({rows:[{ready:true,runtimeHash:"a".repeat(64),capabilityManifestHash:"b".repeat(64)}]})};
     await expect(new ReleaseAdmissionService(database as never).status()).resolves.toMatchObject({ready:false,browserRuntimeReady:false});
+  });
+
+  it("rejects a worker with a mixed Praxis contract or runtime version", async () => {
+    configureRelease();
+    const { runtimeHash, capabilityManifestHash } = (await import("@scry/executor")).browserObservationRuntimeHealth();
+    const database = { query: vi.fn()
+      .mockResolvedValueOnce({ rows: [{ schemaFingerprint }] })
+      .mockResolvedValueOnce({ rows: [{ workerId: "mixed", releaseId, schemaFingerprint, ...praxis, praxisRuntimeVersion: "0" }] })
+      .mockResolvedValueOnce({ rows: [{ ready: true, runtimeHash, capabilityManifestHash }] }) };
+    await expect(new ReleaseAdmissionService(database as never).status()).resolves.toMatchObject({ ready: false, praxisReady: false, compatibleWorkerCount: 0 });
   });
 
   it("rejects legacy direct Flow publication before opening a transaction", async () => {
