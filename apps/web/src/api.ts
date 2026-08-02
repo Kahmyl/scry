@@ -189,6 +189,33 @@ export type RunState =
   | "infrastructure_error";
 
 export type Report = {
+  praxis: {
+    contractVersion: 1;
+    runtimeVersions: string[];
+    status: "pending" | "complete" | "unavailable" | "failed";
+    transactions: Array<{
+      transactionId: string;
+      operationId: string;
+      stepId?: string | null;
+      runtimeVersion: string;
+      startedAt: string;
+      completedAt?: string | null;
+      result: {
+        status: "succeeded" | "failed" | "inconclusive" | "cancelled";
+        mutationOutcome: "not_started" | "not_applied" | "applied" | "unknown";
+        retry?: "safe" | "unsafe" | "requires_reobservation" | "requires_revision";
+        timing: { totalMs: number; phases: Record<string, number | null> };
+        report: { summary: string; safeActions: string[] };
+      };
+    }>;
+    findings: Array<{
+      id: string;
+      transactionId: string;
+      finding: { code: string; severity: string; confidence: number; remediation: string };
+      artifactRefs: string[];
+      createdAt: string;
+    }>;
+  };
   run: Run & {
     planSnapshot: {
       name: string;
