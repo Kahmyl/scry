@@ -16,5 +16,6 @@ export {
   type ReadinessCondition,
 } from "./plan.js";
 export * from "./policy.js";
+export * from "./praxis.js";
 export * from "./run.js";
 export * from "./validation.js";

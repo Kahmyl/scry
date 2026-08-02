@@ -5,7 +5,7 @@ const capabilitySchema = z.enum([
   "focusable", "pointer_activatable", "keyboard_activatable", "accepts_text", "editable",
   "toggleable", "selects_option", "submittable", "readable_value", "coordinate_action",
 ]);
-const evidenceFamilySchema = z.enum([
+export const evidenceFamilySchema = z.enum([
   "native_control", "accessibility", "textual", "structural", "visual", "historical", "runtime", "effect",
 ]);
 const semanticRoleSchema = z.enum([

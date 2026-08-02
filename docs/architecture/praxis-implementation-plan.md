@@ -1,5 +1,7 @@
 # Praxis implementation plan
 
+> **Governing architecture decision:** This document is the authoritative implementation boundary for Praxis. Changes that introduce another owner for live application perception or interaction require an explicit superseding architecture decision.
+
 ## Status
 
 - **Type:** subsystem correction inside Scry

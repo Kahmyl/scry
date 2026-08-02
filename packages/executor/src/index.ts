@@ -12,4 +12,6 @@ export * from "./probe.js";
 export * from "./grounding.js";
 export * from "./visual-grounding.js";
 export * from "./adapters.js";
+export * from "./praxis-transaction.js";
+export * from "./praxis-legacy-adapter.js";
 export * from "./types.js";

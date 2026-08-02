@@ -366,6 +366,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
                 options.plan.allowedOrigins[0]!,
                 networkRecords,
                 networkActivity.active,
+                stepStarted.getTime(),
               );
               const readinessCompletedAt = new Date();
               result.readiness = {
@@ -1104,10 +1105,11 @@ async function executeReadiness(
   baseOrigin: string,
   networkRecords: Array<Record<string, unknown>>,
   activeRequests: Map<string, { url: string; resourceType: string }>,
+  observationStartedAt: number,
 ) {
   const startedAt = Date.now();
   const execute = (condition: ReadinessCondition) => executeReadinessCondition(
-    page, condition, baseOrigin, readiness.timeoutMs, startedAt, networkRecords, activeRequests,
+    page, condition, baseOrigin, readiness.timeoutMs, startedAt, observationStartedAt, networkRecords, activeRequests,
   );
   if (readiness.mode === "all") {
     await Promise.all(readiness.conditions.map(execute));
@@ -1126,14 +1128,17 @@ async function executeReadinessCondition(
   baseOrigin: string,
   timeoutMs: number,
   startedAt: number,
+  observationStartedAt: number,
   networkRecords: Array<Record<string, unknown>>,
   activeRequests: Map<string, { url: string; resourceType: string }>,
 ) {
   const remaining = () => Math.max(100, timeoutMs - (Date.now() - startedAt));
   switch (condition.type) {
     case "visible":
+      await expectEventually(async () => (await resolveTargetLocator(page, condition.target)).isVisible(), remaining());
+      return;
     case "hidden":
-      await (await resolveTargetLocator(page, condition.target)).waitFor({ state: condition.type, timeout: remaining() });
+      await (await resolveTargetLocator(page, condition.target)).waitFor({ state: "hidden", timeout: remaining() });
       return;
     case "text":
       await expectEventually(async () => {
@@ -1180,7 +1185,7 @@ async function executeReadinessCondition(
         && (!condition.method || record.method === condition.method)
         && Number(record.status) >= condition.status.min
         && Number(record.status) <= condition.status.max
-        && new Date(String(record.occurredAt)).getTime() >= startedAt
+        && new Date(String(record.occurredAt)).getTime() >= observationStartedAt
       ), remaining());
       return;
     case "domStable":
