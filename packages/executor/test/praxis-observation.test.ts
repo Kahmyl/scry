@@ -33,7 +33,7 @@ describe("Praxis observation and grounding foundation", () => {
   it("serializes only opaque handle identity and rejects a stale handle", async () => {
     await page.setContent("<button>Save</button>");
     const epoch = await PraxisDocumentEpoch.current(page);
-    const handle = new PraxisTargetHandle(page, page.locator("button"), epoch);
+    const handle = new PraxisTargetHandle(page, page.mainFrame(), page.locator("button"), epoch);
     expect(JSON.stringify(handle)).not.toContain("locator");
     expect(JSON.stringify(handle)).not.toContain("button");
     await page.locator("body").evaluate((body) => body.append(document.createElement("span")));

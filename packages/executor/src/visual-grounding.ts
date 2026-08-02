@@ -6,7 +6,7 @@ import type { InteractionTargetIntent, VisualAnchor } from "@scry/contracts";
 const eng=createRequire(import.meta.url)("@tesseract.js-data/eng") as {code:string;gzip:boolean;langPath:string};
 type OcrWord={text:string;confidence:number;bbox:{x0:number;y0:number;x1:number;y1:number}};
 let workerPromise:ReturnType<typeof createWorker>|undefined;
-async function worker(){workerPromise??=createWorker(eng.code,OEM.LSTM_ONLY,{langPath:eng.langPath,gzip:eng.gzip});return workerPromise;}
+async function worker(){workerPromise??=createWorker(eng.code,OEM.LSTM_ONLY,{langPath:eng.langPath,gzip:eng.gzip,cacheMethod:"none"});return workerPromise;}
 
 /** Visual sources produce evidence anchors only. They never return an action target. */
 export async function resolveVisualAnchors(page:Page,scope:Locator,intent:InteractionTargetIntent):Promise<VisualAnchor[]>{

@@ -7,7 +7,7 @@ x-app-environment: &app-environment
 
 x-release-environment: &release-environment
   SCRY_RELEASE_ID: "${SCRY_RELEASE_ID:-local-20260802-capability-grounding}"
-  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-0a6037509852bb13d0f05be5a699c7aa0b40124a9ebd73a55c73501ed1e2d155}"
+  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-3768cc9a3e9b5f901f6c888fc1ec3b33600c6382802684248ebdd00d80040ef1}"
 
 x-node-build: &node-build
   context: .

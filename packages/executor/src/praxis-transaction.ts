@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import type {
   PraxisAgentReport, PraxisFailure, PraxisFailureProvenance, PraxisLifecycleEvent, PraxisMutationOutcome,
   PraxisPhase, PraxisQualityFinding, PraxisRequest, PraxisResolution, PraxisResult, PraxisRetryDisposition,
-  PraxisSafeAction, PraxisSuccess, PraxisTiming, PraxisVerification,
+  PraxisAcquisitionOutput, PraxisSafeAction, PraxisSuccess, PraxisTiming, PraxisVerification,
 } from "@scry/contracts";
 import { ExpectedEffectError, GroundingError } from "./grounding.js";
+import { PraxisExecutionEnvelope } from "./praxis-execution-envelope.js";
 
 const linearPhases: PraxisPhase[] = ["created", "observing", "grounding", "resolved", "revalidating", "dispatching", "verifying_local", "verifying_effect", "succeeded"];
 const terminalPhases = new Set<PraxisPhase>(["succeeded", "failed", "cancelled", "inconclusive"]);
@@ -21,15 +22,34 @@ export class PraxisTransactionStateMachine {
   }
 }
 
-export type PraxisAdapterDispatch = { mutationOutcome?: PraxisMutationOutcome };
+export type PraxisAdapterDispatch<TTarget = unknown> = { mutationOutcome?: PraxisMutationOutcome; output?: PraxisAcquisitionOutput; target?: TTarget; resolution?: PraxisResolution; providerTimings?: PraxisTiming["providerTimings"]; escalationLevel?: number };
+export class PraxisDispatchBoundary {
+  #dispatchEntered = false;
+  #mutationStarted = false;
+  constructor(private readonly mutating: boolean) {}
+  enterDispatch() { if (this.#dispatchEntered) throw new Error("PRAXIS_DISPATCH_BOUNDARY_REENTERED"); this.#dispatchEntered = true; }
+  beginMutation() {
+    if (!this.#dispatchEntered) throw new Error("PRAXIS_MUTATION_BEFORE_DISPATCH");
+    if (!this.mutating) throw new Error("PRAXIS_READ_ONLY_MUTATION_REJECTED");
+    if (this.#mutationStarted) throw new Error("PRAXIS_MUTATION_BOUNDARY_REPEATED");
+    this.#mutationStarted = true;
+  }
+  dispatchEntered() { return this.#dispatchEntered; }
+  mutationStarted() { return this.#mutationStarted; }
+  failureOutcome(current: PraxisMutationOutcome): PraxisMutationOutcome {
+    if (this.#mutationStarted) return current === "not_started" || current === "not_applied" ? "unknown" : current;
+    return this.#dispatchEntered && this.mutating ? "not_applied" : "not_started";
+  }
+}
 export interface PraxisTransactionAdapter<TTarget = unknown> {
+  acquire?(request: PraxisRequest, signal: AbortSignal): Promise<() => void>;
   observe(request: PraxisRequest, signal: AbortSignal): Promise<void>;
   ground(request: PraxisRequest, signal: AbortSignal): Promise<{ target: TTarget; resolution: PraxisResolution; providerTimings?: PraxisTiming["providerTimings"]; escalationLevel?: number }>;
-  revalidate(target: TTarget, request: PraxisRequest, signal: AbortSignal): Promise<void>;
+  revalidate(target: TTarget, request: PraxisRequest, signal: AbortSignal): Promise<void | { target: TTarget; resolution: PraxisResolution; providerTimings?: PraxisTiming["providerTimings"]; escalationLevel?: number }>;
   armEffect?(target: TTarget, request: PraxisRequest, signal: AbortSignal): Promise<void>;
-  dispatch(target: TTarget, request: PraxisRequest, signal: AbortSignal): Promise<PraxisAdapterDispatch | void>;
+  dispatch(target: TTarget, request: PraxisRequest, signal: AbortSignal, boundary: PraxisDispatchBoundary): Promise<PraxisAdapterDispatch<TTarget> | void>;
   verifyLocal(target: TTarget, request: PraxisRequest, signal: AbortSignal): Promise<PraxisVerification["local"]>;
-  verifyEffect(target: TTarget, request: PraxisRequest, signal: AbortSignal): Promise<PraxisVerification["effect"]>;
+  verifyEffect(target: TTarget, request: PraxisRequest, signal: AbortSignal, budgetMs: number): Promise<PraxisVerification["effect"]>;
   qualityFindings?(target: TTarget, request: PraxisRequest): Promise<PraxisQualityFinding[]>;
 }
 
@@ -43,37 +63,53 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
   async execute(request: PraxisRequest, signal: AbortSignal): Promise<PraxisResult> {
     const state = new PraxisTransactionStateMachine();
     const started = performance.now();
+    const deadline = started + request.policy.totalTimeoutMs;
     const timeoutController = new AbortController();
     const timeout = setTimeout(() => timeoutController.abort("PRAXIS_TRANSACTION_TIMED_OUT"), request.policy.totalTimeoutMs);
     const operationSignal = AbortSignal.any([signal, timeoutController.signal]);
     const durations = new Map<PraxisPhase, number>();
     let target: TTarget | undefined;
     let resolution: PraxisResolution | undefined;
-    let dispatchStarted = false;
+    const dispatchBoundary = new PraxisDispatchBoundary(mutates(request));
     let mutationOutcome: PraxisMutationOutcome = "not_started";
     let verification: PraxisVerification = { local: "unknown", effect: "unknown", effectType: request.expectedEffect.type };
     let providerTimings: PraxisTiming["providerTimings"] = [];
     let escalationLevel: number | null = null;
+    let output: PraxisAcquisitionOutput | undefined;
+    let release: () => void = () => undefined;
     try {
       await this.event(request, "praxis.transaction_started", "created", {});
+      const queuedAt = performance.now();
+      release = await this.adapter.acquire?.(request, operationSignal) ?? release;
+      durations.set("created", performance.now() - queuedAt);
       await this.stage(state, "observing", durations, request, operationSignal, () => this.adapter.observe(request, operationSignal));
       const grounded = await this.stage(state, "grounding", durations, request, operationSignal, () => this.adapter.ground(request, operationSignal));
       target = grounded.target; resolution = grounded.resolution; providerTimings = grounded.providerTimings ?? []; escalationLevel = grounded.escalationLevel ?? null;
       state.transition("resolved"); await this.event(request, "praxis.phase_changed", "resolved", {});
-      await this.stage(state, "revalidating", durations, request, operationSignal, async () => { await this.adapter.revalidate(target!, request, operationSignal); await this.adapter.armEffect?.(target!, request, operationSignal); });
+      await this.stage(state, "revalidating", durations, request, operationSignal, async () => {
+        const refreshed = await this.adapter.revalidate(target!, request, operationSignal);
+        if (refreshed) { target = refreshed.target; resolution = refreshed.resolution; providerTimings = [...providerTimings, ...(refreshed.providerTimings ?? [])]; escalationLevel = Math.max(escalationLevel ?? 0, refreshed.escalationLevel ?? 0) || null; }
+        await this.adapter.armEffect?.(target!, request, operationSignal);
+      });
       checkAbort(operationSignal);
-      state.transition("dispatching"); dispatchStarted = true; await this.event(request, "praxis.phase_changed", "dispatching", {});
-      const dispatchStartedAt = performance.now();
-      const dispatch = await this.adapter.dispatch(target, request, operationSignal);
-      durations.set("dispatching", performance.now() - dispatchStartedAt);
+      state.transition("dispatching"); dispatchBoundary.enterDispatch(); await this.event(request, "praxis.phase_changed", "dispatching", {});
+      const dispatchPhaseStartedAt = performance.now();
+      const dispatch = await this.adapter.dispatch(target, request, operationSignal, dispatchBoundary);
+      if (mutates(request) && !dispatchBoundary.mutationStarted()) throw new Error("PRAXIS_MUTATION_BOUNDARY_NOT_RECORDED");
+      output = dispatch?.output;
+      if (dispatch?.target) target = dispatch.target;
+      if (dispatch?.resolution) resolution = dispatch.resolution;
+      if (dispatch?.providerTimings) providerTimings = [...providerTimings, ...dispatch.providerTimings];
+      if (dispatch?.escalationLevel !== undefined) escalationLevel = Math.max(escalationLevel ?? 0, dispatch.escalationLevel) || null;
+      durations.set("dispatching", performance.now() - dispatchPhaseStartedAt);
       mutationOutcome = dispatch?.mutationOutcome ?? (mutates(request) ? "unknown" : "not_applied");
       verification.local = await this.stage(state, "verifying_local", durations, request, operationSignal, () => this.adapter.verifyLocal(target!, request, operationSignal));
       if (verification.local === "failed" || verification.local === "unknown") {
-        throw unverifiedOutcome("PRAXIS_LOCAL_STATE_NOT_OBSERVED", dispatchStarted);
+        throw unverifiedOutcome("PRAXIS_LOCAL_STATE_NOT_OBSERVED");
       }
-      verification.effect = await this.stage(state, "verifying_effect", durations, request, operationSignal, () => this.adapter.verifyEffect(target!, request, operationSignal));
+      verification.effect = await this.stage(state, "verifying_effect", durations, request, operationSignal, () => this.adapter.verifyEffect(target!, request, operationSignal, PraxisExecutionEnvelope.verificationBudget(deadline, request.policy.actionTimeoutMs)));
       if (verification.effect === "failed" || verification.effect === "unknown") {
-        throw unverifiedOutcome("PRAXIS_EXPECTED_EFFECT_NOT_OBSERVED", dispatchStarted);
+        throw unverifiedOutcome("PRAXIS_EXPECTED_EFFECT_NOT_OBSERVED");
       }
       if (mutates(request) && mutationOutcome === "unknown") mutationOutcome = "applied";
       let qualityFindings: PraxisQualityFinding[] = [];
@@ -82,25 +118,26 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
       state.transition("succeeded");
       const timing = timingFrom(durations, performance.now() - started, providerTimings, escalationLevel);
       const report = reportForSuccess(request, resolution, verification, timing, mutationOutcome, qualityFindings);
-      const success: PraxisSuccess = { schemaVersion: 1, status: "succeeded", transactionId: request.transactionId, operationId: request.operationId, ...(request.stepId ? { stepId: request.stepId } : {}), phase: "succeeded", mutationOutcome, resolution, verification, timing, qualityFindings, report };
+      const success: PraxisSuccess = { schemaVersion: 1, status: "succeeded", transactionId: request.transactionId, operationId: request.operationId, ...(request.stepId ? { stepId: request.stepId } : {}), phase: "succeeded", mutationOutcome, resolution, verification, timing, ...(output ? { output } : {}), qualityFindings, report };
       await this.event(request, "praxis.transaction_succeeded", "succeeded", { mutationOutcome });
-      clearTimeout(timeout);
       return success;
     } catch (error) {
       const timedOut = timeoutController.signal.aborted && !signal.aborted;
       const cancelled = !timedOut && (signal.aborted || error instanceof PraxisCancellationError);
-      const status = timedOut ? (dispatchStarted ? "inconclusive" : "failed") : cancelled ? "cancelled" : dispatchStarted && mutationOutcome === "unknown" ? "inconclusive" : "failed";
+      const classified = classify(error, dispatchBoundary, mutationOutcome, cancelled, timedOut);
+      const status = timedOut ? (classified.mutationOutcome === "unknown" ? "inconclusive" : "failed") : cancelled ? "cancelled" : classified.mutationOutcome === "unknown" ? "inconclusive" : "failed";
       const phase = state.phase();
       if (!terminalPhases.has(phase)) state.transition(status);
-      const classified = classify(error, dispatchStarted, mutationOutcome, cancelled, timedOut);
       mutationOutcome = classified.mutationOutcome;
       const timing = timingFrom(durations, performance.now() - started, providerTimings, escalationLevel);
       const safeActions = classified.safeActions;
       const report = reportForFailure(request, status, classified, verification, timing, resolution, safeActions);
       const failure: PraxisFailure = { schemaVersion: 1, status, transactionId: request.transactionId, operationId: request.operationId, ...(request.stepId ? { stepId: request.stepId } : {}), phase: state.phase(), code: classified.code, provenance: classified.provenance, retry: classified.retry, mutationOutcome, timing, diagnostics: classified.diagnostics, qualityFindings: [], safeActions, report };
       await this.event(request, "praxis.transaction_failed", state.phase(), { code: classified.code, mutationOutcome });
-      clearTimeout(timeout);
       return failure;
+    } finally {
+      release();
+      clearTimeout(timeout);
     }
   }
 
@@ -119,19 +156,21 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
 class PraxisCancellationError extends Error { constructor() { super("PRAXIS_CANCELLED"); } }
 function checkAbort(signal: AbortSignal) { if (signal.aborted) throw new PraxisCancellationError(); }
 function mutates(request: PraxisRequest) { return ["activate", "enter_text", "select_option", "set_checked", "press_key"].includes(request.operation.type); }
-function unverifiedOutcome(code: string, dispatchStarted: boolean) { return new PraxisAdapterError(code, { provenance: "application", mutationOutcome: dispatchStarted ? "unknown" : "not_applied", retry: "unsafe", safeActions: ["do_not_retry", "inspect_artifact"] }); }
+function unverifiedOutcome(code: string) { return new PraxisAdapterError(code, { provenance: "application", safeActions: ["inspect_artifact"] }); }
 function intentDigest(request: PraxisRequest) { return createHash("sha256").update(stable(request.intent)).digest("hex"); }
 function stable(value: unknown): string { if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`; if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${stable(item)}`).join(",")}}`; return JSON.stringify(value); }
-function timingFrom(durations: Map<PraxisPhase, number>, totalMs: number, providerTimings: PraxisTiming["providerTimings"], escalationLevel: number|null): PraxisTiming { return { queuedMs: null, observationMs: value(durations,"observing"), groundingMs: value(durations,"grounding"), revalidationMs: value(durations,"revalidating"), dispatchMs: value(durations,"dispatching"), localVerificationMs: value(durations,"verifying_local"), effectVerificationMs: value(durations,"verifying_effect"), totalMs, escalationLevel, providerTimings }; }
+function timingFrom(durations: Map<PraxisPhase, number>, totalMs: number, providerTimings: PraxisTiming["providerTimings"], escalationLevel: number|null): PraxisTiming { return { queuedMs: value(durations,"created"), observationMs: value(durations,"observing"), groundingMs: value(durations,"grounding"), revalidationMs: value(durations,"revalidating"), dispatchMs: value(durations,"dispatching"), localVerificationMs: value(durations,"verifying_local"), effectVerificationMs: value(durations,"verifying_effect"), totalMs, escalationLevel, providerTimings }; }
 function value(map: Map<PraxisPhase, number>, phase: PraxisPhase) { return map.has(phase) ? map.get(phase)! : null; }
 function reportForSuccess(request: PraxisRequest, resolution: PraxisResolution, verification: PraxisVerification, timing: PraxisTiming, mutationOutcome: PraxisMutationOutcome, qualityFindings: PraxisQualityFinding[]): PraxisAgentReport { return { schemaVersion: 1, transactionId: request.transactionId, operationId: request.operationId, ...(request.stepId ? { stepId: request.stepId } : {}), outcome: "succeeded", summary: "Praxis completed and verified the interaction.", classification: { provenance: "none", mutationOutcome }, intentDigest: intentDigest(request), resolution, verification, timing, qualityFindings, safeActions: [], artifactRefs: [] }; }
 function reportForFailure(request: PraxisRequest, status: "failed"|"cancelled"|"inconclusive", classified: ReturnType<typeof classify>, verification: PraxisVerification, timing: PraxisTiming, resolution: PraxisResolution|undefined, safeActions: PraxisSafeAction[]): PraxisAgentReport { return { schemaVersion: 1, transactionId: request.transactionId, operationId: request.operationId, ...(request.stepId ? { stepId: request.stepId } : {}), outcome: status, summary: status === "cancelled" ? "Praxis cancelled the interaction." : "Praxis could not establish a verified interaction outcome.", classification: { provenance: classified.provenance, code: classified.code, mutationOutcome: classified.mutationOutcome }, intentDigest: intentDigest(request), ...(resolution ? { resolution } : {}), verification, timing, qualityFindings: [], safeActions, artifactRefs: [] }; }
 type ClassifiedFailure = { code: string; provenance: PraxisFailureProvenance; retry: PraxisRetryDisposition; mutationOutcome: PraxisMutationOutcome; safeActions: PraxisSafeAction[]; diagnostics: Record<string,string|number|boolean|null> };
-function classify(error: unknown, dispatchStarted: boolean, current: PraxisMutationOutcome, cancelled: boolean, timedOut: boolean): ClassifiedFailure {
-  if (timedOut) { const mutationOutcome = dispatchStarted ? (current === "not_started" ? "unknown" : current) : "not_started"; return { code: "PRAXIS_TRANSACTION_TIMED_OUT", provenance: "infrastructure", retry: mutationOutcome === "unknown" ? "unsafe" : "safe", mutationOutcome, safeActions: mutationOutcome === "unknown" ? ["do_not_retry"] : ["check_executor_health"], diagnostics: { reasonCode: "TOTAL_TIMEOUT" } }; }
-  if (cancelled) { const mutationOutcome = dispatchStarted ? (current === "not_started" ? "unknown" : current) : "not_started"; return { code: "PRAXIS_CANCELLED", provenance: "cancelled" as const, retry: mutationOutcome === "unknown" ? "unsafe" as const : "safe" as const, mutationOutcome, safeActions: mutationOutcome === "unknown" ? ["do_not_retry" as const] : ["retry_after_render" as const], diagnostics: { reasonCode: "ABORT_SIGNAL" } }; }
-  if (error instanceof PraxisAdapterError) { const mutationOutcome = error.options.mutationOutcome ?? (dispatchStarted ? "unknown" : "not_started"); return { code: error.code, provenance: error.options.provenance ?? "praxis" as const, retry: error.options.retry ?? (mutationOutcome === "unknown" ? "unsafe" as const : "requires_reobservation" as const), mutationOutcome, safeActions: error.options.safeActions ?? (mutationOutcome === "unknown" ? ["do_not_retry" as const] : ["reobserve" as const]), diagnostics: { reasonCode: error.code } }; }
-  if (error instanceof GroundingError) { const allowed = new Set<string>(["narrow_scope","revise_intent","retry_after_render","request_calibration","check_executor_health","use_supported_capability"]); const safeActions = error.diagnostic.safeActions.filter((item) => allowed.has(item)) as PraxisSafeAction[]; return { code: `PRAXIS_${error.code}`, provenance: ["INSUFFICIENT_EVIDENCE","TARGET_AMBIGUOUS","TARGET_SCOPE_INVALID"].includes(error.code) ? "intent" as const : error.code === "OBSERVATION_FAILED" ? "infrastructure" as const : "praxis" as const, retry: error.code === "TARGET_CHANGED_BEFORE_ACTION" ? "requires_reobservation" as const : "requires_revision" as const, mutationOutcome: dispatchStarted ? "unknown" as const : "not_started" as const, safeActions, diagnostics: { reasonCode: error.code } }; }
-  if (error instanceof ExpectedEffectError) return { code: `PRAXIS_${error.code}`, provenance: "application" as const, retry: "unsafe" as const, mutationOutcome: "unknown" as const, safeActions: ["do_not_retry" as const, "inspect_artifact" as const], diagnostics: { reasonCode: error.code } };
-  return { code: "PRAXIS_INTERNAL_ERROR", provenance: "infrastructure" as const, retry: dispatchStarted ? "unsafe" as const : "safe" as const, mutationOutcome: dispatchStarted ? "unknown" as const : "not_started" as const, safeActions: dispatchStarted ? ["do_not_retry" as const] : ["check_executor_health" as const], diagnostics: { reasonCode: error instanceof Error ? error.name.replace(/[^A-Z0-9_]/gi,"_").toUpperCase().slice(0,100) : "UNKNOWN" } };
+function classify(error: unknown, boundary: PraxisDispatchBoundary, current: PraxisMutationOutcome, cancelled: boolean, timedOut: boolean): ClassifiedFailure {
+  const mutationOutcome = boundary.failureOutcome(current);
+  if (timedOut) return { code: "PRAXIS_TRANSACTION_TIMED_OUT", provenance: "infrastructure", retry: mutationOutcome === "unknown" ? "unsafe" : "safe", mutationOutcome, safeActions: mutationOutcome === "unknown" ? ["do_not_retry"] : ["check_executor_health"], diagnostics: failureDiagnostics("TOTAL_TIMEOUT", boundary) };
+  if (cancelled) return { code: "PRAXIS_CANCELLED", provenance: "cancelled" as const, retry: mutationOutcome === "unknown" ? "unsafe" as const : "safe" as const, mutationOutcome, safeActions: mutationOutcome === "unknown" ? ["do_not_retry" as const] : ["retry_after_render" as const], diagnostics: failureDiagnostics("ABORT_SIGNAL", boundary) };
+  if (error instanceof PraxisAdapterError) return { code: error.code, provenance: error.options.provenance ?? "praxis" as const, retry: mutationOutcome === "unknown" ? "unsafe" as const : error.options.retry ?? "requires_reobservation" as const, mutationOutcome, safeActions: mutationOutcome === "unknown" ? ["do_not_retry" as const] : error.options.safeActions ?? ["reobserve" as const], diagnostics: failureDiagnostics(error.code, boundary) };
+  if (error instanceof GroundingError) { const allowed = new Set<string>(["narrow_scope","revise_intent","retry_after_render","request_calibration","check_executor_health","use_supported_capability"]); const safeActions = error.diagnostic.safeActions.filter((item) => allowed.has(item)) as PraxisSafeAction[]; return { code: `PRAXIS_${error.code}`, provenance: ["INSUFFICIENT_EVIDENCE","TARGET_AMBIGUOUS","TARGET_SCOPE_INVALID"].includes(error.code) ? "intent" as const : error.code === "OBSERVATION_FAILED" ? "infrastructure" as const : "praxis" as const, retry: error.code === "TARGET_CHANGED_BEFORE_ACTION" ? "requires_reobservation" as const : "requires_revision" as const, mutationOutcome, safeActions, diagnostics: failureDiagnostics(error.code, boundary) }; }
+  if (error instanceof ExpectedEffectError) return { code: `PRAXIS_${error.code}`, provenance: "application" as const, retry: mutationOutcome === "unknown" ? "unsafe" as const : "requires_reobservation" as const, mutationOutcome, safeActions: mutationOutcome === "unknown" ? ["do_not_retry" as const, "inspect_artifact" as const] : ["reobserve" as const], diagnostics: failureDiagnostics(error.code, boundary) };
+  return { code: "PRAXIS_INTERNAL_ERROR", provenance: "infrastructure" as const, retry: mutationOutcome === "unknown" ? "unsafe" as const : "safe" as const, mutationOutcome, safeActions: mutationOutcome === "unknown" ? ["do_not_retry" as const] : ["check_executor_health" as const], diagnostics: failureDiagnostics(error instanceof Error ? error.name.replace(/[^A-Z0-9_]/gi,"_").toUpperCase().slice(0,100) : "UNKNOWN", boundary) };
 }
+function failureDiagnostics(reasonCode: string, boundary: PraxisDispatchBoundary) { return { reasonCode, mutationBoundaryCrossed: boundary.mutationStarted() }; }

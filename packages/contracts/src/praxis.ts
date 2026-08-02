@@ -60,6 +60,7 @@ export const praxisVerificationSchema = z.object({
   local: z.enum(["passed", "not_required", "failed", "unknown"]), effect: z.enum(["passed", "not_required", "failed", "unknown"]),
   effectType: expectedEffectTypeSchema,
 }).strict();
+export const praxisAcquisitionOutputSchema = z.object({ classification: z.literal("public"), value: z.string().max(20_000) }).strict();
 export const praxisAgentReportSchema = z.object({
   schemaVersion: z.literal(1), transactionId: identifier, operationId: identifier, stepId: identifier.optional(),
   outcome: z.enum(["succeeded", "failed", "inconclusive", "cancelled"]), summary: safeText,
@@ -82,6 +83,7 @@ const praxisSuccessBaseSchema = z.object({
   operationId: identifier, stepId: identifier.optional(), phase: z.literal("succeeded"),
   mutationOutcome: praxisMutationOutcomeSchema, resolution: praxisResolutionSchema,
   verification: praxisVerificationSchema, timing: praxisTimingSchema,
+  output: praxisAcquisitionOutputSchema.optional(),
   qualityFindings: z.array(praxisQualityFindingSchema).max(100), report: praxisAgentReportSchema,
 }).strict();
 export const praxisSuccessSchema = praxisSuccessBaseSchema.superRefine((value, context) => {
@@ -134,6 +136,7 @@ export type PraxisFailure = z.infer<typeof praxisFailureSchema>;
 export type PraxisResult = z.infer<typeof praxisResultSchema>;
 export type PraxisResolution = z.infer<typeof praxisResolutionSchema>;
 export type PraxisVerification = z.infer<typeof praxisVerificationSchema>;
+export type PraxisAcquisitionOutput = z.infer<typeof praxisAcquisitionOutputSchema>;
 export type PraxisLifecycleEvent = z.infer<typeof praxisLifecycleEventSchema>;
 export type PraxisDurableTransaction = z.infer<typeof praxisDurableTransactionSchema>;
 export type PraxisDurableQualityFinding = z.infer<typeof praxisDurableQualityFindingSchema>;

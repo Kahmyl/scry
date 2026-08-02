@@ -54,8 +54,9 @@ export type PraxisObservationSnapshot = {
   providerTimings: readonly PraxisProviderTiming[];
 };
 
-type EpochState = { pageId: string; epoch: number; installed: boolean };
-const epochStates = new WeakMap<Page, EpochState>();
+type EpochState = { epoch: number };
+const epochStates = new WeakMap<Frame, EpochState>();
+const initializedPages = new WeakSet<Page>();
 const pageIds = new WeakMap<Page, string>();
 const frameIds = new WeakMap<Frame, string>();
 let pageSequence = 0;
@@ -65,30 +66,45 @@ function pageId(page: Page) { let value = pageIds.get(page); if (!value) { value
 function frameId(frame: Frame) { let value = frameIds.get(frame); if (!value) { value = `frame-${++frameSequence}`; frameIds.set(frame, value); } return value; }
 
 export class PraxisDocumentEpoch {
-  static async current(page: Page): Promise<number> {
-    let state = epochStates.get(page);
+  static async current(page: Page, frame: Frame = page.mainFrame()): Promise<number> {
+    let state = epochStates.get(frame);
     if (!state) {
-      state = { pageId: pageId(page), epoch: 0, installed: false };
-      epochStates.set(page, state);
-      page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) PraxisDocumentEpoch.bump(page); });
+      state = { epoch: 0 };
+      epochStates.set(frame, state);
+    }
+    if (!initializedPages.has(page)) {
+      initializedPages.add(page);
+      page.on("framenavigated", (changedFrame) => { PraxisDocumentEpoch.bump(page, changedFrame); });
       page.on("close", () => observationCaches.delete(page));
-    }
-    if (!state.installed && !page.isClosed()) {
       await page.addInitScript(epochRuntime).catch(() => undefined);
-      await page.evaluate(epochRuntime).catch(() => undefined);
-      state.installed = true;
     }
-    const browserEpoch = await page.evaluate(() => (globalThis as typeof globalThis & { __scryPraxisEpoch?: number }).__scryPraxisEpoch ?? 0).catch(() => state!.epoch);
+    if (!page.isClosed() && !frame.isDetached()) await frame.evaluate(epochRuntime).catch(() => undefined);
+    const browserEpoch = await frame.evaluate(async () => {
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      return (globalThis as typeof globalThis & { __scryPraxisEpoch?: number }).__scryPraxisEpoch ?? 0;
+    }).catch(() => state!.epoch);
     state.epoch = Math.max(state.epoch, browserEpoch);
     return state.epoch;
   }
 
-  static bump(page: Page) {
-    const state = epochStates.get(page) ?? { pageId: pageId(page), epoch: 0, installed: false };
+  static bump(page: Page, frame: Frame = page.mainFrame()) {
+    const state = epochStates.get(frame) ?? { epoch: 0 };
     state.epoch += 1;
-    epochStates.set(page, state);
+    epochStates.set(frame, state);
     observationCaches.delete(page);
     return state.epoch;
+  }
+
+  static async stable(page: Page, frame: Frame, signal: AbortSignal, quietMs = 32, maximumMs = 180): Promise<number> {
+    const deadline = performance.now() + maximumMs;
+    let epoch = await this.current(page, frame);
+    while (performance.now() < deadline) {
+      await abortableDelay(Math.min(quietMs, deadline - performance.now()), signal);
+      const next = await this.current(page, frame);
+      if (next === epoch) return next;
+      epoch = next;
+    }
+    return epoch;
   }
 }
 
@@ -111,20 +127,29 @@ export class PraxisTargetHandle {
   readonly documentEpoch: number;
   readonly runtimeVersion = PRAXIS_OBSERVATION_RUNTIME_VERSION;
   #page: Page;
+  #frame: Frame;
   #locator: Locator;
 
-  constructor(page: Page, locator: Locator, documentEpoch: number) {
+  constructor(page: Page, frame: Frame, locator: Locator, documentEpoch: number) {
     this.#page = page;
+    this.#frame = frame;
     this.#locator = locator;
     this.pageId = pageId(page);
-    this.frameId = frameId(locator.page().mainFrame());
+    this.frameId = frameId(frame);
     this.documentEpoch = documentEpoch;
   }
 
   async use<T>(work: (locator: Locator) => Promise<T>): Promise<T> {
-    if (this.#page.isClosed() || await PraxisDocumentEpoch.current(this.#page) !== this.documentEpoch) throw new PraxisStaleTargetError();
+    await this.assertCurrent();
     return work(this.#locator);
   }
+
+  async reconcile<T>(work: (locator: Locator) => Promise<T>): Promise<T> {
+    if (this.#page.isClosed() || this.#frame.isDetached()) throw new PraxisStaleTargetError();
+    return work(this.#locator);
+  }
+
+  async assertCurrent() { if (this.#page.isClosed() || this.#frame.isDetached() || await PraxisDocumentEpoch.current(this.#page, this.#frame) !== this.documentEpoch) throw new PraxisStaleTargetError(); }
 
   async readAfterDispatch<T>(work: (locator: Locator) => Promise<T>): Promise<T> {
     if (this.#page.isClosed()) throw new PraxisStaleTargetError();
@@ -151,7 +176,7 @@ export class PraxisObservationCache {
     cache.set(key, { key, snapshot });
     while (cache.size > MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
   }
-  static key(input: { scope: unknown; privacyState: string; providers: readonly string[]; epoch: number; policyVersion?:number;adapterVersion?:string;viewport?:{width:number;height:number}|null }) {
+  static key(input: { scope: unknown; privacyState: string; providers: readonly string[]; epoch: number; scoringPolicyVersion?:number;adapterVersion?:string;viewport?:{width:number;height:number}|null }) {
     return createHash("sha256").update(stable(input)).digest("hex");
   }
 }
@@ -194,8 +219,9 @@ export async function runEvidenceProviders<T>(providers: readonly PraxisEvidence
   return results;
 }
 
-export function observationIdentity(page: Page, scope: unknown, privacyState: string, epoch: number): Omit<PraxisObservationSnapshot, "controls" | "providerTimings"> {
-  return { schemaVersion: 1, runtimeVersion: PRAXIS_OBSERVATION_RUNTIME_VERSION, pageId: pageId(page), frameId: frameId(page.mainFrame()), documentEpoch: epoch, scopeDigest: createHash("sha256").update(stable(scope)).digest("hex"), privacyState };
+export function observationIdentity(page: Page, scope: unknown, privacyState: string, epoch: number, frame: Frame = page.mainFrame()): Omit<PraxisObservationSnapshot, "controls" | "providerTimings"> {
+  return { schemaVersion: 1, runtimeVersion: PRAXIS_OBSERVATION_RUNTIME_VERSION, pageId: pageId(page), frameId: frameId(frame), documentEpoch: epoch, scopeDigest: createHash("sha256").update(stable(scope)).digest("hex"), privacyState };
 }
 
 function stable(value: unknown): string { if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`; if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${stable(item)}`).join(",")}}`; return JSON.stringify(value); }
+function abortableDelay(ms: number, signal: AbortSignal) { return new Promise<void>((resolve, reject) => { if (signal.aborted) { reject(signal.reason); return; } const timer = setTimeout(resolve, Math.max(0, ms)); signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true }); }); }

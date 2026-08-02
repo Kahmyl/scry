@@ -41,8 +41,14 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm verify:privacy-foundation
           pnpm verify:playwright
+          pnpm verify:praxis-change-gate
           pnpm typecheck
           pnpm test
+          SCRY_BROWSER_CHANNEL=chrome pnpm campaign:praxis
+          SCRY_BROWSER_CHANNEL=chrome pnpm campaign:praxis:100
+          SCRY_BROWSER_CHANNEL=chrome pnpm campaign:praxis:resilience
+          SCRY_BROWSER_CHANNEL=chrome pnpm campaign:praxis:certification
+          SCRY_BROWSER_CHANNEL=chrome pnpm campaign:praxis:public-apps
           echo "SCRY_SCHEMA_FINGERPRINT=$(node scripts/schema-fingerprint.mjs)" >> "$GITHUB_ENV"
 
       - name: Log in to Docker Hub

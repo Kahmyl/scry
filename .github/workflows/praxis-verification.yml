@@ -1,0 +1,144 @@
+name: Verify Praxis Production Capability
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/praxis-verification.yml"
+      - ".github/workflows/docker-publish.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "packages/contracts/**"
+      - "packages/executor/**"
+      - "packages/policy/**"
+      - "scripts/verify-praxis-*.mjs"
+      - "docs/architecture/praxis-*.md"
+      - "docs/architecture/praxis-*.json"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/praxis-verification.yml"
+      - ".github/workflows/docker-publish.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "packages/contracts/**"
+      - "packages/executor/**"
+      - "packages/policy/**"
+      - "scripts/verify-praxis-*.mjs"
+      - "docs/architecture/praxis-*.md"
+      - "docs/architecture/praxis-*.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: praxis-production-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  production-http:
+    name: Real HTTP production campaigns
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Record browser environment
+        run: google-chrome --version
+
+      - name: Verify contracts and Praxis boundaries
+        run: |
+          pnpm --filter @scry/contracts typecheck
+          pnpm --filter @scry/executor typecheck
+          pnpm verify:praxis-change-gate
+          pnpm verify:praxis-inventory
+          pnpm verify:praxis-performance
+          pnpm verify:privacy-foundation
+
+      - name: Prepare campaign evidence
+        run: mkdir -p artifacts/praxis
+
+      - name: Run accepted baseline campaign
+        env:
+          SCRY_BROWSER_CHANNEL: chrome
+        run: pnpm campaign:praxis | tee artifacts/praxis/baseline.txt
+
+      - name: Run 100-scenario production campaign
+        env:
+          SCRY_BROWSER_CHANNEL: chrome
+        run: pnpm campaign:praxis:100 | tee artifacts/praxis/production-100.txt
+
+      - name: Run resilience campaign
+        env:
+          SCRY_BROWSER_CHANNEL: chrome
+        run: pnpm campaign:praxis:resilience | tee artifacts/praxis/resilience.txt
+
+      - name: Run adversarial certification campaign
+        env:
+          SCRY_BROWSER_CHANNEL: chrome
+        run: pnpm campaign:praxis:certification | tee artifacts/praxis/certification.txt
+
+      - name: Retain production campaign evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: praxis-production-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/praxis
+          if-no-files-found: error
+          retention-days: 30
+
+  public-applications:
+    name: Live public application campaign
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Record browser environment
+        run: google-chrome --version
+
+      - name: Prepare campaign evidence
+        run: mkdir -p artifacts/praxis-public
+
+      - name: Run live public application campaign
+        env:
+          SCRY_BROWSER_CHANNEL: chrome
+        run: pnpm campaign:praxis:public-apps | tee artifacts/praxis-public/public-applications.txt
+
+      - name: Retain public campaign evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: praxis-public-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/praxis-public
+          if-no-files-found: error
+          retention-days: 30
