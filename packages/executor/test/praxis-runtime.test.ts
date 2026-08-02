@@ -5,6 +5,7 @@ import { LegacyPraxisAdapter } from "../src/praxis-legacy-adapter.js";
 import { PraxisMutationLease, selectPraxisStrategy } from "../src/praxis-runtime.js";
 import { PraxisDocumentEpoch } from "../src/praxis-observation.js";
 import { PraxisTransactionCoordinator } from "../src/praxis-transaction.js";
+import { executePraxisConsumer } from "../src/praxis-consumer.js";
 
 let browser: Browser;
 let page: Page;
@@ -43,5 +44,15 @@ describe("Praxis strategy, dispatch, and verification", () => {
     const result = await new PraxisTransactionCoordinator(adapter).execute(request({ type: "activate" }), new AbortController().signal);
     expect(result).toMatchObject({ status: "failed", code: "PRAXIS_TARGET_CHANGED_BEFORE_ACTION", mutationOutcome: "not_applied", retry: "requires_reobservation" });
     expect(await page.locator("button").getAttribute("data-count")).toBeNull();
+  });
+
+  it("derives an idempotent transaction identity for a consumer operation", async () => {
+    await page.setContent("<output aria-label=Status>Ready</output>");
+    const target = { ...intent("Status"), requiredCapabilities: ["readable_value" as const], preferredEvidence: { ...intent("Status").preferredEvidence, roles: ["value" as const] } };
+    const ids: string[] = [];
+    const context = { runId: "run-1", attemptId: "attempt-1", stepId: "step-1", channel: "probe" as const, ordinal: 0, allowedOrigins: ["https://example.test"], timeoutMs: 1_000, emit: (event: { type: string; transactionId: string }) => { if (event.type === "praxis.transaction_started") ids.push(event.transactionId); } };
+    expect((await executePraxisConsumer({ page, intent: target, operation: { type: "inspect" }, context, signal: new AbortController().signal })).status).toBe("succeeded");
+    expect((await executePraxisConsumer({ page, intent: target, operation: { type: "inspect" }, context, signal: new AbortController().signal })).status).toBe("succeeded");
+    expect(new Set(ids).size).toBe(1);
   });
 });
