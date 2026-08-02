@@ -24,6 +24,8 @@ export class RunObservationService {
     const currentAttempt = attempts.at(-1) ?? null;
     const currentAttemptId = currentAttempt?.id as string | undefined;
     let [stepRows, assertionRows, events, artifactRows, timelineRows, intervals, operations, incidents] = emptyObservationQueries();
+    let praxisTransactions: Array<Record<string, any>> = [];
+    let praxisFindings: Array<Record<string, any>> = [];
     if (currentAttemptId) {
       [stepRows, assertionRows, events, artifactRows, timelineRows, intervals, operations, incidents] = await Promise.all([
           this.database.query(
@@ -96,7 +98,13 @@ export class RunObservationService {
                     created_at AS "createdAt", resolved_at AS "resolvedAt"
              FROM credential_incidents WHERE run_id = $1 ORDER BY created_at`, [runId],
           ),
-        ]);
+      ]);
+      const [transactionRows, findingRows] = await Promise.all([
+        this.database.query(`SELECT transaction_id AS "transactionId",operation_id AS "operationId",step_id AS "stepId",schema_version AS "schemaVersion",runtime_version AS "runtimeVersion",result,started_at AS "startedAt",completed_at AS "completedAt" FROM praxis_transactions WHERE attempt_id=$1 ORDER BY started_at,transaction_id`,[currentAttemptId]),
+        this.database.query(`SELECT finding.id,finding.transaction_id AS "transactionId",finding.step_id AS "stepId",finding.intent_digest AS "intentDigest",finding.finding,finding.artifact_refs AS "artifactRefs",finding.created_at AS "createdAt" FROM praxis_quality_findings finding JOIN praxis_transactions transaction ON transaction.transaction_id=finding.transaction_id WHERE transaction.attempt_id=$1 ORDER BY finding.created_at,finding.id`,[currentAttemptId]),
+      ]);
+      praxisTransactions = transactionRows.rows;
+      praxisFindings = findingRows.rows;
     }
 
     const planSteps = Array.isArray(run.planSnapshot?.steps) ? run.planSnapshot.steps as Array<{ id?: string; title?: string }> : [];
@@ -152,6 +160,13 @@ export class RunObservationService {
       artifacts,
       artifactTimeline: artifactTimeline as RunObservation["artifactTimeline"],
       privacy: { intervals: intervals.rows, operations: operations.rows, credentialIncidents: incidents.rows },
+      praxis: {
+        contractVersion: 1,
+        runtimeVersions: [...new Set(praxisTransactions.map((transaction) => String(transaction.runtimeVersion)))],
+        status: active ? "pending" : "complete",
+        transactions: praxisTransactions.map((transaction) => ({ ...transaction, stepId: transaction.stepId ?? null, startedAt: new Date(transaction.startedAt).toISOString(), completedAt: transaction.completedAt ? new Date(transaction.completedAt).toISOString() : null })),
+        findings: praxisFindings.map((finding) => ({ ...finding, stepId: finding.stepId ?? null, createdAt: new Date(finding.createdAt).toISOString() })),
+      },
       failure,
       sections: {
         attempts: section(attempts), steps: section(steps), events: section(events.rows),

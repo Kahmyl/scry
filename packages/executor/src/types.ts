@@ -58,6 +58,7 @@ export type ExecuteOptions = {
   groundingHistory?: (intentDigest: string) => Promise<import("@scry/contracts").SemanticFingerprint | undefined>;
   signal?: AbortSignal;
   onEvent?: (event: RunEvent) => void | Promise<void>;
+  onPraxisResult?: (result: import("@scry/contracts").PraxisResult) => void | Promise<void>;
   readinessTimeoutMultiplier?: number;
   /** Phase 1 synthetic-gap hook. It must never handle real protected values. */
   recordingTestHook?: (input: { page: Page; recording: RecordingCoordinator }) => Promise<void>;

@@ -15,6 +15,7 @@ export type PraxisConsumerContext = {
   timeoutMs: number;
   privacy?: PraxisRequest["privacy"];
   emit?: (event: PraxisLifecycleEvent) => void | Promise<void>;
+  record?: (result: PraxisResult) => void | Promise<void>;
 };
 
 export type PraxisConsumerInput = {
@@ -29,7 +30,9 @@ export type PraxisConsumerInput = {
 
 export async function executePraxisConsumer(input: PraxisConsumerInput): Promise<PraxisResult> {
   const request = await buildPraxisRequest(input);
-  return new PraxisTransactionCoordinator(new LegacyPraxisAdapter(input.page, input.resolveInput), input.context.emit).execute(request, input.signal);
+  const result = await new PraxisTransactionCoordinator(new LegacyPraxisAdapter(input.page, input.resolveInput), input.context.emit).execute(request, input.signal);
+  await input.context.record?.(result);
+  return result;
 }
 
 export async function requirePraxisSuccess(input: PraxisConsumerInput) {

@@ -18,4 +18,6 @@ export * from "./praxis-observation.js";
 export * from "./praxis-evidence.js";
 export * from "./praxis-runtime.js";
 export * from "./praxis-consumer.js";
+export * from "./praxis-quality.js";
+export * from "./praxis-latency.js";
 export * from "./types.js";

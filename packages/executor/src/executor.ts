@@ -310,7 +310,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               calibrationBoundaryReached = true;
             },
             verifyAssertions: async (targetPage, assertions) => {
-              for (const [assertionIndex, assertion] of assertions.entries()) await executeAssertion(targetPage, assertion, options.plan.allowedOrigins[0]!, { runId, attemptId, stepId: step.id, channel: "assertion", ordinal: assertionIndex, allowedOrigins: options.plan.allowedOrigins, timeoutMs: assertion.timeoutMs ?? 10_000 }, timeoutController.signal);
+              for (const [assertionIndex, assertion] of assertions.entries()) await executeAssertion(targetPage, assertion, options.plan.allowedOrigins[0]!, { runId, attemptId, stepId: step.id, channel: "assertion", ordinal: assertionIndex, allowedOrigins: options.plan.allowedOrigins, timeoutMs: assertion.timeoutMs ?? 10_000, ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}) }, timeoutController.signal);
             },
             reconcile: async () => "unknown",
             ...(options.recordContextProvenance ? { onContextProvenance: options.recordContextProvenance } : {}),
@@ -343,7 +343,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             capturedValues,
             privacyGate,
             emit,
-            { runId, attemptId, stepId: step.id, channel: "action", ordinal: index, allowedOrigins: options.plan.allowedOrigins, timeoutMs: "timeoutMs" in step.action ? step.action.timeoutMs ?? 10_000 : 10_000 },
+            { runId, attemptId, stepId: step.id, channel: "action", ordinal: index, allowedOrigins: options.plan.allowedOrigins, timeoutMs: "timeoutMs" in step.action ? step.action.timeoutMs ?? 10_000 : 10_000, ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}) },
           );
         }
         result.action = { status: "passed" };
@@ -441,7 +441,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         for (const [assertionIndex, assertion] of assertions.entries()) {
           const assertionResult = result.assertions[assertionIndex]!;
           try {
-            await executeAssertion(page, assertion, options.plan.allowedOrigins[0]!, { runId, attemptId, stepId: step.id, channel: "assertion", ordinal: assertionIndex, allowedOrigins: options.plan.allowedOrigins, timeoutMs: assertion.timeoutMs ?? 10_000 }, timeoutController.signal);
+            await executeAssertion(page, assertion, options.plan.allowedOrigins[0]!, { runId, attemptId, stepId: step.id, channel: "assertion", ordinal: assertionIndex, allowedOrigins: options.plan.allowedOrigins, timeoutMs: assertion.timeoutMs ?? 10_000, ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}) }, timeoutController.signal);
             assertionResult.status = "passed";
           } catch (error) {
             assertionResult.status = "failed";

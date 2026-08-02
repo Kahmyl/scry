@@ -86,4 +86,5 @@ export type ScryCapabilities = {
   groundingCapabilities?: string[];
   intelligenceCapabilities?: { modelAssistance: boolean; visualGrounding: string };
   missionContext?: { requiredForWrites:boolean;transport:"explicit";phases:string[] };
+  praxis?: { contractVersion:number;runtimeVersion:string;scoringPolicyVersion:number;evidenceChannels:string[];strategies:string[];hardBoundaries:string[] };
 };

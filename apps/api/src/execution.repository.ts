@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import type { Artifact, OutcomeClassification, RecordingTimelineEntry, RunEvent, RunState } from "@scry/contracts";
+import type { Artifact, OutcomeClassification, PraxisResult, RecordingTimelineEntry, RunEvent, RunState } from "@scry/contracts";
 
 import { Database } from "./database.js";
 import { decryptCredential } from "./credential.crypto.js";
@@ -553,6 +553,28 @@ export class ExecutionRepository {
     await this.database.transaction(async (client) => {
       await client.query(`INSERT INTO grounding_diagnostics(run_id,step_id,intent_digest,outcome,failure_code,candidate_count,eligible_count,confidence,confidence_margin,score_components,rejected_constraints,selected_fingerprint,drift,safe_actions,resolution_source,visual_candidate_count,observation,evidence_families,correlation_groups,degraded_policy,selected_adapter) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13,$14::jsonb,'unified',$15,$16::jsonb,$17::jsonb,$18::jsonb,$19,$20)`, [runId,String(payload.stepId ?? "unknown"),String(payload.intentDigest),payload.outcome === "resolved" ? "resolved" : "rejected",payload.code ?? null,Number(payload.candidateCount ?? 0),Number(payload.eligibleCount ?? 0),Number(payload.confidence ?? 0),Number(payload.confidenceMargin ?? 0),JSON.stringify(payload.score ?? {}),JSON.stringify(payload.rejectedConstraints ?? []),JSON.stringify(payload.selectedFingerprint ?? null),String(payload.drift ?? "unchanged"),JSON.stringify(payload.safeActions ?? []),Number(payload.visualCandidateCount ?? 0),JSON.stringify(payload.observation ?? {status:"failed",reasonCode:"DIAGNOSTIC_INCOMPLETE"}),JSON.stringify(payload.evidenceFamilies ?? []),JSON.stringify(payload.correlationGroups ?? []),payload.degradedPolicy??null,payload.selectedAdapter??null]);
       if (payload.outcome === "resolved" && payload.selectedFingerprint) await client.query(`INSERT INTO semantic_target_history(project_id,environment_id,flow_revision_id,origin,intent_digest,fingerprint,confidence,confidence_margin,drift) SELECT r.project_id,r.environment_id,r.flow_revision_id,e.base_origin,$2,$3::jsonb,$4,$5,$6 FROM runs r JOIN environments e ON e.id=r.environment_id WHERE r.id=$1 ON CONFLICT(project_id,environment_id,flow_revision_id,origin,intent_digest) DO UPDATE SET fingerprint=EXCLUDED.fingerprint,confidence=EXCLUDED.confidence,confidence_margin=EXCLUDED.confidence_margin,drift=EXCLUDED.drift,success_count=semantic_target_history.success_count+1,last_seen_at=now()`, [runId,String(payload.intentDigest),JSON.stringify(payload.selectedFingerprint),Number(payload.confidence ?? 0),Number(payload.confidenceMargin ?? 0),String(payload.drift ?? "unchanged")]);
+    });
+  }
+
+  async recordPraxisResult(runId: string, attemptId: string, result: PraxisResult) {
+    await this.database.transaction(async (client) => {
+      const completedAt = new Date();
+      const startedAt = new Date(completedAt.getTime() - result.timing.totalMs);
+      const stored = await client.query(
+        `INSERT INTO praxis_transactions(transaction_id,run_id,attempt_id,step_id,operation_id,schema_version,runtime_version,phase,outcome,result,started_at,completed_at)
+         VALUES($1,$2,$3,$4,$5,$6,'1',$7,$8,$9::jsonb,$10,$11)
+         ON CONFLICT(transaction_id) DO UPDATE SET
+           phase=EXCLUDED.phase,outcome=EXCLUDED.outcome,result=EXCLUDED.result,completed_at=EXCLUDED.completed_at,updated_at=now()
+         WHERE praxis_transactions.result IS NULL OR praxis_transactions.result=EXCLUDED.result
+         RETURNING transaction_id`,
+        [result.transactionId,runId,attemptId,result.stepId??null,result.operationId,result.schemaVersion,result.phase,result.status,JSON.stringify(result),startedAt,completedAt],
+      );
+      if (!stored.rowCount) throw new ConflictException("Contradictory terminal Praxis result");
+      for (const finding of result.qualityFindings) await client.query(
+        `INSERT INTO praxis_quality_findings(transaction_id,run_id,step_id,intent_digest,finding,artifact_refs)
+         VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb) ON CONFLICT DO NOTHING`,
+        [result.transactionId,runId,result.stepId??null,result.report.intentDigest,JSON.stringify(finding),JSON.stringify(result.report.artifactRefs)],
+      );
     });
   }
 
