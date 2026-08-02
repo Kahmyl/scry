@@ -1,11 +1,13 @@
 # Architecture overview
 
+Browser interaction is governed by the [capability-grounding authority](semantic-grounding.md). Public Flow contracts describe required behavior and supporting evidence, never authored locators.
+
 ```mermaid
 flowchart TD
-    A["Codex, dashboard, or API client"] --> B["Structured protocol v1 plan"]
-    B --> C["Schema validation"]
-    C --> D["Project execution policy"]
-    D --> E["Persist immutable run snapshot"]
+    A["Codex, dashboard, or API client"] --> B["Current API readiness"]
+    B --> C["Authoritative validation"]
+    C --> D["Atomic Flow revision"]
+    D --> E["Persist immutable run snapshot and outbox"]
     E --> F["Queue"]
     F --> G["Playwright worker"]
     G --> H["Browser context"]
@@ -40,18 +42,32 @@ packages/
 5. Reports are projections of stored facts, not the primary execution record.
 6. Exact rerun does not call an AI or change the stored plan.
 7. Large artifacts are referenced by metadata rather than embedded in API or MCP responses.
+8. An active Flow cannot exist without a complete executable revision.
+9. API, MCP, and worker must report one compatible release before accepting work.
+10. A Privacy Gate controls every evidence producer; evidence cannot redefine action truth.
+11. Protected work is atomic and recording resumes only after an explicit safe boundary.
 
-## Initial domain model
+## Current domain model
 
 ```text
 Project
+├── Mission
+│   ├── Objective
+│   ├── Agent session
+│   ├── Activity and causal relations
+│   ├── Flow and Run associations
+│   ├── Accepted evidence
+│   ├── Resume pointer
+│   └── Immutable Mission report revisions
 ├── Environment
 │   ├── base origin
 │   ├── execution policy
 │   └── secret references
-├── Test specification
-│   └── Specification version
-│       └── Plan version
+├── Flow
+│   └── Flow revision
+│       ├── specification
+│       ├── executable plan
+│       └── validation record
 └── Run
     └── Attempt
         ├── Step result
@@ -59,3 +75,5 @@ Project
         ├── Event
         └── Artifact
 ```
+
+Mission is the authoritative boundary for user-directed work. A Flow remains a reusable definition and may be linked to many Missions; a Run belongs to exactly one Mission and Objective. Reports are published only from explicitly accepted evidence and never synthesize an execution that did not occur.

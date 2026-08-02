@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement Feature"
+  short_description: "Deliver complete behavior across its lifecycle"
+  default_prompt: "Use $implement-feature to design and implement this feature as a complete verified product capability."

@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1.7
+ARG PLAYWRIGHT_VERSION=1.62.0
 FROM node:22-alpine AS deps
 WORKDIR /workspace
 RUN corepack enable
@@ -17,7 +18,7 @@ FROM deps AS build
 COPY apps/web apps/web
 RUN pnpm --filter @scry/web build
 
-FROM mcr.microsoft.com/playwright:v1.62.0-noble AS runner
+FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble AS runner
 ENV NODE_ENV=production
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH

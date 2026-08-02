@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ExecutionPolicyV1, TestPlanV1 } from "@scry/contracts";
+import type { CurrentPlan, ExecutionPolicy } from "@scry/contracts";
 
 import {
   isPrivateAddress,
@@ -37,7 +37,6 @@ describe("runtime policy helpers", () => {
 
   it("allows environment-approved page dependencies outside plan navigation origins", async () => {
     const plan = {
-      protocolVersion: "1",
       name: "Page dependency policy",
       objective: "Load an approved application and its approved static assets.",
       preconditions: [],
@@ -47,6 +46,7 @@ describe("runtime policy helpers", () => {
         maxDurationMs: 10_000,
         maxNavigations: 1,
       },
+      checkpoints: [],
       steps: [
         {
           id: "open-app",
@@ -55,11 +55,11 @@ describe("runtime policy helpers", () => {
           assertions: [],
           onFailure: "stop",
           evidence: [],
+          captureIntent: "final",
         },
       ],
-    } satisfies TestPlanV1;
+    } satisfies CurrentPlan;
     const policy = {
-      policyVersion: "1",
       allowedOrigins: [
         "https://app.example.test",
         "https://assets.example.test",
@@ -70,7 +70,7 @@ describe("runtime policy helpers", () => {
       maxActions: 10,
       maxDurationMs: 10_000,
       maxNavigations: 2,
-    } satisfies ExecutionPolicyV1;
+    } satisfies ExecutionPolicy;
 
     const runtime = new RuntimeRequestPolicy(plan, policy);
 

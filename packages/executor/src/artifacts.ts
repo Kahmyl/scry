@@ -26,7 +26,8 @@ export async function availableArtifact(
   return {
     id: randomUUID(),
     kind,
-    status: "available",
+    availability: "available",
+    privacyClassification: "safe",
     contentType,
     sizeBytes: metadata.size,
     checksumSha256: createHash("sha256").update(data).digest("hex"),

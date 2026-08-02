@@ -1,19 +1,11 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import type { PoolClient } from "pg";
-
-import { analyzePlanRisks } from "@scry/contracts";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import type {
   CreateEnvironmentInput,
-  CreateAtomicRevisionInput,
   CreateCredentialInput,
-  CreatePlanVersionInput,
   CreateProjectInput,
-  CreateRunInput,
-  CreateSpecificationVersionInput,
-  CreateTestSpecificationInput,
   UpdateEnvironmentInput,
   ValidateCredentialReferencesInput,
-  UpdateTestSpecificationInput,
   UpdateCredentialInput,
 } from "@scry/contracts";
 
@@ -75,19 +67,42 @@ export class ScryRepository {
     ).rows;
   }
 
+  async listCredentialIncidents(principal: Principal, projectId: string) {
+    await this.requireProject(principal, projectId);
+    return (await this.database.query(
+      `SELECT id, run_id AS "runId", credential_id AS "credentialId", operation_id AS "operationId",
+              adapter_id AS "adapterId", state, reason_code AS "reasonCode", safe_diagnostics AS "safeDiagnostics",
+              created_at AS "createdAt", resolved_at AS "resolvedAt"
+       FROM credential_incidents WHERE project_id = $1 ORDER BY created_at DESC`, [projectId],
+    )).rows;
+  }
+
   async createCredential(principal: Principal, projectId: string, input: CreateCredentialInput) {
     this.requireWriteAccess(principal);
     await this.requireProject(principal, projectId);
-    const encrypted = encryptCredential(input.value);
-    const result = await this.database.query(
-      `INSERT INTO project_credentials(
-         project_id, name, ciphertext, initialization_vector, authentication_tag
-       ) VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, project_id AS "projectId", name,
-                 created_at AS "createdAt", updated_at AS "updatedAt"`,
-      [projectId, input.name, encrypted.ciphertext, encrypted.initializationVector, encrypted.authenticationTag],
+    const context = await this.database.query(
+      `SELECT 1 FROM missions m JOIN mission_objectives o ON o.mission_id=m.id AND o.id=$3
+       JOIN agent_sessions s ON s.mission_id=m.id AND s.id=$4 AND s.status='active'
+       WHERE m.id=$2 AND m.project_id=$1`, [projectId,input.missionId,input.objectiveId,input.agentSessionId],
     );
-    return result.rows[0]!;
+    if (!context.rowCount) throw new BadRequestException({ code: "MISSION_CONTEXT_INVALID" });
+    const encrypted = encryptCredential(input.value);
+    try {
+      const result = await this.database.query(
+        `INSERT INTO project_credentials(project_id,name,ciphertext,initialization_vector,authentication_tag,origin_mission_id,origin_objective_id,created_by_agent_session_id)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+         RETURNING id, project_id AS "projectId", name,
+                   created_at AS "createdAt", updated_at AS "updatedAt"`,
+        [projectId,input.name,encrypted.ciphertext,encrypted.initializationVector,encrypted.authenticationTag,input.missionId,input.objectiveId,input.agentSessionId],
+      );
+      await this.database.query(`INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata) VALUES($1,$2,$3,'credential_created',$4,$5::jsonb)`,[input.missionId,input.objectiveId,input.agentSessionId,`Credential created: ${input.name}`,JSON.stringify({credentialId:result.rows[0]!.id})]);
+      return result.rows[0]!;
+    } catch (error) {
+      if (isPostgresUniqueViolation(error)) {
+        throw new ConflictException({ code: "CREDENTIAL_NAME_CONFLICT", message: "An active credential with this name already exists. Existing credentials cannot be overwritten." });
+      }
+      throw error;
+    }
   }
 
   async updateCredential(principal: Principal, credentialId: string, input: UpdateCredentialInput) {
@@ -128,51 +143,19 @@ export class ScryRepository {
     return { id: credentialId, deleted: true };
   }
 
-  async listSpecifications(principal: Principal, projectId: string) {
-    await this.requireProject(principal, projectId);
-    return (
-      await this.database.query(
-        `SELECT ts.id, ts.project_id AS "projectId", ts.name, ts.description,
-                ts.created_at AS "createdAt",
-                complete.id AS "latestVersionId", complete.version AS "latestVersion",
-                complete.content AS "latestContent",
-                complete.plan_version_id AS "latestPlanVersionId", complete.plan AS "latestPlan"
-         FROM test_specifications ts
-         LEFT JOIN LATERAL (
-           SELECT sv.id, sv.version, sv.content,
-                  pv.id AS plan_version_id, pv.plan
-           FROM specification_versions sv
-           JOIN plan_versions pv ON pv.specification_version_id = sv.id
-           WHERE sv.specification_id = ts.id
-           ORDER BY pv.version DESC
-           LIMIT 1
-         ) complete ON true
-         WHERE ts.project_id = $1 ORDER BY ts.updated_at DESC`,
-        [projectId],
-      )
-    ).rows;
-  }
-
   async listRuns(principal: Principal, projectId: string) {
     await this.requireProject(principal, projectId);
     return (
       await this.database.query(
-        `SELECT r.id, r.state, r.outcome_classification AS "outcomeClassification",
+        `SELECT r.id,r.mission_id AS "missionId",r.objective_id AS "objectiveId",m.title AS "missionTitle",l.role,r.state,r.phase,r.outcome_classification AS "outcomeClassification",r.result_classification AS "resultClassification",r.reliability_eligible AS "reliabilityEligible",r.compiled_contract_id AS "compiledContractId",
                 r.created_at AS "createdAt", r.updated_at AS "updatedAt",
                 r.execution_snapshot AS "executionSnapshot",
                 r.environment_snapshot AS "environmentSnapshot",
                 r.plan_snapshot->>'name' AS "planName",
                 r.rerun_of_run_id AS "rerunOfRunId",
-                r.resolved_at AS "resolvedAt",
-                r.resolved_by_run_id AS "resolvedByRunId",
-                r.confirmation_of_run_id AS "confirmationOfRunId",
-                r.confirmation_run_id AS "confirmationRunId",
-                (
-                  r.state IN ('failed','timed_out','infrastructure_error')
-                  AND r.resolved_at IS NULL
-                ) AS "needsAttention",
+                (r.state IN ('failed','timed_out','infrastructure_error') AND COALESCE(r.result_classification,'')<>'legacy_authoring_attempt') AS "needsAttention",
                 COALESCE(a.attempt_count, 0)::int AS "attemptCount"
-         FROM runs r
+         FROM runs r JOIN missions m ON m.id=r.mission_id JOIN mission_run_links l ON l.run_id=r.id
          LEFT JOIN LATERAL (
            SELECT COUNT(*) AS attempt_count FROM attempts WHERE run_id = r.id
          ) a ON true
@@ -185,6 +168,7 @@ export class ScryRepository {
   async createEnvironment(principal: Principal, projectId: string, input: CreateEnvironmentInput) {
     this.requireWriteAccess(principal);
     await this.requireProject(principal, projectId);
+    await this.requireMissionCommandContext(projectId,input.missionId,input.objectiveId,input.agentSessionId);
     await this.requireActiveCredentials(
       (text, values) => this.database.query<{ id: string }>(text, values),
       projectId,
@@ -196,17 +180,6 @@ export class ScryRepository {
        RETURNING id, project_id AS "projectId", name, base_origin AS "baseOrigin",
                  policy, secret_refs AS "secretRefs", created_at AS "createdAt"`,
       [projectId, input.name, input.baseOrigin, JSON.stringify(input.policy), JSON.stringify(input.secretRefs)],
-    );
-    return result.rows[0]!;
-  }
-
-  async createSpecification(principal: Principal, projectId: string, input: CreateTestSpecificationInput) {
-    this.requireWriteAccess(principal);
-    await this.requireProject(principal, projectId);
-    const result = await this.database.query(
-      `INSERT INTO test_specifications(project_id, name, description) VALUES ($1, $2, $3)
-       RETURNING id, project_id AS "projectId", name, description, created_at AS "createdAt"`,
-      [projectId, input.name, input.description],
     );
     return result.rows[0]!;
   }
@@ -245,23 +218,6 @@ export class ScryRepository {
     return { valid: true };
   }
 
-  async updateSpecification(principal: Principal, specificationId: string, input: UpdateTestSpecificationInput) {
-    this.requireWriteAccess(principal);
-    const workspaceId = principal.kind === "user" ? principal.workspaceId : null;
-    const result = await this.database.query(
-      `UPDATE test_specifications ts
-       SET name = $2, description = $3, updated_at = now()
-       FROM projects p
-       WHERE ts.id = $1 AND p.id = ts.project_id
-         AND ($4::uuid IS NULL OR p.workspace_id = $4)
-       RETURNING ts.id, ts.project_id AS "projectId", ts.name, ts.description,
-                 ts.created_at AS "createdAt", ts.updated_at AS "updatedAt"`,
-      [specificationId, input.name, input.description, workspaceId],
-    );
-    if (!result.rowCount) throw new NotFoundException("Test specification not found");
-    return result.rows[0]!;
-  }
-
   async updateEnvironment(principal: Principal, environmentId: string, input: UpdateEnvironmentInput) {
     this.requireWriteAccess(principal);
     const workspaceId = principal.kind === "user" ? principal.workspaceId : null;
@@ -274,6 +230,7 @@ export class ScryRepository {
       [environmentId, workspaceId],
     );
     if (!environment.rowCount) throw new NotFoundException("Flow environment not found");
+    await this.requireMissionCommandContext(environment.rows[0]!.projectId,input.missionId,input.objectiveId,input.agentSessionId);
     await this.requireActiveCredentials(
       (text, values) => this.database.query<{ id: string }>(text, values),
       environment.rows[0]!.projectId,
@@ -295,184 +252,15 @@ export class ScryRepository {
     return result.rows[0]!;
   }
 
-  async createSpecificationVersion(
-    principal: Principal,
-    specificationId: string,
-    input: CreateSpecificationVersionInput,
-  ) {
-    this.requireWriteAccess(principal);
-    return this.database.transaction(async (client) => {
-      await this.requireSpecification(client, principal, specificationId);
-      const result = await client.query(
-        `INSERT INTO specification_versions(specification_id, version, content)
-         SELECT $1, COALESCE(MAX(version), 0) + 1, $2::jsonb
-         FROM specification_versions WHERE specification_id = $1
-         RETURNING id, specification_id AS "specificationId", version, content, created_at AS "createdAt"`,
-        [specificationId, JSON.stringify(input)],
-      );
-      return result.rows[0]!;
-    });
-  }
-
-  async createPlanVersion(principal: Principal, input: CreatePlanVersionInput) {
-    this.requireWriteAccess(principal);
-    const risks = analyzePlanRisks(input.plan);
-    if (risks.errors.length > 0) {
-      throw new BadRequestException({
-        message: "Plan has conclusive-evidence validation errors",
-        errors: risks.errors,
-        warnings: risks.warnings,
-      });
-    }
-    return this.database.transaction(async (client) => {
-      await this.requireSpecificationVersion(client, principal, input.specificationVersionId);
-      const result = await client.query(
-        `INSERT INTO plan_versions(specification_version_id, version, protocol_version, plan)
-         SELECT $1, COALESCE(MAX(pv.version), 0) + 1, $2, $3::jsonb
-         FROM specification_versions target
-         LEFT JOIN specification_versions sibling
-           ON sibling.specification_id = target.specification_id
-         LEFT JOIN plan_versions pv ON pv.specification_version_id = sibling.id
-         WHERE target.id = $1
-         RETURNING id, specification_version_id AS "specificationVersionId", version,
-                   protocol_version AS "protocolVersion", plan, created_at AS "createdAt"`,
-        [input.specificationVersionId, input.plan.protocolVersion, JSON.stringify(input.plan)],
-      );
-      return result.rows[0]!;
-    });
-  }
-
-  async createAtomicRevision(
-    principal: Principal,
-    specificationId: string,
-    input: CreateAtomicRevisionInput,
-  ) {
-    this.requireWriteAccess(principal);
-    const risks = analyzePlanRisks(input.plan);
-    if (risks.errors.length > 0) {
-      throw new BadRequestException({
-        message: "Plan has conclusive-evidence validation errors",
-        errors: risks.errors,
-        warnings: risks.warnings,
-      });
-    }
-    return this.database.transaction(async (client) => {
-      await this.requireSpecification(client, principal, specificationId);
-      if (input.name !== undefined || input.description !== undefined) {
-        await client.query(
-          `UPDATE test_specifications
-           SET name = COALESCE($2, name), description = COALESCE($3, description), updated_at = now()
-           WHERE id = $1`,
-          [specificationId, input.name ?? null, input.description ?? null],
-        );
-      }
-      const specificationVersion = await client.query(
-        `INSERT INTO specification_versions(specification_id, version, content)
-         SELECT $1, COALESCE(MAX(version), 0) + 1, $2::jsonb
-         FROM specification_versions WHERE specification_id = $1
-         RETURNING id, version`,
-        [specificationId, JSON.stringify(input.content)],
-      );
-      const planVersion = await client.query(
-        `INSERT INTO plan_versions(specification_version_id, version, protocol_version, plan)
-         SELECT $1, COALESCE(MAX(pv.version), 0) + 1, $2, $3::jsonb
-         FROM specification_versions sibling
-         LEFT JOIN plan_versions pv ON pv.specification_version_id = sibling.id
-         WHERE sibling.specification_id = $4
-         RETURNING id, version`,
-        [specificationVersion.rows[0]!.id, input.plan.protocolVersion, JSON.stringify(input.plan), specificationId],
-      );
-      return {
-        specificationId,
-        specificationVersionId: specificationVersion.rows[0]!.id,
-        specificationVersion: specificationVersion.rows[0]!.version,
-        planVersionId: planVersion.rows[0]!.id,
-        planVersion: planVersion.rows[0]!.version,
-        warnings: risks.warnings,
-      };
-    });
-  }
-
-  async createRun(principal: Principal, projectId: string, input: CreateRunInput) {
-    this.requireWriteAccess(principal);
-    await this.requireProject(principal, projectId);
-    return this.database.transaction(async (client) => {
-      const environment = await client.query(
-        `SELECT id, project_id, name, base_origin, policy, secret_refs
-         FROM environments WHERE id = $1 AND project_id = $2`,
-        [input.environmentId, projectId],
-      );
-      if (!environment.rowCount) throw new NotFoundException("Environment not found");
-      const plan = await client.query(
-        `SELECT pv.id, pv.plan, pv.protocol_version, sv.specification_id
-         FROM plan_versions pv
-         JOIN specification_versions sv ON sv.id = pv.specification_version_id
-         JOIN test_specifications ts ON ts.id = sv.specification_id
-         WHERE pv.id = $1 AND ts.project_id = $2`,
-        [input.planVersionId, projectId],
-      );
-      if (!plan.rowCount) throw new NotFoundException("Plan version not found");
-      const environmentRow = environment.rows[0]!;
-      const planRow = plan.rows[0]!;
-      const planSecretRefs = this.planSecretRefs(planRow.plan);
-      const environmentSecretRefs = new Set<string>(environmentRow.secret_refs);
-      const unavailableRef = planSecretRefs.find(
-        (reference) => !environmentSecretRefs.has(reference),
-      );
-      if (unavailableRef) {
-        throw new BadRequestException(
-          `Protected credential "${unavailableRef}" is not available in the selected Flow environment.`,
-        );
-      }
-      await this.requireActiveCredentials(
-        (text, values) => client.query<{ id: string }>(text, values),
-        projectId,
-        planSecretRefs,
-      );
-      const execution = { browser: input.browser, viewport: input.viewport, seed: input.seed };
-      const result = await client.query(
-        `INSERT INTO runs(
-           project_id, environment_id, plan_version_id, state,
-           plan_snapshot, environment_snapshot, policy_snapshot, execution_snapshot
-         ) VALUES ($1, $2, $3, 'draft', $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb)
-         RETURNING id, project_id AS "projectId", environment_id AS "environmentId",
-                   plan_version_id AS "planVersionId", state, plan_snapshot AS "planSnapshot",
-                   environment_snapshot AS "environmentSnapshot", policy_snapshot AS "policySnapshot",
-                   execution_snapshot AS "executionSnapshot", created_at AS "createdAt"`,
-        [
-          projectId,
-          input.environmentId,
-          input.planVersionId,
-          JSON.stringify(planRow.plan),
-          JSON.stringify({
-            id: environmentRow.id,
-            name: environmentRow.name,
-            baseOrigin: environmentRow.base_origin,
-            secretRefs: environmentRow.secret_refs,
-          }),
-          JSON.stringify(environmentRow.policy),
-          JSON.stringify(execution),
-        ],
-      );
-      return result.rows[0]!;
-    });
-  }
-
   async getRun(principal: Principal, runId: string) {
     const workspaceId = principal.kind === "user" ? principal.workspaceId : null;
     const run = await this.database.query(
       `SELECT runs.id, runs.project_id AS "projectId", runs.environment_id AS "environmentId",
-              runs.plan_version_id AS "planVersionId", runs.state,
+              runs.mission_id AS "missionId",runs.objective_id AS "objectiveId",runs.agent_session_id AS "agentSessionId",
+              runs.flow_revision_id AS "flowRevisionId", runs.state, runs.phase,
               runs.outcome_classification AS "outcomeClassification",
               runs.rerun_of_run_id AS "rerunOfRunId",
-              runs.resolved_at AS "resolvedAt",
-              runs.resolved_by_run_id AS "resolvedByRunId",
-              runs.confirmation_of_run_id AS "confirmationOfRunId",
-              runs.confirmation_run_id AS "confirmationRunId",
-              (
-                runs.state IN ('failed','timed_out','infrastructure_error')
-                AND runs.resolved_at IS NULL
-              ) AS "needsAttention",
+              (runs.state IN ('failed','timed_out','infrastructure_error')) AS "needsAttention",
               runs.plan_snapshot AS "planSnapshot",
               runs.environment_snapshot AS "environmentSnapshot",
               runs.policy_snapshot AS "policySnapshot",
@@ -480,7 +268,7 @@ export class ScryRepository {
               CASE
                 WHEN runs.state = 'finalizing' THEN 'finalizing'
                 WHEN latest_event.type = 'step.evidence_started' THEN 'capturing_evidence'
-                WHEN runs.state = 'running' THEN 'executing_steps'
+                WHEN runs.state = 'running' THEN runs.phase
                 ELSE runs.state
               END AS "currentPhase",
               runs.created_at AS "createdAt", runs.updated_at AS "updatedAt"
@@ -500,68 +288,33 @@ export class ScryRepository {
     return run.rows[0]!;
   }
 
-  async getRunReport(principal: Principal, runId: string) {
-    const run = await this.getRun(principal, runId);
-    const attempts = (
-      await this.database.query(
-        `SELECT id, attempt_number AS "attemptNumber", state, started_at AS "startedAt",
-                completed_at AS "completedAt", error
-         FROM attempts WHERE run_id = $1 ORDER BY attempt_number`,
-        [runId],
-      )
-    ).rows;
-    const attemptIds = attempts.map((attempt) => attempt.id);
-    if (attemptIds.length === 0) {
-      return { run, attempts: [], events: [], assertions: [], artifacts: [] };
-    }
-    const events = (
-      await this.database.query(
-        `SELECT id, attempt_id AS "attemptId", sequence, type, payload,
-                occurred_at AS "occurredAt"
-         FROM run_events WHERE attempt_id = ANY($1::uuid[])
-         ORDER BY attempt_id, sequence`,
-        [attemptIds],
-      )
-    ).rows;
-    const assertions = (
-      await this.database.query(
-        `SELECT attempt_id AS "attemptId", step_id AS "stepId",
-                assertion_index AS "assertionIndex", assertion_type AS "assertionType",
-                status, error FROM assertion_results WHERE attempt_id = ANY($1::uuid[])
-         ORDER BY attempt_id, step_id, assertion_index`,
-        [attemptIds],
-      )
-    ).rows;
-    const artifacts = (
-      await this.database.query(
-        `SELECT id, attempt_id AS "attemptId", step_id AS "stepId", kind, status,
-                content_type AS "contentType", storage_key AS "storageKey",
-                size_bytes AS "sizeBytes", checksum_sha256 AS "checksumSha256",
-                retention_until AS "retentionUntil", observation, created_at AS "createdAt"
-         FROM artifacts WHERE attempt_id = ANY($1::uuid[]) ORDER BY created_at`,
-        [attemptIds],
-      )
-    ).rows;
-    return { run, attempts, events, assertions, artifacts };
-  }
-
   async rerunExact(principal: Principal, runId: string) {
     this.requireWriteAccess(principal);
     const source = await this.validateRunCredentials(principal, runId);
-    const result = await this.database.query(
-      `INSERT INTO runs(
-         project_id, environment_id, plan_version_id, state,
-         plan_snapshot, environment_snapshot, policy_snapshot, execution_snapshot,
-         rerun_of_run_id
-       )
-       SELECT project_id, environment_id, plan_version_id, 'draft',
-              plan_snapshot, environment_snapshot, policy_snapshot, execution_snapshot, id
-       FROM runs WHERE id = $1
-       RETURNING id, project_id AS "projectId", environment_id AS "environmentId",
-                 plan_version_id AS "planVersionId", state, created_at AS "createdAt"`,
-      [source.id],
-    );
-    return result.rows[0]!;
+    return this.database.transaction(async (client) => {
+      const result = await client.query(
+        `INSERT INTO runs(project_id,mission_id,objective_id,agent_session_id,environment_id,flow_revision_id,state,phase,
+           plan_snapshot, environment_snapshot, policy_snapshot, execution_snapshot,
+           rerun_of_run_id, idempotency_key
+         )
+         SELECT project_id,mission_id,objective_id,agent_session_id,environment_id,flow_revision_id,'queued','queued',
+                plan_snapshot, environment_snapshot, policy_snapshot, execution_snapshot, id, $2
+         FROM runs WHERE id = $1
+         RETURNING id, project_id AS "projectId", environment_id AS "environmentId",
+                   flow_revision_id AS "flowRevisionId",
+                   state, phase, created_at AS "createdAt"`,
+        [source.id, `rerun:${source.id}:${randomUUID()}`],
+      );
+      if (!result.rowCount) throw new NotFoundException("Source run not found");
+      const run = result.rows[0]!;
+      await client.query(`INSERT INTO mission_run_links(run_id,mission_id,objective_id,role,reason,classified_by_agent_session_id)
+        SELECT $1,r.mission_id,r.objective_id,'candidate','Exact rerun',r.agent_session_id FROM runs r WHERE r.id=$1`,[run.id]);
+      await client.query(
+        `INSERT INTO run_outbox(run_id, release_id, schema_fingerprint) VALUES ($1, $2, $3)`,
+        [run.id, process.env.SCRY_RELEASE_ID ?? "development", process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline"],
+      );
+      return run;
+    });
   }
 
   async validateRunCredentials(principal: Principal, runId: string) {
@@ -585,8 +338,10 @@ export class ScryRepository {
   async getArtifact(principal: Principal, artifactId: string) {
     const workspaceId = principal.kind === "user" ? principal.workspaceId : null;
     const result = await this.database.query(
-      `SELECT a.id, a.kind, a.status, a.content_type AS "contentType",
-              a.storage_key AS "storageKey", a.size_bytes AS "sizeBytes", a.observation
+      `SELECT a.id, a.kind, a.availability, a.content_type AS "contentType",
+              a.storage_key AS "storageKey", a.size_bytes AS "sizeBytes", a.metadata AS observation,
+              a.privacy_classification AS "privacyClassification", a.failure_provenance AS "failureProvenance",
+              a.reason_code AS "reasonCode"
        FROM artifacts a
        JOIN attempts att ON att.id = a.attempt_id
        JOIN runs r ON r.id = att.run_id
@@ -610,6 +365,8 @@ export class ScryRepository {
       return typeof secretRef === "string" ? [secretRef] : [];
     }))];
   }
+
+  private async requireMissionCommandContext(projectId:string,missionId:string,objectiveId:string,agentSessionId:string){const result=await this.database.query(`SELECT 1 FROM missions m JOIN mission_objectives o ON o.mission_id=m.id AND o.id=$3 JOIN agent_sessions s ON s.mission_id=m.id AND s.id=$4 AND s.status='active' WHERE m.project_id=$1 AND m.id=$2`,[projectId,missionId,objectiveId,agentSessionId]);if(!result.rowCount)throw new BadRequestException({code:"MISSION_CONTEXT_INVALID"});}
 
   private async requireActiveCredentials(
     query: (text: string, values: unknown[]) => Promise<{ rows: Array<{ id: string }> }>,
@@ -649,48 +406,13 @@ export class ScryRepository {
     if (!result.rowCount) throw new NotFoundException("Project not found");
   }
 
-  private async requireSpecification(
-    client: PoolClient,
-    principal: Principal,
-    specificationId: string,
-  ) {
-    const workspaceId = principal.kind === "user" ? principal.workspaceId : null;
-    const result = await client.query(
-      `SELECT 1
-       FROM test_specifications ts
-       JOIN projects p ON p.id = ts.project_id
-       WHERE ts.id = $1 AND ($2::uuid IS NULL OR p.workspace_id = $2)
-       FOR UPDATE OF ts`,
-      [specificationId, workspaceId],
-    );
-    if (!result.rowCount) throw new NotFoundException("Test specification not found");
-  }
-
-  private async requireSpecificationVersion(
-    client: PoolClient,
-    principal: Principal,
-    specificationVersionId: string,
-  ) {
-    const workspaceId = principal.kind === "user" ? principal.workspaceId : null;
-    const result = await client.query(
-      `SELECT 1
-       FROM specification_versions sv
-       JOIN test_specifications ts ON ts.id = sv.specification_id
-       JOIN projects p ON p.id = ts.project_id
-       WHERE sv.id = $1 AND ($2::uuid IS NULL OR p.workspace_id = $2)
-       FOR UPDATE OF sv`,
-      [specificationVersionId, workspaceId],
-    );
-    if (!result.rowCount) throw new NotFoundException("Specification version not found");
-  }
-
   private async workspaceFor(principal: Principal) {
     if (principal.kind === "user") return principal.workspaceId;
-    const legacy = await this.database.query(
-      "SELECT id FROM workspaces WHERE slug = 'legacy'",
+    const serviceWorkspace = await this.database.query(
+      "SELECT id FROM workspaces WHERE slug = 'scry-service'",
     );
-    if (!legacy.rowCount) throw new Error("Legacy service workspace is missing");
-    return legacy.rows[0]!.id as string;
+    if (!serviceWorkspace.rowCount) throw new Error("Service workspace is missing");
+    return serviceWorkspace.rows[0]!.id as string;
   }
 
   requireWriteAccess(principal: Principal) {
@@ -698,4 +420,8 @@ export class ScryRepository {
       throw new ForbiddenException("Workspace viewers have read-only access");
     }
   }
+}
+
+function isPostgresUniqueViolation(error: unknown): error is { code: "23505" } {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "23505");
 }

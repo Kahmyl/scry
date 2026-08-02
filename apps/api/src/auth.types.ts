@@ -12,6 +12,8 @@ export type UserPrincipal = {
 export type ServicePrincipal = {
   kind: "service";
   subject: "scry-service";
+  workspaceId?: never;
+  role?: never;
 };
 
 export type Principal = UserPrincipal | ServicePrincipal;

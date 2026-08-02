@@ -1,5 +1,5 @@
-import type { TestPlan } from "./plan.js";
-import type { ExecutionPolicyV1 } from "./policy.js";
+import type { CurrentPlan, CurrentAction } from "./current.js";
+import type { ExecutionPolicy } from "./policy.js";
 
 export type PolicyViolation = {
   code: "ORIGIN_NOT_ALLOWED" | "ACTION_BUDGET_EXCEEDED" | "DURATION_BUDGET_EXCEEDED" | "NAVIGATION_BUDGET_EXCEEDED";
@@ -17,7 +17,7 @@ export type PlanRiskDiagnostic = {
     | "READINESS_EXCEEDS_RUN_BUDGET"
     | "FIXED_DELAY_READINESS"
     | "TECHNICAL_READINESS_ONLY"
-    | "BROAD_SELECTOR"
+    | "BROAD_SEMANTIC_TARGET"
     | "READINESS_CONSUMES_RUN_BUDGET"
     | "SECRET_CAPTURE_SCREENSHOT_RISK"
     | "SECRET_CAPTURE_WITHOUT_PROTECTED_BOUNDARY"
@@ -31,18 +31,17 @@ export type PlanRiskDiagnostic = {
   stepId: string;
 };
 
-export function analyzePlanRisks(plan: TestPlan): {
+export function analyzePlanRisks(plan: CurrentPlan): {
   errors: PlanRiskDiagnostic[];
   warnings: PlanRiskDiagnostic[];
 } {
-  if (plan.protocolVersion === "1") return { errors: [], warnings: [] };
   const diagnostics: PlanRiskDiagnostic[] = [];
   const capturedSecretReferences = new Set<string>();
   const capturedValueReferences = new Set<string>();
   let unsettledReactionStep: string | undefined;
   const reactionTypes = new Set(["navigate", "click", "press", "select", "check"]);
   for (const [index, step] of plan.steps.entries()) {
-    if (step.action.type === "captureValue") {
+    if (step.action.type === "capturePublicValue") {
       if (capturedValueReferences.has(step.action.reference)) {
         diagnostics.push(error(
           "DUPLICATE_CAPTURED_VALUE_REFERENCE",
@@ -53,43 +52,13 @@ export function analyzePlanRisks(plan: TestPlan): {
       }
       capturedValueReferences.add(step.action.reference);
     }
-    if (step.action.type === "captureSecret") {
-      if (capturedSecretReferences.has(step.action.reference)) {
-        diagnostics.push(error(
-          "DUPLICATE_CAPTURED_SECRET_REFERENCE",
-          step.id,
-          `Captured secret reference "${step.action.reference}" is already used by an earlier capture step.`,
-          "Give every generated secret a unique reference so one protected value cannot silently replace another.",
-        ));
-      }
-      capturedSecretReferences.add(step.action.reference);
-      const targetName = "value" in step.action.target
-        ? step.action.target.value
-        : step.action.target.name;
-      if (targetName && /\b(?:client|application|account)\s*(?:id|identifier)\b/i.test(targetName)) {
-        diagnostics.push(error(
-          "NON_SECRET_IDENTIFIER_CAPTURE",
-          step.id,
-          `The protected capture target "${targetName}" appears to be a public identifier, not a generated secret.`,
-          "Target the one-time secret value (for example, Client secret). Record public identifiers as ordinary non-secret evidence.",
-        ));
-      }
-      let boundaryIndex = index - 1;
-      while (boundaryIndex >= 0 && plan.steps[boundaryIndex]!.action.type === "captureValue") {
-        boundaryIndex -= 1;
-      }
-      const boundary = plan.steps[boundaryIndex];
-      const beginsProtectedBlock = boundary && (
-        reactionTypes.has(boundary.action.type)
-        || boundary.action.type === "captureSecret"
-      );
-      if (!beginsProtectedBlock) {
-        diagnostics.push(error(
-          "SECRET_CAPTURE_WITHOUT_PROTECTED_BOUNDARY",
-          step.id,
-          "A generated secret could become visible before Scry starts its visual privacy overlay.",
-          "Place captureSecret in the capture block immediately after the revealing action. Public captureValue steps may precede it.",
-        ));
+    if (step.action.type === "protectedTransaction") {
+      for (const output of step.action.extraction.outputs) {
+        const references = output.classification === "protected" ? capturedSecretReferences : capturedValueReferences;
+        if (references.has(output.reference)) diagnostics.push(error(output.classification === "protected" ? "DUPLICATE_CAPTURED_SECRET_REFERENCE" : "DUPLICATE_CAPTURED_VALUE_REFERENCE", step.id, `Captured reference "${output.reference}" is already used.`, "Give every generated output a unique reference."));
+        references.add(output.reference);
+        const targetName = output.acquisition.target.preferredEvidence.names[0] ?? output.acquisition.target.preferredEvidence.labels[0] ?? output.acquisition.target.concept;
+        if (output.classification === "protected" && targetName && /\b(?:client|application|account)\s*(?:id|identifier)\b/i.test(targetName)) diagnostics.push(error("NON_SECRET_IDENTIFIER_CAPTURE", step.id, `The protected output target "${targetName}" appears to be public.`, "Classify identifiers as public transaction outputs."));
       }
     }
     if (
@@ -101,7 +70,7 @@ export function analyzePlanRisks(plan: TestPlan): {
         "CAPTURED_SECRET_REFERENCE_UNAVAILABLE",
         step.id,
         `Captured secret reference "${step.action.capturedSecretRef}" is not produced by an earlier step.`,
-        "Place the matching captureSecret step before this fill action and use the same unique reference.",
+        "Place the matching protected operation before this fill action and use the same unique reference.",
       ));
     }
     if (
@@ -200,16 +169,16 @@ export function analyzePlanRisks(plan: TestPlan): {
         ));
       }
     }
-    const locators = [
-      ...(step.action.type !== "navigate" && step.action.type !== "scroll" && step.action.type !== "screenshot" && step.action.type !== "press" ? [step.action.target] : []),
+    const intents = [
+      ...actionIntents(step.action),
       ...(step.after?.conditions.flatMap((condition) => "target" in condition ? [condition.target] : []) ?? []),
     ];
-    if (locators.some((locator) => locator.strategy === "css" && ["*", "body", "html"].includes(locator.value.trim()))) {
+    if (intents.some((intent) => intent.scope.kind === "page" && intent.preferredEvidence.roles.length === 0 && intent.preferredEvidence.names.length === 0 && intent.preferredEvidence.labels.length === 0 && !intent.preferredEvidence.expectedText)) {
       diagnostics.push(warning(
-        "BROAD_SELECTOR",
+        "BROAD_SEMANTIC_TARGET",
         step.id,
-        "A broad selector can match before the intended content is ready.",
-        "Target the smallest stable container or use user-visible text and roles.",
+        "A broad semantic target can remain ambiguous after the intended content renders.",
+        "Add a role, accessible name, label, relationship, or narrower semantic scope.",
       ));
     }
   }
@@ -217,6 +186,17 @@ export function analyzePlanRisks(plan: TestPlan): {
     errors: diagnostics.filter((item) => item.severity === "error"),
     warnings: diagnostics.filter((item) => item.severity === "warning"),
   };
+}
+
+function actionIntents(action: CurrentAction) {
+  if (action.type === "protectedTransaction") {
+    return action.extraction.outputs.map((output) => output.acquisition.target);
+  }
+  if (action.type === "capturePublicValue") {
+    return [action.capture.acquisition.target];
+  }
+  if (action.type === "navigate" || action.type === "scroll" || action.type === "screenshot" || action.type === "press") return [];
+  return [action.target];
 }
 
 function error(code: PlanRiskDiagnostic["code"], stepId: string, message: string, suggestion: string): PlanRiskDiagnostic {
@@ -228,8 +208,8 @@ function warning(code: PlanRiskDiagnostic["code"], stepId: string, message: stri
 }
 
 export function validatePlanAgainstPolicy(
-  plan: TestPlan,
-  policy: ExecutionPolicyV1,
+  plan: CurrentPlan,
+  policy: ExecutionPolicy,
 ): PolicyViolation[] {
   const violations: PolicyViolation[] = [];
   const policyOrigins = new Set(policy.allowedOrigins.map((value) => new URL(value).origin));

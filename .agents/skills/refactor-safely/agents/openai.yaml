@@ -1,0 +1,4 @@
+interface:
+  display_name: "Refactor Safely"
+  short_description: "Improve internals without behavior change"
+  default_prompt: "Use $refactor-safely to restructure this code while preserving observable behavior and keeping verification green."

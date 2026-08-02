@@ -7,7 +7,7 @@ import { createScryMcpServer } from "./server.js";
 
 const host = process.env.MCP_HOST ?? "0.0.0.0";
 const port = Number(process.env.MCP_PORT ?? 4100);
-const apiBaseUrl = process.env.SCRY_API_BASE_URL ?? "http://127.0.0.1:4000/v1";
+const apiBaseUrl = process.env.SCRY_API_BASE_URL ?? "http://127.0.0.1:4000/api";
 const publicApiBaseUrl = process.env.SCRY_PUBLIC_API_BASE_URL ?? apiBaseUrl;
 const allowedOrigins = new Set(
   (process.env.MCP_ALLOWED_ORIGINS ?? "")
@@ -20,7 +20,13 @@ const httpServer = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
   if (url.pathname === "/health" && request.method === "GET") {
-    json(response, 200, { status: "ok", transport: "streamable-http" });
+    try {
+      const api = new ScryApiClient(apiBaseUrl, process.env.SCRY_SERVICE_TOKEN, publicApiBaseUrl);
+      const readiness = await api.get<{ ready: boolean; releaseId: string }>("/ready");
+      json(response, readiness.ready ? 200 : 503, { status: readiness.ready ? "ok" : "not_ready", transport: "streamable-http", api: readiness });
+    } catch (error) {
+      json(response, 503, { status: "incompatible", transport: "streamable-http", error: error instanceof Error ? error.message : String(error) });
+    }
     return;
   }
 

@@ -26,6 +26,7 @@ import {
   Play,
   Plus,
   RotateCcw,
+  ScanSearch,
   Search,
   Settings2,
   ShieldCheck,
@@ -36,6 +37,7 @@ import {
   Trash2,
   X,
   XCircle,
+  Wrench,
 } from "lucide-react";
 import {
   type Dispatch,
@@ -57,17 +59,23 @@ import {
   post,
   remove,
   type Credential,
+  type Calibration,
+  type CredentialIncident,
   type Environment,
   type McpAccessToken,
+  type MissionDetail,
+  type MissionReport,
+  type MissionSummary,
   type Project,
   type Report,
   type Run,
   type RunState,
-  type Specification,
+  type Flow,
 } from "./api.js";
 import { publicConfig } from "./runtime-config.js";
+import { deriveRecordingTimeline, deriveRecoveryTimeline, type RecordingTimelineEntry } from "./recording-timeline.js";
+import { dashboardPaths as viewPaths, reconcileProjectSelection, resolveDashboardView, type DashboardView as View } from "./dashboard-state.js";
 
-type View = "overview" | "specifications" | "runs" | "reports" | "settings" | "workspace" | "account" | "integrations";
 type SequenceActionType = "navigate" | "fill" | "click" | "waitFor" | "screenshot";
 type VerificationDraft = {
   id: string;
@@ -79,25 +87,16 @@ type SequenceDraft = {
   type: SequenceActionType;
   title: string;
   url: string;
-  targetStrategy: "role" | "label" | "placeholder" | "text" | "testId";
-  targetRole: "button" | "link" | "heading" | "textbox";
+  targetScope: "page" | "dialog" | "form" | "field_group" | "table" | "row" | "region";
+  targetRole: "button" | "link" | "heading" | "textbox" | "checkbox" | "combobox" | "text" | "value";
   target: string;
+  visualGrounding: boolean;
   valueMode: "value" | "secret";
   value: string;
   verifications: VerificationDraft[];
   readinessType: "visible" | "hidden" | "url" | "content" | "request" | "settle" | "delay";
   readinessValue: string;
   readinessTimeoutMs: number;
-};
-const viewPaths: Record<View, string> = {
-  overview: "/dashboard",
-  specifications: "/dashboard/flows",
-  runs: "/dashboard/runs",
-  reports: "/dashboard/reports",
-  settings: "/dashboard/settings",
-  workspace: "/dashboard/workspace",
-  account: "/dashboard/account",
-  integrations: "/dashboard/integrations",
 };
 const terminalStates: RunState[] = [
   "passed",
@@ -125,46 +124,37 @@ export function App({
   const navigate = useNavigate();
   const reportMatch = matchPath("/dashboard/reports/:reportId", location.pathname);
   const reportId = reportMatch?.params.reportId;
-  const view: View =
-    reportId || location.pathname === viewPaths.reports
-      ? "reports"
-      : location.pathname === viewPaths.specifications || location.pathname === "/dashboard/specifications"
-        ? "specifications"
-        : location.pathname === viewPaths.runs
-          ? "runs"
-          : location.pathname === viewPaths.settings
-            ? "settings"
-            : location.pathname === viewPaths.workspace
-              ? "workspace"
-            : location.pathname === viewPaths.account
-              ? "account"
-            : location.pathname === viewPaths.integrations
-              ? "integrations"
-            : "overview";
+  const runMatch=matchPath("/dashboard/runs/:runId",location.pathname);
+  const runId=runMatch?.params.runId;
+  const missionFlowsMatch=matchPath("/dashboard/missions/:missionId/flows",location.pathname);
+  const missionMatch=missionFlowsMatch??matchPath("/dashboard/missions/:missionId",location.pathname);
+  const missionId=missionMatch?.params.missionId;
+  const view = resolveDashboardView(location.pathname);
+
+  useEffect(() => {
+    if (location.pathname === "/dashboard/flows") navigate(viewPaths.missions, { replace: true });
+  }, [location.pathname, navigate]);
 
   const loadProjects = useCallback(async () => {
     try {
       const data = await api<Project[]>("/projects");
       setProjects(data);
-      if (!projectId && data[0]) {
-        setProjectId(data[0].id);
-        localStorage.setItem("scry:project", data[0].id);
-      }
+      setProjectId((selected) => {
+        const next = reconcileProjectSelection(data, selected);
+        if (next) localStorage.setItem("scry:project", next);
+        else localStorage.removeItem("scry:project");
+        return next;
+      });
     } catch (cause) {
       setError(message(cause));
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, []);
 
   useEffect(() => {
     void loadProjects();
   }, [loadProjects]);
-  useEffect(() => {
-    if (location.pathname === viewPaths.reports) {
-      navigate(viewPaths.runs, { replace: true });
-    }
-  }, [location.pathname, navigate]);
 
   const selectProject = (id: string) => {
     setProjectId(id);
@@ -210,13 +200,21 @@ export function App({
           ) : !projectId ? (
             <EmptyWorkspace onCreate={() => setCreateProjectOpen(true)} />
           ) : reportId ? (
-            <ReportView runId={reportId} onBack={() => navigate(viewPaths.runs)} onOpenReport={(id) => navigate(`/dashboard/reports/${id}`)} />
+            <MissionReportView reportId={reportId} onBack={()=>navigate(viewPaths.reports)}/>
+          ) : runId ? (
+            <ReportView runId={runId} onBack={() => navigate(viewPaths.runs)} onOpenReport={(id) => navigate(`/dashboard/runs/${id}`)} />
+          ) : missionId && missionFlowsMatch ? (
+            <Flows projectId={projectId} scopedMissionId={missionId} onBack={()=>navigate(`/dashboard/missions/${missionId}`)} onRunStarted={(id) => navigate(`/dashboard/runs/${id}`)} onNavigateMissions={() => navigate(viewPaths.missions)} />
+          ) : missionId ? (
+            <MissionDetailPage missionId={missionId} onBack={()=>navigate(viewPaths.missions)} onOpenFlows={()=>navigate(`/dashboard/missions/${missionId}/flows`)} onOpenRun={(id)=>navigate(`/dashboard/runs/${id}`)} onOpenReport={(id)=>navigate(`/dashboard/reports/${id}`)}/>
+          ) : view === "missions" ? (
+            <Missions projectId={projectId} onOpen={(id)=>navigate(`/dashboard/missions/${id}`)}/>
           ) : view === "overview" ? (
-            <Overview projectId={projectId} onOpenReport={(id) => navigate(`/dashboard/reports/${id}`)} onNavigate={(next) => navigate(viewPaths[next])} />
-          ) : view === "specifications" ? (
-            <Specifications projectId={projectId} onRunStarted={(id) => navigate(`/dashboard/reports/${id}`)} />
+            <Overview projectId={projectId} onOpenReport={(id) => navigate(`/dashboard/runs/${id}`)} onNavigate={(next) => navigate(viewPaths[next])} />
           ) : view === "runs" ? (
-            <Runs projectId={projectId} onOpenReport={(id) => navigate(`/dashboard/reports/${id}`)} />
+            <Runs projectId={projectId} onOpenReport={(id) => navigate(`/dashboard/runs/${id}`)} />
+          ) : view === "reports" ? (
+            <MissionReportsPage projectId={projectId} onOpen={(id)=>navigate(`/dashboard/reports/${id}`)}/>
           ) : view === "settings" ? (
             <Settings projectId={projectId} />
           ) : (
@@ -257,9 +255,10 @@ function Sidebar({
   const projectMenuRef = useRef<HTMLDivElement>(null);
   const selectedProject = projects.find((project) => project.id === projectId);
   const nav: Array<[View, string, ReactNode]> = [
-    ["overview", "Command center", <LayoutDashboard size={17} />],
-    ["specifications", "Flows", <FileCode2 size={17} />],
+    ["overview", "Dashboard", <LayoutDashboard size={17} />],
+    ["missions", "Missions", <Eye size={17} />],
     ["runs", "Runs", <Activity size={17} />],
+    ["reports","Reports",<FileText size={17}/>],
   ];
 
   useEffect(() => {
@@ -433,6 +432,106 @@ function Topbar({
   );
 }
 
+function Missions({projectId,onOpen}:{projectId:string;onOpen:(id:string)=>void}){
+  const [missions,setMissions]=useState<MissionSummary[]>([]);const [open,setOpen]=useState(false);const [loading,setLoading]=useState(true);const [error,setError]=useState("");
+  const load=useCallback(()=>{setLoading(true);void api<MissionSummary[]>(`/projects/${projectId}/missions`).then(setMissions).catch((e)=>setError(message(e))).finally(()=>setLoading(false));},[projectId]);
+  useEffect(load,[load]);if(loading)return <PageSkeleton/>;
+  return <><PageTitle eyebrow="MISSION CONTROL" title="Missions" copy="Every instruction, objective, execution, accepted result, and next action in one durable journey." action={<button className="primary-button" onClick={()=>setOpen(true)}><Plus size={16}/> New Mission</button>}/>{error&&<div className="form-error page-form-error">{error}</div>}<div className="spec-grid mission-grid">{missions.map(m=>{const total=m.objectiveCount||0;const done=m.terminalObjectiveCount||0;return <button className="spec-card mission-card" key={m.id} onClick={()=>onOpen(m.id)}><div className="spec-top"><div className="spec-icon"><Eye size={19}/></div><span className={m.status==="completed"?"ready-tag":"draft-tag"}>{m.status.replace("_"," ")}</span></div><h3>{m.title}</h3><p>{m.originalInstruction}</p><div className="mission-progress"><span style={{width:`${total?Math.round(done/total*100):0}%`}}/></div><div className="spec-facts"><span><CheckCircle2 size={14}/>{done} of {total} objectives</span><span><FileText size={14}/>{m.acceptedEvidenceCount} evidence</span></div><div className="spec-footer"><span>{m.resumePointer?.explanation??m.lastMeaningfulActivity??"Ready for planning"}</span><ArrowRight size={16}/></div></button>})}{!missions.length&&<div className="panel empty-large"><EmptyBlock icon={<Eye/>} title="Start the first Mission" copy="Capture the instruction first, then organize its Flows and Runs into objectives."/></div>}</div>{open&&<CreateMissionDialog projectId={projectId} onClose={()=>setOpen(false)} onCreated={(id)=>{setOpen(false);load();onOpen(id);}}/>}</>;
+}
+
+function CreateMissionDialog({projectId,onClose,onCreated}:{projectId:string;onClose:()=>void;onCreated:(id:string)=>void}){
+  const[title,setTitle]=useState("");
+  const[instruction,setInstruction]=useState("");
+  const[objective,setObjective]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[error,setError]=useState("");
+  return <Modal title="Start Mission" subtitle="Turn one instruction into an organized, resumable journey." onClose={onClose}>
+    <form className="stack-form mission-create-form" onSubmit={(event)=>{
+      event.preventDefault();setBusy(true);setError("");
+      void post<{missionId:string;agentSessionId:string}>(`/projects/${projectId}/missions`,{title,originalInstruction:instruction,instructionSnapshot:instruction,provider:"human",idempotencyKey:`web-mission-${crypto.randomUUID()}`}).then(async created=>{
+        await post(`/missions/${created.missionId}/objectives`,{missionId:created.missionId,agentSessionId:created.agentSessionId,title:objective||title,description:instruction,dependencies:[],completionCriteria:[{description:`Complete: ${objective||title}`,required:true}],order:0});onCreated(created.missionId);
+      }).catch(cause=>setError(message(cause))).finally(()=>setBusy(false));
+    }}>
+      <div className="mission-form-intro"><span><Eye size={18}/></span><div><strong>Define the outcome</strong><small>Scry will keep every objective, Flow, Run, and accepted result connected to this Mission.</small></div></div>
+      <label><span>Mission title</span><input autoFocus value={title} onChange={event=>setTitle(event.target.value)} placeholder="e.g. Verify the complete partner workflow" required/><small>A short name you can recognize later.</small></label>
+      <label><span>Original instruction</span><textarea value={instruction} onChange={event=>setInstruction(event.target.value)} placeholder="Describe what Scry should accomplish and any important constraints…" required/><small>This instruction is preserved as the Mission’s source of truth.</small></label>
+      <label><span>First objective <em>Optional</em></span><input value={objective} onChange={event=>setObjective(event.target.value)} placeholder="Defaults to the Mission title"/><small>You can add and organize more objectives after starting.</small></label>
+      {error&&<div className="form-error"><AlertTriangle size={14}/>{error}</div>}
+      <div className="modal-actions mission-form-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy}>{busy?<><LoaderCircle className="spin" size={16}/> Starting…</>:<>Start Mission <ArrowRight size={16}/></>}</button></div>
+    </form>
+  </Modal>;
+}
+
+function MissionView({missionId,onBack,onOpenRun,onOpenReport}:{missionId:string;onBack:()=>void;onOpenRun:(id:string)=>void;onOpenReport:(id:string)=>void}){const[data,setData]=useState<MissionDetail>();const[activities,setActivities]=useState<Array<{id:string;type:string;summary:string;occurredAt:string;technical:boolean}>>([]);const[technical,setTechnical]=useState(false);const[error,setError]=useState("");const load=useCallback(()=>{void Promise.all([api<MissionDetail>(`/missions/${missionId}`),api<typeof activities>(`/missions/${missionId}/activities?technical=${technical}`)]).then(([m,a])=>{setData(m);setActivities(a);}).catch(e=>setError(message(e)));},[missionId,technical]);useEffect(load,[load]);if(!data)return <PageSkeleton/>;return <><button className="back-button" onClick={onBack}>← Back to Missions</button><PageTitle eyebrow="MISSION" title={data.title} copy={data.originalInstruction} action={<div className="page-title-actions">{data.resumePointer&&<button className="primary-button" onClick={()=>data.resumePointer?.runId?onOpenRun(data.resumePointer.runId):undefined}>Continue Mission <ArrowRight size={15}/></button>}{data.latestReportId&&<button className="secondary-button" onClick={()=>onOpenReport(data.latestReportId!)}>View report</button>}</div>}/>{error&&<div className="form-error">{error}</div>}<section className="metric-grid metric-grid-compact"><Metric label="Status" value={data.status.replace("_"," ")} detail={data.resumePointer?.explanation??"No pending resume action"} icon={<Activity/>}/><Metric label="Objectives" value={`${data.terminalObjectiveCount}/${data.objectiveCount}`} detail="Terminal outcomes" icon={<CheckCircle2/>} tone="lime"/><Metric label="Accepted evidence" value={String(data.acceptedEvidenceCount)} detail="Authoritative records" icon={<ShieldCheck/>}/></section><section className="content-grid"><div className="panel span-2"><PanelHeader title="Objectives" kicker="OUTCOME STRUCTURE"/>{data.objectives.map(o=><div className="mission-objective" key={o.id}><StatusBadge state={o.status==="passed"?"passed":o.status==="failed"?"failed":"running"}/><div><strong>{o.order+1}. {o.title}</strong><small>{o.conclusion??o.description}</small></div><span>{data.acceptedEvidence.filter(e=>e.objectiveId===o.id).length} accepted</span></div>)}</div><div className="panel"><PanelHeader title="Journey timeline" kicker="MEANINGFUL ACTIVITY" action={technical?"Hide technical":"Show technical"} onAction={()=>setTechnical(v=>!v)}/><div className="mission-timeline">{activities.map(a=><div key={a.id}><span/><div><strong>{a.summary}</strong><small>{relativeTime(a.occurredAt)}{a.technical?" · technical":""}</small></div></div>)}</div></div></section><section className="panel"><PanelHeader title="Evidence by objective" kicker="ACCEPTED SET"/>{data.objectives.map(o=><div className="evidence-group" key={o.id}><strong>{o.title}</strong>{data.acceptedEvidence.filter(e=>e.objectiveId===o.id).map(e=><button key={e.id} onClick={()=>onOpenRun(e.runId)}>Run {e.runId.slice(0,8)} · {e.conclusion}<ArrowRight size={14}/></button>)}</div>)}</section></>}
+
+function MissionReports({projectId,onOpen}:{projectId:string;onOpen:(id:string)=>void}){const[reports,setReports]=useState<MissionReport[]>([]);useEffect(()=>{void api<MissionReport[]>(`/projects/${projectId}/mission-reports`).then(setReports)},[projectId]);return <><PageTitle eyebrow="PUBLISHED OUTCOMES" title="Reports" copy="Immutable Mission conclusions assembled from explicitly accepted evidence."/><div className="panel table-panel">{reports.map(r=><button className="run-table row" key={r.id} onClick={()=>onOpen(r.id)}><span><strong>{r.missionTitle??r.snapshot.mission.title}</strong><small>Revision {r.revision}</small></span><span>{r.snapshot.overallConclusion}</span><span>{relativeTime(r.createdAt)}</span><span className="ready-tag">{r.status}</span><ArrowRight size={16}/></button>)}{!reports.length&&<EmptyBlock icon={<FileText/>} title="No published reports" copy="Reports appear after every required objective reaches a terminal outcome."/>}</div></>}
+
+function MissionReportView({reportId,onBack}:{reportId:string;onBack:()=>void}){
+  const[report,setReport]=useState<MissionReport>();
+  const[evidenceRuns,setEvidenceRuns]=useState<Record<string,Report>>({});
+  const[evidenceLoading,setEvidenceLoading]=useState(false);
+  const[evidenceError,setEvidenceError]=useState("");
+  const[openEvidenceObjective,setOpenEvidenceObjective]=useState<string|null>(null);
+  const[openEvidenceRun,setOpenEvidenceRun]=useState<string|null>(null);
+  useEffect(()=>{void api<MissionReport>(`/mission-reports/${reportId}`).then(setReport)},[reportId]);
+  useEffect(()=>{
+    if(!report)return;
+    const runIds=[...new Set(report.snapshot.objectiveResults.flatMap(objective=>objective.acceptedRunIds))];
+    if(!runIds.length){setEvidenceRuns({});return;}
+    let active=true;setEvidenceLoading(true);setEvidenceError("");
+    void Promise.all(runIds.map(async runId=>[runId,await api<Report>(`/runs/${runId}`)] as const)).then(entries=>{if(active)setEvidenceRuns(Object.fromEntries(entries));}).catch(cause=>{if(active)setEvidenceError(message(cause));}).finally(()=>{if(active)setEvidenceLoading(false);});
+    return()=>{active=false;};
+  },[report]);
+  if(!report)return <PageSkeleton/>;
+  const snapshot=report.snapshot;
+  const passed=snapshot.objectiveResults.filter(objective=>objective.status==="passed").length;
+  const runCount=new Set(snapshot.objectiveResults.flatMap(objective=>objective.acceptedRunIds)).size;
+  const artifactCount=new Set(snapshot.objectiveResults.flatMap(objective=>objective.acceptedArtifactIds)).size;
+  return <div className="mission-report-detail">
+    <button className="back-button mission-report-back" onClick={onBack}><ChevronLeft size={15}/> All reports</button>
+    <section className="mission-report-hero" id="report-overview">
+      <div className="mission-report-mark"><FileText size={25}/></div>
+      <div className="mission-report-heading">
+        <div className="mission-report-meta"><span className="mission-report-state"><CheckCircle2 size={13}/> Published</span><span>Revision {report.revision}</span><span>{relativeTime(report.createdAt)}</span></div>
+        <h1>{snapshot.mission.title}</h1>
+        <p>{snapshot.mission.originalInstruction}</p>
+      </div>
+      <div className="mission-report-conclusion"><span><CheckCircle2 size={13}/> Overall conclusion</span><h2>{snapshot.overallConclusion}</h2></div>
+      <div className="mission-report-stats">
+        <div><span>Objectives passed</span><strong>{passed}<small> / {snapshot.objectiveResults.length}</small></strong></div>
+        <div><span>Accepted runs</span><strong>{runCount}</strong></div>
+        <div><span>Evidence artifacts</span><strong>{artifactCount}</strong></div>
+        <div><span>Superseded attempts</span><strong>{snapshot.supersededAttemptCount}</strong></div>
+      </div>
+    </section>
+    <nav className="mission-report-nav" aria-label="Report sections"><a href="#report-overview"><FileText size={14}/>Overview</a><a href="#report-objectives"><CheckCircle2 size={14}/>Objectives <span>{snapshot.objectiveResults.length}</span></a><a href="#report-journey"><Activity size={14}/>Journey</a><a href="#report-evidence"><ShieldCheck size={14}/>Evidence <span>{runCount}</span></a></nav>
+    <section className="mission-report-section" id="report-objectives">
+      <div className="mission-report-section-head"><div><span>Accepted evidence</span><h2>Objective results</h2></div><small>{passed} of {snapshot.objectiveResults.length} passed</small></div>
+      <div className="mission-report-objectives">{snapshot.objectiveResults.map((objective,index)=><article key={objective.id}>
+        <div className="mission-report-objective-index">{String(index+1).padStart(2,"0")}</div>
+        <div className="mission-report-objective-copy"><div><h3>{objective.title}</h3><span className={objective.status==="passed"?"mission-result-pass":"mission-result-neutral"}><CheckCircle2 size={12}/>{objective.status}</span></div><p>{objective.conclusion??"No conclusion recorded."}</p><div className="mission-report-evidence-counts"><span><Play size={12}/>{objective.acceptedRunIds.length} accepted run{objective.acceptedRunIds.length===1?"":"s"}</span><span><FileText size={12}/>{objective.acceptedArtifactIds.length} artifact{objective.acceptedArtifactIds.length===1?"":"s"}</span></div></div>
+      </article>)}</div>
+    </section>
+    <section className="mission-report-lower" id="report-journey">
+      <details className="mission-report-section mission-report-journey"><summary className="mission-report-section-head"><div><span>What happened</span><h2>Journey summary</h2></div><small>{snapshot.journeySummary.length} events <ChevronDown size={15}/></small></summary><ol>{snapshot.journeySummary.map((item,index)=><li key={`${index}-${item}`}><span>{String(index+1).padStart(2,"0")}</span><p>{item}</p></li>)}</ol></details>
+      <div className="mission-report-section mission-report-actions"><div className="mission-report-section-head"><div><span>Next</span><h2>Remaining actions</h2></div></div>{snapshot.remainingActions.length?<ul>{snapshot.remainingActions.map((item,index)=><li key={`${index}-${item}`}><AlertTriangle size={15}/><span>{item}</span></li>)}</ul>:<div className="mission-report-complete"><CheckCircle2 size={24}/><strong>No remaining actions</strong><span>This Mission is complete.</span></div>}</div>
+    </section>
+    <section className="mission-report-section mission-report-evidence-appendix" id="report-evidence">
+      <div className="mission-report-section-head"><div><span>Evidence appendix</span><h2>Accepted evidence, in reading order</h2></div><small>{runCount} accepted run{runCount===1?"":"s"}</small></div>
+      {evidenceLoading&&<div className="mission-report-evidence-loading"><LoaderCircle className="spin" size={18}/> Loading accepted evidence…</div>}
+      {evidenceError&&<div className="form-error mission-report-evidence-error"><AlertTriangle size={14}/>{evidenceError}</div>}
+      {!evidenceLoading&&snapshot.objectiveResults.map((objective,objectiveIndex)=>{const objectiveOpen=openEvidenceObjective===objective.id;return <div className={`mission-report-evidence-objective ${objectiveOpen?"open":""}`} key={objective.id}>
+        <button className="mission-report-evidence-objective-head" aria-expanded={objectiveOpen} onClick={()=>{setOpenEvidenceObjective(objectiveOpen?null:objective.id);setOpenEvidenceRun(null);}}><span>{String(objectiveIndex+1).padStart(2,"0")}</span><div><small>Objective</small><h3>{objective.title}</h3><p>{objective.conclusion}</p></div><div className="mission-report-evidence-summary"><strong>{objective.acceptedRunIds.length}</strong><small>accepted run{objective.acceptedRunIds.length===1?"":"s"}</small><em>{objectiveOpen?"Hide runs":"Explore runs"}</em>{objectiveOpen?<ChevronDown size={17}/>:<ChevronRight size={17}/>}</div></button>
+        {objectiveOpen&&<div className="mission-report-evidence-objective-body">{objective.acceptedRunIds.map((runId,runIndex)=>{const runReport=evidenceRuns[runId];if(!runReport)return null;const runOpen=openEvidenceRun===runId;const stepOrder=new Map(runReport.steps.map((step,index)=>[step.stepId,index]));const orderedArtifacts=[...runReport.artifacts].sort((left,right)=>(stepOrder.get(left.stepId??"")??Number.MAX_SAFE_INTEGER)-(stepOrder.get(right.stepId??"")??Number.MAX_SAFE_INTEGER));return <article className={`mission-report-evidence-run ${runOpen?"open":""}`} key={runId}>
+          <button className="mission-report-evidence-run-head" aria-expanded={runOpen} onClick={()=>setOpenEvidenceRun(runOpen?null:runId)}><div><span className="mission-result-pass"><CheckCircle2 size={12}/>{runReport.run.state}</span><h4>Accepted Run {runIndex+1}</h4><code>{runId.slice(0,8)}</code></div><div><span>Integrity</span><strong>{runReport.integrity.status}</strong></div><div><span>Environment</span><strong>{runReport.run.environmentSnapshot.name}</strong></div><div><span>Artifacts</span><strong>{runReport.artifacts.length}</strong></div><span className="mission-report-run-toggle"><small>{runOpen?"Hide evidence":"View evidence"}</small>{runOpen?<ChevronDown size={17}/>:<ChevronRight size={17}/>}</span></button>
+          {runOpen&&<div className="mission-report-evidence-run-body"><div className="mission-report-evidence-steps">{runReport.steps.map((step,stepIndex)=><div className="mission-report-evidence-step" key={`${step.attemptId}-${step.stepId}`}><span>{String(stepIndex+1).padStart(2,"0")}</span><div><div><strong>{step.title}</strong><code>{runReport.run.planSnapshot.steps.find(candidate=>candidate.id===step.stepId)?.action.type??"step"}</code><em className={step.action.status==="passed"?"evidence-step-pass":"evidence-step-neutral"}>{step.action.status}</em></div>{step.readiness&&<small>Readiness: {step.readiness.status?.replaceAll("_"," ")}</small>}{step.assertions.length>0&&<ul>{step.assertions.map(assertion=><li key={assertion.index}><CheckCircle2 size={12}/><span>{assertion.type}</span><em>{assertion.status}</em></li>)}</ul>}</div></div>)}</div>
+          {orderedArtifacts.length>0&&<div className="mission-report-run-artifacts">{orderedArtifacts.map(artifact=><div className={`mission-report-artifact mission-report-artifact-${artifact.kind}`} key={artifact.id}>{artifact.availability!=="available"?<div className="mission-report-unavailable-artifact"><ShieldCheck size={15}/><span><strong>{artifact.kind}</strong><small>{artifact.availability} · no artifact bytes exposed</small></span></div>:artifact.kind==="video"?<AuthenticatedVideo artifact={artifact}/>:artifact.kind==="screenshot"?<div className="evidence-grid"><AuthenticatedArtifact artifact={artifact} image/></div>:<div className="artifact-strip"><AuthenticatedArtifact artifact={artifact}/></div>}</div>)}</div>}</div>}
+        </article>})}</div>}
+      </div>})}
+    </section>
+  </div>;
+}
+
 function Overview({
   projectId,
   onOpenReport,
@@ -443,29 +542,34 @@ function Overview({
   onNavigate: (view: View) => void;
 }) {
   const [runs, setRuns] = useState<Run[]>([]);
-  const [specs, setSpecs] = useState<Specification[]>([]);
+  const [specs, setSpecs] = useState<Flow[]>([]);
+  const [missions, setMissions] = useState<MissionSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
     void Promise.all([
       api<Run[]>(`/projects/${projectId}/runs`),
-      api<Specification[]>(`/projects/${projectId}/specifications`),
-    ]).then(([nextRuns, nextSpecs]) => {
+      api<Flow[]>(`/projects/${projectId}/flows?visibility=all`),
+      api<MissionSummary[]>(`/projects/${projectId}/missions`),
+    ]).then(([nextRuns, nextSpecs, nextMissions]) => {
       setRuns(nextRuns);
       setSpecs(nextSpecs);
+      setMissions(nextMissions);
       setLoading(false);
     });
   }, [projectId]);
 
-  const passed = runs.filter((run) => run.state === "passed").length;
-  const completed = runs.filter((run) => terminalStates.includes(run.state)).length;
+  const reliableRuns=runs.filter(run=>run.reliabilityEligible!==false);
+  const passed = reliableRuns.filter((run) => run.state === "passed").length;
+  const completed = reliableRuns.filter((run) => terminalStates.includes(run.state)).length;
   const passRate = completed ? Math.round((passed / completed) * 100) : 0;
   const active = runs.filter((run) =>
     ["queued", "preparing", "running", "finalizing"].includes(run.state),
   ).length;
-  const failedRuns = runs.filter((run) => run.needsAttention);
-  const firstRunSetup = specs.length === 0 && runs.length === 0;
+  const failedRuns = reliableRuns.filter((run) => run.needsAttention);
+  const activeMissions = missions.filter((mission) => !["completed", "cancelled", "failed"].includes(mission.status)).length;
+  const firstRunSetup = missions.length === 0 && specs.length === 0 && runs.length === 0;
 
   if (loading) return <PageSkeleton />;
 
@@ -473,9 +577,9 @@ function Overview({
     return (
       <>
         <PageTitle
-          eyebrow="COMMAND CENTER"
-          title="Set up your first Flow"
-          copy="Describe one connected journey, the related URLs it uses, and what success means."
+          eyebrow="PROJECT OVERVIEW"
+          title="Dashboard"
+          copy="Start a Mission to organize the objectives, Flows, Runs, and evidence for one piece of work."
         />
         <section className="panel onboarding-panel">
           <div className="onboarding-intro">
@@ -485,17 +589,17 @@ function Overview({
               <h2>Create the journey you want to test</h2>
               <p>Add its destinations in the order they are needed. Every URL must contribute to the same connected user journey.</p>
             </div>
-            <button className="primary-button onboarding-primary" onClick={() => onNavigate("specifications")}>
-              Create Flow <ArrowRight size={16} />
+            <button className="primary-button onboarding-primary" onClick={() => onNavigate("missions")}>
+              Start Mission <ArrowRight size={16} />
             </button>
           </div>
           <div className="setup-journey">
-            <button className="current" onClick={() => onNavigate("specifications")}>
+            <button className="current" onClick={() => onNavigate("missions")}>
               <span>1</span>
-              <div><strong>Describe the Flow</strong><small>Name the connected journey and its purpose.</small></div>
+              <div><strong>Start a Mission</strong><small>Capture the instruction and its first objective.</small></div>
               <ArrowRight size={16} />
             </button>
-            <button onClick={() => onNavigate("specifications")}>
+            <button onClick={() => onNavigate("missions")}>
               <span>2</span>
               <div><strong>Build the Sequence</strong><small>Add related destinations in the order they are visited.</small></div>
               <ArrowRight size={16} />
@@ -514,10 +618,10 @@ function Overview({
   return (
     <>
       <PageTitle
-        eyebrow="COMMAND CENTER"
-        title="Project activity"
+        eyebrow="PROJECT OVERVIEW"
+        title="Dashboard"
         copy="What needs attention, what is running, and the latest evidence from this project."
-        action={<button className="primary-button" onClick={() => onNavigate("specifications")}><Plus size={16} /> Create Flow</button>}
+        action={<button className="primary-button" onClick={() => onNavigate("missions")}><Eye size={16} /> Open Missions</button>}
       />
 
       {failedRuns.length > 0 && (
@@ -529,9 +633,9 @@ function Overview({
       )}
 
       <section className="metric-grid metric-grid-compact">
+        <Metric label="Active Missions" value={String(activeMissions)} detail={`${missions.length} total Missions`} icon={<Eye />} tone="lime" />
         <Metric label="Active now" value={String(active)} detail={active ? "Queued or executing" : "Nothing currently running"} icon={<Activity />} tone="lime" />
         <Metric label="Pass rate" value={`${passRate}%`} detail={`${completed} completed runs`} icon={<Gauge />} tone="lime" />
-        <Metric label="Needs attention" value={String(failedRuns.length)} detail={failedRuns.length ? "Failed or interrupted runs" : "No unresolved failures"} icon={<AlertTriangle />} />
       </section>
 
       <section className="content-grid">
@@ -548,16 +652,16 @@ function Overview({
           )}
         </div>
         <div className="panel">
-          <PanelHeader title="Flow coverage" kicker={`${specs.length} FLOWS`} action="Manage" onAction={() => onNavigate("specifications")} />
+          <PanelHeader title="Recent Missions" kicker={`${missions.length} MISSIONS`} action="View all" onAction={() => onNavigate("missions")} />
           <div className="coverage-list">
-            {specs.slice(0, 5).map((spec, index) => (
-              <div key={spec.id}>
+            {missions.slice(0, 5).map((mission, index) => (
+              <div key={mission.id}>
                 <span className="coverage-index">{String(index + 1).padStart(2, "0")}</span>
-                <div><strong>{spec.name}</strong><span>{spec.latestPlan?.steps.length ?? 0} planned actions</span></div>
-                {spec.latestPlanVersionId ? <Check size={15} /> : <Clock3 size={15} />}
+                <div><strong>{mission.title}</strong><span>{mission.terminalObjectiveCount} of {mission.objectiveCount} objectives resolved</span></div>
+                {mission.status === "completed" ? <Check size={15} /> : <Clock3 size={15} />}
               </div>
             ))}
-            {!specs.length && <EmptyBlock icon={<FileCode2 />} title="No coverage yet" copy="Your reusable journeys will appear here." />}
+            {!missions.length && <EmptyBlock icon={<Eye />} title="No Missions yet" copy="Start a Mission to organize objectives, Flows, Runs, and evidence." />}
           </div>
         </div>
       </section>
@@ -565,31 +669,46 @@ function Overview({
   );
 }
 
-function Specifications({ projectId, onRunStarted }: { projectId: string; onRunStarted: (id: string) => void }) {
-  const [specs, setSpecs] = useState<Specification[]>([]);
+function Flows({ projectId, scopedMissionId, onBack, onRunStarted, onNavigateMissions }: { projectId: string; scopedMissionId: string; onBack: () => void; onRunStarted: (id: string) => void; onNavigateMissions: () => void }) {
+  const [specs, setSpecs] = useState<Flow[]>([]);
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [credentials, setCredentials] = useState<Credential[]>([]);
-  const [dialog, setDialog] = useState<Specification | "new" | null>(null);
+  const [dialog, setDialog] = useState<Flow | "new" | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [starting, setStarting] = useState("");
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [missions,setMissions]=useState<MissionSummary[]>([]);
+  const [missionId,setMissionId]=useState(scopedMissionId);
+  const [objectiveId,setObjectiveId]=useState("");
 
   useEffect(() => {
+    let active = true;
     void Promise.all([
-      api<Specification[]>(`/projects/${projectId}/specifications`),
+      api<Flow[]>(`/projects/${projectId}/flows?visibility=all`),
       api<Environment[]>(`/projects/${projectId}/environments`),
       api<Credential[]>(`/projects/${projectId}/credentials`),
-    ]).then(([s, e, c]) => {
-      setSpecs(s);
-      setEnvironments(e);
-      setCredentials(c);
+      api<MissionSummary[]>(`/projects/${projectId}/missions`),
+    ]).then(([s, e, c,m]) => {
+      if (!active) return;
+      setSpecs(Array.isArray(s) ? s : []);
+      setEnvironments(Array.isArray(e) ? e : []);
+      setCredentials(Array.isArray(c) ? c : []);
+      setMissions(m);setMissionId(scopedMissionId);
+    }).catch((cause) => {
+      if (active) setError(message(cause));
     });
-  }, [projectId, refresh]);
+    return () => { active = false; };
+  }, [projectId, refresh, scopedMissionId]);
+  useEffect(()=>{if(!missionId){setObjectiveId("");return;}void api<MissionDetail>(`/missions/${missionId}`).then(value=>setObjectiveId(value.objectives[0]?.id??""));},[missionId,refresh]);
+  const getContext=async(flow?:Flow)=>{const link=flow?.missionLinks?.[0];const contextMissionId=link?.missionId??missionId;const contextObjectiveId=link?.objectiveId??objectiveId;if(!contextMissionId||!contextObjectiveId)throw new Error("Start a Mission before creating or running a Flow.");const session=await post<{agentSessionId:string}>(`/missions/${contextMissionId}/agent-sessions`,{provider:"human",instructionSnapshot:"Dashboard Flow operation",idempotencyKey:`web-session-${crypto.randomUUID()}`});return{missionId:contextMissionId,objectiveId:contextObjectiveId,agentSessionId:session.agentSessionId};};
 
-  const visibleSpecs = specs.filter((spec) => {
-    const searchable = `${spec.name} ${spec.latestContent?.objective ?? spec.description}`.toLowerCase();
+  const mission=missions.find(item=>item.id===scopedMissionId);
+  const missionSpecs=specs.filter(spec=>spec.missionLinks?.some(link=>link.missionId===scopedMissionId));
+  const visibleSpecs = missionSpecs.filter((spec) => {
+    const missionNames=(spec.missionLinks??[]).map(link=>link.missionTitle).join(" ");
+    const searchable = `${spec.name} ${spec.latestContent?.objective ?? spec.description} ${missionNames}`.toLowerCase();
     return searchable.includes(query.trim().toLowerCase());
   });
   const pageCount = Math.max(1, Math.ceil(visibleSpecs.length / FLOW_PAGE_SIZE));
@@ -599,23 +718,25 @@ function Specifications({ projectId, onRunStarted }: { projectId: string; onRunS
   useEffect(() => setPage(1), [projectId, query]);
   useEffect(() => setPage((current) => Math.min(current, pageCount)), [pageCount]);
 
-  const runSpecification = async (specification: Specification) => {
+  const runFlow = async (flow: Flow) => {
     const environment =
-      environments.find((item) => item.name === `flow:${specification.id}`) ??
+      environments.find((item) => item.name === `flow:${flow.id}`) ??
       environments.find((item) => !item.name.startsWith("flow:"));
-    if (!environment || !specification.latestPlanVersionId) return;
-    setStarting(specification.id);
+    if (!environment || !flow.latestRevisionId) return;
+    setStarting(flow.id);
     setError("");
     try {
-      const run = await post<{ id: string }>(`/projects/${projectId}/runs`, {
+      const context=await getContext(flow);
+      const run = await post<{ runId: string }>(`/projects/${projectId}/runs`, {
+        ...context,role:"candidate",
         environmentId: environment.id,
-        planVersionId: specification.latestPlanVersionId,
+        flowRevisionId: flow.latestRevisionId,
         browser: "chromium",
         viewport: { width: 1280, height: 720 },
         seed: 1,
+        idempotencyKey: `web-run-${crypto.randomUUID()}`,
       });
-      await post(`/runs/${run.id}/start`);
-      onRunStarted(run.id);
+      onRunStarted(run.runId);
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -625,27 +746,30 @@ function Specifications({ projectId, onRunStarted }: { projectId: string; onRunS
 
   return (
     <>
+      <button className="back-button mission-back" onClick={onBack}><ChevronLeft size={15}/> Back to Mission</button>
       <PageTitle
-        eyebrow="FLOW LIBRARY"
-        title="Flows"
-        copy="Reusable user journeys, ordered Sequences, and expected outcomes."
-        action={<button className="primary-button" onClick={() => setDialog("new")}><Plus size={16} /> New Flow</button>}
+        eyebrow="MISSION FLOWS"
+        title={mission?.title??"Flows"}
+        copy="The browser journeys, ordered Sequences, and expected outcomes used by this Mission."
+        action={<button className="primary-button" onClick={() => missions.length ? setDialog("new") : onNavigateMissions()}><Plus size={16} /> {missions.length ? "New Flow" : "Start Mission"}</button>}
       />
       <div className="toolbar">
         <div className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search Flows…" /></div>
-        <div className="toolbar-meta">{query ? `${visibleSpecs.length} of ` : ""}{specs.length} total</div>
+        <div className="toolbar-meta">{query ? `${visibleSpecs.length} of ` : ""}{missionSpecs.length} in this Mission</div>
       </div>
+      {!missions.length && <div className="flow-context-empty"><Eye size={17}/><div><strong>Start with a Mission</strong><span>Flows are created and executed in the context of a Mission objective.</span></div><button onClick={onNavigateMissions}>Go to Missions <ArrowRight size={14}/></button></div>}
       {error && <div className="form-error page-form-error"><AlertTriangle size={15} /> {error}</div>}
       <div className="spec-grid">
         {pagedSpecs.map((spec) => (
           <article className="spec-card" key={spec.id}>
             <div className="spec-top">
               <div className="spec-icon"><Code2 size={19} /></div>
-              <span className={spec.latestPlanVersionId ? "ready-tag" : "draft-tag"}>
-                {spec.latestPlanVersionId ? "Executable" : "Draft"}
+              <span className={spec.latestRevisionId ? "ready-tag" : "draft-tag"}>
+                {spec.latestRevisionId ? "Executable" : "Draft"}
               </span>
             </div>
             <h3>{spec.name}</h3>
+            {!!spec.missionLinks?.length&&<span className="flow-mission-name"><Eye size={12}/>{spec.missionLinks.map(link=>link.missionTitle).join(", ")}</span>}
             <p title={spec.latestContent?.objective ?? (spec.description || "No objective added yet.")}>{spec.latestContent?.objective ?? (spec.description || "No objective added yet.")}</p>
             <div className="spec-facts">
               <span><FileCode2 size={14} /> v{spec.latestVersion ?? "—"}</span>
@@ -660,9 +784,9 @@ function Specifications({ projectId, onRunStarted }: { projectId: string; onRunS
                 </button>
                 <button
                   className="flow-run-button"
-                  onClick={() => void runSpecification(spec)}
-                  disabled={!spec.latestPlanVersionId || !environmentFor(spec, environments) || !!starting}
-                  title={!environmentFor(spec, environments) ? "This Flow needs a valid Sequence" : !spec.latestPlanVersionId ? "This Flow needs an executable Sequence" : "Run Flow"}
+                  onClick={() => void runFlow(spec)}
+                  disabled={!spec.latestRevisionId || !environmentFor(spec, environments) || !!starting}
+                  title={!environmentFor(spec, environments) ? "This Flow needs a valid Sequence" : !spec.latestRevisionId ? "This Flow needs an executable Sequence" : "Run Flow"}
                 >
                   {starting === spec.id ? <LoaderCircle className="spin" size={14} /> : <Play size={14} />} Run
                 </button>
@@ -672,17 +796,18 @@ function Specifications({ projectId, onRunStarted }: { projectId: string; onRunS
         ))}
         {!visibleSpecs.length && (
           <div className="panel empty-large">
-            <EmptyBlock icon={<FileCode2 />} title={specs.length ? "No matching Flows" : "Build your first Flow"} copy={specs.length ? "Try a different name or objective." : "Describe the journey, add its Sequence, and define the expected behavior."} />
+            <EmptyBlock icon={<FileCode2 />} title={missionSpecs.length ? "No matching Flows" : "Build this Mission’s first Flow"} copy={missionSpecs.length ? "Try a different Flow name or objective." : "Describe a journey for this Mission, add its Sequence, and define the expected behavior."} />
           </div>
         )}
       </div>
       <Pagination page={currentPage} pageSize={FLOW_PAGE_SIZE} total={visibleSpecs.length} itemName="Flows" onChange={setPage} />
       {dialog && (
-        <SpecDialog
+        <FlowDialog
           projectId={projectId}
-          specification={dialog === "new" ? undefined : dialog}
+          flow={dialog === "new" ? undefined : dialog}
           environment={dialog === "new" ? undefined : environmentFor(dialog, environments)}
           credentials={credentials}
+          getContext={getContext}
           onCredentialCreated={(credential) => setCredentials((items) => [...items, credential].sort((a, b) => a.name.localeCompare(b.name)))}
           onClose={() => setDialog(null)}
           onCreated={() => {
@@ -723,9 +848,10 @@ function Runs({
     if (!["all", "running", "attention"].includes(filter) && run.state !== filter) return false;
     return (run.planName ?? "").toLowerCase().includes(query.toLowerCase());
   });
-  const activeCount = runs.filter((run) => ["queued", "preparing", "running", "finalizing"].includes(run.state)).length;
-  const failedCount = runs.filter((run) => run.needsAttention).length;
-  const passedCount = runs.filter((run) => run.state === "passed").length;
+  const reliabilityRuns=runs.filter(run=>run.reliabilityEligible!==false);
+  const activeCount = reliabilityRuns.filter((run) => ["queued", "preparing", "running", "finalizing"].includes(run.state)).length;
+  const failedCount = reliabilityRuns.filter((run) => run.needsAttention).length;
+  const passedCount = reliabilityRuns.filter((run) => run.state === "passed").length;
   const pageCount = Math.max(1, Math.ceil(visible.length / RUN_PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
   const pagedRuns = visible.slice((currentPage - 1) * RUN_PAGE_SIZE, currentPage * RUN_PAGE_SIZE);
@@ -808,7 +934,7 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
   const [error, setError] = useState("");
 
   const load = useCallback(() => {
-    void api<Report>(`/runs/${runId}/report`).then(setReport).catch((cause) => setError(message(cause)));
+    void api<Report>(`/runs/${runId}`).then(setReport).catch((cause) => setError(message(cause)));
   }, [runId]);
 
   useEffect(() => {
@@ -821,22 +947,30 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
 
   if (!report) return <PageSkeleton />;
   const run = report.run;
-  const currentAttempt = report.attempts.at(-1);
-  const passed = report.assertions.filter((assertion) => assertion.status === "passed").length;
-  const failed = report.assertions.filter((assertion) => assertion.status === "failed").length;
-  const screenshots = report.artifacts.filter((artifact) => artifact.kind === "screenshot" && artifact.status === "available");
-  const videos = report.artifacts.filter((artifact) => artifact.kind === "video" && artifact.status === "available");
+  const currentAttempt = report.currentAttempt ?? report.attempts.at(-1);
+  const allAssertions = report.steps.flatMap((step) => step.assertions);
+  const passed = allAssertions.filter((assertion) => assertion.status === "passed").length;
+  const failed = allAssertions.filter((assertion) => assertion.status === "failed").length;
+  const screenshots = report.artifacts.filter((artifact) => artifact.kind === "screenshot" && artifact.availability === "available");
+  const videos = report.artifacts.filter((artifact) => artifact.kind === "video" && artifact.availability === "available");
+  const recordingTimeline = deriveRecordingTimeline(report);
+  const recoveryTimeline = deriveRecoveryTimeline(report);
   const visuallyRedacted = report.artifacts.some((artifact) => artifact.observation?.visualRedaction === "protected-elements-masked");
+  const degradedEvidence = report.artifacts.filter((artifact) => artifact.availability !== "available");
+  const privacyEvents = report.events.filter((event) => event.type === "privacy.state_changed");
+  const protectedTransactionEvents = report.events.filter((event) => ["privacy.operation_completed", "privacy.operation_failed", "privacy.credential_compromised"].includes(event.type));
   const diagnostics = report.events.filter((event) => event.type.startsWith("diagnostic."));
+  const groundingEvents = report.events.filter((event) => event.type === "grounding.resolved" || event.type === "grounding.rejected");
   const policyEvents = report.events.filter((event) => event.type === "policy.rejected");
   const fatalPolicy = [...policyEvents].reverse().find((event) => event.payload.disposition !== "blocked_subresource");
-  const failedAssertion = report.assertions.find((assertion) => assertion.status === "failed");
-  const failedStep = report.events.find((event) => event.type === "step.failed");
-  const failureMessage = fatalPolicy
+  const failedAssertion = allAssertions.find((assertion) => assertion.status === "failed");
+  const failedStep = report.steps.find((step) => step.action.status === "failed" || step.readiness?.status === "failed" || step.assertions.some((assertion) => assertion.status === "failed"));
+  const failureMessage = report.failure?.message ?? (fatalPolicy
     ? `${String(fatalPolicy.payload.message ?? "Request blocked by execution policy")}${fatalPolicy.payload.target ? ` · ${String(fatalPolicy.payload.target)}` : ""}`
     : currentAttempt?.error
     ?? failedAssertion?.error
-    ?? (failedStep?.payload.error ? String(failedStep.payload.error) : undefined);
+    ?? failedStep?.action.error
+    ?? failedStep?.readiness?.error);
   const classification = run.outcomeClassification;
   const classificationSummary = outcomeSummary(classification, failureMessage);
   const duration = currentAttempt?.startedAt && currentAttempt.completedAt
@@ -888,13 +1022,38 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
         </div>
       </section>
       {error && <div className="global-error"><AlertTriangle size={16} /> {error}</div>}
-      {visuallyRedacted && (
+      {report.integrity.status === "failed" && (
+        <section className="failure-summary">
+          <div className="failure-summary-icon"><AlertTriangle size={22} /></div>
+          <div>
+            <span className="eyebrow">OBSERVATION INTEGRITY</span>
+            <h2>Persisted run evidence is incomplete</h2>
+            <p>{report.integrity.issues.map((issue) => `${issue.code}: ${issue.message}`).join(" · ")}</p>
+          </div>
+        </section>
+      )}
+      {(visuallyRedacted || privacyEvents.length > 0) && (
         <section className="resolution-summary">
           <div className="resolution-summary-icon"><ShieldCheck size={22} /></div>
           <div>
             <span className="eyebrow">PROTECTED EVIDENCE</span>
-            <h2>Sensitive values are blacked out in visual artifacts</h2>
-            <p>The run remains fully recorded, while credential fields and one-time secret reveal intervals are masked. Textual artifacts are separately redacted.</p>
+            <h2>Evidence collection was controlled through protected intervals</h2>
+            <p>Recording and trace segments stop at Privacy Gate boundaries. Suppressed or uncertain evidence is shown as a gap or metadata-only quarantine record.</p>
+          </div>
+        </section>
+      )}
+      {protectedTransactionEvents.length > 0 && (
+        <section className="resolution-summary">
+          <div className="resolution-summary-icon"><ShieldCheck size={22} /></div>
+          <div>
+            <span className="eyebrow">PROTECTED OPERATIONS</span>
+            <h2>Atomic privacy outcomes</h2>
+            {protectedTransactionEvents.map((event) => (
+              <div className="privacy-operation-facts" key={`${event.attemptId}-${event.sequence}`}>
+                <strong>{String(event.payload.operationId ?? "protected operation")} · {String((event.payload.result as Record<string, unknown> | undefined)?.status ?? event.payload.status ?? event.payload.code ?? "completed")}</strong>
+                {Boolean(event.payload.result) && <span>{["mutation", "extraction", "persistence", "capsule", "reconciliation", "continuation", "evidence", "credentialSecurity"].map((fact) => `${fact}: ${String((event.payload.result as Record<string, unknown>)[fact] ?? "unknown")}`).join(" · ")}</span>}
+              </div>
+            ))}
           </div>
         </section>
       )}
@@ -940,10 +1099,12 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
 
       <section className="report-metrics">
         <div><span>Outcome</span><StatusBadge state={run.state} resolved={Boolean(run.resolvedAt)} /></div>
+        <div><span>Phase</span><strong>{run.currentPhase ?? run.phase ?? run.state}</strong></div>
         <div><span>Assertions</span><strong>{passed}<small> passed</small>{failed > 0 && <em>{failed} failed</em>}</strong></div>
         <div><span>Duration</span><strong>{duration === undefined ? "—" : formatDuration(duration)}</strong></div>
         <div><span>Viewport</span><strong>{run.executionSnapshot.viewport.width} × {run.executionSnapshot.viewport.height}</strong></div>
         <div><span>Evidence</span><strong>{report.artifacts.length}<small> artifacts</small></strong></div>
+        {degradedEvidence.length > 0 && <div><span>Evidence health</span><strong>{degradedEvidence.length}<small> degraded</small></strong></div>}
       </section>
 
       <section className="report-layout">
@@ -952,20 +1113,21 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
             <PanelHeader title="Execution timeline" kicker={`${run.planSnapshot.steps.length} PLANNED STEPS`} />
             <div className="timeline">
               {run.planSnapshot.steps.map((step, index) => {
-                const failure = report.events.find((event) => event.type === "step.failed" && event.payload.stepId === step.id);
-                const pass = report.events.find((event) => event.type === "step.passed" && event.payload.stepId === step.id);
+                const result = report.steps.find((candidate) => candidate.stepId === step.id);
+                const failure = result && (result.action.status === "failed" || result.readiness?.status === "failed" || result.assertions.some((assertion) => assertion.status === "failed"));
+                const pass = result && !failure && result.action.status === "passed";
                 return (
                   <div className={`timeline-step ${failure ? "step-failed" : pass ? "step-passed" : "step-waiting"}`} key={step.id}>
                     <div className="step-rail"><span>{failure ? <X size={14} /> : pass ? <Check size={14} /> : index + 1}</span></div>
                     <div className="step-body">
                       <div><strong>{step.title}</strong><code>{step.action.type}</code></div>
-                      <span>{failure ? String(failure.payload.error) : pass ? "Completed successfully" : "Not evaluated"}</span>
+                      <span>{failure ? String(result?.action.error ?? result?.readiness?.error ?? result?.assertions.find((assertion) => assertion.status === "failed")?.error ?? "Step failed") : pass ? "Completed successfully" : "Not evaluated"}</span>
                       {step.after && <div className="assertion-line"><LoaderCircle size={14} /> Readiness · {step.after.conditions.map((condition) => condition.type).join(step.after.mode === "all" ? " + " : " or ")} · up to {Math.round(step.after.timeoutMs / 1000)}s</div>}
                       {step.captureIntent === "transient" && <div className="assertion-line"><AlertTriangle size={14} /> Transient observation · not completed-state proof</div>}
-                      {report.assertions.filter((a) => a.stepId === step.id).map((assertion) => (
-                        <div className={`assertion-line assertion-${assertion.status}`} key={assertion.assertionIndex}>
+                      {(result?.assertions ?? []).map((assertion) => (
+                        <div className={`assertion-line assertion-${assertion.status}`} key={assertion.index}>
                           {assertion.status === "passed" ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                          {assertion.assertionType} assertion · {assertion.status}
+                          {assertion.type} assertion · {assertion.status}
                         </div>
                       ))}
                     </div>
@@ -976,7 +1138,9 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
           </div>
           <div className="panel">
             <PanelHeader title="Captured evidence" kicker="ARTIFACTS" />
-            {videos.map((artifact) => <AuthenticatedVideo artifact={artifact} key={artifact.id} />)}
+            {recordingTimeline.length > 0
+              ? <RecordingPlaylist entries={recordingTimeline} artifacts={report.artifacts} />
+              : videos.map((artifact) => <AuthenticatedVideo artifact={artifact} key={artifact.id} />)}
             {screenshots.length ? (
               <div className="evidence-grid">
                 {screenshots.map((artifact) => (
@@ -1006,12 +1170,20 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
               <div><dt>Browser</dt><dd>Chrome / {run.executionSnapshot.browser}</dd></div>
               <div><dt>Seed</dt><dd>{run.executionSnapshot.seed}</dd></div>
               <div><dt>Attempt</dt><dd>{currentAttempt?.attemptNumber ?? "—"}</dd></div>
+              <div><dt>Capture epochs</dt><dd>{recoveryTimeline.filter((entry) => entry.type === "capture_epoch").length || 1}</dd></div>
               {run.rerunOfRunId && <div><dt>Rerun of</dt><dd>#{run.rerunOfRunId.slice(0, 8)}</dd></div>}
               {run.resolvedByRunId && <div><dt>Resolved by</dt><dd>#{run.resolvedByRunId.slice(0, 8)}</dd></div>}
             </dl>
+            {recoveryTimeline.length > 0 && (
+              <div className="privacy-state-list">
+                {recoveryTimeline.map((entry) => entry.type === "capture_epoch"
+                  ? <div key={entry.id}><strong>Capture epoch {entry.epoch}</strong><span>{entry.startReason.replaceAll("_", " ")} → {entry.endReason.replaceAll("_", " ")}</span></div>
+                  : <div key={entry.id}><strong>Checkpoint · {entry.boundary.replaceAll("_", " ")}</strong><span>{entry.reasonCode ?? entry.continuedAtStepId ?? `epoch ${entry.captureEpoch}`}</span></div>)}
+              </div>
+            )}
           </div>
           <div className="panel">
-            <PanelHeader title="Diagnostics" kicker={`${diagnostics.length + policyEvents.length} SIGNALS`} />
+            <PanelHeader title="Diagnostics" kicker={`${diagnostics.length + policyEvents.length + groundingEvents.length} SIGNALS`} />
             <div className="diagnostics">
               {policyEvents.map((event) => (
                 <div key={event.id}>
@@ -1029,7 +1201,8 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
                   <div><strong>{event.type.replace("diagnostic.", "")}</strong><span>{String(event.payload.message ?? "")}</span>{Boolean(event.payload.url) && <code>{String(event.payload.url)}</code>}</div>
                 </div>
               ))}
-              {!diagnostics.length && !policyEvents.length && <div className="clean-signal"><ShieldCheck size={20} /><strong>Clean session</strong><span>No console, page, policy, or failed-request signals.</span></div>}
+              {groundingEvents.map((event)=><div key={event.id}><ScanSearch size={15}/><div><strong>{event.type==="grounding.resolved"?`${String(event.payload.resolutionSource??"semantic").toUpperCase()} TARGET RESOLVED`:String(event.payload.code??"TARGET REJECTED")}</strong><span>{Math.round(Number(event.payload.confidence??0)*100)}% confidence · {Number(event.payload.visualCandidateCount??0)} visual candidates · {String(event.payload.drift??"unchanged")} drift</span>{Boolean(event.payload.visualFingerprint)&&<code>Visual fingerprint {String(event.payload.visualFingerprint).slice(0,12)}…</code>}</div></div>)}
+              {!diagnostics.length && !policyEvents.length && !groundingEvents.length && <div className="clean-signal"><ShieldCheck size={20} /><strong>Clean session</strong><span>No console, page, policy, grounding, or failed-request signals.</span></div>}
             </div>
           </div>
         </aside>
@@ -1040,12 +1213,14 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
 
 function Settings({ projectId }: { projectId: string }) {
   const [credentials, setCredentials] = useState<Credential[]>([]);
+  const [calibrations, setCalibrations] = useState<Calibration[]>([]);
+  const [incidents, setIncidents] = useState<CredentialIncident[]>([]);
   const [dialog, setDialog] = useState(false);
   const [error, setError] = useState("");
 
   const load = useCallback(() => {
-    void api<Credential[]>(`/projects/${projectId}/credentials`)
-      .then(setCredentials)
+    void Promise.all([api<Credential[]>(`/projects/${projectId}/credentials`), api<Calibration[]>(`/projects/${projectId}/calibrations`), api<CredentialIncident[]>(`/projects/${projectId}/credential-incidents`)])
+      .then(([nextCredentials, nextCalibrations, nextIncidents]) => { setCredentials(nextCredentials); setCalibrations(nextCalibrations); setIncidents(nextIncidents); })
       .catch((cause) => setError(message(cause)));
   }, [projectId]);
 
@@ -1060,6 +1235,13 @@ function Settings({ projectId }: { projectId: string }) {
     } catch (cause) {
       setError(message(cause));
     }
+  };
+
+  const decideCalibration = async (calibration: Calibration, decision: "approve" | "reject") => {
+    if (!calibration.attestationId) return;
+    setError("");
+    try {const session=await post<{agentSessionId:string}>(`/missions/${calibration.missionId}/agent-sessions`,{provider:"human",instructionSnapshot:`${decision} calibration`,idempotencyKey:`web-calibration-${crypto.randomUUID()}`});await post(`/calibrations/${calibration.id}/attestations/${calibration.attestationId}/${decision}`,{missionId:calibration.missionId,objectiveId:calibration.objectiveId,agentSessionId:session.agentSessionId,confirmedUserAuthorized:true});load();}
+    catch (cause) { setError(message(cause)); }
   };
 
   return (
@@ -1085,6 +1267,20 @@ function Settings({ projectId }: { projectId: string }) {
             </div>
           ))}
           {!credentials.length && <EmptyBlock icon={<KeyRound />} title="No test credentials yet" copy="Add protected information once, then select it safely inside any Flow." />}
+        </div>
+      </section>
+      <section className="panel credential-settings">
+        <div className="credential-settings-head"><div><span className="eyebrow">PRIVACY CALIBRATION</span><h3>Protected-operation contracts</h3><p>Structural fingerprints and adapter choices remain inactive until an owner or admin approves the immutable revision.</p></div></div>
+        <div className="credential-list">
+          {calibrations.map((calibration) => <div key={calibration.id}><span className="credential-icon"><ShieldCheck size={17} /></span><div><strong>{calibration.name}</strong><small>{calibration.operationId} · revision {calibration.revision} · {calibration.status} · session {calibration.sessionState ?? "pending"}{calibration.safeDiagnostics?.phase ? ` · ${calibration.safeDiagnostics.phase}` : ""}{calibration.safeDiagnostics?.stepId ? ` · step ${calibration.safeDiagnostics.stepId}` : ""}{calibration.safeDiagnostics?.code ? ` · ${calibration.safeDiagnostics.code}` : ""}</small></div>{calibration.status === "draft" && calibration.attestationId && <><button className="secondary-button" onClick={() => void decideCalibration(calibration, "reject")}>Reject</button><button className="primary-button" onClick={() => void decideCalibration(calibration, "approve")}>Approve</button></>}</div>)}
+          {!calibrations.length && <EmptyBlock icon={<ShieldCheck />} title="No calibration contracts" copy="Agents may create disposable calibration drafts through MCP; approval remains here." />}
+        </div>
+      </section>
+      <section className="panel credential-settings">
+        <div className="credential-settings-head"><div><span className="eyebrow">CREDENTIAL RESPONSE</span><h3>Credential incidents</h3><p>Compromised credentials never reactivate. Failed or timed-out revocation requires manual action.</p></div></div>
+        <div className="credential-list">
+          {incidents.map((incident) => <div key={incident.id}><span className="credential-icon"><AlertTriangle size={17} /></span><div><strong>{incident.operationId}</strong><small>{incident.state} · {incident.reasonCode} · {incident.safeDiagnostics?.code ?? "INCIDENT_RECORDED"} · {relativeTime(incident.createdAt)}</small>{incident.safeDiagnostics?.manualAction && <small>Required action: revoke this credential in the provider administration console.</small>}</div></div>)}
+          {!incidents.length && <EmptyBlock icon={<ShieldCheck />} title="No credential incidents" copy="Revocation outcomes and manual follow-up will appear here." />}
         </div>
       </section>
       {dialog && <CredentialDialog projectId={projectId} onClose={() => setDialog(false)} onSaved={() => { setDialog(false); load(); }} />}
@@ -1350,28 +1546,30 @@ function AccountSettings({ userEmail }: { userEmail: string }) {
   );
 }
 
-function SpecDialog({
+function FlowDialog({
   projectId,
-  specification,
+  flow,
   environment,
   credentials,
   onCredentialCreated,
   onClose,
   onCreated,
+  getContext,
 }: {
   projectId: string;
-  specification?: Specification | undefined;
+  flow?: Flow | undefined;
   environment?: Environment | undefined;
   credentials: Credential[];
   onCredentialCreated: (credential: Credential) => void;
   onClose: () => void;
   onCreated: () => void;
+  getContext:()=>Promise<{missionId:string;objectiveId:string;agentSessionId:string}>;
 }) {
-  const initialDestinations = destinationsFromFlow(specification, environment);
-  const initialSequence = sequenceFromFlow(specification);
+  const initialDestinations = destinationsFromFlow(flow, environment);
+  const initialSequence = sequenceFromFlow(flow);
   const [step, setStep] = useState(0);
-  const [name, setName] = useState(specification?.name ?? "");
-  const [objective, setObjective] = useState(specification?.latestContent?.objective ?? specification?.description ?? "");
+  const [name, setName] = useState(flow?.name ?? "");
+  const [objective, setObjective] = useState(flow?.latestContent?.objective ?? flow?.description ?? "");
   const [destinations, setDestinations] = useState(initialDestinations);
   const [sequence, setSequence] = useState<SequenceDraft[]>(initialSequence);
   const [customPlanText, setCustomPlanText] = useState("");
@@ -1394,22 +1592,19 @@ function SpecDialog({
     .map((item) => ({ ...item, url: normalizedUrl(item.url), origin: canonicalOrigin(item.url) }))
     .filter((item): item is typeof item & { url: string; origin: string } => Boolean(item.url && item.origin));
   const allowedOrigins = [...new Set(validDestinations.map((item) => item.origin))];
-  const targetFor = (action: SequenceDraft) => action.targetStrategy === "role"
-    ? { strategy: "role", role: action.targetRole, name: action.target, exact: true }
-    : action.targetStrategy === "text"
-      ? { strategy: "text", value: action.target, exact: true }
-      : { strategy: action.targetStrategy, value: action.target };
+  const targetFor = (action: SequenceDraft) => ({ concept: action.target.trim(), requiredCapabilities: action.type === "fill" ? ["focusable","accepts_text","editable"] : action.type === "click" ? ["pointer_activatable"] : ["readable_value"], preferredEvidence: { roles: [action.targetRole], names: [action.target.trim()], labels: action.targetRole === "textbox" || action.targetRole === "combobox" ? [action.target.trim()] : [], descriptions: [], placeholders: action.targetRole === "textbox" ? [action.target.trim()] : [], inputTypes: action.valueMode === "secret" ? ["password"] : [], ...(action.visualGrounding?{visual:{sources:["ocr","geometry"],expectedText:action.target.trim(),protectedUse:false}}:{}) }, scope: { kind: action.targetScope }, relations: [], prohibited: ["hidden","disabled",...(action.type === "fill" ? ["readonly","display_only_text"] : [])], risk: action.valueMode === "secret" ? "authentication" : "ordinary", confidence: { requiredFamilies: [], minimumFamilyCount: action.valueMode === "secret" ? 3 : 2 } });
+  const textIntent = (value:string, role:"text"|"region"="text") => ({concept:value.trim(),requiredCapabilities:["readable_value"],preferredEvidence:{roles:[role],names:[value.trim()],labels:[],descriptions:[],placeholders:[],inputTypes:[],expectedText:value.trim()},scope:{kind:"page" as const},relations:[],prohibited:["hidden"],risk:"read_only" as const,confidence:{requiredFamilies:[],minimumFamilyCount:1}});
   const readinessFor = (action: SequenceDraft) => {
     if (!["navigate", "click"].includes(action.type)) return undefined;
     const timeoutMs = action.readinessTimeoutMs;
     if (action.readinessType === "visible" || action.readinessType === "hidden") {
-      return { mode: "all", timeoutMs, conditions: [{ type: action.readinessType, target: { strategy: "text", value: action.readinessValue, exact: true } }] };
+      return { mode: "all", timeoutMs, conditions: [{ type: action.readinessType, target: textIntent(action.readinessValue) }] };
     }
     if (action.readinessType === "url") {
       return { mode: "all", timeoutMs, conditions: [{ type: "url", expected: action.readinessValue, match: "contains" }] };
     }
     if (action.readinessType === "content") {
-      return { mode: "all", timeoutMs, conditions: [{ type: "content", target: { strategy: "css", value: action.readinessValue, justification: "User-selected application content container" }, minimumChildren: 1 }] };
+      return { mode: "all", timeoutMs, conditions: [{ type: "content", target: textIntent(action.readinessValue,"region"), minimumChildren: 1 }] };
     }
     if (action.readinessType === "request") {
       return { mode: "all", timeoutMs, conditions: [{ type: "request", urlPattern: action.readinessValue, status: { min: 200, max: 399 } }] };
@@ -1429,7 +1624,7 @@ function SpecDialog({
           ? { type: "url", expected: verification.value.trim(), match: "contains" }
           : {
               type: verification.type,
-              target: { strategy: "text", value: verification.value.trim(), exact: true },
+              target: textIntent(verification.value.trim()),
             }) as Array<Record<string, unknown>>,
       evidence: item.type === "waitFor" ? ["screenshot", "dom"] : ["network"],
       ...(readinessFor(item) ? { after: readinessFor(item) } : {}),
@@ -1454,7 +1649,7 @@ function SpecDialog({
       };
     }
     if (item.type === "click") {
-      return { ...base, action: { type: "click", target: targetFor(item) } };
+      return { ...base, action: { type: "click", target: targetFor(item), expectedEffect: item.readinessType === "url" ? {type:"navigation",url:item.readinessValue,match:"contains"} : {type:"none"} } };
     }
     if (item.type === "waitFor") {
       return {
@@ -1478,9 +1673,9 @@ function SpecDialog({
         evidence: ["screenshot", "network"],
       }));
   const generatedPlan = {
-    protocolVersion: "2",
     name: name.trim() || "Untitled journey",
     objective: objective.trim() || "Verify the selected user journey.",
+    preconditions: [],
     allowedOrigins: allowedOrigins.length ? allowedOrigins : ["https://example.com"],
     budgets: {
       maxActions: Math.max(10, generatedSteps.length + 1),
@@ -1557,11 +1752,12 @@ function SpecDialog({
     setBusy(true);
     setError("");
     try {
+      const context=await getContext();
       const plan = JSON.parse(planText);
       const environmentInput = {
+        ...context,
         baseOrigin: allowedOrigins[0],
         policy: {
-          policyVersion: "1",
           allowedOrigins,
           allowPrivateNetwork: allowedOrigins.some((origin) => origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1")),
           allowDownloads: false,
@@ -1572,27 +1768,36 @@ function SpecDialog({
         },
         secretRefs: sequence.filter((item) => item.type === "fill" && item.valueMode === "secret").map((item) => item.value),
       };
-      const spec = specification
-        ? await patch<{ id: string }>(`/specifications/${specification.id}`, { name, description: objective })
-        : await post<{ id: string }>(`/projects/${projectId}/specifications`, { name, description: objective });
-      if (specification && environment) {
-        await patch<Environment>(`/environments/${environment.id}`, environmentInput);
-      } else if (specification) {
-        await post<Environment>(`/projects/${projectId}/environments`, {
-          ...environmentInput,
-          name: `flow:${spec.id}`,
+      const selectedEnvironment = environment
+        ? await patch<Environment>(`/environments/${environment.id}`, environmentInput)
+        : await post<Environment>(`/projects/${projectId}/environments`, {
+            ...environmentInput,
+            name: `flow:${crypto.randomUUID()}`,
+          });
+      const content = { objective, expectedOutcomes: outcomes, preconditions: [], prohibitedSideEffects: [] };
+      if (flow) {
+        if (!flow.latestRevisionId) throw new Error("Flow has no current revision.");
+        await post(`/flows/${flow.id}/revisions`, {
+          ...context,reason:"Dashboard Flow revision",
+          environmentId: selectedEnvironment.id,
+          expectedRevisionId: flow.latestRevisionId,
+          name,
+          description: objective,
+          content,
+          plan,
+          idempotencyKey: `web-revision-${crypto.randomUUID()}`,
         });
       } else {
-        await post<Environment>(`/projects/${projectId}/environments`, {
-          ...environmentInput,
-          name: `flow:${spec.id}`,
+        await post(`/projects/${projectId}/flows`, {
+          ...context,visibility:"reusable",purpose:"primary",reason:"Dashboard Flow creation",
+          environmentId: selectedEnvironment.id,
+          name,
+          description: objective,
+          content,
+          plan,
+          idempotencyKey: `web-flow-${crypto.randomUUID()}`,
         });
       }
-      const version = await post<{ id: string }>(`/specifications/${spec.id}/versions`, {
-        objective,
-        expectedOutcomes: outcomes,
-      });
-      await post("/plans/versions", { specificationVersionId: version.id, plan });
       onCreated();
     } catch (cause) {
       setError(message(cause));
@@ -1602,7 +1807,7 @@ function SpecDialog({
   };
 
   return (
-    <Modal title={specification ? "Edit Flow" : "Create Flow"} subtitle={`Step ${step + 1} of 4 · ${["Describe the journey", "Add related pages", "Add instructions and proof", "Review and save"][step]}`} onClose={onClose} wide>
+    <Modal title={flow ? "Edit Flow" : "Create Flow"} subtitle={`Step ${step + 1} of 4 · ${["Describe the journey", "Add related pages", "Add instructions and proof", "Review and save"][step]}`} onClose={onClose} wide>
       <form onSubmit={(event) => void submit(event)} className="spec-wizard">
         <div className="wizard-progress wizard-progress-four" aria-label={`Step ${step + 1} of 4`}>
           {["Goal", "Pages", "Instructions + proof", "Review"].map((label, index) => (
@@ -1672,12 +1877,14 @@ function SpecDialog({
                         <>
                           <label><span>{action.type === "fill" ? "Which field should Scry fill?" : action.type === "click" ? "What should Scry click?" : "What should appear on the page?"}</span><input value={action.target} onChange={(event) => updateSequence(setSequence, action.id, { target: event.target.value })} placeholder={action.type === "fill" ? "Email address" : action.type === "click" ? "Sign in" : "Dashboard"} /><small>Enter the words a user can see on or beside the element.</small></label>
                           <details className="sequence-advanced">
-                            <summary>Change how Scry finds this element</summary>
-                            <p>Most users can keep these defaults. Change them only when Scry cannot find the element.</p>
+                            <summary>Refine capability and evidence</summary>
+                            <p>Scry first requires a control that can perform the action. Roles, names, layout, and OCR are supporting evidence—not mandatory page markup.</p>
+                            <div className="capability-summary"><strong>Required behavior</strong><span>{action.type === "fill" ? "Focusable · accepts text · editable" : action.type === "click" ? "Pointer or keyboard activation" : "Readable visible state"}</span></div>
                             <div className="sequence-target-grid">
-                              <label><span>Find it using</span><WizardSelect value={action.targetStrategy} options={[["role", "Element type and name"], ["label", "Field label"], ["placeholder", "Placeholder text"], ["text", "Visible text"], ["testId", "Test ID"]]} onChange={(value) => updateSequence(setSequence, action.id, { targetStrategy: value as SequenceDraft["targetStrategy"] })} /></label>
-                              {action.targetStrategy === "role" && <label><span>Element type</span><WizardSelect value={action.targetRole} options={[["button", "Button"], ["link", "Link"], ["heading", "Heading"], ["textbox", "Text field"]]} onChange={(value) => updateSequence(setSequence, action.id, { targetRole: value as SequenceDraft["targetRole"] })} /></label>}
+                              <label><span>Preferred semantic evidence</span><WizardSelect value={action.targetRole} options={[["button", "Button-like"], ["link", "Link-like"], ["heading", "Heading-like"], ["textbox", "Text-field-like"], ["checkbox", "Toggle-like"], ["combobox", "Selection-control-like"], ["text", "Visible text"], ["value", "Displayed value"]]} onChange={(value) => updateSequence(setSequence, action.id, { targetRole: value as SequenceDraft["targetRole"] })} /></label>
+                              <label><span>Search within</span><WizardSelect value={action.targetScope} options={[["page", "Whole page"], ["dialog", "Open dialog"], ["form", "Form"], ["field_group", "Field group"], ["table", "Table"], ["row", "Table row"], ["region", "Named region"]]} onChange={(value) => updateSequence(setSequence, action.id, { targetScope: value as SequenceDraft["targetScope"] })} /></label>
                             </div>
+                            <label className="checkbox-row"><input type="checkbox" checked={action.visualGrounding} onChange={(event)=>updateSequence(setSequence,action.id,{visualGrounding:event.target.checked})}/><span><strong>Add local visual evidence</strong><small>Fuse local OCR anchors and geometry with browser control capabilities. Visual evidence never becomes an action target by itself.</small></span></label>
                           </details>
                         </>
                       )}
@@ -1730,11 +1937,11 @@ function SpecDialog({
                             </label>
                             {action.readinessType !== "settle" && (
                               <label>
-                                <span>{action.readinessType === "url" ? "Address should contain" : action.readinessType === "content" ? "Container selector" : action.readinessType === "request" ? "Request URL should contain" : action.readinessType === "delay" ? "Delay in milliseconds" : "Words on the page"}</span>
+                                <span>{action.readinessType === "url" ? "Address should contain" : action.readinessType === "content" ? "Section name or description" : action.readinessType === "request" ? "Request URL should contain" : action.readinessType === "delay" ? "Delay in milliseconds" : "Words on the page"}</span>
                                 <input
                                   value={action.readinessValue}
                                   onChange={(event) => updateSequence(setSequence, action.id, { readinessValue: event.target.value })}
-                                  placeholder={action.readinessType === "url" ? "/dashboard" : action.readinessType === "content" ? "#docs-root" : action.readinessType === "request" ? "/api/orders" : action.readinessType === "delay" ? "1000" : "Run POST"}
+                                  placeholder={action.readinessType === "url" ? "/dashboard" : action.readinessType === "content" ? "API documentation" : action.readinessType === "request" ? "/api/orders" : action.readinessType === "delay" ? "1000" : "Run POST"}
                                 />
                               </label>
                             )}
@@ -1792,7 +1999,7 @@ function SpecDialog({
               </div>
               <details className="advanced-plan">
                 <summary><Code2 size={15} /> Review or edit deterministic plan</summary>
-                <p>Advanced: changes must remain valid protocol v2 JSON, preserve readiness before final evidence, and respect the selected origins.</p>
+                <p>Advanced: changes must remain valid current-plan JSON, preserve readiness before final evidence, and respect the selected origins.</p>
                 <textarea value={planText} onChange={(event) => setCustomPlanText(event.target.value)} spellCheck={false} />
               </details>
             </div>
@@ -1803,13 +2010,14 @@ function SpecDialog({
           <button type="button" className="secondary-button" onClick={step === 0 ? onClose : () => { setError(""); setStep((current) => current - 1); }}>{step === 0 ? "Cancel" : "Back"}</button>
           <button className="primary-button" disabled={busy}>
             {busy ? <LoaderCircle className="spin" size={16} /> : step === 3 ? <Check size={16} /> : null}
-            {step === 3 ? (specification ? "Validate and save version" : "Validate and save") : "Continue"} {step < 3 && <ArrowRight size={16} />}
+            {step === 3 ? (flow ? "Validate and save revision" : "Validate and save") : "Continue"} {step < 3 && <ArrowRight size={16} />}
           </button>
         </div>
       </form>
       {credentialDialog && (
         <CredentialDialog
           projectId={projectId}
+          getContext={getContext}
           onClose={() => setCredentialDialog(false)}
           onSaved={(credential) => {
             onCredentialCreated(credential);
@@ -1825,10 +2033,12 @@ function CredentialDialog({
   projectId,
   onClose,
   onSaved,
+  getContext,
 }: {
   projectId: string;
   onClose: () => void;
   onSaved: (credential: Credential) => void;
+  getContext?:()=>Promise<{missionId:string;objectiveId:string;agentSessionId:string}>;
 }) {
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
@@ -1840,7 +2050,10 @@ function CredentialDialog({
     setError(null);
     setSaving(true);
     try {
+      if(!getContext) throw new Error("Select a Mission objective before creating protected information.");
+      const context=await getContext();
       const credential = await post<Credential>(`/projects/${projectId}/credentials`, {
+        ...context,
         name: name.trim(),
         value,
       });
@@ -2013,6 +2226,7 @@ function AuthenticatedArtifact({
   const [url, setUrl] = useState<string>();
 
   useEffect(() => {
+    if (artifact.availability !== "available") return;
     let objectUrl: string | undefined;
     void apiBlob(`/artifacts/${artifact.id}`).then((blob) => {
       objectUrl = URL.createObjectURL(blob);
@@ -2022,6 +2236,10 @@ function AuthenticatedArtifact({
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [artifact.id]);
+
+  if (artifact.availability === "quarantined" || artifact.availability === "destroyed") {
+    return <div className="artifact-quarantined"><ShieldCheck size={16} /><span><strong>{artifact.kind} quarantined</strong><small>Uncertain bytes were destroyed · {String(artifact.observation?.reasonCode ?? "PRIVACY_UNCERTAIN")}</small></span></div>;
+  }
 
   if (image) {
     return (
@@ -2061,8 +2279,106 @@ function AuthenticatedVideo({ artifact }: { artifact: Report["artifacts"][number
         <span>{formatBytes(Number(artifact.sizeBytes ?? 0))}</span>
       </div>
       {url
-        ? <video controls preload="metadata" src={url}>Your browser does not support WebM video.</video>
+        ? <EvidenceVideo src={url} label="Play run recording" />
         : <div className="recording-loading"><LoaderCircle className="spin" size={20} /> Preparing recording…</div>}
+    </div>
+  );
+}
+
+function EvidenceVideo({ src, label }: { src: string; label: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(false);
+
+  useEffect(() => setPlaying(false), [src]);
+
+  const play = () => {
+    const result = videoRef.current?.play();
+    if (result) void result.catch(() => setPlaying(false));
+  };
+
+  return (
+    <div className="recording-video-stage">
+      <video
+        ref={videoRef}
+        controls
+        preload="metadata"
+        src={src}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+      >Your browser does not support WebM video.</video>
+      {!playing && (
+        <button className="recording-play-overlay" type="button" aria-label={label} onClick={play}>
+          <Play size={30} fill="currentColor" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function RecordingPlaylist({ entries, artifacts }: { entries: RecordingTimelineEntry[]; artifacts: Report["artifacts"] }) {
+  const [index, setIndex] = useState(0);
+  const [url, setUrl] = useState<string>();
+  const [loadFailed, setLoadFailed] = useState(false);
+  const entry = entries[index];
+  const artifact = entry?.type === "video_segment" && entry.artifactId
+    ? artifacts.find((candidate) => candidate.id === entry.artifactId)
+    : undefined;
+  const entryId = entry?.id;
+  const entryType = entry?.type;
+  const entryStatus = entry?.type === "video_segment" ? entry.status : undefined;
+  const artifactId = artifact?.id;
+
+  const advance = useCallback(() => setIndex((current) => Math.min(current + 1, entries.length - 1)), [entries.length]);
+
+  useEffect(() => {
+    setUrl(undefined);
+    setLoadFailed(false);
+    if (entryType !== "video_segment" || entryStatus !== "available" || !artifactId) return;
+    let disposed = false;
+    let objectUrl: string | undefined;
+    void apiBlob(`/artifacts/${artifactId}`).then((blob) => {
+      if (disposed) return;
+      objectUrl = URL.createObjectURL(blob);
+      setUrl(objectUrl);
+    }).catch(() => {
+      if (!disposed) setLoadFailed(true);
+    });
+    return () => {
+      disposed = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [artifactId, entryId, entryStatus, entryType]);
+
+  if (!entry) return null;
+  const durationMs = "endedAt" in entry && "startedAt" in entry
+    ? Math.max(0, new Date(entry.endedAt).getTime() - new Date(entry.startedAt).getTime())
+    : 0;
+  return (
+    <div className="run-recording">
+      <div className="run-recording-head">
+        <div><Play size={15} /><span><strong>Run recording</strong><small>Segment {index + 1} of {entries.length}</small></span></div>
+        <div className="recording-segment-nav">
+          <button type="button" onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0}><ChevronLeft size={16} /> Previous</button>
+          <span>{formatDuration(durationMs)}</span>
+          <button type="button" onClick={advance} disabled={index === entries.length - 1}>Next <ChevronRight size={16} /></button>
+        </div>
+      </div>
+      {entry.type === "video_segment" && entry.status === "available" && url && !loadFailed && (
+        <EvidenceVideo src={url} label={`Play recording segment ${index + 1}`} />
+      )}
+      {entry.type === "video_segment" && entry.status === "available" && !url && !loadFailed && (
+        <div className="recording-loading"><LoaderCircle className="spin" size={20} /> Preparing segment…</div>
+      )}
+      {entry.type === "protected_gap" && (
+        <div className="recording-gap"><ShieldCheck size={24} /><strong>Protected operation</strong><span>Visual capture was suspended for this interval.</span></div>
+      )}
+      {(entry.type === "unavailable_interval" || entry.type === "video_segment" && (entry.status !== "available" || loadFailed)) && (
+        <div className="recording-gap recording-unavailable"><AlertTriangle size={24} /><strong>Recording interval unavailable</strong><span>{entry.type === "unavailable_interval" ? entry.failureCode : entry.failureCode ?? "SEGMENT_UNAVAILABLE"}</span></div>
+      )}
+      <div className="recording-playlist-controls">
+        <span>{entries.map((item, itemIndex) => <i className={itemIndex === index ? "active" : ""} key={item.id} />)}</span>
+      </div>
     </div>
   );
 }
@@ -2079,6 +2395,48 @@ function PageTitle({ eyebrow, title, copy, action }: { eyebrow: string; title: s
 function RunRow({ run, onOpen }: { run: Run; onOpen: () => void }) {
   return <button onClick={onOpen}><div className="run-symbol">{stateIcon(run.state, 17)}</div><div className="run-primary"><strong>{run.planName || "Untitled plan"}</strong><span>Flow-scoped · {run.executionSnapshot?.viewport?.width}×{run.executionSnapshot?.viewport?.height}</span></div><span className="run-time">{relativeTime(run.createdAt)}</span><StatusBadge state={run.state} resolved={Boolean(run.resolvedAt)} /><ArrowRight size={15} /></button>;
 }
+function MissionReportsPage({projectId,onOpen}:{projectId:string;onOpen:(id:string)=>void}){
+  const[reports,setReports]=useState<MissionReport[]>([]);
+  useEffect(()=>{void api<MissionReport[]>(`/projects/${projectId}/mission-reports`).then(setReports)},[projectId]);
+  const objectiveCount=reports.reduce((total,report)=>total+report.snapshot.objectiveResults.length,0);
+  const acceptedRuns=new Set(reports.flatMap(report=>report.snapshot.objectiveResults.flatMap(objective=>objective.acceptedRunIds))).size;
+  return <div className="mission-reports-page"><PageTitle eyebrow="PUBLISHED OUTCOMES" title="Reports" copy="Final Mission conclusions, backed by explicitly accepted evidence."/>{reports.length>0&&<div className="mission-report-index-summary"><div><FileText size={18}/><span>Published reports<strong>{reports.length}</strong></span></div><div><CheckCircle2 size={18}/><span>Documented objectives<strong>{objectiveCount}</strong></span></div><div><ShieldCheck size={18}/><span>Accepted runs<strong>{acceptedRuns}</strong></span></div></div>}<div className="mission-report-grid">{reports.map(report=>{const objectives=report.snapshot.objectiveResults;const passed=objectives.filter(objective=>objective.status==="passed").length;const runs=new Set(objectives.flatMap(objective=>objective.acceptedRunIds)).size;return <button className="mission-report-card" key={report.id} onClick={()=>onOpen(report.id)}><div className="mission-report-card-top"><span><FileText size={18}/></span><div className="mission-report-card-meta"><span className="mission-report-state"><CheckCircle2 size={12}/>{report.status}</span><small>{relativeTime(report.createdAt)}</small></div></div><div className="mission-report-card-body"><small>Mission report · Revision {report.revision}</small><h2>{report.missionTitle??report.snapshot.mission.title}</h2><p>{report.snapshot.overallConclusion}</p></div><div className="mission-report-card-footer"><div><span>{passed}/{objectives.length}</span> objectives passed</div><div><span>{runs}</span> accepted run{runs===1?"":"s"}</div><span className="mission-report-open">Open report <ArrowRight size={14}/></span></div></button>})}{!reports.length&&<div className="panel mission-reports-empty"><EmptyBlock icon={<FileText/>} title="No Mission reports published" copy="A passed Run creates evidence, not a report. Publish a report explicitly from a Mission after its objectives and accepted evidence are final."/></div>}</div></div>;
+}
+
+function MissionDetailPage({missionId,onBack,onOpenFlows,onOpenRun,onOpenReport}:{missionId:string;onBack:()=>void;onOpenFlows:()=>void;onOpenRun:(id:string)=>void;onOpenReport:(id:string)=>void}){
+  const[data,setData]=useState<MissionDetail>();
+  const[activities,setActivities]=useState<Array<{id:string;type:string;summary:string;occurredAt:string;technical:boolean}>>([]);
+  const[technical,setTechnical]=useState(false);
+  const[error,setError]=useState("");
+  const[editing,setEditing]=useState(false);
+  const[authoringOpen,setAuthoringOpen]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const load=useCallback(()=>{void Promise.all([api<MissionDetail>(`/missions/${missionId}`),api<typeof activities>(`/missions/${missionId}/activities?technical=${technical}`)]).then(([mission,nextActivities])=>{setData(mission);setActivities(nextActivities);}).catch(cause=>setError(message(cause)));},[missionId,technical]);
+  useEffect(load,[load]);
+  if(!data)return <PageSkeleton/>;
+  const statusLabel=data.status.replaceAll("_"," ");
+  const statusTone=data.status==="completed"?"success":["failed","blocked"].includes(data.status)?"danger":"active";
+  const mutate=async(action:"edit"|"cancel",values?:{title:string;originalInstruction:string})=>{setBusy(true);setError("");try{const session=await post<{agentSessionId:string}>(`/missions/${missionId}/agent-sessions`,{provider:"human",instructionSnapshot:action==="edit"?"Edit Mission definition":"Close abandoned Mission",idempotencyKey:`web-mission-${action}-${crypto.randomUUID()}`});if(action==="edit")await patch(`/missions/${missionId}`,{missionId,agentSessionId:session.agentSessionId,...values});else await post(`/missions/${missionId}/cancel`,{missionId,agentSessionId:session.agentSessionId,explanation:"Closed explicitly from Mission detail."});await post(`/agent-sessions/${session.agentSessionId}/end`,{status:"completed"});setEditing(false);load();}catch(cause){setError(message(cause));}finally{setBusy(false);}};
+  return <div className="mission-detail">
+    <button className="back-button mission-back" onClick={onBack}><ChevronLeft size={15}/> Back to Missions</button>
+    <section className={`mission-hero mission-hero-${statusTone}`}>
+      <div className="mission-hero-copy"><div className="mission-hero-meta"><span className={`mission-status mission-status-${statusTone}`}>{statusLabel}</span><span>{data.terminalObjectiveCount} of {data.objectiveCount} objectives resolved</span></div><h1>{data.title}</h1><p>{data.originalInstruction}</p></div>
+      <div className="page-title-actions"><button className="secondary-button" onClick={()=>setEditing(true)}><Pencil size={15}/> Edit</button><button className="secondary-button" onClick={onOpenFlows}><FileCode2 size={15}/> Flows ({data.flows.length})</button>{data.resumePointer&&<button className="primary-button" onClick={()=>data.resumePointer?.runId?onOpenRun(data.resumePointer.runId):undefined}>Continue Mission <ArrowRight size={15}/></button>}{data.latestReportId&&<button className="secondary-button" onClick={()=>onOpenReport(data.latestReportId!)}>View report</button>}{!["completed","cancelled"].includes(data.status)&&<button className="secondary-button danger" disabled={busy} onClick={()=>window.confirm("Close this Mission? Its history and evidence will be preserved.")&&void mutate("cancel")}>Close Mission</button>}</div>
+      <div className="mission-summary-strip"><div><span>Progress</span><strong>{data.terminalObjectiveCount}/{data.objectiveCount}</strong></div><div><span>Accepted evidence</span><strong>{data.acceptedEvidenceCount}</strong></div><div className="mission-next-action"><span>Next action</span><strong>{data.resumePointer?.explanation??"No pending action"}</strong></div></div>
+    </section>
+    {error&&<div className="form-error">{error}</div>}
+    <section className="mission-detail-grid">
+      <div className="panel mission-objectives-panel"><PanelHeader title="Objectives" kicker="OUTCOMES"/><div className="mission-objective-list">{data.objectives.map(objective=>{const accepted=data.acceptedEvidence.filter(evidence=>evidence.objectiveId===objective.id);const awaiting=objective.orchestrationState==="awaiting_evidence";return <article className="mission-objective-card" key={objective.id}><div className="mission-objective-index">{String(objective.order+1).padStart(2,"0")}</div><div><div className="mission-objective-title"><strong>{objective.title}</strong>{awaiting?<span className="draft-tag">awaiting evidence</span>:<StatusBadge state={objective.status==="passed"?"passed":objective.status==="failed"?"failed":"running"}/>}</div><p>{objective.conclusion??objective.description}</p><span>{accepted.length?`${accepted.length} accepted evidence record${accepted.length===1?"":"s"}`:awaiting?"Candidate Run ready for review":"No evidence accepted yet"}</span></div></article>})}</div></div>
+      <div className="panel mission-journey-panel"><PanelHeader title="Journey" kicker="MEANINGFUL ACTIVITY" action={technical?"Hide technical":"Show technical"} onAction={()=>setTechnical(current=>!current)}/><div className="mission-timeline">{activities.map(activity=><div key={activity.id}><span/><div><strong>{activity.summary}</strong><small>{relativeTime(activity.occurredAt)}{activity.technical?" · technical":""}</small></div></div>)}</div></div>
+    </section>
+    {data.authoring.length>0&&<section className="panel mission-authoring-panel"><button className="mission-authoring-toggle" onClick={()=>setAuthoringOpen(value=>!value)} aria-expanded={authoringOpen}><span><Wrench size={17}/><span><small>AUTHORING ACTIVITY</small><strong>{data.authoring.reduce((total,draft)=>total+draft.probes.length,0)} Probe Session{data.authoring.reduce((total,draft)=>total+draft.probes.length,0)===1?"":"s"}</strong></span></span><span>Drafts, calibration, and compilation do not count as failed Runs <ChevronDown className={authoringOpen?"expanded":""} size={18}/></span></button>{authoringOpen&&<div className="mission-authoring-list">{data.authoring.map(draft=><article key={draft.id}><div><strong>{draft.name}</strong><span>Draft v{draft.version} · {draft.state.replaceAll("_"," ")}</span></div><div className="mission-authoring-pills"><span>{draft.probes.length} probes</span><span>{draft.compilations[0]?.status?.replaceAll("_"," ")??"not compiled"}</span></div>{draft.probes.map(probe=><div className="mission-authoring-probe" key={probe.id}><span>{probe.level.replaceAll("_"," ")}</span><strong>{probe.state}</strong><small>{probe.result?.allResolved===true?"All contracts resolved":probe.result?.diagnostics?.length?`${probe.result.diagnostics.length} authoring issue${probe.result.diagnostics.length===1?"":"s"}`:"Awaiting diagnostic result"}</small></div>)}</article>)}</div>}</section>}
+    <section className="panel mission-evidence-panel"><PanelHeader title="Accepted evidence" kicker="AUTHORITATIVE SET"/>{data.acceptedEvidence.length?<div className="mission-evidence-list">{data.acceptedEvidence.map(evidence=>{const objective=data.objectives.find(candidate=>candidate.id===evidence.objectiveId);return <button key={evidence.id} onClick={()=>onOpenRun(evidence.runId)}><span><small>{objective?.title??"Objective"}</small><strong>{evidence.conclusion}</strong></span><span>Run {evidence.runId.slice(0,8)} <ArrowRight size={14}/></span></button>})}</div>:<EmptyBlock icon={<ShieldCheck/>} title="No accepted evidence yet" copy="Candidate Runs remain reviewable and do not become Mission conclusions until explicitly accepted."/>}</section>
+    {editing&&<EditMissionDialog mission={data} busy={busy} onClose={()=>setEditing(false)} onSave={values=>void mutate("edit",values)}/>}
+  </div>;
+}
+
+function EditMissionDialog({mission,busy,onClose,onSave}:{mission:MissionDetail;busy:boolean;onClose:()=>void;onSave:(values:{title:string;originalInstruction:string})=>void}){const[title,setTitle]=useState(mission.title);const[instruction,setInstruction]=useState(mission.originalInstruction);return <Modal title="Edit Mission" subtitle="Correct this Mission instead of creating replacement work." onClose={onClose}><form className="stack-form" onSubmit={event=>{event.preventDefault();onSave({title,originalInstruction:instruction});}}><label><span>Mission title</span><input value={title} onChange={event=>setTitle(event.target.value)} required/></label><label><span>Original instruction</span><textarea value={instruction} onChange={event=>setInstruction(event.target.value)} required/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy}>{busy?<LoaderCircle className="spin" size={15}/>:<Pencil size={15}/>} Save Mission</button></div></form></Modal>}
+
 function StatusBadge({ state, resolved = false }: { state: RunState; resolved?: boolean }) {
   if (resolved) return <span className="status status-resolved">resolved</span>;
   return <span className={`status status-${state}`}>{["running", "queued", "preparing", "finalizing"].includes(state) && <span className="pulse-dot" />}{humanState(state)}</span>;
@@ -2130,8 +2488,8 @@ function canonicalOrigin(value: string) {
     return undefined;
   }
 }
-function destinationsFromFlow(specification?: Specification, environment?: Environment) {
-  const destinations = (specification?.latestPlan?.steps ?? [])
+function destinationsFromFlow(flow?: Flow, environment?: Environment) {
+  const destinations = (flow?.latestPlan?.steps ?? [])
     .filter((step) => step.action?.type === "navigate" && step.action.url)
     .map((step) => ({
       id: crypto.randomUUID(),
@@ -2146,37 +2504,35 @@ function destinationsFromFlow(specification?: Specification, environment?: Envir
     purpose: environment ? "Open the application" : "",
   }];
 }
-function sequenceFromFlow(specification?: Specification): SequenceDraft[] {
-  return (specification?.latestPlan?.steps ?? []).map((step) => {
+function sequenceFromFlow(flow?: Flow): SequenceDraft[] {
+  return (flow?.latestPlan?.steps ?? []).map((step) => {
     const action = step.action;
     const type = action?.type as SequenceActionType | undefined;
     if (!type || !["navigate", "fill", "click", "waitFor", "screenshot"].includes(type)) return undefined;
-    const strategy = action?.target?.strategy;
-    const targetStrategy = ["role", "label", "placeholder", "text", "testId"].includes(strategy ?? "")
-      ? strategy as SequenceDraft["targetStrategy"]
-      : "role";
-    const role = action?.target?.role;
-    const targetRole = ["button", "link", "heading", "textbox"].includes(role ?? "")
+    const role = action?.target?.preferredEvidence?.roles?.[0];
+    const targetRole = ["button", "link", "heading", "textbox", "checkbox", "combobox", "text", "value"].includes(role ?? "")
       ? role as SequenceDraft["targetRole"]
       : "button";
+    const scopeKind=action?.target?.scope?.kind; const targetScope=["page","dialog","form","field_group","table","row","region"].includes(scopeKind??"")?scopeKind as SequenceDraft["targetScope"]:"page";
     const readiness = step.after?.conditions?.[0];
     const readinessType = readiness && typeof readiness.type === "string" && ["visible", "hidden", "url", "content", "request", "delay"].includes(readiness.type)
       ? readiness.type as SequenceDraft["readinessType"]
       : "settle";
-    const readinessTarget = readiness?.target as { value?: string; name?: string } | undefined;
+    const readinessTarget = readiness?.target as { preferredEvidence?: { names?: string[]; expectedText?: string }; concept?: string } | undefined;
     const readinessValue = readinessType === "url"
       ? String(readiness?.expected ?? "")
       : readinessType === "request"
         ? String(readiness?.urlPattern ?? "")
         : readinessType === "delay"
           ? String(readiness?.durationMs ?? "")
-          : readinessTarget?.value ?? readinessTarget?.name ?? "";
+          : readinessTarget?.preferredEvidence?.expectedText ?? readinessTarget?.preferredEvidence?.names?.[0] ?? readinessTarget?.concept ?? "";
     return newSequenceAction(type, {
       title: step.title ?? "",
       url: action?.url ?? "",
-      targetStrategy,
+      targetScope,
       targetRole,
-      target: targetStrategy === "role" ? action?.target?.name ?? "" : action?.target?.value ?? "",
+      target: action?.target?.preferredEvidence?.names?.[0] ?? action?.target?.concept ?? action?.target?.preferredEvidence?.labels?.[0] ?? "",
+      visualGrounding: Boolean(action?.target?.preferredEvidence?.visual),
       valueMode: action?.secretRef ? "secret" : "value",
       value: action?.secretRef ?? action?.value ?? "",
       readinessType,
@@ -2195,7 +2551,7 @@ function sequenceFromFlow(specification?: Specification): SequenceDraft[] {
           type: assertion.type as VerificationDraft["type"],
           value: assertion.type === "url"
             ? assertion.expected ?? ""
-            : assertion.target?.name ?? assertion.target?.value ?? "",
+            : assertion.target?.preferredEvidence?.names?.[0] ?? assertion.target?.concept ?? "",
         })),
     });
   }).filter((step): step is SequenceDraft => Boolean(step));
@@ -2217,9 +2573,10 @@ function newSequenceAction(
     type,
     title: type === "navigate" ? "Open application" : type === "fill" ? "Enter value" : type === "click" ? "Continue" : type === "waitFor" ? "Verify the result" : "Capture evidence",
     url: "",
-    targetStrategy: type === "fill" ? "placeholder" : "role",
+    targetScope: "page",
     targetRole: type === "waitFor" ? "heading" : "button",
     target: "",
+    visualGrounding: false,
     valueMode: "value",
     value: "",
     verifications: [],
@@ -2257,8 +2614,8 @@ function moveItem<T>(items: T[], from: number, to: number) {
   if (item !== undefined) next.splice(to, 0, item);
   return next;
 }
-function environmentFor(specification: Specification, environments: Environment[]) {
-  return environments.find((item) => item.name === `flow:${specification.id}`)
+function environmentFor(flow: Flow, environments: Environment[]) {
+  return environments.find((item) => item.name === `flow:${flow.id}`)
     ?? environments.find((item) => !item.name.startsWith("flow:"));
 }
 function message(error: unknown) {

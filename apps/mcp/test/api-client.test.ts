@@ -12,21 +12,21 @@ describe("ScryApiClient", () => {
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const client = new ScryApiClient("http://scry.test/v1");
-    await expect(client.post("/runs/run-1/start")).resolves.toEqual({
+    const client = new ScryApiClient("http://scry.test/api");
+    await expect(client.post("/runs/run-1/cancel")).resolves.toEqual({
       id: "run-1",
       state: "queued",
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://scry.test/v1/runs/run-1/start",
+      "http://scry.test/api/runs/run-1/cancel",
       expect.objectContaining({ method: "POST" }),
     );
   });
 
   it("returns stable artifact URLs and useful errors", async () => {
-    const client = new ScryApiClient("http://scry.test/v1");
+    const client = new ScryApiClient("http://scry.test/api");
     expect(client.artifactUrl("artifact id")).toBe(
-      "http://scry.test/v1/artifacts/artifact%20id",
+      "http://scry.test/api/artifacts/artifact%20id",
     );
     vi.stubGlobal(
       "fetch",
@@ -44,11 +44,11 @@ describe("ScryApiClient", () => {
       new Response(JSON.stringify({ id: "environment-1" }), { status: 200 }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const client = new ScryApiClient("http://scry.test/v1");
+    const client = new ScryApiClient("http://scry.test/api");
     await expect(client.patch("/environments/environment-1", { secretRefs: [] }))
       .resolves.toEqual({ id: "environment-1" });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://scry.test/v1/environments/environment-1",
+      "http://scry.test/api/environments/environment-1",
       expect.objectContaining({ method: "PATCH" }),
     );
   });
@@ -59,18 +59,18 @@ describe("ScryApiClient", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     const client = new ScryApiClient(
-      "http://api.internal/v1",
+      "http://api.internal/api",
       "token",
-      "https://scry.example/v1",
+      "https://scry.example/api",
     );
     expect(client.artifactUrl("artifact id")).toBe(
-      "https://scry.example/v1/artifacts/artifact%20id",
+      "https://scry.example/api/artifacts/artifact%20id",
     );
     await expect(client.getArtifact("artifact id")).resolves.toMatchObject({
       contentType: "text/plain",
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://api.internal/v1/artifacts/artifact%20id",
+      "http://api.internal/api/artifacts/artifact%20id",
       expect.objectContaining({ headers: expect.any(Headers) }),
     );
   });

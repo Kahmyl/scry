@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fix Defect"
+  short_description: "Repair proven defects with regression evidence"
+  default_prompt: "Use $fix-defect to repair this confirmed defect at the correct boundary and prove the regression is resolved."

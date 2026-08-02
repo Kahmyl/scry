@@ -5,6 +5,10 @@ x-app-environment: &app-environment
   REDIS_URL: redis://redis:6379
   ARTIFACT_ROOT: /workspace/apps/api/artifacts/runs
 
+x-release-environment: &release-environment
+  SCRY_RELEASE_ID: "${SCRY_RELEASE_ID:-local-20260802-capability-grounding}"
+  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-0a6037509852bb13d0f05be5a699c7aa0b40124a9ebd73a55c73501ed1e2d155}"
+
 x-node-build: &node-build
   context: .
   dockerfile: docker/Dockerfile.dev
@@ -50,7 +54,7 @@ services:
     env_file:
       - apps/api/.env
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *release-environment]
     command: ["pnpm", "--filter", "@scry/api", "db:migrate"]
     depends_on:
       postgres:
@@ -62,10 +66,11 @@ services:
     env_file:
       - apps/api/.env
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *release-environment]
       API_HOST: 0.0.0.0
       API_PORT: 4000
       API_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      SCRY_ORCHESTRATION_ENABLED: "${SCRY_ORCHESTRATION_ENABLED:-true}"
     command: ["pnpm", "--filter", "@scry/api", "dev"]
     ports:
       - "${SCRY_API_PORT:-4000}:4000"
@@ -75,7 +80,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/v1/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/health"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -111,7 +116,7 @@ services:
     env_file:
       - apps/api/.env
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *release-environment]
       SCRY_BROWSER_CHANNEL: chromium
       WORKER_CONCURRENCY: "${SCRY_WORKER_CONCURRENCY:-1}"
     depends_on:
@@ -152,8 +157,9 @@ services:
   mcp:
     build: *node-build
     environment:
-      SCRY_API_BASE_URL: http://api:4000/v1
-      SCRY_PUBLIC_API_BASE_URL: "${SCRY_PUBLIC_API_BASE_URL:-http://127.0.0.1:4000/v1}"
+      <<: *release-environment
+      SCRY_API_BASE_URL: http://api:4000/api
+      SCRY_PUBLIC_API_BASE_URL: "${SCRY_PUBLIC_API_BASE_URL:-http://127.0.0.1:4000/api}"
       MCP_HOST: 0.0.0.0
       MCP_PORT: 4100
     command: ["pnpm", "--filter", "@scry/mcp", "start:http"]
@@ -186,7 +192,7 @@ services:
     env_file:
       - apps/web/.env
     environment:
-      VITE_API_BASE_URL: /v1
+      VITE_API_BASE_URL: /api
       VITE_API_PROXY_TARGET: http://api:4000
       VITE_MCP_SERVER_URL: http://127.0.0.1:${SCRY_MCP_PORT:-4100}/mcp
     command: ["pnpm", "--filter", "@scry/web", "dev:docker"]

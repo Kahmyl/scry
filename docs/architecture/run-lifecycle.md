@@ -23,6 +23,15 @@ stateDiagram-v2
 Terminal states are `passed`, `failed`, `cancelled`, `timed_out`, and
 `infrastructure_error`.
 
+Every active run also persists a phase: `validating`, `queued`, `preparing`,
+`executing_action`, `waiting_readiness`, `evaluating_assertions`,
+`capturing_evidence`, `finalizing`, or `completed`. State describes lifecycle;
+phase describes current work.
+
+The current contract stores action, readiness, assertion, and evidence results
+independently. A missing screenshot can degrade evidence but cannot turn a
+successful product interaction into a plan failure.
+
 ## Outcome meanings
 
 - `passed`: every required assertion passed.

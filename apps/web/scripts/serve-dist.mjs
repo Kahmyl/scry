@@ -46,7 +46,7 @@ createServer(async (request, response) => {
         "cache-control": "no-store",
       });
       response.end(`window.__SCRY_CONFIG__=${JSON.stringify({
-        apiBaseUrl: process.env.SCRY_PUBLIC_API_BASE_URL ?? "/v1",
+        apiBaseUrl: process.env.SCRY_PUBLIC_API_BASE_URL ?? "/api",
         mcpServerUrl: process.env.SCRY_PUBLIC_MCP_SERVER_URL ?? "/mcp",
         supabaseUrl: process.env.SUPABASE_URL ?? "",
         supabasePublishableKey: process.env.SUPABASE_PUBLISHABLE_KEY ?? "",

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Route Engineering Work"
+  short_description: "Classify work and select the right workflow"
+  default_prompt: "Use $route-engineering-work to classify this engineering request and select the required diagnosis and delivery workflow."

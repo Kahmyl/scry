@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify Change"
+  short_description: "Prove behavior, safety, and operational readiness"
+  default_prompt: "Use $verify-change to build a risk-based verification matrix and prove this change is ready."

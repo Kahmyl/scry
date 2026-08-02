@@ -26,11 +26,11 @@ describe("dashboard API client", () => {
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    await expect(post("/plans/versions", { plan: {} })).rejects.toThrow(
+    await expect(post("/plan-validations", { plan: {} })).rejects.toThrow(
       "Plan validation failed",
     );
     expect(fetchMock).toHaveBeenCalledWith(
-      "/v1/plans/versions",
+      "/api/plan-validations",
       expect.objectContaining({ method: "POST", body: '{"plan":{}}' }),
     );
   });

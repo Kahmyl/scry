@@ -4,9 +4,9 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
-  executionPolicyV1Schema,
-  testPlanSchema,
-  type ExecutionPolicyV1,
+  executionPolicySchema,
+  currentPlanSchema,
+  type ExecutionPolicy,
 } from "@scry/contracts";
 
 import { executePlan } from "./executor.js";
@@ -23,10 +23,10 @@ async function main() {
   const outputDirectory = path.resolve(readFlag(flags, "--output") ?? `artifacts/${Date.now()}`);
   const browserChannel = readFlag(flags, "--channel");
   const headed = flags.includes("--headed");
-  const plan = testPlanSchema.parse(JSON.parse(await readFile(planPath, "utf8")));
+  const plan = currentPlanSchema.parse(JSON.parse(await readFile(planPath, "utf8")));
   const policyPath = readFlag(flags, "--policy");
   const policy = policyPath
-    ? executionPolicyV1Schema.parse(
+    ? executionPolicySchema.parse(
         JSON.parse(await readFile(path.resolve(policyPath), "utf8")),
       )
     : defaultPolicy(plan.allowedOrigins, plan.budgets);
@@ -67,9 +67,8 @@ function readFlag(flags: string[], name: string) {
 function defaultPolicy(
   allowedOrigins: string[],
   budgets: { maxActions: number; maxDurationMs: number; maxNavigations: number },
-): ExecutionPolicyV1 {
-  return executionPolicyV1Schema.parse({
-    policyVersion: "1",
+): ExecutionPolicy {
+  return executionPolicySchema.parse({
     allowedOrigins,
     ...budgets,
   });

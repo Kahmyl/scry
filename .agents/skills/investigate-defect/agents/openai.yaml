@@ -1,0 +1,4 @@
+interface:
+  display_name: "Investigate Defect"
+  short_description: "Reproduce, isolate, and explain failures"
+  default_prompt: "Use $investigate-defect to reproduce this failure, isolate its cause, and determine the appropriate repair scope."

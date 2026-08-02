@@ -1,6 +1,7 @@
 export class ScryApiClient {
+  private capabilitiesPromise?: Promise<ScryCapabilities>;
   constructor(
-    readonly baseUrl = process.env.SCRY_API_BASE_URL ?? "http://127.0.0.1:4000/v1",
+    readonly baseUrl = process.env.SCRY_API_BASE_URL ?? "http://127.0.0.1:4000/api",
     readonly serviceToken = process.env.SCRY_SERVICE_TOKEN,
     readonly publicBaseUrl = process.env.SCRY_PUBLIC_API_BASE_URL ?? baseUrl,
   ) {}
@@ -23,6 +24,21 @@ export class ScryApiClient {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
+  }
+
+  capabilities() {
+    this.capabilitiesPromise ??= this.get<ScryCapabilities>("/capabilities");
+    return this.capabilitiesPromise;
+  }
+
+  async requireCurrentRelease() {
+    const capabilities = await this.capabilities();
+    const expectedRelease = process.env.SCRY_RELEASE_ID;
+    const expectedSchema = process.env.SCRY_SCHEMA_FINGERPRINT;
+    if ((expectedRelease && capabilities.releaseId !== expectedRelease) || (expectedSchema && capabilities.schemaFingerprint !== expectedSchema)) {
+      throw new Error("SCRY_RELEASE_MISMATCH");
+    }
+    return capabilities;
   }
 
   artifactUrl(artifactId: string) {
@@ -57,4 +73,17 @@ export class ScryApiClient {
     }
     return body as T;
   }
+
 }
+
+export type ScryCapabilities = {
+  releaseId: string;
+  schemaFingerprint: string;
+  supportedActions: string[];
+  evidenceChannels: string[];
+  artifactCapabilities: string[];
+  collectorCapabilities: string[];
+  groundingCapabilities?: string[];
+  intelligenceCapabilities?: { modelAssistance: boolean; visualGrounding: string };
+  missionContext?: { requiredForWrites:boolean;transport:"explicit";phases:string[] };
+};

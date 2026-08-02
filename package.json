@@ -13,6 +13,10 @@
     "docker:logs": "docker compose logs -f --tail=200",
     "docker:reset": "docker compose down --volumes --remove-orphans",
     "scry": "pnpm --filter @scry/executor cli",
+    "verify:privacy-foundation": "node scripts/verify-privacy-foundation.mjs",
+    "verify:playwright": "node scripts/verify-playwright-version.mjs",
+    "verify:agent-skills": "node scripts/verify-agent-skills.mjs",
+    "schema:fingerprint": "node scripts/schema-fingerprint.mjs",
     "test": "pnpm --recursive test",
     "typecheck": "pnpm --recursive typecheck"
   },

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Architectural Diagnosis"
+  short_description: "Diagnose foundations before choosing a fix"
+  default_prompt: "Use $architectural-diagnosis to investigate this issue and recommend the right repair scope before implementation."

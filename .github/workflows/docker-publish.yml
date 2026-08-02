@@ -27,6 +27,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Verify contracts and implementation
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm verify:privacy-foundation
+          pnpm verify:playwright
+          pnpm typecheck
+          pnpm test
+          echo "SCRY_SCHEMA_FINGERPRINT=$(node scripts/schema-fingerprint.mjs)" >> "$GITHUB_ENV"
+
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -44,6 +62,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and publish the combined Scry image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -54,6 +73,22 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=scry
           cache-to: type=gha,mode=max,scope=scry
+
+      - name: Boot production topology and verify compatibility
+        env:
+          SCRY_DOMAIN: scry.example.com
+          POSTGRES_PASSWORD: integration-password
+          SCRY_SERVICE_TOKEN: integration-service-token
+          SCRY_CREDENTIAL_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_PUBLISHABLE_KEY: integration-placeholder
+          SCRY_IMAGE_REF: ${{ env.APP_IMAGE }}@${{ steps.build.outputs.digest }}
+          SCRY_RELEASE_ID: ${{ github.sha }}
+        run: |
+          trap 'docker compose -f compose.deploy.yml down -v' EXIT
+          docker compose -f compose.deploy.yml up -d --wait postgres redis migrate api worker mcp
+          docker compose -f compose.deploy.yml exec -T api wget -qO- http://127.0.0.1:4000/api/ready
+          docker compose -f compose.deploy.yml exec -T mcp wget -qO- http://127.0.0.1:4100/health
 
       - name: Select stack tag
         id: stack
@@ -84,7 +119,8 @@ jobs:
           SCRY_CREDENTIAL_ENCRYPTION_KEY: publish-placeholder
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_PUBLISHABLE_KEY: publish-placeholder
-          SCRY_IMAGE_TAG: ${{ steps.stack.outputs.tag }}
+          SCRY_IMAGE_REF: ${{ env.APP_IMAGE }}@${{ steps.build.outputs.digest }}
+          SCRY_RELEASE_ID: ${{ github.sha }}
         run: |
           docker compose -f compose.deploy.yml publish -y \
             "${STACK_IMAGE}:${{ steps.stack.outputs.tag }}"

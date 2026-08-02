@@ -104,8 +104,13 @@ Compose loads browser-safe variables from `apps/web/.env` and server-only
 variables from `apps/api/.env`. Never put `SCRY_SERVICE_TOKEN`, credential
 encryption keys, or browser-run credentials in the web environment.
 
-Project test credentials are created in **Project settings → Test credentials**.
-Their values are encrypted at rest and Flows store only opaque credential IDs.
+Project test credentials can be created in **Project settings → Test credentials**.
+An MCP agent may also create a new credential only when the user explicitly
+supplies its value for the stated project and purpose. MCP can never read a
+stored value back or overwrite an existing credential; it receives only the
+new opaque credential ID. Credential use is authorized separately by adding
+that ID to an environment allowlist. Values are encrypted at rest and Flows
+store only opaque credential IDs.
 Set `SCRY_CREDENTIAL_ENCRYPTION_KEY` in `apps/api/.env` to a long random value
 for shared or production deployments. API and worker instances must use the
 same key. Local development has a deterministic fallback so a fresh Docker

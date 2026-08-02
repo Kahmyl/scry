@@ -31,15 +31,17 @@ services:
       - mcp
 
   web:
-    image: kahmyl/scry:${SCRY_IMAGE_TAG:-latest}
+    image: ${SCRY_IMAGE_REF:?Set SCRY_IMAGE_REF to an immutable image digest}
     restart: unless-stopped
     command: ["node", "apps/web/scripts/serve-dist.mjs"]
     environment:
       WEB_PORT: "3000"
-      SCRY_PUBLIC_API_BASE_URL: /v1
+      SCRY_PUBLIC_API_BASE_URL: /api
       SCRY_PUBLIC_MCP_SERVER_URL: /mcp
       SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL}
       SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?Set SUPABASE_PUBLISHABLE_KEY}
+      SCRY_RELEASE_ID: ${SCRY_RELEASE_ID:?Set SCRY_RELEASE_ID}
+      SCRY_SCHEMA_FINGERPRINT: ${SCRY_SCHEMA_FINGERPRINT:?Set SCRY_SCHEMA_FINGERPRINT}
     depends_on:
       api:
         condition: service_started
@@ -47,13 +49,16 @@ services:
         condition: service_started
 
   api:
-    image: kahmyl/scry:${SCRY_IMAGE_TAG:-latest}
+    image: ${SCRY_IMAGE_REF:?Set SCRY_IMAGE_REF to an immutable image digest}
     restart: unless-stopped
     environment:
       <<: *api-environment
       API_HOST: 0.0.0.0
       API_PORT: "4000"
       API_CORS_ORIGINS: https://${SCRY_DOMAIN:?Set SCRY_DOMAIN}
+      SCRY_ORCHESTRATION_ENABLED: "${SCRY_ORCHESTRATION_ENABLED:-false}"
+      SCRY_RELEASE_ID: ${SCRY_RELEASE_ID:?Set SCRY_RELEASE_ID}
+      SCRY_SCHEMA_FINGERPRINT: ${SCRY_SCHEMA_FINGERPRINT:?Set SCRY_SCHEMA_FINGERPRINT}
     command: ["pnpm", "--filter", "@scry/api", "start"]
     depends_on:
       migrate:
@@ -62,15 +67,22 @@ services:
         condition: service_healthy
     volumes:
       - artifacts:/workspace/apps/api/artifacts/runs
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   worker:
-    image: kahmyl/scry:${SCRY_IMAGE_TAG:-latest}
+    image: ${SCRY_IMAGE_REF:?Set SCRY_IMAGE_REF to an immutable image digest}
     restart: unless-stopped
     command: ["pnpm", "--filter", "@scry/api", "worker"]
     environment:
       <<: *api-environment
       SCRY_BROWSER_CHANNEL: chromium
       WORKER_CONCURRENCY: ${SCRY_WORKER_CONCURRENCY:-1}
+      SCRY_RELEASE_ID: ${SCRY_RELEASE_ID:?Set SCRY_RELEASE_ID}
+      SCRY_SCHEMA_FINGERPRINT: ${SCRY_SCHEMA_FINGERPRINT:?Set SCRY_SCHEMA_FINGERPRINT}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -82,7 +94,7 @@ services:
     stop_grace_period: 30s
 
   migrate:
-    image: kahmyl/scry:${SCRY_IMAGE_TAG:-latest}
+    image: ${SCRY_IMAGE_REF:?Set SCRY_IMAGE_REF to an immutable image digest}
     restart: "no"
     command: ["pnpm", "--filter", "@scry/api", "db:migrate"]
     environment:
@@ -92,19 +104,26 @@ services:
         condition: service_healthy
 
   mcp:
-    image: kahmyl/scry:${SCRY_IMAGE_TAG:-latest}
+    image: ${SCRY_IMAGE_REF:?Set SCRY_IMAGE_REF to an immutable image digest}
     restart: unless-stopped
     command: ["pnpm", "--filter", "@scry/mcp", "start:http"]
     environment:
       MCP_HOST: 0.0.0.0
       MCP_PORT: "4100"
       MCP_ALLOWED_ORIGINS: https://${SCRY_DOMAIN:?Set SCRY_DOMAIN}
-      SCRY_API_BASE_URL: http://api:4000/v1
-      SCRY_PUBLIC_API_BASE_URL: https://${SCRY_DOMAIN:?Set SCRY_DOMAIN}/v1
+      SCRY_API_BASE_URL: http://api:4000/api
+      SCRY_PUBLIC_API_BASE_URL: https://${SCRY_DOMAIN:?Set SCRY_DOMAIN}/api
       SCRY_SERVICE_TOKEN: ${SCRY_SERVICE_TOKEN:?Set SCRY_SERVICE_TOKEN}
+      SCRY_RELEASE_ID: ${SCRY_RELEASE_ID:?Set SCRY_RELEASE_ID}
+      SCRY_SCHEMA_FINGERPRINT: ${SCRY_SCHEMA_FINGERPRINT:?Set SCRY_SCHEMA_FINGERPRINT}
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4100/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   postgres:
     image: postgres:17-alpine
@@ -144,7 +163,7 @@ configs:
   caddyfile:
     content: |
       ${SCRY_DOMAIN:?Set SCRY_DOMAIN} {
-        handle /v1/* {
+        handle /api/* {
           reverse_proxy api:4000
         }
         handle /mcp {

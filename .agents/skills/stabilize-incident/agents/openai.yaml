@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stabilize Incident"
+  short_description: "Contain urgent impact and preserve follow-up"
+  default_prompt: "Use $stabilize-incident to mitigate this active incident safely and preserve evidence for durable remediation."

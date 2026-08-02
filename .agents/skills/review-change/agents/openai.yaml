@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Change"
+  short_description: "Review diffs for correctness and systemic risk"
+  default_prompt: "Use $review-change to assess this proposed change against its intent, invariants, and regression risks."

@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.7
-FROM mcr.microsoft.com/playwright:v1.62.0-noble
+ARG PLAYWRIGHT_VERSION=1.62.0
+FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH

@@ -8,4 +8,4 @@ default_tools_approval_mode = "writes"
 enabled = true
 
 [mcp_servers.scry.env]
-SCRY_API_BASE_URL = "http://127.0.0.1:4000/v1"
+SCRY_API_BASE_URL = "http://127.0.0.1:4000/api"

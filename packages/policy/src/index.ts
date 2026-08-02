@@ -1,7 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
-import type { Action, ExecutionPolicyV1, TestPlan } from "@scry/contracts";
+import type { CurrentAction, CurrentPlan, ExecutionPolicy } from "@scry/contracts";
 
 export { SecretRedactor } from "./redactor.js";
 
@@ -30,11 +30,11 @@ export type ActionCapability =
   | "observation"
   | "evidence";
 
-export function classifyAction(action: Action): ActionCapability {
+export function classifyAction(action: CurrentAction): ActionCapability {
   if (action.type === "navigate") return "navigation";
   if (action.type === "fill" && (action.secretRef || action.capturedSecretRef)) return "secret_input";
-  if (action.type === "captureSecret") return "secret_input";
-  if (action.type === "captureValue") return "observation";
+  if (action.type === "protectedTransaction") return "secret_input";
+  if (action.type === "capturePublicValue") return "observation";
   if (action.type === "waitFor" || action.type === "scroll") return "observation";
   if (action.type === "screenshot") return "evidence";
   return "interaction";
@@ -45,8 +45,8 @@ export class RuntimeRequestPolicy {
   private readonly addressCache = new Map<string, Promise<string[]>>();
 
   constructor(
-    _plan: TestPlan,
-    private readonly policy: ExecutionPolicyV1,
+    _plan: CurrentPlan,
+    private readonly policy: ExecutionPolicy,
   ) {
     this.origins = new Set(
       policy.allowedOrigins.map((value) => new URL(value).origin),

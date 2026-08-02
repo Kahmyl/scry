@@ -1,8 +1,7 @@
 import { z } from "zod";
 
-export const executionPolicyV1Schema = z
+export const executionPolicySchema = z
   .object({
-    policyVersion: z.literal("1"),
     allowedOrigins: z
       .array(
         z
@@ -24,4 +23,4 @@ export const executionPolicyV1Schema = z
   })
   .strict();
 
-export type ExecutionPolicyV1 = z.infer<typeof executionPolicyV1Schema>;
+export type ExecutionPolicy = z.infer<typeof executionPolicySchema>;

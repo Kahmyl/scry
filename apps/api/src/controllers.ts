@@ -3,39 +3,22 @@ import {
   Controller,
   Delete,
   Get,
-  Header,
   Inject,
-  NotFoundException,
   Param,
   Patch,
   Post,
-  StreamableFile,
 } from "@nestjs/common";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import {
   createEnvironmentSchema,
-  createAtomicRevisionSchema,
   createCredentialSchema,
-  createPlanVersionSchema,
   createProjectSchema,
-  createRunSchema,
-  createSpecificationVersionSchema,
-  createTestSpecificationSchema,
   updateEnvironmentSchema,
-  updateTestSpecificationSchema,
   updateCredentialSchema,
   validateCredentialReferencesSchema,
   type CreateEnvironmentInput,
-  type CreateAtomicRevisionInput,
   type CreateCredentialInput,
-  type CreatePlanVersionInput,
   type CreateProjectInput,
-  type CreateRunInput,
-  type CreateSpecificationVersionInput,
-  type CreateTestSpecificationInput,
   type UpdateEnvironmentInput,
-  type UpdateTestSpecificationInput,
   type UpdateCredentialInput,
   type ValidateCredentialReferencesInput,
 } from "@scry/contracts";
@@ -47,8 +30,10 @@ import { Public } from "./auth.guard.js";
 import type { Principal } from "./auth.types.js";
 import { CurrentPrincipal } from "./current-principal.decorator.js";
 import { McpTokenRepository } from "./mcp-token.repository.js";
+import { RunObservationService } from "./run-observation.service.js";
+import { ReleaseAdmissionService } from "./release-admission.service.js";
 
-@Controller("health")
+@Controller("api/health")
 @Public()
 export class HealthController {
   @Get()
@@ -57,7 +42,7 @@ export class HealthController {
   }
 }
 
-@Controller("mcp-tokens")
+@Controller("api/mcp-tokens")
 export class McpTokensController {
   constructor(@Inject(McpTokenRepository) private readonly tokens: McpTokenRepository) {}
 
@@ -83,7 +68,7 @@ export class McpTokensController {
   }
 }
 
-@Controller("projects")
+@Controller("api/projects")
 export class ProjectsController {
   constructor(@Inject(ScryRepository) private readonly repository: ScryRepository) {}
 
@@ -125,6 +110,11 @@ export class ProjectsController {
     return this.repository.listCredentials(principal, projectId);
   }
 
+  @Get(":projectId/credential-incidents")
+  listCredentialIncidents(@Param("projectId") projectId: string, @CurrentPrincipal() principal: Principal) {
+    return this.repository.listCredentialIncidents(principal, projectId);
+  }
+
   @Post(":projectId/credentials")
   createCredential(
     @Param("projectId") projectId: string,
@@ -132,33 +122,6 @@ export class ProjectsController {
     @Body(new ZodValidationPipe(createCredentialSchema)) input: CreateCredentialInput,
   ) {
     return this.repository.createCredential(principal, projectId, input);
-  }
-
-  @Post(":projectId/specifications")
-  createSpecification(
-    @Param("projectId") projectId: string,
-    @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(createTestSpecificationSchema))
-    input: CreateTestSpecificationInput,
-  ) {
-    return this.repository.createSpecification(principal, projectId, input);
-  }
-
-  @Get(":projectId/specifications")
-  listSpecifications(
-    @Param("projectId") projectId: string,
-    @CurrentPrincipal() principal: Principal,
-  ) {
-    return this.repository.listSpecifications(principal, projectId);
-  }
-
-  @Post(":projectId/runs")
-  createRun(
-    @Param("projectId") projectId: string,
-    @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(createRunSchema)) input: CreateRunInput,
-  ) {
-    return this.repository.createRun(principal, projectId, input);
   }
 
   @Get(":projectId/runs")
@@ -170,41 +133,7 @@ export class ProjectsController {
   }
 }
 
-@Controller("specifications")
-export class SpecificationsController {
-  constructor(@Inject(ScryRepository) private readonly repository: ScryRepository) {}
-
-  @Patch(":specificationId")
-  update(
-    @Param("specificationId") specificationId: string,
-    @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(updateTestSpecificationSchema))
-    input: UpdateTestSpecificationInput,
-  ) {
-    return this.repository.updateSpecification(principal, specificationId, input);
-  }
-
-  @Post(":specificationId/versions")
-  createVersion(
-    @Param("specificationId") specificationId: string,
-    @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(createSpecificationVersionSchema))
-    input: CreateSpecificationVersionInput,
-  ) {
-    return this.repository.createSpecificationVersion(principal, specificationId, input);
-  }
-
-  @Post(":specificationId/revisions")
-  revise(
-    @Param("specificationId") specificationId: string,
-    @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(createAtomicRevisionSchema)) input: CreateAtomicRevisionInput,
-  ) {
-    return this.repository.createAtomicRevision(principal, specificationId, input);
-  }
-}
-
-@Controller("environments")
+@Controller("api/environments")
 export class EnvironmentsController {
   constructor(@Inject(ScryRepository) private readonly repository: ScryRepository) {}
 
@@ -228,7 +157,7 @@ export class EnvironmentsController {
   }
 }
 
-@Controller("credentials")
+@Controller("api/credentials")
 export class CredentialsController {
   constructor(@Inject(ScryRepository) private readonly repository: ScryRepository) {}
 
@@ -250,38 +179,23 @@ export class CredentialsController {
   }
 }
 
-@Controller("plans")
-export class PlansController {
-  constructor(@Inject(ScryRepository) private readonly repository: ScryRepository) {}
-
-  @Post("versions")
-  createVersion(
-    @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(createPlanVersionSchema)) input: CreatePlanVersionInput,
-  ) {
-    return this.repository.createPlanVersion(principal, input);
-  }
-}
-
-@Controller("runs")
+@Controller("api/runs")
 export class RunsController {
   constructor(
     @Inject(ScryRepository) private readonly repository: ScryRepository,
     @Inject(RunQueueService) private readonly queue: RunQueueService,
+    @Inject(RunObservationService) private readonly observations: RunObservationService,
+    @Inject(ReleaseAdmissionService) private readonly admission: ReleaseAdmissionService,
   ) {}
 
   @Get(":runId")
   get(@Param("runId") runId: string, @CurrentPrincipal() principal: Principal) {
-    return this.repository.getRun(principal, runId);
-  }
-
-  @Get(":runId/report")
-  report(@Param("runId") runId: string, @CurrentPrincipal() principal: Principal) {
-    return this.repository.getRunReport(principal, runId);
+    return this.observations.observe(principal, runId);
   }
 
   @Post(":runId/start")
   async start(@Param("runId") runId: string, @CurrentPrincipal() principal: Principal) {
+    await this.admission.assertAcceptingWork();
     this.repository.requireWriteAccess(principal);
     await this.repository.validateRunCredentials(principal, runId);
     return this.queue.start(runId);
@@ -296,38 +210,9 @@ export class RunsController {
 
   @Post(":runId/rerun")
   async rerun(@Param("runId") runId: string, @CurrentPrincipal() principal: Principal) {
+    await this.admission.assertAcceptingWork();
     const run = await this.repository.rerunExact(principal, runId);
-    await this.queue.start(run.id);
+    await this.queue.dispatchPending();
     return run;
-  }
-}
-
-@Controller("artifacts")
-export class ArtifactsController {
-  constructor(@Inject(ScryRepository) private readonly repository: ScryRepository) {}
-
-  @Get(":artifactId")
-  @Header("Cache-Control", "private, max-age=300")
-  async get(
-    @Param("artifactId") artifactId: string,
-    @CurrentPrincipal() principal: Principal,
-  ) {
-    const artifact = await this.repository.getArtifact(principal, artifactId);
-    if (artifact.status !== "available" || !artifact.storageKey) {
-      throw new NotFoundException("Artifact is not available");
-    }
-    const root = path.resolve(process.env.ARTIFACT_ROOT ?? "artifacts/runs");
-    const target = path.resolve(root, artifact.storageKey);
-    if (!target.startsWith(`${root}${path.sep}`)) {
-      throw new NotFoundException("Artifact path is invalid");
-    }
-    try {
-      return new StreamableFile(await readFile(target), {
-        type: artifact.contentType,
-        disposition: `inline; filename="${path.basename(target)}"`,
-      });
-    } catch {
-      throw new NotFoundException("Artifact file is missing");
-    }
   }
 }

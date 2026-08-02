@@ -6,488 +6,185 @@ import { ScryApiClient } from "../src/api-client.js";
 import { createScryMcpServer } from "../src/server.js";
 
 afterEach(() => vi.unstubAllGlobals());
+const context={missionId:"dddddddd-dddd-4ddd-8ddd-dddddddddddd",objectiveId:"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",agentSessionId:"ffffffff-ffff-4fff-8fff-ffffffffffff"};
 
-describe("Scry MCP server", () => {
-  it("initializes with the complete focused tool surface", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify([{ id: "p1", name: "Scry" }]), { status: 200 }),
-      ),
-    );
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const server = createScryMcpServer(new ScryApiClient("http://scry.test/v1"));
-    const client = new Client({ name: "scry-test", version: "1.0.0" });
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-
-    const tools = await client.listTools();
-    expect(tools.tools.map((tool) => tool.name)).toEqual([
-      "list_projects",
-      "create_project",
-      "list_flows",
-      "list_environments",
-      "create_test_environment",
-      "update_test_environment",
-      "list_project_credentials",
-      "create_project_credential",
-      "get_plan_authoring_guide",
-      "validate_test_plan",
-      "submit_test_spec",
-      "revise_flow",
-      "replace_flow_steps",
-      "extend_flow",
-      "start_run",
-      "get_run_status",
-      "get_test_report",
-      "list_failed_steps",
-      "list_run_artifacts",
-      "get_artifact",
-      "rerun_exact_plan",
-      "cancel_run",
+describe("current Scry MCP surface", () => {
+  it("exposes only current Flow, run, and artifact tools", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 })));
+    const { client, server } = await connected();
+    expect((await client.listTools()).tools.map(({ name }) => name)).toEqual([
+      "get_capabilities", "list_projects","start_mission","resume_mission","attach_to_mission","get_mission","list_missions","update_mission","end_agent_session","get_mission_activity","create_execution_plan","validate_execution_plan","activate_execution_plan","get_orchestration_status","start_ready_objectives","pause_mission_orchestration","resume_mission_orchestration","cancel_mission_orchestration","grant_mission_execution_authorization","relate_mission_activity","create_mission_objective","update_mission_objective","attach_flow_to_mission", "list_environments", "create_test_environment",
+      "list_project_credentials", "create_project_credential", "authorize_environment_credentials", "list_flows", "ensure_calibration", "list_calibrations", "get_calibration", "approve_calibration", "retry_calibration", "cancel_calibration", "bind_calibration", "validate_test_plan", "create_flow_draft", "update_flow_draft", "get_flow_draft", "list_mission_flow_drafts", "abandon_flow_draft", "start_probe_session", "get_probe_session", "cancel_probe_session", "compile_flow_draft", "publish_flow_draft", "list_authentication_contracts", "list_authenticated_session_leases", "revoke_authenticated_session_lease",
+      "start_run", "get_run","get_grounding_diagnostics","get_protected_recovery","act_on_protected_recovery","accept_objective_evidence","classify_run","set_mission_resume_pointer","publish_mission_report", "get_artifact", "search_artifact", "extract_artifact_html",
     ]);
-    const response = await client.callTool({ name: "list_projects", arguments: {} });
-    expect(response.structuredContent).toEqual({
-      projects: [{ id: "p1", name: "Scry" }],
-    });
-
-    await client.close();
-    await server.close();
+    await client.close(); await server.close();
   });
 
-  it("revises an existing Flow by appending versions instead of creating a duplicate", async () => {
-    const projectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const specificationId = "11111111-1111-4111-8111-111111111111";
-    const specificationVersionId = "22222222-2222-4222-8222-222222222222";
-    const planVersionId = "33333333-3333-4333-8333-333333333333";
-    const requests: Array<{ method: string; path: string }> = [];
+  it("creates a credential without returning its sensitive value", async () => {
+    const sensitiveValue = "explicit-user-secret";
+    const requests: Array<{ path: string; body?: Record<string, unknown> }> = [];
     vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input));
-      const method = init?.method ?? "GET";
-      requests.push({ method, path: url.pathname });
-      const body = method === "GET"
-        ? [{ id: specificationId, latestPlan: {
-            protocolVersion: "1",
-            name: "Login journey",
-            objective: "Reach the dashboard.",
-            allowedOrigins: ["https://staging.example.com"],
-            budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
-            steps: [{ id: "open-login", title: "Open login", action: { type: "navigate", url: "/login" } }],
-          } }]
-        : url.pathname.endsWith("/revisions")
-        ? { specificationVersionId, planVersionId, planVersion: 2 }
-        : url.pathname.endsWith("/versions") && url.pathname.includes("/specifications/")
-        ? { id: specificationVersionId }
-        : url.pathname.endsWith("/plans/versions")
-          ? { id: planVersionId, version: 2 }
-          : { id: specificationId, name: "Login journey" };
-      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+      requests.push({ path: url.pathname, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
+      return Promise.resolve(new Response(JSON.stringify({
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Preview login password",
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+        value: sensitiveValue,
+      }), { status: 200 }));
     }));
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const server = createScryMcpServer(new ScryApiClient("http://scry.test/v1"));
-    const client = new Client({ name: "scry-test", version: "1.0.0" });
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-
-    const response = await client.callTool({
-      name: "revise_flow",
-      arguments: {
-        projectId,
-        specificationId,
-        name: "Login journey",
-        description: "Verify login",
-        objective: "Reach the dashboard.",
-        expectedOutcomes: ["Dashboard is visible"],
-        plan: {
-          protocolVersion: "1",
-          name: "Login journey",
-          objective: "Reach the dashboard.",
-          allowedOrigins: ["https://staging.example.com"],
-          budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
-          steps: [{
-            id: "open-login",
-            title: "Open login",
-            action: { type: "navigate", url: "/login" },
-          }],
-        },
-      },
-    });
-
-    expect(requests).toEqual([
-      { method: "GET", path: `/v1/projects/${projectId}/specifications` },
-      { method: "POST", path: `/v1/specifications/${specificationId}/revisions` },
-    ]);
-    expect(response.structuredContent).toEqual({
-      specificationId,
-      specificationVersionId,
-      planVersionId,
-      planVersion: 2,
-      preservedStepCount: 1,
-      removedStepCount: 0,
-    });
-    await client.close();
-    await server.close();
+    const { client, server } = await connected();
+    const response = await client.callTool({ name: "create_project_credential", arguments: {
+      ...context,
+      projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      name: "Preview login password",
+      value: sensitiveValue,
+      purpose: "Sign in to the explicitly requested preview environment",
+      confirmedUserProvided: true,
+    } });
+    expect(requests).toEqual([{ path: "/api/projects/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/credentials", body: { ...context,name: "Preview login password", value: sensitiveValue } }]);
+    expect(JSON.stringify(response)).not.toContain(sensitiveValue);
+    expect(response.structuredContent).toMatchObject({ credential: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "Preview login password" } });
+    await client.close(); await server.close();
   });
 
-  it("rejects new Flow creation when existing Flows were not reviewed", async () => {
-    const projectId = "11111111-1111-4111-8111-111111111111";
-    const existingFlowId = "22222222-2222-4222-8222-222222222222";
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([
-      { id: existingFlowId, name: "Sign up and Onboarding" },
-    ]), { status: 200 }));
+  it("adds credential references to an environment without replacing its allowlist", async () => {
+    const requests: Array<{ method: string; path: string; body?: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push({ method: init?.method ?? "GET", path: url.pathname, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
+      const body = init?.method === "PATCH"
+        ? { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Preview", baseOrigin: "https://preview.example.com", secretRefs: ["cccccccc-cccc-4ccc-8ccc-cccccccccccc", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"] }
+        : [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", baseOrigin: "https://preview.example.com", policy: { allowedOrigins: ["https://preview.example.com"], allowPrivateNetwork: false, allowDownloads: false, maxRequests: 100, blockedResourceTypes: [] }, secretRefs: ["cccccccc-cccc-4ccc-8ccc-cccccccccccc"] }];
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    }));
+    const { client, server } = await connected();
+    const response = await client.callTool({ name: "authorize_environment_credentials", arguments: {
+      ...context,
+      projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      credentialIds: ["dddddddd-dddd-4ddd-8ddd-dddddddddddd"],
+    } });
+    expect(response.isError).not.toBe(true);
+    expect(requests[1]?.body).toMatchObject({...context,secretRefs:["cccccccc-cccc-4ccc-8ccc-cccccccccccc","dddddddd-dddd-4ddd-8ddd-dddddddddddd"]});
+    await client.close(); await server.close();
+  });
+
+  it("starts a run only with an admitted compiled contract", async () => {
+    const requests: Array<{ path: string; body?: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push({ path: url.pathname, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
+      const response = url.pathname.endsWith("/capabilities")
+        ? { releaseId: "development", schemaFingerprint: "development-baseline", supportedActions: [], evidenceChannels: [], artifactCapabilities: [], collectorCapabilities: [] }
+        : { runId: "11111111-1111-4111-8111-111111111111", state: "queued" };
+      return Promise.resolve(new Response(JSON.stringify(response), { status: 200 }));
+    }));
+    const { client, server } = await connected();
+    const response = await client.callTool({ name: "start_run", arguments: {
+      ...context,
+      projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      flowRevisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      compiledContractId: "99999999-9999-4999-8999-999999999999",
+    } });
+    expect(response.isError).not.toBe(true);
+    expect(requests.map(({ path }) => path)).toEqual(["/api/capabilities", "/api/projects/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/runs"]);
+    expect(requests[1]?.body).toMatchObject({ flowRevisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", compiledContractId: "99999999-9999-4999-8999-999999999999", browser: "chromium" });
+    await client.close(); await server.close();
+  });
+
+  it("delegates plan validation to the authoritative API", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: string | URL | Request) => {
+      const url = new URL(String(input));
+      const body = url.pathname.endsWith("/capabilities")
+        ? { releaseId: "development", schemaFingerprint: "development-baseline", supportedActions: [], evidenceChannels: [], artifactCapabilities: [], collectorCapabilities: [] }
+        : { valid: true, errors: [], warnings: [] };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    });
     vi.stubGlobal("fetch", fetchMock);
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const server = createScryMcpServer(new ScryApiClient("http://scry.test/v1"));
-    const client = new Client({ name: "scry-test", version: "1.0.0" });
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-
-    const response = await client.callTool({
-      name: "submit_test_spec",
-      arguments: {
-        projectId,
-        reviewedExistingFlowIds: [],
-        newFlowJustification: "This is claimed to be a separate user journey for testing.",
-        name: "Replacement onboarding flow",
-        objective: "Verify onboarding.",
-        expectedOutcomes: ["Onboarding completes"],
-        plan: {
-          protocolVersion: "1",
-          name: "Replacement onboarding flow",
-          objective: "Verify onboarding.",
-          allowedOrigins: ["https://staging.example.com"],
-          budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
-          steps: [{
-            id: "open",
-            title: "Open application",
-            action: { type: "navigate", url: "/" },
-          }],
-        },
-      },
-    });
-
-    expect(response.isError).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    await client.close();
-    await server.close();
+    const { client, server } = await connected();
+    const plan = { name: "Smoke", objective: "Open the app", preconditions: [], allowedOrigins: ["https://example.com"],
+      budgets: { maxActions: 1, maxDurationMs: 10_000, maxNavigations: 1 },
+      steps: [{ id: "open", title: "Open", action: { type: "navigate", url: "/" }, after: { mode: "all", timeoutMs: 1_000, conditions: [{ type: "delay", durationMs: 100 }] }, assertions: [], onFailure: "stop", evidence: [], captureIntent: "final" }] };
+    const response = await client.callTool({ name: "validate_test_plan", arguments: {
+      projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", plan,
+    } });
+    expect(response.structuredContent).toMatchObject({ valid: true, errors: [], warnings: [] });
+    await client.close(); await server.close();
   });
 
-  it("extends a Flow without losing its existing steps", async () => {
-    const projectId = "11111111-1111-4111-8111-111111111111";
-    const specificationId = "22222222-2222-4222-8222-222222222222";
-    const specificationVersionId = "33333333-3333-4333-8333-333333333333";
-    const planVersionId = "44444444-4444-4444-8444-444444444444";
-    const postedBodies: unknown[] = [];
-    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
-      const url = new URL(String(input));
-      if ((init?.method ?? "GET") === "GET") {
-        return Promise.resolve(new Response(JSON.stringify([{
-          id: specificationId,
-          name: "Partner developer journey",
-          latestContent: {
-            objective: "Sign in and open developer settings.",
-            expectedOutcomes: ["Developer settings are visible"],
-            preconditions: [],
-            prohibitedSideEffects: [],
-          },
-          latestPlan: {
-            protocolVersion: "2",
-            name: "Partner developer journey",
-            objective: "Sign in and open developer settings.",
-            allowedOrigins: ["https://staging.example.com"],
-            budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
-            steps: [{
-              id: "open",
-              title: "Open app",
-              action: { type: "navigate", url: "/" },
-              after: { mode: "all", timeoutMs: 5_000, conditions: [{ type: "domStable", quietWindowMs: 500 }] },
-            }],
-          },
-        }]), { status: 200 }));
-      }
-      postedBodies.push(JSON.parse(String(init?.body)));
-      const body = url.pathname.endsWith("/revisions")
-        ? { specificationVersionId, planVersionId, planVersion: 2 }
-        : { id: planVersionId, version: 2 };
-      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
-    }));
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const server = createScryMcpServer(new ScryApiClient("http://scry.test/v1"));
-    const client = new Client({ name: "scry-test", version: "1.0.0" });
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-
-    const response = await client.callTool({
-      name: "extend_flow",
-      arguments: {
-        projectId,
-        specificationId,
-        objectiveAddition: "Then inspect the API documentation.",
-        additionalExpectedOutcomes: ["API documentation is visible"],
-        appendedSteps: [{
-          id: "open-docs",
-          title: "Open documentation",
-          action: { type: "click", target: { strategy: "role", role: "link", name: "Documentation" } },
-          after: { mode: "all", timeoutMs: 5_000, conditions: [{ type: "visible", target: { strategy: "text", value: "API documentation" } }] },
-        }],
-      },
-    });
-
-    expect(response.structuredContent).toMatchObject({
-      preservedStepCount: 1,
-      appendedStepCount: 1,
-      combinedPlan: {
-        steps: [
-          { id: "open" },
-          { id: "open-docs" },
-        ],
-      },
-    });
-    expect(postedBodies).toHaveLength(1);
-    await client.close();
-    await server.close();
-  });
-
-  it("replaces only named Flow steps and preserves the rest", async () => {
-    const projectId = "11111111-1111-4111-8111-111111111111";
-    const specificationId = "22222222-2222-4222-8222-222222222222";
-    const specificationVersionId = "33333333-3333-4333-8333-333333333333";
-    const planVersionId = "44444444-4444-4444-8444-444444444444";
-    const latestPlan = {
-      protocolVersion: "2",
-      name: "Complete login journey",
-      objective: "Sign in and reach the dashboard.",
-      allowedOrigins: ["https://staging.example.com"],
-      budgets: { maxActions: 3, maxDurationMs: 10_000, maxNavigations: 1 },
-      steps: [
-        { id: "open", title: "Open", action: { type: "navigate", url: "/" }, after: { mode: "all", timeoutMs: 5_000, conditions: [{ type: "domStable", quietWindowMs: 500 }] } },
-        { id: "submit", title: "Submit", action: { type: "click", target: { strategy: "role", role: "button", name: "Login" } }, after: { mode: "all", timeoutMs: 5_000, conditions: [{ type: "url", expected: "/dashboard", match: "path" }] } },
-        { id: "verify", title: "Verify", action: { type: "waitFor", target: { strategy: "text", value: "Dashboard" }, state: "visible" } },
-      ],
+  it("returns the canonical observation instead of a metadata-only run projection", async () => {
+    const observation = {
+      run: { id: "11111111-1111-4111-8111-111111111111", state: "failed" },
+      steps: [{ stepId: "sign-in", action: { status: "failed", error: "Target was not found" } }],
+      artifacts: [{ id: "22222222-2222-4222-8222-222222222222", resource: "scry://artifact/22222222-2222-4222-8222-222222222222" }],
+      artifactTimeline: [],
+      integrity: { status: "complete", issues: [] },
+      safeActions: ["rerun", "revise_flow", "read_artifact"],
     };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(observation), { status: 200 })));
+    const { client, server } = await connected();
+
+    const response = await client.callTool({ name: "get_run", arguments: { runId: "11111111-1111-4111-8111-111111111111" } });
+
+    expect(response.structuredContent).toMatchObject({ observation: { steps: observation.steps, artifacts: observation.artifacts, integrity: observation.integrity } });
+    await client.close(); await server.close();
+  });
+
+  it("requests an authenticated calibration rehearsal without accepting agent-authored structure", async () => {
+    const requests: Array<{ path: string; body: unknown }> = [];
     vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input));
-      if ((init?.method ?? "GET") === "GET") return Promise.resolve(new Response(JSON.stringify([{
-        id: specificationId,
-        name: "Complete login journey",
-        latestContent: { objective: latestPlan.objective, expectedOutcomes: ["Dashboard is visible"], preconditions: [], prohibitedSideEffects: [] },
-        latestPlan,
-      }]), { status: 200 }));
-      return Promise.resolve(new Response(JSON.stringify(
-        url.pathname.endsWith("/revisions")
-          ? { specificationVersionId, planVersionId, planVersion: 7 }
-          : { id: planVersionId, version: 7 },
-      ), { status: 200 }));
+      requests.push({ path: url.pathname, body: JSON.parse(String(init?.body)) });
+      return Promise.resolve(new Response(JSON.stringify({ calibrationId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", state: "rehearsal_queued" }), { status: 200 }));
     }));
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const server = createScryMcpServer(new ScryApiClient("http://scry.test/v1"));
-    const client = new Client({ name: "scry-test", version: "1.0.0" });
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-
-    const response = await client.callTool({
-      name: "replace_flow_steps",
-      arguments: {
-        projectId,
-        specificationId,
-        replacements: [{
-          stepId: "submit",
-          reason: "Observed the accessible button name.",
-          correctedStep: {
-            id: "submit",
-            title: "Submit",
-            action: { type: "click", target: { strategy: "role", role: "button", name: "Sign in" } },
-            after: { mode: "all", timeoutMs: 5_000, conditions: [{ type: "url", expected: "/dashboard", match: "path" }] },
-          },
-        }],
+    const { client, server } = await connected();
+    await client.callTool({ name: "ensure_calibration", arguments: {
+      projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      calibration: {
+        ...context,
+        name: "Credential generation",
+        sourceFlowRevisionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        operationId: "generate-api-secret",
+        environmentId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        disposableDataConfirmed: true,
+        confirmedUserAuthorized: true,
+        purpose: "Generate a disposable test API credential requested by the user",
+        idempotencyKey: "calibration-request-1",
       },
-    });
-    expect(response.structuredContent).toMatchObject({
-      planVersion: 7,
-      preservedStepCount: 2,
-      replacedStepCount: 1,
-      combinedPlan: { steps: [{ id: "open" }, { id: "submit", action: { target: { name: "Sign in" } } }, { id: "verify" }] },
-    });
-    await client.close();
-    await server.close();
+    } });
+    expect(requests[0]).toMatchObject({ path: "/api/projects/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/calibration-sessions" });
+    expect(JSON.stringify(requests[0]?.body)).not.toContain("structure");
+    await client.close(); await server.close();
   });
 
-  it("rejects a full Flow revision that silently removes existing steps", async () => {
-    const projectId = "11111111-1111-4111-8111-111111111111";
-    const specificationId = "22222222-2222-4222-8222-222222222222";
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([{
-      id: specificationId,
-      latestPlan: {
-        protocolVersion: "1",
-        name: "Complete journey",
-        objective: "Complete both checkpoints.",
-        allowedOrigins: ["https://staging.example.com"],
-        budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
-        steps: [
-          { id: "open", title: "Open", action: { type: "navigate", url: "/" } },
-          { id: "verify", title: "Verify", action: { type: "waitFor", target: { strategy: "text", value: "Complete" }, state: "visible" } },
-        ],
-      },
-    }]), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const server = createScryMcpServer(new ScryApiClient("http://scry.test/v1"));
-    const client = new Client({ name: "scry-test", version: "1.0.0" });
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-
-    const response = await client.callTool({
-      name: "revise_flow",
-      arguments: {
-        projectId,
-        specificationId,
-        name: "Complete journey",
-        description: "",
-        objective: "Complete both checkpoints.",
-        expectedOutcomes: ["Journey completes"],
-        plan: {
-          protocolVersion: "1",
-          name: "Complete journey",
-          objective: "Complete both checkpoints.",
-          allowedOrigins: ["https://staging.example.com"],
-          budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
-          steps: [{ id: "open", title: "Open", action: { type: "navigate", url: "/" } }],
-        },
-      },
-    });
-    expect(response.isError).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    await client.close();
-    await server.close();
-  });
-
-  it("validates a plan against the selected environment policy", async () => {
-    const projectId = "11111111-1111-4111-8111-111111111111";
-    const environmentId = "22222222-2222-4222-8222-222222222222";
-    const origin = "https://staging.example.com";
-    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request) => {
-      const url = String(input);
-      return Promise.resolve(new Response(JSON.stringify(url.endsWith("/credentials") ? [] : [
-        {
-          id: environmentId,
-          secretRefs: [],
-          policy: {
-            policyVersion: "1",
-            allowedOrigins: [origin],
-            allowPrivateNetwork: false,
-            allowDownloads: false,
-            allowPopups: false,
-            maxActions: 10,
-            maxDurationMs: 30_000,
-            maxNavigations: 2,
-          },
-        },
-      ]), { status: 200 }));
-    }));
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const server = createScryMcpServer(new ScryApiClient("http://scry.test/v1"));
-    const client = new Client({ name: "scry-test", version: "1.0.0" });
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    const response = await client.callTool({
-      name: "validate_test_plan",
-      arguments: {
-        projectId,
-        environmentId,
-        plan: {
-          protocolVersion: "1",
-          name: "Smoke",
-          objective: "Verify the home page.",
-          allowedOrigins: [origin],
-          budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
-          steps: [
-            {
-              id: "home",
-              title: "Open home",
-              action: { type: "navigate", url: "/" },
-            },
-          ],
-        },
-      },
-    });
-    expect(response.structuredContent).toEqual({
-      valid: true,
-      errors: [],
-      warnings: [],
-      violations: [],
-    });
-    await client.close();
-    await server.close();
-  });
-
-  it("rejects a plan whose protected credential is unavailable", async () => {
-    const projectId = "11111111-1111-4111-8111-111111111111";
-    const environmentId = "22222222-2222-4222-8222-222222222222";
-    const credentialId = "33333333-3333-4333-8333-333333333333";
-    const origin = "https://staging.example.com";
+  it("approves only an exact attested revision with explicit user authorization", async () => {
+    const requests: Array<{ path: string; body: unknown }> = [];
     vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
-      const url = String(input);
-      if ((init?.method ?? "GET") === "POST") {
-        return Promise.resolve(new Response(JSON.stringify({
-          valid: false,
-          errors: [{ code: "CREDENTIAL_UNAVAILABLE", message: `Protected credential "${credentialId}" is invalid or unavailable for this project.` }],
-        }), { status: 200 }));
-      }
-      return Promise.resolve(new Response(JSON.stringify(url.endsWith("/credentials") ? [] : [{
-        id: environmentId,
-        secretRefs: [credentialId],
-        policy: {
-          policyVersion: "1",
-          allowedOrigins: [origin],
-          maxActions: 10,
-          maxDurationMs: 30_000,
-          maxNavigations: 2,
-        },
-      }]), { status: 200 }));
+      const url = new URL(String(input)); requests.push({ path: url.pathname, body: JSON.parse(String(init?.body)) });
+      return Promise.resolve(new Response(JSON.stringify({ status: "approved" }), { status: 200 }));
     }));
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const server = createScryMcpServer(new ScryApiClient("http://scry.test/v1"));
-    const client = new Client({ name: "scry-test", version: "1.0.0" });
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    const response = await client.callTool({
-      name: "validate_test_plan",
-      arguments: {
-        projectId,
-        environmentId,
-        plan: {
-          protocolVersion: "1",
-          name: "Authenticated smoke test",
-          objective: "Verify authenticated access.",
-          allowedOrigins: [origin],
-          budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
-          steps: [{
-            id: "email",
-            title: "Enter email",
-            action: {
-              type: "fill",
-              target: { strategy: "placeholder", value: "Email" },
-              secretRef: credentialId,
-            },
-          }],
-        },
-      },
-    });
-    expect(response.structuredContent).toEqual({
-      valid: false,
-      errors: [{
-        severity: "error",
-        code: "CREDENTIAL_UNAVAILABLE",
-        message: `Protected credential "${credentialId}" is invalid or unavailable for this project.`,
-        suggestion: "Update the plan or selected environment policy.",
-      }],
-      warnings: [],
-      violations: [{
-        code: "CREDENTIAL_UNAVAILABLE",
-        message: `Protected credential "${credentialId}" is invalid or unavailable for this project.`,
-      }],
-    });
-    await client.close();
-    await server.close();
+    const { client, server } = await connected();
+    const response = await client.callTool({ name: "approve_calibration", arguments: {
+      ...context,
+      calibrationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      attestationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      confirmedUserAuthorized: true,
+      reasonCode: "USER_AUTHORIZED_AGENT_CALIBRATION",
+    } });
+    expect(response.isError).not.toBe(true);
+    expect(requests[0]).toEqual({path:"/api/calibrations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/attestations/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/approve",body:{...context,reasonCode:"USER_AUTHORIZED_AGENT_CALIBRATION",confirmedUserAuthorized:true}});
+    await client.close(); await server.close();
   });
 });
+
+async function connected() {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createScryMcpServer(new ScryApiClient("http://scry.test/api"));
+  const client = new Client({ name: "scry-test", version: "1.0.0" });
+  await server.connect(serverTransport); await client.connect(clientTransport);
+  return { client, server };
+}
