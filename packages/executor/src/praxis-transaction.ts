@@ -24,7 +24,7 @@ export class PraxisTransactionStateMachine {
 export type PraxisAdapterDispatch = { mutationOutcome?: PraxisMutationOutcome };
 export interface PraxisTransactionAdapter<TTarget = unknown> {
   observe(request: PraxisRequest, signal: AbortSignal): Promise<void>;
-  ground(request: PraxisRequest, signal: AbortSignal): Promise<{ target: TTarget; resolution: PraxisResolution; providerTimings?: PraxisTiming["providerTimings"] }>;
+  ground(request: PraxisRequest, signal: AbortSignal): Promise<{ target: TTarget; resolution: PraxisResolution; providerTimings?: PraxisTiming["providerTimings"]; escalationLevel?: number }>;
   revalidate(target: TTarget, request: PraxisRequest, signal: AbortSignal): Promise<void>;
   armEffect?(target: TTarget, request: PraxisRequest, signal: AbortSignal): Promise<void>;
   dispatch(target: TTarget, request: PraxisRequest, signal: AbortSignal): Promise<PraxisAdapterDispatch | void>;
@@ -53,11 +53,12 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
     let mutationOutcome: PraxisMutationOutcome = "not_started";
     let verification: PraxisVerification = { local: "unknown", effect: "unknown", effectType: request.expectedEffect.type };
     let providerTimings: PraxisTiming["providerTimings"] = [];
+    let escalationLevel: number | null = null;
     try {
       await this.event(request, "praxis.transaction_started", "created", {});
       await this.stage(state, "observing", durations, request, operationSignal, () => this.adapter.observe(request, operationSignal));
       const grounded = await this.stage(state, "grounding", durations, request, operationSignal, () => this.adapter.ground(request, operationSignal));
-      target = grounded.target; resolution = grounded.resolution; providerTimings = grounded.providerTimings ?? [];
+      target = grounded.target; resolution = grounded.resolution; providerTimings = grounded.providerTimings ?? []; escalationLevel = grounded.escalationLevel ?? null;
       state.transition("resolved"); await this.event(request, "praxis.phase_changed", "resolved", {});
       await this.stage(state, "revalidating", durations, request, operationSignal, async () => { await this.adapter.revalidate(target!, request, operationSignal); await this.adapter.armEffect?.(target!, request, operationSignal); });
       checkAbort(operationSignal);
@@ -79,7 +80,7 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
       try { qualityFindings = await this.adapter.qualityFindings?.(target, request) ?? []; }
       catch { /* Advisory reporting cannot redefine a verified interaction outcome. */ }
       state.transition("succeeded");
-      const timing = timingFrom(durations, performance.now() - started, providerTimings);
+      const timing = timingFrom(durations, performance.now() - started, providerTimings, escalationLevel);
       const report = reportForSuccess(request, resolution, verification, timing, mutationOutcome, qualityFindings);
       const success: PraxisSuccess = { schemaVersion: 1, status: "succeeded", transactionId: request.transactionId, operationId: request.operationId, ...(request.stepId ? { stepId: request.stepId } : {}), phase: "succeeded", mutationOutcome, resolution, verification, timing, qualityFindings, report };
       await this.event(request, "praxis.transaction_succeeded", "succeeded", { mutationOutcome });
@@ -93,7 +94,7 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
       if (!terminalPhases.has(phase)) state.transition(status);
       const classified = classify(error, dispatchStarted, mutationOutcome, cancelled, timedOut);
       mutationOutcome = classified.mutationOutcome;
-      const timing = timingFrom(durations, performance.now() - started, providerTimings);
+      const timing = timingFrom(durations, performance.now() - started, providerTimings, escalationLevel);
       const safeActions = classified.safeActions;
       const report = reportForFailure(request, status, classified, verification, timing, resolution, safeActions);
       const failure: PraxisFailure = { schemaVersion: 1, status, transactionId: request.transactionId, operationId: request.operationId, ...(request.stepId ? { stepId: request.stepId } : {}), phase: state.phase(), code: classified.code, provenance: classified.provenance, retry: classified.retry, mutationOutcome, timing, diagnostics: classified.diagnostics, qualityFindings: [], safeActions, report };
@@ -121,7 +122,7 @@ function mutates(request: PraxisRequest) { return ["activate", "enter_text", "se
 function unverifiedOutcome(code: string, dispatchStarted: boolean) { return new PraxisAdapterError(code, { provenance: "application", mutationOutcome: dispatchStarted ? "unknown" : "not_applied", retry: "unsafe", safeActions: ["do_not_retry", "inspect_artifact"] }); }
 function intentDigest(request: PraxisRequest) { return createHash("sha256").update(stable(request.intent)).digest("hex"); }
 function stable(value: unknown): string { if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`; if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${stable(item)}`).join(",")}}`; return JSON.stringify(value); }
-function timingFrom(durations: Map<PraxisPhase, number>, totalMs: number, providerTimings: PraxisTiming["providerTimings"]): PraxisTiming { return { queuedMs: null, observationMs: value(durations,"observing"), groundingMs: value(durations,"grounding"), revalidationMs: value(durations,"revalidating"), dispatchMs: value(durations,"dispatching"), localVerificationMs: value(durations,"verifying_local"), effectVerificationMs: value(durations,"verifying_effect"), totalMs, escalationLevel: null, providerTimings }; }
+function timingFrom(durations: Map<PraxisPhase, number>, totalMs: number, providerTimings: PraxisTiming["providerTimings"], escalationLevel: number|null): PraxisTiming { return { queuedMs: null, observationMs: value(durations,"observing"), groundingMs: value(durations,"grounding"), revalidationMs: value(durations,"revalidating"), dispatchMs: value(durations,"dispatching"), localVerificationMs: value(durations,"verifying_local"), effectVerificationMs: value(durations,"verifying_effect"), totalMs, escalationLevel, providerTimings }; }
 function value(map: Map<PraxisPhase, number>, phase: PraxisPhase) { return map.has(phase) ? map.get(phase)! : null; }
 function reportForSuccess(request: PraxisRequest, resolution: PraxisResolution, verification: PraxisVerification, timing: PraxisTiming, mutationOutcome: PraxisMutationOutcome, qualityFindings: PraxisQualityFinding[]): PraxisAgentReport { return { schemaVersion: 1, transactionId: request.transactionId, operationId: request.operationId, ...(request.stepId ? { stepId: request.stepId } : {}), outcome: "succeeded", summary: "Praxis completed and verified the interaction.", classification: { provenance: "none", mutationOutcome }, intentDigest: intentDigest(request), resolution, verification, timing, qualityFindings, safeActions: [], artifactRefs: [] }; }
 function reportForFailure(request: PraxisRequest, status: "failed"|"cancelled"|"inconclusive", classified: ReturnType<typeof classify>, verification: PraxisVerification, timing: PraxisTiming, resolution: PraxisResolution|undefined, safeActions: PraxisSafeAction[]): PraxisAgentReport { return { schemaVersion: 1, transactionId: request.transactionId, operationId: request.operationId, ...(request.stepId ? { stepId: request.stepId } : {}), outcome: status, summary: status === "cancelled" ? "Praxis cancelled the interaction." : "Praxis could not establish a verified interaction outcome.", classification: { provenance: classified.provenance, code: classified.code, mutationOutcome: classified.mutationOutcome }, intentDigest: intentDigest(request), ...(resolution ? { resolution } : {}), verification, timing, qualityFindings: [], safeActions, artifactRefs: [] }; }
