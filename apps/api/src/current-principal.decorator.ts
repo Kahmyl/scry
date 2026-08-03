@@ -1,8 +1,4 @@
-import {
-  createParamDecorator,
-  type ExecutionContext,
-  UnauthorizedException,
-} from "@nestjs/common";
+import { createParamDecorator, type ExecutionContext, UnauthorizedException } from "@nestjs/common";
 
 import type { AuthenticatedRequest, Principal } from "./auth.types.js";
 

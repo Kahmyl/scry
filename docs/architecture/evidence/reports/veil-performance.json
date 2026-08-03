@@ -1,9 +1,6 @@
 {
   "schemaVersion": 1,
-  "command": [
-    "pnpm",
-    "verify:veil-performance"
-  ],
+  "command": ["pnpm", "verify:veil-performance"],
   "startedAt": "2026-08-03T11:49:03.478Z",
   "completedAt": "2026-08-03T11:49:04.070Z",
   "durationMs": 592,

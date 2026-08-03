@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { dashboardAuthority, reconcileProjectSelection, resolveDashboardView, veilPolicyIdentity, veilTighteningOptions } from "./dashboard-state.js";
+import {
+  dashboardAuthority,
+  reconcileProjectSelection,
+  resolveDashboardView,
+  veilPolicyIdentity,
+  veilTighteningOptions,
+} from "./dashboard-state.js";
 
 describe("dashboard state", () => {
   it("keeps the dashboard separate from Missions", () => {
@@ -20,7 +26,9 @@ describe("dashboard state", () => {
   });
 
   it("preserves a valid project selection", () => {
-    expect(reconcileProjectSelection([{ id: "project-1" }, { id: "project-2" }], "project-2")).toBe("project-2");
+    expect(reconcileProjectSelection([{ id: "project-1" }, { id: "project-2" }], "project-2")).toBe(
+      "project-2",
+    );
   });
 
   it("makes MCP authoritative while retaining explicit human safety controls", () => {

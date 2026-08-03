@@ -19,9 +19,13 @@ const baseline = (await readFile(new URL("baseline.sql", migrations), "utf8"))
   .replace("\\ir veil-observation-preferences.sql", () => preferences)
   .replace("\\ir veil-artifact-retention.sql", () => retention);
 const required = createHash("sha256").update(baseline).digest("hex");
-const configured = compose.match(/SCRY_SCHEMA_FINGERPRINT:\s*"\$\{SCRY_SCHEMA_FINGERPRINT:-([a-f0-9]{64})\}"/)?.[1];
+const configured = compose.match(
+  /SCRY_SCHEMA_FINGERPRINT:\s*"\$\{SCRY_SCHEMA_FINGERPRINT:-([a-f0-9]{64})\}"/,
+)?.[1];
 
 if (configured !== required) {
-  throw new Error(`Docker Compose schema fingerprint is stale: configured=${configured ?? "missing"} required=${required}`);
+  throw new Error(
+    `Docker Compose schema fingerprint is stale: configured=${configured ?? "missing"} required=${required}`,
+  );
 }
 process.stdout.write(`Docker Compose release fingerprint verified: ${required}\n`);

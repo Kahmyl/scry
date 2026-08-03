@@ -25,14 +25,14 @@ describe("ScryApiClient", () => {
 
   it("returns stable artifact URLs and useful errors", async () => {
     const client = new ScryApiClient("http://scry.test/api");
-    expect(client.artifactUrl("artifact id")).toBe(
-      "http://scry.test/api/artifacts/artifact%20id",
-    );
+    expect(client.artifactUrl("artifact id")).toBe("http://scry.test/api/artifacts/artifact%20id");
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ message: "Run not found" }), { status: 404 }),
-      ),
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ message: "Run not found" }), { status: 404 }),
+        ),
     );
     await expect(client.get("/runs/missing")).rejects.toThrow(
       "Scry API request failed: Run not found",
@@ -40,13 +40,14 @@ describe("ScryApiClient", () => {
   });
 
   it("updates API resources with PATCH", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ id: "environment-1" }), { status: 200 }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ id: "environment-1" }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const client = new ScryApiClient("http://scry.test/api");
-    await expect(client.patch("/environments/environment-1", { secretRefs: [] }))
-      .resolves.toEqual({ id: "environment-1" });
+    await expect(client.patch("/environments/environment-1", { secretRefs: [] })).resolves.toEqual({
+      id: "environment-1",
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       "http://scry.test/api/environments/environment-1",
       expect.objectContaining({ method: "PATCH" }),
@@ -54,18 +55,35 @@ describe("ScryApiClient", () => {
   });
 
   it("fails closed when the API does not advertise the cutoff Praxis versions", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      releaseId: "development", schemaFingerprint: "development-baseline",
-      praxis: { contractVersion: 1, runtimeVersion: "0", scoringPolicyVersion: 1, cutoff: true },
-    }), { status: 200 })));
-    await expect(new ScryApiClient("http://scry.test/api").requireCurrentRelease())
-      .rejects.toThrow("SCRY_PRAXIS_VERSION_MISMATCH");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            releaseId: "development",
+            schemaFingerprint: "development-baseline",
+            praxis: {
+              contractVersion: 1,
+              runtimeVersion: "0",
+              scoringPolicyVersion: 1,
+              cutoff: true,
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    await expect(new ScryApiClient("http://scry.test/api").requireCurrentRelease()).rejects.toThrow(
+      "SCRY_PRAXIS_VERSION_MISMATCH",
+    );
   });
 
   it("retrieves authenticated artifacts and uses the public artifact URL", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response("evidence", { status: 200, headers: { "content-type": "text/plain" } }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response("evidence", { status: 200, headers: { "content-type": "text/plain" } }),
+      );
     vi.stubGlobal("fetch", fetchMock);
     const client = new ScryApiClient(
       "http://api.internal/api",

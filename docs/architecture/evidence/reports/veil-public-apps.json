@@ -1,9 +1,6 @@
 {
   "schemaVersion": 1,
-  "command": [
-    "pnpm",
-    "campaign:veil:public-apps"
-  ],
+  "command": ["pnpm", "campaign:veil:public-apps"],
   "startedAt": "2026-08-03T11:49:08.866Z",
   "completedAt": "2026-08-03T11:49:41.158Z",
   "durationMs": 32292,

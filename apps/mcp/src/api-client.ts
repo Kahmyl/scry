@@ -1,4 +1,8 @@
-import { PRAXIS_CONTRACT_VERSION, PRAXIS_RUNTIME_VERSION, PRAXIS_SCORING_POLICY_VERSION } from "@scry/contracts";
+import {
+  PRAXIS_CONTRACT_VERSION,
+  PRAXIS_RUNTIME_VERSION,
+  PRAXIS_SCORING_POLICY_VERSION,
+} from "@scry/contracts";
 
 export class ScryApiClient {
   private capabilitiesPromise?: Promise<ScryCapabilities>;
@@ -37,14 +41,19 @@ export class ScryApiClient {
     const capabilities = await this.capabilities();
     const expectedRelease = process.env.SCRY_RELEASE_ID;
     const expectedSchema = process.env.SCRY_SCHEMA_FINGERPRINT;
-    if ((expectedRelease && capabilities.releaseId !== expectedRelease) || (expectedSchema && capabilities.schemaFingerprint !== expectedSchema)) {
+    if (
+      (expectedRelease && capabilities.releaseId !== expectedRelease) ||
+      (expectedSchema && capabilities.schemaFingerprint !== expectedSchema)
+    ) {
       throw new Error("SCRY_RELEASE_MISMATCH");
     }
-    if (!capabilities.praxis
-      || capabilities.praxis.contractVersion !== PRAXIS_CONTRACT_VERSION
-      || capabilities.praxis.runtimeVersion !== PRAXIS_RUNTIME_VERSION
-      || capabilities.praxis.scoringPolicyVersion !== PRAXIS_SCORING_POLICY_VERSION
-      || capabilities.praxis.cutoff !== true) {
+    if (
+      !capabilities.praxis ||
+      capabilities.praxis.contractVersion !== PRAXIS_CONTRACT_VERSION ||
+      capabilities.praxis.runtimeVersion !== PRAXIS_RUNTIME_VERSION ||
+      capabilities.praxis.scoringPolicyVersion !== PRAXIS_SCORING_POLICY_VERSION ||
+      capabilities.praxis.cutoff !== true
+    ) {
       throw new Error("SCRY_PRAXIS_VERSION_MISMATCH");
     }
     return capabilities;
@@ -73,16 +82,16 @@ export class ScryApiClient {
     const response = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     const body = await response.json().catch(() => undefined);
     if (!response.ok) {
-      const detail = body && typeof body === "object"
-        ? (Object.keys(body).length === 1 && "message" in body
-          ? String(body.message)
-          : JSON.stringify(body))
-        : `HTTP ${response.status}`;
+      const detail =
+        body && typeof body === "object"
+          ? Object.keys(body).length === 1 && "message" in body
+            ? String(body.message)
+            : JSON.stringify(body)
+          : `HTTP ${response.status}`;
       throw new Error(`Scry API request failed: ${detail}`);
     }
     return body as T;
   }
-
 }
 
 export type ScryCapabilities = {
@@ -94,6 +103,14 @@ export type ScryCapabilities = {
   collectorCapabilities: string[];
   groundingCapabilities?: string[];
   intelligenceCapabilities?: { modelAssistance: boolean; visualGrounding: string };
-  missionContext?: { requiredForWrites:boolean;transport:"explicit";phases:string[] };
-  praxis?: { contractVersion:number;runtimeVersion:string;scoringPolicyVersion:number;cutoff:boolean;evidenceChannels:string[];strategies:string[];hardBoundaries:string[] };
+  missionContext?: { requiredForWrites: boolean; transport: "explicit"; phases: string[] };
+  praxis?: {
+    contractVersion: number;
+    runtimeVersion: string;
+    scoringPolicyVersion: number;
+    cutoff: boolean;
+    evidenceChannels: string[];
+    strategies: string[];
+    hardBoundaries: string[];
+  };
 };

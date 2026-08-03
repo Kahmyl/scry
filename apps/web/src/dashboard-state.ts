@@ -10,8 +10,22 @@ export type DashboardView =
 
 export const dashboardAuthority = {
   authoringSurface: "mcp",
-  retainedHumanControls: ["active_run_cancel", "calibration_approval", "credential_management", "mcp_token_management", "project_setup", "session_revocation"],
-  prohibitedDashboardMutations: ["mission_authoring", "objective_authoring", "flow_authoring", "execution_plan_authoring", "run_start", "run_rerun"],
+  retainedHumanControls: [
+    "active_run_cancel",
+    "calibration_approval",
+    "credential_management",
+    "mcp_token_management",
+    "project_setup",
+    "session_revocation",
+  ],
+  prohibitedDashboardMutations: [
+    "mission_authoring",
+    "objective_authoring",
+    "flow_authoring",
+    "execution_plan_authoring",
+    "run_start",
+    "run_rerun",
+  ],
 } as const;
 
 export const dashboardPaths: Record<DashboardView, string> = {
@@ -27,10 +41,13 @@ export const dashboardPaths: Record<DashboardView, string> = {
 
 export function resolveDashboardView(pathname: string): DashboardView {
   if (pathname === dashboardPaths.overview) return "overview";
-  if (pathname === dashboardPaths.missions || pathname.startsWith(`${dashboardPaths.missions}/`)) return "missions";
+  if (pathname === dashboardPaths.missions || pathname.startsWith(`${dashboardPaths.missions}/`))
+    return "missions";
   if (pathname === "/dashboard/flows") return "missions";
-  if (pathname === dashboardPaths.runs || pathname.startsWith(`${dashboardPaths.runs}/`)) return "runs";
-  if (pathname === dashboardPaths.reports || pathname.startsWith(`${dashboardPaths.reports}/`)) return "reports";
+  if (pathname === dashboardPaths.runs || pathname.startsWith(`${dashboardPaths.runs}/`))
+    return "runs";
+  if (pathname === dashboardPaths.reports || pathname.startsWith(`${dashboardPaths.reports}/`))
+    return "reports";
   if (pathname === dashboardPaths.settings) return "settings";
   if (pathname === dashboardPaths.workspace) return "workspace";
   if (pathname === dashboardPaths.account) return "account";
@@ -46,7 +63,9 @@ export function reconcileProjectSelection(
   return projects[0]?.id ?? "";
 }
 
-export function veilTighteningOptions(profile: "balanced" | "private" | "minimal_capture" | "custom") {
+export function veilTighteningOptions(
+  profile: "balanced" | "private" | "minimal_capture" | "custom",
+) {
   if (profile === "minimal_capture") return [] as const;
   if (profile === "private") return ["minimal_capture"] as const;
   return ["private", "minimal_capture"] as const;

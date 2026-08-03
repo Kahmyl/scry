@@ -15,7 +15,11 @@ export const RUN_QUEUE_NAME = "scry-runs";
 export const CALIBRATION_QUEUE_NAME = "scry-calibrations";
 export const PROBE_QUEUE_NAME = "scry-probes";
 export type RunJob = { runId: string; releaseId: string; schemaFingerprint: string };
-export type CalibrationJob = { calibrationSessionId: string; releaseId: string; schemaFingerprint: string };
+export type CalibrationJob = {
+  calibrationSessionId: string;
+  releaseId: string;
+  schemaFingerprint: string;
+};
 export type ProbeJob = { probeSessionId: string; releaseId: string; schemaFingerprint: string };
 
 @Injectable()
@@ -43,7 +47,10 @@ export class RunQueueService implements OnModuleDestroy, OnModuleInit {
       connection: redis.client,
       defaultJobOptions: { attempts: 1, removeOnComplete: 100, removeOnFail: 500 },
     });
-    this.probeQueue = new Queue<ProbeJob>(PROBE_QUEUE_NAME, { connection: redis.client, defaultJobOptions: { attempts: 1, removeOnComplete: 100, removeOnFail: 500 } });
+    this.probeQueue = new Queue<ProbeJob>(PROBE_QUEUE_NAME, {
+      connection: redis.client,
+      defaultJobOptions: { attempts: 1, removeOnComplete: 100, removeOnFail: 500 },
+    });
   }
 
   async onModuleInit() {
@@ -52,25 +59,35 @@ export class RunQueueService implements OnModuleDestroy, OnModuleInit {
   }
 
   async dispatchPending(limit = 100) {
-    const pending = await this.database.query<RunJob>(
-      `SELECT run_id AS "runId", release_id AS "releaseId", schema_fingerprint AS "schemaFingerprint"
+    const pending = await this.database
+      .query<RunJob>(
+        `SELECT run_id AS "runId", release_id AS "releaseId", schema_fingerprint AS "schemaFingerprint"
        FROM run_outbox WHERE published_at IS NULL ORDER BY created_at LIMIT $1`,
-      [limit],
-    ).catch(() => ({ rows: [], rowCount: 0 }));
+        [limit],
+      )
+      .catch(() => ({ rows: [], rowCount: 0 }));
     for (const item of pending.rows) {
       try {
         const existing = await this.queue.getJob(item.runId);
         if (!existing) await this.queue.add("execute", item, { jobId: item.runId });
-        await this.database.query(`UPDATE run_outbox SET published_at = now(), publish_attempts = publish_attempts + 1, last_error = NULL WHERE run_id = $1`, [item.runId]);
+        await this.database.query(
+          `UPDATE run_outbox SET published_at = now(), publish_attempts = publish_attempts + 1, last_error = NULL WHERE run_id = $1`,
+          [item.runId],
+        );
       } catch (error) {
-        await this.database.query(`UPDATE run_outbox SET publish_attempts = publish_attempts + 1, last_error = $2 WHERE run_id = $1`, [item.runId, error instanceof Error ? error.message : String(error)]);
+        await this.database.query(
+          `UPDATE run_outbox SET publish_attempts = publish_attempts + 1, last_error = $2 WHERE run_id = $1`,
+          [item.runId, error instanceof Error ? error.message : String(error)],
+        );
       }
     }
-    const calibrations = await this.database.query<CalibrationJob>(
-      `SELECT calibration_session_id AS "calibrationSessionId", release_id AS "releaseId", schema_fingerprint AS "schemaFingerprint"
+    const calibrations = await this.database
+      .query<CalibrationJob>(
+        `SELECT calibration_session_id AS "calibrationSessionId", release_id AS "releaseId", schema_fingerprint AS "schemaFingerprint"
        FROM calibration_outbox WHERE published_at IS NULL ORDER BY created_at LIMIT $1`,
-      [limit],
-    ).catch(() => ({ rows: [], rowCount: 0 }));
+        [limit],
+      )
+      .catch(() => ({ rows: [], rowCount: 0 }));
     for (const item of calibrations.rows) {
       try {
         const existing = await this.calibrationQueue.getJob(item.calibrationSessionId);
@@ -78,18 +95,46 @@ export class RunQueueService implements OnModuleDestroy, OnModuleInit {
           const state = await existing.getState();
           if (state === "completed" || state === "failed") await existing.remove();
           else {
-            await this.database.query(`UPDATE calibration_outbox SET published_at = now(), publish_attempts = publish_attempts + 1, last_error = NULL WHERE calibration_session_id = $1`, [item.calibrationSessionId]);
+            await this.database.query(
+              `UPDATE calibration_outbox SET published_at = now(), publish_attempts = publish_attempts + 1, last_error = NULL WHERE calibration_session_id = $1`,
+              [item.calibrationSessionId],
+            );
             continue;
           }
         }
         await this.calibrationQueue.add("calibrate", item, { jobId: item.calibrationSessionId });
-        await this.database.query(`UPDATE calibration_outbox SET published_at = now(), publish_attempts = publish_attempts + 1, last_error = NULL WHERE calibration_session_id = $1`, [item.calibrationSessionId]);
+        await this.database.query(
+          `UPDATE calibration_outbox SET published_at = now(), publish_attempts = publish_attempts + 1, last_error = NULL WHERE calibration_session_id = $1`,
+          [item.calibrationSessionId],
+        );
       } catch (error) {
-        await this.database.query(`UPDATE calibration_outbox SET publish_attempts = publish_attempts + 1, last_error = $2 WHERE calibration_session_id = $1`, [item.calibrationSessionId, error instanceof Error ? error.message : String(error)]);
+        await this.database.query(
+          `UPDATE calibration_outbox SET publish_attempts = publish_attempts + 1, last_error = $2 WHERE calibration_session_id = $1`,
+          [item.calibrationSessionId, error instanceof Error ? error.message : String(error)],
+        );
       }
     }
-    const probes=await this.database.query<ProbeJob>(`SELECT probe_session_id AS "probeSessionId",release_id AS "releaseId",schema_fingerprint AS "schemaFingerprint" FROM probe_outbox WHERE published_at IS NULL ORDER BY created_at LIMIT $1`,[limit]).catch(()=>({rows:[],rowCount:0}));
-    for(const item of probes.rows){try{const existing=await this.probeQueue.getJob(item.probeSessionId);if(!existing)await this.probeQueue.add("probe",item,{jobId:item.probeSessionId});await this.database.query(`UPDATE probe_outbox SET published_at=now(),publish_attempts=publish_attempts+1,last_error=NULL WHERE probe_session_id=$1`,[item.probeSessionId]);}catch(error){await this.database.query(`UPDATE probe_outbox SET publish_attempts=publish_attempts+1,last_error=$2 WHERE probe_session_id=$1`,[item.probeSessionId,error instanceof Error?error.message:String(error)]);}}
+    const probes = await this.database
+      .query<ProbeJob>(
+        `SELECT probe_session_id AS "probeSessionId",release_id AS "releaseId",schema_fingerprint AS "schemaFingerprint" FROM probe_outbox WHERE published_at IS NULL ORDER BY created_at LIMIT $1`,
+        [limit],
+      )
+      .catch(() => ({ rows: [], rowCount: 0 }));
+    for (const item of probes.rows) {
+      try {
+        const existing = await this.probeQueue.getJob(item.probeSessionId);
+        if (!existing) await this.probeQueue.add("probe", item, { jobId: item.probeSessionId });
+        await this.database.query(
+          `UPDATE probe_outbox SET published_at=now(),publish_attempts=publish_attempts+1,last_error=NULL WHERE probe_session_id=$1`,
+          [item.probeSessionId],
+        );
+      } catch (error) {
+        await this.database.query(
+          `UPDATE probe_outbox SET publish_attempts=publish_attempts+1,last_error=$2 WHERE probe_session_id=$1`,
+          [item.probeSessionId, error instanceof Error ? error.message : String(error)],
+        );
+      }
+    }
   }
 
   async start(runId: string) {
@@ -97,11 +142,15 @@ export class RunQueueService implements OnModuleDestroy, OnModuleInit {
     try {
       const existing = await this.queue.getJob(runId);
       if (!existing) {
-        await this.queue.add("execute", {
-          runId,
-          releaseId: process.env.SCRY_RELEASE_ID ?? "development",
-          schemaFingerprint: process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline",
-        }, { jobId: runId });
+        await this.queue.add(
+          "execute",
+          {
+            runId,
+            releaseId: process.env.SCRY_RELEASE_ID ?? "development",
+            schemaFingerprint: process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline",
+          },
+          { jobId: runId },
+        );
       }
     } catch (error) {
       throw new ConflictException(

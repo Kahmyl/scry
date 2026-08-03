@@ -1,9 +1,6 @@
 {
   "schemaVersion": 1,
-  "command": [
-    "pnpm",
-    "campaign:praxis:100"
-  ],
+  "command": ["pnpm", "campaign:praxis:100"],
   "startedAt": "2026-08-03T11:52:15.570Z",
   "completedAt": "2026-08-03T11:52:35.610Z",
   "durationMs": 20040,

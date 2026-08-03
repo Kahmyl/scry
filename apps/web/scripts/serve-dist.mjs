@@ -23,7 +23,10 @@ async function sendFile(filePath, response, cacheControl = "no-cache") {
     const file = await stat(filePath);
     if (!file.isFile()) return false;
     response.statusCode = 200;
-    response.setHeader("content-type", contentTypes.get(path.extname(filePath)) ?? "application/octet-stream");
+    response.setHeader(
+      "content-type",
+      contentTypes.get(path.extname(filePath)) ?? "application/octet-stream",
+    );
     response.setHeader("cache-control", cacheControl);
     createReadStream(filePath).pipe(response);
     return true;
@@ -45,18 +48,24 @@ createServer(async (request, response) => {
         "content-type": "text/javascript; charset=utf-8",
         "cache-control": "no-store",
       });
-      response.end(`window.__SCRY_CONFIG__=${JSON.stringify({
-        apiBaseUrl: process.env.SCRY_PUBLIC_API_BASE_URL ?? "/api",
-        mcpServerUrl: process.env.SCRY_PUBLIC_MCP_SERVER_URL ?? "/mcp",
-        supabaseUrl: process.env.SUPABASE_URL ?? "",
-        supabasePublishableKey: process.env.SUPABASE_PUBLISHABLE_KEY ?? "",
-      })};`);
+      response.end(
+        `window.__SCRY_CONFIG__=${JSON.stringify({
+          apiBaseUrl: process.env.SCRY_PUBLIC_API_BASE_URL ?? "/api",
+          mcpServerUrl: process.env.SCRY_PUBLIC_MCP_SERVER_URL ?? "/mcp",
+          supabaseUrl: process.env.SUPABASE_URL ?? "",
+          supabasePublishableKey: process.env.SUPABASE_PUBLISHABLE_KEY ?? "",
+        })};`,
+      );
       return;
     }
 
     const relative = decodeURIComponent(url.pathname).replace(/^\/+/, "");
     const candidate = path.resolve(root, relative);
-    if (candidate.startsWith(`${root}${path.sep}`) && await sendFile(candidate, response, "public, max-age=31536000, immutable")) return;
+    if (
+      candidate.startsWith(`${root}${path.sep}`) &&
+      (await sendFile(candidate, response, "public, max-age=31536000, immutable"))
+    )
+      return;
     await sendFile(path.join(root, "index.html"), response);
   } catch (error) {
     console.error(error);

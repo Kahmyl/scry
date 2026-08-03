@@ -39,7 +39,15 @@ for (const skillName of skillNames) {
 
   for (const match of contents.matchAll(/`([a-z0-9]+(?:-[a-z0-9]+)+)`/g)) {
     const reference = match[1];
-    if ((reference.includes("defect") || reference.includes("change") || reference.includes("feature") || reference.includes("incident") || reference.includes("engineering") || reference.includes("diagnosis")) && !knownSkills.has(reference)) {
+    if (
+      (reference.includes("defect") ||
+        reference.includes("change") ||
+        reference.includes("feature") ||
+        reference.includes("incident") ||
+        reference.includes("engineering") ||
+        reference.includes("diagnosis")) &&
+      !knownSkills.has(reference)
+    ) {
       errors.push(`${skillName}: references missing workflow skill ${reference}`);
     }
   }
@@ -50,7 +58,8 @@ for (const skillName of skillNames) {
     if (!stat.isSymbolicLink()) errors.push(`${skillName}: Claude mirror is not a symbolic link`);
     const canonicalRealPath = await realpath(join(canonicalRoot, skillName));
     const claudeRealPath = await realpath(claudePath);
-    if (canonicalRealPath !== claudeRealPath) errors.push(`${skillName}: Claude mirror resolves elsewhere`);
+    if (canonicalRealPath !== claudeRealPath)
+      errors.push(`${skillName}: Claude mirror resolves elsewhere`);
     await readlink(claudePath);
   } catch (error) {
     errors.push(`${skillName}: missing or invalid Claude mirror (${error.code ?? error.message})`);
@@ -58,7 +67,8 @@ for (const skillName of skillNames) {
 }
 
 for (const entry of await readdir(claudeRoot, { withFileTypes: true })) {
-  if (!knownSkills.has(entry.name)) errors.push(`${entry.name}: Claude skill has no canonical skill`);
+  if (!knownSkills.has(entry.name))
+    errors.push(`${entry.name}: Claude skill has no canonical skill`);
 }
 
 for (const entrypoint of ["AGENTS.md", "CLAUDE.md"]) {

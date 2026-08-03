@@ -1,9 +1,6 @@
 {
   "schemaVersion": 1,
-  "command": [
-    "pnpm",
-    "campaign:veil:certification"
-  ],
+  "command": ["pnpm", "campaign:veil:certification"],
   "startedAt": "2026-08-03T11:46:34.365Z",
   "completedAt": "2026-08-03T11:46:53.339Z",
   "durationMs": 18974,

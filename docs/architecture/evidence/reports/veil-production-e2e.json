@@ -1,9 +1,6 @@
 {
   "schemaVersion": 1,
-  "command": [
-    "pnpm",
-    "campaign:veil:production-e2e"
-  ],
+  "command": ["pnpm", "campaign:veil:production-e2e"],
   "startedAt": "2026-08-03T11:48:30.719Z",
   "completedAt": "2026-08-03T11:48:53.104Z",
   "durationMs": 22385,

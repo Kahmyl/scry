@@ -4,8 +4,7 @@ import pg, { type PoolClient, type QueryResultRow } from "pg";
 @Injectable()
 export class Database implements OnModuleDestroy {
   readonly pool = new pg.Pool({
-    connectionString:
-      process.env.DATABASE_URL ?? "postgres://scry:scry-local@127.0.0.1:54329/scry",
+    connectionString: process.env.DATABASE_URL ?? "postgres://scry:scry-local@127.0.0.1:54329/scry",
   });
 
   query<T extends QueryResultRow>(text: string, values: unknown[] = []) {

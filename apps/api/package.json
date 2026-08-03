@@ -20,6 +20,8 @@
     "@scry/contracts": "workspace:*",
     "@scry/executor": "workspace:*",
     "@scry/policy": "workspace:*",
+    "@scry/praxis": "workspace:*",
+    "@scry/veil": "workspace:*",
     "bullmq": "^5.58.0",
     "fflate": "^0.8.3",
     "ioredis": "^5.7.0",

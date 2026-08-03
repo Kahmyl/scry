@@ -13,9 +13,9 @@ const temporaryDirectories: string[] = [];
 afterEach(async () => {
   const { rm } = await import("node:fs/promises");
   await Promise.all(
-    temporaryDirectories.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true }),
-    ),
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -32,9 +32,7 @@ describe("sanitizeTraceArchive", () => {
       tracePath,
       zipSync({
         "trace.trace": new TextEncoder().encode(`filled ${secret}`),
-        "trace.network": new TextEncoder().encode(
-          `request=${encodeURIComponent(secret)}`,
-        ),
+        "trace.network": new TextEncoder().encode(`request=${encodeURIComponent(secret)}`),
         "resources/screenshot.jpeg": binary,
       }),
     );
@@ -44,12 +42,8 @@ describe("sanitizeTraceArchive", () => {
     await sanitizeTraceArchive(tracePath, redactor);
 
     const archive = unzipSync(await readFile(tracePath));
-    expect(new TextDecoder().decode(archive["trace.trace"])).toBe(
-      "filled [REDACTED]",
-    );
-    expect(new TextDecoder().decode(archive["trace.network"])).toBe(
-      "request=[REDACTED]",
-    );
+    expect(new TextDecoder().decode(archive["trace.trace"])).toBe("filled [REDACTED]");
+    expect(new TextDecoder().decode(archive["trace.network"])).toBe("request=[REDACTED]");
     expect(archive["resources/screenshot.jpeg"]).toEqual(binary);
   });
 });

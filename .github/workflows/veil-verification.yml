@@ -10,7 +10,10 @@ on:
       - "packages/contracts/**"
       - "packages/executor/**"
       - "packages/policy/**"
+      - "packages/praxis/**"
+      - "packages/veil/**"
       - "apps/api/**"
+      - "scripts/verify-subsystem-boundaries.mjs"
       - "scripts/verify-veil-*.mjs"
       - "docs/architecture/veil-*.json"
   push:
@@ -72,6 +75,7 @@ jobs:
           pnpm test
           pnpm verify:veil-performance
           pnpm verify:veil-change-gate
+          pnpm verify:subsystem-boundaries
       - run: mkdir -p artifacts/veil
       - name: Run Veil certification
         env: { SCRY_BROWSER_CHANNEL: chrome }

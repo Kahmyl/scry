@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "targetOwners": {
+    "praxis": "packages/praxis",
+    "veil": "packages/veil"
+  },
+  "transitionalSources": [],
+  "applicationAdapters": [
+    "apps/api/src/veil/policy-snapshot.ts",
+    "apps/api/src/veil/preferences.service.ts"
+  ]
+}

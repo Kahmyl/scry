@@ -1,11 +1,147 @@
-import { compileVeilPolicy } from "@scry/policy";
-import { VEIL_CONTRACT_VERSION, type VeilCollectorPhase, type VeilLeaseRequest } from "@scry/contracts";
-import { VeilAuthority } from "../src/veil-authority.js";
-import { VeilRuntimeSession, type VeilRuntimeCollector } from "../src/veil-runtime-session.js";
+import { compileVeilPolicy } from "@scry/veil";
+import {
+  VEIL_CONTRACT_VERSION,
+  type VeilCollectorPhase,
+  type VeilLeaseRequest,
+} from "@scry/contracts";
+import { VeilAuthority } from "@scry/veil";
+import { VeilRuntimeSession, type VeilRuntimeCollector } from "@scry/veil";
 
-class TimedCollector implements VeilRuntimeCollector{readonly suspensions:number[]=[];constructor(readonly id:string){}async transition(phase:VeilCollectorPhase,context:{operationId?:string;stateVersion:number}){const started=performance.now();await Promise.resolve();if(phase==="suspend")this.suspensions.push(performance.now()-started);return{schemaVersion:VEIL_CONTRACT_VERSION,collectorId:this.id,phase,...(context.operationId?{operationId:context.operationId}:{}),stateVersion:context.stateVersion,acknowledgedAt:new Date().toISOString()};}}
-const origin="https://performance.test";let now=Date.now();const policy=compileVeilPolicy({profile:"balanced",allowedOrigins:[origin],leaseTtlMs:60_000});const authority=new VeilAuthority(policy,()=>now);const request:VeilLeaseRequest={context:{userId:"performance",environmentId:"local",transactionId:"performance",origin,browserContextId:"context",pageId:"page",frameId:"main",documentEpoch:1},operation:"capture",channel:"screenshot",classification:"public",scope:"channel"};
-for(let index=0;index<1_000;index++)authority.decide(request);const cacheBefore=authority.cacheStats();const decisionDurations=measure(10_000,()=>authority.decide(request));const cacheAfter=authority.cacheStats();const issued=authority.issueLease(request);const leaseDurations=measure(10_000,()=>authority.validateLease(issued.lease,request));const collector=new TimedCollector("performance");const runtimeDurations:number[]=[];for(let index=0;index<500;index++){const runtime=new VeilRuntimeSession([collector],policy.digest,`context-${index}`);const started=performance.now();await runtime.prepare(`operation-${index}`);runtimeDurations.push(performance.now()-started);await runtime.beginProtected();await runtime.resume();await runtime.finalize();}
-const cancelDurations:number[]=[];for(let index=0;index<500;index++){const runtime=new VeilRuntimeSession([new TimedCollector(`cancel-${index}`)],policy.digest,`cancel-context-${index}`);await runtime.prepare(`cancel-operation-${index}`);const started=performance.now();await runtime.cancel();cancelDurations.push(performance.now()-started);}
-const metrics={repeatedDecisionP50Ms:percentile(decisionDurations,.5),repeatedDecisionP95Ms:percentile(decisionDurations,.95),structuralDecisionP95Ms:percentile(decisionDurations,.95),leaseValidationP95Ms:percentile(leaseDurations,.95),collectorSuspensionP95Ms:percentile(collector.suspensions,.95),cancellationPropagationP95Ms:percentile(cancelDurations,.95)};const limits={repeatedDecisionP50Ms:1,repeatedDecisionP95Ms:3,structuralDecisionP95Ms:15,leaseValidationP95Ms:1,collectorSuspensionP95Ms:100,cancellationPropagationP95Ms:250};const failures=Object.entries(limits).filter(([key,limit])=>metrics[key as keyof typeof metrics]>=limit).map(([key,limit])=>`${key} ${metrics[key as keyof typeof metrics].toFixed(3)}ms must be < ${limit}ms`);const cacheProof=cacheAfter.hits-cacheBefore.hits===10_000&&cacheAfter.entries===cacheBefore.entries&&cacheAfter.policyDigest===policy.digest;if(!cacheProof)failures.push("decision cache did not produce exact-policy hot-path hits");const report={schemaVersion:1,campaign:"veil-performance",executedAt:new Date().toISOString(),environment:{node:process.version,iterations:{decision:10_000,leaseValidation:10_000,runtime:500,cancellation:500}},metrics,limits,coverage:{cacheProof,cacheBefore,cacheAfter,decisionMeasurement:"observable exact-policy/request cache hits",collectorMeasurement:"collector suspend acknowledgement body",cancellationMeasurement:"cancel request through sealed acknowledgement"},counts:{failed:failures.length},failures,qualification:failures.length?"PERFORMANCE_FAIL":"PERFORMANCE_COMPONENT_PASS",readiness:"NOT_READY_WITHOUT_FULL_GATE"};process.stdout.write(`${JSON.stringify(report,null,2)}\n`);process.exitCode=failures.length?1:0;
-function measure(iterations:number,operation:()=>unknown){const durations=[];for(let index=0;index<iterations;index++){const started=performance.now();operation();durations.push(performance.now()-started);}return durations;}function percentile(values:number[],fraction:number){const sorted=[...values].sort((a,b)=>a-b);return sorted[Math.min(sorted.length-1,Math.floor(sorted.length*fraction))]??Infinity;}
+class TimedCollector implements VeilRuntimeCollector {
+  readonly suspensions: number[] = [];
+  constructor(readonly id: string) {}
+  async transition(
+    phase: VeilCollectorPhase,
+    context: { operationId?: string; stateVersion: number },
+  ) {
+    const started = performance.now();
+    await Promise.resolve();
+    if (phase === "suspend") this.suspensions.push(performance.now() - started);
+    return {
+      schemaVersion: VEIL_CONTRACT_VERSION,
+      collectorId: this.id,
+      phase,
+      ...(context.operationId ? { operationId: context.operationId } : {}),
+      stateVersion: context.stateVersion,
+      acknowledgedAt: new Date().toISOString(),
+    };
+  }
+}
+const origin = "https://performance.test";
+let now = Date.now();
+const policy = compileVeilPolicy({
+  profile: "balanced",
+  allowedOrigins: [origin],
+  leaseTtlMs: 60_000,
+});
+const authority = new VeilAuthority(policy, () => now);
+const request: VeilLeaseRequest = {
+  context: {
+    userId: "performance",
+    environmentId: "local",
+    transactionId: "performance",
+    origin,
+    browserContextId: "context",
+    pageId: "page",
+    frameId: "main",
+    documentEpoch: 1,
+  },
+  operation: "capture",
+  channel: "screenshot",
+  classification: "public",
+  scope: "channel",
+};
+for (let index = 0; index < 1_000; index++) authority.decide(request);
+const cacheBefore = authority.cacheStats();
+const decisionDurations = measure(10_000, () => authority.decide(request));
+const cacheAfter = authority.cacheStats();
+const issued = authority.issueLease(request);
+const leaseDurations = measure(10_000, () => authority.validateLease(issued.lease, request));
+const collector = new TimedCollector("performance");
+const runtimeDurations: number[] = [];
+for (let index = 0; index < 500; index++) {
+  const runtime = new VeilRuntimeSession([collector], policy.digest, `context-${index}`);
+  const started = performance.now();
+  await runtime.prepare(`operation-${index}`);
+  runtimeDurations.push(performance.now() - started);
+  await runtime.beginProtected();
+  await runtime.resume();
+  await runtime.finalize();
+}
+const cancelDurations: number[] = [];
+for (let index = 0; index < 500; index++) {
+  const runtime = new VeilRuntimeSession(
+    [new TimedCollector(`cancel-${index}`)],
+    policy.digest,
+    `cancel-context-${index}`,
+  );
+  await runtime.prepare(`cancel-operation-${index}`);
+  const started = performance.now();
+  await runtime.cancel();
+  cancelDurations.push(performance.now() - started);
+}
+const metrics = {
+  repeatedDecisionP50Ms: percentile(decisionDurations, 0.5),
+  repeatedDecisionP95Ms: percentile(decisionDurations, 0.95),
+  structuralDecisionP95Ms: percentile(decisionDurations, 0.95),
+  leaseValidationP95Ms: percentile(leaseDurations, 0.95),
+  collectorSuspensionP95Ms: percentile(collector.suspensions, 0.95),
+  cancellationPropagationP95Ms: percentile(cancelDurations, 0.95),
+};
+const limits = {
+  repeatedDecisionP50Ms: 1,
+  repeatedDecisionP95Ms: 3,
+  structuralDecisionP95Ms: 15,
+  leaseValidationP95Ms: 1,
+  collectorSuspensionP95Ms: 100,
+  cancellationPropagationP95Ms: 250,
+};
+const failures = Object.entries(limits)
+  .filter(([key, limit]) => metrics[key as keyof typeof metrics] >= limit)
+  .map(
+    ([key, limit]) =>
+      `${key} ${metrics[key as keyof typeof metrics].toFixed(3)}ms must be < ${limit}ms`,
+  );
+const cacheProof =
+  cacheAfter.hits - cacheBefore.hits === 10_000 &&
+  cacheAfter.entries === cacheBefore.entries &&
+  cacheAfter.policyDigest === policy.digest;
+if (!cacheProof) failures.push("decision cache did not produce exact-policy hot-path hits");
+const report = {
+  schemaVersion: 1,
+  campaign: "veil-performance",
+  executedAt: new Date().toISOString(),
+  environment: {
+    node: process.version,
+    iterations: { decision: 10_000, leaseValidation: 10_000, runtime: 500, cancellation: 500 },
+  },
+  metrics,
+  limits,
+  coverage: {
+    cacheProof,
+    cacheBefore,
+    cacheAfter,
+    decisionMeasurement: "observable exact-policy/request cache hits",
+    collectorMeasurement: "collector suspend acknowledgement body",
+    cancellationMeasurement: "cancel request through sealed acknowledgement",
+  },
+  counts: { failed: failures.length },
+  failures,
+  qualification: failures.length ? "PERFORMANCE_FAIL" : "PERFORMANCE_COMPONENT_PASS",
+  readiness: "NOT_READY_WITHOUT_FULL_GATE",
+};
+process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+process.exitCode = failures.length ? 1 : 0;
+function measure(iterations: number, operation: () => unknown) {
+  const durations = [];
+  for (let index = 0; index < iterations; index++) {
+    const started = performance.now();
+    operation();
+    durations.push(performance.now() - started);
+  }
+  return durations;
+}
+function percentile(values: number[], fraction: number) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))] ?? Infinity;
+}

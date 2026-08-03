@@ -29,11 +29,15 @@ for (const relativePath of foundationFiles) {
 }
 
 if (violations.length > 0) {
-  console.error("Privacy foundation freeze failed:\n" + violations.map((item) => `- ${item}`).join("\n"));
+  console.error(
+    "Privacy foundation freeze failed:\n" + violations.map((item) => `- ${item}`).join("\n"),
+  );
   process.exit(1);
 }
 
-console.log("Privacy foundation freeze passed: current surface contains no legacy feature-generation or overlay-era primitives.");
+console.log(
+  "Privacy foundation freeze passed: current surface contains no legacy feature-generation or overlay-era primitives.",
+);
 
 function filesUnder(relativeDirectory) {
   const result = [];

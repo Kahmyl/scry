@@ -1,9 +1,6 @@
 {
   "schemaVersion": 1,
-  "command": [
-    "pnpm",
-    "campaign:veil:release-scope"
-  ],
+  "command": ["pnpm", "campaign:veil:release-scope"],
   "startedAt": "2026-08-03T11:49:08.235Z",
   "completedAt": "2026-08-03T11:49:11.306Z",
   "durationMs": 3071,

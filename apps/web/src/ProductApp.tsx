@@ -26,7 +26,12 @@ export function ProductApp() {
   }, []);
 
   if (checkingSession) {
-    return <div className="auth-boot"><span className="auth-orbit" /><small>RESTORING SECURE SESSION</small></div>;
+    return (
+      <div className="auth-boot">
+        <span className="auth-orbit" />
+        <small>RESTORING SECURE SESSION</small>
+      </div>
+    );
   }
 
   if (session) {

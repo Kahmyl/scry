@@ -1,16 +1,150 @@
 import { chromium } from "playwright";
 import { VEIL_CONTRACT_VERSION, type VeilCollectorPhase } from "@scry/contracts";
-import { compileVeilPolicy } from "@scry/policy";
-import { VeilAuthority } from "../src/veil-authority.js";
-import { VeilRuntimeSession, type VeilRuntimeCollector } from "../src/veil-runtime-session.js";
+import { compileVeilPolicy } from "@scry/veil";
+import { VeilAuthority } from "@scry/veil";
+import { VeilRuntimeSession, type VeilRuntimeCollector } from "@scry/veil";
 
-const targets=[
-  ["wikipedia","https://www.wikipedia.org/"],["mdn","https://developer.mozilla.org/en-US/"],["react","https://react.dev/"],["vue","https://vuejs.org/"],["angular","https://angular.dev/"],
-  ["svelte","https://svelte.dev/"],["node","https://nodejs.org/en"],["typescript","https://www.typescriptlang.org/"],["playwright","https://playwright.dev/"],["vitest","https://vitest.dev/"],
-  ["pnpm","https://pnpm.io/"],["python","https://www.python.org/"],["rust","https://www.rust-lang.org/"],["go","https://go.dev/"],["postgresql","https://www.postgresql.org/"],
-  ["redis","https://redis.io/"],["kubernetes","https://kubernetes.io/"],["docker","https://www.docker.com/"],["w3c","https://www.w3.org/"],["webdev","https://web.dev/"],
-  ["github-docs","https://docs.github.com/en"],["npm-docs","https://docs.npmjs.com/"],["nextjs","https://nextjs.org/"],["nuxt","https://nuxt.com/"],["tailwind","https://tailwindcss.com/"],
+const targets = [
+  ["wikipedia", "https://www.wikipedia.org/"],
+  ["mdn", "https://developer.mozilla.org/en-US/"],
+  ["react", "https://react.dev/"],
+  ["vue", "https://vuejs.org/"],
+  ["angular", "https://angular.dev/"],
+  ["svelte", "https://svelte.dev/"],
+  ["node", "https://nodejs.org/en"],
+  ["typescript", "https://www.typescriptlang.org/"],
+  ["playwright", "https://playwright.dev/"],
+  ["vitest", "https://vitest.dev/"],
+  ["pnpm", "https://pnpm.io/"],
+  ["python", "https://www.python.org/"],
+  ["rust", "https://www.rust-lang.org/"],
+  ["go", "https://go.dev/"],
+  ["postgresql", "https://www.postgresql.org/"],
+  ["redis", "https://redis.io/"],
+  ["kubernetes", "https://kubernetes.io/"],
+  ["docker", "https://www.docker.com/"],
+  ["w3c", "https://www.w3.org/"],
+  ["webdev", "https://web.dev/"],
+  ["github-docs", "https://docs.github.com/en"],
+  ["npm-docs", "https://docs.npmjs.com/"],
+  ["nextjs", "https://nextjs.org/"],
+  ["nuxt", "https://nuxt.com/"],
+  ["tailwind", "https://tailwindcss.com/"],
 ] as const;
-class Collector implements VeilRuntimeCollector{phase:VeilCollectorPhase|"idle"="idle";constructor(readonly id:string){}async transition(phase:VeilCollectorPhase,context:{operationId?:string;stateVersion:number}){this.phase=phase;return{schemaVersion:VEIL_CONTRACT_VERSION,collectorId:this.id,phase,...(context.operationId?{operationId:context.operationId}:{}),stateVersion:context.stateVersion,acknowledgedAt:new Date().toISOString()};}}
-async function main(){if(targets.length!==25)throw new Error(`expected 25 targets, got ${targets.length}`);const browser=await chromium.launch({headless:true,channel:process.env.SCRY_BROWSER_CHANNEL??"chrome"});const results=[];try{for(const [id,url] of targets){const started=performance.now();const context=await browser.newContext();const page=await context.newPage();try{const response=await page.goto(url,{waitUntil:"domcontentloaded",timeout:30_000});if(!response||response.status()<200||response.status()>=400)throw new Error(`HTTP ${response?.status()??"missing"}`);const origin=new URL(page.url()).origin;const policy=compileVeilPolicy({profile:"balanced",allowedOrigins:[origin]});const authority=new VeilAuthority(policy);const collectors=[new Collector("visual"),new Collector("structured"),new Collector("diagnostics")];const runtime=new VeilRuntimeSession(collectors,policy.digest,`public:${id}`);await runtime.prepare(`public-${id}`);await runtime.beginProtected();for(const channel of ["video","screenshot","trace","dom","accessibility","console","page_error","network","clipboard","download"] as const){const decision=authority.decide({context:{userId:"public-probe",environmentId:"live",transactionId:`public-${id}`,origin,browserContextId:`context-${id}`,pageId:`page-${id}`,frameId:"main",documentEpoch:1},operation:"capture",channel,classification:"secret",scope:"channel"});if(decision.disposition!=="suppress")throw new Error(`${channel} was not suppressed`);}if(collectors.some(item=>item.phase!=="isolate"))throw new Error("collector isolation acknowledgement not observable");await runtime.seal({schemaVersion:VEIL_CONTRACT_VERSION,code:"VEIL_PUBLIC_PROBE_COMPLETE",provenance:"runtime",retry:"unsafe"});results.push({id,url,finalUrl:page.url(),status:"passed",durationMs:performance.now()-started});}catch(error){results.push({id,url,finalUrl:page.url(),status:"failed",durationMs:performance.now()-started,diagnostics:error instanceof Error?{name:error.name,message:error.message}:String(error)});}finally{await context.close();}}const failed=results.filter(item=>item.status==="failed").length;process.stdout.write(`${JSON.stringify({schemaVersion:1,campaign:"veil-public-application-qualification",executedAt:new Date().toISOString(),environment:{transport:"public_https",browser:"real_chromium",browserVersion:browser.version(),externalMutation:"none",authentication:"none"},counts:{total:results.length,passed:results.length-failed,failed,skipped:0},qualification:failed===0?"PUBLIC_COMPONENT_PASS":"PUBLIC_COMPONENT_FAIL",readiness:"NOT_READY_WITHOUT_FULL_GATE",results},null,2)}\n`);process.exitCode=failed?1:0;}finally{await browser.close();}}
-(process.stdout as typeof process.stdout&{_handle?:{setBlocking?(value:boolean):void}})._handle?.setBlocking?.(true);await main();
+class Collector implements VeilRuntimeCollector {
+  phase: VeilCollectorPhase | "idle" = "idle";
+  constructor(readonly id: string) {}
+  async transition(
+    phase: VeilCollectorPhase,
+    context: { operationId?: string; stateVersion: number },
+  ) {
+    this.phase = phase;
+    return {
+      schemaVersion: VEIL_CONTRACT_VERSION,
+      collectorId: this.id,
+      phase,
+      ...(context.operationId ? { operationId: context.operationId } : {}),
+      stateVersion: context.stateVersion,
+      acknowledgedAt: new Date().toISOString(),
+    };
+  }
+}
+async function main() {
+  if (targets.length !== 25) throw new Error(`expected 25 targets, got ${targets.length}`);
+  const browser = await chromium.launch({
+    headless: true,
+    channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+  });
+  const results = [];
+  try {
+    for (const [id, url] of targets) {
+      const started = performance.now();
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      try {
+        const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+        if (!response || response.status() < 200 || response.status() >= 400)
+          throw new Error(`HTTP ${response?.status() ?? "missing"}`);
+        const origin = new URL(page.url()).origin;
+        const policy = compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] });
+        const authority = new VeilAuthority(policy);
+        const collectors = [
+          new Collector("visual"),
+          new Collector("structured"),
+          new Collector("diagnostics"),
+        ];
+        const runtime = new VeilRuntimeSession(collectors, policy.digest, `public:${id}`);
+        await runtime.prepare(`public-${id}`);
+        await runtime.beginProtected();
+        for (const channel of [
+          "video",
+          "screenshot",
+          "trace",
+          "dom",
+          "accessibility",
+          "console",
+          "page_error",
+          "network",
+          "clipboard",
+          "download",
+        ] as const) {
+          const decision = authority.decide({
+            context: {
+              userId: "public-probe",
+              environmentId: "live",
+              transactionId: `public-${id}`,
+              origin,
+              browserContextId: `context-${id}`,
+              pageId: `page-${id}`,
+              frameId: "main",
+              documentEpoch: 1,
+            },
+            operation: "capture",
+            channel,
+            classification: "secret",
+            scope: "channel",
+          });
+          if (decision.disposition !== "suppress") throw new Error(`${channel} was not suppressed`);
+        }
+        if (collectors.some((item) => item.phase !== "isolate"))
+          throw new Error("collector isolation acknowledgement not observable");
+        await runtime.seal({
+          schemaVersion: VEIL_CONTRACT_VERSION,
+          code: "VEIL_PUBLIC_PROBE_COMPLETE",
+          provenance: "runtime",
+          retry: "unsafe",
+        });
+        results.push({
+          id,
+          url,
+          finalUrl: page.url(),
+          status: "passed",
+          durationMs: performance.now() - started,
+        });
+      } catch (error) {
+        results.push({
+          id,
+          url,
+          finalUrl: page.url(),
+          status: "failed",
+          durationMs: performance.now() - started,
+          diagnostics:
+            error instanceof Error ? { name: error.name, message: error.message } : String(error),
+        });
+      } finally {
+        await context.close();
+      }
+    }
+    const failed = results.filter((item) => item.status === "failed").length;
+    process.stdout.write(
+      `${JSON.stringify({ schemaVersion: 1, campaign: "veil-public-application-qualification", executedAt: new Date().toISOString(), environment: { transport: "public_https", browser: "real_chromium", browserVersion: browser.version(), externalMutation: "none", authentication: "none" }, counts: { total: results.length, passed: results.length - failed, failed, skipped: 0 }, qualification: failed === 0 ? "PUBLIC_COMPONENT_PASS" : "PUBLIC_COMPONENT_FAIL", readiness: "NOT_READY_WITHOUT_FULL_GATE", results }, null, 2)}\n`,
+    );
+    process.exitCode = failed ? 1 : 0;
+  } finally {
+    await browser.close();
+  }
+}
+(
+  process.stdout as typeof process.stdout & { _handle?: { setBlocking?(value: boolean): void } }
+)._handle?.setBlocking?.(true);
+await main();

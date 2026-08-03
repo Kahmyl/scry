@@ -82,4 +82,3 @@ Praxis, storage, API/MCP/UI, migrations, campaigns, and CI advance through gated
 increments but cut over as one compatible release. Completion requires all Veil
 and Praxis campaigns, production-shaped topology proof, and independent privacy
 and verification reviews with no unresolved blocker or high finding.
-

@@ -33,7 +33,8 @@ import { OrchestrationService } from "./orchestration.service.js";
 import { AuthoringController } from "./authoring.controller.js";
 import { AuthoringService } from "./authoring.service.js";
 import { ProbeRuntimeRepository } from "./probe-runtime.repository.js";
-import { VeilPreferencesService } from "./veil-preferences.service.js";
+import { VeilPreferencesService } from "./veil/preferences.service.js";
+import { FlowReadRepository } from "./flow-read.repository.js";
 
 @Module({
   controllers: [
@@ -59,6 +60,7 @@ import { VeilPreferencesService } from "./veil-preferences.service.js";
     AuthService,
     McpTokenRepository,
     FlowService,
+    FlowReadRepository,
     ArtifactService,
     CalibrationService,
     CalibrationRuntimeRepository,

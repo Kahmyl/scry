@@ -4,7 +4,6 @@ import { isIP } from "node:net";
 import type { CurrentAction, CurrentPlan, ExecutionPolicy } from "@scry/contracts";
 
 export { SecretRedactor } from "./redactor.js";
-export * from "./veil-policy.js";
 
 export type RuntimePolicyViolationCode =
   | "SCHEME_NOT_ALLOWED"
@@ -25,15 +24,12 @@ export class RuntimePolicyError extends Error {
 }
 
 export type ActionCapability =
-  | "navigation"
-  | "interaction"
-  | "secret_input"
-  | "observation"
-  | "evidence";
+  "navigation" | "interaction" | "secret_input" | "observation" | "evidence";
 
 export function classifyAction(action: CurrentAction): ActionCapability {
   if (action.type === "navigate") return "navigation";
-  if (action.type === "fill" && (action.secretRef || action.capturedSecretRef)) return "secret_input";
+  if (action.type === "fill" && (action.secretRef || action.capturedSecretRef))
+    return "secret_input";
   if (action.type === "protectedTransaction") return "secret_input";
   if (action.type === "capturePublicValue") return "observation";
   if (action.type === "waitFor" || action.type === "scroll") return "observation";
@@ -49,9 +45,7 @@ export class RuntimeRequestPolicy {
     _plan: CurrentPlan,
     private readonly policy: ExecutionPolicy,
   ) {
-    this.origins = new Set(
-      policy.allowedOrigins.map((value) => new URL(value).origin),
-    );
+    this.origins = new Set(policy.allowedOrigins.map((value) => new URL(value).origin));
   }
 
   async assertAllowed(rawUrl: string) {
@@ -103,9 +97,7 @@ export class RuntimeRequestPolicy {
     if (cached) return cached;
     const result = isIP(hostname)
       ? Promise.resolve([hostname])
-      : lookup(hostname, { all: true }).then((records) =>
-          records.map((record) => record.address),
-        );
+      : lookup(hostname, { all: true }).then((records) => records.map((record) => record.address));
     this.addressCache.set(hostname, result);
     return result;
   }
@@ -143,9 +135,7 @@ export function isPrivateAddress(address: string): boolean {
 function isLocalHostname(hostname: string) {
   const normalized = hostname.toLowerCase().replace(/\.$/, "");
   return (
-    normalized === "localhost" ||
-    normalized.endsWith(".localhost") ||
-    normalized.endsWith(".local")
+    normalized === "localhost" || normalized.endsWith(".localhost") || normalized.endsWith(".local")
   );
 }
 

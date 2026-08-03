@@ -5,10 +5,7 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 
 import { AppModule } from "./app.module.js";
 
-const app = await NestFactory.create<NestFastifyApplication>(
-  AppModule,
-  new FastifyAdapter(),
-);
+const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
 app.enableCors({
   origin: (process.env.API_CORS_ORIGINS ?? "http://127.0.0.1:5173,http://localhost:5173")
     .split(",")

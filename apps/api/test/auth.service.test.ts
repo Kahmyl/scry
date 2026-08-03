@@ -21,9 +21,9 @@ describe("AuthService", () => {
     delete process.env.SUPABASE_URL;
     const service = new AuthService({} as IdentityRepository);
 
-    await expect(
-      service.authenticate("Bearer service-token-with-enough-entropy"),
-    ).resolves.toEqual({ kind: "service", subject: "scry-service" });
+    await expect(service.authenticate("Bearer service-token-with-enough-entropy")).resolves.toEqual(
+      { kind: "service", subject: "scry-service" },
+    );
     await expect(service.authenticate("Bearer wrong-token")).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
@@ -34,12 +34,8 @@ describe("AuthService", () => {
     delete process.env.SUPABASE_URL;
     const service = new AuthService({} as IdentityRepository);
 
-    await expect(service.authenticate(undefined)).rejects.toBeInstanceOf(
-      UnauthorizedException,
-    );
-    await expect(service.authenticate("Basic value")).rejects.toBeInstanceOf(
-      UnauthorizedException,
-    );
+    await expect(service.authenticate(undefined)).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(service.authenticate("Basic value")).rejects.toBeInstanceOf(UnauthorizedException);
     await expect(service.authenticate("Bearer one two")).rejects.toBeInstanceOf(
       UnauthorizedException,
     );

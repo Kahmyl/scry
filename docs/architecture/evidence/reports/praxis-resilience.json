@@ -1,9 +1,6 @@
 {
   "schemaVersion": 1,
-  "command": [
-    "pnpm",
-    "campaign:praxis:resilience"
-  ],
+  "command": ["pnpm", "campaign:praxis:resilience"],
   "startedAt": "2026-08-03T11:52:42.540Z",
   "completedAt": "2026-08-03T11:53:04.024Z",
   "durationMs": 21484,

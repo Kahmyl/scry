@@ -1,6 +1,10 @@
 import { Inject, Injectable, ServiceUnavailableException } from "@nestjs/common";
-import { browserObservationRuntimeHealth } from "@scry/executor";
-import { PRAXIS_CONTRACT_VERSION, PRAXIS_RUNTIME_VERSION, PRAXIS_SCORING_POLICY_VERSION } from "@scry/contracts";
+import { browserObservationRuntimeHealth } from "@scry/praxis";
+import {
+  PRAXIS_CONTRACT_VERSION,
+  PRAXIS_RUNTIME_VERSION,
+  PRAXIS_SCORING_POLICY_VERSION,
+} from "@scry/contracts";
 
 import { Database } from "./database.js";
 
@@ -8,7 +12,14 @@ export type ReleaseAdmissionStatus = {
   ready: boolean;
   schemaReady: boolean;
   compatibleWorkerCount: number;
-  incompatibleWorkers: Array<{ workerId: string; releaseId: string; schemaFingerprint: string; praxisContractVersion: number; praxisRuntimeVersion: string; praxisScoringPolicyVersion: number }>;
+  incompatibleWorkers: Array<{
+    workerId: string;
+    releaseId: string;
+    schemaFingerprint: string;
+    praxisContractVersion: number;
+    praxisRuntimeVersion: string;
+    praxisScoringPolicyVersion: number;
+  }>;
   releaseId: string;
   schemaFingerprint: string;
   browserRuntimeReady: boolean;
@@ -27,24 +38,39 @@ export class ReleaseAdmissionService {
       this.database.query<{ schemaFingerprint: string }>(
         `SELECT schema_fingerprint AS "schemaFingerprint" FROM schema_baseline WHERE singleton = true`,
       ),
-      this.database.query<{ workerId: string; releaseId: string; schemaFingerprint: string; praxisContractVersion: number; praxisRuntimeVersion: string; praxisScoringPolicyVersion: number }>(
+      this.database.query<{
+        workerId: string;
+        releaseId: string;
+        schemaFingerprint: string;
+        praxisContractVersion: number;
+        praxisRuntimeVersion: string;
+        praxisScoringPolicyVersion: number;
+      }>(
         `SELECT worker_id AS "workerId", release_id AS "releaseId", schema_fingerprint AS "schemaFingerprint",
                 praxis_contract_version AS "praxisContractVersion", praxis_runtime_version AS "praxisRuntimeVersion",
                 praxis_scoring_policy_version AS "praxisScoringPolicyVersion"
          FROM worker_heartbeats WHERE heartbeat_at > now() - interval '30 seconds'`,
       ),
-      this.database.query<{ready:boolean;runtimeHash:string;capabilityManifestHash:string}>(`SELECT ready,runtime_hash AS "runtimeHash",capability_manifest_hash AS "capabilityManifestHash" FROM browser_runtime_manifests WHERE release_id=$1 AND schema_fingerprint=$2 ORDER BY created_at DESC LIMIT 1`,[releaseId,schemaFingerprint]),
+      this.database.query<{ ready: boolean; runtimeHash: string; capabilityManifestHash: string }>(
+        `SELECT ready,runtime_hash AS "runtimeHash",capability_manifest_hash AS "capabilityManifestHash" FROM browser_runtime_manifests WHERE release_id=$1 AND schema_fingerprint=$2 ORDER BY created_at DESC LIMIT 1`,
+        [releaseId, schemaFingerprint],
+      ),
     ]);
     const incompatibleWorkers = workers.rows.filter(
-      (worker) => worker.releaseId !== releaseId || worker.schemaFingerprint !== schemaFingerprint
-        || worker.praxisContractVersion !== PRAXIS_CONTRACT_VERSION
-        || worker.praxisRuntimeVersion !== PRAXIS_RUNTIME_VERSION
-        || worker.praxisScoringPolicyVersion !== PRAXIS_SCORING_POLICY_VERSION,
+      (worker) =>
+        worker.releaseId !== releaseId ||
+        worker.schemaFingerprint !== schemaFingerprint ||
+        worker.praxisContractVersion !== PRAXIS_CONTRACT_VERSION ||
+        worker.praxisRuntimeVersion !== PRAXIS_RUNTIME_VERSION ||
+        worker.praxisScoringPolicyVersion !== PRAXIS_SCORING_POLICY_VERSION,
     );
     const compatibleWorkerCount = workers.rows.length - incompatibleWorkers.length;
     const schemaReady = baseline.rows[0]?.schemaFingerprint === schemaFingerprint;
-    const expectedRuntime=browserObservationRuntimeHealth();
-    const browserRuntimeReady=runtime.rows[0]?.ready===true&&runtime.rows[0]?.runtimeHash===expectedRuntime.runtimeHash&&runtime.rows[0]?.capabilityManifestHash===expectedRuntime.capabilityManifestHash;
+    const expectedRuntime = browserObservationRuntimeHealth();
+    const browserRuntimeReady =
+      runtime.rows[0]?.ready === true &&
+      runtime.rows[0]?.runtimeHash === expectedRuntime.runtimeHash &&
+      runtime.rows[0]?.capabilityManifestHash === expectedRuntime.capabilityManifestHash;
     const praxisReady = compatibleWorkerCount > 0 && incompatibleWorkers.length === 0;
     return {
       ready: schemaReady && browserRuntimeReady && praxisReady,
@@ -55,7 +81,11 @@ export class ReleaseAdmissionService {
       schemaFingerprint,
       browserRuntimeReady,
       praxisReady,
-      praxis: { contractVersion: PRAXIS_CONTRACT_VERSION, runtimeVersion: PRAXIS_RUNTIME_VERSION, scoringPolicyVersion: PRAXIS_SCORING_POLICY_VERSION },
+      praxis: {
+        contractVersion: PRAXIS_CONTRACT_VERSION,
+        runtimeVersion: PRAXIS_RUNTIME_VERSION,
+        scoringPolicyVersion: PRAXIS_SCORING_POLICY_VERSION,
+      },
     };
   }
 
@@ -72,7 +102,8 @@ export class ReleaseAdmissionService {
     if (!status.ready) {
       throw new ServiceUnavailableException({
         code: "RELEASE_ADMISSION_BLOCKED",
-        message: "Scry is not accepting executable work until API, worker, and schema agreement is restored.",
+        message:
+          "Scry is not accepting executable work until API, worker, and schema agreement is restored.",
         status,
       });
     }

@@ -65,4 +65,3 @@ values or secret-bearing selector text.
 
 The eventual reset command must refuse remote or production-looking targets by
 default and require both an environment sentinel and an exact typed confirmation.
-

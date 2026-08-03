@@ -1,38 +1,592 @@
 import { createServer } from "node:http";
 import { chromium, type Page } from "playwright";
-import type { ExpectedEffect, InteractionTargetIntent, PraxisOperation, PraxisResult } from "@scry/contracts";
+import type {
+  ExpectedEffect,
+  InteractionTargetIntent,
+  PraxisOperation,
+  PraxisResult,
+} from "@scry/contracts";
 import { executePraxisCampaignConsumer as executePraxisConsumer } from "./praxis-campaign-veil.js";
 
-type Options={effect?:ExpectedEffect;timeout?:number;signal?:AbortSignal};type Invoke=(intent:InteractionTargetIntent,operation:PraxisOperation,options?:Options)=>Promise<PraxisResult>;
-type Scenario={id:string;campaign:"safety"|"hostile";html:string;script:string;run(page:Page,invoke:Invoke,origin:string):Promise<void>};type Result={id:string;campaign:string;status:"passed"|"failed";durationMs:number;diagnostics?:unknown};
-class CheckError extends Error{constructor(message:string,readonly evidence:unknown={}){super(message);this.name="CheckError";}}
-const scenarios:Scenario[]=[];const add=(id:Scenario["id"],campaign:Scenario["campaign"],html:string,script:string,run:Scenario["run"])=>scenarios.push({id,campaign,html,script,run});
+type Options = { effect?: ExpectedEffect; timeout?: number; signal?: AbortSignal };
+type Invoke = (
+  intent: InteractionTargetIntent,
+  operation: PraxisOperation,
+  options?: Options,
+) => Promise<PraxisResult>;
+type Scenario = {
+  id: string;
+  campaign: "safety" | "hostile";
+  html: string;
+  script: string;
+  run(page: Page, invoke: Invoke, origin: string): Promise<void>;
+};
+type Result = {
+  id: string;
+  campaign: string;
+  status: "passed" | "failed";
+  durationMs: number;
+  diagnostics?: unknown;
+};
+class CheckError extends Error {
+  constructor(
+    message: string,
+    readonly evidence: unknown = {},
+  ) {
+    super(message);
+    this.name = "CheckError";
+  }
+}
+const scenarios: Scenario[] = [];
+const add = (
+  id: Scenario["id"],
+  campaign: Scenario["campaign"],
+  html: string,
+  script: string,
+  run: Scenario["run"],
+) => scenarios.push({ id, campaign, html, script, run });
 
-for(let i=1;i<=10;i++){const left=`Commit lane A${i}`,right=`Commit lane B${i}`;add(`concurrent-mutations-${i}`,"safety",`<section aria-label="Lane A${i}"><button>${left}</button></section><section aria-label="Lane B${i}"><button>${right}</button></section><output data-scry-readable>0</output>`,`document.querySelectorAll('button').forEach(b=>b.onclick=()=>{window.hits++;document.querySelector('output').textContent=String(window.hits);});`,async(p,invoke)=>{const [a,b]=await Promise.all([invoke(button(left,{kind:"region",name:`Lane A${i}`}),{type:"activate"}),invoke(button(right,{kind:"region",name:`Lane B${i}`}),{type:"activate"})]);ok(a);ok(b);eq(await hits(p),2,"concurrent single dispatch total");});}
-for(let i=1;i<=5;i++){const name=`Abort verification ${i}`;add(`cancel-during-verification-${i}`,"safety",`<button>${name}</button><output data-scry-readable>idle</output>`,`document.querySelector('button').onclick=()=>window.hits++;`,async(p,invoke)=>{const c=new AbortController();setTimeout(()=>c.abort("campaign"),80);const r=await invoke(button(name),{type:"activate"},{effect:valueEffect(`never-${i}`),timeout:1200,signal:c.signal});truth(r.status==="cancelled"||r.status==="inconclusive","cancellation returned success",r);truth(r.mutationOutcome==="unknown","post-dispatch cancellation not unknown",r);eq(await hits(p),1,"cancel dispatch count");});}
-for(let i=1;i<=5;i++){const name=`Timeout verification ${i}`;add(`verification-timeout-${i}`,"safety",`<button>${name}</button>`,`document.querySelector('button').onclick=()=>window.hits++;`,async(p,invoke)=>{const r=await invoke(button(name),{type:"activate"},{effect:valueEffect(`absent-${i}`),timeout:350});fail(r,"PRAXIS_EXPECTED_EFFECT_NOT_OBSERVED");eq(await hits(p),1,"timeout dispatch count");});}
-for(let i=1;i<=5;i++){const name=`Navigate race ${i}`;add(`navigation-race-${i}`,"safety",`<button>${name}</button>`,`document.querySelector('button').onclick=()=>setTimeout(()=>location.href='/landing/${i}?ok=1',${20+i*5});`,async(p,invoke)=>{const r=await invoke(button(name),{type:"activate"},{effect:{type:"navigation",url:`/landing/${i}?ok=1`,match:"path"},timeout:1000});ok(r);eq(new URL(p.url()).pathname,`/landing/${i}`,"navigation race path");});}
-for(let i=1;i<=5;i++){const name=`Ephemeral mutation ${i}`;add(`dispatch-replacement-${i}`,"safety",`<button>${name}</button>`,`window.replacementHits=0;const b=document.querySelector('button');b.onpointerover=()=>{const n=b.cloneNode(true);n.onclick=()=>window.replacementHits++;b.replaceWith(n);};`,async(p,invoke)=>{const r=await invoke(button(name),{type:"activate"});fail(r,"PRAXIS_DISPATCH_FAILED");truth(r.status==="inconclusive","replacement outcome was not inconclusive",r);truth(r.mutationOutcome==="unknown","replacement mutation was not unknown",r);truth(r.retry==="unsafe","replacement retry was not unsafe",r);truth(r.safeActions.includes("do_not_retry"),"replacement did not prohibit retry",r);eq(await hits(p),0,"original replacement dispatch");eq(await p.evaluate(()=>window.replacementHits),0,"replacement target dispatch");});}
-for(let i=1;i<=5;i++){const name=`Network commit ${i}`;add(`network-effect-${i}`,"safety",`<button>${name}</button>`,`document.querySelector('button').onclick=()=>{window.hits++;fetch('/network/${i}',{method:'POST'});};`,async(p,invoke)=>{const r=await invoke(button(name),{type:"activate"},{effect:{type:"network_outcome",urlPattern:`/network/${i}`,method:"POST",statusMin:200,statusMax:299},timeout:1000});ok(r);eq(await hits(p),1,"network dispatch");});}
-for(let i=1;i<=5;i++){const name=`Pre-aborted command ${i}`;add(`pre-cancel-${i}`,"safety",`<button>${name}</button>`,`document.querySelector('button').onclick=()=>window.hits++;`,async(p,invoke)=>{const c=new AbortController();c.abort();const r=await invoke(button(name),{type:"activate"},{signal:c.signal});fail(r,"PRAXIS_CANCELLED");eq(await hits(p),0,"pre-cancel dispatch");});}
+for (let i = 1; i <= 10; i++) {
+  const left = `Commit lane A${i}`,
+    right = `Commit lane B${i}`;
+  add(
+    `concurrent-mutations-${i}`,
+    "safety",
+    `<section aria-label="Lane A${i}"><button>${left}</button></section><section aria-label="Lane B${i}"><button>${right}</button></section><output data-scry-readable>0</output>`,
+    `document.querySelectorAll('button').forEach(b=>b.onclick=()=>{window.hits++;document.querySelector('output').textContent=String(window.hits);});`,
+    async (p, invoke) => {
+      const [a, b] = await Promise.all([
+        invoke(button(left, { kind: "region", name: `Lane A${i}` }), { type: "activate" }),
+        invoke(button(right, { kind: "region", name: `Lane B${i}` }), { type: "activate" }),
+      ]);
+      ok(a);
+      ok(b);
+      eq(await hits(p), 2, "concurrent single dispatch total");
+    },
+  );
+}
+for (let i = 1; i <= 5; i++) {
+  const name = `Abort verification ${i}`;
+  add(
+    `cancel-during-verification-${i}`,
+    "safety",
+    `<button>${name}</button><output data-scry-readable>idle</output>`,
+    `document.querySelector('button').onclick=()=>window.hits++;`,
+    async (p, invoke) => {
+      const c = new AbortController();
+      setTimeout(() => c.abort("campaign"), 80);
+      const r = await invoke(
+        button(name),
+        { type: "activate" },
+        { effect: valueEffect(`never-${i}`), timeout: 1200, signal: c.signal },
+      );
+      truth(
+        r.status === "cancelled" || r.status === "inconclusive",
+        "cancellation returned success",
+        r,
+      );
+      truth(r.mutationOutcome === "unknown", "post-dispatch cancellation not unknown", r);
+      eq(await hits(p), 1, "cancel dispatch count");
+    },
+  );
+}
+for (let i = 1; i <= 5; i++) {
+  const name = `Timeout verification ${i}`;
+  add(
+    `verification-timeout-${i}`,
+    "safety",
+    `<button>${name}</button>`,
+    `document.querySelector('button').onclick=()=>window.hits++;`,
+    async (p, invoke) => {
+      const r = await invoke(
+        button(name),
+        { type: "activate" },
+        { effect: valueEffect(`absent-${i}`), timeout: 350 },
+      );
+      fail(r, "PRAXIS_EXPECTED_EFFECT_NOT_OBSERVED");
+      eq(await hits(p), 1, "timeout dispatch count");
+    },
+  );
+}
+for (let i = 1; i <= 5; i++) {
+  const name = `Navigate race ${i}`;
+  add(
+    `navigation-race-${i}`,
+    "safety",
+    `<button>${name}</button>`,
+    `document.querySelector('button').onclick=()=>setTimeout(()=>location.href='/landing/${i}?ok=1',${20 + i * 5});`,
+    async (p, invoke) => {
+      const r = await invoke(
+        button(name),
+        { type: "activate" },
+        { effect: { type: "navigation", url: `/landing/${i}?ok=1`, match: "path" }, timeout: 1000 },
+      );
+      ok(r);
+      eq(new URL(p.url()).pathname, `/landing/${i}`, "navigation race path");
+    },
+  );
+}
+for (let i = 1; i <= 5; i++) {
+  const name = `Ephemeral mutation ${i}`;
+  add(
+    `dispatch-replacement-${i}`,
+    "safety",
+    `<button>${name}</button>`,
+    `window.replacementHits=0;const b=document.querySelector('button');b.onpointerover=()=>{const n=b.cloneNode(true);n.onclick=()=>window.replacementHits++;b.replaceWith(n);};`,
+    async (p, invoke) => {
+      const r = await invoke(button(name), { type: "activate" });
+      fail(r, "PRAXIS_DISPATCH_FAILED");
+      truth(r.status === "inconclusive", "replacement outcome was not inconclusive", r);
+      truth(r.mutationOutcome === "unknown", "replacement mutation was not unknown", r);
+      truth(r.retry === "unsafe", "replacement retry was not unsafe", r);
+      truth(r.safeActions.includes("do_not_retry"), "replacement did not prohibit retry", r);
+      eq(await hits(p), 0, "original replacement dispatch");
+      eq(await p.evaluate(() => window.replacementHits), 0, "replacement target dispatch");
+    },
+  );
+}
+for (let i = 1; i <= 5; i++) {
+  const name = `Network commit ${i}`;
+  add(
+    `network-effect-${i}`,
+    "safety",
+    `<button>${name}</button>`,
+    `document.querySelector('button').onclick=()=>{window.hits++;fetch('/network/${i}',{method:'POST'});};`,
+    async (p, invoke) => {
+      const r = await invoke(
+        button(name),
+        { type: "activate" },
+        {
+          effect: {
+            type: "network_outcome",
+            urlPattern: `/network/${i}`,
+            method: "POST",
+            statusMin: 200,
+            statusMax: 299,
+          },
+          timeout: 1000,
+        },
+      );
+      ok(r);
+      eq(await hits(p), 1, "network dispatch");
+    },
+  );
+}
+for (let i = 1; i <= 5; i++) {
+  const name = `Pre-aborted command ${i}`;
+  add(
+    `pre-cancel-${i}`,
+    "safety",
+    `<button>${name}</button>`,
+    `document.querySelector('button').onclick=()=>window.hits++;`,
+    async (p, invoke) => {
+      const c = new AbortController();
+      c.abort();
+      const r = await invoke(button(name), { type: "activate" }, { signal: c.signal });
+      fail(r, "PRAXIS_CANCELLED");
+      eq(await hits(p), 0, "pre-cancel dispatch");
+    },
+  );
+}
 
-for(let i=1;i<=8;i++){const name=`Shadow action ${i}`;add(`open-shadow-${i}`,"hostile",`<div id="host"></div><output data-scry-readable>idle</output>`,`const root=document.querySelector('#host').attachShadow({mode:'open'});const b=document.createElement('button');b.textContent='${name}';b.onclick=()=>{window.hits++;document.querySelector('output').textContent='shadow-done';};root.append(b);`,async(p,invoke)=>{const r=await invoke(button(name),{type:"activate"});ok(r);eq(await hits(p),1,"open shadow dispatch");});}
-for(let i=1;i<=8;i++){const name=`Malformed command ${i}`;add(`malformed-control-${i}`,"hostile",`<div class="outer"><span><div tabindex="0" title="${name}"><em>${name}</em></div></span></div><output data-scry-readable>idle</output>`,`document.querySelector('[tabindex]').onclick=()=>{window.hits++;document.querySelector('output').textContent='done';};`,async(p,invoke)=>{const r=await invoke({...base(name,["pointer_activatable"]),preferredEvidence:{roles:[],names:[name],labels:[],descriptions:[],placeholders:[],inputTypes:[]}},{type:"activate"});ok(r);eq(await hits(p),1,"malformed dispatch");});}
-for(let i=1;i<=4;i++){const name=`Framed command ${i}`;add(`iframe-target-${i}`,"hostile",`<iframe src="/frame/${i}"></iframe><output data-scry-readable>idle</output>`,`addEventListener('message',event=>{if(event.data!=='frame-hit-${i}')return;window.hits++;document.querySelector('output').textContent='frame-done';});`,async(p,invoke)=>{const r=await invoke(button(name),{type:"activate"},{effect:valueEffect("frame-done"),timeout:1200});ok(r);eq(await hits(p),1,"iframe dispatch");});}
-for(let i=1;i<=4;i++){const name=`Canvas action ${i}`;add(`canvas-target-${i}`,"hostile",`<canvas width="320" height="100"></canvas><output data-scry-readable>idle</output>`,`const c=document.querySelector('canvas'),x=c.getContext('2d');x.font='24px sans-serif';x.fillText('${name}',25,55);c.onclick=()=>{window.hits++;document.querySelector('output').textContent='canvas-done';};`,async(p,invoke)=>{const intent={...base(name,["coordinate_action"]),preferredEvidence:{roles:[],names:[],labels:[],descriptions:[],placeholders:[],inputTypes:[],visual:{sources:["canvas"],expectedText:name,protectedUse:false}},confidence:{requiredFamilies:["visual" as const],minimumFamilyCount:1}};const r=await invoke(intent,{type:"activate"},{timeout:3000});ok(r);eq(await hits(p),1,"canvas dispatch");});}
-for(let i=1;i<=4;i++){const name=`Icon command ${i}`;add(`icon-target-${i}`,"hostile",`<button aria-label="${name}"><svg aria-hidden="true" width="30" height="30"><path d="M4 15h22M15 4v22" stroke="black"/></svg></button><output data-scry-readable>idle</output>`,`document.querySelector('button').onclick=()=>window.hits++;`,async(p,invoke)=>{const r=await invoke(button(name),{type:"activate"});ok(r);eq(await hits(p),1,"icon dispatch");});}
-for(let i=1;i<=4;i++){const name=`Obstructed command ${i}`;add(`obstructed-target-${i}`,"hostile",`<div style="position:relative"><button>${name}</button><div style="position:absolute;inset:0;z-index:3"></div></div>`,`document.querySelector('button').onclick=()=>window.hits++;`,async(p,invoke)=>{const r=await invoke(button(name),{type:"activate"},{timeout:500});truth(r.status!=="succeeded","obstructed target succeeded",r);eq(await hits(p),0,"obstructed dispatch");});}
-for(let i=1;i<=4;i++){const name=`Deep delayed command ${i}`;add(`deep-delayed-${i}`,"hostile",`<main><div><section><article id="mount">pending</article></section></div></main>`,`setTimeout(()=>{document.querySelector('#mount').innerHTML='<div><span><button>${name}</button></span></div>';document.querySelector('button').onclick=()=>window.hits++;},${100+i*30});`,async(p,invoke)=>{const r=await invoke(button(name),{type:"activate"},{timeout:1400});ok(r);eq(await hits(p),1,"deep delayed dispatch");});}
-for(let i=1;i<=4;i++){const name=`Styled pseudo button ${i}`;add(`styled-div-${i}`,"hostile",`<div role="button" tabindex="0" aria-label="${name}" style="display:inline-block;padding:14px;background:#246;color:white">${name}</div>`,`document.querySelector('[role=button]').onclick=()=>window.hits++;`,async(p,invoke)=>{const r=await invoke(button(name),{type:"activate"});ok(r);eq(await hits(p),1,"styled div dispatch");});}
+for (let i = 1; i <= 8; i++) {
+  const name = `Shadow action ${i}`;
+  add(
+    `open-shadow-${i}`,
+    "hostile",
+    `<div id="host"></div><output data-scry-readable>idle</output>`,
+    `const root=document.querySelector('#host').attachShadow({mode:'open'});const b=document.createElement('button');b.textContent='${name}';b.onclick=()=>{window.hits++;document.querySelector('output').textContent='shadow-done';};root.append(b);`,
+    async (p, invoke) => {
+      const r = await invoke(button(name), { type: "activate" });
+      ok(r);
+      eq(await hits(p), 1, "open shadow dispatch");
+    },
+  );
+}
+for (let i = 1; i <= 8; i++) {
+  const name = `Malformed command ${i}`;
+  add(
+    `malformed-control-${i}`,
+    "hostile",
+    `<div class="outer"><span><div tabindex="0" title="${name}"><em>${name}</em></div></span></div><output data-scry-readable>idle</output>`,
+    `document.querySelector('[tabindex]').onclick=()=>{window.hits++;document.querySelector('output').textContent='done';};`,
+    async (p, invoke) => {
+      const r = await invoke(
+        {
+          ...base(name, ["pointer_activatable"]),
+          preferredEvidence: {
+            roles: [],
+            names: [name],
+            labels: [],
+            descriptions: [],
+            placeholders: [],
+            inputTypes: [],
+          },
+        },
+        { type: "activate" },
+      );
+      ok(r);
+      eq(await hits(p), 1, "malformed dispatch");
+    },
+  );
+}
+for (let i = 1; i <= 4; i++) {
+  const name = `Framed command ${i}`;
+  add(
+    `iframe-target-${i}`,
+    "hostile",
+    `<iframe src="/frame/${i}"></iframe><output data-scry-readable>idle</output>`,
+    `addEventListener('message',event=>{if(event.data!=='frame-hit-${i}')return;window.hits++;document.querySelector('output').textContent='frame-done';});`,
+    async (p, invoke) => {
+      const r = await invoke(
+        button(name),
+        { type: "activate" },
+        { effect: valueEffect("frame-done"), timeout: 1200 },
+      );
+      ok(r);
+      eq(await hits(p), 1, "iframe dispatch");
+    },
+  );
+}
+for (let i = 1; i <= 4; i++) {
+  const name = `Canvas action ${i}`;
+  add(
+    `canvas-target-${i}`,
+    "hostile",
+    `<canvas width="320" height="100"></canvas><output data-scry-readable>idle</output>`,
+    `const c=document.querySelector('canvas'),x=c.getContext('2d');x.font='24px sans-serif';x.fillText('${name}',25,55);c.onclick=()=>{window.hits++;document.querySelector('output').textContent='canvas-done';};`,
+    async (p, invoke) => {
+      const intent = {
+        ...base(name, ["coordinate_action"]),
+        preferredEvidence: {
+          roles: [],
+          names: [],
+          labels: [],
+          descriptions: [],
+          placeholders: [],
+          inputTypes: [],
+          visual: { sources: ["canvas"], expectedText: name, protectedUse: false },
+        },
+        confidence: { requiredFamilies: ["visual" as const], minimumFamilyCount: 1 },
+      };
+      const r = await invoke(intent, { type: "activate" }, { timeout: 3000 });
+      ok(r);
+      eq(await hits(p), 1, "canvas dispatch");
+    },
+  );
+}
+for (let i = 1; i <= 4; i++) {
+  const name = `Icon command ${i}`;
+  add(
+    `icon-target-${i}`,
+    "hostile",
+    `<button aria-label="${name}"><svg aria-hidden="true" width="30" height="30"><path d="M4 15h22M15 4v22" stroke="black"/></svg></button><output data-scry-readable>idle</output>`,
+    `document.querySelector('button').onclick=()=>window.hits++;`,
+    async (p, invoke) => {
+      const r = await invoke(button(name), { type: "activate" });
+      ok(r);
+      eq(await hits(p), 1, "icon dispatch");
+    },
+  );
+}
+for (let i = 1; i <= 4; i++) {
+  const name = `Obstructed command ${i}`;
+  add(
+    `obstructed-target-${i}`,
+    "hostile",
+    `<div style="position:relative"><button>${name}</button><div style="position:absolute;inset:0;z-index:3"></div></div>`,
+    `document.querySelector('button').onclick=()=>window.hits++;`,
+    async (p, invoke) => {
+      const r = await invoke(button(name), { type: "activate" }, { timeout: 500 });
+      truth(r.status !== "succeeded", "obstructed target succeeded", r);
+      eq(await hits(p), 0, "obstructed dispatch");
+    },
+  );
+}
+for (let i = 1; i <= 4; i++) {
+  const name = `Deep delayed command ${i}`;
+  add(
+    `deep-delayed-${i}`,
+    "hostile",
+    `<main><div><section><article id="mount">pending</article></section></div></main>`,
+    `setTimeout(()=>{document.querySelector('#mount').innerHTML='<div><span><button>${name}</button></span></div>';document.querySelector('button').onclick=()=>window.hits++;},${100 + i * 30});`,
+    async (p, invoke) => {
+      const r = await invoke(button(name), { type: "activate" }, { timeout: 1400 });
+      ok(r);
+      eq(await hits(p), 1, "deep delayed dispatch");
+    },
+  );
+}
+for (let i = 1; i <= 4; i++) {
+  const name = `Styled pseudo button ${i}`;
+  add(
+    `styled-div-${i}`,
+    "hostile",
+    `<div role="button" tabindex="0" aria-label="${name}" style="display:inline-block;padding:14px;background:#246;color:white">${name}</div>`,
+    `document.querySelector('[role=button]').onclick=()=>window.hits++;`,
+    async (p, invoke) => {
+      const r = await invoke(button(name), { type: "activate" });
+      ok(r);
+      eq(await hits(p), 1, "styled div dispatch");
+    },
+  );
+}
 
-async function main(){check(scenarios.length===80,`expected 80 scenarios, got ${scenarios.length}`);const routes=new Map(scenarios.map(s=>[`/case/${s.id}`,s]));const server=createServer((req,res)=>{const u=new URL(req.url??"/","http://local");if(u.pathname.startsWith('/network/')){res.writeHead(204);res.end();return;}if(u.pathname.startsWith('/landing/')){res.writeHead(200,{"content-type":"text/html"});res.end(doc("landing","<h1>Landing</h1>",""));return;}if(u.pathname.startsWith('/frame/')){const id=Number(u.pathname.split('/').pop());res.writeHead(200,{"content-type":"text/html","cache-control":"no-store"});res.end(doc(`frame-${id}`,`<button>Framed command ${id}</button>`,`document.querySelector('button').onclick=()=>parent.postMessage('frame-hit-${id}','*');`));return;}const s=routes.get(u.pathname);if(!s){res.writeHead(404);res.end();return;}res.writeHead(200,{"content-type":"text/html","cache-control":"no-store"});res.end(doc(s.id,s.html,s.script));});await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});const a=server.address();if(!a||typeof a==='string')throw new Error('server');const origin=`http://127.0.0.1:${a.port}`;const browser=await chromium.launch({headless:true,channel:process.env.SCRY_BROWSER_CHANNEL??'chrome'});const results:Result[]=[];let ordinal=0;try{for(const s of scenarios){const started=performance.now(),context=await browser.newContext(),p=await context.newPage();let last:PraxisResult|undefined;try{await p.goto(`${origin}/case/${s.id}`);const invoke:Invoke=async(intent,operation,o={})=>last=await executePraxisConsumer({page:p,intent,operation,expectedEffect:o.effect,signal:o.signal??new AbortController().signal,context:{channel:'action',ordinal:++ordinal,allowedOrigins:[origin],timeoutMs:o.timeout??1500}});await s.run(p,invoke,origin);results.push({id:s.id,campaign:s.campaign,status:'passed',durationMs:performance.now()-started});}catch(e){results.push({id:s.id,campaign:s.campaign,status:'failed',durationMs:performance.now()-started,diagnostics:{error:diag(e),result:last,state:await state(p).catch(()=>null)}});}finally{await context.close();}}const endurance=await runEndurance(browser,origin,()=>++ordinal);const report={schemaVersion:1,campaign:'praxis-resilience',environment:{realHttp:true,realChromium:true,persistence:false},counts:{total:results.length,passed:results.filter(x=>x.status==='passed').length,failed:results.filter(x=>x.status==='failed').length,skipped:0},campaigns:{safety:summary(results,'safety'),hostile:summary(results,'hostile')},endurance,scenarios:results};process.stdout.write(JSON.stringify(report,null,2)+'\n');process.exit(report.counts.failed||!endurance.passed?1:0);}finally{await browser.close();await new Promise<void>(r=>server.close(()=>r()));}}
-async function runEndurance(browser:Awaited<ReturnType<typeof chromium.launch>>,origin:string,next:()=>number){const context=await browser.newContext(),p=await context.newPage();await p.goto(`${origin}/case/concurrent-mutations-1`);const before=process.memoryUsage().rss,latencies:number[]=[],fingerprints=new Set<string>();let failures=0;for(let i=0;i<100;i++){const started=performance.now();const r=await executePraxisConsumer({page:p,intent:button('Commit lane A1',{kind:'region',name:'Lane A1'}),operation:{type:'activate'},signal:new AbortController().signal,context:{channel:'action',ordinal:next(),allowedOrigins:[origin],timeoutMs:1000}});latencies.push(performance.now()-started);if(r.status==='succeeded')fingerprints.add(r.resolution.target.fingerprint);else failures++;}const count=await hits(p),after=process.memoryUsage().rss;await context.close();const growth=(after-before)/Math.max(1,before);return{iterations:100,failures,dispatchCount:count,uniqueFingerprints:fingerprints.size,memoryGrowthRatio:growth,p50:percentile(latencies,.5),p95:percentile(latencies,.95),passed:failures===0&&count===100&&fingerprints.size===1&&growth<=.30};}
-function doc(title:string,body:string,script:string){return`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>body{font:16px system-ui;margin:24px}button,[role=button],[tabindex],canvas{font:inherit;padding:9px;margin:8px;min-width:150px}section{padding:10px;border:1px solid #aaa}</style></head><body>${body}<script>window.hits=0;window.wrong=0;${script}</script></body></html>`;}
-function base(concept:string,caps:InteractionTargetIntent['requiredCapabilities'],scope:InteractionTargetIntent['scope']={kind:'page'}):InteractionTargetIntent{return{concept,requiredCapabilities:caps,preferredEvidence:{roles:[],names:[concept],labels:[concept],descriptions:[],placeholders:[],inputTypes:[]},scope,relations:[],prohibited:['hidden','disabled'],risk:'ordinary',confidence:{requiredFamilies:[]}};}
-function button(name:string,scope?:InteractionTargetIntent['scope']){return{...base(name,['pointer_activatable'],scope),preferredEvidence:{roles:['button' as const],names:[name],labels:[],descriptions:[],placeholders:[],inputTypes:[]}};}
-function read(expected:string){return{...base(expected,['readable_value']),risk:'read_only' as const,preferredEvidence:{roles:['value' as const],names:[],labels:[],descriptions:[],placeholders:[],inputTypes:[],expectedText:expected}};}
-function valueEffect(expected:string):ExpectedEffect{return{type:'value_change',target:read(expected),expected};}
-function ok(r:PraxisResult):asserts r is Extract<PraxisResult,{status:'succeeded'}>{check(r.status==='succeeded','expected success',r);}function fail(r:PraxisResult,code:string){check(r.status!=='succeeded',`expected ${code}`,r);eq(r.code,code,'failure code');}
-function check(v:unknown,m:string,e:unknown={}){if(!v)throw new CheckError(m,e);}function truth(v:unknown,m:string,e:unknown={}){check(v,m,e);}function eq(a:unknown,b:unknown,m:string){if(!Object.is(a,b))throw new CheckError(`${m}: expected ${String(b)}, got ${String(a)}`);}async function hits(p:Page){return p.evaluate(()=>Number((window as unknown as Record<string,unknown>).hits??0));}async function state(p:Page){return p.evaluate(()=>({url:location.href,text:document.body.innerText,hits:Number((window as unknown as Record<string,unknown>).hits??0)}));}function diag(e:unknown){return e instanceof CheckError?{message:e.message,evidence:e.evidence}:e instanceof Error?{name:e.name,message:e.message}:String(e);}function summary(r:Result[],c:string){const x=r.filter(v=>v.campaign===c);return{total:x.length,passed:x.filter(v=>v.status==='passed').length,failed:x.filter(v=>v.status==='failed').length};}function percentile(v:number[],q:number){const s=[...v].sort((a,b)=>a-b);return s[Math.min(s.length-1,Math.floor(s.length*q))]??0;}
-(process.stdout as typeof process.stdout & { _handle?: { setBlocking?: (value:boolean)=>void } })._handle?.setBlocking?.(true);
+async function main() {
+  check(scenarios.length === 80, `expected 80 scenarios, got ${scenarios.length}`);
+  const routes = new Map(scenarios.map((s) => [`/case/${s.id}`, s]));
+  const server = createServer((req, res) => {
+    const u = new URL(req.url ?? "/", "http://local");
+    if (u.pathname.startsWith("/network/")) {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    if (u.pathname.startsWith("/landing/")) {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(doc("landing", "<h1>Landing</h1>", ""));
+      return;
+    }
+    if (u.pathname.startsWith("/frame/")) {
+      const id = Number(u.pathname.split("/").pop());
+      res.writeHead(200, { "content-type": "text/html", "cache-control": "no-store" });
+      res.end(
+        doc(
+          `frame-${id}`,
+          `<button>Framed command ${id}</button>`,
+          `document.querySelector('button').onclick=()=>parent.postMessage('frame-hit-${id}','*');`,
+        ),
+      );
+      return;
+    }
+    const s = routes.get(u.pathname);
+    if (!s) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    res.writeHead(200, { "content-type": "text/html", "cache-control": "no-store" });
+    res.end(doc(s.id, s.html, s.script));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const a = server.address();
+  if (!a || typeof a === "string") throw new Error("server");
+  const origin = `http://127.0.0.1:${a.port}`;
+  const browser = await chromium.launch({
+    headless: true,
+    channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+  });
+  const results: Result[] = [];
+  let ordinal = 0;
+  try {
+    for (const s of scenarios) {
+      const started = performance.now(),
+        context = await browser.newContext(),
+        p = await context.newPage();
+      let last: PraxisResult | undefined;
+      try {
+        await p.goto(`${origin}/case/${s.id}`);
+        const invoke: Invoke = async (intent, operation, o = {}) =>
+          (last = await executePraxisConsumer({
+            page: p,
+            intent,
+            operation,
+            expectedEffect: o.effect,
+            signal: o.signal ?? new AbortController().signal,
+            context: {
+              channel: "action",
+              ordinal: ++ordinal,
+              allowedOrigins: [origin],
+              timeoutMs: o.timeout ?? 1500,
+            },
+          }));
+        await s.run(p, invoke, origin);
+        results.push({
+          id: s.id,
+          campaign: s.campaign,
+          status: "passed",
+          durationMs: performance.now() - started,
+        });
+      } catch (e) {
+        results.push({
+          id: s.id,
+          campaign: s.campaign,
+          status: "failed",
+          durationMs: performance.now() - started,
+          diagnostics: { error: diag(e), result: last, state: await state(p).catch(() => null) },
+        });
+      } finally {
+        await context.close();
+      }
+    }
+    const endurance = await runEndurance(browser, origin, () => ++ordinal);
+    const report = {
+      schemaVersion: 1,
+      campaign: "praxis-resilience",
+      environment: { realHttp: true, realChromium: true, persistence: false },
+      counts: {
+        total: results.length,
+        passed: results.filter((x) => x.status === "passed").length,
+        failed: results.filter((x) => x.status === "failed").length,
+        skipped: 0,
+      },
+      campaigns: { safety: summary(results, "safety"), hostile: summary(results, "hostile") },
+      endurance,
+      scenarios: results,
+    };
+    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    process.exit(report.counts.failed || !endurance.passed ? 1 : 0);
+  } finally {
+    await browser.close();
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+async function runEndurance(
+  browser: Awaited<ReturnType<typeof chromium.launch>>,
+  origin: string,
+  next: () => number,
+) {
+  const context = await browser.newContext(),
+    p = await context.newPage();
+  await p.goto(`${origin}/case/concurrent-mutations-1`);
+  const before = process.memoryUsage().rss,
+    latencies: number[] = [],
+    fingerprints = new Set<string>();
+  let failures = 0;
+  for (let i = 0; i < 100; i++) {
+    const started = performance.now();
+    const r = await executePraxisConsumer({
+      page: p,
+      intent: button("Commit lane A1", { kind: "region", name: "Lane A1" }),
+      operation: { type: "activate" },
+      signal: new AbortController().signal,
+      context: { channel: "action", ordinal: next(), allowedOrigins: [origin], timeoutMs: 1000 },
+    });
+    latencies.push(performance.now() - started);
+    if (r.status === "succeeded") fingerprints.add(r.resolution.target.fingerprint);
+    else failures++;
+  }
+  const count = await hits(p),
+    after = process.memoryUsage().rss;
+  await context.close();
+  const growth = (after - before) / Math.max(1, before);
+  return {
+    iterations: 100,
+    failures,
+    dispatchCount: count,
+    uniqueFingerprints: fingerprints.size,
+    memoryGrowthRatio: growth,
+    p50: percentile(latencies, 0.5),
+    p95: percentile(latencies, 0.95),
+    passed: failures === 0 && count === 100 && fingerprints.size === 1 && growth <= 0.3,
+  };
+}
+function doc(title: string, body: string, script: string) {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>body{font:16px system-ui;margin:24px}button,[role=button],[tabindex],canvas{font:inherit;padding:9px;margin:8px;min-width:150px}section{padding:10px;border:1px solid #aaa}</style></head><body>${body}<script>window.hits=0;window.wrong=0;${script}</script></body></html>`;
+}
+function base(
+  concept: string,
+  caps: InteractionTargetIntent["requiredCapabilities"],
+  scope: InteractionTargetIntent["scope"] = { kind: "page" },
+): InteractionTargetIntent {
+  return {
+    concept,
+    requiredCapabilities: caps,
+    preferredEvidence: {
+      roles: [],
+      names: [concept],
+      labels: [concept],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+    },
+    scope,
+    relations: [],
+    prohibited: ["hidden", "disabled"],
+    risk: "ordinary",
+    confidence: { requiredFamilies: [] },
+  };
+}
+function button(name: string, scope?: InteractionTargetIntent["scope"]) {
+  return {
+    ...base(name, ["pointer_activatable"], scope),
+    preferredEvidence: {
+      roles: ["button" as const],
+      names: [name],
+      labels: [],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+    },
+  };
+}
+function read(expected: string) {
+  return {
+    ...base(expected, ["readable_value"]),
+    risk: "read_only" as const,
+    preferredEvidence: {
+      roles: ["value" as const],
+      names: [],
+      labels: [],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+      expectedText: expected,
+    },
+  };
+}
+function valueEffect(expected: string): ExpectedEffect {
+  return { type: "value_change", target: read(expected), expected };
+}
+function ok(r: PraxisResult): asserts r is Extract<PraxisResult, { status: "succeeded" }> {
+  check(r.status === "succeeded", "expected success", r);
+}
+function fail(r: PraxisResult, code: string) {
+  check(r.status !== "succeeded", `expected ${code}`, r);
+  eq(r.code, code, "failure code");
+}
+function check(v: unknown, m: string, e: unknown = {}) {
+  if (!v) throw new CheckError(m, e);
+}
+function truth(v: unknown, m: string, e: unknown = {}) {
+  check(v, m, e);
+}
+function eq(a: unknown, b: unknown, m: string) {
+  if (!Object.is(a, b)) throw new CheckError(`${m}: expected ${String(b)}, got ${String(a)}`);
+}
+async function hits(p: Page) {
+  return p.evaluate(() => Number((window as unknown as Record<string, unknown>).hits ?? 0));
+}
+async function state(p: Page) {
+  return p.evaluate(() => ({
+    url: location.href,
+    text: document.body.innerText,
+    hits: Number((window as unknown as Record<string, unknown>).hits ?? 0),
+  }));
+}
+function diag(e: unknown) {
+  return e instanceof CheckError
+    ? { message: e.message, evidence: e.evidence }
+    : e instanceof Error
+      ? { name: e.name, message: e.message }
+      : String(e);
+}
+function summary(r: Result[], c: string) {
+  const x = r.filter((v) => v.campaign === c);
+  return {
+    total: x.length,
+    passed: x.filter((v) => v.status === "passed").length,
+    failed: x.filter((v) => v.status === "failed").length,
+  };
+}
+function percentile(v: number[], q: number) {
+  const s = [...v].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.floor(s.length * q))] ?? 0;
+}
+(
+  process.stdout as typeof process.stdout & { _handle?: { setBlocking?: (value: boolean) => void } }
+)._handle?.setBlocking?.(true);
 await main();

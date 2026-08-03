@@ -1,10 +1,4 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Inject,
-  Injectable,
-  SetMetadata,
-} from "@nestjs/common";
+import { CanActivate, ExecutionContext, Inject, Injectable, SetMetadata } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 
 import { AuthService } from "./auth.service.js";
@@ -31,9 +25,7 @@ export class AuthGuard implements CanActivate {
     }
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const rawAuthorization = request.headers.authorization;
-    const authorization = Array.isArray(rawAuthorization)
-      ? rawAuthorization[0]
-      : rawAuthorization;
+    const authorization = Array.isArray(rawAuthorization) ? rawAuthorization[0] : rawAuthorization;
     request.principal = await this.auth.authenticate(authorization);
     return true;
   }

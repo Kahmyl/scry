@@ -15,14 +15,14 @@ Milestones 0 and 1 establish the accepted baseline and internal transaction skel
 
 ## Environment
 
-| Component | Recorded value |
-|---|---|
-| Operating system | Darwin 25.2.0 arm64 |
-| Node.js | 22.14.0 |
-| pnpm | 10.29.3 |
-| Playwright | 1.62.0, pinned by `@scry/executor` |
-| Chrome | 150.0.7871.187 |
-| Browser channel | `SCRY_BROWSER_CHANNEL`, default `chrome` |
+| Component        | Recorded value                           |
+| ---------------- | ---------------------------------------- |
+| Operating system | Darwin 25.2.0 arm64                      |
+| Node.js          | 22.14.0                                  |
+| pnpm             | 10.29.3                                  |
+| Playwright       | 1.62.0, pinned by `@scry/executor`       |
+| Chrome           | 150.0.7871.187                           |
+| Browser channel  | `SCRY_BROWSER_CHANNEL`, default `chrome` |
 
 Browser verification requires an environment that can bind local fixture servers to `127.0.0.1`, launch the configured Chrome channel, and grant clipboard permissions to the fixture origin.
 

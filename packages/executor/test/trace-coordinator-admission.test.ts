@@ -11,13 +11,27 @@ describe("TraceCoordinator admission", () => {
     let tracePath = "";
     const tracing = {
       start: vi.fn(async () => undefined),
-      stop: vi.fn(async ({ path: target }: { path: string }) => { tracePath = target; await writeFile(target, zipSync({ "trace.trace": Buffer.from("unknown protected material") })); }),
+      stop: vi.fn(async ({ path: target }: { path: string }) => {
+        tracePath = target;
+        await writeFile(
+          target,
+          zipSync({ "trace.trace": Buffer.from("unknown protected material") }),
+        );
+      }),
     };
-    const coordinator = new TraceCoordinator({ context: { tracing } as never, outputDirectory: root, sanitize: async () => undefined });
+    const coordinator = new TraceCoordinator({
+      context: { tracing } as never,
+      outputDirectory: root,
+      sanitize: async () => undefined,
+    });
     await coordinator.start("run_started");
     await coordinator.finalize();
     const [artifact] = coordinator.artifacts();
-    expect(artifact).toMatchObject({ kind: "trace", availability: "destroyed", reasonCode: "TRACE_CLASSIFICATION_UNPROVEN" });
+    expect(artifact).toMatchObject({
+      kind: "trace",
+      availability: "destroyed",
+      reasonCode: "TRACE_CLASSIFICATION_UNPROVEN",
+    });
     await expect(readFile(tracePath)).rejects.toBeDefined();
   });
 });

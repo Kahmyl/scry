@@ -15,13 +15,18 @@ describe("Veil schema migration manifest", () => {
   it("recognizes the preferences-only fingerprint and applies guarded retention", async () => {
     const migrate = await readFile(new URL("scripts/migrate.ts", root), "utf8");
     expect(migrate).toContain("preferencesFingerprint");
-    expect(migrate).toContain("preferencesFingerprint, previousVeilFullFingerprint].includes(installedFingerprint)");
+    expect(migrate).toContain(
+      "preferencesFingerprint, previousVeilFullFingerprint].includes(installedFingerprint)",
+    );
     expect(migrate).toContain("await client.query(veilArtifactRetention)");
     expect(migrate).toContain("installedFingerprint !== preferencesFingerprint");
   });
 
   it("includes every Veil migration in both fingerprint commands", async () => {
-    for (const path of ["../../../scripts/schema-fingerprint.mjs", "../../../scripts/verify-release-fingerprint.mjs"]) {
+    for (const path of [
+      "../../../scripts/schema-fingerprint.mjs",
+      "../../../scripts/verify-release-fingerprint.mjs",
+    ]) {
       const source = await readFile(new URL(path, import.meta.url), "utf8");
       expect(source).toContain("veil-observation-preferences.sql");
       expect(source).toContain("veil-artifact-retention.sql");
@@ -29,7 +34,10 @@ describe("Veil schema migration manifest", () => {
   });
 
   it("keeps the retention upgrade repeat-safe", async () => {
-    const retention = await readFile(new URL("migrations/veil-artifact-retention.sql", root), "utf8");
+    const retention = await readFile(
+      new URL("migrations/veil-artifact-retention.sql", root),
+      "utf8",
+    );
     expect(retention.match(/ADD COLUMN IF NOT EXISTS/g)?.length).toBe(6);
     expect(retention).toContain("CREATE INDEX IF NOT EXISTS artifacts_retention_due_idx");
   });

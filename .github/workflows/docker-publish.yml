@@ -43,6 +43,7 @@ jobs:
           pnpm verify:playwright
           pnpm verify:praxis-change-gate
           pnpm verify:veil-change-gate
+          pnpm verify:subsystem-boundaries
           pnpm verify:veil-performance
           pnpm verify:veil-release-transition
           pnpm typecheck

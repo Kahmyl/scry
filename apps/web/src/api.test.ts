@@ -26,9 +26,7 @@ describe("dashboard API client", () => {
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    await expect(post("/plan-validations", { plan: {} })).rejects.toThrow(
-      "Plan validation failed",
-    );
+    await expect(post("/plan-validations", { plan: {} })).rejects.toThrow("Plan validation failed");
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/plan-validations",
       expect.objectContaining({ method: "POST", body: '{"plan":{}}' }),

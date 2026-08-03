@@ -16,6 +16,7 @@
     "verify:privacy-foundation": "node scripts/verify-privacy-foundation.mjs",
     "verify:playwright": "node scripts/verify-playwright-version.mjs",
     "verify:agent-skills": "node scripts/verify-agent-skills.mjs",
+    "verify:subsystem-boundaries": "node scripts/verify-subsystem-boundaries.mjs",
     "verify:praxis-inventory": "node scripts/verify-praxis-interaction-inventory.mjs",
     "verify:praxis-change-gate": "node scripts/verify-praxis-change-gate.mjs",
     "baseline:praxis": "node scripts/praxis-baseline.mjs",
@@ -39,11 +40,15 @@
     "verify:veil-release-transition": "node scripts/verify-veil-release-transition.mjs",
     "verify:veil-db-restore": "bash scripts/veil-db-snapshot-restore.sh",
     "verify:veil-rollback:docker": "bash scripts/qualify-veil-cross-schema-rollback.sh",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "analyze:decomposition": "node scripts/analyze-source-structure.mjs",
     "test": "pnpm --recursive test",
     "typecheck": "pnpm --recursive typecheck"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "prettier": "^3.6.2",
     "typescript": "^5.8.3",
     "vitest": "^4.0.15"
   }

@@ -10,6 +10,10 @@ on:
       - "packages/contracts/**"
       - "packages/executor/**"
       - "packages/policy/**"
+      - "packages/praxis/**"
+      - "packages/veil/**"
+      - "scripts/verify-subsystem-boundaries.mjs"
+      - "docs/decisions/0007-praxis-veil-package-boundaries.md"
       - "scripts/verify-praxis-*.mjs"
       - "docs/architecture/praxis-*.md"
       - "docs/architecture/praxis-*.json"
@@ -24,6 +28,10 @@ on:
       - "packages/contracts/**"
       - "packages/executor/**"
       - "packages/policy/**"
+      - "packages/praxis/**"
+      - "packages/veil/**"
+      - "scripts/verify-subsystem-boundaries.mjs"
+      - "docs/decisions/0007-praxis-veil-package-boundaries.md"
       - "scripts/verify-praxis-*.mjs"
       - "docs/architecture/praxis-*.md"
       - "docs/architecture/praxis-*.json"
@@ -69,6 +77,7 @@ jobs:
           pnpm verify:praxis-inventory
           pnpm verify:praxis-performance
           pnpm verify:privacy-foundation
+          pnpm verify:subsystem-boundaries
 
       - name: Prepare campaign evidence
         run: mkdir -p artifacts/praxis

@@ -28,7 +28,9 @@ export class FlowController {
 
   @Get("capabilities")
   @Public()
-  capabilities() { return this.core.capabilities(); }
+  capabilities() {
+    return this.core.capabilities();
+  }
 
   @Get("ready")
   @Public()
@@ -42,18 +44,26 @@ export class FlowController {
   validate(
     @CurrentPrincipal() principal: Principal,
     @Body(new ZodValidationPipe(validatePlanSchema)) input: ValidatePlanInput,
-  ) { return this.core.validate(principal, input); }
+  ) {
+    return this.core.validate(principal, input);
+  }
 
   @Post("projects/:projectId/flows")
   createFlow(
     @Param("projectId") projectId: string,
     @CurrentPrincipal() principal: Principal,
     @Body(new ZodValidationPipe(createFlowSchema)) input: CreateFlowInput,
-  ) { return this.core.createFlow(principal, projectId, input); }
+  ) {
+    return this.core.createFlow(principal, projectId, input);
+  }
 
   @Get("projects/:projectId/flows")
-  listFlows(@Param("projectId") projectId: string,@Query("visibility") visibility:string|undefined,@CurrentPrincipal() principal: Principal) {
-    return this.core.listFlows(principal,projectId,visibility??"reusable");
+  listFlows(
+    @Param("projectId") projectId: string,
+    @Query("visibility") visibility: string | undefined,
+    @CurrentPrincipal() principal: Principal,
+  ) {
+    return this.core.listFlows(principal, projectId, visibility ?? "reusable");
   }
 
   @Post("flows/:flowId/revisions")
@@ -61,14 +71,18 @@ export class FlowController {
     @Param("flowId") flowId: string,
     @CurrentPrincipal() principal: Principal,
     @Body(new ZodValidationPipe(createFlowRevisionSchema)) input: CreateFlowRevisionInput,
-  ) { return this.core.reviseFlow(principal, flowId, input); }
+  ) {
+    return this.core.reviseFlow(principal, flowId, input);
+  }
 
   @Post("flows/:flowId/calibration-bindings")
   bindCalibration(
     @Param("flowId") flowId: string,
     @CurrentPrincipal() principal: Principal,
     @Body(new ZodValidationPipe(bindCalibrationSchema)) input: BindCalibrationInput,
-  ) { return this.core.bindCalibration(principal, flowId, input); }
+  ) {
+    return this.core.bindCalibration(principal, flowId, input);
+  }
 
   @Post("projects/:projectId/runs")
   async createRun(
@@ -80,5 +94,4 @@ export class FlowController {
     await this.queue.dispatchPending();
     return run;
   }
-
 }

@@ -1,9 +1,6 @@
 {
   "schemaVersion": 1,
-  "command": [
-    "pnpm",
-    "campaign:praxis:public-apps"
-  ],
+  "command": ["pnpm", "campaign:praxis:public-apps"],
   "startedAt": "2026-08-03T11:49:53.294Z",
   "completedAt": "2026-08-03T11:50:58.481Z",
   "durationMs": 65187,

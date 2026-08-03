@@ -18,9 +18,7 @@ export class AuthService {
     ? createRemoteJWKSet(new URL(`${this.issuer}/.well-known/jwks.json`))
     : undefined;
 
-  constructor(
-    @Inject(IdentityRepository) private readonly identities: IdentityRepository,
-  ) {}
+  constructor(@Inject(IdentityRepository) private readonly identities: IdentityRepository) {}
 
   async authenticate(authorization: string | undefined): Promise<Principal> {
     const token = bearerToken(authorization);
@@ -40,9 +38,7 @@ export class AuthService {
     }
 
     if (!this.jwks || !this.issuer) {
-      throw new ServiceUnavailableException(
-        "Supabase authentication is not configured on the API",
-      );
+      throw new ServiceUnavailableException("Supabase authentication is not configured on the API");
     }
 
     try {
@@ -74,8 +70,5 @@ function normalizedUrl(value: string | undefined) {
 function secureEqual(left: string, right: string) {
   const leftBuffer = Buffer.from(left);
   const rightBuffer = Buffer.from(right);
-  return (
-    leftBuffer.length === rightBuffer.length &&
-    timingSafeEqual(leftBuffer, rightBuffer)
-  );
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }

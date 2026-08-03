@@ -29,6 +29,8 @@
     "@scry/artifact": "workspace:*",
     "@scry/contracts": "workspace:*",
     "@scry/policy": "workspace:*",
+    "@scry/praxis": "workspace:*",
+    "@scry/veil": "workspace:*",
     "@tesseract.js-data/eng": "^1.0.0",
     "fflate": "^0.8.3",
     "playwright": "1.62.0",

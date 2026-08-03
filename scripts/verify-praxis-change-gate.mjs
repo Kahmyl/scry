@@ -24,19 +24,27 @@ const requiredCampaigns = [
 ];
 
 const failures = [];
-for (const trigger of requiredTriggers) if (!workflow.includes(trigger)) failures.push(`missing Praxis change trigger ${trigger}`);
+for (const trigger of requiredTriggers)
+  if (!workflow.includes(trigger)) failures.push(`missing Praxis change trigger ${trigger}`);
 for (const campaign of requiredCampaigns) {
   if (!workflow.includes(campaign)) failures.push(`change workflow does not run ${campaign}`);
   if (!publish.includes(campaign)) failures.push(`release workflow does not run ${campaign}`);
 }
-if (!workflow.includes("pull_request:") || !workflow.includes("push:")) failures.push("Praxis workflow must cover pull requests and main-branch pushes");
-if ((workflow.match(/uses: actions\/upload-artifact@v4/g) ?? []).length !== 2) failures.push("both campaign jobs must retain evidence");
+if (!workflow.includes("pull_request:") || !workflow.includes("push:"))
+  failures.push("Praxis workflow must cover pull requests and main-branch pushes");
+if ((workflow.match(/uses: actions\/upload-artifact@v4/g) ?? []).length !== 2)
+  failures.push("both campaign jobs must retain evidence");
 if (!workflow.includes("if: always()")) failures.push("campaign evidence must survive failed runs");
-if (!workflow.includes("SCRY_BROWSER_CHANNEL: chrome")) failures.push("campaigns must use the configured real Chrome channel");
+if (!workflow.includes("SCRY_BROWSER_CHANNEL: chrome"))
+  failures.push("campaigns must use the configured real Chrome channel");
 
 if (failures.length) {
-  console.error(`Praxis change gate verification failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
+  console.error(
+    `Praxis change gate verification failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`,
+  );
   process.exit(1);
 }
 
-console.log("Praxis change gate verified: relevant updates and Docker releases run all production and public campaigns.");
+console.log(
+  "Praxis change gate verified: relevant updates and Docker releases run all production and public campaigns.",
+);

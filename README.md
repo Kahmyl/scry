@@ -37,6 +37,7 @@ pnpm scry run examples/plans/signup.valid.json --channel chrome
 ```
 
 See [the Phase 1 checklist](docs/phases/phase-1-executor.md).
+
 ## Authentication
 
 See [apps/web/AUTH_SETUP.md](apps/web/AUTH_SETUP.md) for Supabase browser authentication, NestJS JWT verification, workspace authorization, and MCP service-token configuration.

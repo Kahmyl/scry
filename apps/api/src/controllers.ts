@@ -1,13 +1,4 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Inject,
-  Param,
-  Patch,
-  Post,
-} from "@nestjs/common";
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post } from "@nestjs/common";
 import {
   createEnvironmentSchema,
   createCredentialSchema,
@@ -34,7 +25,7 @@ import { CurrentPrincipal } from "./current-principal.decorator.js";
 import { McpTokenRepository } from "./mcp-token.repository.js";
 import { RunObservationService } from "./run-observation.service.js";
 import { ReleaseAdmissionService } from "./release-admission.service.js";
-import { VeilPreferencesService } from "./veil-preferences.service.js";
+import { VeilPreferencesService } from "./veil/preferences.service.js";
 
 @Controller("api/health")
 @Public()
@@ -55,18 +46,12 @@ export class McpTokensController {
   }
 
   @Post()
-  create(
-    @CurrentPrincipal() principal: Principal,
-    @Body() input: { name?: string },
-  ) {
+  create(@CurrentPrincipal() principal: Principal, @Body() input: { name?: string }) {
     return this.tokens.create(principal, input.name?.trim() || "MCP connection");
   }
 
   @Delete(":tokenId")
-  revoke(
-    @Param("tokenId") tokenId: string,
-    @CurrentPrincipal() principal: Principal,
-  ) {
+  revoke(@Param("tokenId") tokenId: string, @CurrentPrincipal() principal: Principal) {
     return this.tokens.revoke(principal, tokenId);
   }
 }
@@ -106,15 +91,15 @@ export class ProjectsController {
   }
 
   @Get(":projectId/credentials")
-  listCredentials(
-    @Param("projectId") projectId: string,
-    @CurrentPrincipal() principal: Principal,
-  ) {
+  listCredentials(@Param("projectId") projectId: string, @CurrentPrincipal() principal: Principal) {
     return this.repository.listCredentials(principal, projectId);
   }
 
   @Get(":projectId/credential-incidents")
-  listCredentialIncidents(@Param("projectId") projectId: string, @CurrentPrincipal() principal: Principal) {
+  listCredentialIncidents(
+    @Param("projectId") projectId: string,
+    @CurrentPrincipal() principal: Principal,
+  ) {
     return this.repository.listCredentialIncidents(principal, projectId);
   }
 
@@ -128,10 +113,7 @@ export class ProjectsController {
   }
 
   @Get(":projectId/runs")
-  listRuns(
-    @Param("projectId") projectId: string,
-    @CurrentPrincipal() principal: Principal,
-  ) {
+  listRuns(@Param("projectId") projectId: string, @CurrentPrincipal() principal: Principal) {
     return this.repository.listRuns(principal, projectId);
   }
 }
@@ -171,7 +153,8 @@ export class EnvironmentsController {
   validateCredentials(
     @Param("environmentId") environmentId: string,
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(validateCredentialReferencesSchema)) input: ValidateCredentialReferencesInput,
+    @Body(new ZodValidationPipe(validateCredentialReferencesSchema))
+    input: ValidateCredentialReferencesInput,
   ) {
     return this.repository.validateCredentialReferences(principal, environmentId, input);
   }
@@ -191,10 +174,7 @@ export class CredentialsController {
   }
 
   @Delete(":credentialId")
-  remove(
-    @Param("credentialId") credentialId: string,
-    @CurrentPrincipal() principal: Principal,
-  ) {
+  remove(@Param("credentialId") credentialId: string, @CurrentPrincipal() principal: Principal) {
     return this.repository.deleteCredential(principal, credentialId);
   }
 }

@@ -1,47 +1,389 @@
 import { createServer } from "node:http";
 import { chromium } from "playwright";
-import { VEIL_CONTRACT_VERSION, type VeilCollectorPhase, type VeilEvidenceChannel, type VeilLeaseRequest } from "@scry/contracts";
-import { compileVeilPolicy } from "@scry/policy";
-import { VeilAuthority } from "../src/veil-authority.js";
-import { VeilRuntimeSession, type VeilRuntimeCollector } from "../src/veil-runtime-session.js";
+import {
+  VEIL_CONTRACT_VERSION,
+  type VeilCollectorPhase,
+  type VeilEvidenceChannel,
+  type VeilLeaseRequest,
+} from "@scry/contracts";
+import { compileVeilPolicy } from "@scry/veil";
+import { VeilAuthority } from "@scry/veil";
+import { VeilRuntimeSession, type VeilRuntimeCollector } from "@scry/veil";
 
-type Outcome={id:string;category:string;status:"passed"|"failed";durationMs:number;diagnostics?:unknown};
-const channels:readonly VeilEvidenceChannel[]=["video","trace","screenshot","dom","accessibility","console","page_error","network","clipboard","download","event","report","metadata"];
-const categories=["native-control","aria","contenteditable","dom-attribute","console","canvas","svg"] as const;
-const cases=Array.from({length:100},(_,index)=>({id:`veil-${String(index+1).padStart(3,"0")}`,category:categories[index%categories.length]!,failure:index%10===9}));
+type Outcome = {
+  id: string;
+  category: string;
+  status: "passed" | "failed";
+  durationMs: number;
+  diagnostics?: unknown;
+};
+const channels: readonly VeilEvidenceChannel[] = [
+  "video",
+  "trace",
+  "screenshot",
+  "dom",
+  "accessibility",
+  "console",
+  "page_error",
+  "network",
+  "clipboard",
+  "download",
+  "event",
+  "report",
+  "metadata",
+];
+const categories = [
+  "native-control",
+  "aria",
+  "contenteditable",
+  "dom-attribute",
+  "console",
+  "canvas",
+  "svg",
+] as const;
+const cases = Array.from({ length: 100 }, (_, index) => ({
+  id: `veil-${String(index + 1).padStart(3, "0")}`,
+  category: categories[index % categories.length]!,
+  failure: index % 10 === 9,
+}));
 
-class ObservableCollector implements VeilRuntimeCollector{
-  phase:VeilCollectorPhase|"idle"="idle";
-  constructor(readonly id:string,private readonly failPrepare=false){}
-  async transition(phase:VeilCollectorPhase,context:{operationId?:string;stateVersion:number}){if(this.failPrepare&&phase==="prepare")throw new Error("INJECTED_PREPARE_FAILURE");this.phase=phase;return{schemaVersion:VEIL_CONTRACT_VERSION,collectorId:this.id,phase,...(context.operationId?{operationId:context.operationId}:{}),stateVersion:context.stateVersion,acknowledgedAt:new Date().toISOString()};}
+class ObservableCollector implements VeilRuntimeCollector {
+  phase: VeilCollectorPhase | "idle" = "idle";
+  constructor(
+    readonly id: string,
+    private readonly failPrepare = false,
+  ) {}
+  async transition(
+    phase: VeilCollectorPhase,
+    context: { operationId?: string; stateVersion: number },
+  ) {
+    if (this.failPrepare && phase === "prepare") throw new Error("INJECTED_PREPARE_FAILURE");
+    this.phase = phase;
+    return {
+      schemaVersion: VEIL_CONTRACT_VERSION,
+      collectorId: this.id,
+      phase,
+      ...(context.operationId ? { operationId: context.operationId } : {}),
+      stateVersion: context.stateVersion,
+      acknowledgedAt: new Date().toISOString(),
+    };
+  }
 }
 
-async function main(){
-  check(cases.length>=100,`expected at least 100 scenarios, got ${cases.length}`);
-  const server=createServer((request,response)=>{const path=new URL(request.url??"/","http://local").pathname;const scenario=cases.find(item=>path===`/case/${item.id}`);if(!scenario){response.writeHead(404);response.end("missing");return;}const canary=`VEIL_CANARY_${scenario.id}`;response.writeHead(200,{"content-type":"text/html; charset=utf-8","cache-control":"no-store"});response.end(documentFor(scenario.category,canary));});
-  await new Promise<void>((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve);});
-  const address=server.address();if(!address||typeof address==="string")throw new Error("HTTP server unavailable");
-  const origin=`http://127.0.0.1:${address.port}`;const browser=await chromium.launch({headless:true,channel:process.env.SCRY_BROWSER_CHANNEL??"chrome"});const results:Outcome[]=[];
-  try{
-    for(const scenario of cases){const started=performance.now();const context=await browser.newContext();const page=await context.newPage();try{
-      await page.goto(`${origin}/case/${scenario.id}`);const collectorIds=["video","trace","dom","accessibility","diagnostics","network","event-report"];
-      const collectors=collectorIds.map((id,index)=>new ObservableCollector(id,scenario.failure&&index===scenario.id.length%collectorIds.length));const policy=compileVeilPolicy({profile:"balanced",allowedOrigins:[origin]});const authority=new VeilAuthority(policy);const runtime=new VeilRuntimeSession(collectors,policy.digest,`browser:${scenario.id}`,async()=>undefined,100);const request=(channel:VeilEvidenceChannel,classification:"public"|"sensitive"|"secret"|"unknown"):VeilLeaseRequest=>({context:{userId:"campaign-user",environmentId:"local",transactionId:scenario.id,origin,browserContextId:`context-${scenario.id}`,pageId:`page-${scenario.id}`,frameId:"main",documentEpoch:1},operation:"capture",channel,classification,scope:"channel"});
-      if(scenario.failure){await expectReject(runtime.prepare(scenario.id));check(runtime.state()==="sealed","failed collector did not seal runtime");check(collectors.every(item=>item.phase==="seal"),"not all collectors acknowledged sealing");for(const channel of channels)check(authority.decide(request(channel,"unknown")).disposition==="quarantine",`${channel} escaped quarantine`);}
-      else{await runtime.prepare(scenario.id);check(collectors.every(item=>item.phase==="isolate"),"collector acknowledgement was not backed by isolated state");await runtime.beginProtected();for(const channel of channels){check(authority.decide(request(channel,"secret")).disposition==="suppress",`${channel} did not suppress secret evidence`);check(authority.decide(request(channel,"unknown")).disposition==="quarantine",`${channel} did not quarantine unknown evidence`);}const issued=authority.issueLease(request("screenshot","public"));check(authority.validateLease(issued.lease,request("screenshot","public")).disposition==="allow","valid scoped lease was rejected");const control=await decodedPixelProfile(page,await page.screenshot());check(control.nonBlackPixels>0,"control screenshot unexpectedly contained no visible page pixels");await installOpaqueMask(page);const protectedProfile=await decodedPixelProfile(page,await page.screenshot());check(protectedProfile.nonBlackPixels===0,`opaque mask leaked ${protectedProfile.nonBlackPixels} non-black decoded pixels`);check(protectedProfile.totalPixels===control.totalPixels,"pixel scan dimensions changed");await runtime.resume();check(runtime.state()==="normal","runtime did not safely resume");await runtime.finalize();}
-      results.push({id:scenario.id,category:scenario.category,status:"passed",durationMs:performance.now()-started});
-    }catch(error){results.push({id:scenario.id,category:scenario.category,status:"failed",durationMs:performance.now()-started,diagnostics:diagnostic(error)});}finally{await context.close();}}
-    const endurance=await runEndurance();const failed=results.filter(x=>x.status==="failed").length;const report={schemaVersion:1,campaign:"veil-certification",executedAt:new Date().toISOString(),environment:{transport:"real_http",browser:"real_chromium",browserVersion:browser.version(),channel:process.env.SCRY_BROWSER_CHANNEL??"chrome",externalMutation:"none"},counts:{total:results.length,passed:results.length-failed,failed,skipped:0},categories:Object.fromEntries(categories.map(category=>[category,summary(results,category)])),coverage:{failureInjection:cases.filter(x=>x.failure).length,syntheticCanarySurfaces:["dom-text","dom-attribute","accessibility-label","console","canvas-2d","svg-text"],decodedPixelInspection:{controlMustContainNonBlackPixels:true,protectedFrameMustBeFullyOpaqueBlack:true},coveredByCompanionCampaigns:{opaqueAndBrowserSurfaces:"veil-adversarial",decodedVideoAndAdmission:"veil-production-e2e",completeCanaryFailureAndReplicaMatrix:"veil-release-scope",publicApplications:"veil-public-application-qualification"}},qualification:failed===0&&endurance.passed?"CERTIFICATION_CORPUS_PASS":"CERTIFICATION_CORPUS_FAIL",readiness:failed===0&&endurance.passed?"PASSED_AS_COMBINED_CAMPAIGN_COMPONENT":"NOT_READY",endurance,scenarios:results};process.stdout.write(`${JSON.stringify(report,null,2)}\n`);process.exitCode=failed||!endurance.passed?1:0;
-  }finally{await browser.close();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+async function main() {
+  check(cases.length >= 100, `expected at least 100 scenarios, got ${cases.length}`);
+  const server = createServer((request, response) => {
+    const path = new URL(request.url ?? "/", "http://local").pathname;
+    const scenario = cases.find((item) => path === `/case/${item.id}`);
+    if (!scenario) {
+      response.writeHead(404);
+      response.end("missing");
+      return;
+    }
+    const canary = `VEIL_CANARY_${scenario.id}`;
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(documentFor(scenario.category, canary));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("HTTP server unavailable");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const browser = await chromium.launch({
+    headless: true,
+    channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+  });
+  const results: Outcome[] = [];
+  try {
+    for (const scenario of cases) {
+      const started = performance.now();
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      try {
+        await page.goto(`${origin}/case/${scenario.id}`);
+        const collectorIds = [
+          "video",
+          "trace",
+          "dom",
+          "accessibility",
+          "diagnostics",
+          "network",
+          "event-report",
+        ];
+        const collectors = collectorIds.map(
+          (id, index) =>
+            new ObservableCollector(
+              id,
+              scenario.failure && index === scenario.id.length % collectorIds.length,
+            ),
+        );
+        const policy = compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] });
+        const authority = new VeilAuthority(policy);
+        const runtime = new VeilRuntimeSession(
+          collectors,
+          policy.digest,
+          `browser:${scenario.id}`,
+          async () => undefined,
+          100,
+        );
+        const request = (
+          channel: VeilEvidenceChannel,
+          classification: "public" | "sensitive" | "secret" | "unknown",
+        ): VeilLeaseRequest => ({
+          context: {
+            userId: "campaign-user",
+            environmentId: "local",
+            transactionId: scenario.id,
+            origin,
+            browserContextId: `context-${scenario.id}`,
+            pageId: `page-${scenario.id}`,
+            frameId: "main",
+            documentEpoch: 1,
+          },
+          operation: "capture",
+          channel,
+          classification,
+          scope: "channel",
+        });
+        if (scenario.failure) {
+          await expectReject(runtime.prepare(scenario.id));
+          check(runtime.state() === "sealed", "failed collector did not seal runtime");
+          check(
+            collectors.every((item) => item.phase === "seal"),
+            "not all collectors acknowledged sealing",
+          );
+          for (const channel of channels)
+            check(
+              authority.decide(request(channel, "unknown")).disposition === "quarantine",
+              `${channel} escaped quarantine`,
+            );
+        } else {
+          await runtime.prepare(scenario.id);
+          check(
+            collectors.every((item) => item.phase === "isolate"),
+            "collector acknowledgement was not backed by isolated state",
+          );
+          await runtime.beginProtected();
+          for (const channel of channels) {
+            check(
+              authority.decide(request(channel, "secret")).disposition === "suppress",
+              `${channel} did not suppress secret evidence`,
+            );
+            check(
+              authority.decide(request(channel, "unknown")).disposition === "quarantine",
+              `${channel} did not quarantine unknown evidence`,
+            );
+          }
+          const issued = authority.issueLease(request("screenshot", "public"));
+          check(
+            authority.validateLease(issued.lease, request("screenshot", "public")).disposition ===
+              "allow",
+            "valid scoped lease was rejected",
+          );
+          const control = await decodedPixelProfile(page, await page.screenshot());
+          check(
+            control.nonBlackPixels > 0,
+            "control screenshot unexpectedly contained no visible page pixels",
+          );
+          await installOpaqueMask(page);
+          const protectedProfile = await decodedPixelProfile(page, await page.screenshot());
+          check(
+            protectedProfile.nonBlackPixels === 0,
+            `opaque mask leaked ${protectedProfile.nonBlackPixels} non-black decoded pixels`,
+          );
+          check(
+            protectedProfile.totalPixels === control.totalPixels,
+            "pixel scan dimensions changed",
+          );
+          await runtime.resume();
+          check(runtime.state() === "normal", "runtime did not safely resume");
+          await runtime.finalize();
+        }
+        results.push({
+          id: scenario.id,
+          category: scenario.category,
+          status: "passed",
+          durationMs: performance.now() - started,
+        });
+      } catch (error) {
+        results.push({
+          id: scenario.id,
+          category: scenario.category,
+          status: "failed",
+          durationMs: performance.now() - started,
+          diagnostics: diagnostic(error),
+        });
+      } finally {
+        await context.close();
+      }
+    }
+    const endurance = await runEndurance();
+    const failed = results.filter((x) => x.status === "failed").length;
+    const report = {
+      schemaVersion: 1,
+      campaign: "veil-certification",
+      executedAt: new Date().toISOString(),
+      environment: {
+        transport: "real_http",
+        browser: "real_chromium",
+        browserVersion: browser.version(),
+        channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+        externalMutation: "none",
+      },
+      counts: { total: results.length, passed: results.length - failed, failed, skipped: 0 },
+      categories: Object.fromEntries(
+        categories.map((category) => [category, summary(results, category)]),
+      ),
+      coverage: {
+        failureInjection: cases.filter((x) => x.failure).length,
+        syntheticCanarySurfaces: [
+          "dom-text",
+          "dom-attribute",
+          "accessibility-label",
+          "console",
+          "canvas-2d",
+          "svg-text",
+        ],
+        decodedPixelInspection: {
+          controlMustContainNonBlackPixels: true,
+          protectedFrameMustBeFullyOpaqueBlack: true,
+        },
+        coveredByCompanionCampaigns: {
+          opaqueAndBrowserSurfaces: "veil-adversarial",
+          decodedVideoAndAdmission: "veil-production-e2e",
+          completeCanaryFailureAndReplicaMatrix: "veil-release-scope",
+          publicApplications: "veil-public-application-qualification",
+        },
+      },
+      qualification:
+        failed === 0 && endurance.passed
+          ? "CERTIFICATION_CORPUS_PASS"
+          : "CERTIFICATION_CORPUS_FAIL",
+      readiness:
+        failed === 0 && endurance.passed ? "PASSED_AS_COMBINED_CAMPAIGN_COMPONENT" : "NOT_READY",
+      endurance,
+      scenarios: results,
+    };
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    process.exitCode = failed || !endurance.passed ? 1 : 0;
+  } finally {
+    await browser.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 }
 
-async function runEndurance(){const before=process.memoryUsage().rss;const durations:number[]=[];let failures=0;for(let index=0;index<1000;index++){const started=performance.now();const collector=new ObservableCollector("endurance");const runtime=new VeilRuntimeSession([collector],"a".repeat(64),"endurance");try{await runtime.prepare(`endurance-${index}`);await runtime.beginProtected();await runtime.resume();await runtime.finalize();}catch{failures++;}durations.push(performance.now()-started);}const memoryGrowthRatio=(process.memoryUsage().rss-before)/Math.max(1,before);return{iterations:1000,failures,memoryGrowthRatio,p50:percentile(durations,.5),p95:percentile(durations,.95),passed:failures===0&&memoryGrowthRatio<=.30};}
-async function installOpaqueMask(page:import("playwright").Page){await page.addStyleTag({content:"html::after{content:''!important;position:fixed!important;inset:0!important;background:#000!important;z-index:2147483647!important}"});await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));}
-async function decodedPixelProfile(page:import("playwright").Page,bytes:Buffer){const source=`data:image/png;base64,${bytes.toString("base64")}`;return page.evaluate(async source=>{const image=new Image();image.src=source;await image.decode();const canvas=document.createElement("canvas");canvas.width=image.width;canvas.height=image.height;const context=canvas.getContext("2d",{willReadFrequently:true});if(!context)throw new Error("2D canvas unavailable");context.drawImage(image,0,0);const pixels=context.getImageData(0,0,image.width,image.height).data;let nonBlackPixels=0;for(let offset=0;offset<pixels.length;offset+=4)if(pixels[offset]!==0||pixels[offset+1]!==0||pixels[offset+2]!==0||pixels[offset+3]!==255)nonBlackPixels++;return{totalPixels:image.width*image.height,nonBlackPixels};},source);}
-function documentFor(category:string,canary:string){const encoded=JSON.stringify(canary);const surface:Record<string,string>={"native-control":`<label>Protected <input value=${encoded}></label>`,aria:`<button aria-label=${encoded}>Protected action</button>`,contenteditable:`<div contenteditable>${canary}</div>`,"dom-attribute":`<div data-secret=${encoded}>Protected attribute</div>`,console:`<script>console.log(${encoded})</script>`,canvas:`<canvas id=c></canvas><script>document.querySelector('#c').getContext('2d').fillText(${encoded},0,20)</script>`,svg:`<svg width=500 height=50><text x=0 y=20>${canary}</text></svg>`};return `<!doctype html><html><body><h1>Veil ${category}</h1>${surface[category]??""}</body></html>`;}
-async function expectReject(operation:Promise<unknown>){let rejected=false;try{await operation;}catch{rejected=true;}check(rejected,"expected injected failure");}
-function summary(results:Outcome[],category:string){const selected=results.filter(x=>x.category===category);return{total:selected.length,passed:selected.filter(x=>x.status==="passed").length,failed:selected.filter(x=>x.status==="failed").length};}
-function percentile(values:number[],fraction:number){const sorted=[...values].sort((a,b)=>a-b);return sorted[Math.min(sorted.length-1,Math.floor(sorted.length*fraction))]??0;}
-function check(value:unknown,message:string):asserts value{if(!value)throw new Error(message);}function diagnostic(error:unknown){return error instanceof Error?{name:error.name,message:error.message}:String(error);}
+async function runEndurance() {
+  const before = process.memoryUsage().rss;
+  const durations: number[] = [];
+  let failures = 0;
+  for (let index = 0; index < 1000; index++) {
+    const started = performance.now();
+    const collector = new ObservableCollector("endurance");
+    const runtime = new VeilRuntimeSession([collector], "a".repeat(64), "endurance");
+    try {
+      await runtime.prepare(`endurance-${index}`);
+      await runtime.beginProtected();
+      await runtime.resume();
+      await runtime.finalize();
+    } catch {
+      failures++;
+    }
+    durations.push(performance.now() - started);
+  }
+  const memoryGrowthRatio = (process.memoryUsage().rss - before) / Math.max(1, before);
+  return {
+    iterations: 1000,
+    failures,
+    memoryGrowthRatio,
+    p50: percentile(durations, 0.5),
+    p95: percentile(durations, 0.95),
+    passed: failures === 0 && memoryGrowthRatio <= 0.3,
+  };
+}
+async function installOpaqueMask(page: import("playwright").Page) {
+  await page.addStyleTag({
+    content:
+      "html::after{content:''!important;position:fixed!important;inset:0!important;background:#000!important;z-index:2147483647!important}",
+  });
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+}
+async function decodedPixelProfile(page: import("playwright").Page, bytes: Buffer) {
+  const source = `data:image/png;base64,${bytes.toString("base64")}`;
+  return page.evaluate(async (source) => {
+    const image = new Image();
+    image.src = source;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("2D canvas unavailable");
+    context.drawImage(image, 0, 0);
+    const pixels = context.getImageData(0, 0, image.width, image.height).data;
+    let nonBlackPixels = 0;
+    for (let offset = 0; offset < pixels.length; offset += 4)
+      if (
+        pixels[offset] !== 0 ||
+        pixels[offset + 1] !== 0 ||
+        pixels[offset + 2] !== 0 ||
+        pixels[offset + 3] !== 255
+      )
+        nonBlackPixels++;
+    return { totalPixels: image.width * image.height, nonBlackPixels };
+  }, source);
+}
+function documentFor(category: string, canary: string) {
+  const encoded = JSON.stringify(canary);
+  const surface: Record<string, string> = {
+    "native-control": `<label>Protected <input value=${encoded}></label>`,
+    aria: `<button aria-label=${encoded}>Protected action</button>`,
+    contenteditable: `<div contenteditable>${canary}</div>`,
+    "dom-attribute": `<div data-secret=${encoded}>Protected attribute</div>`,
+    console: `<script>console.log(${encoded})</script>`,
+    canvas: `<canvas id=c></canvas><script>document.querySelector('#c').getContext('2d').fillText(${encoded},0,20)</script>`,
+    svg: `<svg width=500 height=50><text x=0 y=20>${canary}</text></svg>`,
+  };
+  return `<!doctype html><html><body><h1>Veil ${category}</h1>${surface[category] ?? ""}</body></html>`;
+}
+async function expectReject(operation: Promise<unknown>) {
+  let rejected = false;
+  try {
+    await operation;
+  } catch {
+    rejected = true;
+  }
+  check(rejected, "expected injected failure");
+}
+function summary(results: Outcome[], category: string) {
+  const selected = results.filter((x) => x.category === category);
+  return {
+    total: selected.length,
+    passed: selected.filter((x) => x.status === "passed").length,
+    failed: selected.filter((x) => x.status === "failed").length,
+  };
+}
+function percentile(values: number[], fraction: number) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))] ?? 0;
+}
+function check(value: unknown, message: string): asserts value {
+  if (!value) throw new Error(message);
+}
+function diagnostic(error: unknown) {
+  return error instanceof Error ? { name: error.name, message: error.message } : String(error);
+}
 
-(process.stdout as typeof process.stdout&{_handle?:{setBlocking?(value:boolean):void}})._handle?.setBlocking?.(true);
+(
+  process.stdout as typeof process.stdout & { _handle?: { setBlocking?(value: boolean): void } }
+)._handle?.setBlocking?.(true);
 await main();
