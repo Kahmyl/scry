@@ -4,6 +4,20 @@ import { encryptCredential } from "../src/credential.crypto.js";
 import { ExecutionRepository } from "../src/execution.repository.js";
 
 describe("protected execution credentials", () => {
+  it("rejects a contradictory terminal Praxis result for a true duplicate transaction id", async () => {
+    const client = { query: vi.fn().mockResolvedValue({ rowCount: 0, rows: [] }) };
+    const repository = new ExecutionRepository({ transaction: (work: (value: typeof client) => Promise<unknown>) => work(client) } as never);
+    await expect(repository.recordPraxisResult("run-id", "attempt-id", {
+      transactionId: "duplicate-transaction", timing: { totalMs: 1 }, qualityFindings: [], report: { intentDigest: "a".repeat(64), artifactRefs: [] },
+    } as never)).rejects.toThrow("Contradictory terminal Praxis result");
+    expect(client.query.mock.calls[0]?.[0]).toContain("praxis_transactions.result=EXCLUDED.result");
+  });
+  it("loads the immutable Veil policy snapshot for the worker", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1, rows: [{ veilPolicySnapshot: { digest: "a".repeat(64) } }] });
+    const repository = new ExecutionRepository({ query } as never);
+    await expect(repository.loadExecution("run-id")).resolves.toMatchObject({ veilPolicySnapshot: { digest: "a".repeat(64) } });
+    expect(query.mock.calls[0]?.[0]).toContain('veil_policy_snapshot AS "veilPolicySnapshot"');
+  });
   it("resolves a credential only through the run's immutable allowlist", async () => {
     const encrypted = encryptCredential("allowed-secret");
     const query = vi.fn()

@@ -19,6 +19,7 @@ import type { PoolClient, QueryResultRow } from "pg";
 import type { Principal } from "./auth.types.js";
 import { Database } from "./database.js";
 import { ReleaseAdmissionService } from "./release-admission.service.js";
+import { snapshotVeilPolicy } from "./veil-policy-snapshot.js";
 
 type Query = <T extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]) => Promise<{ rowCount: number | null; rows: T[] }>;
 type Diagnostic = { severity: "error" | "warning"; code: string; message: string; suggestion?: string; stepId?: string };
@@ -229,18 +230,21 @@ export class FlowService {
         plan: revision.rows[0]!.plan,
       }, true);
       this.requireValid(validation);
-      const environment = await query<{ name: string; baseOrigin: string; policy: unknown; secretRefs: string[] }>(
-        `SELECT name, base_origin AS "baseOrigin", policy, secret_refs AS "secretRefs"
-         FROM environments WHERE id = $1 AND project_id = $2`,
+      const environment = await query<{ name: string; baseOrigin: string; policy: unknown; secretRefs: string[]; veilPreferences: import("@scry/contracts").VeilPolicyPreferences | null }>(
+        `SELECT environment.name,environment.base_origin AS "baseOrigin",environment.policy,environment.secret_refs AS "secretRefs",veil.preferences AS "veilPreferences"
+         FROM environments environment LEFT JOIN veil_environment_preferences veil ON veil.environment_id=environment.id
+         WHERE environment.id = $1 AND environment.project_id = $2 FOR SHARE OF environment`,
         [input.environmentId, projectId],
       );
+      const executionPolicy = executionPolicySchema.parse(environment.rows[0]!.policy);
+      const veilPolicySnapshot = snapshotVeilPolicy(executionPolicy, environment.rows[0]!.veilPreferences);
       const run = await query<{ id: string; state: string }>(
         `INSERT INTO runs(project_id,mission_id,objective_id,agent_session_id,environment_id,flow_revision_id,compiled_contract_id,compiled_contract_digest,state,phase,
-                          plan_snapshot, environment_snapshot, policy_snapshot, execution_snapshot, idempotency_key)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued','queued',$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13)
+                          plan_snapshot, environment_snapshot, policy_snapshot,veil_policy_snapshot, execution_snapshot, idempotency_key)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued','queued',$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14)
          RETURNING id, state`,
         [projectId,input.missionId,input.objectiveId,input.agentSessionId,input.environmentId,input.flowRevisionId,input.compiledContractId,compilation.rows[0]!.compiledContractDigest,JSON.stringify(revision.rows[0]!.plan),
-         JSON.stringify({ id: input.environmentId, ...environment.rows[0] }), JSON.stringify(environment.rows[0]!.policy),
+         JSON.stringify({ id: input.environmentId, ...environment.rows[0], veilPreferences: undefined }), JSON.stringify(executionPolicy), JSON.stringify(veilPolicySnapshot),
          JSON.stringify({ browser: input.browser, viewport: input.viewport, seed: input.seed }), input.idempotencyKey],
       );
       await query(`INSERT INTO mission_run_links(run_id,mission_id,objective_id,role,reason,classified_by_agent_session_id) VALUES($1,$2,$3,$4,'Run created',$5)`,[run.rows[0]!.id,input.missionId,input.objectiveId,input.role,input.agentSessionId]);

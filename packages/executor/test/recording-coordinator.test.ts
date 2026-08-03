@@ -6,11 +6,16 @@ import type { Page } from "playwright";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { RecordingCoordinator } from "../src/recording-coordinator.js";
+import { registerVeilEvidenceAdmission } from "../src/artifacts.js";
+import { VeilAuthority } from "../src/veil-authority.js";
+import { compileVeilPolicy } from "@scry/policy";
 
 const roots: string[] = [];
+const unregister: Array<() => void> = [];
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  for (const dispose of unregister.splice(0)) dispose();
 });
 
 async function fixture(options: { failStart?: boolean; failStop?: boolean; omitFile?: boolean; closed?: boolean } = {}) {
@@ -35,10 +40,24 @@ async function fixture(options: { failStart?: boolean; failStop?: boolean; omitF
     },
   } as unknown as Page;
   const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const videoFinalization = { schemaVersion: 1 as const, segmentId: "segment", segmentPermitDigest: "a".repeat(64), policyDigest: "b".repeat(64), contextDigest: "c".repeat(64), documentEpoch: 1, checkpointCount: 2, checkpointChainDigest: "d".repeat(64), finalizedAt: new Date().toISOString() };
+  const videoAuthority = {
+    issue: (segmentId: string) => ({ schemaVersion: 1, token: `veil_video_${"a".repeat(43)}`, segmentId, policyDigest: "b".repeat(64), contextDigest: "c".repeat(64), browserContextId: "context", pageId: "page", frameId: "main", documentEpoch: 1, issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() }),
+    checkpoint: async () => undefined,
+    finalize: () => videoFinalization,
+  };
   const coordinator = new RecordingCoordinator({
     outputDirectory: root,
     emit: async (type, payload) => { events.push({ type, payload }); },
+    videoAuthority: videoAuthority as never,
+    videoBinding: () => ({ browserContextId: "context", pageId: "page", frameId: "main", documentEpoch: 1 }),
   });
+  const authority = new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: ["https://recording.test"] }));
+  unregister.push(registerVeilEvidenceAdmission({
+    root, authority, admissionKey: "recording-test-veil-admission-key-32-bytes",
+    videoAdmission: (finalization) => finalization,
+    context: () => ({ userId: "test", environmentId: "test", transactionId: "recording-test", origin: "https://recording.test", browserContextId: "context", pageId: "page", frameId: "main", documentEpoch: 1 }),
+  }));
   return { root, page, coordinator, events, startInputs };
 }
 
@@ -53,7 +72,7 @@ describe("RecordingCoordinator", () => {
     expect(startInputs[0]).not.toHaveProperty("size");
   });
 
-  it("creates two independently persisted segments around a protected gap", async () => {
+  it("creates permitted segments around a protected gap", async () => {
     const { root, page, coordinator } = await fixture();
     await coordinator.startSegment({ page, reason: "run_started" });
     await coordinator.createProtectedGap({ operationId: "synthetic-gap", reason: "Phase 1 feasibility" });

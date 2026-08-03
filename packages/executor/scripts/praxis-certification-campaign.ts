@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import type { ExpectedEffect, InteractionTargetIntent, PraxisOperation, PraxisRequest, PraxisResult } from "@scry/contracts";
-import { executePraxisConsumer } from "../src/praxis-consumer.js";
+import { executePraxisCampaignConsumer as executePraxisConsumer } from "./praxis-campaign-veil.js";
 
 type Category="nested_frames"|"frame_reads"|"cross_origin"|"closed_shadow"|"popups"|"international_input"|"responsive_layout"|"contention"|"privacy"|"frame_detachment"|"delayed_frames"|"frame_navigation"|"frame_acquisition"|"frame_wait"|"cancelled_queue"|"cross_frame_ambiguity";
 type InvokeOptions={effect?:ExpectedEffect;timeout?:number;signal?:AbortSignal;privacy?:PraxisRequest["privacy"]};

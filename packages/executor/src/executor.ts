@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   attemptResultSchema,
   runEventSchema,
+  veilPolicySnapshotSchema,
   validatePlanAgainstPolicy,
   type CurrentAction,
   type Artifact,
@@ -19,6 +20,8 @@ import {
   RuntimePolicyError,
   RuntimeRequestPolicy,
   SecretRedactor,
+  compileDefaultVeilPolicy,
+  veilPolicyDigest,
 } from "@scry/policy";
 import {
   chromium,
@@ -29,12 +32,18 @@ import {
   type Page,
 } from "playwright";
 
-import { availableArtifact, ensureOutputDirectories, writeJson } from "./artifacts.js";
+import { availableArtifact, ensureOutputDirectories, registerVeilEvidenceAdmission, writeJson } from "./artifacts.js";
+import { VeilAuthority } from "./veil-authority.js";
 import { playwrightBrowserChannel, visualRedactionInitScript } from "./browser-runtime-artifacts.js";
 import { registerGroundingHistoryProvider, resolveTargetLocator } from "./grounding.js";
 import { requirePraxisSuccess, type PraxisConsumerContext } from "./praxis-consumer.js";
+import { registerPraxisVeilAuthority } from "./praxis-veil.js";
 import { RecordingCoordinator } from "./recording-coordinator.js";
-import { PrivacyGate, type PrivacyCollector } from "./privacy-gate.js";
+import { VeilRuntimeCoordinator, type PrivacyCollector, type PrivacyPreparation } from "./veil-runtime-coordinator.js";
+import { VeilClipboardCollector } from "./veil-clipboard-collector.js";
+import { VeilChannelCollector } from "./veil-channel-collector.js";
+import { VeilVisualCaptureAuthority } from "./veil-visual-capture.js";
+import { VeilVideoSegmentAuthority } from "./veil-video-segment.js";
 import { capturePublicGeneratedValue } from "./public-value-capture.js";
 import { BrowserSessionProvenance } from "./browser-session.js";
 import { PlaywrightProtectedCapsuleFactory, ProtectedTransactionCoordinator, type ProtectedTransactionExecution } from "./protected-transaction-coordinator.js";
@@ -90,7 +99,8 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   let privacySealed = false;
   let recording: RecordingCoordinator | undefined;
   let trace: TraceCoordinator | undefined;
-  let privacyGate: PrivacyGate | undefined;
+  let privacyGate: VeilRuntimeCoordinator | undefined;
+  let veilChannelCollectors = new Map<string, VeilChannelCollector>();
   let checkpointCoordinator: CheckpointCoordinator | undefined;
   const establishedCheckpoints = new Set<string>();
   const retiredArtifacts: Artifact[] = [];
@@ -99,6 +109,30 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   let captureEpoch = 0;
   let activeCaptureEpoch: Extract<RecordingTimelineEntry, { type: "capture_epoch" }> | undefined;
   let calibrationBoundaryReached = false;
+  let unregisterPraxisVeil: (() => void) | undefined;
+  const veilPolicy = resolveVeilPolicyForExecution(options.policy, options.veilPolicySnapshot);
+  const veilAuthority = new VeilAuthority(veilPolicy);
+  const veilVisualCapture = new VeilVisualCaptureAuthority(veilPolicy.digest);
+  const veilVideoSegments = new VeilVideoSegmentAuthority(veilPolicy.digest, veilVisualCapture);
+  const veilCaptureBinding = () => ({
+    browserContextId: safeProvenance?.contextId ?? attemptId,
+    pageId: runId,
+    frameId: "main-frame",
+    documentEpoch: captureEpoch,
+  });
+  const veilAdmissionKey = options.veilAdmissionKey ?? (process.env.NODE_ENV === "test" ? "scry-test-only-veil-admission-key-32-bytes" : undefined);
+  if (!veilAdmissionKey) throw new Error("VEIL_ADMISSION_KEY_REQUIRED");
+  const unregisterVeilAdmission = registerVeilEvidenceAdmission({
+    root: options.outputDirectory, authority: veilAuthority, admissionKey: veilAdmissionKey,
+    visualAdmission: (permit) => veilVisualCapture.admissionBinding(permit),
+    videoAdmission: (finalization) => veilVideoSegments.consumeFinalization(finalization),
+    context: () => ({
+      userId: "executor", environmentId: options.environmentId ?? "local-environment", transactionId: attemptId,
+      origin: canonicalVeilOrigin(page?.url(), options.plan.allowedOrigins[0]!),
+      browserContextId: safeProvenance?.contextId ?? attemptId, pageId: runId,
+      frameId: "main-frame", documentEpoch: captureEpoch,
+    }),
+  });
 
   const startCaptureEpoch = (startReason: "run_started" | "checkpoint_restored", contextId = safeProvenance?.contextId ?? randomUUID()) => {
     captureEpoch += 1;
@@ -140,7 +174,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   await writeFile(eventPath, "", "utf8");
 
   const emit = async (type: RunEvent["type"], payload: Record<string, unknown>) => {
-    if (privacyGate?.isSuppressed() && !type.startsWith("privacy.") && !type.startsWith("recording.")) return;
+    if ((privacyGate?.isSuppressed() || veilChannelCollectors.get("event-report")?.isCaptureSuppressed()) && !type.startsWith("privacy.") && !type.startsWith("recording.")) return;
     const event = runEventSchema.parse({
       sequence: ++sequence,
       runId,
@@ -186,6 +220,12 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     });
     await installVisualRedactionStyles(context);
     page = await context.newPage();
+    unregisterPraxisVeil = registerPraxisVeilAuthority(page, {
+      authority: veilAuthority,
+      userId: "executor",
+      environmentId: options.environmentId ?? "local-environment",
+      browserContextId: safeProvenance?.contextId ?? attemptId,
+    });
     if (options.groundingHistory) registerGroundingHistoryProvider(page, options.groundingHistory);
     safeProvenance = new BrowserSessionProvenance(randomUUID(), "safe");
     let policyEpoch = 0;
@@ -207,34 +247,50 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       await emit("policy.rejected", violation);
     };
     await attachRequestInterception(context, page, requestPolicy, rejectPolicy);
-    attachDiagnostics(page, diagnostics, emit, redactor, () => privacyGate?.getDecision("console") === "suppress" || privacyGate?.getDecision("console") === "quarantine");
-    attachNetworkCapture(page, networkRecords, redactor, networkActivity, pendingNetworkBodies, () => privacyGate?.getDecision("network") === "suppress" || privacyGate?.getDecision("network") === "quarantine");
+    veilChannelCollectors = new Map(["screenshot", "dom", "accessibility", "diagnostics", "network", "event-report"]
+      .map((name) => [name, new VeilChannelCollector(name)] as const));
+    attachDiagnostics(page, diagnostics, emit, redactor, () => veilChannelCollectors.get("diagnostics")!.isCaptureSuppressed() || privacyGate?.getDecision("console") === "suppress" || privacyGate?.getDecision("console") === "quarantine");
+    attachNetworkCapture(page, networkRecords, redactor, networkActivity, pendingNetworkBodies, () => veilChannelCollectors.get("network")!.isCaptureSuppressed() || privacyGate?.getDecision("network") === "suppress" || privacyGate?.getDecision("network") === "quarantine");
     attachCapabilityGuards(context, page, options, rejectPolicy);
     recording = new RecordingCoordinator({
       outputDirectory: options.outputDirectory,
       emit: (type, payload) => emit(type, payload),
+      videoAuthority: veilVideoSegments,
+      videoBinding: veilCaptureBinding,
     });
     trace = new TraceCoordinator({ context, outputDirectory: options.outputDirectory, sanitize: (target) => sanitizeTraceArchive(target, redactor) });
+    let recordingVeilState: ReturnType<PrivacyCollector["state"]>["status"] = "active";
+    let recordingOperationId = "protected-operation";
+    let recordingPreparation: PrivacyPreparation = {mode:"protected_recording_gap",videoMaskEstablished:false};
     const recordingCollector: PrivacyCollector = {
       name: "recording",
-      arm: async (operationId, preparation) => {
-        if (preparation?.mode === "protected_recording_gap" || !preparation?.videoMaskEstablished) {
-          await recording!.createProtectedGap({ operationId, reason: "Privacy Gate protected interval" });
+      arm: async (operationId,preparation) => { if(recordingVeilState!=="active")throw new Error("RECORDING_NOT_ACTIVE");recordingOperationId=operationId;recordingPreparation=preparation??recordingPreparation;recordingVeilState="prepared"; },
+      suspend: async () => {
+        if(recordingVeilState!=="prepared")throw new Error("RECORDING_NOT_PREPARED");
+        recordingVeilState="suspended";
+      },
+      isolate: async () => {
+        if(recordingVeilState!=="suspended")throw new Error("RECORDING_NOT_SUSPENDED");
+        if (recordingPreparation.mode === "protected_recording_gap" || !recordingPreparation.videoMaskEstablished) {
+          await recording!.createProtectedGap({ operationId:recordingOperationId, reason: "Veil protected interval" });
         }
+        recordingVeilState="isolated";
       },
       resume: async () => {
+        if(recordingVeilState!=="isolated")throw new Error("RECORDING_NOT_ISOLATED");
         if (!recording!.hasActiveSegment()) await recording!.startSegment({ reason: "safe_resume" });
+        recordingVeilState="active";
       },
-      seal: async ({ code }) => recording!.seal(code),
-      finalize: async () => recording!.finalize(),
+      seal: async ({ code }) => {await recording!.seal(code);recordingVeilState="sealed";},
+      finalize: async () => {await recording!.finalize();recordingVeilState="finalized";},
+      state:()=>({status:recordingVeilState}),
     };
-    const passiveCollectors = ["screenshot", "dom", "accessibility", "diagnostics", "network", "event-report"].map<PrivacyCollector>((name) => ({
-      name, arm: async () => undefined, resume: async () => undefined, seal: async () => undefined, finalize: async () => undefined,
-    }));
-    privacyGate = new PrivacyGate([recordingCollector, trace, ...passiveCollectors], (privacyEvent) =>
-      emit("privacy.state_changed", privacyEvent));
-    page.once("close", () => { void recording?.seal("ACTIVE_PAGE_CLOSED"); });
-    browser.once("disconnected", () => { void recording?.seal("BROWSER_DISCONNECTED"); });
+    const clipboardCollector = new VeilClipboardCollector(page);
+    const passiveCollectors = [...veilChannelCollectors.values(), clipboardCollector];
+    privacyGate = new VeilRuntimeCoordinator([recordingCollector, trace, ...passiveCollectors], (privacyEvent) =>
+      emit("privacy.state_changed", privacyEvent), 5_000, veilPolicy.digest, `${runId}:${attemptId}`);
+    page.once("close", () => { void privacyGate?.seal({code:"ACTIVE_PAGE_CLOSED"}).catch(()=>undefined); });
+    browser.once("disconnected", () => { void privacyGate?.seal({code:"BROWSER_DISCONNECTED"}).catch(()=>undefined); });
     startCaptureEpoch("run_started");
     await recording.startSegment({ page, reason: "run_started" });
     await trace.start("run_started");
@@ -278,6 +334,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           if (!browser || !context || !page || !safeProvenance || !privacyGate || !options.protectedTransactionStore || !options.atomicSecretCapture || !options.publicValueCapture) {
             throw new InfrastructureDependencyError("Protected transaction dependencies are unavailable");
           }
+          let protectedAssertionOrdinal = 0;
           const transaction: ProtectedTransactionExecution = await new ProtectedTransactionCoordinator({
             safeSession: { browser, context, page, provenance: safeProvenance },
             gate: privacyGate,
@@ -289,6 +346,12 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             persistPublicValue: options.publicValueCapture,
             resolveKnownSecret: options.secretResolver ?? missingSecretResolver,
             prepareCapsule: async (capsule) => {
+              registerPraxisVeilAuthority(capsule.page, {
+                authority: veilAuthority,
+                userId: "executor",
+                environmentId: options.environmentId ?? "local-environment",
+                browserContextId: capsule.provenance.contextId,
+              });
               if (options.groundingHistory) registerGroundingHistoryProvider(capsule.page, options.groundingHistory);
               await attachRequestInterception(capsule.context, capsule.page, requestPolicy, rejectPolicy);
               attachCapabilityGuards(capsule.context, capsule.page, options, rejectPolicy);
@@ -296,9 +359,16 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             verifyCalibration: async (capsule, action) => {
               if (!action.calibrationAttestationId) return;
               if (!options.calibrationVerifier) throw new InfrastructureDependencyError("Calibration verifier is unavailable");
-              const fingerprint = structureFingerprint(await capturePageStructure(capsule.page, action));
-              const operationDigest = protectedTransactionDigest(action, options.plan.allowedOrigins);
-              if (!(await options.calibrationVerifier({ attestationId: action.calibrationAttestationId, operationId: action.operationId, operationDigest, structureFingerprint: fingerprint }))) throw new CalibrationRequiredError();
+              try {
+                const fingerprint = structureFingerprint(await capturePageStructure(capsule.page, action));
+                const operationDigest = protectedTransactionDigest(action, options.plan.allowedOrigins);
+                const verified = await options.calibrationVerifier({ attestationId: action.calibrationAttestationId, operationId: action.operationId, operationDigest, structureFingerprint: fingerprint });
+                await emit("calibration.boundary_reached", { operationId: action.operationId, attestationId: action.calibrationAttestationId, operationDigest, structureFingerprint: fingerprint, verified, mode: "production_verification" });
+                if (!verified) throw new CalibrationRequiredError();
+              } catch (error) {
+                await emit("calibration.boundary_reached", { operationId: action.operationId, code: error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code ?? "CALIBRATION_VERIFICATION_FAILED") : "CALIBRATION_VERIFICATION_FAILED", message: error instanceof Error ? error.message.slice(0, 500) : "CALIBRATION_VERIFICATION_FAILED", verified: false, mode: "production_verification_failed" });
+                throw error;
+              }
             },
             onPreparationVerified: async (capsule, action) => {
               if (options.calibrationRehearsal?.operationId !== action.operationId) return;
@@ -308,7 +378,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               calibrationBoundaryReached = true;
             },
             verifyAssertions: async (targetPage, assertions) => {
-              for (const [assertionIndex, assertion] of assertions.entries()) await executeAssertion(targetPage, assertion, options.plan.allowedOrigins[0]!, { runId, attemptId, stepId: step.id, channel: "assertion", ordinal: assertionIndex, allowedOrigins: options.plan.allowedOrigins, timeoutMs: assertion.timeoutMs ?? 10_000, ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}) }, timeoutController.signal);
+              for (const assertion of assertions) await executeAssertion(targetPage, assertion, options.plan.allowedOrigins[0]!, { runId, attemptId, stepId: step.id, channel: "assertion", ordinal: protectedAssertionOrdinal++, allowedOrigins: options.plan.allowedOrigins, timeoutMs: assertion.timeoutMs ?? 10_000, ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}) }, timeoutController.signal);
             },
             reconcile: async () => "unknown",
             ...(options.recordContextProvenance ? { onContextProvenance: options.recordContextProvenance } : {}),
@@ -324,6 +394,13 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           context = transaction.safeSession.context;
           page = transaction.safeSession.page;
           safeProvenance = transaction.safeSession.provenance;
+          unregisterPraxisVeil?.();
+          unregisterPraxisVeil = registerPraxisVeilAuthority(page, {
+            authority: veilAuthority,
+            userId: "executor",
+            environmentId: options.environmentId ?? "local-environment",
+            browserContextId: safeProvenance.contextId,
+          });
           protectedTerminal = transaction.terminal;
           protectedContinuationStepId = transaction.result.continuedAtStepId;
           for (const [reference, credentialId] of Object.entries(transaction.result.credentialReferences)) capturedSecrets.set(reference, credentialId);
@@ -415,15 +492,20 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           await emit("step.evidence_started", { stepId: step.id, evidence: step.evidence });
         }
         if (step.action.type === "screenshot") {
+          const capturePage = page;
+          const fullPage = step.action.fullPage;
           const screenshotPath = path.join(options.outputDirectory, "screenshots", `${step.action.name}.png`);
-          const fallback = await captureScreenshotWithFallback(page, screenshotPath, step.action.fullPage);
+          const { permit } = await veilVisualCapture.issue(capturePage, veilCaptureBinding());
+          const fallback = await veilVisualCapture.capture(capturePage, permit, veilCaptureBinding(), () => captureScreenshotWithFallback(capturePage, screenshotPath, fullPage));
           const artifact = await availableArtifact(
             "screenshot",
             "image/png",
             screenshotPath,
             `screenshots/${step.action.name}.png`,
+            { classification: "public", capturePermit: permit },
           );
           artifact.observation = {
+            ...artifact.observation,
             ...observation,
             screenshotMode: fallback ? "viewport-fallback" : step.action.fullPage ? "full-page" : "viewport",
           };
@@ -458,6 +540,9 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           pendingNetworkBodies,
           observation,
           privacyGate,
+          veilChannelCollectors,
+          veilVisualCapture,
+          veilCaptureBinding,
         );
         result.status = "passed";
         await emit("step.passed", {
@@ -478,7 +563,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         unsafeProtectedFailure = error instanceof UnsafeProtectedCaptureError;
         continueUnrecordedProtectedFailure = error instanceof ContinueUnrecordedProtectedError;
         markRemainingAssertionsUnevaluated(result);
-        await captureFailureScreenshot(page, options.outputDirectory, step.id, result, privacyGate);
+        await captureFailureScreenshot(page, options.outputDirectory, step.id, result, privacyGate, veilChannelCollectors, veilVisualCapture, veilCaptureBinding);
         await emit("step.failed", {
           stepId: step.id,
           error: result.error,
@@ -515,7 +600,16 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     if (privacyGate && (privacySealed || cancelled || timedOut)) {
       await privacyGate.seal({ code: privacySealed ? "UNRESOLVED_PROTECTED_CAPTURE" : cancelled ? "RUN_CANCELLED" : "RUN_TIMED_OUT" }).catch(() => undefined);
     }
-    await privacyGate?.finalize().catch(() => undefined);
+    if (privacyGate) {
+      try { await privacyGate.finalize(); }
+      catch (error) {
+        privacySealed = true;
+        terminalState = "infrastructure_error";
+        fatalError = errorMessage(error);
+        await privacyGate.seal({ code: "VEIL_COLLECTOR_FINALIZE_FAILED" }).catch(() => undefined);
+        await emit("privacy.state_changed", { state: "sealed", code: "VEIL_COLLECTOR_FINALIZE_FAILED", diagnostic: errorMessage(error) }).catch(() => undefined);
+      }
+    }
     if (recording) {
       if (privacySealed || cancelled || timedOut) {
         await recording.seal(
@@ -545,6 +639,8 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       await boundedClose(context.close()).catch(() => undefined);
     }
     if (browser) await boundedClose(browser.close()).catch(() => undefined);
+    unregisterPraxisVeil?.();
+    unregisterVeilAdmission();
   }
 
   endCaptureEpoch(privacySealed ? "sealed" : "run_completed", privacySealed ? "sealed" : "completed");
@@ -589,6 +685,23 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   return report;
 }
 
+export function resolveVeilPolicyForExecution(
+  executionPolicy: ExecuteOptions["policy"],
+  snapshot?: import("@scry/contracts").VeilPolicySnapshot,
+) {
+  if (!snapshot) return compileDefaultVeilPolicy(executionPolicy);
+  const parsed = importVeilSnapshot(snapshot);
+  const { digest, ...unsigned } = parsed;
+  if (veilPolicyDigest(unsigned) !== digest) throw new Error("VEIL_POLICY_SNAPSHOT_DIGEST_INVALID");
+  const compatibility = compileDefaultVeilPolicy(executionPolicy);
+  if (parsed.allowedOrigins.some((origin) => !compatibility.allowedOrigins.includes(origin))) throw new Error("VEIL_POLICY_SNAPSHOT_ORIGIN_MISMATCH");
+  return parsed;
+}
+
+function importVeilSnapshot(snapshot: import("@scry/contracts").VeilPolicySnapshot) {
+  return veilPolicySnapshotSchema.parse(snapshot);
+}
+
 function initializeSteps(options: ExecuteOptions): StepExecutionResult[] {
   return options.plan.steps.map((step) => ({
     id: step.id,
@@ -628,7 +741,7 @@ async function executeAction(
   redactor: SecretRedactor,
   capturedSecrets: Map<string, string>,
   capturedValues: Map<string, string>,
-  privacyGate?: PrivacyGate,
+  privacyGate?: VeilRuntimeCoordinator,
   emitEvent?: (type: RunEvent["type"], payload: Record<string, unknown>) => Promise<void>,
   praxisContext?: PraxisConsumerContext,
 ) {
@@ -816,18 +929,26 @@ async function captureRequestedEvidence(
   redactor: SecretRedactor,
   pendingNetworkBodies: Set<Promise<void>>,
   observation?: Record<string, unknown>,
-  privacyGate?: PrivacyGate,
+  privacyGate?: VeilRuntimeCoordinator,
+  collectors: ReadonlyMap<string, VeilChannelCollector> = new Map(),
+  visualCapture?: VeilVisualCaptureAuthority,
+  captureBinding?: () => { browserContextId: string; pageId: string; frameId: string; documentEpoch: number },
 ) {
   if (evidence.includes("screenshot")) {
-    if (privacyGate && privacyGate.getDecision("screenshot") !== "allow") {
+    if (collectors.get("screenshot")?.isCaptureSuppressed() || (privacyGate && privacyGate.getDecision("screenshot") !== "allow")) {
       result.artifacts.push({ id: randomUUID(), kind: "screenshot", availability: "destroyed", privacyClassification: "uncertain", failureProvenance: "privacy", reasonCode: "PRIVACY_GATE_CLOSED", contentType: "image/png", observation: { bytesDestroyed: true, reasonCode: "PRIVACY_GATE_CLOSED" } });
       setEvidenceStatus(result, "screenshot", "degraded", "Evidence suppressed by Privacy Gate");
     } else {
     const file = path.join(root, "screenshots", `${stepId}.png`);
     try {
-      const fallback = await captureScreenshotWithFallback(page, file, true);
-      const artifact = await availableArtifact("screenshot", "image/png", file, `screenshots/${stepId}.png`);
-      artifact.observation = { ...observation, screenshotMode: fallback ? "viewport-fallback" : "full-page" };
+      if (!visualCapture || !captureBinding) throw new Error("VEIL_VISUAL_CAPTURE_AUTHORITY_REQUIRED");
+      const binding = captureBinding();
+      const { permit } = await visualCapture.issue(page, binding);
+      const fallback = await visualCapture.capture(page, permit, binding, () => captureScreenshotWithFallback(page, file, true));
+      const artifact = await availableArtifact("screenshot", "image/png", file, `screenshots/${stepId}.png`, {
+        classification: "public", capturePermit: permit,
+      });
+      artifact.observation = { ...artifact.observation, ...observation, screenshotMode: fallback ? "viewport-fallback" : "full-page" };
       result.artifacts.push(artifact);
       setEvidenceStatus(result, "screenshot", "available");
     } catch (error) {
@@ -839,15 +960,17 @@ async function captureRequestedEvidence(
     }
   }
   if (evidence.includes("dom")) {
-    if (privacyGate && ["suppress", "quarantine"].includes(privacyGate.getDecision("dom"))) {
+    if (collectors.get("dom")?.isCaptureSuppressed() || (privacyGate && ["suppress", "quarantine"].includes(privacyGate.getDecision("dom")))) {
       result.artifacts.push({ id: randomUUID(), kind: "dom", availability: "destroyed", privacyClassification: "uncertain", failureProvenance: "privacy", reasonCode: "PRIVACY_GATE_CLOSED", contentType: "text/html", observation: { bytesDestroyed: true, reasonCode: "PRIVACY_GATE_CLOSED" } });
       setEvidenceStatus(result, "dom", "degraded", "Evidence suppressed by Privacy Gate");
     } else {
     try {
       const file = path.join(root, "dom", `${stepId}.html`);
-      await writeFile(file, redactor.redact(await page.content()), "utf8");
-      const artifact = await availableArtifact("dom", "text/html", file, `dom/${stepId}.html`);
-      if (observation) artifact.observation = observation;
+      await writeFile(file, await sanitizedDomStructure(page), "utf8");
+      const artifact = await availableArtifact("dom", "text/html", file, `dom/${stepId}.html`, {
+        classification: "public", sanitation: { stage: "post_capture", method: "SecretRedactor.redact", attestedAt: new Date().toISOString() },
+      });
+      if (observation) artifact.observation = { ...artifact.observation, ...observation };
       result.artifacts.push(artifact);
       setEvidenceStatus(result, "dom", "available");
     } catch (error) {
@@ -859,16 +982,18 @@ async function captureRequestedEvidence(
     }
   }
   if (evidence.includes("network")) {
-    if (privacyGate && ["suppress", "quarantine"].includes(privacyGate.getDecision("network"))) {
+    if (collectors.get("network")?.isCaptureSuppressed() || (privacyGate && ["suppress", "quarantine"].includes(privacyGate.getDecision("network")))) {
       result.artifacts.push({ id: randomUUID(), kind: "network", availability: "destroyed", privacyClassification: "uncertain", failureProvenance: "privacy", reasonCode: "PRIVACY_GATE_CLOSED", contentType: "application/json", observation: { bytesDestroyed: true, reasonCode: "PRIVACY_GATE_CLOSED" } });
       setEvidenceStatus(result, "network", "degraded", "Evidence suppressed by Privacy Gate");
     } else {
     try {
       await Promise.allSettled([...pendingNetworkBodies]);
       const file = path.join(root, "network", `${stepId}.json`);
-      await writeJson(file, redactor.redactValue({ requests: networkRecords }));
-      const artifact = await availableArtifact("network", "application/json", file, `network/${stepId}.json`);
-      if (observation) artifact.observation = observation;
+      await writeJson(file, { requests: safeNetworkEvidence(networkRecords) });
+      const artifact = await availableArtifact("network", "application/json", file, `network/${stepId}.json`, {
+        classification: "public", sanitation: { stage: "post_capture", method: "SecretRedactor.redactValue", attestedAt: new Date().toISOString() },
+      });
+      if (observation) artifact.observation = { ...artifact.observation, ...observation };
       result.artifacts.push(artifact);
       setEvidenceStatus(result, "network", "available");
     } catch (error) {
@@ -902,23 +1027,68 @@ async function captureScreenshotWithFallback(page: Page, file: string, fullPage:
   return true;
 }
 
+/**
+ * Produces structural DOM evidence without retaining page-authored text or
+ * attribute values. Those values are untrusted and may contain generated
+ * secrets that were never registered with SecretRedactor.
+ */
+async function sanitizedDomStructure(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const source = document.documentElement;
+    const clone = source.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll("script,style,noscript,template").forEach((element) => element.remove());
+    const walker = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT);
+    const remove: Node[] = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) remove.push(node);
+    remove.forEach((node) => node.parentNode?.removeChild(node));
+    clone.querySelectorAll("*").forEach((element) => {
+      const inputType = element instanceof HTMLInputElement ? element.type : undefined;
+      for (const attribute of [...element.attributes]) element.removeAttribute(attribute.name);
+      if (inputType) element.setAttribute("type", safeInputType(inputType));
+    });
+    return `<!doctype html>${clone.outerHTML}`;
+    function safeInputType(value: string) {
+      return ["button", "checkbox", "color", "date", "file", "hidden", "image", "month", "number", "password", "radio", "range", "reset", "submit", "time", "week"].includes(value) ? value : "text";
+    }
+  });
+}
+
+/** Network evidence is metadata-only. URLs, headers and bodies are excluded. */
+function safeNetworkEvidence(records: Array<Record<string, unknown>>) {
+  return records.map((record) => ({
+    type: record.type === "response" ? "response" : "request",
+    occurredAt: typeof record.occurredAt === "string" ? record.occurredAt : undefined,
+    method: typeof record.method === "string" ? record.method : undefined,
+    resourceType: typeof record.resourceType === "string" ? record.resourceType : undefined,
+    status: typeof record.status === "number" ? record.status : undefined,
+    responseBodyOmitted: record.responseBody === undefined ? record.responseBodyOmitted : "privacy_metadata_only",
+  }));
+}
+
 async function captureFailureScreenshot(
   page: Page,
   root: string,
   stepId: string,
   result: StepExecutionResult,
-  privacyGate?: PrivacyGate,
+  privacyGate?: VeilRuntimeCoordinator,
+  collectors: ReadonlyMap<string, VeilChannelCollector> = new Map(),
+  visualCapture?: VeilVisualCaptureAuthority,
+  captureBinding?: () => { browserContextId: string; pageId: string; frameId: string; documentEpoch: number },
 ) {
-  if (privacyGate && privacyGate.getDecision("screenshot") !== "allow") return;
+  if (collectors.get("screenshot")?.isCaptureSuppressed() || (privacyGate && privacyGate.getDecision("screenshot") !== "allow")) return;
   try {
     const file = path.join(root, "screenshots", `${stepId}.failure.png`);
-    await page.screenshot({ path: file, fullPage: true });
+    if (!visualCapture || !captureBinding) return;
+    const binding = captureBinding();
+    const { permit } = await visualCapture.issue(page, binding);
+    await visualCapture.capture(page, permit, binding, () => page.screenshot({ path: file, fullPage: true }).then(() => undefined));
     result.artifacts.push(
       await availableArtifact(
         "screenshot",
         "image/png",
         file,
         `screenshots/${stepId}.failure.png`,
+        { classification: "public", capturePermit: permit },
       ),
     );
   } catch {
@@ -933,22 +1103,22 @@ function attachDiagnostics(
   redactor: SecretRedactor,
   isProtectedCaptureActive: () => boolean = () => false,
 ) {
-  page.on("console", (message) => {
+  page.on("console", () => {
     if (isProtectedCaptureActive()) return;
     const diagnostic: DiagnosticRecord = {
       type: "console",
       occurredAt: new Date().toISOString(),
-      message: isProtectedCaptureActive() ? PROTECTED_CAPTURE_REDACTION : redactor.redact(message.text()),
+      message: "PAGE_CONSOLE_MESSAGE_OMITTED",
     };
     diagnostics.push(diagnostic);
     void emit("diagnostic.console", diagnostic);
   });
-  page.on("pageerror", (error) => {
+  page.on("pageerror", () => {
     if (isProtectedCaptureActive()) return;
     const diagnostic: DiagnosticRecord = {
       type: "page_error",
       occurredAt: new Date().toISOString(),
-      message: isProtectedCaptureActive() ? PROTECTED_CAPTURE_REDACTION : redactor.redact(error.message),
+      message: "PAGE_ERROR_MESSAGE_OMITTED",
     };
     diagnostics.push(diagnostic);
     void emit("diagnostic.page_error", diagnostic);
@@ -958,13 +1128,17 @@ function attachDiagnostics(
     const diagnostic: DiagnosticRecord = {
       type: "request_failed",
       occurredAt: new Date().toISOString(),
-      message: isProtectedCaptureActive() ? PROTECTED_CAPTURE_REDACTION : redactor.redact(request.failure()?.errorText ?? "Request failed"),
-      url: isProtectedCaptureActive() ? PROTECTED_CAPTURE_REDACTION : redactor.redact(request.url()),
+      message: "REQUEST_FAILURE_DETAILS_OMITTED",
+      url: safeDiagnosticOrigin(request.url()),
       method: request.method(),
     };
     diagnostics.push(diagnostic);
     void emit("diagnostic.request_failed", diagnostic);
   });
+}
+
+function safeDiagnosticOrigin(value: string): string {
+  try { return new URL(value).origin; } catch { return "invalid-origin"; }
 }
 
 function attachNetworkCapture(
@@ -1416,6 +1590,14 @@ function isBrowserInfrastructureFailure(error: unknown) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function canonicalVeilOrigin(currentUrl: string | undefined, fallback: string): string {
+  try {
+    const origin = currentUrl ? new URL(currentUrl).origin : "null";
+    if (origin !== "null") return origin;
+  } catch { /* use policy origin before navigation */ }
+  return new URL(fallback).origin;
 }
 
 function optionalTimeout(timeoutMs: number | undefined): { timeout?: number } {

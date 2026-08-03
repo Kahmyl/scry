@@ -6,7 +6,7 @@ import type { Artifact, PrivacyFailure, RecordingTimelineEntry, SafeResumeBounda
 import type { BrowserContext } from "playwright";
 
 import { availableArtifact } from "./artifacts.js";
-import type { PrivacyCollector } from "./privacy-gate.js";
+import type { PrivacyCollector } from "./veil-runtime-coordinator.js";
 
 export class TraceCoordinator implements PrivacyCollector {
   readonly name = "trace";
@@ -16,11 +16,14 @@ export class TraceCoordinator implements PrivacyCollector {
   private sealed = false;
   private finalized = false;
   private transition = Promise.resolve();
+  private veilState: ReturnType<PrivacyCollector["state"]>["status"] = "active";
 
   constructor(private readonly options: {
     context: BrowserContext;
     outputDirectory: string;
     sanitize: (path: string) => Promise<void>;
+    /** Only a pre-admission verifier with complete classification may opt in. */
+    admitSanitized?: (path: string) => Promise<boolean>;
     now?: () => Date;
   }) {}
 
@@ -37,10 +40,13 @@ export class TraceCoordinator implements PrivacyCollector {
     });
   }
 
-  async arm(_operationId: string) { await this.stop(false); }
-  async resume(_boundary: SafeResumeBoundary) { await this.start("safe_resume"); }
-  async seal(_reason: PrivacyFailure) { await this.stop(true); this.sealed = true; }
-  async finalize() { if (this.finalized) return; await this.stop(this.sealed); this.finalized = true; }
+  async arm(_operationId: string) { if(this.veilState!=="active")throw new Error("TRACE_NOT_ACTIVE");this.veilState="prepared"; }
+  async suspend() { if(this.veilState!=="prepared")throw new Error("TRACE_NOT_PREPARED");await this.stop(false);this.veilState="suspended"; }
+  async isolate() { if(this.veilState!=="suspended"||this.active)throw new Error("TRACE_NOT_SUSPENDED");this.veilState="isolated"; }
+  async resume(_boundary: SafeResumeBoundary) { if(this.veilState!=="isolated")throw new Error("TRACE_NOT_ISOLATED");await this.start("safe_resume");this.veilState="active"; }
+  async seal(_reason: PrivacyFailure) { await this.stop(true); this.sealed = true; this.veilState="sealed"; }
+  async finalize() { if (this.finalized) return; await this.stop(this.sealed); this.finalized = true; this.veilState="finalized"; }
+  state(){return {status:this.veilState};}
 
   artifacts() { return structuredClone(this.traceArtifacts); }
   timeline() { return structuredClone(this.entries); }
@@ -63,9 +69,21 @@ export class TraceCoordinator implements PrivacyCollector {
           return;
         }
         await this.options.sanitize(active.path);
-        const artifact = await availableArtifact("trace", "application/zip", active.path, active.relativePath);
+        if (!this.options.admitSanitized || !await this.options.admitSanitized(active.path)) {
+          await rm(active.path, { force: true });
+          const artifact: Artifact = { id: randomUUID(), kind: "trace", availability: "destroyed", privacyClassification: "uncertain", failureProvenance: "privacy", reasonCode: "TRACE_CLASSIFICATION_UNPROVEN", contentType: "application/zip", observation: { reasonCode: "TRACE_CLASSIFICATION_UNPROVEN", bytesDestroyed: true } };
+          const entry: RecordingTimelineEntry = { type: "trace_segment", id: active.id, sequence: this.entries.length, startedAt: active.startedAt, endedAt, reason: active.reason, status: "quarantined", privacyStatus: "quarantined", artifactId: artifact.id };
+          artifact.observation = { ...artifact.observation, timelineEntry: entry };
+          this.traceArtifacts.push(artifact);
+          this.entries.push(entry);
+          return;
+        }
+        const artifact = await availableArtifact("trace", "application/zip", active.path, active.relativePath, {
+          classification: "public",
+          sanitation: { stage: "post_capture", method: "sanitizeTraceArchive", attestedAt: endedAt },
+        });
         const entry: RecordingTimelineEntry = { type: "trace_segment", id: active.id, sequence: this.entries.length, startedAt: active.startedAt, endedAt, reason: active.reason, status: "available", privacyStatus: "verified_safe", artifactId: artifact.id };
-        artifact.observation = { timelineEntry: entry };
+        artifact.observation = { ...artifact.observation, timelineEntry: entry };
         this.traceArtifacts.push(artifact);
         this.entries.push(entry);
       } catch {

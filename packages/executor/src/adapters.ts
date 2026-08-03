@@ -1,4 +1,5 @@
 import type { Page } from "playwright";
+import { markVeilProtectedClipboardTouched } from "./veil-clipboard-collector.js";
 
 export type AdapterCapability = "clipboard_extraction" | "network_extraction" | "safe_exit" | "credential_revocation";
 export type AdapterResult<T = unknown> = { value?: T; code: "ADAPTER_COMPLETED"; durationMs: number };
@@ -31,10 +32,11 @@ const clipboard: BuiltInAdapter<Record<string, never>> = {
   suppressedChannels: ["video","trace","screenshot","dom","accessibility","console","page_error","network","report","event"], timeoutMs: 2_000,
   async execute(context) {
     requireProtected(context); const started = Date.now();
+    const lifecycleOwned = markVeilProtectedClipboardTouched(context.page);
     const value = await context.page.evaluate(() => navigator.clipboard.readText());
     if (!value) throw new AdapterError("ADAPTER_VALUE_EMPTY", "gauntlet.clipboard");
     context.registerSecret(value);
-    await context.page.evaluate(() => navigator.clipboard.writeText(""));
+    if (!lifecycleOwned) await context.page.evaluate(() => navigator.clipboard.writeText(""));
     return { value, code: "ADAPTER_COMPLETED", durationMs: Date.now() - started };
   },
 };

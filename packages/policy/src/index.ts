@@ -4,6 +4,7 @@ import { isIP } from "node:net";
 import type { CurrentAction, CurrentPlan, ExecutionPolicy } from "@scry/contracts";
 
 export { SecretRedactor } from "./redactor.js";
+export * from "./veil-policy.js";
 
 export type RuntimePolicyViolationCode =
   | "SCHEME_NOT_ALLOWED"

@@ -264,6 +264,7 @@ export class ScryRepository {
               runs.plan_snapshot AS "planSnapshot",
               runs.environment_snapshot AS "environmentSnapshot",
               runs.policy_snapshot AS "policySnapshot",
+              runs.veil_policy_snapshot AS "veilPolicySnapshot",
               runs.execution_snapshot AS "executionSnapshot",
               CASE
                 WHEN runs.state = 'finalizing' THEN 'finalizing'
@@ -294,11 +295,11 @@ export class ScryRepository {
     return this.database.transaction(async (client) => {
       const result = await client.query(
         `INSERT INTO runs(project_id,mission_id,objective_id,agent_session_id,environment_id,flow_revision_id,state,phase,
-           plan_snapshot, environment_snapshot, policy_snapshot, execution_snapshot,
+           plan_snapshot, environment_snapshot, policy_snapshot, veil_policy_snapshot, execution_snapshot,
            rerun_of_run_id, idempotency_key
          )
          SELECT project_id,mission_id,objective_id,agent_session_id,environment_id,flow_revision_id,'queued','queued',
-                plan_snapshot, environment_snapshot, policy_snapshot, execution_snapshot, id, $2
+                plan_snapshot, environment_snapshot, policy_snapshot, veil_policy_snapshot, execution_snapshot, id, $2
          FROM runs WHERE id = $1
          RETURNING id, project_id AS "projectId", environment_id AS "environmentId",
                    flow_revision_id AS "flowRevisionId",
@@ -339,9 +340,10 @@ export class ScryRepository {
     const workspaceId = principal.kind === "user" ? principal.workspaceId : null;
     const result = await this.database.query(
       `SELECT a.id, a.kind, a.availability, a.content_type AS "contentType",
-              a.storage_key AS "storageKey", a.size_bytes AS "sizeBytes", a.metadata AS observation,
+              a.storage_key AS "storageKey", a.size_bytes AS "sizeBytes", a.checksum_sha256 AS "checksumSha256", a.metadata AS observation,
               a.privacy_classification AS "privacyClassification", a.failure_provenance AS "failureProvenance",
               a.reason_code AS "reasonCode"
+              ,a.destruction_status AS "destructionStatus"
        FROM artifacts a
        JOIN attempts att ON att.id = a.attempt_id
        JOIN runs r ON r.id = att.run_id

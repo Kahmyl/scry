@@ -33,6 +33,7 @@ import { OrchestrationService } from "./orchestration.service.js";
 import { AuthoringController } from "./authoring.controller.js";
 import { AuthoringService } from "./authoring.service.js";
 import { ProbeRuntimeRepository } from "./probe-runtime.repository.js";
+import { VeilPreferencesService } from "./veil-preferences.service.js";
 
 @Module({
   controllers: [
@@ -67,6 +68,7 @@ import { ProbeRuntimeRepository } from "./probe-runtime.repository.js";
     OrchestrationService,
     AuthoringService,
     ProbeRuntimeRepository,
+    VeilPreferencesService,
     { provide: APP_GUARD, useClass: AuthGuard },
   ],
   exports: [

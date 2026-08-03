@@ -12,7 +12,7 @@ import type { BrowserContext, Page } from "playwright";
 import type { CalibrationStructure } from "./calibration.js";
 
 import type { RecordingCoordinator } from "./recording-coordinator.js";
-import type { PrivacyGate } from "./privacy-gate.js";
+import type { VeilRuntimeCoordinator } from "./veil-runtime-coordinator.js";
 
 export type SecretResolver = (reference: string) => Promise<string>;
 export type SecretCapture = (name: string, value: string) => Promise<{ credentialId: string }>;
@@ -60,10 +60,13 @@ export type ExecuteOptions = {
   onEvent?: (event: RunEvent) => void | Promise<void>;
   onPraxisResult?: (result: import("@scry/contracts").PraxisResult) => void | Promise<void>;
   readinessTimeoutMultiplier?: number;
+  veilAdmissionKey?: string;
+  /** Immutable, run-bound Veil authority snapshot. Production workers must provide it. */
+  veilPolicySnapshot?: import("@scry/contracts").VeilPolicySnapshot;
   /** Phase 1 synthetic-gap hook. It must never handle real protected values. */
   recordingTestHook?: (input: { page: Page; recording: RecordingCoordinator }) => Promise<void>;
   /** Phase 2 synthetic privacy interval hook. It must never handle real protected values. */
-  privacyTestHook?: (input: { page: Page; privacy: PrivacyGate }) => Promise<void>;
+  privacyTestHook?: (input: { page: Page; privacy: VeilRuntimeCoordinator }) => Promise<void>;
 };
 
 export type ExecutionReport = AttemptResult & {

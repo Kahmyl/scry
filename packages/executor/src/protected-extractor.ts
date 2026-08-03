@@ -3,6 +3,7 @@ import type { Locator, Page } from "playwright";
 import { armExpectedEffect, clickGroundedTarget, GroundingError, resolveTarget, resolveTargetLocator, verifyExpectedEffect } from "./grounding.js";
 import { acquireProtectedVisualText } from "./visual-grounding.js";
 import { requirePraxisSuccess } from "./praxis-consumer.js";
+import { markVeilProtectedClipboardTouched } from "./veil-clipboard-collector.js";
 
 type CandidateState = ExtractionDiagnostic & { method?: AcquisitionIntent["permittedMethods"][number] };
 
@@ -58,8 +59,9 @@ async function acquireByMethod(page: Page, target: Locator, method: AcquisitionI
       const copy = group.getByRole("button", { name: /copy/i });
       if (await copy.count() !== 1) throw new AcquisitionError("COPY_CONTROL_UNRESOLVED");
       await copy.click();
+      const lifecycleOwned = markVeilProtectedClipboardTouched(page);
       const value = await page.evaluate(() => navigator.clipboard.readText());
-      await page.evaluate(() => navigator.clipboard.writeText(""));
+      if (!lifecycleOwned) await page.evaluate(() => navigator.clipboard.writeText(""));
       return value;
     }
     case "scoped_text_selection": return target.evaluate((element) => { const selection = getSelection(); const range = document.createRange(); range.selectNodeContents(element); selection?.removeAllRanges(); selection?.addRange(range); const value = selection?.toString() ?? ""; selection?.removeAllRanges(); return value; });

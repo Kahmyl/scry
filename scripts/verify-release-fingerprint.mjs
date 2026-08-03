@@ -8,12 +8,16 @@ const capsule = await readFile(new URL("protected-capsule.sql", migrations), "ut
 const authoring = await readFile(new URL("authoring-execution-cutover.sql", migrations), "utf8");
 const reporting = await readFile(new URL("praxis-reporting.sql", migrations), "utf8");
 const cutoff = await readFile(new URL("praxis-cutoff.sql", migrations), "utf8");
+const preferences = await readFile(new URL("veil-observation-preferences.sql", migrations), "utf8");
+const retention = await readFile(new URL("veil-artifact-retention.sql", migrations), "utf8");
 const baseline = (await readFile(new URL("baseline.sql", migrations), "utf8"))
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule)
   .replace("\\ir authoring-execution-cutover.sql", () => authoring)
   .replace("\\ir praxis-reporting.sql", () => reporting)
-  .replace("\\ir praxis-cutoff.sql", () => cutoff);
+  .replace("\\ir praxis-cutoff.sql", () => cutoff)
+  .replace("\\ir veil-observation-preferences.sql", () => preferences)
+  .replace("\\ir veil-artifact-retention.sql", () => retention);
 const required = createHash("sha256").update(baseline).digest("hex");
 const configured = compose.match(/SCRY_SCHEMA_FINGERPRINT:\s*"\$\{SCRY_SCHEMA_FINGERPRINT:-([a-f0-9]{64})\}"/)?.[1];
 

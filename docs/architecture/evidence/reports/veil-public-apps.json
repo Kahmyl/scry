@@ -1,0 +1,209 @@
+{
+  "schemaVersion": 1,
+  "command": [
+    "pnpm",
+    "campaign:veil:public-apps"
+  ],
+  "startedAt": "2026-08-03T11:49:08.866Z",
+  "completedAt": "2026-08-03T11:49:41.158Z",
+  "durationMs": 32292,
+  "exitCode": 0,
+  "reportSha256": "c0240717e3bdcda228bbda702362e1db36664589d90fdee5e7325f6dac6e180d",
+  "report": {
+    "schemaVersion": 1,
+    "campaign": "veil-public-application-qualification",
+    "executedAt": "2026-08-03T11:49:41.086Z",
+    "environment": {
+      "transport": "public_https",
+      "browser": "real_chromium",
+      "browserVersion": "150.0.7871.187",
+      "externalMutation": "none",
+      "authentication": "none"
+    },
+    "counts": {
+      "total": 25,
+      "passed": 25,
+      "failed": 0,
+      "skipped": 0
+    },
+    "qualification": "PUBLIC_COMPONENT_PASS",
+    "readiness": "NOT_READY_WITHOUT_FULL_GATE",
+    "results": [
+      {
+        "id": "wikipedia",
+        "url": "https://www.wikipedia.org/",
+        "finalUrl": "https://www.wikipedia.org/",
+        "status": "passed",
+        "durationMs": 1231.862542
+      },
+      {
+        "id": "mdn",
+        "url": "https://developer.mozilla.org/en-US/",
+        "finalUrl": "https://developer.mozilla.org/en-US/",
+        "status": "passed",
+        "durationMs": 735.1529999999998
+      },
+      {
+        "id": "react",
+        "url": "https://react.dev/",
+        "finalUrl": "https://react.dev/",
+        "status": "passed",
+        "durationMs": 867.6561670000001
+      },
+      {
+        "id": "vue",
+        "url": "https://vuejs.org/",
+        "finalUrl": "https://vuejs.org/",
+        "status": "passed",
+        "durationMs": 1483.912917
+      },
+      {
+        "id": "angular",
+        "url": "https://angular.dev/",
+        "finalUrl": "https://angular.dev/",
+        "status": "passed",
+        "durationMs": 773.2185420000005
+      },
+      {
+        "id": "svelte",
+        "url": "https://svelte.dev/",
+        "finalUrl": "https://svelte.dev/",
+        "status": "passed",
+        "durationMs": 833.1624579999998
+      },
+      {
+        "id": "node",
+        "url": "https://nodejs.org/en",
+        "finalUrl": "https://nodejs.org/en",
+        "status": "passed",
+        "durationMs": 1277.779208
+      },
+      {
+        "id": "typescript",
+        "url": "https://www.typescriptlang.org/",
+        "finalUrl": "https://www.typescriptlang.org/",
+        "status": "passed",
+        "durationMs": 578.6117500000009
+      },
+      {
+        "id": "playwright",
+        "url": "https://playwright.dev/",
+        "finalUrl": "https://playwright.dev/",
+        "status": "passed",
+        "durationMs": 449.0832499999997
+      },
+      {
+        "id": "vitest",
+        "url": "https://vitest.dev/",
+        "finalUrl": "https://vitest.dev/",
+        "status": "passed",
+        "durationMs": 1424.8582079999996
+      },
+      {
+        "id": "pnpm",
+        "url": "https://pnpm.io/",
+        "finalUrl": "https://pnpm.io/",
+        "status": "passed",
+        "durationMs": 1271.1981250000008
+      },
+      {
+        "id": "python",
+        "url": "https://www.python.org/",
+        "finalUrl": "https://www.python.org/",
+        "status": "passed",
+        "durationMs": 1272.6081669999985
+      },
+      {
+        "id": "rust",
+        "url": "https://www.rust-lang.org/",
+        "finalUrl": "https://rust-lang.org/",
+        "status": "passed",
+        "durationMs": 1763.3904999999995
+      },
+      {
+        "id": "go",
+        "url": "https://go.dev/",
+        "finalUrl": "https://go.dev/",
+        "status": "passed",
+        "durationMs": 1731.430875
+      },
+      {
+        "id": "postgresql",
+        "url": "https://www.postgresql.org/",
+        "finalUrl": "https://www.postgresql.org/",
+        "status": "passed",
+        "durationMs": 3027.2607500000013
+      },
+      {
+        "id": "redis",
+        "url": "https://redis.io/",
+        "finalUrl": "https://redis.io/",
+        "status": "passed",
+        "durationMs": 2328.174500000001
+      },
+      {
+        "id": "kubernetes",
+        "url": "https://kubernetes.io/",
+        "finalUrl": "https://kubernetes.io/",
+        "status": "passed",
+        "durationMs": 1171.0813329999983
+      },
+      {
+        "id": "docker",
+        "url": "https://www.docker.com/",
+        "finalUrl": "https://www.docker.com/",
+        "status": "passed",
+        "durationMs": 1551.7975420000002
+      },
+      {
+        "id": "w3c",
+        "url": "https://www.w3.org/",
+        "finalUrl": "https://www.w3.org/",
+        "status": "passed",
+        "durationMs": 989.3313749999979
+      },
+      {
+        "id": "webdev",
+        "url": "https://web.dev/",
+        "finalUrl": "https://web.dev/",
+        "status": "passed",
+        "durationMs": 1697.6733749999985
+      },
+      {
+        "id": "github-docs",
+        "url": "https://docs.github.com/en",
+        "finalUrl": "https://docs.github.com/en",
+        "status": "passed",
+        "durationMs": 507.01470899999913
+      },
+      {
+        "id": "npm-docs",
+        "url": "https://docs.npmjs.com/",
+        "finalUrl": "https://docs.npmjs.com/",
+        "status": "passed",
+        "durationMs": 813.1979169999977
+      },
+      {
+        "id": "nextjs",
+        "url": "https://nextjs.org/",
+        "finalUrl": "https://nextjs.org/",
+        "status": "passed",
+        "durationMs": 684.5219590000015
+      },
+      {
+        "id": "nuxt",
+        "url": "https://nuxt.com/",
+        "finalUrl": "https://nuxt.com/",
+        "status": "passed",
+        "durationMs": 1136.6519160000025
+      },
+      {
+        "id": "tailwind",
+        "url": "https://tailwindcss.com/",
+        "finalUrl": "https://tailwindcss.com/",
+        "status": "passed",
+        "durationMs": 1288.9313750000001
+      }
+    ]
+  }
+}

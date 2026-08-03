@@ -8,6 +8,7 @@
     "worker": "tsx src/worker.ts",
     "start": "tsx src/main.ts",
     "db:migrate": "tsx scripts/migrate.ts",
+    "campaign:veil:worker-crash": "tsx scripts/veil-worker-crash-recovery-campaign.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -18,6 +19,7 @@
     "@scry/artifact": "workspace:*",
     "@scry/contracts": "workspace:*",
     "@scry/executor": "workspace:*",
+    "@scry/policy": "workspace:*",
     "bullmq": "^5.58.0",
     "fflate": "^0.8.3",
     "ioredis": "^5.7.0",

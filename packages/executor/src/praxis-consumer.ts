@@ -4,6 +4,7 @@ import type { Page } from "playwright";
 import { PraxisAdapter, type PraxisInputResolver } from "./praxis-adapter.js";
 import { PraxisDocumentEpoch } from "./praxis-observation.js";
 import { PraxisTransactionCoordinator } from "./praxis-transaction.js";
+import { authorizePraxisRequest, releasePraxisVeilGrants } from "./praxis-veil.js";
 
 export type PraxisConsumerContext = {
   runId?: string;
@@ -29,10 +30,14 @@ export type PraxisConsumerInput = {
 };
 
 export async function executePraxisConsumer(input: PraxisConsumerInput): Promise<PraxisResult> {
-  const request = await buildPraxisRequest(input);
-  const result = await new PraxisTransactionCoordinator(new PraxisAdapter(input.page, input.resolveInput), input.context.emit).execute(request, input.signal);
-  await input.context.record?.(result);
-  return result;
+  const request = authorizePraxisRequest(input.page, await buildPraxisRequest(input));
+  try {
+    const result = await new PraxisTransactionCoordinator(new PraxisAdapter(input.page, input.resolveInput), input.context.emit).execute(request, input.signal);
+    await input.context.record?.(result);
+    return result;
+  } finally {
+    releasePraxisVeilGrants(request);
+  }
 }
 
 export async function requirePraxisSuccess(input: PraxisConsumerInput) {
@@ -66,5 +71,11 @@ async function buildPraxisRequest(input: PraxisConsumerInput): Promise<PraxisReq
   };
 }
 
-function safeOrigin(url: string, fallback?: string) { try { return new URL(url).origin; } catch { return new URL(fallback ?? "https://scry.invalid").origin; } }
+function safeOrigin(url: string, fallback?: string) {
+  try {
+    const candidate = new URL(url).origin;
+    if (candidate !== "null") return candidate;
+  } catch { /* use the declared allowed origin */ }
+  return new URL(fallback ?? "https://scry.invalid").origin;
+}
 function bounded(value: number, minimum: number, maximum: number) { return Math.min(maximum, Math.max(minimum, Math.round(value))); }

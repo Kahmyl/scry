@@ -62,6 +62,7 @@ import {
   type Calibration,
   type CredentialIncident,
   type Environment,
+  type VeilPreferenceRecord,
   type McpAccessToken,
   type MissionDetail,
   type MissionReport,
@@ -74,7 +75,7 @@ import {
 } from "./api.js";
 import { publicConfig } from "./runtime-config.js";
 import { deriveRecordingTimeline, deriveRecoveryTimeline, type RecordingTimelineEntry } from "./recording-timeline.js";
-import { dashboardPaths as viewPaths, reconcileProjectSelection, resolveDashboardView, type DashboardView as View } from "./dashboard-state.js";
+import { dashboardPaths as viewPaths, reconcileProjectSelection, resolveDashboardView, veilPolicyIdentity, veilTighteningOptions, type DashboardView as View } from "./dashboard-state.js";
 
 type SequenceActionType = "navigate" | "fill" | "click" | "waitFor" | "screenshot";
 type VerificationDraft = {
@@ -942,6 +943,20 @@ function ReportView({ runId, onBack, onOpenReport }: { runId: string; onBack: ()
       </section>
       {error && <div className="global-error"><AlertTriangle size={16} /> {error}</div>}
       <section className="panel">
+        <PanelHeader title="Veil privacy" kicker={`${report.veil.effectiveProfile.replaceAll("_", " ").toUpperCase()} · ${report.veil.status.toUpperCase()}`} />
+        <div className="diagnostics">
+          <div><ShieldCheck size={15} /><div><strong>Effective policy · {veilPolicyIdentity(report.veil.policyDigest)}</strong><span>{report.veil.timeline.length} lifecycle entries · {report.veil.gaps.length} capture gaps</span></div></div>
+          {report.veil.findings.map((finding, index) => <div key={`${finding.code}-${index}`}>
+            <AlertTriangle size={15} />
+            <div><strong>{finding.code} · {finding.severity}</strong><span>{finding.remediation}</span>{finding.channel && <code>{finding.channel} · {finding.reasonCode}</code>}</div>
+          </div>)}
+          {report.veil.gaps.map((gap, index) => <div key={`${gap.startedAt}-${index}`}>
+            <Eye size={15} /><div><strong>Capture withheld · {gap.reasonCode}</strong><span>{gap.remediation}</span></div>
+          </div>)}
+          {!report.veil.findings.length && !report.veil.gaps.length && <div className="clean-signal"><ShieldCheck size={20}/><strong>Veil verified</strong><span>No privacy finding or capture gap was recorded.</span></div>}
+        </div>
+      </section>
+      <section className="panel">
         <PanelHeader title="Praxis interactions" kicker={`${report.praxis.transactions.length} TRANSACTIONS · ${report.praxis.findings.length} FINDINGS`} />
         <div className="diagnostics">
           {report.praxis.transactions.map((transaction) => <div key={transaction.transactionId}>
@@ -1151,12 +1166,17 @@ function Settings({ projectId }: { projectId: string }) {
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [calibrations, setCalibrations] = useState<Calibration[]>([]);
   const [incidents, setIncidents] = useState<CredentialIncident[]>([]);
+  const [environments, setEnvironments] = useState<Environment[]>([]);
+  const [veil, setVeil] = useState<VeilPreferenceRecord[]>([]);
   const [dialog, setDialog] = useState(false);
   const [error, setError] = useState("");
 
   const load = useCallback(() => {
-    void Promise.all([api<Credential[]>(`/projects/${projectId}/credentials`), api<Calibration[]>(`/projects/${projectId}/calibrations`), api<CredentialIncident[]>(`/projects/${projectId}/credential-incidents`)])
-      .then(([nextCredentials, nextCalibrations, nextIncidents]) => { setCredentials(nextCredentials); setCalibrations(nextCalibrations); setIncidents(nextIncidents); })
+    void Promise.all([api<Credential[]>(`/projects/${projectId}/credentials`), api<Calibration[]>(`/projects/${projectId}/calibrations`), api<CredentialIncident[]>(`/projects/${projectId}/credential-incidents`), api<Environment[]>(`/projects/${projectId}/environments`)])
+      .then(async ([nextCredentials, nextCalibrations, nextIncidents, nextEnvironments]) => {
+        const veilRecords = await Promise.all(nextEnvironments.map((environment) => api<VeilPreferenceRecord>(`/environments/${environment.id}/veil`)));
+        setCredentials(nextCredentials); setCalibrations(nextCalibrations); setIncidents(nextIncidents); setEnvironments(nextEnvironments); setVeil(veilRecords);
+      })
       .catch((cause) => setError(message(cause)));
   }, [projectId]);
 
@@ -1180,12 +1200,31 @@ function Settings({ projectId }: { projectId: string }) {
     catch (cause) { setError(message(cause)); }
   };
 
+  const tightenVeil = async (environmentId: string, profile: "private" | "minimal_capture") => {
+    setError("");
+    try {
+      const updated = await patch<VeilPreferenceRecord>(`/environments/${environmentId}/veil`, { profile, reasonCode: "VEIL_USER_REQUESTED_PRIVACY" });
+      setVeil((current) => current.map((record) => record.environmentId === environmentId ? updated : record));
+    } catch (cause) { setError(message(cause)); }
+  };
+
   return (
     <>
       <PageTitle eyebrow="PROJECT SCOPE" title="Project settings" copy="Defaults applied to new Flow runs in this project." />
       <section className="panel policy-defaults">
         <div><span className="eyebrow">EXECUTION DEFAULTS</span><h3>Configured inside each Flow</h3><p>Every Flow owns its related URLs and ordered Sequence. Scry generates its safety boundaries automatically and preserves them with every report.</p></div>
         <div className="policy-facts"><span><Check size={14} /> Chromium</span><span><Check size={14} /> 1280 × 720</span><span><Check size={14} /> Flow-scoped access</span></div>
+      </section>
+      <section className="panel credential-settings">
+        <div className="credential-settings-head"><div><span className="eyebrow">VEIL PRIVACY</span><h3>Effective capture profiles</h3><p>Settings can only become stricter. Sensitive visual masking, structured-evidence sanitation, and unknown-evidence quarantine cannot be disabled.</p></div></div>
+        <div className="credential-list">
+          {environments.map((environment) => { const record = veil.find((candidate) => candidate.environmentId === environment.id); return <div key={environment.id}>
+            <span className="credential-icon"><ShieldCheck size={17}/></span>
+            <div><strong>{environment.name} · {record?.effectivePolicy.profile.replaceAll("_", " ") ?? "loading"}</strong><small>{record ? `Policy ${veilPolicyIdentity(record.effectivePolicy.digest)} · ${record.effectivePolicy.allowedOrigins.length} allowed origin(s) · ${record.effectivePolicy.leaseTtlMs} ms leases` : "Loading effective policy"}</small></div>
+            {record && veilTighteningOptions(record.effectivePolicy.profile).map((profile) => <button key={profile} className="secondary-button" onClick={() => void tightenVeil(environment.id, profile)}>Use {profile.replaceAll("_", " ")}</button>)}
+          </div>; })}
+          {!environments.length && <EmptyBlock icon={<ShieldCheck/>} title="No environments" copy="Veil preferences are environment-scoped and appear after an execution environment is created."/>}
+        </div>
       </section>
       <section className="panel credential-settings">
         <div className="credential-settings-head">

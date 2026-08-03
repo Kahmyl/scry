@@ -1,0 +1,303 @@
+{
+  "schemaVersion": 1,
+  "command": [
+    "pnpm",
+    "campaign:praxis:public-apps"
+  ],
+  "startedAt": "2026-08-03T11:49:53.294Z",
+  "completedAt": "2026-08-03T11:50:58.481Z",
+  "durationMs": 65187,
+  "exitCode": 0,
+  "reportSha256": "7a23fe828feef10f9b85eb1888bcb7efb26731485bb8eb385c6f49f956d4bce6",
+  "report": {
+    "schemaVersion": 1,
+    "campaign": "praxis-public-application-qualification",
+    "executedAt": "2026-08-03T11:50:58.436Z",
+    "environment": {
+      "browser": "real_chromium",
+      "browserVersion": "150.0.7871.187",
+      "channel": "chrome",
+      "transport": "public_https",
+      "persistence": false,
+      "missionFlowInfrastructure": false,
+      "externalMutation": "none"
+    },
+    "counts": {
+      "total": 25,
+      "passed": 25,
+      "failed": 0,
+      "skipped": 0
+    },
+    "categories": {
+      "content": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0
+      },
+      "framework": {
+        "total": 6,
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0
+      },
+      "runtime": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0
+      },
+      "tooling": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0
+      },
+      "infrastructure": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0
+      },
+      "commercial": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "standards": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    "results": [
+      {
+        "id": "wikipedia",
+        "name": "Wikipedia",
+        "category": "content",
+        "url": "https://www.wikipedia.org/",
+        "finalUrl": "https://www.wikipedia.org/",
+        "status": "passed",
+        "durationMs": 2644.297875
+      },
+      {
+        "id": "mdn",
+        "name": "MDN Web Docs",
+        "category": "content",
+        "url": "https://developer.mozilla.org/en-US/",
+        "finalUrl": "https://developer.mozilla.org/en-US/",
+        "status": "passed",
+        "durationMs": 1902.5699999999997
+      },
+      {
+        "id": "react",
+        "name": "React",
+        "category": "framework",
+        "url": "https://react.dev/",
+        "finalUrl": "https://react.dev/learn",
+        "status": "passed",
+        "durationMs": 3558.0927089999996
+      },
+      {
+        "id": "vue",
+        "name": "Vue",
+        "category": "framework",
+        "url": "https://vuejs.org/",
+        "finalUrl": "https://vuejs.org/guide/introduction.html",
+        "status": "passed",
+        "durationMs": 3121.876
+      },
+      {
+        "id": "angular",
+        "name": "Angular",
+        "category": "framework",
+        "url": "https://angular.dev/",
+        "finalUrl": "https://angular.dev/",
+        "status": "passed",
+        "durationMs": 2355.508750000001
+      },
+      {
+        "id": "svelte",
+        "name": "Svelte",
+        "category": "framework",
+        "url": "https://svelte.dev/",
+        "finalUrl": "https://svelte.dev/tutorial/svelte/welcome-to-svelte",
+        "status": "passed",
+        "durationMs": 3099.303333
+      },
+      {
+        "id": "node",
+        "name": "Node.js",
+        "category": "runtime",
+        "url": "https://nodejs.org/en",
+        "finalUrl": "https://nodejs.org/en",
+        "status": "passed",
+        "durationMs": 2097.1911660000005
+      },
+      {
+        "id": "typescript",
+        "name": "TypeScript",
+        "category": "tooling",
+        "url": "https://www.typescriptlang.org/",
+        "finalUrl": "https://www.typescriptlang.org/docs/handbook/intro.html",
+        "status": "passed",
+        "durationMs": 2102.982916000001
+      },
+      {
+        "id": "playwright",
+        "name": "Playwright",
+        "category": "tooling",
+        "url": "https://playwright.dev/",
+        "finalUrl": "https://playwright.dev/mcp/introduction",
+        "status": "passed",
+        "durationMs": 1978.134541000003
+      },
+      {
+        "id": "vitest",
+        "name": "Vitest",
+        "category": "tooling",
+        "url": "https://vitest.dev/",
+        "finalUrl": "https://vitest.dev/guide/",
+        "status": "passed",
+        "durationMs": 2429.890124999998
+      },
+      {
+        "id": "pnpm",
+        "name": "pnpm",
+        "category": "tooling",
+        "url": "https://pnpm.io/",
+        "finalUrl": "https://pnpm.io/",
+        "status": "passed",
+        "durationMs": 2279.305542000002
+      },
+      {
+        "id": "python",
+        "name": "Python",
+        "category": "runtime",
+        "url": "https://www.python.org/",
+        "finalUrl": "https://www.python.org/",
+        "status": "passed",
+        "durationMs": 2390.2532089999986
+      },
+      {
+        "id": "rust",
+        "name": "Rust",
+        "category": "runtime",
+        "url": "https://www.rust-lang.org/",
+        "finalUrl": "https://rust-lang.org/",
+        "status": "passed",
+        "durationMs": 1534.0883329999997
+      },
+      {
+        "id": "go",
+        "name": "Go",
+        "category": "runtime",
+        "url": "https://go.dev/",
+        "finalUrl": "https://go.dev/",
+        "status": "passed",
+        "durationMs": 2461.5285839999997
+      },
+      {
+        "id": "postgresql",
+        "name": "PostgreSQL",
+        "category": "infrastructure",
+        "url": "https://www.postgresql.org/",
+        "finalUrl": "https://www.postgresql.org/",
+        "status": "passed",
+        "durationMs": 2502.8166670000064
+      },
+      {
+        "id": "redis",
+        "name": "Redis",
+        "category": "infrastructure",
+        "url": "https://redis.io/",
+        "finalUrl": "https://redis.io/",
+        "status": "passed",
+        "durationMs": 3221.1025420000005
+      },
+      {
+        "id": "kubernetes",
+        "name": "Kubernetes",
+        "category": "infrastructure",
+        "url": "https://kubernetes.io/",
+        "finalUrl": "https://kubernetes.io/docs/tutorials/kubernetes-basics/",
+        "status": "passed",
+        "durationMs": 2521.200499999999
+      },
+      {
+        "id": "docker",
+        "name": "Docker",
+        "category": "commercial",
+        "url": "https://www.docker.com/",
+        "finalUrl": "https://www.docker.com/",
+        "status": "passed",
+        "durationMs": 2345.337667
+      },
+      {
+        "id": "w3c",
+        "name": "W3C",
+        "category": "standards",
+        "url": "https://www.w3.org/",
+        "finalUrl": "https://www.w3.org/",
+        "status": "passed",
+        "durationMs": 2102.2434580000045
+      },
+      {
+        "id": "webdev",
+        "name": "web.dev",
+        "category": "content",
+        "url": "https://web.dev/",
+        "finalUrl": "https://web.dev/baseline",
+        "status": "passed",
+        "durationMs": 4403.672832999997
+      },
+      {
+        "id": "github_docs",
+        "name": "GitHub Docs",
+        "category": "content",
+        "url": "https://docs.github.com/en",
+        "finalUrl": "https://docs.github.com/en/get-started",
+        "status": "passed",
+        "durationMs": 3730.8806659999973
+      },
+      {
+        "id": "npm_docs",
+        "name": "npm Docs",
+        "category": "content",
+        "url": "https://docs.npmjs.com/",
+        "finalUrl": "https://docs.npmjs.com/",
+        "status": "passed",
+        "durationMs": 1659.8747079999957
+      },
+      {
+        "id": "nextjs",
+        "name": "Next.js",
+        "category": "framework",
+        "url": "https://nextjs.org/",
+        "finalUrl": "https://nextjs.org/",
+        "status": "passed",
+        "durationMs": 1611.129958000005
+      },
+      {
+        "id": "nuxt",
+        "name": "Nuxt",
+        "category": "framework",
+        "url": "https://nuxt.com/",
+        "finalUrl": "https://nuxt.com/",
+        "status": "passed",
+        "durationMs": 1954.2124999999942
+      },
+      {
+        "id": "tailwind",
+        "name": "Tailwind CSS",
+        "category": "tooling",
+        "url": "https://tailwindcss.com/",
+        "finalUrl": "https://tailwindcss.com/",
+        "status": "passed",
+        "durationMs": 1994.6736249999958
+      }
+    ]
+  }
+}

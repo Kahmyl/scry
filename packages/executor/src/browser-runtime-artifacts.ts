@@ -2,12 +2,20 @@ import { createHash } from "node:crypto";
 
 // Source text is intentional: browser initialization must not acquire TSX/esbuild helpers.
 export const visualRedactionInitScript = String.raw`(() => {
+  const shadow = Element.prototype.attachShadow;
+  if (!globalThis.__scryVeilShadowGuardInstalled) {
+    Object.defineProperty(globalThis, "__scryVeilShadowGuardInstalled", { value: true });
+    Element.prototype.attachShadow = function (init) {
+      if (init && init.mode === "closed") this.setAttribute("data-scry-closed-shadow-host", "true");
+      return shadow.call(this, init);
+    };
+  }
   const install = function () {
     if (!document.documentElement) return;
     if (document.getElementById("scry-visual-redaction-style")) return;
     const style = document.createElement("style");
     style.id = "scry-visual-redaction-style";
-    style.textContent = '[data-scry-redacted="true"]{color:transparent!important;-webkit-text-fill-color:transparent!important;background:#000!important;border-color:#000!important;caret-color:transparent!important;text-shadow:none!important}#scry-sensitive-overlay{position:fixed!important;inset:0!important;z-index:2147483647!important;display:grid!important;place-items:center!important;color:#fff!important;background:#000!important;font:600 16px/1.4 system-ui,sans-serif!important;pointer-events:none!important}';
+    style.textContent = '[data-scry-redacted="true"],[data-scry-closed-shadow-host="true"],iframe,canvas,video,svg{color:transparent!important;-webkit-text-fill-color:transparent!important;background:#000!important;border-color:#000!important;caret-color:transparent!important;text-shadow:none!important;visibility:visible!important;filter:brightness(0)!important;opacity:1!important}svg *{fill:#000!important;stroke:#000!important}#scry-sensitive-overlay{position:fixed!important;inset:0!important;z-index:2147483647!important;display:grid!important;place-items:center!important;color:#fff!important;background:#000!important;font:600 16px/1.4 system-ui,sans-serif!important;pointer-events:none!important}';
     document.documentElement.appendChild(style);
     try {
       if (sessionStorage.getItem("scry-sensitive-overlay") === "1" && !document.getElementById("scry-sensitive-overlay")) {

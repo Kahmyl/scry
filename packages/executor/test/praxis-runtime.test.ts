@@ -6,13 +6,20 @@ import { PraxisMutationLease, selectPraxisStrategy } from "../src/praxis-runtime
 import { PraxisDocumentEpoch } from "../src/praxis-observation.js";
 import { PraxisTransactionCoordinator } from "../src/praxis-transaction.js";
 import { executePraxisConsumer } from "../src/praxis-consumer.js";
+import { compileVeilPolicy } from "@scry/policy";
+import { VeilAuthority } from "../src/veil-authority.js";
+import { authorizePraxisRequest, registerPraxisVeilAuthority } from "../src/praxis-veil.js";
 
 let browser: Browser;
 let page: Page;
-beforeAll(async () => { browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" }); page = await browser.newPage(); });
+beforeAll(async () => {
+  browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" });
+  page = await browser.newPage();
+  registerPraxisVeilAuthority(page, { authority: new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: ["https://example.test"] })), userId: "test", environmentId: "test", browserContextId: "test-context" });
+});
 afterAll(async () => { await browser?.close(); });
 const intent = (name: string, role: "button"|"textbox" = "button"): InteractionTargetIntent => ({ concept: name, requiredCapabilities: role === "textbox" ? ["focusable","accepts_text","editable"] : ["pointer_activatable"], preferredEvidence: { roles: [role], names: [name], labels: [], descriptions: [], placeholders: [], inputTypes: [] }, scope: { kind: "page" }, relations: [], prohibited: ["hidden","disabled"], risk: "ordinary", confidence: { requiredFamilies: [], minimum: .35, minimumMargin: 0, minimumFamilyCount: 1 } });
-const request = (operation: PraxisOperation, target = intent("Save")): PraxisRequest => ({ schemaVersion: 1, transactionId: `tx-${Math.random()}`, operationId: operation.type, intent: target, operation, expectedEffect: { type: "none" }, risk: target.risk, policy: { allowedOrigins: ["https://example.test"], actionTimeoutMs: 1_000, totalTimeoutMs: 2_000 }, privacy: { state: "normal", allowedChannels: ["public_dom","accessibility"], suppressedChannels: [] }, context: { pageId: "page", origin: "https://example.test", documentEpoch: 0 } });
+const request = (operation: PraxisOperation, target = intent("Save")): PraxisRequest => authorizePraxisRequest(page, { schemaVersion: 1, transactionId: `tx-${Math.random()}`, operationId: operation.type, intent: target, operation, expectedEffect: { type: "none" }, risk: target.risk, policy: { allowedOrigins: ["https://example.test"], actionTimeoutMs: 1_000, totalTimeoutMs: 2_000 }, privacy: { state: "normal", allowedChannels: ["public_dom","accessibility"], suppressedChannels: [] }, context: { pageId: "page", origin: "https://example.test", documentEpoch: 0 } });
 
 describe("Praxis strategy, dispatch, and verification", () => {
   it("selects typed least-invasive strategies", () => {

@@ -67,6 +67,24 @@ export type Environment = {
   policy: Record<string, unknown>;
 };
 
+export type VeilPreferenceRecord = {
+  schemaVersion: 1;
+  environmentId: string;
+  preferences: { profile: "balanced" | "private" | "minimal_capture" | "custom"; allowedOrigins: string[]; controls: Record<string, boolean>; leaseTtlMs: number };
+  effectivePolicy: { profile: "balanced" | "private" | "minimal_capture" | "custom"; digest: string; controls: Record<string, boolean>; allowedOrigins: string[]; leaseTtlMs: number };
+  updatedAt: string;
+};
+
+export type VeilRunObservation = {
+  schemaVersion: 1;
+  effectiveProfile: "balanced" | "private" | "minimal_capture" | "custom";
+  policyDigest: string;
+  status: "pending" | "verified" | "degraded" | "sealed";
+  timeline: Array<{ sequence: number; type: "transition" | "gap" | "disposition"; startedAt: string; endedAt?: string; reasonCode: string; channel?: string }>;
+  gaps: Array<{ startedAt: string; endedAt?: string; reasonCode: string; remediation: string }>;
+  findings: Array<{ code: string; severity: "info" | "warning" | "blocking"; reasonCode: string; channel?: string; occurredAt?: string; remediation: string }>;
+};
+
 export type Credential = {
   id: string;
   projectId: string;
@@ -284,6 +302,7 @@ export type Report = {
   }>;
   artifactTimeline: import("./recording-timeline.js").RecordingTimelineEntry[];
   privacy: { intervals: Array<Record<string, unknown>>; operations: Array<Record<string, unknown>>; credentialIncidents: Array<Record<string, unknown>> };
+  veil: VeilRunObservation;
   failure?: { provenance: "product" | "plan" | "policy" | "infrastructure" | "privacy" | "executor"; code: string; message?: string; stepId?: string; channel?: string } | null;
   sections: { attempts: string; steps: string; events: string; artifacts: string; timeline: string };
   integrity: { status: "complete" | "partial" | "failed"; issues: Array<{ code: string; message: string }> };

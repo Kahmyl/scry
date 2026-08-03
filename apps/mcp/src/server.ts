@@ -13,6 +13,7 @@ import {
   executionBindingSchema,
   authorizationKindSchema,
   protectedRecoveryCommandSchema,
+  veilPreferenceUpdateSchema,
 } from "@scry/contracts";
 import { z } from "zod";
 
@@ -228,6 +229,18 @@ export function createScryMcpServer(client = new ScryApiClient()) {
   server.registerTool("get_run", {
     title: "Get run observation", description: "Read the canonical run observation: current attempt, independent step channels, typed failure, safe artifact manifest, privacy timeline, integrity status, and permitted next actions.", inputSchema: { runId: uuid }, annotations: readOnly,
   }, async ({ runId }) => result({ observation: await client.get(`/runs/${runId}`) }, "Canonical run observation loaded."));
+  server.registerTool("get_veil_findings", {
+    title: "Get Veil privacy findings",
+    description: "Read the effective Veil profile, privacy timeline, capture gaps, safe reason codes, and remediation without exposing protected values.",
+    inputSchema: { runId: uuid }, annotations: readOnly,
+  }, async ({ runId }) => result({ veil: await client.get(`/runs/${runId}/veil`) }, "Veil privacy findings loaded."));
+  server.registerTool("tighten_veil_preferences", {
+    title: "Tighten Veil preferences",
+    description: "Apply a strictly more private environment policy. This tool cannot enable a disabled channel, add an origin, extend a lease, or weaken Veil's safety floor.",
+    inputSchema: { environmentId: uuid, ...veilPreferenceUpdateSchema.shape }, annotations: writes,
+  }, async ({ environmentId, ...preferences }) => result({
+    veil: await client.patch(`/environments/${environmentId}/veil`, preferences),
+  }, "Veil preferences tightened; the hard safety floor remains active."));
   server.registerTool("get_protected_recovery",{title:"Get protected acquisition recovery",description:"Inspect the bounded recovery state without exposing protected values.",inputSchema:{runId:uuid,operationId:z.string().min(1).max(128)},annotations:readOnly},async({runId,operationId})=>result({recovery:await client.get(`/runs/${runId}/protected-transactions/${operationId}/recovery`)},"Protected recovery state loaded."));
   server.registerTool("act_on_protected_recovery",{title:"Act on protected acquisition recovery",description:"Retry an approved acquisition method, request secure assistance, revoke, or abandon. This never repeats the mutation.",inputSchema:{runId:uuid,operationId:z.string().min(1).max(128),...protectedRecoveryCommandSchema.shape},annotations:writes},async({runId,operationId,...body})=>result({recovery:await client.post(`/runs/${runId}/protected-transactions/${operationId}/recovery`,body)},"Protected recovery action recorded."));
 

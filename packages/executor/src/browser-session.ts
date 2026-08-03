@@ -1,5 +1,6 @@
 import type { Browser, BrowserContext, Page } from "playwright";
 import type { ContextProvenance } from "@scry/contracts";
+import type { VeilClipboardCollector } from "./veil-clipboard-collector.js";
 
 const transitions: Record<ContextProvenance, ContextProvenance[]> = {
   safe: ["safe_parked", "destroyed"],
@@ -34,6 +35,6 @@ export type ProtectedBrowserSession = {
   context: BrowserContext;
   page: Page;
   provenance: BrowserSessionProvenance;
+  clipboardCollector: VeilClipboardCollector;
   destroy(): Promise<"destroyed" | "force_terminated">;
 };
-

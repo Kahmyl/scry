@@ -1,0 +1,700 @@
+{
+  "schemaVersion": 1,
+  "command": [
+    "pnpm",
+    "campaign:veil:certification"
+  ],
+  "startedAt": "2026-08-03T11:46:34.365Z",
+  "completedAt": "2026-08-03T11:46:53.339Z",
+  "durationMs": 18974,
+  "exitCode": 0,
+  "reportSha256": "6bec1a226b8a480bc51487068f34a606cd5ed7e566bdf5c5130c2fdef2ddcd81",
+  "report": {
+    "schemaVersion": 1,
+    "campaign": "veil-certification",
+    "executedAt": "2026-08-03T11:46:53.278Z",
+    "environment": {
+      "transport": "real_http",
+      "browser": "real_chromium",
+      "browserVersion": "150.0.7871.187",
+      "channel": "chrome",
+      "externalMutation": "none"
+    },
+    "counts": {
+      "total": 100,
+      "passed": 100,
+      "failed": 0,
+      "skipped": 0
+    },
+    "categories": {
+      "native-control": {
+        "total": 15,
+        "passed": 15,
+        "failed": 0
+      },
+      "aria": {
+        "total": 15,
+        "passed": 15,
+        "failed": 0
+      },
+      "contenteditable": {
+        "total": 14,
+        "passed": 14,
+        "failed": 0
+      },
+      "dom-attribute": {
+        "total": 14,
+        "passed": 14,
+        "failed": 0
+      },
+      "console": {
+        "total": 14,
+        "passed": 14,
+        "failed": 0
+      },
+      "canvas": {
+        "total": 14,
+        "passed": 14,
+        "failed": 0
+      },
+      "svg": {
+        "total": 14,
+        "passed": 14,
+        "failed": 0
+      }
+    },
+    "coverage": {
+      "failureInjection": 10,
+      "syntheticCanarySurfaces": [
+        "dom-text",
+        "dom-attribute",
+        "accessibility-label",
+        "console",
+        "canvas-2d",
+        "svg-text"
+      ],
+      "decodedPixelInspection": {
+        "controlMustContainNonBlackPixels": true,
+        "protectedFrameMustBeFullyOpaqueBlack": true
+      },
+      "coveredByCompanionCampaigns": {
+        "opaqueAndBrowserSurfaces": "veil-adversarial",
+        "decodedVideoAndAdmission": "veil-production-e2e",
+        "completeCanaryFailureAndReplicaMatrix": "veil-release-scope",
+        "publicApplications": "veil-public-application-qualification"
+      }
+    },
+    "qualification": "CERTIFICATION_CORPUS_PASS",
+    "readiness": "PASSED_AS_COMBINED_CAMPAIGN_COMPONENT",
+    "endurance": {
+      "iterations": 1000,
+      "failures": 0,
+      "memoryGrowthRatio": 0.03488372093023256,
+      "p50": 0.021749999999883585,
+      "p95": 0.029625000002852175,
+      "passed": true
+    },
+    "scenarios": [
+      {
+        "id": "veil-001",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 472.67195800000013
+      },
+      {
+        "id": "veil-002",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 203.85408299999995
+      },
+      {
+        "id": "veil-003",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 178.2467079999999
+      },
+      {
+        "id": "veil-004",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 170.5777089999999
+      },
+      {
+        "id": "veil-005",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 201.15387499999997
+      },
+      {
+        "id": "veil-006",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 189.34204200000022
+      },
+      {
+        "id": "veil-007",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 162.32999999999993
+      },
+      {
+        "id": "veil-008",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 172.5636669999999
+      },
+      {
+        "id": "veil-009",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 164.00675
+      },
+      {
+        "id": "veil-010",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 98.67399999999998
+      },
+      {
+        "id": "veil-011",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 166.98329200000035
+      },
+      {
+        "id": "veil-012",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 173.76125000000002
+      },
+      {
+        "id": "veil-013",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 170.48183400000016
+      },
+      {
+        "id": "veil-014",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 219.40404200000012
+      },
+      {
+        "id": "veil-015",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 167.4754170000001
+      },
+      {
+        "id": "veil-016",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 180.79291699999976
+      },
+      {
+        "id": "veil-017",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 164.35800000000017
+      },
+      {
+        "id": "veil-018",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 162.9848750000001
+      },
+      {
+        "id": "veil-019",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 182.85670799999934
+      },
+      {
+        "id": "veil-020",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 99.9474169999994
+      },
+      {
+        "id": "veil-021",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 180.2305410000008
+      },
+      {
+        "id": "veil-022",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 172.15466600000036
+      },
+      {
+        "id": "veil-023",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 171.70949999999993
+      },
+      {
+        "id": "veil-024",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 176.49049999999988
+      },
+      {
+        "id": "veil-025",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 168.12558399999944
+      },
+      {
+        "id": "veil-026",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 172.7652079999998
+      },
+      {
+        "id": "veil-027",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 178.90254099999947
+      },
+      {
+        "id": "veil-028",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 167.0689170000005
+      },
+      {
+        "id": "veil-029",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 174.76929199999995
+      },
+      {
+        "id": "veil-030",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 100.26133300000038
+      },
+      {
+        "id": "veil-031",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 178.3540839999996
+      },
+      {
+        "id": "veil-032",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 175.25733300000047
+      },
+      {
+        "id": "veil-033",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 164.5654170000007
+      },
+      {
+        "id": "veil-034",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 163.5541659999999
+      },
+      {
+        "id": "veil-035",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 177.37012500000037
+      },
+      {
+        "id": "veil-036",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 182.95941700000003
+      },
+      {
+        "id": "veil-037",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 182.0349580000002
+      },
+      {
+        "id": "veil-038",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 184.60741700000017
+      },
+      {
+        "id": "veil-039",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 165.06079200000022
+      },
+      {
+        "id": "veil-040",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 99.7367090000007
+      },
+      {
+        "id": "veil-041",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 178.0205420000002
+      },
+      {
+        "id": "veil-042",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 182.26833299999998
+      },
+      {
+        "id": "veil-043",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 172.97199999999975
+      },
+      {
+        "id": "veil-044",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 164.683500000001
+      },
+      {
+        "id": "veil-045",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 183.13075000000026
+      },
+      {
+        "id": "veil-046",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 177.9239579999994
+      },
+      {
+        "id": "veil-047",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 183.7377089999991
+      },
+      {
+        "id": "veil-048",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 186.98258299999907
+      },
+      {
+        "id": "veil-049",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 165.63816600000064
+      },
+      {
+        "id": "veil-050",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 106.63195799999994
+      },
+      {
+        "id": "veil-051",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 176.63991700000042
+      },
+      {
+        "id": "veil-052",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 173.61912500000108
+      },
+      {
+        "id": "veil-053",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 164.2983750000003
+      },
+      {
+        "id": "veil-054",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 167.59620799999902
+      },
+      {
+        "id": "veil-055",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 168.7622909999991
+      },
+      {
+        "id": "veil-056",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 167.77429200000006
+      },
+      {
+        "id": "veil-057",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 177.13133400000152
+      },
+      {
+        "id": "veil-058",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 176.972749999999
+      },
+      {
+        "id": "veil-059",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 170.08541700000023
+      },
+      {
+        "id": "veil-060",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 95.78245799999968
+      },
+      {
+        "id": "veil-061",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 175.9557079999995
+      },
+      {
+        "id": "veil-062",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 179.7024590000001
+      },
+      {
+        "id": "veil-063",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 172.55787500000042
+      },
+      {
+        "id": "veil-064",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 176.66662500000166
+      },
+      {
+        "id": "veil-065",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 169.15250000000015
+      },
+      {
+        "id": "veil-066",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 197.27466699999968
+      },
+      {
+        "id": "veil-067",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 178.9259579999998
+      },
+      {
+        "id": "veil-068",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 181.02579200000037
+      },
+      {
+        "id": "veil-069",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 182.26575000000048
+      },
+      {
+        "id": "veil-070",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 99.5064999999995
+      },
+      {
+        "id": "veil-071",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 181.1898340000007
+      },
+      {
+        "id": "veil-072",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 175.653624999999
+      },
+      {
+        "id": "veil-073",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 167.25345900000138
+      },
+      {
+        "id": "veil-074",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 175.48716700000114
+      },
+      {
+        "id": "veil-075",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 179.96749999999884
+      },
+      {
+        "id": "veil-076",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 181.3237910000007
+      },
+      {
+        "id": "veil-077",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 176.07433400000082
+      },
+      {
+        "id": "veil-078",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 180.60325000000012
+      },
+      {
+        "id": "veil-079",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 183.24462500000118
+      },
+      {
+        "id": "veil-080",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 100.81775000000016
+      },
+      {
+        "id": "veil-081",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 181.816499999999
+      },
+      {
+        "id": "veil-082",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 166.93404100000043
+      },
+      {
+        "id": "veil-083",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 164.4689580000013
+      },
+      {
+        "id": "veil-084",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 177.898416
+      },
+      {
+        "id": "veil-085",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 185.7318749999995
+      },
+      {
+        "id": "veil-086",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 185.15287499999977
+      },
+      {
+        "id": "veil-087",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 173.33470800000032
+      },
+      {
+        "id": "veil-088",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 182.09162500000093
+      },
+      {
+        "id": "veil-089",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 177.7373750000006
+      },
+      {
+        "id": "veil-090",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 103.48345800000243
+      },
+      {
+        "id": "veil-091",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 183.51487500000076
+      },
+      {
+        "id": "veil-092",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 178.59058300000106
+      },
+      {
+        "id": "veil-093",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 189.02158299999792
+      },
+      {
+        "id": "veil-094",
+        "category": "contenteditable",
+        "status": "passed",
+        "durationMs": 181.05875000000015
+      },
+      {
+        "id": "veil-095",
+        "category": "dom-attribute",
+        "status": "passed",
+        "durationMs": 175.84170799999993
+      },
+      {
+        "id": "veil-096",
+        "category": "console",
+        "status": "passed",
+        "durationMs": 189.5671250000014
+      },
+      {
+        "id": "veil-097",
+        "category": "canvas",
+        "status": "passed",
+        "durationMs": 178.08670899999925
+      },
+      {
+        "id": "veil-098",
+        "category": "svg",
+        "status": "passed",
+        "durationMs": 168.67762499999662
+      },
+      {
+        "id": "veil-099",
+        "category": "native-control",
+        "status": "passed",
+        "durationMs": 177.21666600000026
+      },
+      {
+        "id": "veil-100",
+        "category": "aria",
+        "status": "passed",
+        "durationMs": 102.10233299999891
+      }
+    ]
+  }
+}

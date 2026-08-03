@@ -16,7 +16,7 @@ describe("current Scry MCP surface", () => {
     expect((await client.listTools()).tools.map(({ name }) => name)).toEqual([
       "get_capabilities", "list_projects","start_mission","resume_mission","attach_to_mission","get_mission","list_missions","update_mission","end_agent_session","get_mission_activity","create_execution_plan","validate_execution_plan","activate_execution_plan","get_orchestration_status","start_ready_objectives","pause_mission_orchestration","resume_mission_orchestration","cancel_mission_orchestration","grant_mission_execution_authorization","relate_mission_activity","create_mission_objective","update_mission_objective","attach_flow_to_mission", "list_environments", "create_test_environment",
       "list_project_credentials", "create_project_credential", "authorize_environment_credentials", "list_flows", "ensure_calibration", "list_calibrations", "get_calibration", "approve_calibration", "retry_calibration", "cancel_calibration", "bind_calibration", "validate_test_plan", "create_flow_draft", "update_flow_draft", "get_flow_draft", "list_mission_flow_drafts", "abandon_flow_draft", "start_probe_session", "get_probe_session", "cancel_probe_session", "compile_flow_draft", "publish_flow_draft", "list_authentication_contracts", "list_authenticated_session_leases", "revoke_authenticated_session_lease",
-      "start_run", "get_run","get_protected_recovery","act_on_protected_recovery","accept_objective_evidence","classify_run","set_mission_resume_pointer","publish_mission_report", "get_artifact", "search_artifact", "extract_artifact_html",
+      "start_run", "get_run","get_veil_findings","tighten_veil_preferences","get_protected_recovery","act_on_protected_recovery","accept_objective_evidence","classify_run","set_mission_resume_pointer","publish_mission_report", "get_artifact", "search_artifact", "extract_artifact_html",
     ]);
     await client.close(); await server.close();
   });
@@ -132,6 +132,29 @@ describe("current Scry MCP surface", () => {
     const response = await client.callTool({ name: "get_run", arguments: { runId: "11111111-1111-4111-8111-111111111111" } });
 
     expect(response.structuredContent).toMatchObject({ observation: { steps: observation.steps, artifacts: observation.artifacts, integrity: observation.integrity } });
+    await client.close(); await server.close();
+  });
+
+  it("exposes safe Veil findings and sends tightening requests to the authoritative API", async () => {
+    const requests: Array<{ method: string; path: string; body?: unknown }> = [];
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push({ method: init?.method ?? "GET", path: url.pathname, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
+      const body = url.pathname.endsWith("/veil") && (init?.method ?? "GET") === "GET"
+        ? { effectiveProfile: "private", policyDigest: "a".repeat(64), findings: [], gaps: [], timeline: [] }
+        : { effectivePolicy: { profile: "minimal_capture", digest: "b".repeat(64) } };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    }));
+    const { client, server } = await connected();
+    await client.callTool({ name: "get_veil_findings", arguments: { runId: "11111111-1111-4111-8111-111111111111" } });
+    const tightened = await client.callTool({ name: "tighten_veil_preferences", arguments: {
+      environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", profile: "minimal_capture", reasonCode: "VEIL_AGENT_REQUESTED_PRIVACY",
+    } });
+    expect(requests).toEqual([
+      { method: "GET", path: "/api/runs/11111111-1111-4111-8111-111111111111/veil" },
+      { method: "PATCH", path: "/api/environments/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/veil", body: { profile: "minimal_capture", reasonCode: "VEIL_AGENT_REQUESTED_PRIVACY" } },
+    ]);
+    expect(tightened.structuredContent).toMatchObject({ veil: { effectivePolicy: { profile: "minimal_capture" } } });
     await client.close(); await server.close();
   });
 

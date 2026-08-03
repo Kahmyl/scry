@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { chromium, type Page } from "playwright";
 import type { ExpectedEffect, InteractionTargetIntent, PraxisLifecycleEvent, PraxisOperation, PraxisResult } from "@scry/contracts";
-import { executePraxisConsumer } from "../src/praxis-consumer.js";
+import { executePraxisCampaignConsumer as executePraxisConsumer } from "./praxis-campaign-veil.js";
 
 type Invoke = (intent: InteractionTargetIntent, operation: PraxisOperation, options?: { effect?: ExpectedEffect; timeout?: number; origins?: string[]; privacy?: { state:string;allowedChannels:string[];suppressedChannels:string[] }; input?: (reference:string, classification:"public"|"known_secret"|"captured_secret"|"captured_public")=>Promise<string>; signal?:AbortSignal }) => Promise<{result:PraxisResult;events:PraxisLifecycleEvent[]}>;
 type Case = { id:string; category:string; route:string; html:string; script:string; run(page:Page, invoke:Invoke):Promise<void> };

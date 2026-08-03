@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { chromium, type Browser, type Page } from "playwright";
 import type { ExpectedEffect, InteractionTargetIntent, PraxisLifecycleEvent, PraxisOperation, PraxisResult } from "@scry/contracts";
-import { executePraxisConsumer } from "../src/praxis-consumer.js";
+import { executePraxisCampaignConsumer as executePraxisConsumer } from "./praxis-campaign-veil.js";
 
 type ScenarioContext = {
   page: Page;
@@ -86,7 +86,7 @@ const scenarios: Scenario[] = [
   } },
   { id: "replacement-between-revalidation-and-click", category: "dynamic_replacement", path: "/replacement-race", async execute(context) {
     const { result } = await context.invoke({ intent: buttonIntent("confirm rotating token"), operation: { type: "activate" } });
-    failure(result, "PRAXIS_TARGET_CHANGED_BEFORE_ACTION", "application", "not_applied"); equal(await count(context.page, "replacementClicks"), 0, "replacement dispatch count"); equal(await count(context.page, "originalClicks"), 0, "original dispatch count");
+    failure(result, "PRAXIS_DISPATCH_FAILED", "application", "unknown", "inconclusive", "unsafe"); equal(await count(context.page, "replacementClicks"), 0, "replacement dispatch count"); equal(await count(context.page, "originalClicks"), 0, "original dispatch count");
   } },
   { id: "disabled-control-refusal", category: "unsupported", path: "/disabled-export", async execute(context) {
     const { result } = await context.invoke({ intent: buttonIntent("export signed archive"), operation: { type: "activate" } });

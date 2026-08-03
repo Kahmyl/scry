@@ -42,6 +42,9 @@ jobs:
           pnpm verify:privacy-foundation
           pnpm verify:playwright
           pnpm verify:praxis-change-gate
+          pnpm verify:veil-change-gate
+          pnpm verify:veil-performance
+          pnpm verify:veil-release-transition
           pnpm typecheck
           pnpm test
           SCRY_BROWSER_CHANNEL=chrome pnpm campaign:praxis
@@ -49,6 +52,15 @@ jobs:
           SCRY_BROWSER_CHANNEL=chrome pnpm campaign:praxis:resilience
           SCRY_BROWSER_CHANNEL=chrome pnpm campaign:praxis:certification
           SCRY_BROWSER_CHANNEL=chrome pnpm campaign:praxis:public-apps
+          SCRY_BROWSER_CHANNEL=chrome pnpm campaign:veil:certification
+          SCRY_BROWSER_CHANNEL=chrome pnpm campaign:veil:adversarial
+          SCRY_BROWSER_CHANNEL=chrome pnpm campaign:veil:production-e2e
+          pnpm campaign:veil:release-scope
+          SCRY_BROWSER_CHANNEL=chrome pnpm campaign:veil:public-apps
+          printf 'SCRY_SERVICE_TOKEN=veil-release-worker-crash-service-token\nSCRY_ORCHESTRATION_ENABLED=true\n' > apps/api/.env
+          SCRY_SERVICE_TOKEN=veil-release-worker-crash-service-token docker compose up -d --build --wait postgres redis migrate api worker
+          SCRY_SERVICE_TOKEN=veil-release-worker-crash-service-token pnpm campaign:veil:worker-crash
+          docker compose down -v --remove-orphans
           echo "SCRY_SCHEMA_FINGERPRINT=$(node scripts/schema-fingerprint.mjs)" >> "$GITHUB_ENV"
 
       - name: Log in to Docker Hub
@@ -56,6 +68,21 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Resolve previous admitted Veil release
+        shell: bash
+        run: |
+          docker pull "${APP_IMAGE}:latest"
+          previous_ref="$(docker image inspect "${APP_IMAGE}:latest" --format '{{index .RepoDigests 0}}')"
+          previous_release="$(docker image inspect "${APP_IMAGE}:latest" --format '{{index .Config.Labels "org.scry.release-id"}}')"
+          previous_schema="$(docker image inspect "${APP_IMAGE}:latest" --format '{{index .Config.Labels "org.scry.schema-fingerprint"}}')"
+          previous_authority="$(docker image inspect "${APP_IMAGE}:latest" --format '{{index .Config.Labels "org.scry.privacy-authority"}}')"
+          test "$previous_authority" = veil-only
+          printf '%s' "$previous_schema" | grep -Eq '^[a-f0-9]{64}$'
+          test -n "$previous_release"
+          echo "SCRY_PREVIOUS_IMAGE_REF=$previous_ref" >> "$GITHUB_ENV"
+          echo "SCRY_PREVIOUS_RELEASE_ID=$previous_release" >> "$GITHUB_ENV"
+          echo "SCRY_PREVIOUS_SCHEMA_FINGERPRINT=$previous_schema" >> "$GITHUB_ENV"
 
       - name: Generate application image metadata
         id: meta
@@ -76,9 +103,35 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            org.scry.privacy-authority=veil-only
+            org.scry.schema-fingerprint=${{ env.SCRY_SCHEMA_FINGERPRINT }}
+            org.scry.release-id=${{ github.sha }}
           cache-from: type=gha,scope=scry
           cache-to: type=gha,mode=max,scope=scry
+
+      - name: Snapshot previous admitted release state
+        env:
+          SCRY_DOMAIN: scry.example.com
+          POSTGRES_PASSWORD: integration-password
+          SCRY_SERVICE_TOKEN: integration-service-token
+          SCRY_CREDENTIAL_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          VEIL_ADMISSION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_PUBLISHABLE_KEY: integration-placeholder
+          SCRY_IMAGE_REF: ${{ env.SCRY_PREVIOUS_IMAGE_REF }}
+          SCRY_RELEASE_ID: ${{ env.SCRY_PREVIOUS_RELEASE_ID }}
+          SCRY_SCHEMA_FINGERPRINT: ${{ env.SCRY_PREVIOUS_SCHEMA_FINGERPRINT }}
+        run: |
+          docker compose -f compose.deploy.yml up -d --wait postgres redis migrate api worker mcp
+          docker compose -f compose.deploy.yml exec -T api wget -qO- http://127.0.0.1:4000/api/ready
+          docker compose -f compose.deploy.yml exec -T mcp wget -qO- http://127.0.0.1:4100/health
+          docker compose -f compose.deploy.yml exec -T postgres psql -U scry -d scry -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS veil_rollback_probe(id text PRIMARY KEY,privacy_authority text NOT NULL CHECK(privacy_authority='veil-only'),pre_value text NOT NULL,post_value text); INSERT INTO veil_rollback_probe VALUES('representative','veil-only','pre-release-data',NULL) ON CONFLICT(id) DO UPDATE SET pre_value=EXCLUDED.pre_value,privacy_authority=EXCLUDED.privacy_authority"
+          bash scripts/veil-db-snapshot-restore.sh snapshot "$RUNNER_TEMP/scry-previous.dump"
+          test -s "$RUNNER_TEMP/scry-previous.dump"
+          docker compose -f compose.deploy.yml stop api worker mcp migrate
+          echo "SCRY_PREVIOUS_SNAPSHOT=$RUNNER_TEMP/scry-previous.dump" >> "$GITHUB_ENV"
 
       - name: Boot production topology and verify compatibility
         env:
@@ -86,15 +139,73 @@ jobs:
           POSTGRES_PASSWORD: integration-password
           SCRY_SERVICE_TOKEN: integration-service-token
           SCRY_CREDENTIAL_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          VEIL_ADMISSION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_PUBLISHABLE_KEY: integration-placeholder
+          SCRY_IMAGE_REF: ${{ env.APP_IMAGE }}@${{ steps.build.outputs.digest }}
+          SCRY_RELEASE_ID: ${{ github.sha }}
+        run: |
+          docker compose -f compose.deploy.yml up -d --wait postgres redis migrate api worker mcp
+          docker compose -f compose.deploy.yml exec -T api wget -qO- http://127.0.0.1:4000/api/ready
+          docker compose -f compose.deploy.yml exec -T mcp wget -qO- http://127.0.0.1:4100/health
+          docker compose -f compose.deploy.yml exec -T postgres psql -U scry -d scry -v ON_ERROR_STOP=1 -c "UPDATE veil_rollback_probe SET post_value='post-upgrade-data' WHERE id='representative'"
+          bash scripts/veil-db-snapshot-restore.sh snapshot "$RUNNER_TEMP/scry-current.dump"
+          test -s "$RUNNER_TEMP/scry-current.dump"
+          echo "SCRY_CURRENT_SNAPSHOT=$RUNNER_TEMP/scry-current.dump" >> "$GITHUB_ENV"
+          docker compose -f compose.deploy.yml restart worker api mcp
+          docker compose -f compose.deploy.yml up -d --wait api worker mcp
+          docker compose -f compose.deploy.yml exec -T api wget -qO- http://127.0.0.1:4000/api/ready
+          docker compose -f compose.deploy.yml exec -T mcp wget -qO- http://127.0.0.1:4100/health
+          SCRY_TRANSITION=upgrade SCRY_CURRENT_RELEASE_ID="${{ github.sha }}" SCRY_CURRENT_SCHEMA_FINGERPRINT="$SCRY_SCHEMA_FINGERPRINT" SCRY_CURRENT_PRIVACY_AUTHORITY=veil-only SCRY_PREVIOUS_RELEASE_ID="$SCRY_PREVIOUS_RELEASE_ID" SCRY_PREVIOUS_SCHEMA_FINGERPRINT="$SCRY_PREVIOUS_SCHEMA_FINGERPRINT" SCRY_PREVIOUS_PRIVACY_AUTHORITY=veil-only SCRY_ACTIVE_SCHEMA_FINGERPRINT="$SCRY_SCHEMA_FINGERPRINT" SCRY_WRITERS_STOPPED=true SCRY_MIGRATION_PROOF=passed node scripts/verify-veil-release-transition.mjs
+
+      - name: Verify rollback to the previous complete admitted release
+        env:
+          SCRY_DOMAIN: scry.example.com
+          POSTGRES_PASSWORD: integration-password
+          SCRY_SERVICE_TOKEN: integration-service-token
+          SCRY_CREDENTIAL_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          VEIL_ADMISSION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_PUBLISHABLE_KEY: integration-placeholder
           SCRY_IMAGE_REF: ${{ env.APP_IMAGE }}@${{ steps.build.outputs.digest }}
           SCRY_RELEASE_ID: ${{ github.sha }}
         run: |
           trap 'docker compose -f compose.deploy.yml down -v' EXIT
-          docker compose -f compose.deploy.yml up -d --wait postgres redis migrate api worker mcp
-          docker compose -f compose.deploy.yml exec -T api wget -qO- http://127.0.0.1:4000/api/ready
-          docker compose -f compose.deploy.yml exec -T mcp wget -qO- http://127.0.0.1:4100/health
+          test "$SCRY_PREVIOUS_SCHEMA_FINGERPRINT" != "$SCRY_SCHEMA_FINGERPRINT"
+          test -s "$SCRY_PREVIOUS_SNAPSHOT"
+          test -s "$SCRY_CURRENT_SNAPSHOT"
+          docker compose -f compose.deploy.yml stop api worker mcp migrate
+          SCRY_IMAGE_REF="$SCRY_PREVIOUS_IMAGE_REF" SCRY_RELEASE_ID="$SCRY_PREVIOUS_RELEASE_ID" SCRY_SCHEMA_FINGERPRINT="$SCRY_PREVIOUS_SCHEMA_FINGERPRINT" docker compose -f compose.deploy.yml up -d --no-deps api
+          sleep 10
+          if SCRY_IMAGE_REF="$SCRY_PREVIOUS_IMAGE_REF" SCRY_RELEASE_ID="$SCRY_PREVIOUS_RELEASE_ID" SCRY_SCHEMA_FINGERPRINT="$SCRY_PREVIOUS_SCHEMA_FINGERPRINT" docker compose -f compose.deploy.yml exec -T api wget -qO- http://127.0.0.1:4000/api/ready; then echo 'Prior image accepted mixed current schema'; exit 1; fi
+          docker compose -f compose.deploy.yml stop api
+          SCRY_WRITERS_STOPPED=true bash scripts/veil-db-snapshot-restore.sh restore "$SCRY_PREVIOUS_SNAPSHOT"
+          SCRY_IMAGE_REF="$SCRY_PREVIOUS_IMAGE_REF" SCRY_RELEASE_ID="$SCRY_PREVIOUS_RELEASE_ID" SCRY_SCHEMA_FINGERPRINT="$SCRY_PREVIOUS_SCHEMA_FINGERPRINT" docker compose -f compose.deploy.yml up -d --no-deps api worker mcp
+          for attempt in $(seq 1 30); do
+            if SCRY_IMAGE_REF="$SCRY_PREVIOUS_IMAGE_REF" SCRY_RELEASE_ID="$SCRY_PREVIOUS_RELEASE_ID" SCRY_SCHEMA_FINGERPRINT="$SCRY_PREVIOUS_SCHEMA_FINGERPRINT" docker compose -f compose.deploy.yml exec -T api wget -qO /tmp/prior-ready.json http://127.0.0.1:4000/api/ready && SCRY_IMAGE_REF="$SCRY_PREVIOUS_IMAGE_REF" SCRY_RELEASE_ID="$SCRY_PREVIOUS_RELEASE_ID" SCRY_SCHEMA_FINGERPRINT="$SCRY_PREVIOUS_SCHEMA_FINGERPRINT" docker compose -f compose.deploy.yml exec -T mcp wget -qO- http://127.0.0.1:4100/health; then break; fi
+            test "$attempt" -lt 30
+            sleep 2
+          done
+          prior_ready="$(SCRY_IMAGE_REF="$SCRY_PREVIOUS_IMAGE_REF" SCRY_RELEASE_ID="$SCRY_PREVIOUS_RELEASE_ID" SCRY_SCHEMA_FINGERPRINT="$SCRY_PREVIOUS_SCHEMA_FINGERPRINT" docker compose -f compose.deploy.yml exec -T api cat /tmp/prior-ready.json)"
+          PRIOR_READY="$prior_ready" node -e 'const value=JSON.parse(process.env.PRIOR_READY);if(value.ready!==true||value.releaseId!==process.env.SCRY_PREVIOUS_RELEASE_ID||value.schemaFingerprint!==process.env.SCRY_PREVIOUS_SCHEMA_FINGERPRINT||value.compatibleWorkerCount<1||value.praxisReady!==true)process.exit(1)'
+          test "$(docker compose -f compose.deploy.yml exec -T postgres psql -U scry -d scry -Atc "SELECT count(*) FROM worker_heartbeats WHERE release_id='$SCRY_PREVIOUS_RELEASE_ID' AND schema_fingerprint='$SCRY_PREVIOUS_SCHEMA_FINGERPRINT' AND heartbeat_at>now()-interval '30 seconds'")" -ge 1
+          expected_prior_image="$(docker image inspect "$SCRY_PREVIOUS_IMAGE_REF" --format '{{.Id}}')"
+          for service in api worker mcp; do
+            container_id="$(SCRY_IMAGE_REF="$SCRY_PREVIOUS_IMAGE_REF" SCRY_RELEASE_ID="$SCRY_PREVIOUS_RELEASE_ID" SCRY_SCHEMA_FINGERPRINT="$SCRY_PREVIOUS_SCHEMA_FINGERPRINT" docker compose -f compose.deploy.yml ps -q "$service")"
+            test -n "$container_id"
+            test "$(docker inspect "$container_id" --format '{{.Image}}')" = "$expected_prior_image"
+            test "$(docker inspect "$container_id" --format '{{index .Config.Labels "org.scry.release-id"}}')" = "$SCRY_PREVIOUS_RELEASE_ID"
+            test "$(docker inspect "$container_id" --format '{{index .Config.Labels "org.scry.schema-fingerprint"}}')" = "$SCRY_PREVIOUS_SCHEMA_FINGERPRINT"
+            test "$(docker inspect "$container_id" --format '{{index .Config.Labels "org.scry.privacy-authority"}}')" = "veil-only"
+          done
+          test "$(docker compose -f compose.deploy.yml exec -T postgres psql -U scry -d scry -Atc "SELECT pre_value||':'||privacy_authority FROM veil_rollback_probe WHERE id='representative'")" = "pre-release-data:veil-only"
+          SCRY_TRANSITION=rollback SCRY_CURRENT_RELEASE_ID="${{ github.sha }}" SCRY_CURRENT_SCHEMA_FINGERPRINT="$SCRY_SCHEMA_FINGERPRINT" SCRY_CURRENT_PRIVACY_AUTHORITY=veil-only SCRY_PREVIOUS_RELEASE_ID="$SCRY_PREVIOUS_RELEASE_ID" SCRY_PREVIOUS_SCHEMA_FINGERPRINT="$SCRY_PREVIOUS_SCHEMA_FINGERPRINT" SCRY_PREVIOUS_PRIVACY_AUTHORITY=veil-only SCRY_ACTIVE_SCHEMA_FINGERPRINT="$SCRY_PREVIOUS_SCHEMA_FINGERPRINT" SCRY_WRITERS_STOPPED=true SCRY_ROLLBACK_SNAPSHOT_PROOF=passed SCRY_ROLLBACK_RESTORE_PROOF=passed SCRY_PRIOR_IMAGE_BOOT_PROOF=passed SCRY_PRIOR_API_READINESS_PROOF=passed SCRY_PRIOR_MCP_READINESS_PROOF=passed SCRY_PRIOR_WORKER_READINESS_PROOF=passed SCRY_PRIOR_IMAGE_IDENTITY_PROOF=passed SCRY_REPRESENTATIVE_DATA_PROOF=passed SCRY_VEIL_AUTHORITY_PROOF=passed SCRY_MIXED_SCHEMA_REFUSAL_PROOF=passed node scripts/verify-veil-release-transition.mjs
+          docker compose -f compose.deploy.yml stop api worker mcp
+          SCRY_WRITERS_STOPPED=true bash scripts/veil-db-snapshot-restore.sh restore "$SCRY_CURRENT_SNAPSHOT"
+          SCRY_IMAGE_REF="${APP_IMAGE}@${{ steps.build.outputs.digest }}" SCRY_RELEASE_ID="${{ github.sha }}" SCRY_SCHEMA_FINGERPRINT="$SCRY_SCHEMA_FINGERPRINT" docker compose -f compose.deploy.yml up -d --no-deps api worker mcp
+          SCRY_IMAGE_REF="${APP_IMAGE}@${{ steps.build.outputs.digest }}" SCRY_RELEASE_ID="${{ github.sha }}" SCRY_SCHEMA_FINGERPRINT="$SCRY_SCHEMA_FINGERPRINT" docker compose -f compose.deploy.yml exec -T api wget -qO- http://127.0.0.1:4000/api/ready
+          test "$(docker compose -f compose.deploy.yml exec -T postgres psql -U scry -d scry -Atc "SELECT pre_value||':'||post_value||':'||privacy_authority FROM veil_rollback_probe WHERE id='representative'")" = "pre-release-data:post-upgrade-data:veil-only"
+          SCRY_TRANSITION=restore_current SCRY_CURRENT_RELEASE_ID="${{ github.sha }}" SCRY_CURRENT_SCHEMA_FINGERPRINT="$SCRY_SCHEMA_FINGERPRINT" SCRY_CURRENT_PRIVACY_AUTHORITY=veil-only SCRY_PREVIOUS_RELEASE_ID="$SCRY_PREVIOUS_RELEASE_ID" SCRY_PREVIOUS_SCHEMA_FINGERPRINT="$SCRY_PREVIOUS_SCHEMA_FINGERPRINT" SCRY_PREVIOUS_PRIVACY_AUTHORITY=veil-only SCRY_ACTIVE_SCHEMA_FINGERPRINT="$SCRY_SCHEMA_FINGERPRINT" SCRY_WRITERS_STOPPED=true SCRY_CURRENT_RESTORE_PROOF=passed SCRY_CURRENT_IMAGE_BOOT_PROOF=passed SCRY_REPRESENTATIVE_DATA_PROOF=passed SCRY_VEIL_AUTHORITY_PROOF=passed node scripts/verify-veil-release-transition.mjs
 
       - name: Select stack tag
         id: stack
@@ -123,6 +234,7 @@ jobs:
           POSTGRES_PASSWORD: publish-placeholder
           SCRY_SERVICE_TOKEN: publish-placeholder
           SCRY_CREDENTIAL_ENCRYPTION_KEY: publish-placeholder
+          VEIL_ADMISSION_KEY: publish-placeholder-at-least-32-bytes
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_PUBLISHABLE_KEY: publish-placeholder
           SCRY_IMAGE_REF: ${{ env.APP_IMAGE }}@${{ steps.build.outputs.digest }}

@@ -1,6 +1,6 @@
 import { chromium, type Page } from "playwright";
 import type { ExpectedEffect, InteractionTargetIntent, PraxisOperation, PraxisResult } from "@scry/contracts";
-import { executePraxisConsumer } from "../src/praxis-consumer.js";
+import { executePraxisCampaignConsumer as executePraxisConsumer } from "./praxis-campaign-veil.js";
 
 type AppCategory="content"|"framework"|"runtime"|"tooling"|"infrastructure"|"standards"|"commercial";
 type InspectJourney={kind:"inspect";heading:string};

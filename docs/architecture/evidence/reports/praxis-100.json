@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "command": [
+    "pnpm",
+    "campaign:praxis:100"
+  ],
+  "startedAt": "2026-08-03T11:52:15.570Z",
+  "completedAt": "2026-08-03T11:52:35.610Z",
+  "durationMs": 20040,
+  "exitCode": 0,
+  "reportSha256": "d0cd9456c4373e064e96f41c3d4d3a8cbb4427238c809bf5cabb50de01119df8",
+  "report": {
+    "semantic_activation": {
+      "total": 16,
+      "passed": 16
+    },
+    "custom_activation": {
+      "total": 4,
+      "passed": 4
+    },
+    "text_entry": {
+      "total": 12,
+      "passed": 12
+    },
+    "contenteditable": {
+      "total": 3,
+      "passed": 3
+    },
+    "selection": {
+      "total": 8,
+      "passed": 8
+    },
+    "native_toggle": {
+      "total": 4,
+      "passed": 4
+    },
+    "custom_toggle": {
+      "total": 4,
+      "passed": 4
+    },
+    "scope": {
+      "total": 10,
+      "passed": 10
+    },
+    "ambiguity": {
+      "total": 6,
+      "passed": 6
+    },
+    "unsupported": {
+      "total": 4,
+      "passed": 4
+    },
+    "delayed_render": {
+      "total": 5,
+      "passed": 5
+    },
+    "dynamic_replacement": {
+      "total": 3,
+      "passed": 3
+    },
+    "effect_verification": {
+      "total": 4,
+      "passed": 4
+    },
+    "incorrect_effect": {
+      "total": 2,
+      "passed": 2
+    },
+    "navigation": {
+      "total": 1,
+      "passed": 1
+    },
+    "security": {
+      "total": 3,
+      "passed": 3
+    },
+    "privacy": {
+      "total": 2,
+      "passed": 2
+    },
+    "acquisition": {
+      "total": 5,
+      "passed": 5
+    },
+    "keyboard": {
+      "total": 2,
+      "passed": 2
+    },
+    "scroll": {
+      "total": 1,
+      "passed": 1
+    },
+    "wait": {
+      "total": 1,
+      "passed": 1
+    }
+  }
+}

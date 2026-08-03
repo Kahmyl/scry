@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "command": [
+    "pnpm",
+    "verify:veil-performance"
+  ],
+  "startedAt": "2026-08-03T11:49:03.478Z",
+  "completedAt": "2026-08-03T11:49:04.070Z",
+  "durationMs": 592,
+  "exitCode": 0,
+  "reportSha256": "75837ead1ee5a3f58ea47ad5742af6674123bd562c4d1da6bdf6a6aa35b94666",
+  "report": {
+    "schemaVersion": 1,
+    "campaign": "veil-performance",
+    "executedAt": "2026-08-03T11:49:04.053Z",
+    "environment": {
+      "node": "v22.14.0",
+      "iterations": {
+        "decision": 10000,
+        "leaseValidation": 10000,
+        "runtime": 500,
+        "cancellation": 500
+      }
+    },
+    "metrics": {
+      "repeatedDecisionP50Ms": 0.002332999999993035,
+      "repeatedDecisionP95Ms": 0.005124999999992497,
+      "structuralDecisionP95Ms": 0.005124999999992497,
+      "leaseValidationP95Ms": 0.006416999999999007,
+      "collectorSuspensionP95Ms": 0.001082999999994172,
+      "cancellationPropagationP95Ms": 0.01133399999997664
+    },
+    "limits": {
+      "repeatedDecisionP50Ms": 1,
+      "repeatedDecisionP95Ms": 3,
+      "structuralDecisionP95Ms": 15,
+      "leaseValidationP95Ms": 1,
+      "collectorSuspensionP95Ms": 100,
+      "cancellationPropagationP95Ms": 250
+    },
+    "coverage": {
+      "cacheProof": true,
+      "cacheBefore": {
+        "hits": 999,
+        "misses": 1,
+        "entries": 1,
+        "policyDigest": "61e92801bf22f88585da210a66179058a7ccbd89835119b14d477a5a64e4aec1"
+      },
+      "cacheAfter": {
+        "hits": 10999,
+        "misses": 1,
+        "entries": 1,
+        "policyDigest": "61e92801bf22f88585da210a66179058a7ccbd89835119b14d477a5a64e4aec1"
+      },
+      "decisionMeasurement": "observable exact-policy/request cache hits",
+      "collectorMeasurement": "collector suspend acknowledgement body",
+      "cancellationMeasurement": "cancel request through sealed acknowledgement"
+    },
+    "counts": {
+      "failed": 0
+    },
+    "failures": [],
+    "qualification": "PERFORMANCE_COMPONENT_PASS",
+    "readiness": "NOT_READY_WITHOUT_FULL_GATE"
+  }
+}

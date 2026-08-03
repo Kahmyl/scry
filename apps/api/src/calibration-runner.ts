@@ -12,6 +12,7 @@ export async function runCalibrationAttestation(
   resolveCredential?: (reference: string) => Promise<string>,
   markMutation?: (state: "started" | "completed" | "unknown") => Promise<boolean>,
   onPhase?: (phase: string) => Promise<boolean>,
+  veilAdmissionKey = process.env.VEIL_ADMISSION_KEY,
 ): Promise<CalibrationCompletion> {
   const outputDirectory = await mkdtemp(path.join(tmpdir(), "scry-calibration-"));
   let boundary: { structure: CalibrationStructure; url: string } | undefined;
@@ -51,6 +52,7 @@ export async function runCalibrationAttestation(
       policy: runtime.policy,
       outputDirectory,
       browserChannel,
+      ...(veilAdmissionKey ? { veilAdmissionKey } : {}),
       ...(resolveCredential ? { secretResolver: resolveCredential } : {}),
       protectedTransactionStore: transactionStore,
       atomicSecretCapture: async ({ value }) => { capturedProtectedValues.push(value); return { credentialId: crypto.randomUUID() }; },
@@ -84,6 +86,8 @@ export async function runCalibrationAttestation(
           candidateDiagnostics: safeCandidateDiagnostics(transactionResult),
           preparationEffects: safePreparationEffects(transactionResult),
           ...(failedStep ? { stepId: failedStep.id } : {}),
+          ...(failedStep?.action.error ? { stepError: failedStep.action.error.slice(0, 500) } : {}),
+          ...(report.error ? { reportError: report.error.slice(0, 500) } : {}),
           ...(protectedFailure ? { protectedFailure } : {}),
         },
       };

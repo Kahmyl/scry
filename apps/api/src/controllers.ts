@@ -21,6 +21,8 @@ import {
   type UpdateEnvironmentInput,
   type UpdateCredentialInput,
   type ValidateCredentialReferencesInput,
+  veilPreferenceUpdateSchema,
+  type VeilPreferenceUpdate,
 } from "@scry/contracts";
 
 import { ScryRepository } from "./repository.js";
@@ -32,6 +34,7 @@ import { CurrentPrincipal } from "./current-principal.decorator.js";
 import { McpTokenRepository } from "./mcp-token.repository.js";
 import { RunObservationService } from "./run-observation.service.js";
 import { ReleaseAdmissionService } from "./release-admission.service.js";
+import { VeilPreferencesService } from "./veil-preferences.service.js";
 
 @Controller("api/health")
 @Public()
@@ -135,7 +138,24 @@ export class ProjectsController {
 
 @Controller("api/environments")
 export class EnvironmentsController {
-  constructor(@Inject(ScryRepository) private readonly repository: ScryRepository) {}
+  constructor(
+    @Inject(ScryRepository) private readonly repository: ScryRepository,
+    @Inject(VeilPreferencesService) private readonly veilPreferences: VeilPreferencesService,
+  ) {}
+
+  @Get(":environmentId/veil")
+  getVeil(@Param("environmentId") environmentId: string, @CurrentPrincipal() principal: Principal) {
+    return this.veilPreferences.get(principal, environmentId);
+  }
+
+  @Patch(":environmentId/veil")
+  tightenVeil(
+    @Param("environmentId") environmentId: string,
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodValidationPipe(veilPreferenceUpdateSchema)) input: VeilPreferenceUpdate,
+  ) {
+    return this.veilPreferences.tighten(principal, environmentId, input);
+  }
 
   @Patch(":environmentId")
   update(
@@ -191,6 +211,11 @@ export class RunsController {
   @Get(":runId")
   get(@Param("runId") runId: string, @CurrentPrincipal() principal: Principal) {
     return this.observations.observe(principal, runId);
+  }
+
+  @Get(":runId/veil")
+  async getVeil(@Param("runId") runId: string, @CurrentPrincipal() principal: Principal) {
+    return (await this.observations.observe(principal, runId)).veil;
   }
 
   @Post(":runId/start")

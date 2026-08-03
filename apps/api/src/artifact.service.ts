@@ -1,5 +1,6 @@
 import { Inject, Injectable, NotFoundException, UnsupportedMediaTypeException } from "@nestjs/common";
-import { LocalArtifactStore } from "@scry/artifact";
+import { LocalArtifactStore, type VeilEvidenceAdmissionProof } from "@scry/artifact";
+import { veilEvidenceManifestSchema } from "@scry/contracts";
 import { parse, serialize, type DefaultTreeAdapterMap } from "parse5";
 
 import type { Principal } from "./auth.types.js";
@@ -11,31 +12,38 @@ const MAX_TEXT_PAGE = 256 * 1024;
 export class ArtifactService {
   private readonly store = new LocalArtifactStore(
     process.env.ARTIFACT_ROOT ?? "artifacts/runs",
+    requireAdmissionKey(),
   );
 
   constructor(@Inject(ScryRepository) private readonly repository: ScryRepository) {}
 
   async metadata(principal: Principal, artifactId: string) {
     const artifact = await this.repository.getArtifact(principal, artifactId);
-    if (artifact.availability !== "available" || !artifact.storageKey) throw new NotFoundException("Artifact is not available");
-    return artifact as typeof artifact & { storageKey: string; contentType: string };
+    if (artifact.availability !== "available" || artifact.destructionStatus !== "pending" || !artifact.storageKey) throw new NotFoundException("Artifact is not available");
+    const admission = veilEvidenceManifestSchema.safeParse(artifact.observation?.veilManifest);
+    const admissionToken = artifact.observation?.veilAdmissionToken;
+    const sanitation = artifact.observation?.veilSanitation;
+    if (!admission.success || typeof admissionToken !== "string" || !sanitation || typeof sanitation !== "object" || admission.data.evidenceId !== artifact.id || admission.data.contentDigest !== artifact.checksumSha256) {
+      throw new NotFoundException("Artifact has no valid Veil admission proof");
+    }
+    return { ...artifact, admission: { manifest: admission.data, sanitation: sanitation as Record<string, unknown>, token: admissionToken } } as typeof artifact & { storageKey: string; contentType: string; admission: VeilEvidenceAdmissionProof };
   }
 
   async range(principal: Principal, artifactId: string, range?: string) {
     const artifact = await this.metadata(principal, artifactId);
-    const size = await this.store.size(artifact.storageKey);
+    const size = await this.store.size(artifact.storageKey, artifact.admission);
     const parsed = parseRange(range, size);
-    const data = await this.store.getRange(artifact.storageKey, parsed.start, parsed.end - parsed.start + 1);
+    const data = await this.store.getRange(artifact.storageKey, parsed.start, parsed.end - parsed.start + 1, artifact.admission);
     return { artifact, data, size, ...parsed };
   }
 
   async text(principal: Principal, artifactId: string, offset = 0, limit = 64 * 1024) {
     const artifact = await this.metadata(principal, artifactId);
     this.requireText(artifact.contentType);
-    const size = await this.store.size(artifact.storageKey);
+    const size = await this.store.size(artifact.storageKey, artifact.admission);
     const safeOffset = Math.min(Math.max(0, offset), size);
     const safeLimit = Math.min(Math.max(1, limit), MAX_TEXT_PAGE);
-    const data = await this.store.getRange(artifact.storageKey, safeOffset, safeLimit);
+    const data = await this.store.getRange(artifact.storageKey, safeOffset, safeLimit, artifact.admission);
     const nextOffset = safeOffset + data.byteLength;
     return { artifactId, offset: safeOffset, nextOffset, eof: nextOffset >= size, sizeBytes: size, text: new TextDecoder().decode(data) };
   }
@@ -44,13 +52,13 @@ export class ArtifactService {
     if (!query || query.length > 500) throw new UnsupportedMediaTypeException("Search query must contain 1-500 characters");
     const artifact = await this.metadata(principal, artifactId);
     this.requireText(artifact.contentType);
-    const size = await this.store.size(artifact.storageKey);
+    const size = await this.store.size(artifact.storageKey, artifact.admission);
     const matches: Array<{ offset: number; context: string }> = [];
     const chunkSize = 256 * 1024;
     let offset = 0;
     let carry = "";
     while (offset < size && matches.length < Math.min(maxMatches, 100)) {
-      const bytes = await this.store.getRange(artifact.storageKey, offset, chunkSize);
+      const bytes = await this.store.getRange(artifact.storageKey, offset, chunkSize, artifact.admission);
       const text = carry + new TextDecoder().decode(bytes);
       let index = 0;
       while ((index = text.indexOf(query, index)) >= 0 && matches.length < Math.min(maxMatches, 100)) {
@@ -69,7 +77,7 @@ export class ArtifactService {
     const artifact = await this.metadata(principal, artifactId);
     if (!artifact.contentType.includes("html")) throw new UnsupportedMediaTypeException("Artifact is not HTML");
     const normalized = validateSimpleSelector(selector);
-    const html = new TextDecoder().decode(await this.store.get(artifact.storageKey));
+    const html = new TextDecoder().decode(await this.store.get(artifact.storageKey, artifact.admission));
     const matches = extractHtml(html, normalized).slice(0, 100);
     return { artifactId, selector, matches, truncated: matches.length === 100 };
   }
@@ -79,6 +87,12 @@ export class ArtifactService {
       throw new UnsupportedMediaTypeException("Artifact is not textual");
     }
   }
+}
+
+function requireAdmissionKey() {
+  const key = process.env.VEIL_ADMISSION_KEY;
+  if (!key) throw new Error("VEIL_ADMISSION_KEY_REQUIRED");
+  return key;
 }
 
 function parseRange(value: string | undefined, size: number) {

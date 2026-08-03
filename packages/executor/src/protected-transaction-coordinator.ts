@@ -7,8 +7,9 @@ import { playwrightBrowserChannel } from "./browser-runtime-artifacts.js";
 import { extractProtectedValue, executeProtectedReveal } from "./protected-extractor.js";
 import { resolveTarget, resolveTargetLocator } from "./grounding.js";
 import { CalibrationRequiredError, protectedTransactionDigest, transactionInputDigest, transactionInputSchemaDigest } from "./calibration.js";
-import type { PrivacyGate } from "./privacy-gate.js";
+import type { VeilRuntimeCoordinator } from "./veil-runtime-coordinator.js";
 import { requirePraxisSuccess } from "./praxis-consumer.js";
+import { VeilClipboardCollector } from "./veil-clipboard-collector.js";
 
 export type MutationLedgerState = "planned" | "dispatch_authorized" | "dispatching" | "dispatched" | "acknowledged" | "reconciled_succeeded" | "reconciled_not_applied" | "outcome_unknown";
 export type ProtectedTransactionStore = {
@@ -23,7 +24,7 @@ export type CapsuleFactory = {
 
 export type ProtectedTransactionDependencies = {
   safeSession: SafeBrowserSession;
-  gate: PrivacyGate;
+  gate: VeilRuntimeCoordinator;
   redactor: SecretRedactor;
   store: ProtectedTransactionStore;
   capsuleFactory: CapsuleFactory;
@@ -57,6 +58,7 @@ export class ProtectedTransactionKernel {
     if (claim.state !== "planned") return this.outcomeUnknown(transaction, claim.fencingToken);
     const facts = initialFacts();
     let capsule: ProtectedBrowserSession | undefined;
+    let capsulePrivacyFailed = false;
     let safeSession = d.safeSession;
     try {
       await d.store.record({ operationId: transaction.operationId, fencingToken: claim.fencingToken, phase: "safe_context_parking", facts: identity });
@@ -157,6 +159,13 @@ export class ProtectedTransactionKernel {
       }
     } finally {
       if (capsule) {
+        try { await capsule.clipboardCollector.finalize(); }
+        catch {
+          capsulePrivacyFailed = true;
+          facts.reasonCode = "VEIL_CLIPBOARD_CLEANUP_FAILED";
+          facts.failurePhase = "capsule_destruction";
+          facts.retryClass = "manual_review";
+        }
         try {
           facts.capsule = await capsule.destroy();
           await d.onContextProvenance?.({ contextId: capsule.provenance.contextId, provenance: "destroyed", operationId: transaction.operationId });
@@ -176,7 +185,7 @@ export class ProtectedTransactionKernel {
     }
 
     const persistenceComplete = transaction.extraction.outputs.every((output) => output.classification === "protected" ? facts.protectedPersistence === "confirmed" : facts.publicPersistence === "confirmed");
-    if (facts.capsule === "destruction_failed" || !persistenceComplete) {
+    if (capsulePrivacyFailed || facts.capsule === "destruction_failed" || !persistenceComplete) {
       facts.reconciliation = await this.reconcile(safeSession, transaction, claim.fencingToken, facts);
       await d.gate.seal({ code: facts.reasonCode ?? "PROTECTED_TRANSACTION_FAILED" });
       const status = facts.mutation.outcome === "unknown" ? "outcome_unknown" : "aborted";
@@ -324,7 +333,9 @@ async function verifyTransactionAssertions(
   for (const assertion of assertions) {
     if (assertion.type !== "fieldValueMatchesInput" && assertion.type !== "textMatchesInput") {
       try { await dependencies.verifyAssertions(page, [assertion]); }
-      catch { throw new PhaseError(`TRANSACTION_${assertion.type.toUpperCase()}_ASSERTION_FAILED`, phase, phase === "continuation" ? "manual_review" : "safe_to_retry"); }
+      catch {
+        throw new PhaseError(`TRANSACTION_${assertion.type.toUpperCase()}_ASSERTION_FAILED`, phase, phase === "continuation" ? "manual_review" : "safe_to_retry");
+      }
       continue;
     }
     const code = `${phase.toUpperCase()}_${assertion.input.replace(/[^a-z0-9]+/gi, "_").toUpperCase()}_VERIFICATION_FAILED`;
@@ -421,8 +432,8 @@ export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
     const launchChannel=playwrightBrowserChannel(configuredChannel);
     const browser = await chromium.launch({ headless: true, ...(launchChannel?{channel:launchChannel}:{}) });
     const options: BrowserContextOptions = { storageState: input.storageState, serviceWorkers: "block", acceptDownloads: false, ...(input.viewport ? { viewport: input.viewport } : {}) };
-    const context = await browser.newContext(options); const page = await context.newPage(); const provenance = new BrowserSessionProvenance(randomUUID(), "protected"); let destroyed = false;
-    const session: ProtectedBrowserSession = { browser, context, page, provenance, destroy: async () => { if (destroyed) return "destroyed"; destroyed = true; let outcome: "destroyed" | "force_terminated" = "destroyed"; try { await context.close(); await browser.close(); } catch { outcome = "force_terminated"; await browser.close().catch(() => undefined); } if (provenance.value() !== "destroyed") provenance.transition("destroyed"); return outcome; } };
+    const context = await browser.newContext(options); const page = await context.newPage(); const provenance = new BrowserSessionProvenance(randomUUID(), "protected"); const clipboardCollector = new VeilClipboardCollector(page); let destroyed = false;
+    const session: ProtectedBrowserSession = { browser, context, page, provenance, clipboardCollector, destroy: async () => { if (destroyed) return "destroyed"; destroyed = true; let outcome: "destroyed" | "force_terminated" = "destroyed"; try { await context.close(); await browser.close(); } catch { outcome = "force_terminated"; await browser.close().catch(() => undefined); } if (provenance.value() !== "destroyed") provenance.transition("destroyed"); return outcome; } };
     try { await input.prepare(session); return session; } catch (error) { await session.destroy(); throw error; }
   }
 }

@@ -5,6 +5,7 @@ import { PRAXIS_PROVIDER_CATALOG, PraxisDocumentEpoch, PraxisObservationCache, P
 import { PraxisAdapterError, type PraxisDispatchBoundary } from "./praxis-transaction.js";
 import { PraxisExecutionEnvelope } from "./praxis-execution-envelope.js";
 import { PraxisStateObserver } from "./praxis-state-observer.js";
+import { validatePraxisVeilGrants } from "./praxis-veil.js";
 
 const stateObserver = new PraxisStateObserver();
 
@@ -43,6 +44,7 @@ export class PraxisGroundedTarget {
 export class PraxisGroundingEngine {
   constructor(private readonly page: Page) {}
   async resolve(request: PraxisRequest, signal: AbortSignal) {
+    validatePraxisVeilGrants(request);
     checkAbort(signal);
     const started = performance.now();
     const observationDeadline = started + PraxisExecutionEnvelope.groundingWindow(request);

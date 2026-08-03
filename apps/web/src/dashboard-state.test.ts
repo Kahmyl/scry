@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dashboardAuthority, reconcileProjectSelection, resolveDashboardView } from "./dashboard-state.js";
+import { dashboardAuthority, reconcileProjectSelection, resolveDashboardView, veilPolicyIdentity, veilTighteningOptions } from "./dashboard-state.js";
 
 describe("dashboard state", () => {
   it("keeps the dashboard separate from Missions", () => {
@@ -28,5 +28,16 @@ describe("dashboard state", () => {
     expect(dashboardAuthority.prohibitedDashboardMutations).toContain("run_rerun");
     expect(dashboardAuthority.retainedHumanControls).toContain("active_run_cancel");
     expect(dashboardAuthority.retainedHumanControls).toContain("calibration_approval");
+  });
+
+  it("offers only stricter Veil profiles", () => {
+    expect(veilTighteningOptions("balanced")).toEqual(["private", "minimal_capture"]);
+    expect(veilTighteningOptions("private")).toEqual(["minimal_capture"]);
+    expect(veilTighteningOptions("minimal_capture")).toEqual([]);
+  });
+
+  it("renders the exact API policy digest identity", () => {
+    expect(veilPolicyIdentity("a".repeat(64))).toBe("a".repeat(12));
+    expect(() => veilPolicyIdentity("not-a-digest")).toThrow("VEIL_POLICY_DIGEST_INVALID");
   });
 });

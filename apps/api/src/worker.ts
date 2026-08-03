@@ -12,6 +12,8 @@ import {
   PRAXIS_CONTRACT_VERSION,
   PRAXIS_RUNTIME_VERSION,
   PRAXIS_SCORING_POLICY_VERSION,
+  veilEvidenceManifestSchema,
+  veilPolicySnapshotSchema,
   type Artifact,
 } from "@scry/contracts";
 import { executePlan, probeFlowPlan, verifyBrowserObservationRuntime, type BrowserStorageState, type ExecuteOptions, type ExecutionReport } from "@scry/executor";
@@ -34,6 +36,7 @@ import { CalibrationRuntimeRepository } from "./calibration-runtime.repository.j
 import { runCalibrationAttestation } from "./calibration-runner.js";
 import { ProbeRuntimeRepository } from "./probe-runtime.repository.js";
 import { Database } from "./database.js";
+import { ArtifactRetentionService } from "./artifact-retention.service.js";
 
 const app = await NestFactory.createApplicationContext(AppModule, {
   logger: ["log", "warn", "error"],
@@ -46,7 +49,11 @@ const probes = app.get(ProbeRuntimeRepository);
 const database = app.get(Database);
 const workerId = `${os.hostname()}:${process.pid}:${randomUUID()}`;
 const artifactRoot = path.resolve(process.env.ARTIFACT_ROOT ?? "artifacts/runs");
-const artifactStore = new LocalArtifactStore(artifactRoot);
+const veilAdmissionKey: string = requireVeilAdmissionKey();
+const artifactStore = new LocalArtifactStore(artifactRoot, veilAdmissionKey);
+const artifactRetention = new ArtifactRetentionService(database, artifactStore);
+const retentionIntervalMs = Math.max(10_000, Number(process.env.ARTIFACT_RETENTION_INTERVAL_MS ?? 60_000));
+const artifactRetentionMs = Math.max(60_000, Number(process.env.ARTIFACT_RETENTION_MS ?? 30 * 24 * 60 * 60 * 1_000));
 const heartbeatMs = Number(process.env.WORKER_HEARTBEAT_MS ?? 2_000);
 const staleMs = Number(process.env.WORKER_STALE_MS ?? 15_000);
 const releaseId = process.env.SCRY_RELEASE_ID ?? "development";
@@ -62,6 +69,8 @@ const workerHeartbeat = setInterval(() => {
 }, Math.min(staleMs, 10_000));
 
 await recoverStaleRuns();
+await runArtifactRetention();
+const retentionSweep = setInterval(() => { void runArtifactRetention(); }, retentionIntervalMs);
 let recoveryRunning = false;
 const staleRecovery = setInterval(() => {
   if (recoveryRunning) return;
@@ -121,6 +130,7 @@ async function processCalibration(job: Job<CalibrationJob>) {
       (reference) => calibrations.resolveCredential(runtime, reference),
       (state) => calibrations.markMutation(runtime, state),
       (phase) => calibrations.markPhase(runtime, phase),
+      veilAdmissionKey,
     );
     await calibrations.complete(runtime, result);
     return { state: result.passed ? "passed" : "failed" };
@@ -136,6 +146,11 @@ async function processCalibration(job: Job<CalibrationJob>) {
 function safeCalibrationCode(error: unknown) {
   const value = error instanceof Error ? error.message : String(error);
   return /^[A-Z][A-Z0-9_]*$/.test(value) ? value : "CALIBRATION_EXECUTION_FAILED";
+}
+function requireVeilAdmissionKey(): string {
+  const key = process.env.VEIL_ADMISSION_KEY;
+  if (!key) throw new Error("VEIL_ADMISSION_KEY_REQUIRED");
+  return key;
 }
 function safeDependencyCode(error: unknown) {
   const value = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
@@ -158,6 +173,7 @@ async function processRun(job: Job<RunJob>) {
     const snapshot = await executions.loadExecution(job.data.runId);
     const plan = currentPlanSchema.parse(snapshot.planSnapshot);
     const policy = executionPolicySchema.parse(snapshot.policySnapshot);
+    const veilPolicySnapshot = veilPolicySnapshotSchema.parse(snapshot.veilPolicySnapshot);
     const execution = snapshot.executionSnapshot as {
       viewport: { width: number; height: number };
       readinessTimeoutMultiplier?: number;
@@ -184,9 +200,11 @@ async function processRun(job: Job<RunJob>) {
     const executionOptions: Omit<ExecuteOptions, "plan"> & { plan: typeof plan } = {
       plan,
       policy,
+      veilPolicySnapshot,
       outputDirectory,
       runId: job.data.runId,
       attemptId: attempt.id,
+      veilAdmissionKey,
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
       viewport: execution.viewport,
       ...(execution.readinessTimeoutMultiplier !== undefined
@@ -312,10 +330,18 @@ async function persistReport(
       stepArtifacts.get(artifact.id),
     );
     if (artifact.availability === "available") {
+      const parsedAdmission = veilEvidenceManifestSchema.safeParse(artifact.observation?.veilManifest);
+      const admissionToken = artifact.observation?.veilAdmissionToken;
+      const sanitation = artifact.observation?.veilSanitation;
+      if (!parsedAdmission.success || parsedAdmission.data.evidenceId !== artifact.id || typeof admissionToken !== "string" || !sanitation || typeof sanitation !== "object") {
+        throw new Error("VEIL_EVIDENCE_ADMISSION_REQUIRED");
+      }
       const sourcePath = path.join(artifactRoot, storageKey);
-      const stored = await artifactStore.put(storageKey, await readFile(sourcePath));
+      const stored = await artifactStore.put(storageKey, await readFile(sourcePath), { manifest: parsedAdmission.data, sanitation: sanitation as Record<string, unknown>, token: admissionToken });
       artifact.sizeBytes = stored.sizeBytes;
       artifact.checksumSha256 = stored.checksumSha256;
+    } else if (artifact.availability === "quarantined" || artifact.availability === "destroyed") {
+      await artifactStore.quarantine(storageKey);
     }
     await executions.recordArtifact({
       attemptId,
@@ -324,6 +350,7 @@ async function persistReport(
         ? { stepId: stepArtifacts.get(artifact.id)! }
         : {}),
       artifact,
+      ...(artifact.availability === "available" ? { retentionUntil: new Date(Date.now() + artifactRetentionMs).toISOString() } : {}),
       ...(artifact.availability === "available" ? { storageKey } : {}),
       ...(artifact.availability === "available" && (artifactProvenance.get(artifact.id) || defaultProvenance) ? {
         contextId: (artifactProvenance.get(artifact.id) ?? { contextId: defaultProvenance!.contextId }).contextId,
@@ -360,9 +387,19 @@ async function recoverStaleRuns() {
   await probes.recoverStale(new Date(Date.now() - staleMs));
 }
 
+async function runArtifactRetention() {
+  try {
+    const results = await artifactRetention.runBatch(Number(process.env.ARTIFACT_RETENTION_BATCH_SIZE ?? 50));
+    for (const result of results) process.stdout.write(`${JSON.stringify({ event: "veil.artifact_retention", ...result })}\n`);
+  } catch (error) {
+    process.stderr.write(`${JSON.stringify({ event: "veil.artifact_retention_failed", code: error instanceof Error ? error.name : "UNKNOWN" })}\n`);
+  }
+}
+
 const shutdown = async () => {
   clearInterval(workerHeartbeat);
   clearInterval(staleRecovery);
+  clearInterval(retentionSweep);
   await worker.close();
   await calibrationWorker.close();
   await probeWorker.close();

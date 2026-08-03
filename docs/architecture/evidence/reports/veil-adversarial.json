@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "command": [
+    "pnpm",
+    "campaign:veil:adversarial"
+  ],
+  "startedAt": "2026-08-03T11:47:20.669Z",
+  "completedAt": "2026-08-03T11:47:25.023Z",
+  "durationMs": 4354,
+  "exitCode": 0,
+  "reportSha256": "4c61f480c1b27a79b1a607254e2931a6a5fa6a82ea98d5363e95fa155468947c",
+  "report": {
+    "schemaVersion": 1,
+    "campaign": "veil-adversarial",
+    "executedAt": "2026-08-03T11:47:24.952Z",
+    "environment": {
+      "realHttp": true,
+      "realChromium": true,
+      "browserVersion": "150.0.7871.187",
+      "origins": 2
+    },
+    "counts": {
+      "total": 11,
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0
+    },
+    "coverage": {
+      "realBrowser": [
+        "cross-origin-frame",
+        "closed-shadow",
+        "canvas-2d",
+        "webgl",
+        "video-region",
+        "browser-pdf",
+        "context-loss",
+        "browser-process-loss"
+      ],
+      "authorityRefusal": [
+        "pdf-screenshot",
+        "clipboard",
+        "download",
+        "secret-trace"
+      ],
+      "contentScan": [
+        "decoded-png-rgba",
+        "trace-buffer"
+      ]
+    },
+    "qualification": "ADVERSARIAL_COMPONENT_PASS",
+    "readiness": "NOT_READY_WITHOUT_FULL_GATE",
+    "results": [
+      {
+        "id": "cross-origin-frame",
+        "proof": "real cross-origin iframe is covered by an opaque full-frame fallback",
+        "status": "passed",
+        "durationMs": 805.1946669999999
+      },
+      {
+        "id": "closed-shadow",
+        "proof": "closed-shadow host is covered as a full opaque region",
+        "status": "passed",
+        "durationMs": 210.81566700000008
+      },
+      {
+        "id": "canvas-2d",
+        "proof": "decoded protected canvas pixels are opaque",
+        "status": "passed",
+        "durationMs": 200.50637500000016
+      },
+      {
+        "id": "webgl",
+        "proof": "decoded protected WebGL region is opaque",
+        "status": "passed",
+        "durationMs": 201.41941699999984
+      },
+      {
+        "id": "video-gap",
+        "proof": "unknown video region forces quarantine and the visible region is omitted",
+        "status": "passed",
+        "durationMs": 212.66020800000024
+      },
+      {
+        "id": "pdf-refusal",
+        "proof": "browser PDF capture receives no secret capability",
+        "status": "passed",
+        "durationMs": 133.84637500000008
+      },
+      {
+        "id": "clipboard-download",
+        "proof": "clipboard and download capabilities are refused for secrets",
+        "status": "passed",
+        "durationMs": 73.26025000000027
+      },
+      {
+        "id": "trace-archive",
+        "proof": "trace canary is removed before sanitized admission",
+        "status": "passed",
+        "durationMs": 73.19195799999989
+      },
+      {
+        "id": "context-loss",
+        "proof": "browser context loss seals all collectors before reuse",
+        "status": "passed",
+        "durationMs": 78.09700000000021
+      },
+      {
+        "id": "browser-loss",
+        "proof": "browser process loss seals the runtime before reuse",
+        "status": "passed",
+        "durationMs": 985.7396669999998
+      },
+      {
+        "id": "masking-runtime-loss",
+        "proof": "removing the real mask runtime either refuses or re-establishes masks before capture",
+        "status": "passed",
+        "durationMs": 201.7789170000001
+      }
+    ]
+  }
+}

@@ -21,6 +21,7 @@ describe("canonical run observation", () => {
     expect(observation.artifacts[0]).not.toHaveProperty("storageKey");
     expect(observation.integrity).toEqual({ status: "complete", issues: [] });
     expect(observation.safeActions).toEqual(["rerun", "revise_flow", "read_artifact"]);
+    expect(observation.veil).toMatchObject({ effectiveProfile: "private", policyDigest: "a".repeat(64), status: "verified", findings: [] });
   });
 
   it("reports cross-table observation corruption explicitly", async () => {
@@ -54,6 +55,11 @@ function failedRun() {
     planSnapshot: { name: "Observation smoke", objective: "Open", steps: [{ id: "open", title: "Open application" }] },
     environmentSnapshot: { baseOrigin: "https://example.test" },
     policySnapshot: {},
+    veilPolicySnapshot: {
+      schemaVersion: 1, profile: "private", allowedOrigins: ["https://example.test"],
+      controls: { screenshots: true, video: false, dom: false, accessibility: true, diagnostics: false, network: false, trace: false, clipboard: false, downloads: false, maskSensitiveVisuals: true, sanitizeStructuredEvidence: true, quarantineUnknown: true },
+      leaseTtlMs: 5000, digest: "a".repeat(64),
+    },
     executionSnapshot: { browser: "chromium", viewport: { width: 1280, height: 720 }, seed: 1 },
     rerunOfRunId: null,
     createdAt: "2026-08-01T00:00:00.000Z",

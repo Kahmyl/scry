@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { runObservationSchema, type RunObservation } from "@scry/contracts";
+import { runObservationSchema, veilPolicySnapshotSchema, type RunObservation, type VeilRunObservation } from "@scry/contracts";
+import { compileDefaultVeilPolicy } from "@scry/policy";
 
 import type { Principal } from "./auth.types.js";
 import { Database } from "./database.js";
@@ -150,6 +151,7 @@ export class RunObservationService {
     else safeActions.push("rerun");
     if (failure && ["plan", "product"].includes(failure.provenance)) safeActions.push("revise_flow");
     if (artifacts.some((artifact) => artifact.availability === "available")) safeActions.push("read_artifact");
+    const veil = deriveVeilObservation(run, intervals.rows, artifactTimeline, artifacts, active);
 
     return runObservationSchema.parse({
       run,
@@ -160,6 +162,7 @@ export class RunObservationService {
       artifacts,
       artifactTimeline: artifactTimeline as RunObservation["artifactTimeline"],
       privacy: { intervals: intervals.rows, operations: operations.rows, credentialIncidents: incidents.rows },
+      veil,
       praxis: {
         contractVersion: 1,
         runtimeVersions: [...new Set(praxisTransactions.map((transaction) => String(transaction.runtimeVersion)))],
@@ -180,6 +183,79 @@ export class RunObservationService {
       },
     });
   }
+}
+
+function deriveVeilObservation(
+  run: Record<string, any>,
+  intervals: Array<Record<string, any>>,
+  timeline: Array<Record<string, any>>,
+  artifacts: Array<Record<string, any>>,
+  active: boolean,
+): VeilRunObservation {
+  const parsed = veilPolicySnapshotSchema.safeParse(run.veilPolicySnapshot);
+  const policy = parsed.success ? parsed.data : compileDefaultVeilPolicy({
+    allowedOrigins: Array.isArray(run.policySnapshot?.allowedOrigins)
+      ? run.policySnapshot.allowedOrigins
+      : [String(run.environmentSnapshot?.baseOrigin ?? "https://invalid.local")],
+    allowDownloads: false,
+  });
+  const gapRows = intervals.filter((entry) => entry.mode === "protected_recording_gap");
+  const withheld = artifacts.filter((artifact) => ["quarantined", "destroyed", "failed", "incomplete"].includes(String(artifact.availability)) && artifact.reasonCode);
+  const normalizedTimeline: VeilRunObservation["timeline"] = [
+    ...intervals.map((entry, index) => ({
+      sequence: Number(entry.sequence ?? index), type: entry.mode === "protected_recording_gap" ? "gap" as const : "transition" as const,
+      startedAt: iso(entry.startedAt), ...(entry.endedAt ? { endedAt: iso(entry.endedAt) } : {}),
+      reasonCode: safeReason(entry.failureCode ?? entry.terminalState ?? "VEIL_PROTECTED_INTERVAL"),
+    })),
+    ...timeline.filter((entry) => entry.type === "quarantine_record" || entry.type === "unavailable_interval").map((entry, index) => ({
+      sequence: intervals.length + Number(entry.sequence ?? index), type: entry.type === "unavailable_interval" ? "gap" as const : "disposition" as const,
+      startedAt: iso(entry.startedAt), ...(entry.endedAt ? { endedAt: iso(entry.endedAt) } : {}),
+      reasonCode: safeReason(entry.reasonCode ?? "VEIL_EVIDENCE_WITHHELD"),
+      ...(artifactKindChannel(entry.channel) ? { channel: artifactKindChannel(entry.channel)! } : {}),
+    })),
+  ].sort((left, right) => left.sequence - right.sequence);
+  const gaps = gapRows.map((entry) => ({
+    startedAt: iso(entry.startedAt), ...(entry.endedAt ? { endedAt: iso(entry.endedAt) } : {}),
+    reasonCode: safeReason(entry.failureCode ?? "VEIL_CAPTURE_GAP"),
+    remediation: remediationFor(entry.failureCode),
+  }));
+  const findings = withheld.map((artifact) => ({
+    code: safeVeilCode(artifact.reasonCode),
+    severity: artifact.availability === "failed" ? "blocking" as const : "warning" as const,
+    reasonCode: safeReason(artifact.reasonCode),
+    ...(artifactKindChannel(artifact.kind) ? { channel: artifactKindChannel(artifact.kind)! } : {}),
+    occurredAt: iso(artifact.createdAt),
+    remediation: remediationFor(artifact.reasonCode),
+  }));
+  const sealed = findings.some((finding) => finding.severity === "blocking") || gapRows.some((entry) => !entry.endedAt);
+  return {
+    schemaVersion: 1,
+    effectiveProfile: policy.profile,
+    policyDigest: policy.digest,
+    status: sealed ? "sealed" : findings.length || gaps.length ? "degraded" : active ? "pending" : "verified",
+    timeline: normalizedTimeline,
+    gaps,
+    findings,
+  };
+}
+
+function iso(value: unknown): string { return new Date(value as string | number | Date).toISOString(); }
+function safeReason(value: unknown): string {
+  const normalized = String(value ?? "VEIL_UNSPECIFIED").toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+  return /^[A-Z][A-Z0-9_]*$/.test(normalized) ? normalized : "VEIL_UNSPECIFIED";
+}
+function safeVeilCode(value: unknown): string {
+  const reason = safeReason(value);
+  return reason.startsWith("VEIL_") ? reason : `VEIL_${reason}`;
+}
+function remediationFor(reason: unknown): string {
+  const code = safeReason(reason);
+  if (code.includes("PERMIT") || code.includes("POLICY")) return "Start a new capture under the current Veil policy and document epoch.";
+  if (code.includes("SEALED") || code.includes("GATE_CLOSED")) return "Inspect the preceding Veil transition, restore a safe context, and rerun the affected step.";
+  return "Review the Veil timeline and rerun only after the affected evidence channel reports a verified-safe state.";
+}
+function artifactKindChannel(kind: unknown): VeilRunObservation["findings"][number]["channel"] | undefined {
+  return ["screenshot", "video", "dom", "network", "trace"].includes(String(kind)) ? String(kind) as VeilRunObservation["findings"][number]["channel"] : undefined;
 }
 
 function emptyObservationQueries() {
