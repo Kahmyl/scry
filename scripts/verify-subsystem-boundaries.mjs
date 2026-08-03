@@ -35,10 +35,12 @@ for (const file of sourceFiles) {
   }
 }
 
+const composition = [...(inventory.applicationComposition ?? [])].sort();
 const discovered = sourceFiles
   .map((file) => relative(root, file))
   .filter((path) => !path.startsWith("packages/praxis/") && !path.startsWith("packages/veil/"))
   .filter((path) => /\/(?:praxis|veil)(?:-|\.)/i.test(path))
+  .filter((path) => !composition.includes(path))
   .sort();
 const classified = [...inventory.transitionalSources].sort();
 if (new Set(classified).size !== classified.length)
@@ -49,6 +51,12 @@ for (const path of discovered)
 for (const path of classified)
   if (!discovered.includes(path)) failures.push(`stale transitional subsystem source: ${path}`);
 const sourcePaths = new Set(sourceFiles.map((file) => relative(root, file)));
+for (const path of composition) {
+  if (!path.startsWith("apps/"))
+    failures.push(`subsystem application composition must remain application-owned: ${path}`);
+  if (!sourcePaths.has(path))
+    failures.push(`subsystem application composition does not exist: ${path}`);
+}
 const adapters = [...(inventory.applicationAdapters ?? [])].sort();
 if (new Set(adapters).size !== adapters.length)
   failures.push("subsystem application-adapter inventory contains duplicate sources");
@@ -64,7 +72,7 @@ if (failures.length) {
   process.exit(1);
 }
 process.stdout.write(
-  `Subsystem boundaries verified; ${classified.length} transitional sources remain, ${adapters.length} application adapters are classified, and no forbidden dependency was found.\n`,
+  `Subsystem boundaries verified; ${classified.length} transitional sources remain, ${adapters.length} application adapters and ${composition.length} composition roots are classified, and no forbidden dependency was found.\n`,
 );
 
 async function sourceTree(directory) {

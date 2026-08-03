@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ArtifactStore, VeilEvidenceAdmissionProof } from "@scry/artifact";
-import { ArtifactRetentionService } from "../src/artifact-retention.service.js";
+import { ArtifactRetentionService } from "../src/artifacts/index.js";
 
 const manifest = {
   schemaVersion: 1 as const,

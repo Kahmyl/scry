@@ -10,7 +10,10 @@
     "branch": "feat/veil",
     "manifestCommand": "node scripts/veil-readiness-manifest.mjs",
     "manifestAlgorithm": "sha256-v1 over git binary diff and sorted path-NUL-content-SHA entries",
-    "manifestExclusions": ["docs/architecture/veil-readiness-ledger.json", "docs/architecture/evidence/**"],
+    "manifestExclusions": [
+      "docs/architecture/veil-readiness-ledger.json",
+      "docs/architecture/evidence/**"
+    ],
     "codeTrackedDiffSha256ExcludingSignoffArtifacts": "fe746fc8e5a7bb5ebdb88696888a095c3ec610cf55505f9ce5c26e396e9885c5",
     "codeUntrackedContentManifestSha256ExcludingSignoffArtifacts": "0887541a0e4c0b9f240e961af90c315c3151cd6af058585279ea0d13a712443b",
     "codeWorkingTreeEntryCountExcludingSignoffArtifacts": 118,
@@ -24,19 +27,150 @@
     "balancedPolicy": "61e92801bf22f88585da210a66179058a7ccbd89835119b14d477a5a64e4aec1"
   },
   "rules": {
-    "advanceRequires": ["implementation_complete", "focused_verification_passed", "independent_review_complete", "blocker_and_high_findings_remediated", "reverification_passed"],
-    "releaseRequires": ["all_milestones_accepted", "all_veil_campaigns_passed", "all_praxis_campaigns_passed", "production_topology_verified", "final_privacy_review_clean", "final_evidence_audit_clean", "zero_required_skips", "zero_unexplained_flakes", "zero_privacy_waivers"]
+    "advanceRequires": [
+      "implementation_complete",
+      "focused_verification_passed",
+      "independent_review_complete",
+      "blocker_and_high_findings_remediated",
+      "reverification_passed"
+    ],
+    "releaseRequires": [
+      "all_milestones_accepted",
+      "all_veil_campaigns_passed",
+      "all_praxis_campaigns_passed",
+      "production_topology_verified",
+      "final_privacy_review_clean",
+      "final_evidence_audit_clean",
+      "zero_required_skips",
+      "zero_unexplained_flakes",
+      "zero_privacy_waivers"
+    ]
   },
   "milestones": [
-    {"id": 1, "name": "authority_inventory_and_baseline", "status": "ACCEPTED", "verification": ["lifecycle_inventory", "baseline_typecheck_tests_campaigns_performance_topology"], "review": "CLEAN", "gateDecision": "ACCEPTED"},
-    {"id": 2, "name": "contracts_policies_preferences", "status": "ACCEPTED", "verification": ["versioned_contracts", "deterministic_policy_digest", "hard_floor", "immutable_run_policy_snapshot", "preference_tightening_integration"], "review": "CLEAN_AFTER_REMEDIATION", "gateDecision": "ACCEPTED"},
-    {"id": 3, "name": "authority_leases_runtime_state", "status": "ACCEPTED", "verification": ["bound_opaque_leases", "invalid_context_refusal", "serialized_transitions", "positive_state_versions", "uncertainty_sealing"], "review": "CLEAN_AFTER_REMEDIATION", "gateDecision": "ACCEPTED"},
-    {"id": 4, "name": "collectors_and_evidence_admission", "status": "ACCEPTED", "verification": ["observable_collectors", "signed_single_admission_boundary", "tamper_refusal", "quarantine_destruction", "trace_classification_fail_closed"], "review": "CLEAN_AFTER_REMEDIATION", "gateDecision": "ACCEPTED"},
-    {"id": 5, "name": "praxis_integration", "status": "ACCEPTED", "verification": ["schedule_observe_interact_transaction_evidence_result_leases", "typed_required_refusal", "explicit_optional_degradation", "protected_value_exclusion", "unique_assertion_transaction_ordinals"], "review": "CLEAN_AFTER_REMEDIATION", "gateDecision": "ACCEPTED"},
-    {"id": 6, "name": "visual_privacy_and_fidelity", "status": "ACCEPTED", "verification": ["pre_capture_masks", "dynamic_and_opaque_fallbacks", "single_use_screenshot_permits", "continuous_video_finalization", "decoded_pixel_scans", "capsule_clipboard_cleanup"], "review": "CLEAN_AFTER_REMEDIATION", "gateDecision": "ACCEPTED"},
-    {"id": 7, "name": "persistence_observation_api_mcp_ui", "status": "ACCEPTED", "verification": ["safe_metadata_only", "api_mcp_ui_digest_agreement", "tightening_only_preferences", "retention_destruction", "fresh_and_upgrade_migrations"], "review": "CLEAN_AFTER_REMEDIATION", "gateDecision": "ACCEPTED"},
-    {"id": 8, "name": "performance_and_resilience", "status": "ACCEPTED", "verification": ["performance_thresholds", "safe_cache_proof", "veil_endurance_1000", "praxis_endurance_1000", "bounded_browser_test_workers"], "review": "CLEAN", "gateDecision": "ACCEPTED"},
-    {"id": 9, "name": "cutoff_and_enforcement", "status": "ACCEPTED", "verification": ["legacy_privacy_gate_removed", "artifact_bypass_gate", "mandatory_veil_and_praxis_campaigns", "mandatory_worker_crash_gate", "release_schema_and_authority_checks"], "review": "CLEAN", "gateDecision": "ACCEPTED"}
+    {
+      "id": 1,
+      "name": "authority_inventory_and_baseline",
+      "status": "ACCEPTED",
+      "verification": [
+        "lifecycle_inventory",
+        "baseline_typecheck_tests_campaigns_performance_topology"
+      ],
+      "review": "CLEAN",
+      "gateDecision": "ACCEPTED"
+    },
+    {
+      "id": 2,
+      "name": "contracts_policies_preferences",
+      "status": "ACCEPTED",
+      "verification": [
+        "versioned_contracts",
+        "deterministic_policy_digest",
+        "hard_floor",
+        "immutable_run_policy_snapshot",
+        "preference_tightening_integration"
+      ],
+      "review": "CLEAN_AFTER_REMEDIATION",
+      "gateDecision": "ACCEPTED"
+    },
+    {
+      "id": 3,
+      "name": "authority_leases_runtime_state",
+      "status": "ACCEPTED",
+      "verification": [
+        "bound_opaque_leases",
+        "invalid_context_refusal",
+        "serialized_transitions",
+        "positive_state_versions",
+        "uncertainty_sealing"
+      ],
+      "review": "CLEAN_AFTER_REMEDIATION",
+      "gateDecision": "ACCEPTED"
+    },
+    {
+      "id": 4,
+      "name": "collectors_and_evidence_admission",
+      "status": "ACCEPTED",
+      "verification": [
+        "observable_collectors",
+        "signed_single_admission_boundary",
+        "tamper_refusal",
+        "quarantine_destruction",
+        "trace_classification_fail_closed"
+      ],
+      "review": "CLEAN_AFTER_REMEDIATION",
+      "gateDecision": "ACCEPTED"
+    },
+    {
+      "id": 5,
+      "name": "praxis_integration",
+      "status": "ACCEPTED",
+      "verification": [
+        "schedule_observe_interact_transaction_evidence_result_leases",
+        "typed_required_refusal",
+        "explicit_optional_degradation",
+        "protected_value_exclusion",
+        "unique_assertion_transaction_ordinals"
+      ],
+      "review": "CLEAN_AFTER_REMEDIATION",
+      "gateDecision": "ACCEPTED"
+    },
+    {
+      "id": 6,
+      "name": "visual_privacy_and_fidelity",
+      "status": "ACCEPTED",
+      "verification": [
+        "pre_capture_masks",
+        "dynamic_and_opaque_fallbacks",
+        "single_use_screenshot_permits",
+        "continuous_video_finalization",
+        "decoded_pixel_scans",
+        "capsule_clipboard_cleanup"
+      ],
+      "review": "CLEAN_AFTER_REMEDIATION",
+      "gateDecision": "ACCEPTED"
+    },
+    {
+      "id": 7,
+      "name": "persistence_observation_api_mcp_ui",
+      "status": "ACCEPTED",
+      "verification": [
+        "safe_metadata_only",
+        "api_mcp_ui_digest_agreement",
+        "tightening_only_preferences",
+        "retention_destruction",
+        "fresh_and_upgrade_migrations"
+      ],
+      "review": "CLEAN_AFTER_REMEDIATION",
+      "gateDecision": "ACCEPTED"
+    },
+    {
+      "id": 8,
+      "name": "performance_and_resilience",
+      "status": "ACCEPTED",
+      "verification": [
+        "performance_thresholds",
+        "safe_cache_proof",
+        "veil_endurance_1000",
+        "praxis_endurance_1000",
+        "bounded_browser_test_workers"
+      ],
+      "review": "CLEAN",
+      "gateDecision": "ACCEPTED"
+    },
+    {
+      "id": 9,
+      "name": "cutoff_and_enforcement",
+      "status": "ACCEPTED",
+      "verification": [
+        "legacy_privacy_gate_removed",
+        "artifact_bypass_gate",
+        "mandatory_veil_and_praxis_campaigns",
+        "mandatory_worker_crash_gate",
+        "release_schema_and_authority_checks"
+      ],
+      "review": "CLEAN",
+      "gateDecision": "ACCEPTED"
+    }
   ],
   "campaigns": {
     "veil": {
@@ -61,7 +195,26 @@
     }
   },
   "verification": {
-    "commands": ["pnpm typecheck", "pnpm test", "pnpm verify:privacy-foundation", "pnpm verify:release-fingerprint", "pnpm verify:veil-change-gate", "pnpm verify:veil-performance", "pnpm verify:veil-release-transition", "pnpm campaign:veil:certification", "pnpm campaign:veil:adversarial", "pnpm campaign:veil:production-e2e", "pnpm campaign:veil:release-scope", "pnpm campaign:veil:worker-crash", "pnpm campaign:veil:public-apps", "pnpm campaign:praxis", "pnpm campaign:praxis:100", "pnpm campaign:praxis:resilience", "pnpm campaign:praxis:certification", "pnpm campaign:praxis:public-apps"],
+    "commands": [
+      "pnpm typecheck",
+      "pnpm test",
+      "pnpm verify:privacy-foundation",
+      "pnpm verify:release-fingerprint",
+      "pnpm verify:veil-change-gate",
+      "pnpm verify:veil-performance",
+      "pnpm verify:veil-release-transition",
+      "pnpm campaign:veil:certification",
+      "pnpm campaign:veil:adversarial",
+      "pnpm campaign:veil:production-e2e",
+      "pnpm campaign:veil:release-scope",
+      "pnpm campaign:veil:worker-crash",
+      "pnpm campaign:veil:public-apps",
+      "pnpm campaign:praxis",
+      "pnpm campaign:praxis:100",
+      "pnpm campaign:praxis:resilience",
+      "pnpm campaign:praxis:certification",
+      "pnpm campaign:praxis:public-apps"
+    ],
     "requiredSkips": 0,
     "unexplainedFlakes": 0,
     "privacyWaivers": 0,

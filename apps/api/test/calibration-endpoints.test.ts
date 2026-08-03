@@ -3,11 +3,9 @@ import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { CalibrationController } from "../src/calibration.controller.js";
-import { CalibrationService } from "../src/calibration.service.js";
-import { FlowController } from "../src/flow.controller.js";
-import { FlowService } from "../src/flow.service.js";
-import { RunQueueService } from "../src/queue.service.js";
+import { CalibrationController, CalibrationService } from "../src/calibration/index.js";
+import { FlowController, FlowService } from "../src/flows/index.js";
+import { RunQueueService } from "../src/runtime/index.js";
 
 const calibration = {
   request: vi.fn(async () => ({ route: "request" })),

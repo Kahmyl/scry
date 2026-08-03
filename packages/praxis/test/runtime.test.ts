@@ -4,7 +4,7 @@ import type { InteractionTargetIntent, PraxisOperation, PraxisRequest } from "@s
 import { PraxisAdapter } from "../src/adapter.js";
 import { PraxisMutationLease, selectPraxisStrategy } from "../src/runtime.js";
 import { PraxisDocumentEpoch } from "../src/observation.js";
-import { PraxisTransactionCoordinator } from "../src/transaction.js";
+import { PraxisAdapterError, PraxisTransactionCoordinator } from "../src/transaction.js";
 import { executePraxisConsumer } from "../src/consumer.js";
 import { compileVeilPolicy } from "@scry/veil";
 import { VeilAuthority } from "@scry/veil";
@@ -204,15 +204,24 @@ describe("Praxis strategy, dispatch, and verification", () => {
 
   it("refuses repeated target instability without crossing the mutation boundary", async () => {
     await page.setContent(
-      `<button onclick="document.body.dataset.count=String(Number(document.body.dataset.count||0)+1)">Continue</button><script>globalThis.replacer=setInterval(()=>{const old=document.querySelector('button');old?.replaceWith(old.cloneNode(true))},2)</script>`,
+      `<button onclick="document.body.dataset.count=String(Number(document.body.dataset.count||0)+1)">Continue</button>`,
     );
-    const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(
-      request({ type: "activate" }, intent("Continue")),
-      new AbortController().signal,
-    );
-    await page.evaluate(() =>
-      clearInterval((globalThis as typeof globalThis & { replacer: number }).replacer),
-    );
+    class RepeatedInstabilityAdapter extends PraxisAdapter {
+      override async revalidate(
+        ..._args: Parameters<PraxisAdapter["revalidate"]>
+      ): ReturnType<PraxisAdapter["revalidate"]> {
+        await page.locator("button").evaluate((old) => old.replaceWith(old.cloneNode(true)));
+        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+          provenance: "application",
+          mutationOutcome: "not_started",
+          retry: "requires_reobservation",
+          safeActions: ["reobserve"],
+        });
+      }
+    }
+    const result = await new PraxisTransactionCoordinator(
+      new RepeatedInstabilityAdapter(page),
+    ).execute(request({ type: "activate" }, intent("Continue")), new AbortController().signal);
     expect(result).toMatchObject({ status: "failed", mutationOutcome: "not_started" });
     if (result.status !== "succeeded") {
       expect([

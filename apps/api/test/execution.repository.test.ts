@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { encryptCredential } from "../src/credential.crypto.js";
-import { ExecutionRepository } from "../src/execution.repository.js";
+import { encryptCredential } from "../src/access/index.js";
+import { ExecutionRepository } from "../src/runtime/index.js";
 
 describe("protected execution credentials", () => {
   it("rejects a contradictory terminal Praxis result for a true duplicate transaction id", async () => {

@@ -11,24 +11,24 @@ import {
   PRAXIS_SCORING_POLICY_VERSION,
 } from "@scry/contracts";
 import { verifyBrowserObservationRuntime } from "@scry/praxis";
-import { LocalArtifactStore } from "@scry/artifact";
+import { createArtifactStoreFromEnv } from "@scry/artifact";
 
 import { AppModule } from "./app.module.js";
-import { ArtifactRetentionService } from "./artifact-retention.service.js";
-import { CalibrationRuntimeRepository } from "./calibration-runtime.repository.js";
-import { Database } from "./database.js";
-import { ExecutionRepository } from "./execution.repository.js";
-import { ProbeRuntimeRepository } from "./probe-runtime.repository.js";
-import { RunQueueService } from "./queue.service.js";
-import { RedisConnection } from "./redis.js";
-import { createWorkerFleet } from "./worker-orchestration.js";
+import { ArtifactRetentionService } from "./artifacts/index.js";
+import { CalibrationRuntimeRepository } from "./calibration/index.js";
+import { Database } from "./infrastructure/database.js";
+import { ExecutionRepository } from "./runtime/index.js";
+import { ProbeRuntimeRepository } from "./calibration/index.js";
+import { RunQueueService } from "./runtime/index.js";
+import { RedisConnection } from "./infrastructure/redis.js";
+import { createWorkerFleet } from "./workers/index.js";
 import {
   createCalibrationProcessor,
   createProbeProcessor,
   safeDependencyCode,
   safeWorkerCode,
-} from "./worker-probe-calibration.js";
-import { createRunProcessor } from "./worker-run-processor.js";
+} from "./workers/index.js";
+import { createRunProcessor } from "./workers/index.js";
 
 const app = await NestFactory.createApplicationContext(AppModule, {
   logger: ["log", "warn", "error"],
@@ -42,7 +42,9 @@ const database = app.get(Database);
 const workerId = `${os.hostname()}:${process.pid}:${randomUUID()}`;
 const artifactRoot = path.resolve(process.env.ARTIFACT_ROOT ?? "artifacts/runs");
 const veilAdmissionKey = requireVeilAdmissionKey();
-const artifactStore = new LocalArtifactStore(artifactRoot, veilAdmissionKey);
+const artifactStorage = createArtifactStoreFromEnv(process.env, veilAdmissionKey);
+const artifactStore = artifactStorage.store;
+process.stdout.write(`${JSON.stringify({ event: "artifact.storage.ready", provider: artifactStorage.provider, remote: artifactStorage.remote })}\n`);
 const artifactRetention = new ArtifactRetentionService(database, artifactStore);
 const retentionIntervalMs = Math.max(
   10_000,
@@ -125,6 +127,7 @@ const workers = createWorkerFleet({
     artifactRoot,
     artifactRetentionMs,
     artifactStore,
+    artifactStoreRemote: artifactStorage.remote,
     veilAdmissionKey,
     browserChannel,
   }),

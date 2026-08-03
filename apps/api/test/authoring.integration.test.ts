@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { currentPlanSchema } from "@scry/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { Database } from "../src/database.js";
-import { AuthoringService } from "../src/authoring.service.js";
+import { Database } from "../src/infrastructure/database.js";
+import { AuthoringService } from "../src/authoring/index.js";
 
 const enabled = Boolean(process.env.SCRY_AUTHORING_TEST_DATABASE_URL);
 

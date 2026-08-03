@@ -10,9 +10,9 @@ import {
 } from "@scry/contracts";
 import { compileVeilPolicy } from "@scry/veil";
 
-import type { Principal } from "../auth.types.js";
-import { Database } from "../database.js";
-import { ScryRepository } from "../repository.js";
+import type { Principal } from "../auth/index.js";
+import { Database } from "../infrastructure/index.js";
+import { ScryRepository } from "../access/index.js";
 
 @Injectable()
 export class VeilPreferencesService {

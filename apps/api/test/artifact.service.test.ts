@@ -5,7 +5,7 @@ import path from "node:path";
 import { LocalArtifactStore, signVeilEvidenceAdmission } from "@scry/artifact";
 import { describe, expect, it, vi } from "vitest";
 
-import { ArtifactService } from "../src/artifact.service.js";
+import { ArtifactService } from "../src/artifacts/index.js";
 
 function admission(id: string, content: Uint8Array) {
   const digest = createHash("sha256").update(content).digest("hex");

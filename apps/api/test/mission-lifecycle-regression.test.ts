@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { OrchestrationService } from "../src/orchestration.service.js";
-import { MissionService } from "../src/mission.service.js";
+import { OrchestrationService } from "../src/orchestration/index.js";
+import { MissionService } from "../src/missions/index.js";
 
 describe("Mission lifecycle regression", () => {
   it("orders Mission cards by creation time rather than recent activity", async () => {

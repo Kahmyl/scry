@@ -39,11 +39,13 @@ jobs:
       - name: Verify contracts and implementation
         run: |
           pnpm install --frozen-lockfile
+          pnpm format:check
           pnpm verify:privacy-foundation
           pnpm verify:playwright
           pnpm verify:praxis-change-gate
           pnpm verify:veil-change-gate
           pnpm verify:subsystem-boundaries
+          pnpm verify:repository-topology
           pnpm verify:veil-performance
           pnpm verify:veil-release-transition
           pnpm typecheck

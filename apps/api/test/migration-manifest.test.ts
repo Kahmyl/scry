@@ -15,8 +15,8 @@ describe("Veil schema migration manifest", () => {
   it("recognizes the preferences-only fingerprint and applies guarded retention", async () => {
     const migrate = await readFile(new URL("scripts/migrate.ts", root), "utf8");
     expect(migrate).toContain("preferencesFingerprint");
-    expect(migrate).toContain(
-      "preferencesFingerprint, previousVeilFullFingerprint].includes(installedFingerprint)",
+    expect(migrate).toMatch(
+      /preferencesFingerprint,\s*previousVeilFullFingerprint,?\s*\]\.includes\(installedFingerprint\)/,
     );
     expect(migrate).toContain("await client.query(veilArtifactRetention)");
     expect(migrate).toContain("installedFingerprint !== preferencesFingerprint");

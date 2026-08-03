@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { decryptCredential, encryptCredential } from "../src/credential.crypto.js";
+import { decryptCredential, encryptCredential } from "../src/access/index.js";
 
 describe("credential encryption", () => {
   it("round-trips a credential without storing plaintext", () => {

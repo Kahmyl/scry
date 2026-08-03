@@ -1,16 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
   attemptResultSchema,
-  runEventSchema,
   veilPolicySnapshotSchema,
   validatePlanAgainstPolicy,
   type CurrentAction,
   type Artifact,
   type Assertion,
-  type RunEvent,
   type RecordingTimelineEntry,
 } from "@scry/contracts";
 import {
@@ -77,6 +75,26 @@ import {
   captureScreenshotWithFallback,
   installVisualRedactionStyles,
 } from "./evidence-runtime.js";
+import {
+  executeAssertion,
+  executableAssertions,
+  initializeSteps,
+  markRemainingAssertionsUnevaluated,
+} from "./execution-assertions.js";
+import {
+  attachCapabilityGuards,
+  attachRequestInterception,
+  boundedClose,
+  canonicalVeilOrigin,
+  errorMessage,
+  isBrowserInfrastructureFailure,
+  stopBrowser,
+  throwIfAborted,
+} from "./execution-browser-policy.js";
+import { buildExecutionReport } from "./execution-report.js";
+import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
+import { ExecutionState } from "./execution-state.js";
+import { ExecutionEventStream } from "./execution-events.js";
 import type {
   AssertionExecutionResult,
   DiagnosticRecord,
@@ -115,30 +133,17 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   );
   const requestPolicy = new RuntimeRequestPolicy(options.plan, options.policy);
   const runArtifacts: Artifact[] = [];
-  let sequence = 0;
   let browser: Browser | undefined;
   let context: BrowserContext | undefined;
   let page: Page | undefined;
   let safeProvenance: BrowserSessionProvenance | undefined;
-  let terminalState: ExecutionReport["state"] = "infrastructure_error";
-  let timedOut = false;
-  let cancelled = false;
-  let activeStepId: string | undefined;
-  let fatalError: string | undefined;
-  let eventWriteChain = Promise.resolve();
-  let privacySealed = false;
+  const state = new ExecutionState();
   let recording: RecordingCoordinator | undefined;
   let trace: TraceCoordinator | undefined;
   let privacyGate: VeilRuntimeCoordinator | undefined;
   let veilChannelCollectors = new Map<string, VeilChannelCollector>();
   let checkpointCoordinator: CheckpointCoordinator | undefined;
-  const establishedCheckpoints = new Set<string>();
-  const retiredArtifacts: Artifact[] = [];
-  const retiredTimeline: RecordingTimelineEntry[] = [];
-  const lifecycleTimeline: RecordingTimelineEntry[] = [];
-  let captureEpoch = 0;
-  let activeCaptureEpoch: Extract<RecordingTimelineEntry, { type: "capture_epoch" }> | undefined;
-  let calibrationBoundaryReached = false;
+
   let unregisterPraxisVeil: (() => void) | undefined;
   const veilPolicy = resolveVeilPolicyForExecution(options.policy, options.veilPolicySnapshot);
   const veilAuthority = new VeilAuthority(veilPolicy);
@@ -148,7 +153,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     browserContextId: safeProvenance?.contextId ?? attemptId,
     pageId: runId,
     frameId: "main-frame",
-    documentEpoch: captureEpoch,
+    documentEpoch: state.captureEpoch,
   });
   const veilAdmissionKey =
     options.veilAdmissionKey ??
@@ -168,90 +173,35 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       browserContextId: safeProvenance?.contextId ?? attemptId,
       pageId: runId,
       frameId: "main-frame",
-      documentEpoch: captureEpoch,
+      documentEpoch: state.captureEpoch,
     }),
   });
-
-  const startCaptureEpoch = (
-    startReason: "run_started" | "checkpoint_restored",
-    contextId = safeProvenance?.contextId ?? randomUUID(),
-  ) => {
-    captureEpoch += 1;
-    activeCaptureEpoch = {
-      type: "capture_epoch",
-      id: randomUUID(),
-      sequence: 0,
-      epoch: captureEpoch,
-      contextId,
-      startedAt: new Date().toISOString(),
-      endedAt: new Date().toISOString(),
-      startReason,
-      endReason: "run_completed",
-      status: "completed",
-    };
-    lifecycleTimeline.push(activeCaptureEpoch);
-  };
-  const endCaptureEpoch = (
-    endReason: Extract<RecordingTimelineEntry, { type: "capture_epoch" }>["endReason"],
-    status: "completed" | "sealed" = "completed",
-  ) => {
-    if (!activeCaptureEpoch) return;
-    activeCaptureEpoch.endedAt = new Date().toISOString();
-    activeCaptureEpoch.endReason = endReason;
-    activeCaptureEpoch.status = status;
-    activeCaptureEpoch = undefined;
-  };
-  const checkpointBoundary = (
-    checkpointId: string,
-    boundary: Extract<RecordingTimelineEntry, { type: "checkpoint_boundary" }>["boundary"],
-    details: { reasonCode?: string; continuedAtStepId?: string } = {},
-  ) => {
-    lifecycleTimeline.push({
-      type: "checkpoint_boundary",
-      id: randomUUID(),
-      sequence: 0,
-      checkpointId,
-      boundary,
-      occurredAt: new Date().toISOString(),
-      captureEpoch: Math.max(captureEpoch, 1),
-      ...details,
-    });
-  };
 
   await ensureOutputDirectories(options.outputDirectory);
   await writeFile(eventPath, "", "utf8");
 
-  const emit = async (type: RunEvent["type"], payload: Record<string, unknown>) => {
-    if (
-      (privacyGate?.isSuppressed() ||
-        veilChannelCollectors.get("event-report")?.isCaptureSuppressed()) &&
-      !type.startsWith("privacy.") &&
-      !type.startsWith("recording.")
-    )
-      return;
-    const event = runEventSchema.parse({
-      sequence: ++sequence,
-      runId,
-      attemptId,
-      type,
-      occurredAt: new Date().toISOString(),
-      payload: redactor.redactValue(payload),
-    });
-    eventWriteChain = eventWriteChain.then(async () => {
-      await appendFile(eventPath, `${JSON.stringify(event)}\n`, "utf8");
-      await options.onEvent?.(event);
-    });
-    await eventWriteChain;
-  };
+  const eventStream = new ExecutionEventStream({
+    eventPath,
+    runId,
+    attemptId,
+    redactor,
+    isSuppressed: () =>
+      Boolean(
+        privacyGate?.isSuppressed() ||
+        veilChannelCollectors.get("event-report")?.isCaptureSuppressed(),
+      ),
+    ...(options.onEvent ? { onEvent: options.onEvent } : {}),
+  });
+  const emit = eventStream.emit;
   const timeoutController = new AbortController();
   const timeout = setTimeout(() => {
-    timedOut = true;
+    state.timedOut = true;
     timeoutController.abort(new Error("Run duration budget exceeded"));
     void stopBrowser(context, browser);
   }, options.plan.budgets.maxDurationMs);
   const cancel = () => {
-    cancelled = true;
-    timeoutController.abort(options.signal?.reason ?? new Error("Run cancelled"));
+    state.cancelled = true;
+    timeoutController.abort(options.signal?.reason ?? new Error("Run state.cancelled"));
     void stopBrowser(context, browser);
   };
   options.signal?.addEventListener("abort", cancel, { once: true });
@@ -401,7 +351,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     browser.once("disconnected", () => {
       void privacyGate?.seal({ code: "BROWSER_DISCONNECTED" }).catch(() => undefined);
     });
-    startCaptureEpoch("run_started");
+    state.startCaptureEpoch("run_started", safeProvenance?.contextId ?? randomUUID());
     await recording.startSegment({ page, reason: "run_started" });
     await trace.start("run_started");
     await options.recordingTestHook?.({ page, recording });
@@ -424,7 +374,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       const result = steps[index]!;
       let unsafeProtectedFailure = false;
       let continueUnrecordedProtectedFailure = false;
-      activeStepId = step.id;
+      state.activeStepId = step.id;
       const stepStarted = new Date();
       result.startedAt = stepStarted.toISOString();
       await emit("step.started", {
@@ -438,12 +388,12 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         const checkpoint = options.plan.checkpoints.find(
           (candidate) => candidate.beforeStepId === step.id,
         );
-        if (checkpoint && !establishedCheckpoints.has(checkpoint.id)) {
+        if (checkpoint && !state.establishedCheckpoints.has(checkpoint.id)) {
           if (!checkpointCoordinator || !context)
             throw new InfrastructureDependencyError("Checkpoint persistence is unavailable");
           await checkpointCoordinator.establish(context, checkpoint);
-          establishedCheckpoints.add(checkpoint.id);
-          checkpointBoundary(checkpoint.id, "established");
+          state.establishedCheckpoints.add(checkpoint.id);
+          state.recordCheckpointBoundary(checkpoint.id, "established");
           await emit("checkpoint.established", {
             checkpointId: checkpoint.id,
             beforeStepId: checkpoint.beforeStepId,
@@ -554,7 +504,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
                   stepId: step.id,
                   operationId: action.operationId,
                 });
-                calibrationBoundaryReached = true;
+                state.calibrationBoundaryReached = true;
               },
               verifyAssertions: async (targetPage, assertions) => {
                 for (const assertion of assertions)
@@ -583,8 +533,8 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
                 ? { recoverAcquisition: options.recoverAcquisition }
                 : {}),
               onEvidenceResumed: async ({ contextId }) => {
-                endCaptureEpoch("sealed", "sealed");
-                startCaptureEpoch("checkpoint_restored", contextId);
+                state.endCaptureEpoch("sealed", "sealed");
+                state.startCaptureEpoch("checkpoint_restored", contextId);
               },
               emit,
               signal: timeoutController.signal,
@@ -853,33 +803,37 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         result.durationMs = completed.getTime() - stepStarted.getTime();
       }
     }
-    terminalState = steps.some((step) => step.status === "failed") ? "failed" : "passed";
-    if (options.calibrationRehearsal && !calibrationBoundaryReached) {
+    state.terminalState = steps.some((step) => step.status === "failed") ? "failed" : "passed";
+    if (options.calibrationRehearsal && !state.calibrationBoundaryReached) {
       throw new Error("CALIBRATION_BOUNDARY_NOT_REACHED");
     }
   } catch (error) {
-    fatalError = redactor.redact(
-      timedOut || cancelled
+    state.fatalError = redactor.redact(
+      state.timedOut || state.cancelled
         ? errorMessage(timeoutController.signal.reason ?? error)
         : errorMessage(error),
     );
-    if (activeStepId) {
-      const active = steps.find((step) => step.id === activeStepId);
+    if (state.activeStepId) {
+      const active = steps.find((step) => step.id === state.activeStepId);
       if (active?.status === "unevaluated") {
-        active.error = fatalError;
+        active.error = state.fatalError;
       }
     }
-    terminalState = timedOut ? "timed_out" : cancelled ? "cancelled" : "infrastructure_error";
+    state.terminalState = state.timedOut
+      ? "timed_out"
+      : state.cancelled
+        ? "cancelled"
+        : "infrastructure_error";
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener("abort", cancel);
-    await emit("attempt.finalizing", { state: terminalState });
-    if (privacyGate && (privacySealed || cancelled || timedOut)) {
+    await emit("attempt.finalizing", { state: state.terminalState });
+    if (privacyGate && (state.privacySealed || state.cancelled || state.timedOut)) {
       await privacyGate
         .seal({
-          code: privacySealed
+          code: state.privacySealed
             ? "UNRESOLVED_PROTECTED_CAPTURE"
-            : cancelled
+            : state.cancelled
               ? "RUN_CANCELLED"
               : "RUN_TIMED_OUT",
         })
@@ -889,9 +843,9 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       try {
         await privacyGate.finalize();
       } catch (error) {
-        privacySealed = true;
-        terminalState = "infrastructure_error";
-        fatalError = errorMessage(error);
+        state.privacySealed = true;
+        state.terminalState = "infrastructure_error";
+        state.fatalError = errorMessage(error);
         await privacyGate.seal({ code: "VEIL_COLLECTOR_FINALIZE_FAILED" }).catch(() => undefined);
         await emit("privacy.state_changed", {
           state: "sealed",
@@ -901,12 +855,12 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       }
     }
     if (recording) {
-      if (privacySealed || cancelled || timedOut) {
+      if (state.privacySealed || state.cancelled || state.timedOut) {
         await recording
           .seal(
-            privacySealed
+            state.privacySealed
               ? "UNRESOLVED_PROTECTED_CAPTURE"
-              : cancelled
+              : state.cancelled
                 ? "RUN_CANCELLED"
                 : "RUN_TIMED_OUT",
           )
@@ -925,7 +879,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       for (const artifact of traceArtifacts)
         await emit("artifact.created", { artifact, path: artifact.relativePath });
     }
-    if (context && terminalState === "passed" && options.captureBrowserState) {
+    if (context && state.terminalState === "passed" && options.captureBrowserState) {
       await Promise.resolve(options.captureBrowserState(await context.storageState())).catch(
         () => undefined,
       );
@@ -938,38 +892,29 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     unregisterVeilAdmission();
   }
 
-  endCaptureEpoch(
-    privacySealed ? "sealed" : "run_completed",
-    privacySealed ? "sealed" : "completed",
+  state.endCaptureEpoch(
+    state.privacySealed ? "sealed" : "run_completed",
+    state.privacySealed ? "sealed" : "completed",
   );
   const completedAt = new Date();
-  const assertions = steps.flatMap((step) => step.assertions);
-  const report: ExecutionReport = {
+  const report = buildExecutionReport({
     planName: options.plan.name,
     runId,
     attemptId,
-    state: terminalState,
-    outcomeClassification: classifyOutcome(terminalState, steps, policyViolations),
-    startedAt: startedAt.toISOString(),
-    completedAt: completedAt.toISOString(),
-    durationMs: completedAt.getTime() - startedAt.getTime(),
-    requiredAssertions: {
-      passed: assertions.filter((item) => item.status === "passed").length,
-      failed: assertions.filter((item) => item.status === "failed").length,
-      unevaluated: assertions.filter((item) => item.status === "unevaluated").length,
-    },
-    artifacts: [...retiredArtifacts, ...runArtifacts, ...steps.flatMap((step) => step.artifacts)],
-    ...(fatalError ? { error: fatalError } : {}),
+    state: state.terminalState,
+    startedAt,
+    completedAt,
     steps,
     diagnostics,
     policyViolations,
-    artifactTimeline: mergeArtifactTimeline(
-      retiredTimeline,
-      lifecycleTimeline,
-      recording?.timeline() ?? [],
-      trace?.timeline() ?? [],
-    ),
-  };
+    retiredArtifacts: state.retiredArtifacts,
+    runArtifacts,
+    retiredTimeline: state.retiredTimeline,
+    lifecycleTimeline: state.lifecycleTimeline,
+    recordingTimeline: recording?.timeline() ?? [],
+    traceTimeline: trace?.timeline() ?? [],
+    ...(state.fatalError ? { error: state.fatalError } : {}),
+  });
   attemptResultSchema.parse({
     runId: report.runId,
     attemptId: report.attemptId,
@@ -988,118 +933,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   return report;
 }
 
-export function resolveVeilPolicyForExecution(
-  executionPolicy: ExecuteOptions["policy"],
-  snapshot?: import("@scry/contracts").VeilPolicySnapshot,
-) {
-  if (!snapshot) return compileDefaultVeilPolicy(executionPolicy);
-  const parsed = importVeilSnapshot(snapshot);
-  const { digest, ...unsigned } = parsed;
-  if (veilPolicyDigest(unsigned) !== digest) throw new Error("VEIL_POLICY_SNAPSHOT_DIGEST_INVALID");
-  const compatibility = compileDefaultVeilPolicy(executionPolicy);
-  if (parsed.allowedOrigins.some((origin) => !compatibility.allowedOrigins.includes(origin)))
-    throw new Error("VEIL_POLICY_SNAPSHOT_ORIGIN_MISMATCH");
-  return parsed;
-}
-
-function importVeilSnapshot(snapshot: import("@scry/contracts").VeilPolicySnapshot) {
-  return veilPolicySnapshotSchema.parse(snapshot);
-}
-
-function initializeSteps(options: ExecuteOptions): StepExecutionResult[] {
-  return options.plan.steps.map((step) => ({
-    id: step.id,
-    title: step.title,
-    status: "unevaluated",
-    action: { status: "unevaluated" },
-    evidence: step.evidence.map((kind) => ({ kind, status: "degraded" as const })),
-    assertions: executableAssertions(step.id, step.action, step.assertions).map(
-      (assertion, index) => ({
-        index,
-        type: assertion.type,
-        status: "unevaluated",
-      }),
-    ),
-    artifacts: [],
-  }));
-}
-
-function executableAssertions(stepId: string, action: CurrentAction, assertions: Assertion[]) {
-  if (action.type !== "navigate" || !/^(step-\d+-navigate|visit-\d+)$/.test(stepId)) {
-    return assertions;
-  }
-  const requested = new URL(action.url, "https://scry.invalid");
-  const requestedPath = requested.pathname + requested.search;
-  return assertions.filter(
-    (assertion) =>
-      !(
-        assertion.type === "url" &&
-        assertion.match === "path" &&
-        assertion.expected === requestedPath
-      ),
-  );
-}
-
-async function executeAssertion(
-  page: Page,
-  assertion: Assertion,
-  baseOrigin: string,
-  praxisContext?: PraxisConsumerContext,
-  signal: AbortSignal = new AbortController().signal,
-) {
-  if (assertion.type !== "url" && !(assertion.type === "text" && !assertion.exact)) {
-    const expectedEffect =
-      assertion.type === "visible"
-        ? { type: "visibility_change" as const, target: assertion.target, visible: true }
-        : assertion.type === "hidden"
-          ? { type: "visibility_change" as const, target: assertion.target, visible: false }
-          : assertion.type === "enabled"
-            ? { type: "state_change" as const, target: assertion.target, enabled: true }
-            : {
-                type: "value_change" as const,
-                target: assertion.target,
-                expected: assertion.expected,
-              };
-    await requirePraxisSuccess({
-      page,
-      intent: assertion.target,
-      operation: { type: "inspect" },
-      expectedEffect,
-      context: requirePraxisContext(praxisContext),
-      signal,
-    });
-    return;
-  }
-  switch (assertion.type) {
-    case "text": {
-      const locator = await resolveTargetLocator(page, assertion.target);
-      await locator.waitFor({ state: "visible", ...optionalTimeout(assertion.timeoutMs) });
-      const actual = (await locator.textContent()) ?? "";
-      const matches = assertion.exact
-        ? actual.trim() === assertion.expected
-        : actual.includes(assertion.expected);
-      if (!matches)
-        throw new Error(`Expected text "${assertion.expected}", received "${actual.trim()}"`);
-      return;
-    }
-    case "url": {
-      await page.waitForLoadState("domcontentloaded", optionalTimeout(assertion.timeoutMs));
-      const actual = new URL(page.url());
-      const expected = new URL(assertion.expected, baseOrigin);
-      const matches =
-        assertion.match === "exact"
-          ? actual.href === expected.href
-          : assertion.match === "path"
-            ? actual.pathname + actual.search === expected.pathname + expected.search
-            : actual.href.includes(assertion.expected);
-      if (!matches)
-        throw new Error(
-          `Expected URL ${assertion.match} "${assertion.expected}", received "${actual.href}"`,
-        );
-    }
-  }
-}
-
 class UnsafeProtectedCaptureError extends Error {
   constructor(message: string) {
     super(`Protected capture could not resolve safely; recording remained sealed. ${message}`);
@@ -1111,206 +944,4 @@ class ContinueUnrecordedProtectedError extends Error {
   override name = "ContinueUnrecordedProtectedError";
 }
 
-function classifyOutcome(
-  state: ExecutionReport["state"],
-  steps: StepExecutionResult[],
-  policyViolations: PolicyViolationRecord[],
-): ExecutionReport["outcomeClassification"] {
-  if (state === "cancelled") return "cancelled";
-  if (state === "timed_out") return "execution_timeout";
-  if (state === "infrastructure_error") return "infrastructure_failure";
-  if (policyViolations.some((item) => item.disposition === "fatal")) return "policy_failure";
-  if (steps.some((step) => isAmbiguousTargetError(step.error))) return "inconclusive_plan";
-  if (steps.some((step) => step.readiness?.status === "failed")) return "readiness_timeout";
-  if (steps.some((step) => step.assertions.some((assertion) => assertion.status === "failed")))
-    return "assertion_failure";
-  // A step can fail before any assertion is evaluated—for example when an
-  // authored locator matches no element and Playwright times out trying to
-  // click it. That says the plan could not execute, not that the application
-  // violated a declared expectation.
-  if (steps.some((step) => step.status === "failed" && step.error)) return "inconclusive_plan";
-  const evaluatedAssertions = steps
-    .flatMap((step) => step.assertions)
-    .filter((assertion) => assertion.status !== "unevaluated");
-  const configuredReadiness = steps.some((step) => step.readiness?.status === "passed");
-  const finalEvidence = steps.some((step) =>
-    step.artifacts.some((artifact) => artifact.observation?.captureIntent === "final"),
-  );
-  const transientEvidence = steps.some((step) =>
-    step.artifacts.some((artifact) => artifact.observation?.captureIntent === "transient"),
-  );
-  if (transientEvidence && !finalEvidence && evaluatedAssertions.length === 0)
-    return "transient_observation";
-  if (state === "passed" && evaluatedAssertions.length === 0 && !configuredReadiness)
-    return "inconclusive_plan";
-  return state === "passed" ? "passed" : "inconclusive_plan";
-}
-
-function isAmbiguousTargetError(error?: string) {
-  return Boolean(
-    error &&
-    (error.includes("Target is ambiguous:") ||
-      error.includes("strict mode violation") ||
-      /resolved to \d+ elements/i.test(error)),
-  );
-}
-
-function attachCapabilityGuards(
-  context: BrowserContext,
-  primaryPage: Page,
-  options: ExecuteOptions,
-  reject: (error: RuntimePolicyError) => Promise<void>,
-) {
-  context.on("page", (page) => {
-    if (page === primaryPage || options.policy.allowPopups) return;
-    void reject(
-      new RuntimePolicyError("POPUP_NOT_ALLOWED", "Popup or new page was blocked"),
-    ).finally(() => void page.close().catch(() => undefined));
-  });
-  primaryPage.on("download", (download) => {
-    if (options.policy.allowDownloads) return;
-    void reject(
-      new RuntimePolicyError(
-        "DOWNLOAD_NOT_ALLOWED",
-        "Download was blocked",
-        download.suggestedFilename(),
-      ),
-    ).finally(() => void download.cancel().catch(() => undefined));
-  });
-}
-
-async function attachRequestInterception(
-  context: BrowserContext,
-  page: Page,
-  requestPolicy: RuntimeRequestPolicy,
-  reject: (
-    error: RuntimePolicyError,
-    context?: { fatal?: boolean; resourceType?: string },
-  ) => Promise<void>,
-): Promise<CDPSession> {
-  const session = await context.newCDPSession(page);
-  const frameTree = (await session.send("Page.getFrameTree")) as {
-    frameTree: { frame: { id: string } };
-  };
-  const primaryFrameId = frameTree.frameTree.frame.id;
-  await session.send("Fetch.enable", {
-    patterns: [{ urlPattern: "http://*" }, { urlPattern: "https://*" }],
-  });
-  session.on(
-    "Fetch.requestPaused",
-    (parameters: {
-      requestId: string;
-      frameId?: string;
-      resourceType?: string;
-      request: { url: string };
-    }) => {
-      void (async () => {
-        const isPrimaryDocument =
-          parameters.resourceType === "Document" && parameters.frameId === primaryFrameId;
-        try {
-          if (isPrimaryDocument) {
-            await requestPolicy.assertAllowed(parameters.request.url);
-          } else {
-            await requestPolicy.assertSafeSubresource(parameters.request.url);
-          }
-          await session.send("Fetch.continueRequest", {
-            requestId: parameters.requestId,
-          });
-        } catch (error) {
-          const violation =
-            error instanceof RuntimePolicyError
-              ? error
-              : new RuntimePolicyError(
-                  "ORIGIN_NOT_ALLOWED",
-                  `Request policy check failed: ${errorMessage(error)}`,
-                  parameters.request.url,
-                );
-          const resourceType = parameters.resourceType ?? "Other";
-          await reject(violation, {
-            resourceType,
-            fatal: isPrimaryDocument,
-          });
-          await session
-            .send("Fetch.failRequest", {
-              requestId: parameters.requestId,
-              errorReason: "BlockedByClient",
-            })
-            .catch(() => undefined);
-        }
-      })();
-    },
-  );
-  return session;
-}
-
-function markRemainingAssertionsUnevaluated(result: StepExecutionResult) {
-  for (const assertion of result.assertions) {
-    if (assertion.status !== "passed" && assertion.status !== "failed")
-      assertion.status = "unevaluated";
-  }
-}
-
-function throwIfAborted(signal: AbortSignal) {
-  if (signal.aborted) throw signal.reason ?? new Error("Execution aborted");
-}
-
-function isBrowserInfrastructureFailure(error: unknown) {
-  const message = errorMessage(error).toLowerCase();
-  return (
-    message.includes("browser has been closed") ||
-    message.includes("browser closed") ||
-    message.includes("browser disconnected") ||
-    message.includes("target page, context or browser has been closed") ||
-    message.includes("target closed")
-  );
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function canonicalVeilOrigin(currentUrl: string | undefined, fallback: string): string {
-  try {
-    const origin = currentUrl ? new URL(currentUrl).origin : "null";
-    if (origin !== "null") return origin;
-  } catch {
-    /* use policy origin before navigation */
-  }
-  return new URL(fallback).origin;
-}
-
-function optionalTimeout(timeoutMs: number | undefined): { timeout?: number } {
-  return timeoutMs === undefined ? {} : { timeout: timeoutMs };
-}
-
-async function stopBrowser(context: BrowserContext | undefined, browser: Browser | undefined) {
-  await Promise.allSettled([
-    context ? boundedClose(context.close()) : Promise.resolve(),
-    browser ? boundedClose(browser.close()) : Promise.resolve(),
-  ]);
-}
-
-async function boundedClose(operation: Promise<unknown>) {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    await Promise.race([
-      operation,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("Browser shutdown timed out")), 5_000);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-function mergeArtifactTimeline(...groups: RecordingTimelineEntry[][]): RecordingTimelineEntry[] {
-  return groups
-    .flat()
-    .sort((left, right) => {
-      const leftTime = "startedAt" in left ? left.startedAt : left.occurredAt;
-      const rightTime = "startedAt" in right ? right.startedAt : right.occurredAt;
-      return Date.parse(leftTime) - Date.parse(rightTime);
-    })
-    .map((entry, sequence) => ({ ...entry, sequence }));
-}
+export { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";

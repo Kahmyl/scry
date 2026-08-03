@@ -12,6 +12,8 @@ COPY packages/artifact/package.json packages/artifact/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/executor/package.json packages/executor/package.json
 COPY packages/policy/package.json packages/policy/package.json
+COPY packages/praxis/package.json packages/praxis/package.json
+COPY packages/veil/package.json packages/veil/package.json
 RUN --mount=type=cache,id=scry-pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
 FROM deps AS build

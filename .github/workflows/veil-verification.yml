@@ -71,11 +71,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Verify Veil gates
         run: |
+          pnpm format:check
           pnpm typecheck
           pnpm test
           pnpm verify:veil-performance
           pnpm verify:veil-change-gate
           pnpm verify:subsystem-boundaries
+          pnpm verify:repository-topology
       - run: mkdir -p artifacts/veil
       - name: Run Veil certification
         env: { SCRY_BROWSER_CHANNEL: chrome }

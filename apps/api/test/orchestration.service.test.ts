@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { OrchestrationService } from "../src/orchestration.service.js";
+import { OrchestrationService } from "../src/orchestration/index.js";
 
 describe("Orchestration dependency authority", () => {
   const service = new OrchestrationService({} as never);

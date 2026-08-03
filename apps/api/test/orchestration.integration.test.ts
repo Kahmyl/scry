@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Database } from "../src/database.js";
-import { OrchestrationService } from "../src/orchestration.service.js";
+import { Database } from "../src/infrastructure/database.js";
+import { OrchestrationService } from "../src/orchestration/index.js";
 
 const enabled = Boolean(process.env.SCRY_ORCHESTRATION_TEST_DATABASE_URL);
 describe.skipIf(!enabled)("orchestration transactional guarantees", () => {

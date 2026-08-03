@@ -7,8 +7,8 @@ import {
 } from "@scry/executor";
 import type { ProtectedTransaction } from "@scry/contracts";
 
-import { runCalibrationAttestation } from "../src/calibration-runner.js";
-import type { CalibrationRuntime } from "../src/calibration-runtime.repository.js";
+import { runCalibrationAttestation } from "../src/calibration/index.js";
+import type { CalibrationRuntime } from "../src/calibration/index.js";
 
 const servers: Array<ReturnType<typeof createServer>> = [];
 const intent = (

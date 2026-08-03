@@ -3,8 +3,7 @@ import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { EnvironmentsController } from "../src/controllers.js";
-import { ScryRepository } from "../src/repository.js";
+import { VeilPreferencesController } from "../src/veil/preferences.controller.js";
 import { VeilPreferencesService } from "../src/veil/preferences.service.js";
 
 const environmentId = "11111111-1111-4111-8111-111111111111";
@@ -15,14 +14,9 @@ const record = {
   effectivePolicy: { profile: "private", digest: "a".repeat(64) },
 };
 const veil = { get: vi.fn(async () => record), tighten: vi.fn(async () => record) };
-const repository = { updateEnvironment: vi.fn(), validateCredentialReferences: vi.fn() };
-
 @Module({
-  controllers: [EnvironmentsController],
-  providers: [
-    { provide: ScryRepository, useValue: repository },
-    { provide: VeilPreferencesService, useValue: veil },
-  ],
+  controllers: [VeilPreferencesController],
+  providers: [{ provide: VeilPreferencesService, useValue: veil }],
 })
 class TestModule {}
 

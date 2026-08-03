@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyOriginalAfterConfirmation } from "../src/execution.repository.js";
+import { classifyOriginalAfterConfirmation } from "../src/runtime/index.js";
 
 describe("confirmation classification", () => {
   it("does not convert a reproduced readiness timeout into a product failure", () => {

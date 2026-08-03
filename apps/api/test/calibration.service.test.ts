@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { CalibrationService } from "../src/calibration.service.js";
+import { CalibrationService } from "../src/calibration/index.js";
 
 describe("CalibrationService", () => {
   const context = {

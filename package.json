@@ -17,6 +17,7 @@
     "verify:playwright": "node scripts/verify-playwright-version.mjs",
     "verify:agent-skills": "node scripts/verify-agent-skills.mjs",
     "verify:subsystem-boundaries": "node scripts/verify-subsystem-boundaries.mjs",
+    "verify:repository-topology": "node scripts/verify-repository-topology.mjs",
     "verify:praxis-inventory": "node scripts/verify-praxis-interaction-inventory.mjs",
     "verify:praxis-change-gate": "node scripts/verify-praxis-change-gate.mjs",
     "baseline:praxis": "node scripts/praxis-baseline.mjs",

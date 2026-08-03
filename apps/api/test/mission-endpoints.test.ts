@@ -2,9 +2,8 @@ import { Module } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { MissionController } from "../src/mission.controller.js";
-import { MissionService } from "../src/mission.service.js";
-import { OrchestrationService } from "../src/orchestration.service.js";
+import { MissionController, MissionService } from "../src/missions/index.js";
+import { OrchestrationService } from "../src/orchestration/index.js";
 
 const service = {
   create: vi.fn(async () => ({ missionId: ids.mission, agentSessionId: ids.session })),

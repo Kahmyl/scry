@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { RunObservationService } from "../src/run-observation.service.js";
+import { RunObservationService } from "../src/runs/index.js";
 
 const runId = "11111111-1111-4111-8111-111111111111";
 const attemptId = "22222222-2222-4222-8222-222222222222";

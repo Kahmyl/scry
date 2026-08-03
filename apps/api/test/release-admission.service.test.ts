@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { FlowController } from "../src/flow.controller.js";
-import { FlowService } from "../src/flow.service.js";
-import { ReleaseAdmissionService } from "../src/release-admission.service.js";
+import { FlowController, FlowService } from "../src/flows/index.js";
+import { ReleaseAdmissionService } from "../src/runtime/index.js";
 
 const releaseId = "verification-release";
 const schemaFingerprint = "verification-schema";

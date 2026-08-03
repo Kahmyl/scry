@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ScryRepository } from "../src/repository.js";
+import { ScryRepository } from "../src/access/index.js";
 
 const principal = {
   kind: "user" as const,

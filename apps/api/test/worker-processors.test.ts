@@ -5,8 +5,8 @@ import {
   createProbeProcessor,
   safeDependencyCode,
   safeWorkerCode,
-} from "../src/worker-probe-calibration.js";
-import { createRunProcessor } from "../src/worker-run-processor.js";
+} from "../src/workers/index.js";
+import { createRunProcessor } from "../src/workers/index.js";
 
 const identity = {
   workerId: "worker-1",

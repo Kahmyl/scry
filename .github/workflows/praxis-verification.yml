@@ -71,6 +71,7 @@ jobs:
 
       - name: Verify contracts and Praxis boundaries
         run: |
+          pnpm format:check
           pnpm --filter @scry/contracts typecheck
           pnpm --filter @scry/executor typecheck
           pnpm verify:praxis-change-gate
@@ -78,6 +79,7 @@ jobs:
           pnpm verify:praxis-performance
           pnpm verify:privacy-foundation
           pnpm verify:subsystem-boundaries
+          pnpm verify:repository-topology
 
       - name: Prepare campaign evidence
         run: mkdir -p artifacts/praxis
