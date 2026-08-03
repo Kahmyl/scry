@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import { markVeilProtectedClipboardTouched } from "./veil-clipboard-collector.js";
+import { markVeilProtectedClipboardTouched } from "../../src/veil-clipboard-collector.js";
 
 export type AdapterCapability = "clipboard_extraction" | "network_extraction" | "safe_exit" | "credential_revocation";
 export type AdapterResult<T = unknown> = { value?: T; code: "ADAPTER_COMPLETED"; durationMs: number };

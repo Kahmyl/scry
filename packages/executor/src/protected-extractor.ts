@@ -1,6 +1,6 @@
 import type { AcquisitionIntent, ExtractionDiagnostic, ProtectedTransaction } from "@scry/contracts";
 import type { Locator, Page } from "playwright";
-import { armExpectedEffect, clickGroundedTarget, GroundingError, resolveTarget, resolveTargetLocator, verifyExpectedEffect } from "./grounding.js";
+import { armExpectedEffect, GroundingError, resolveTarget, verifyExpectedEffect } from "./grounding.js";
 import { acquireProtectedVisualText } from "./visual-grounding.js";
 import { requirePraxisSuccess } from "./praxis-consumer.js";
 import { markVeilProtectedClipboardTouched } from "./veil-clipboard-collector.js";
@@ -9,18 +9,19 @@ type CandidateState = ExtractionDiagnostic & { method?: AcquisitionIntent["permi
 
 export async function executeProtectedReveal(page: Page, operation: ProtectedTransaction, allowedOrigins: string[], signal: AbortSignal = new AbortController().signal) {
   const action = operation.mutation.action;
-  if (action.target && (action.type === "click" || approvedKey(action.key))) {
-    await requirePraxisSuccess({ page, intent: action.target, operation: action.type === "click" ? { type: "activate" } : { type: "press_key", key: action.key }, expectedEffect: action.expectedEffect, context: { stepId: operation.operationId, channel: "protected", ordinal: 0, allowedOrigins, timeoutMs: action.timeoutMs ?? 10_000, privacy: { state: "protected", allowedChannels: ["public_dom","accessibility"], suppressedChannels: ["visual","ocr"] } }, signal });
+  if (action.type === "click") {
+    await requirePraxisSuccess({ page, intent: action.target, operation: { type: "activate" }, expectedEffect: action.expectedEffect, context: { stepId: operation.operationId, channel: "protected", ordinal: 0, allowedOrigins, timeoutMs: action.timeoutMs ?? 10_000, privacy: { state: "protected", allowedChannels: ["public_dom","accessibility"], suppressedChannels: ["visual","ocr"] } }, signal });
+    return;
+  }
+  if (action.target) {
+    await requirePraxisSuccess({ page, intent: action.target, operation: { type: "press_key", key: action.key }, expectedEffect: action.expectedEffect, context: { stepId: operation.operationId, channel: "protected", ordinal: 0, allowedOrigins, timeoutMs: action.timeoutMs ?? 10_000, privacy: { state: "protected", allowedChannels: ["public_dom","accessibility"], suppressedChannels: ["visual","ocr"] } }, signal });
     return;
   }
   const beforeUrl = page.url();
   const expectedEffect = armExpectedEffect(page, action.expectedEffect, action.timeoutMs);
-  if (action.type === "click") await clickGroundedTarget(page, action.target, timeout(action.timeoutMs));
-  else if (action.target) await (await resolveTargetLocator(page, action.target)).press(action.key, timeout(action.timeoutMs));
-  else await page.keyboard.press(action.key);
+  await page.keyboard.press(action.key);
   await verifyExpectedEffect(page, action.expectedEffect, beforeUrl, action.timeoutMs, expectedEffect);
 }
-function approvedKey(key: string): key is "Enter"|"Space"|"Escape"|"Tab"|"ArrowUp"|"ArrowDown"|"ArrowLeft"|"ArrowRight" { return ["Enter","Space","Escape","Tab","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(key); }
 
 export async function acquireValue(page: Page, acquisition: AcquisitionIntent, timeoutMs: number) {
   const deadline = Date.now() + timeoutMs;
@@ -45,9 +46,6 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
   }
   return { value: undefined, diagnostics };
 }
-
-/** Compatibility name for internal callers; its argument is semantic acquisition, never locators. */
-export const extractProtectedValue = acquireValue;
 
 async function acquireByMethod(page: Page, target: Locator, method: AcquisitionIntent["permittedMethods"][number], intent: AcquisitionIntent["target"]): Promise<string> {
   switch (method) {
@@ -75,4 +73,3 @@ async function acquireByMethod(page: Page, target: Locator, method: AcquisitionI
 function valid(value: string, validation: AcquisitionIntent["validation"]) { if (value.length < validation.minimumLength || value.length > validation.maximumLength) return false; if (validation.pattern) { try { return new RegExp(validation.pattern).test(value); } catch { return false; } } return true; }
 function safeCode(error: unknown) { return error instanceof AcquisitionError ? error.code : "ACQUISITION_METHOD_FAILED"; }
 export class AcquisitionError extends Error { constructor(readonly code: string) { super(code); } }
-function timeout(timeoutMs?: number) { return timeoutMs === undefined ? {} : { timeout: timeoutMs }; }

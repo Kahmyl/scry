@@ -1,7 +1,8 @@
 import { chromium } from "playwright";
 import { describe,expect,it } from "vitest";
 import type { InteractionTargetIntent } from "@scry/contracts";
-import { browserObservationRuntimeHealth, clickGroundedTarget, fillGroundedTarget, GroundingError, registerGroundingHistoryProvider, resolveTarget, resolveTargetLocator, verifyExpectedEffect } from "../src/grounding.js";
+import { browserObservationRuntimeHealth, GroundingError, registerGroundingHistoryProvider, resolveTarget, resolveTargetLocator, verifyExpectedEffect } from "../src/grounding.js";
+import { clickPraxisTarget as clickGroundedTarget, fillPraxisTarget as fillGroundedTarget } from "./support/praxis-actions.js";
 
 const intent=(concept:string,overrides:Partial<InteractionTargetIntent>={}):InteractionTargetIntent=>({concept,requiredCapabilities:["pointer_activatable"],preferredEvidence:{roles:["button"],names:[concept],labels:[],descriptions:[],placeholders:[],inputTypes:[]},scope:{kind:"page"},relations:[],prohibited:["hidden","disabled"],risk:"ordinary",confidence:{requiredFamilies:[],minimum:0.45,minimumMargin:0.05,minimumFamilyCount:2},...overrides});
 

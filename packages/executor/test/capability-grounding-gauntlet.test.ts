@@ -4,15 +4,12 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import type { InteractionTargetIntent } from "@scry/contracts";
 
 import {
-  checkGroundedTarget,
-  clickGroundedTarget,
-  fillGroundedTarget,
   GroundingError,
   resolveTarget,
   resolveTargetLocator,
-  selectGroundedTarget,
   verifyExpectedEffect,
 } from "../src/grounding.js";
+import { checkPraxisTarget as checkGroundedTarget, clickPraxisTarget as clickGroundedTarget, fillPraxisTarget as fillGroundedTarget, selectPraxisTarget as selectGroundedTarget } from "./support/praxis-actions.js";
 import { acquireValue } from "../src/protected-extractor.js";
 
 type Scenario = { name: string; run(page: Page): Promise<void> };
@@ -72,7 +69,7 @@ const scenarios: Scenario[] = [
   clickCase("23 hidden duplicate button ignored", `<button style="display:none">Save</button><button onclick="out.textContent='clicked'">Save</button><output id="out"></output>`, target("Save", { preferredEvidence: evidence("Save", { roles: ["button"] }) })),
   { name: "24 rerendered control rejected before dispatch", run: async (page) => { await set(page, `<button>Save</button>`); const result = await resolveTarget(page, target("Save", { preferredEvidence: evidence("Save", { roles: ["button"] }) })); await page.locator("button").evaluate((button) => button.replaceWith(button.cloneNode(true))); await expectCode(result.revalidate(), "TARGET_CHANGED_BEFORE_ACTION"); } },
   { name: "25 native checkbox toggles", run: async (page) => { await set(page, `<label><input type="checkbox"> Accept terms</label>`); await checkGroundedTarget(page, target("Accept terms", { requiredCapabilities: ["toggleable"], preferredEvidence: evidence("Accept terms", { roles: ["checkbox"] }) }), true); expect(await page.locator("input").isChecked()).toBe(true); } },
-  { name: "26 fake switch refuses native dispatch", run: async (page) => { await set(page, `<div role="switch" tabindex="0" aria-label="Notifications">Notifications</div>`); await expectCode(checkGroundedTarget(page, target("Notifications", { requiredCapabilities: ["toggleable"], preferredEvidence: evidence("Notifications", { roles: ["checkbox"] }) }), true), "INTERACTION_DISPATCH_FAILED"); } },
+  { name: "26 fake switch refuses native dispatch", run: async (page) => { await set(page, `<div role="switch" tabindex="0" aria-label="Notifications">Notifications</div>`); await expectCode(checkGroundedTarget(page, target("Notifications", { requiredCapabilities: ["toggleable"], preferredEvidence: evidence("Notifications", { roles: ["checkbox"] }) }), true), "PRAXIS_INTERACTION_DISPATCH_FAILED"); } },
   { name: "27 native select changes option", run: async (page) => { await set(page, `<label>Country<select><option value="ng">Nigeria</option><option value="gh">Ghana</option></select></label>`); await selectGroundedTarget(page, target("Country", { requiredCapabilities: ["selects_option"], preferredEvidence: evidence("Country", { roles: ["combobox"] }) }), "gh"); expect(await page.locator("select").inputValue()).toBe("gh"); } },
   fillCase("28 textarea entry", `<label>Notes<textarea></textarea></label>`, fillTarget("Notes"), "textarea"),
   fillCase("29 password native type evidence", `<input type="password" placeholder="Password">`, fillTarget("Password", { preferredEvidence: evidence("Password", { roles: ["textbox"], placeholders: ["Password"], inputTypes: ["password"] }), risk: "authentication" }), "input", "secret"),

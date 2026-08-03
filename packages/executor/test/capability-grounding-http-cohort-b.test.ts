@@ -7,7 +7,8 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { currentPlanSchema, executionPolicySchema, type InteractionTargetIntent, type ReadinessCondition } from "@scry/contracts";
 
 import { executePlan } from "../src/executor.js";
-import { clickGroundedTarget, fillGroundedTarget, registerGroundingHistoryProvider, resolveTarget, resolveTargetLocator, verifyExpectedEffect } from "../src/grounding.js";
+import { registerGroundingHistoryProvider, resolveTarget, resolveTargetLocator, verifyExpectedEffect } from "../src/grounding.js";
+import { clickPraxisTarget as clickGroundedTarget, fillPraxisTarget as fillGroundedTarget } from "./support/praxis-actions.js";
 
 let browser: Browser;
 let context: BrowserContext;

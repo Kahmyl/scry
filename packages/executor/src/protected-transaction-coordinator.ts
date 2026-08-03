@@ -4,7 +4,7 @@ import type { Assertion, ProtectedTransaction, ProtectedTransactionResult } from
 import type { SecretRedactor } from "@scry/policy";
 import { BrowserSessionProvenance, type ProtectedBrowserSession, type SafeBrowserSession } from "./browser-session.js";
 import { playwrightBrowserChannel } from "./browser-runtime-artifacts.js";
-import { extractProtectedValue, executeProtectedReveal } from "./protected-extractor.js";
+import { acquireValue, executeProtectedReveal } from "./protected-extractor.js";
 import { resolveTarget, resolveTargetLocator } from "./grounding.js";
 import { CalibrationRequiredError, protectedTransactionDigest, transactionInputDigest, transactionInputSchemaDigest } from "./calibration.js";
 import type { VeilRuntimeCoordinator } from "./veil-runtime-coordinator.js";
@@ -366,7 +366,7 @@ async function extractAndPersist(page: Page, transaction: ProtectedTransaction, 
   const deadline = Date.now() + transaction.extraction.timeoutMs;
   const extracted = await Promise.all(transaction.extraction.outputs.map(async (output) => ({
     output,
-    extraction: await extractProtectedValue(page, output.acquisition, Math.max(100, deadline - Date.now())),
+    extraction: await acquireValue(page, output.acquisition, Math.max(100, deadline - Date.now())),
   })));
   for (const { output, extraction } of extracted) {
     facts.diagnostics.push(...extraction.diagnostics);

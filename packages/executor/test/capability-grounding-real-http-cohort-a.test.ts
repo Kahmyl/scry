@@ -5,15 +5,9 @@ import type { InteractionTargetIntent } from "@scry/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 
-import { builtInAdapterRegistry } from "../src/adapters.js";
-import {
-  checkGroundedTarget,
-  clickGroundedTarget,
-  fillGroundedTarget,
-  resolveTarget,
-  resolveTargetLocator,
-  selectGroundedTarget,
-} from "../src/grounding.js";
+import { builtInAdapterRegistry } from "./support/gauntlet-adapters.js";
+import { resolveTarget, resolveTargetLocator } from "../src/grounding.js";
+import { checkPraxisTarget as checkGroundedTarget, clickPraxisTarget as clickGroundedTarget, fillPraxisTarget as fillGroundedTarget, selectPraxisTarget as selectGroundedTarget } from "./support/praxis-actions.js";
 
 type Scenario = {
   id: number;
@@ -150,7 +144,7 @@ const scenarios: Scenario[] = [
     id: 23,
     name: "fake switch dispatch is typed refusal",
     body: `<div role="switch" tabindex="0" aria-label="Notifications">Notifications</div>`,
-    run: async (page) => expectCode(checkGroundedTarget(page, target("Notifications", { requiredCapabilities: ["toggleable"], preferredEvidence: identity("Notifications", { roles: ["checkbox"] }) }), true), "INTERACTION_DISPATCH_FAILED"),
+    run: async (page) => expectCode(checkGroundedTarget(page, target("Notifications", { requiredCapabilities: ["toggleable"], preferredEvidence: identity("Notifications", { roles: ["checkbox"] }) }), true), "PRAXIS_INTERACTION_DISPATCH_FAILED"),
   },
   {
     id: 24,

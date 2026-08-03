@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserContext, Page } from "playwright";
-import { AdapterRegistry, builtInAdapterRegistry, CheckpointCoordinator, structureFingerprint } from "../src/index.js";
+import { CheckpointCoordinator, structureFingerprint } from "../src/index.js";
+import { AdapterRegistry, builtInAdapterRegistry } from "./support/gauntlet-adapters.js";
 
 const checkpoint = { id: "safe", beforeStepId: "protected", restorationUrl: "https://example.test/safe", verificationAssertions: [{ type: "url" as const, expected: "/safe", match: "path" as const }], continueAtStepId: "continue", maxRestorations: 1 as const, state: { cookies: true as const, localStorage: true as const, indexedDb: true } };
 

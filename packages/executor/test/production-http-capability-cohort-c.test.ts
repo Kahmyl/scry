@@ -7,7 +7,8 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { inspectBrowserRuntimeArtifacts, playwrightBrowserChannel, visualRedactionInitScript } from "../src/browser-runtime-artifacts.js";
 import { capturePublicGeneratedValue } from "../src/public-value-capture.js";
 import { acquireValue } from "../src/protected-extractor.js";
-import { clickGroundedTarget, fillGroundedTarget, resolveTarget, verifyExpectedEffect } from "../src/grounding.js";
+import { resolveTarget, verifyExpectedEffect } from "../src/grounding.js";
+import { clickPraxisTarget as clickGroundedTarget, fillPraxisTarget as fillGroundedTarget } from "./support/praxis-actions.js";
 
 type Scenario = { id: number; name: string; html: string; run(page: Page): Promise<void>; headers?: Record<string, string> };
 

@@ -10,7 +10,6 @@ export * from "./calibration.js";
 export * from "./browser-runtime-artifacts.js";
 export * from "./probe.js";
 export { browserObservationRuntimeHealth, verifyBrowserObservationRuntime } from "./grounding.js";
-export * from "./adapters.js";
 export * from "./praxis-transaction.js";
 export * from "./praxis-adapter.js";
 export * from "./praxis-observation.js";

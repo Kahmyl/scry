@@ -28,6 +28,7 @@ const forbiddenCutoffPatterns = [
   ["SCRY_PRAXIS_LEGACY_CONSUMERS", "legacy consumer rollback flag"],
   ["LegacyPraxisAdapter", "legacy Praxis adapter"],
   ["praxis-legacy-adapter", "legacy Praxis adapter module"],
+  ["extractProtectedValue", "legacy protected acquisition alias"],
   ["clickGroundedTarget(", "direct grounded click helper"],
   ["fillGroundedTarget(", "direct grounded fill helper"],
   ["selectGroundedTarget(", "direct grounded select helper"],
@@ -36,7 +37,7 @@ const forbiddenCutoffPatterns = [
 for (const file of files) {
   const text = await readFile(resolve(sourceRoot, file), "utf8");
   const disposition = entries.get(`packages/executor/src/${file}`)?.disposition;
-  for (const [pattern, reason] of forbiddenCutoffPatterns) if (file !== "grounding.ts" && disposition !== "privacy_exception" && text.includes(pattern)) failures.push(`${reason} remains in packages/executor/src/${file}`);
+  for (const [pattern, reason] of forbiddenCutoffPatterns) if (disposition !== "privacy_exception" && text.includes(pattern)) failures.push(`${reason} remains in packages/executor/src/${file}`);
 }
 if (failures.length) {
   process.stderr.write(`${failures.join("\n")}\n`);
