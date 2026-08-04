@@ -25,6 +25,7 @@ describe("worker processor boundaries", () => {
       artifactRoot: "/tmp/scry-worker-test",
       artifactRetentionMs: 60_000,
       artifactStore: {} as never,
+      artifactStoreRemote: false,
       veilAdmissionKey: "test-key",
     });
     await expect(

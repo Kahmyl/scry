@@ -256,11 +256,11 @@ async function persistReport(
       )
         throw new Error("VEIL_EVIDENCE_ADMISSION_REQUIRED");
       const stagedPath = path.join(options.artifactRoot, storageKey);
-      const stored = await options.artifactStore.put(
-        storageKey,
-        await readFile(stagedPath),
-        { manifest: admission.data, sanitation: sanitation as Record<string, unknown>, token },
-      );
+      const stored = await options.artifactStore.put(storageKey, await readFile(stagedPath), {
+        manifest: admission.data,
+        sanitation: sanitation as Record<string, unknown>,
+        token,
+      });
       artifact.sizeBytes = stored.sizeBytes;
       artifact.checksumSha256 = stored.checksumSha256;
       if (options.artifactStoreRemote) await rm(stagedPath, { force: true });

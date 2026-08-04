@@ -1,26 +1,26 @@
 {
   "schemaVersion": 1,
   "system": "Veil",
-  "updatedAt": "2026-08-03T11:58:03.000Z",
-  "releaseDecision": "READY",
+  "updatedAt": "2026-08-04T05:18:45.005Z",
+  "releaseDecision": "NOT_READY_PENDING_DEPLOYMENT_OPERATIONS_VALIDATION",
   "governingDecision": "docs/decisions/0006-veil-privacy-control-plane.md",
   "inventory": "docs/architecture/veil-lifecycle-inventory.md",
   "releaseIdentity": {
-    "baseCommit": "06eaa428a4c6f72a0a49476dbc502a5fbb7d6d83",
-    "branch": "feat/veil",
+    "baseCommit": "3963650d7390ad75acdd1fdda5ceff499e42c6b9",
+    "branch": "chore/reconstruct",
     "manifestCommand": "node scripts/veil-readiness-manifest.mjs",
     "manifestAlgorithm": "sha256-v1 over git binary diff and sorted path-NUL-content-SHA entries",
     "manifestExclusions": [
       "docs/architecture/veil-readiness-ledger.json",
       "docs/architecture/evidence/**"
     ],
-    "codeTrackedDiffSha256ExcludingSignoffArtifacts": "fe746fc8e5a7bb5ebdb88696888a095c3ec610cf55505f9ce5c26e396e9885c5",
-    "codeUntrackedContentManifestSha256ExcludingSignoffArtifacts": "0887541a0e4c0b9f240e961af90c315c3151cd6af058585279ea0d13a712443b",
-    "codeWorkingTreeEntryCountExcludingSignoffArtifacts": 118,
+    "codeTrackedDiffSha256ExcludingSignoffArtifacts": "cb7ab933d2f35148d8f82f0e3a63fb1ffb464e358aea1c8c53b9b2508bcccded",
+    "codeUntrackedContentManifestSha256ExcludingSignoffArtifacts": "f068a20cc9ae9a11d7e4728dd742d9fb10e680bbe9dadd31df6687678b1edbca",
+    "codeWorkingTreeEntryCountExcludingSignoffArtifacts": 47,
     "evidenceManifestCommand": "node scripts/veil-evidence-manifest.mjs",
     "evidenceManifestAlgorithm": "sorted-path-NUL-sha256-v1",
-    "evidenceManifestSha256": "b62ebabde5ea1ea48f6ea8a0bb3d58ad1b7074b5dba1d3dfc4cbfa293e11b1fd",
-    "evidenceManifestEntryCount": 14
+    "evidenceManifestSha256": "5b82ffddae15c23b6ab6804ac271f29732016d49a61aa33bd4173da0ce7c68c8",
+    "evidenceManifestEntryCount": 15
   },
   "fingerprints": {
     "schema": "5b4c1cdc9432b1378c75d4c57c674c63735a500d7e5fb7956d872d7c1cffa52f",
@@ -213,7 +213,8 @@
       "pnpm campaign:praxis:100",
       "pnpm campaign:praxis:resilience",
       "pnpm campaign:praxis:certification",
-      "pnpm campaign:praxis:public-apps"
+      "pnpm campaign:praxis:public-apps",
+      "pnpm verify:production-operations"
     ],
     "requiredSkips": 0,
     "unexplainedFlakes": 0,
@@ -222,7 +223,14 @@
     "freshDatabase": "PASS",
     "predecessorUpgradeDatabase": "PASS",
     "rollback": "PASS_SNAPSHOT_RESTORE_PRIOR_AND_CURRENT_WITH_DATA_AUTHORITY_AND_COMPONENT_IDENTITY",
-    "artifactRetrievalRefusalAndDestruction": "PASS"
+    "artifactRetrievalRefusalAndDestruction": "PASS",
+    "productionRecovery": "PASS_ENCRYPTED_PHYSICAL_BASE_WAL_REPLAY_PROMOTION_QUERY_CLEAN_SHUTDOWN",
+    "productionObservability": "PASS_PROMETHEUS_7_RULES_BLACKBOX_CONFIGURATION",
+    "deploymentOperationsRemaining": [
+      "off_host_repository_credentials_and_write_read_test",
+      "provider_side_artifact_versioning_confirmation_for_remote_storage",
+      "production_alert_webhook_delivery_test"
+    ]
   },
   "evidenceArtifacts": {
     "campaignAndTopologyIndex": "docs/architecture/evidence/veil-campaign-evidence.json",
@@ -230,8 +238,8 @@
     "performanceProfile": "docs/architecture/veil-performance-profile.json",
     "rawCampaignReports": "docs/architecture/evidence/reports/",
     "workerCrashReport": "docs/architecture/evidence/reports/veil-worker-crash.json",
-    "workerCrashRunId": "b6c2fcf5-6848-46bd-9424-7a24f7528d91",
-    "rollbackRunId": "20260803T113946Z-88865"
+    "rollbackRunId": "20260803T113946Z-88865",
+    "productionOperations": "docs/architecture/evidence/reports/production-operations.json"
   },
   "remediationHistory": [
     "single_admission_boundary_and_observable_collectors",
@@ -251,7 +259,7 @@
   "finalReviews": {
     "architecturePrivacy": "CLEAN_READY_SEVENTH_INDEPENDENT_AUDIT",
     "verificationEvidence": "CLEAN_READY_FINAL_EVIDENCE_AUDIT",
-    "openBlockerCount": 0,
+    "openBlockerCount": 3,
     "openHighCount": 0
   },
   "rollbackProcedureVerified": true,
@@ -260,6 +268,6 @@
     "independentArchitecturePrivacyReviewer": "veil_independent_review",
     "architecturePrivacyDecision": "READY",
     "verificationEvidenceDecision": "READY",
-    "decision": "READY"
+    "decision": "NOT_READY_PENDING_DEPLOYMENT_OPERATIONS_VALIDATION"
   }
 }

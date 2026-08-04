@@ -9,6 +9,40 @@ x-api-environment: &api-environment
   SCRY_SERVICE_TOKEN: ${SCRY_SERVICE_TOKEN:?Set SCRY_SERVICE_TOKEN}
   SCRY_CREDENTIAL_ENCRYPTION_KEY: ${SCRY_CREDENTIAL_ENCRYPTION_KEY:?Set SCRY_CREDENTIAL_ENCRYPTION_KEY}
   VEIL_ADMISSION_KEY: ${VEIL_ADMISSION_KEY:?Set VEIL_ADMISSION_KEY}
+  ARTIFACT_STORAGE_PROVIDER: ${ARTIFACT_STORAGE_PROVIDER:-local}
+  ARTIFACT_STORAGE_PREFIX: ${ARTIFACT_STORAGE_PREFIX:-production}
+  ARTIFACT_S3_BUCKET: ${ARTIFACT_S3_BUCKET:-}
+  ARTIFACT_S3_REGION: ${ARTIFACT_S3_REGION:-}
+  ARTIFACT_S3_ENDPOINT: ${ARTIFACT_S3_ENDPOINT:-}
+  ARTIFACT_S3_ACCESS_KEY_ID: ${ARTIFACT_S3_ACCESS_KEY_ID:-}
+  ARTIFACT_S3_SECRET_ACCESS_KEY: ${ARTIFACT_S3_SECRET_ACCESS_KEY:-}
+  ARTIFACT_S3_SESSION_TOKEN: ${ARTIFACT_S3_SESSION_TOKEN:-}
+  ARTIFACT_S3_FORCE_PATH_STYLE: ${ARTIFACT_S3_FORCE_PATH_STYLE:-false}
+  CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+  CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+  CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
+  ARTIFACT_GCS_BUCKET: ${ARTIFACT_GCS_BUCKET:-}
+  GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+  GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON:-}
+  ARTIFACT_RETENTION_MS: ${ARTIFACT_RETENTION_MS:-2592000000}
+  ARTIFACT_STORE_VERSIONING_REQUIRED: "true"
+  ARTIFACT_STORE_VERSIONING_CONFIRMED: ${ARTIFACT_STORE_VERSIONING_CONFIRMED:-false}
+
+x-backup-environment: &backup-environment
+  RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
+  RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
+  AWS_ACCESS_KEY_ID: ${BACKUP_AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${BACKUP_AWS_SECRET_ACCESS_KEY:-}
+  AWS_DEFAULT_REGION: ${BACKUP_AWS_REGION:-}
+  AWS_ENDPOINT: ${BACKUP_AWS_ENDPOINT:-}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+  PGHOST: postgres
+  PGUSER: scry
+  BACKUP_KEEP_HOURLY: ${BACKUP_KEEP_HOURLY:-48}
+  BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-30}
+  BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-12}
+  BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-12}
+  RESTORE_DRILL_RTO_SECONDS: ${RESTORE_DRILL_RTO_SECONDS:-3600}
 
 services:
   caddy:
@@ -135,11 +169,38 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - postgres_wal_archive:/wal-archive
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=${POSTGRES_ARCHIVE_MODE:-off}
+      - -c
+      - archive_timeout=${POSTGRES_ARCHIVE_TIMEOUT:-300s}
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+      - -c
+      - archive_command=test -f /wal-archive/%f || (cp %p /wal-archive/.%f.tmp && chmod 0600 /wal-archive/.%f.tmp && mv /wal-archive/.%f.tmp /wal-archive/%f)
+    configs:
+      - source: postgres_hba
+        target: /etc/postgresql/pg_hba.conf
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U scry -d scry"]
       interval: 5s
       timeout: 5s
       retries: 10
+    depends_on:
+      postgres-storage-init:
+        condition: service_completed_successfully
+
+  postgres-storage-init:
+    image: postgres:17-alpine
+    restart: "no"
+    user: root
+    command: ["sh", "-c", "chown -R postgres:postgres /wal-archive && chmod 0700 /wal-archive"]
+    volumes:
+      - postgres_wal_archive:/wal-archive
 
   redis:
     image: redis:7-alpine
@@ -153,14 +214,205 @@ services:
       timeout: 3s
       retries: 10
 
+  postgres-base-backup:
+    profiles: [operations]
+    image: ${SCRY_BACKUP_IMAGE_REF:-scry-backup:local}
+    restart: unless-stopped
+    command: ["postgres-base"]
+    environment:
+      <<: *backup-environment
+      POSTGRES_BASE_BACKUP_INTERVAL_SECONDS: ${POSTGRES_BASE_BACKUP_INTERVAL_SECONDS:-86400}
+    volumes:
+      - backup_staging:/staging
+      - backup_metrics:/metrics
+    depends_on:
+      backup-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  postgres-wal-backup:
+    profiles: [operations]
+    image: ${SCRY_BACKUP_IMAGE_REF:-scry-backup:local}
+    restart: unless-stopped
+    command: ["postgres-wal"]
+    environment:
+      <<: *backup-environment
+      POSTGRES_WAL_BACKUP_INTERVAL_SECONDS: ${POSTGRES_WAL_BACKUP_INTERVAL_SECONDS:-300}
+    volumes:
+      - postgres_wal_archive:/wal-archive:ro
+      - backup_metrics:/metrics
+    depends_on:
+      backup-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  artifact-backup:
+    profiles: [operations]
+    image: ${SCRY_BACKUP_IMAGE_REF:-scry-backup:local}
+    restart: unless-stopped
+    command: ["artifacts"]
+    environment:
+      <<: *backup-environment
+      ARTIFACT_BACKUP_INTERVAL_SECONDS: ${ARTIFACT_BACKUP_INTERVAL_SECONDS:-900}
+    volumes:
+      - artifacts:/artifacts:ro
+      - backup_metrics:/metrics
+    depends_on:
+      backup-init:
+        condition: service_completed_successfully
+
+  backup-maintenance:
+    profiles: [operations]
+    image: ${SCRY_BACKUP_IMAGE_REF:-scry-backup:local}
+    restart: unless-stopped
+    command: ["maintenance"]
+    environment:
+      <<: *backup-environment
+      BACKUP_MAINTENANCE_INTERVAL_SECONDS: ${BACKUP_MAINTENANCE_INTERVAL_SECONDS:-86400}
+      BACKUP_CHECK_DATA_SUBSET: ${BACKUP_CHECK_DATA_SUBSET:-5%}
+    volumes:
+      - backup_metrics:/metrics
+    depends_on:
+      backup-init:
+        condition: service_completed_successfully
+
+  restore-drill:
+    profiles: [operations]
+    image: ${SCRY_BACKUP_IMAGE_REF:-scry-backup:local}
+    restart: unless-stopped
+    command: ["restore-drill"]
+    environment:
+      <<: *backup-environment
+      RESTORE_DRILL_INTERVAL_SECONDS: ${RESTORE_DRILL_INTERVAL_SECONDS:-604800}
+    volumes:
+      - restore_drill:/restore-drill
+      - backup_metrics:/metrics
+    depends_on:
+      backup-init:
+        condition: service_completed_successfully
+
+  backup-init:
+    profiles: [operations]
+    image: ${SCRY_BACKUP_IMAGE_REF:-scry-backup:local}
+    restart: "no"
+    command: ["init"]
+    environment:
+      <<: *backup-environment
+
+  postgres-exporter:
+    profiles: [operations]
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://scry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/scry?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis-exporter:
+    profiles: [operations]
+    image: oliver006/redis_exporter:v1.67.0
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  blackbox-exporter:
+    profiles: [operations]
+    image: prom/blackbox-exporter:v0.27.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/blackbox/blackbox.yml"]
+    configs:
+      - source: blackbox_config
+        target: /etc/blackbox/blackbox.yml
+
+  backup-metrics:
+    profiles: [operations]
+    image: prom/node-exporter:v1.9.1
+    restart: unless-stopped
+    command:
+      [
+        "--collector.disable-defaults",
+        "--collector.textfile",
+        "--collector.textfile.directory=/metrics",
+      ]
+    volumes:
+      - backup_metrics:/metrics:ro
+
+  alertmanager:
+    profiles: [operations]
+    image: prom/alertmanager:v0.28.1
+    restart: unless-stopped
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager"]
+    configs:
+      - source: alertmanager_config
+        target: /etc/alertmanager/alertmanager.yml
+    volumes:
+      - alertmanager_data:/alertmanager
+
+  prometheus:
+    profiles: [operations]
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command:
+      [
+        "--config.file=/etc/prometheus/prometheus.yml",
+        "--storage.tsdb.path=/prometheus",
+        "--storage.tsdb.retention.time=30d",
+      ]
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+      - source: prometheus_rules
+        target: /etc/prometheus/rules.yml
+    volumes:
+      - prometheus_data:/prometheus
+    depends_on:
+      - alertmanager
+      - postgres-exporter
+      - redis-exporter
+      - blackbox-exporter
+      - backup-metrics
+
 volumes:
   postgres_data:
   redis_data:
   artifacts:
+  postgres_wal_archive:
+  backup_staging:
+  backup_metrics:
+  restore_drill:
+  prometheus_data:
+  alertmanager_data:
   caddy_data:
   caddy_config:
 
 configs:
+  postgres_hba:
+    file: ./ops/postgres/pg_hba.conf
+  prometheus_config:
+    file: ./ops/observability/prometheus.yml
+  prometheus_rules:
+    file: ./ops/observability/rules.yml
+  blackbox_config:
+    file: ./ops/observability/blackbox.yml
+  alertmanager_config:
+    content: |
+      route:
+        receiver: operations
+        group_by: [alertname, severity]
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 4h
+      receivers:
+        - name: operations
+          webhook_configs:
+            - url: ${SCRY_ALERT_WEBHOOK_URL:-http://127.0.0.1:65535/operations-disabled}
+              send_resolved: true
   caddyfile:
     content: |
       ${SCRY_DOMAIN:?Set SCRY_DOMAIN} {

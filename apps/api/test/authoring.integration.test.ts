@@ -36,8 +36,10 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
           allowedOrigins: ["https://example.test"],
           allowPrivateNetwork: false,
           allowDownloads: false,
-          maxRequests: 10,
-          blockedResourceTypes: [],
+          allowPopups: false,
+          maxActions: 10,
+          maxDurationMs: 120_000,
+          maxNavigations: 3,
         }),
       ],
     );
@@ -100,7 +102,14 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     });
     expect(updated.version).toBe(2);
     expect(
-      Number((await database.query(`SELECT count(*) FROM flow_revisions`)).rows[0]!.count),
+      Number(
+        (
+          await database.query(
+            `SELECT count(*) FROM flow_revisions fr JOIN flows f ON f.id=fr.flow_id WHERE f.project_id=$1`,
+            [project],
+          )
+        ).rows[0]!.count,
+      ),
     ).toBe(0);
     const probe = randomUUID();
     await database.query(

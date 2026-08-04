@@ -44,7 +44,9 @@ const artifactRoot = path.resolve(process.env.ARTIFACT_ROOT ?? "artifacts/runs")
 const veilAdmissionKey = requireVeilAdmissionKey();
 const artifactStorage = createArtifactStoreFromEnv(process.env, veilAdmissionKey);
 const artifactStore = artifactStorage.store;
-process.stdout.write(`${JSON.stringify({ event: "artifact.storage.ready", provider: artifactStorage.provider, remote: artifactStorage.remote })}\n`);
+process.stdout.write(
+  `${JSON.stringify({ event: "artifact.storage.ready", provider: artifactStorage.provider, remote: artifactStorage.remote })}\n`,
+);
 const artifactRetention = new ArtifactRetentionService(database, artifactStore);
 const retentionIntervalMs = Math.max(
   10_000,

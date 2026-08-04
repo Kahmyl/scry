@@ -20,14 +20,26 @@ export type ArtifactDestructionResult = Readonly<{
 }>;
 
 export interface ArtifactStore {
-  put(storageKey: string, content: Uint8Array, admission: VeilEvidenceAdmissionProof): Promise<AdmittedArtifact>;
+  put(
+    storageKey: string,
+    content: Uint8Array,
+    admission: VeilEvidenceAdmissionProof,
+  ): Promise<AdmittedArtifact>;
   get(storageKey: string, admission: VeilEvidenceAdmissionProof): Promise<Uint8Array>;
-  getRange(storageKey: string, offset: number, length: number, admission: VeilEvidenceAdmissionProof): Promise<Uint8Array>;
+  getRange(
+    storageKey: string,
+    offset: number,
+    length: number,
+    admission: VeilEvidenceAdmissionProof,
+  ): Promise<Uint8Array>;
   size(storageKey: string, admission: VeilEvidenceAdmissionProof): Promise<number>;
   exists(storageKey: string): Promise<boolean>;
   delete(storageKey: string): Promise<void>;
   quarantine(storageKey: string): Promise<void>;
-  destroy(storageKey: string, admission: VeilEvidenceAdmissionProof): Promise<ArtifactDestructionResult>;
+  destroy(
+    storageKey: string,
+    admission: VeilEvidenceAdmissionProof,
+  ): Promise<ArtifactDestructionResult>;
 }
 
 export type ArtifactStorageProvider = "local" | "s3" | "cloudinary" | "gcs";

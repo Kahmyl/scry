@@ -12,6 +12,8 @@ describe.skipIf(!enabled)("orchestration transactional guarantees", () => {
     session = randomUUID();
   const objectives = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   const revisions = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+  const drafts = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+  const compilations = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   const environments = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   beforeAll(async () => {
     process.env.DATABASE_URL = process.env.SCRY_ORCHESTRATION_TEST_DATABASE_URL;
@@ -45,8 +47,10 @@ describe.skipIf(!enabled)("orchestration transactional guarantees", () => {
             allowedOrigins: ["https://example.test"],
             allowPrivateNetwork: false,
             allowDownloads: false,
-            maxRequests: 100,
-            blockedResourceTypes: [],
+            allowPopups: false,
+            maxActions: 100,
+            maxDurationMs: 120_000,
+            maxNavigations: 10,
           }),
         ],
       );
@@ -73,6 +77,42 @@ describe.skipIf(!enabled)("orchestration transactional guarantees", () => {
             JSON.stringify({ valid: true, errors: [], warnings: [] }),
           ],
         );
+        const plan = JSON.stringify({
+          version: 1,
+          name: `flow-${i}`,
+          objective: "pass",
+          allowedOrigins: ["https://example.test"],
+          steps: [],
+        });
+        await client.query(
+          `INSERT INTO flow_drafts(id,project_id,mission_id,objective_id,environment_id,flow_id,name,content,state,plan,created_by_agent_session_id) VALUES($1,$2,$3,$4,$5,$6,$7,'{}','published',$8::jsonb,$9)`,
+          [
+            drafts[i],
+            project,
+            mission,
+            objectives[i],
+            environments[i],
+            flow,
+            `draft-${i}`,
+            plan,
+            session,
+          ],
+        );
+        await client.query(
+          `INSERT INTO flow_compilations(id,draft_id,draft_version,project_id,mission_id,objective_id,environment_id,flow_revision_id,status,plan_digest,compiled_contract_digest,capability_manifest_hash,runtime_hash,authorization_digest,calibration_digest,created_by_agent_session_id,idempotency_key,completed_at) VALUES($1,$2,1,$3,$4,$5,$6,$7,'execution_ready',$8,$8,$8,$8,$8,$8,$9,$10,now())`,
+          [
+            compilations[i],
+            drafts[i],
+            project,
+            mission,
+            objectives[i],
+            environments[i],
+            revisions[i],
+            "a".repeat(64),
+            session,
+            `compilation-${i}`,
+          ],
+        );
         await client.query("COMMIT");
       } finally {
         client.release();
@@ -88,6 +128,7 @@ describe.skipIf(!enabled)("orchestration transactional guarantees", () => {
       objectiveId,
       mode: "automatic" as const,
       flowRevisionId: revisions[i],
+      compiledContractId: compilations[i],
       environmentId: environments[i],
       authorizationIds: [],
       browser: "chromium",

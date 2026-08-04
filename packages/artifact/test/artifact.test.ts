@@ -23,6 +23,15 @@ const admission = {
 };
 
 describe("LocalArtifactStore", () => {
+  it("classifies a key below a non-directory component as absent", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "scry-artifact-blocked-"));
+    await writeFile(path.join(root, "blocked"), "occupied");
+    const store = new LocalArtifactStore(
+      path.join(root, "blocked"),
+      "test-admission-key-that-is-at-least-32-bytes",
+    );
+    await expect(store.exists("artifact.bin")).resolves.toBe(false);
+  });
   it("stores bytes with stable metadata", async () => {
     const store = new LocalArtifactStore(await mkdtemp(path.join(tmpdir(), "scry-artifact-")), key);
     const proof = signVeilEvidenceAdmission(admission, key);

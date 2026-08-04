@@ -39,7 +39,7 @@ describe("ArtifactService", () => {
         contentType: "video/webm",
       }),
     };
-    const service = new ArtifactService(repository as never);
+    const service = new ArtifactService(repository as never, {} as never);
     await expect(
       service.range({ kind: "service", subject: "scry-service" }, "quarantined"),
     ).rejects.toThrow("Artifact is not available");
@@ -57,7 +57,7 @@ describe("ArtifactService", () => {
       }),
     };
     await expect(
-      new ArtifactService(repository as never).range(
+      new ArtifactService(repository as never, {} as never).range(
         { kind: "service", subject: "scry-service" },
         "claimed",
       ),
@@ -88,7 +88,7 @@ describe("ArtifactService", () => {
         },
       }),
     };
-    const service = new ArtifactService(repository as never);
+    const service = new ArtifactService(repository as never, store);
     const page = await service.text(
       { kind: "service", subject: "scry-service" },
       "11111111-1111-4111-8111-111111111111",
@@ -142,7 +142,7 @@ describe("ArtifactService", () => {
         },
       }),
     };
-    const service = new ArtifactService(repository as never);
+    const service = new ArtifactService(repository as never, store);
     const extraction = await service.extractHtml(
       { kind: "service", subject: "scry-service" },
       "22222222-2222-4222-8222-222222222222",

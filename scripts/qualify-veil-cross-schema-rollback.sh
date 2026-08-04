@@ -23,6 +23,8 @@ export SCRY_SERVICE_TOKEN=rollback-integration-token
 export SCRY_CREDENTIAL_ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 export VEIL_ADMISSION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 export SUPABASE_URL=https://example.supabase.co SUPABASE_PUBLISHABLE_KEY=rollback-placeholder
+export RESTIC_REPOSITORY=/tmp/scry-rollback-restic RESTIC_PASSWORD=rollback-restic-password
+export SCRY_ALERT_WEBHOOK_URL=https://alerts.example.test/scry
 
 cleanup() {
   docker compose -p "$project" -f compose.deploy.yml down -v --remove-orphans >/dev/null 2>&1 || true
@@ -65,6 +67,7 @@ docker build -f scripts/rollback-qualification-label.Dockerfile -t "$image_b" \
   --build-arg "BASE_IMAGE=$image_a" --build-arg "RELEASE_ID=$release_b" --build-arg "SCHEMA_FINGERPRINT=$schema_b" .
 image_a_digest="$(docker image inspect "$image_a" --format '{{.Id}}')"
 image_b_digest="$(docker image inspect "$image_b" --format '{{.Id}}')"
+export SCRY_BACKUP_IMAGE_REF="$image_a"
 
 set_release "$image_a" "$release_a" "$schema_a"
 compose up -d --wait postgres redis migrate api worker mcp

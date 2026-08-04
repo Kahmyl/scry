@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "campaign": "production-backup-restore-observability",
+  "executedAt": "2026-08-03T23:48:55.000Z",
+  "environment": {
+    "postgresql": "17.10",
+    "backupImage": "scry-backup:verification",
+    "backupRepository": "disposable_encrypted_restic_repository",
+    "storage": "docker_named_volumes",
+    "offHostCredentialsUsed": false
+  },
+  "counts": {
+    "required": 8,
+    "passed": 8,
+    "failed": 0,
+    "skipped": 0
+  },
+  "checks": [
+    "authenticated_replication_connection",
+    "physical_base_backup_manifest",
+    "atomic_wal_archiving",
+    "encrypted_base_snapshot",
+    "encrypted_wal_snapshot",
+    "isolated_restore",
+    "wal_replay_and_promotion",
+    "post_recovery_query_and_clean_shutdown"
+  ],
+  "objectives": {
+    "postgresRpoSeconds": 300,
+    "artifactRpoSeconds": 900,
+    "restoreRtoSeconds": 3600,
+    "drillIntervalSeconds": 604800,
+    "observedRestoreDrillSeconds": 3
+  },
+  "diagnosticHistory": [
+    {
+      "code": "REPLICATION_HBA_MISSING",
+      "disposition": "remediated",
+      "proof": "fresh authenticated pg_basebackup succeeded"
+    },
+    {
+      "code": "WAL_ARCHIVE_VOLUME_OWNERSHIP",
+      "disposition": "remediated",
+      "proof": "completed WAL segments archived and snapshotted"
+    },
+    {
+      "code": "RESTORE_VOLUME_ROOT_DELETION",
+      "disposition": "remediated",
+      "proof": "drill clears volume children without deleting mountpoint"
+    },
+    {
+      "code": "RESTORED_CLUSTER_PERMISSIONS",
+      "disposition": "remediated",
+      "proof": "restored cluster started with mode 0700"
+    },
+    {
+      "code": "RESTORE_DATABASE_IDENTITY",
+      "disposition": "remediated",
+      "proof": "integrity query used configured scry role"
+    }
+  ],
+  "observability": {
+    "prometheusConfig": "passed_promtool",
+    "alertRuleCount": 7,
+    "blackboxConfig": "passed_runtime_startup",
+    "productionAlertDelivery": "not_executed_requires_deployment_webhook"
+  },
+  "qualification": "CODE_AND_PRODUCTION_SHAPED_RECOVERY_PASS",
+  "releaseLimitation": "Actual off-host repository credentials, provider-side artifact versioning, and production alert delivery require deployment-environment validation."
+}

@@ -14,6 +14,14 @@ permissions:
 env:
   APP_IMAGE: kahmyl/scry
   STACK_IMAGE: kahmyl/scry-stack
+  BACKUP_IMAGE: kahmyl/scry-backup
+  SCRY_BACKUP_IMAGE_REF: scry-backup-ci:latest
+  RESTIC_REPOSITORY: /tmp/scry-release-restic
+  RESTIC_PASSWORD: release-verification-restic-password
+  SCRY_ALERT_WEBHOOK_URL: https://alerts.example.invalid/scry
+  SCRY_DEPLOYMENT_TIER: production
+  COMPOSE_PROFILES: operations
+  POSTGRES_ARCHIVE_MODE: on
 
 jobs:
   publish:
@@ -47,6 +55,10 @@ jobs:
           pnpm verify:subsystem-boundaries
           pnpm verify:repository-topology
           pnpm verify:veil-performance
+          pnpm verify:production-operations
+          pnpm verify:deployment-tiers
+          pnpm verify:production-recovery
+          pnpm verify:veil-release-evidence
           pnpm verify:veil-release-transition
           pnpm typecheck
           pnpm test
@@ -114,6 +126,29 @@ jobs:
           cache-from: type=gha,scope=scry
           cache-to: type=gha,mode=max,scope=scry
 
+      - name: Generate backup image metadata
+        id: backup-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.BACKUP_IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and publish the backup and recovery image
+        id: backup-build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.backup
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.backup-meta.outputs.tags }}
+          labels: ${{ steps.backup-meta.outputs.labels }}
+          cache-from: type=gha,scope=scry-backup
+          cache-to: type=gha,mode=max,scope=scry-backup
+
       - name: Snapshot previous admitted release state
         env:
           SCRY_DOMAIN: scry.example.com
@@ -146,6 +181,7 @@ jobs:
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_PUBLISHABLE_KEY: integration-placeholder
           SCRY_IMAGE_REF: ${{ env.APP_IMAGE }}@${{ steps.build.outputs.digest }}
+          SCRY_BACKUP_IMAGE_REF: ${{ env.BACKUP_IMAGE }}@${{ steps.backup-build.outputs.digest }}
           SCRY_RELEASE_ID: ${{ github.sha }}
         run: |
           docker compose -f compose.deploy.yml up -d --wait postgres redis migrate api worker mcp
@@ -241,6 +277,7 @@ jobs:
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_PUBLISHABLE_KEY: publish-placeholder
           SCRY_IMAGE_REF: ${{ env.APP_IMAGE }}@${{ steps.build.outputs.digest }}
+          SCRY_BACKUP_IMAGE_REF: ${{ env.BACKUP_IMAGE }}@${{ steps.backup-build.outputs.digest }}
           SCRY_RELEASE_ID: ${{ github.sha }}
         run: |
           docker compose -f compose.deploy.yml publish -y \

@@ -42,6 +42,7 @@ function store(destroy: ArtifactStore["destroy"]): ArtifactStore {
     size: vi.fn(),
     exists: vi.fn(),
     delete: vi.fn(),
+    quarantine: vi.fn(),
   } as ArtifactStore;
 }
 

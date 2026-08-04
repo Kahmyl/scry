@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-03T11:55:19.000Z",
+  "recordedAt": "2026-08-04T05:18:44.670Z",
   "environment": {
     "workspace": "/Users/habib/Documents/monorepo/scry",
     "node": "v22.14.0",
@@ -17,7 +17,7 @@
       "status": "passed",
       "executedAt": "2026-08-03T11:46:53.339Z",
       "artifact": "docs/architecture/evidence/reports/veil-certification.json",
-      "reportSha256": "6bec1a226b8a480bc51487068f34a606cd5ed7e566bdf5c5130c2fdef2ddcd81"
+      "reportSha256": "20aa2b20e96bb576b4fda6ab74f76dd25cb04efd9ed9d7bfe0381c99d9ddbf6c"
     },
     {
       "id": "veil-adversarial-20260803",
@@ -26,7 +26,7 @@
       "status": "passed",
       "executedAt": "2026-08-03T11:47:25.023Z",
       "artifact": "docs/architecture/evidence/reports/veil-adversarial.json",
-      "reportSha256": "4c61f480c1b27a79b1a607254e2931a6a5fa6a82ea98d5363e95fa155468947c"
+      "reportSha256": "67d0b76cb70a08d0428862db99f05f2b137cd299f835d0daee6fdf75ead207c8"
     },
     {
       "id": "veil-production-e2e-final-20260803",
@@ -35,7 +35,7 @@
       "status": "passed",
       "executedAt": "2026-08-03T11:48:53.104Z",
       "artifact": "docs/architecture/evidence/reports/veil-production-e2e.json",
-      "reportSha256": "329fdd958aca464724bc34412f18180dd042186b35591827bb6fe3cc54d79da1"
+      "reportSha256": "d6b9f51d33b8f0ba64750478220098bb619cc844d20106e8a4c0a14f37a50aa3"
     },
     {
       "id": "veil-failure-boundaries-20260803",
@@ -44,7 +44,7 @@
       "status": "passed",
       "executedAt": "2026-08-03T11:49:11.306Z",
       "artifact": "docs/architecture/evidence/reports/veil-release-scope.json",
-      "reportSha256": "eb073dd2940a63b236ced575a6b59b4ec1fae36a828fa6eb066af3d6a2c0d652"
+      "reportSha256": "2c453cf0896a4eb6d63302a7305ebf5b0561c91a248bdf2fb3b52a3aff6a1d23"
     },
     {
       "id": "veil-worker-crash-b6c2fcf5",
@@ -55,7 +55,8 @@
       "topology": "fresh isolated migrated Docker database/API/worker/MCP",
       "cleanup": "containers_network_volumes_removed",
       "artifact": "docs/architecture/evidence/reports/veil-worker-crash.json",
-      "reportSha256": "46c12fc24d41e0d264295e7bb24e6c16bccc991894d600d9e7e324da967ea7b0"
+      "reportSha256": "018f06721e15c9922a7d96a96b096a690b3b6e5e432822d07fa5c61be0b49e87",
+      "executedAt": "2026-08-03T11:55:19Z"
     },
     {
       "id": "veil-public-apps-20260803",
@@ -64,7 +65,7 @@
       "status": "passed",
       "executedAt": "2026-08-03T11:49:41.158Z",
       "artifact": "docs/architecture/evidence/reports/veil-public-apps.json",
-      "reportSha256": "c0240717e3bdcda228bbda702362e1db36664589d90fdee5e7325f6dac6e180d"
+      "reportSha256": "be8dc5530c47624c9b4c3626723462895e668cd52c17811e1cc8e1b5f2e04ee5"
     },
     {
       "id": "veil-performance-20260803",
@@ -73,7 +74,7 @@
       "status": "passed",
       "executedAt": "2026-08-03T11:49:04.070Z",
       "artifact": "docs/architecture/evidence/reports/veil-performance.json",
-      "reportSha256": "75837ead1ee5a3f58ea47ad5742af6674123bd562c4d1da6bdf6a6aa35b94666"
+      "reportSha256": "0be57304a0e7cdfaebd42d6b2649827762641705795e49faf01e3c51b859f46c"
     },
     {
       "id": "praxis-standard-20260803",
@@ -82,7 +83,7 @@
       "status": "passed",
       "executedAt": "2026-08-03T11:50:04.654Z",
       "artifact": "docs/architecture/evidence/reports/praxis-standard.json",
-      "reportSha256": "9c482bff3a7b7ba0457230be4090bdaefb983f53fcaef217b2ff53182223a011"
+      "reportSha256": "2a37c7147b170a9efc68b7e2586c4de4cefa07471cd217843f35991c74841468"
     },
     {
       "id": "praxis-100-20260803",
@@ -91,7 +92,7 @@
       "status": "passed",
       "executedAt": "2026-08-03T11:52:35.610Z",
       "artifact": "docs/architecture/evidence/reports/praxis-100.json",
-      "reportSha256": "d0cd9456c4373e064e96f41c3d4d3a8cbb4427238c809bf5cabb50de01119df8"
+      "reportSha256": "fc8f1c069d2cf3f317695387b911687b650cd8026b3b36acb4406c6aa5fa9412"
     },
     {
       "id": "praxis-resilience-20260803",
@@ -100,7 +101,7 @@
       "status": "passed",
       "executedAt": "2026-08-03T11:53:04.024Z",
       "artifact": "docs/architecture/evidence/reports/praxis-resilience.json",
-      "reportSha256": "0c2ae438707099fd157da865d0e0a60d8c5c60b748e49d8cd2f6aad77257de19"
+      "reportSha256": "1da4d783ac2a447f9beacb96d11e877dc8c850db47937ede1238080454741a08"
     },
     {
       "id": "praxis-certification-20260803",
@@ -109,7 +110,7 @@
       "status": "passed",
       "executedAt": "2026-08-03T11:51:12.482Z",
       "artifact": "docs/architecture/evidence/reports/praxis-certification.json",
-      "reportSha256": "c5d3739c9fb691c04b57efe85dffc2c3f3d4301dde6c02405428346c820cfe0d"
+      "reportSha256": "7753d2873ec294308e44dbb2047f41be1f808b18d84c17cadf35413b3d659ba6"
     },
     {
       "id": "praxis-public-apps-20260803",
@@ -118,7 +119,7 @@
       "status": "passed",
       "executedAt": "2026-08-03T11:50:58.481Z",
       "artifact": "docs/architecture/evidence/reports/praxis-public-apps.json",
-      "reportSha256": "7a23fe828feef10f9b85eb1888bcb7efb26731485bb8eb385c6f49f956d4bce6"
+      "reportSha256": "f21b1ee5db77c97f5730894065cfd85581ba29224f52910406ffd84f7b179ef1"
     },
     {
       "id": "fresh-schema-topology-20260803",
@@ -141,16 +142,28 @@
       "result": "schema A snapshot; schema B forward migration; mixed refusal; A restore; B restore; exact component/data/authority verification",
       "status": "passed",
       "runId": "20260803T113946Z-88865",
-      "artifact": "docs/architecture/evidence/veil-cross-schema-rollback.json"
+      "artifact": "docs/architecture/evidence/veil-cross-schema-rollback.json",
+      "executedAt": "2026-08-03T23:51:36.097Z",
+      "reportSha256": "56bb6346d23643aba5f3cfe46ef2beb2c6fd726fe6e0ec8512824fee95e9c451"
+    },
+    {
+      "id": "production-operations-20260803",
+      "command": "pnpm verify:production-operations plus production-shaped encrypted PITR drill",
+      "result": "8/8 backup, WAL, restore, promotion, query, shutdown; 7 alert rules validated",
+      "status": "passed",
+      "executedAt": "2026-08-03T23:48:55.000Z",
+      "artifact": "docs/architecture/evidence/reports/production-operations.json",
+      "reportSha256": "6f97b5e6f4b85d66f651b4a4531dc83485ed1e18d7ce36d1e9958094f599c5ac"
     }
   ],
   "testSuites": {
-    "typecheck": "passed",
-    "rootTests": "passed; executor 280/280; API 69 passed with two non-required opt-in DB suites skipped; all other workspaces green",
+    "typecheck": "passed_all_9_projects",
+    "rootTests": "passed; executor 204/204; API 73/73 standard plus 2/2 opt-in transactional database suites on fresh migrated PostgreSQL; all other workspaces green",
     "privacyFoundation": "passed",
     "releaseFingerprint": "passed",
     "veilChangeGate": "passed",
     "releaseTransitionValidator": "passed",
-    "diffCheck": "passed"
+    "diffCheck": "passed",
+    "productionOperations": "passed_13_services_pitr_backup_restore_and_7_alert_rules"
   }
 }

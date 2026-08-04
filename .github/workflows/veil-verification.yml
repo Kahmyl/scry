@@ -13,7 +13,13 @@ on:
       - "packages/praxis/**"
       - "packages/veil/**"
       - "apps/api/**"
+      - "compose.deploy.yml"
+      - "docker/Dockerfile.backup"
+      - "scripts/operations/**"
+      - "scripts/qualify-production-recovery.sh"
+      - "ops/observability/**"
       - "scripts/verify-subsystem-boundaries.mjs"
+      - "scripts/verify-deployment-*.mjs"
       - "scripts/verify-veil-*.mjs"
       - "docs/architecture/veil-*.json"
   push:
@@ -75,6 +81,10 @@ jobs:
           pnpm typecheck
           pnpm test
           pnpm verify:veil-performance
+          pnpm verify:production-operations
+          pnpm verify:deployment-tiers
+          pnpm verify:production-recovery
+          pnpm verify:veil-release-evidence
           pnpm verify:veil-change-gate
           pnpm verify:subsystem-boundaries
           pnpm verify:repository-topology
