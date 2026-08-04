@@ -1,26 +1,25 @@
 {
   "schemaVersion": 1,
   "system": "Veil",
-  "updatedAt": "2026-08-04T05:18:45.005Z",
+  "updatedAt": "2026-08-04T05:35:44.116Z",
   "releaseDecision": "NOT_READY_PENDING_DEPLOYMENT_OPERATIONS_VALIDATION",
   "governingDecision": "docs/decisions/0006-veil-privacy-control-plane.md",
   "inventory": "docs/architecture/veil-lifecycle-inventory.md",
   "releaseIdentity": {
-    "baseCommit": "3963650d7390ad75acdd1fdda5ceff499e42c6b9",
-    "branch": "chore/reconstruct",
     "manifestCommand": "node scripts/veil-readiness-manifest.mjs",
-    "manifestAlgorithm": "sha256-v1 over git binary diff and sorted path-NUL-content-SHA entries",
+    "manifestAlgorithm": "sorted-path-mode-content-sha256-v1",
     "manifestExclusions": [
       "docs/architecture/veil-readiness-ledger.json",
       "docs/architecture/evidence/**"
     ],
-    "codeTrackedDiffSha256ExcludingSignoffArtifacts": "cb7ab933d2f35148d8f82f0e3a63fb1ffb464e358aea1c8c53b9b2508bcccded",
-    "codeUntrackedContentManifestSha256ExcludingSignoffArtifacts": "f068a20cc9ae9a11d7e4728dd742d9fb10e680bbe9dadd31df6687678b1edbca",
-    "codeWorkingTreeEntryCountExcludingSignoffArtifacts": 47,
     "evidenceManifestCommand": "node scripts/veil-evidence-manifest.mjs",
     "evidenceManifestAlgorithm": "sorted-path-NUL-sha256-v1",
-    "evidenceManifestSha256": "5b82ffddae15c23b6ab6804ac271f29732016d49a61aa33bd4173da0ce7c68c8",
-    "evidenceManifestEntryCount": 15
+    "evidenceManifestSha256": "703aea241422c22750d4a0661421759c5334a67e36f96dff5a07bae5e6a1a6e0",
+    "evidenceManifestEntryCount": 15,
+    "sourceRevisionAtEvidenceRefresh": "9cfdc4e16e0ae3acd087623ce8e9a971124a1ca8",
+    "sourceBranchAtEvidenceRefresh": "chore/reconstruct",
+    "codeContentManifestSha256": "775d56381c5ea85895177ea738a01dec48aacdd4d31d558076120b93f503732e",
+    "codeEntryCount": 535
   },
   "fingerprints": {
     "schema": "5b4c1cdc9432b1378c75d4c57c674c63735a500d7e5fb7956d872d7c1cffa52f",

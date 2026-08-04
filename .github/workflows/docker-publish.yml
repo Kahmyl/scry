@@ -59,6 +59,7 @@ jobs:
           pnpm verify:deployment-tiers
           pnpm verify:production-recovery
           pnpm verify:veil-release-evidence
+          pnpm verify:veil-manifest-stability
           pnpm verify:veil-release-transition
           pnpm typecheck
           pnpm test

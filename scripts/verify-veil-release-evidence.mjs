@@ -15,23 +15,12 @@ const evidence = JSON.parse(
 const failures = [];
 const identity = ledger.releaseIdentity;
 
-compare("base commit", identity.baseCommit, code.baseCommit);
-compare("branch", identity.branch, code.branch);
 compare(
-  "tracked code manifest",
-  identity.codeTrackedDiffSha256ExcludingSignoffArtifacts,
-  code.trackedDiffSha256,
+  "code content manifest",
+  identity.codeContentManifestSha256,
+  code.codeContentManifestSha256,
 );
-compare(
-  "untracked code manifest",
-  identity.codeUntrackedContentManifestSha256ExcludingSignoffArtifacts,
-  code.untrackedPathContentManifestSha256,
-);
-compare(
-  "code entry count",
-  identity.codeWorkingTreeEntryCountExcludingSignoffArtifacts,
-  code.codeWorkingTreeEntryCount,
-);
+compare("code entry count", identity.codeEntryCount, code.codeEntryCount);
 compare("evidence manifest", identity.evidenceManifestSha256, evidence.digest);
 compare("evidence entry count", identity.evidenceManifestEntryCount, evidence.entries.length);
 
