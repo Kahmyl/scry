@@ -22,6 +22,7 @@ const commands = [
   "pnpm verify:production-recovery",
   "pnpm verify:deployment-tiers",
   "pnpm verify:veil-release-evidence",
+  "pnpm verify:veil-manifest-stability",
   "pnpm campaign:veil:certification",
   "pnpm campaign:veil:adversarial",
   "pnpm campaign:veil:production-e2e",
@@ -42,6 +43,12 @@ for (const command of commands)
   if (!publish.includes(command)) failures.push(`release workflow does not run ${command}`);
 if (!workflow.includes("if: always()") || !workflow.includes("actions/upload-artifact@v4"))
   failures.push("Veil campaign evidence is not retained on failure");
+const evidencePreparation = workflow.indexOf("name: Prepare campaign evidence");
+const productionGate = workflow.indexOf("name: Verify Veil gates");
+if (evidencePreparation < 0 || productionGate < 0 || evidencePreparation > productionGate)
+  failures.push("Veil production evidence directory is not prepared before its fallible gates");
+if (!/name: veil-production-[\s\S]*?path: artifacts\/veil\s+if-no-files-found: warn/.test(workflow))
+  failures.push("Veil production evidence upload can mask an earlier campaign failure");
 const productionRoots = [
   resolve(root, "packages/executor/src"),
   resolve(root, "packages/artifact/src"),

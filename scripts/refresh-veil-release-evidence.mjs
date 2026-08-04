@@ -56,15 +56,22 @@ const ledger = JSON.parse(readFileSync(ledgerPath, "utf8"));
 ledger.updatedAt = new Date().toISOString();
 ledger.releaseDecision = "NOT_READY_PENDING_DEPLOYMENT_OPERATIONS_VALIDATION";
 Object.assign(ledger.releaseIdentity, {
-  baseCommit: codeManifest.baseCommit,
-  branch: codeManifest.branch,
-  codeTrackedDiffSha256ExcludingSignoffArtifacts: codeManifest.trackedDiffSha256,
-  codeUntrackedContentManifestSha256ExcludingSignoffArtifacts:
-    codeManifest.untrackedPathContentManifestSha256,
-  codeWorkingTreeEntryCountExcludingSignoffArtifacts: codeManifest.codeWorkingTreeEntryCount,
+  sourceRevisionAtEvidenceRefresh: codeManifest.sourceRevision,
+  sourceBranchAtEvidenceRefresh: codeManifest.sourceBranch,
+  manifestAlgorithm: codeManifest.algorithm,
+  codeContentManifestSha256: codeManifest.codeContentManifestSha256,
+  codeEntryCount: codeManifest.codeEntryCount,
   evidenceManifestSha256: evidenceManifest.digest,
   evidenceManifestEntryCount: evidenceManifest.entries.length,
 });
+for (const obsolete of [
+  "baseCommit",
+  "branch",
+  "codeTrackedDiffSha256ExcludingSignoffArtifacts",
+  "codeUntrackedContentManifestSha256ExcludingSignoffArtifacts",
+  "codeWorkingTreeEntryCountExcludingSignoffArtifacts",
+])
+  delete ledger.releaseIdentity[obsolete];
 const worker = JSON.parse(
   readFileSync("docs/architecture/evidence/reports/veil-worker-crash.json", "utf8"),
 );

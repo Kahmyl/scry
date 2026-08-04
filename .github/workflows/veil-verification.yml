@@ -75,6 +75,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - name: Prepare campaign evidence
+        run: mkdir -p artifacts/veil
       - name: Verify Veil gates
         run: |
           pnpm format:check
@@ -85,10 +87,10 @@ jobs:
           pnpm verify:deployment-tiers
           pnpm verify:production-recovery
           pnpm verify:veil-release-evidence
+          pnpm verify:veil-manifest-stability
           pnpm verify:veil-change-gate
           pnpm verify:subsystem-boundaries
           pnpm verify:repository-topology
-      - run: mkdir -p artifacts/veil
       - name: Run Veil certification
         env: { SCRY_BROWSER_CHANNEL: chrome }
         run: pnpm campaign:veil:certification | tee artifacts/veil/certification.json
@@ -113,7 +115,7 @@ jobs:
         with:
           name: veil-production-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/veil
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
 
   public-applications:

@@ -44,6 +44,7 @@
     "verify:production-recovery": "sh scripts/qualify-production-recovery.sh",
     "evidence:refresh:veil": "node scripts/refresh-veil-release-evidence.mjs",
     "verify:veil-release-evidence": "node scripts/verify-veil-release-evidence.mjs",
+    "verify:veil-manifest-stability": "node scripts/verify-veil-manifest-stability.mjs",
     "verify:veil-release-transition": "node scripts/verify-veil-release-transition.mjs",
     "verify:veil-db-restore": "bash scripts/veil-db-snapshot-restore.sh",
     "verify:veil-rollback:docker": "bash scripts/qualify-veil-cross-schema-rollback.sh",
