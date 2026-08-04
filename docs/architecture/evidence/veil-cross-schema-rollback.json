@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "qualification": "veil-cross-schema-rollback",
+  "status": "passed",
+  "startedAt": "2026-08-03T23:50:03Z",
+  "completedAt": "2026-08-03T23:51:36.097Z",
+  "runId": "20260803T235003Z-83715",
+  "prior": {
+    "releaseId": "rollback-prior-20260803T235003Z-83715",
+    "schemaFingerprint": "5b4c1cdc9432b1378c75d4c57c674c63735a500d7e5fb7956d872d7c1cffa52f",
+    "imageDigest": "sha256:035ee19d29e5c12904533bfef23ca385407dc2ef9f6301ee7ac9b09b1b8cc6ba",
+    "privacyAuthority": "veil-only"
+  },
+  "current": {
+    "releaseId": "rollback-current-20260803T235003Z-83715",
+    "schemaFingerprint": "2a17620da6e4480f8d19e2b802d8935d6a161f247901750fb2a41f9f39af011c",
+    "imageDigest": "sha256:9441455033b41e3e215ee49f0428fa0e1bbb4800bd475d01d6e35016b12b8488",
+    "privacyAuthority": "veil-only"
+  },
+  "proofs": {
+    "priorFreshBoot": true,
+    "priorSnapshotNonempty": true,
+    "forwardMigrationApplied": true,
+    "preAndPostDataVerified": true,
+    "mixedSchemaPriorRefused": true,
+    "writersStoppedBeforeRestore": true,
+    "priorSnapshotRestored": true,
+    "exactPriorComponentsReady": true,
+    "priorWorkerHeartbeatVerified": true,
+    "priorImageLabelsVerified": true,
+    "currentSnapshotRestored": true,
+    "exactCurrentComponentsReady": true,
+    "veilOnlyAuthorityPreserved": true
+  },
+  "commands": [
+    "docker build prior/current labeled images",
+    "compose boot API/worker/MCP",
+    "pg_dump custom snapshot",
+    "controlled schema-B migration",
+    "mixed-schema readiness refusal",
+    "writer-fenced pg_restore schema A",
+    "writer-fenced pg_restore schema B"
+  ],
+  "safety": {
+    "isolatedComposeProject": true,
+    "disposableVolumes": true,
+    "secretsRecorded": false,
+    "cleanup": "trap removes project volumes, images, and temporary snapshots"
+  }
+}

@@ -1,0 +1,139 @@
+name: Verify Veil Production Capability
+
+on:
+  pull_request:
+    paths: &veil-paths
+      - ".github/workflows/veil-verification.yml"
+      - ".github/workflows/docker-publish.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "packages/contracts/**"
+      - "packages/executor/**"
+      - "packages/policy/**"
+      - "packages/praxis/**"
+      - "packages/veil/**"
+      - "apps/api/**"
+      - "compose.deploy.yml"
+      - "docker/Dockerfile.backup"
+      - "scripts/operations/**"
+      - "scripts/qualify-production-recovery.sh"
+      - "ops/observability/**"
+      - "scripts/verify-subsystem-boundaries.mjs"
+      - "scripts/verify-deployment-*.mjs"
+      - "scripts/verify-veil-*.mjs"
+      - "docs/architecture/veil-*.json"
+  push:
+    branches: [main]
+    paths: *veil-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veil-production-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  worker-crash-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SCRY_SERVICE_TOKEN: veil-ci-worker-crash-service-token
+      VEIL_ADMISSION_KEY: veil-ci-admission-key-at-least-32-bytes
+      WORKER_STALE_MS: "5000"
+      WORKER_HEARTBEAT_MS: "500"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.29.3 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Configure isolated topology identity
+        run: printf 'SCRY_SERVICE_TOKEN=%s\nSCRY_ORCHESTRATION_ENABLED=true\n' "$SCRY_SERVICE_TOKEN" > apps/api/.env
+      - name: Start production-shaped worker topology
+        run: docker compose up -d --build --wait postgres redis migrate api worker
+      - name: Run calibrated worker SIGKILL and recovery campaign
+        run: pnpm campaign:veil:worker-crash | tee veil-worker-crash-recovery.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: veil-worker-crash-${{ github.run_id }}-${{ github.run_attempt }}
+          path: veil-worker-crash-recovery.json
+          if-no-files-found: error
+      - if: always()
+        run: docker compose down -v --remove-orphans
+
+  production-campaigns:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.29.3 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Verify Veil gates
+        run: |
+          pnpm format:check
+          pnpm typecheck
+          pnpm test
+          pnpm verify:veil-performance
+          pnpm verify:production-operations
+          pnpm verify:deployment-tiers
+          pnpm verify:production-recovery
+          pnpm verify:veil-release-evidence
+          pnpm verify:veil-change-gate
+          pnpm verify:subsystem-boundaries
+          pnpm verify:repository-topology
+      - run: mkdir -p artifacts/veil
+      - name: Run Veil certification
+        env: { SCRY_BROWSER_CHANNEL: chrome }
+        run: pnpm campaign:veil:certification | tee artifacts/veil/certification.json
+      - name: Run Veil adversarial qualification
+        env: { SCRY_BROWSER_CHANNEL: chrome }
+        run: pnpm campaign:veil:adversarial | tee artifacts/veil/adversarial.json
+      - name: Run production executor evidence lifecycle
+        env: { SCRY_BROWSER_CHANNEL: chrome }
+        run: pnpm campaign:veil:production-e2e | tee artifacts/veil/production-e2e.json
+      - name: Run complete required-scope qualification
+        run: pnpm campaign:veil:release-scope | tee artifacts/veil/release-scope.json
+      - name: Run all Praxis campaigns before Veil acceptance
+        env: { SCRY_BROWSER_CHANNEL: chrome }
+        run: |
+          pnpm campaign:praxis | tee artifacts/veil/praxis-baseline.json
+          pnpm campaign:praxis:100 | tee artifacts/veil/praxis-100.json
+          pnpm campaign:praxis:resilience | tee artifacts/veil/praxis-resilience.json
+          pnpm campaign:praxis:certification | tee artifacts/veil/praxis-certification.json
+          pnpm campaign:praxis:public-apps | tee artifacts/veil/praxis-public.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: veil-production-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/veil
+          if-no-files-found: error
+          retention-days: 30
+
+  public-applications:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.29.3 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: mkdir -p artifacts/veil-public
+      - name: Run non-destructive live qualification
+        env: { SCRY_BROWSER_CHANNEL: chrome }
+        run: pnpm campaign:veil:public-apps | tee artifacts/veil-public/public-applications.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: veil-public-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/veil-public
+          if-no-files-found: error
+          retention-days: 30

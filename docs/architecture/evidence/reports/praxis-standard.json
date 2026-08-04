@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "command": ["pnpm", "campaign:praxis"],
+  "startedAt": "2026-08-03T11:49:53.094Z",
+  "completedAt": "2026-08-03T11:50:04.654Z",
+  "durationMs": 11560,
+  "exitCode": 0,
+  "reportSha256": "9c482bff3a7b7ba0457230be4090bdaefb983f53fcaef217b2ff53182223a011",
+  "report": {
+    "schemaVersion": 1,
+    "campaign": "praxis-core-production-shaped",
+    "executedAt": "2026-08-03T11:50:04.534Z",
+    "environment": {
+      "transport": "real_http",
+      "browser": "real_chromium",
+      "browserVersion": "150.0.7871.187",
+      "channel": "chrome",
+      "origin": "http://127.0.0.1:60730",
+      "persistence": false,
+      "missionFlowInfrastructure": false
+    },
+    "counts": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0,
+      "skipped": 0
+    },
+    "scenarios": [
+      {
+        "id": "native-semantic-activation",
+        "category": "valid",
+        "status": "passed",
+        "durationMs": 545.001792
+      },
+      {
+        "id": "custom-role-activation",
+        "category": "poor_implementation",
+        "status": "passed",
+        "durationMs": 304.165209
+      },
+      {
+        "id": "wrapped-labelled-text-entry",
+        "category": "poor_implementation",
+        "status": "passed",
+        "durationMs": 239.16091700000015
+      },
+      {
+        "id": "contenteditable-entry",
+        "category": "custom_control",
+        "status": "passed",
+        "durationMs": 616.62525
+      },
+      {
+        "id": "native-option-selection",
+        "category": "valid",
+        "status": "passed",
+        "durationMs": 548.669875
+      },
+      {
+        "id": "native-toggle-state",
+        "category": "valid",
+        "status": "passed",
+        "durationMs": 390.6283330000001
+      },
+      {
+        "id": "named-scope-disambiguation",
+        "category": "scoping",
+        "status": "passed",
+        "durationMs": 615.4900830000001
+      },
+      {
+        "id": "duplicate-identity-refusal",
+        "category": "ambiguity",
+        "status": "passed",
+        "durationMs": 500.86025000000063
+      },
+      {
+        "id": "delayed-render-within-budget",
+        "category": "delayed_rendering",
+        "status": "passed",
+        "durationMs": 679.9565000000002
+      },
+      {
+        "id": "safe-recovery-after-render",
+        "category": "recovery",
+        "status": "passed",
+        "durationMs": 598.7687079999996
+      },
+      {
+        "id": "replacement-between-revalidation-and-click",
+        "category": "dynamic_replacement",
+        "status": "passed",
+        "durationMs": 318.4795830000003
+      },
+      {
+        "id": "disabled-control-refusal",
+        "category": "unsupported",
+        "status": "passed",
+        "durationMs": 936.7233329999999
+      },
+      {
+        "id": "incorrect-effect-is-inconclusive",
+        "category": "incorrect_output",
+        "status": "passed",
+        "durationMs": 972.243875000001
+      },
+      {
+        "id": "same-origin-navigation-effect",
+        "category": "navigation",
+        "status": "passed",
+        "durationMs": 403.0399589999997
+      },
+      {
+        "id": "disallowed-origin-refusal",
+        "category": "security_boundary",
+        "status": "passed",
+        "durationMs": 231.77916600000026
+      },
+      {
+        "id": "secret-input-redaction",
+        "category": "privacy",
+        "status": "passed",
+        "durationMs": 473.1958330000016
+      },
+      {
+        "id": "required-visual-channel-forbidden",
+        "category": "privacy_failure",
+        "status": "passed",
+        "durationMs": 300.14066699999967
+      },
+      {
+        "id": "closed-shadow-typed-refusal",
+        "category": "unsupported",
+        "status": "passed",
+        "durationMs": 795.8397079999995
+      },
+      {
+        "id": "public-read-returns-exact-output",
+        "category": "read_output",
+        "status": "passed",
+        "durationMs": 254.18658399999913
+      },
+      {
+        "id": "cancelled-before-observation",
+        "category": "cancellation",
+        "status": "passed",
+        "durationMs": 179.68195800000103
+      }
+    ]
+  }
+}

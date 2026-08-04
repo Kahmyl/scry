@@ -1,0 +1,249 @@
+{
+  "schemaVersion": 1,
+  "command": ["pnpm", "campaign:veil:release-scope"],
+  "startedAt": "2026-08-03T11:49:08.235Z",
+  "completedAt": "2026-08-03T11:49:11.306Z",
+  "durationMs": 3071,
+  "exitCode": 0,
+  "reportSha256": "eb073dd2940a63b236ced575a6b59b4ec1fae36a828fa6eb066af3d6a2c0d652",
+  "report": {
+    "schemaVersion": 1,
+    "campaign": "veil-failure-boundaries",
+    "executedAt": "2026-08-03T11:49:11.234Z",
+    "environment": {
+      "deterministic": true,
+      "externalMutation": "none",
+      "secretValuesPersisted": false
+    },
+    "counts": {
+      "required": 28,
+      "executed": 28,
+      "passed": 28,
+      "failed": 0,
+      "missing": 0,
+      "skipped": 0
+    },
+    "coverage": {
+      "failureInjection": [
+        "collector-prepare",
+        "collector-suspend",
+        "collector-isolate",
+        "collector-resume",
+        "collector-seal",
+        "collector-finalize",
+        "policy-change",
+        "lease-expiry",
+        "navigation",
+        "document-epoch",
+        "page-loss",
+        "context-loss",
+        "browser-loss",
+        "storage-failure",
+        "admission-failure",
+        "masking-runtime-loss",
+        "timeout",
+        "cancellation-normal",
+        "cancellation-preparing",
+        "cancellation-suspended",
+        "cancellation-isolated",
+        "cancellation-protected",
+        "cancellation-resuming",
+        "cancellation-sealed",
+        "cancellation-finalized",
+        "retry",
+        "concurrency",
+        "crash-recovery"
+      ],
+      "productionPathEvidence": {
+        "controlledReplicasAndRetainedCanaries": "veil-production-e2e",
+        "opaqueBrowserAndLifecycleSurfaces": "veil-adversarial",
+        "corpusAndEndurance": "veil-certification"
+      },
+      "companionExecutableCampaigns": [
+        "veil-certification",
+        "veil-adversarial",
+        "veil-production-e2e",
+        "veil-public-application-qualification",
+        "veil-performance"
+      ]
+    },
+    "durableEvidence": {
+      "safeScenarioIdentifiers": true,
+      "content": "digests-and-dispositions-only",
+      "reportDigest": "90011edbf2b1992922b0960dec1c7eeb1a020a9bd4645007503ed1e9a7734b2f"
+    },
+    "qualification": "VEIL_FAILURE_BOUNDARIES_PASS",
+    "readiness": "PASSED_AS_COMBINED_CAMPAIGN_COMPONENT",
+    "missing": [],
+    "results": [
+      {
+        "id": "failure:collector-prepare",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "73884f0912e5cdf07acbd219a4e95e6e06a0a1d909550451daa970f39e38af03"
+      },
+      {
+        "id": "failure:collector-suspend",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "7c7b015b4b8463c009ea2c0ead4590ff8e9ee67b32e0b61a23f3a6df252ef534"
+      },
+      {
+        "id": "failure:collector-isolate",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "867627b02cbc5220aa7648704a65627e54215d43e96aea670694508a52e4519a"
+      },
+      {
+        "id": "failure:collector-resume",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "1d860a95b2cfa3d1555ffbc07cf8f5b927b02d4ce495d2fa9c378e54313ef3df"
+      },
+      {
+        "id": "failure:collector-seal",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "aa31cc87d84fd29ae2365798aad721d8ef06ad81bb3ccb10575d482c174f5a82"
+      },
+      {
+        "id": "failure:collector-finalize",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "480be047cffefe01c33a385fa351f259bb840303e06f708005323c97cb5b4f12"
+      },
+      {
+        "id": "failure:policy-change",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "84ef9f4c62cb71b427c141c320aa1c37bcd3551d89bb9e64b5b89b6ef3465cc4"
+      },
+      {
+        "id": "failure:lease-expiry",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "996c0ea40de8f7e80361fdc6fa10d626d2a1e24ad9c93c5c4fa878bdc2e05f9a"
+      },
+      {
+        "id": "failure:navigation",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "2e0a878333734e3c4fab817bc3a35ac165d122ed5e4bdc53bfaf53d0d0f319e8"
+      },
+      {
+        "id": "failure:document-epoch",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "57eb873e6e6ae8ca81ed7a0b4b0d65fa8542fa46ca1b801bdb38dcd5a601ff3f"
+      },
+      {
+        "id": "failure:page-loss",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "fae2de0955c569c37d5ca402c75ec4af59a42a320d1572cca9d81b7c510b3f72"
+      },
+      {
+        "id": "failure:context-loss",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "a20a19439fede0b423f0d06531f0e26eb3bbf1fa0f98862eb814a1600dfd76ae"
+      },
+      {
+        "id": "failure:browser-loss",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "0719f97c4ab06f81affb8cf517728f91bdc3e0b0ff9a9cf9a3df93b342eb8242"
+      },
+      {
+        "id": "failure:storage-failure",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "ab87f9b85c03805fd2fba55f70368ac6858b8049733390d40c235cbbf560ea95"
+      },
+      {
+        "id": "failure:admission-failure",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "d96086684512386abc5cf18e2ce263c353b5e48b88faf2012095a968f6c32922"
+      },
+      {
+        "id": "failure:masking-runtime-loss",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "1633ccd91bc14964135536315d20d23ee2eb25b3a51ccc1dbb976ab7008622f8"
+      },
+      {
+        "id": "failure:crash-recovery",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "ff1362f1032f3cde79b22ed3b7c91442aaa52012bc146383774f8ec1e88d5f83"
+      },
+      {
+        "id": "failure:timeout",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "9f092647080cb3a6c6dae8832213451e41f8117fc5e4247c4b435fa885ad0254"
+      },
+      {
+        "id": "failure:cancellation-normal",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "21f8628d204746f7e2cfb378041d94d9528b664bf50c09d05c9860a58dbd8030"
+      },
+      {
+        "id": "failure:cancellation-preparing",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "d455c7b021849af2039b06bf6351569cf6505616aa308b9ab4f89cb6a522a3b0"
+      },
+      {
+        "id": "failure:cancellation-suspended",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "fdf270ae61fced78698ea12912cfc6e315307f1173706932d3a39f02233e442d"
+      },
+      {
+        "id": "failure:cancellation-isolated",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "ecaff7dab6854dd765b9c891522bc0d158dbf8a2b2b224df30f04fb05fd93071"
+      },
+      {
+        "id": "failure:cancellation-protected",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "e465771e793acc369becff4acd45009b669a73ef1c6f3c4087d64074c3a66016"
+      },
+      {
+        "id": "failure:cancellation-resuming",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "e5ede2afc5aff59d1bc03c774d445a8dbf006e05e87d11f63a2db7d03142ce83"
+      },
+      {
+        "id": "failure:cancellation-sealed",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "7dfa21ca52602ef076f81e9e2643852e206f3c29440968523295afced9b0fefe"
+      },
+      {
+        "id": "failure:cancellation-finalized",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "475c501dd9e5d537d8ace27a5315ff30445afc17e7e08632fdd79fb44567c81c"
+      },
+      {
+        "id": "failure:retry",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "334d36e9395b7b3e6d003b6ef5c175561c6662e5c033d7c1270dc89d8882647f"
+      },
+      {
+        "id": "failure:concurrency",
+        "category": "failure-injection",
+        "status": "passed",
+        "evidenceDigest": "2c488a8e931ce64f5396dd6f0899bce83e7cb33ce1cd9cc9580d57b6234aef75"
+      }
+    ]
+  }
+}

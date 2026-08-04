@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-04T05:18:44.670Z",
+  "environment": {
+    "workspace": "/Users/habib/Documents/monorepo/scry",
+    "node": "v22.14.0",
+    "browser": "Google Chrome 150.0.7871.187",
+    "browserChannel": "chrome",
+    "transport": ["real_http", "public_https"],
+    "requiredSkips": 0
+  },
+  "reports": [
+    {
+      "id": "veil-certification-20260803",
+      "command": "pnpm campaign:veil:certification",
+      "result": "100/100; endurance 1000/1000",
+      "status": "passed",
+      "executedAt": "2026-08-03T11:46:53.339Z",
+      "artifact": "docs/architecture/evidence/reports/veil-certification.json",
+      "reportSha256": "20aa2b20e96bb576b4fda6ab74f76dd25cb04efd9ed9d7bfe0381c99d9ddbf6c"
+    },
+    {
+      "id": "veil-adversarial-20260803",
+      "command": "pnpm campaign:veil:adversarial",
+      "result": "11/11",
+      "status": "passed",
+      "executedAt": "2026-08-03T11:47:25.023Z",
+      "artifact": "docs/architecture/evidence/reports/veil-adversarial.json",
+      "reportSha256": "67d0b76cb70a08d0428862db99f05f2b137cd299f835d0daee6fdf75ead207c8"
+    },
+    {
+      "id": "veil-production-e2e-final-20260803",
+      "command": "pnpm campaign:veil:production-e2e",
+      "result": "286/286; fresh evidence rerun; 8 controlled workflows; 19 unique canary surfaces",
+      "status": "passed",
+      "executedAt": "2026-08-03T11:48:53.104Z",
+      "artifact": "docs/architecture/evidence/reports/veil-production-e2e.json",
+      "reportSha256": "d6b9f51d33b8f0ba64750478220098bb619cc844d20106e8a4c0a14f37a50aa3"
+    },
+    {
+      "id": "veil-failure-boundaries-20260803",
+      "command": "pnpm campaign:veil:release-scope",
+      "result": "28/28; cancellation at every runtime state",
+      "status": "passed",
+      "executedAt": "2026-08-03T11:49:11.306Z",
+      "artifact": "docs/architecture/evidence/reports/veil-release-scope.json",
+      "reportSha256": "2c453cf0896a4eb6d63302a7305ebf5b0561c91a248bdf2fb3b52a3aff6a1d23"
+    },
+    {
+      "id": "veil-worker-crash-b6c2fcf5",
+      "command": "pnpm campaign:veil:worker-crash",
+      "result": "one protected POST; two attempts; one executor checkpoint; zero DB leaks; four artifact-volume files scanned",
+      "status": "passed",
+      "runId": "b6c2fcf5-6848-46bd-9424-7a24f7528d91",
+      "topology": "fresh isolated migrated Docker database/API/worker/MCP",
+      "cleanup": "containers_network_volumes_removed",
+      "artifact": "docs/architecture/evidence/reports/veil-worker-crash.json",
+      "reportSha256": "018f06721e15c9922a7d96a96b096a690b3b6e5e432822d07fa5c61be0b49e87",
+      "executedAt": "2026-08-03T11:55:19Z"
+    },
+    {
+      "id": "veil-public-apps-20260803",
+      "command": "pnpm campaign:veil:public-apps",
+      "result": "25/25",
+      "status": "passed",
+      "executedAt": "2026-08-03T11:49:41.158Z",
+      "artifact": "docs/architecture/evidence/reports/veil-public-apps.json",
+      "reportSha256": "be8dc5530c47624c9b4c3626723462895e668cd52c17811e1cc8e1b5f2e04ee5"
+    },
+    {
+      "id": "veil-performance-20260803",
+      "command": "pnpm verify:veil-performance",
+      "result": "all thresholds passed",
+      "status": "passed",
+      "executedAt": "2026-08-03T11:49:04.070Z",
+      "artifact": "docs/architecture/evidence/reports/veil-performance.json",
+      "reportSha256": "0be57304a0e7cdfaebd42d6b2649827762641705795e49faf01e3c51b859f46c"
+    },
+    {
+      "id": "praxis-standard-20260803",
+      "command": "pnpm campaign:praxis",
+      "result": "20/20",
+      "status": "passed",
+      "executedAt": "2026-08-03T11:50:04.654Z",
+      "artifact": "docs/architecture/evidence/reports/praxis-standard.json",
+      "reportSha256": "2a37c7147b170a9efc68b7e2586c4de4cefa07471cd217843f35991c74841468"
+    },
+    {
+      "id": "praxis-100-20260803",
+      "command": "pnpm campaign:praxis:100",
+      "result": "100/100",
+      "status": "passed",
+      "executedAt": "2026-08-03T11:52:35.610Z",
+      "artifact": "docs/architecture/evidence/reports/praxis-100.json",
+      "reportSha256": "fc8f1c069d2cf3f317695387b911687b650cd8026b3b36acb4406c6aa5fa9412"
+    },
+    {
+      "id": "praxis-resilience-20260803",
+      "command": "pnpm campaign:praxis:resilience",
+      "result": "80/80; endurance 100/100",
+      "status": "passed",
+      "executedAt": "2026-08-03T11:53:04.024Z",
+      "artifact": "docs/architecture/evidence/reports/praxis-resilience.json",
+      "reportSha256": "1da4d783ac2a447f9beacb96d11e877dc8c850db47937ede1238080454741a08"
+    },
+    {
+      "id": "praxis-certification-20260803",
+      "command": "pnpm campaign:praxis:certification",
+      "result": "160/160; endurance 1000/1000",
+      "status": "passed",
+      "executedAt": "2026-08-03T11:51:12.482Z",
+      "artifact": "docs/architecture/evidence/reports/praxis-certification.json",
+      "reportSha256": "7753d2873ec294308e44dbb2047f41be1f808b18d84c17cadf35413b3d659ba6"
+    },
+    {
+      "id": "praxis-public-apps-20260803",
+      "command": "pnpm campaign:praxis:public-apps",
+      "result": "25/25",
+      "status": "passed",
+      "executedAt": "2026-08-03T11:50:58.481Z",
+      "artifact": "docs/architecture/evidence/reports/praxis-public-apps.json",
+      "reportSha256": "f21b1ee5db77c97f5730894065cfd85581ba29224f52910406ffd84f7b179ef1"
+    },
+    {
+      "id": "fresh-schema-topology-20260803",
+      "command": "docker compose -p scry-veil-fresh up --build --wait postgres redis migrate api worker mcp",
+      "result": "clean baseline and API/worker/MCP healthy",
+      "status": "passed",
+      "schemaFingerprint": "5b4c1cdc9432b1378c75d4c57c674c63735a500d7e5fb7956d872d7c1cffa52f",
+      "cleanup": "containers_network_volumes_removed"
+    },
+    {
+      "id": "predecessor-upgrade-topology-20260803",
+      "command": "docker compose up --build --wait postgres redis migrate api worker mcp",
+      "result": "guarded predecessor upgrade and API/worker/MCP healthy",
+      "status": "passed",
+      "schemaFingerprint": "5b4c1cdc9432b1378c75d4c57c674c63735a500d7e5fb7956d872d7c1cffa52f"
+    },
+    {
+      "id": "cross-schema-rollback-20260803T113946Z-88865",
+      "command": "pnpm verify:veil-rollback:docker",
+      "result": "schema A snapshot; schema B forward migration; mixed refusal; A restore; B restore; exact component/data/authority verification",
+      "status": "passed",
+      "runId": "20260803T113946Z-88865",
+      "artifact": "docs/architecture/evidence/veil-cross-schema-rollback.json",
+      "executedAt": "2026-08-03T23:51:36.097Z",
+      "reportSha256": "56bb6346d23643aba5f3cfe46ef2beb2c6fd726fe6e0ec8512824fee95e9c451"
+    },
+    {
+      "id": "production-operations-20260803",
+      "command": "pnpm verify:production-operations plus production-shaped encrypted PITR drill",
+      "result": "8/8 backup, WAL, restore, promotion, query, shutdown; 7 alert rules validated",
+      "status": "passed",
+      "executedAt": "2026-08-03T23:48:55.000Z",
+      "artifact": "docs/architecture/evidence/reports/production-operations.json",
+      "reportSha256": "6f97b5e6f4b85d66f651b4a4531dc83485ed1e18d7ce36d1e9958094f599c5ac"
+    }
+  ],
+  "testSuites": {
+    "typecheck": "passed_all_9_projects",
+    "rootTests": "passed; executor 204/204; API 73/73 standard plus 2/2 opt-in transactional database suites on fresh migrated PostgreSQL; all other workspaces green",
+    "privacyFoundation": "passed",
+    "releaseFingerprint": "passed",
+    "veilChangeGate": "passed",
+    "releaseTransitionValidator": "passed",
+    "diffCheck": "passed",
+    "productionOperations": "passed_13_services_pitr_backup_restore_and_7_alert_rules"
+  }
+}

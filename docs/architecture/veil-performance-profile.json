@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "referenceEnvironment": "Node.js 22, production Chrome channel",
+  "limits": {
+    "cachedDecisionP50Ms": 1,
+    "cachedDecisionP95Ms": 3,
+    "structuralDecisionP95Ms": 15,
+    "leaseValidationP95Ms": 1,
+    "collectorSuspensionP95Ms": 100,
+    "cancellationPropagationMs": 250,
+    "retainedMemoryGrowthPercent": 30
+  }
+}

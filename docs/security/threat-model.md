@@ -18,18 +18,18 @@
 
 ## Primary threats and Phase 0 controls
 
-| Threat | Required control |
-| --- | --- |
-| SSRF or external navigation | Exact HTTP(S) origin allowlist, enforced on every navigation and request |
-| Destructive application action | MVP deny-by-default capability policy and staging-only guidance |
-| Prompt injection from page content | No runtime AI or replanning in the MVP |
-| Secret disclosure | Plans use secret references; secret values are forbidden in stored events |
-| Infinite or expensive execution | Wall-clock, action, and navigation budgets |
-| Arbitrary code execution | No evaluate/script action in protocol v1 |
-| Duplicate queue delivery | Immutable attempts and fenced worker claims |
-| Worker crash | Heartbeat, terminal infrastructure status, and best-effort artifact finalization |
-| Malicious artifact | Content-type validation, safe download behavior, and no inline active HTML |
-| Audit record tampering | Append-only events and immutable execution snapshots |
+| Threat                             | Required control                                                                 |
+| ---------------------------------- | -------------------------------------------------------------------------------- |
+| SSRF or external navigation        | Exact HTTP(S) origin allowlist, enforced on every navigation and request         |
+| Destructive application action     | MVP deny-by-default capability policy and staging-only guidance                  |
+| Prompt injection from page content | No runtime AI or replanning in the MVP                                           |
+| Secret disclosure                  | Plans use secret references; secret values are forbidden in stored events        |
+| Infinite or expensive execution    | Wall-clock, action, and navigation budgets                                       |
+| Arbitrary code execution           | No evaluate/script action in protocol v1                                         |
+| Duplicate queue delivery           | Immutable attempts and fenced worker claims                                      |
+| Worker crash                       | Heartbeat, terminal infrastructure status, and best-effort artifact finalization |
+| Malicious artifact                 | Content-type validation, safe download behavior, and no inline active HTML       |
+| Audit record tampering             | Append-only events and immutable execution snapshots                             |
 
 ## Navigation policy
 

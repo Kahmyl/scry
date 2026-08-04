@@ -1,5 +1,4 @@
 export * from "./executor.js";
-export * from "./privacy-gate.js";
 export * from "./public-value-capture.js";
 export * from "./recording-coordinator.js";
 export * from "./trace-coordinator.js";
@@ -7,9 +6,5 @@ export * from "./checkpoint-coordinator.js";
 export * from "./browser-session.js";
 export * from "./protected-transaction-coordinator.js";
 export * from "./calibration.js";
-export * from "./browser-runtime-artifacts.js";
 export * from "./probe.js";
-export * from "./grounding.js";
-export * from "./visual-grounding.js";
-export * from "./adapters.js";
 export * from "./types.js";

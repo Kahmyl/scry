@@ -1,0 +1,40 @@
+groups:
+  - name: scry-production
+    rules:
+      - alert: ScryEndpointUnavailable
+        expr: probe_success{job="scry-blackbox"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Scry endpoint unavailable: {{ $labels.instance }}"
+      - alert: PostgreSQLUnavailable
+        expr: pg_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: "PostgreSQL exporter cannot reach PostgreSQL" }
+      - alert: RedisUnavailable
+        expr: redis_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: "Redis exporter cannot reach Redis" }
+      - alert: BackupJobFailed
+        expr: scry_backup_last_run_status == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations: { summary: "Backup or restore operation failed: {{ $labels.job }}" }
+      - alert: PostgreSQLWalBackupStale
+        expr: time() - scry_backup_last_success_unixtime{job="postgres-wal"} > 600
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          { summary: "PostgreSQL WAL off-host backup exceeds the 10-minute alert threshold" }
+      - alert: ArtifactBackupStale
+        expr: time() - scry_backup_last_success_unixtime{job="artifacts"} > 1800
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Artifact backup is older than 30 minutes" }
+      - alert: RestoreDrillStale
+        expr: time() - scry_backup_last_success_unixtime{job="restore-drill"} > 691200
+        for: 1h
+        labels: { severity: critical }
+        annotations: { summary: "No successful restore drill in eight days" }

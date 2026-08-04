@@ -23,9 +23,17 @@ const httpServer = createServer(async (request, response) => {
     try {
       const api = new ScryApiClient(apiBaseUrl, process.env.SCRY_SERVICE_TOKEN, publicApiBaseUrl);
       const readiness = await api.get<{ ready: boolean; releaseId: string }>("/ready");
-      json(response, readiness.ready ? 200 : 503, { status: readiness.ready ? "ok" : "not_ready", transport: "streamable-http", api: readiness });
+      json(response, readiness.ready ? 200 : 503, {
+        status: readiness.ready ? "ok" : "not_ready",
+        transport: "streamable-http",
+        api: readiness,
+      });
     } catch (error) {
-      json(response, 503, { status: "incompatible", transport: "streamable-http", error: error instanceof Error ? error.message : String(error) });
+      json(response, 503, {
+        status: "incompatible",
+        transport: "streamable-http",
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
     return;
   }
@@ -41,11 +49,7 @@ const httpServer = createServer(async (request, response) => {
   }
 
   if (request.method !== "POST") {
-    json(
-      response,
-      405,
-      mcpError(-32000, "This stateless MCP endpoint accepts POST requests."),
-    );
+    json(response, 405, mcpError(-32000, "This stateless MCP endpoint accepts POST requests."));
     return;
   }
 

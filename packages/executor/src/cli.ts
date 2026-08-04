@@ -3,11 +3,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import {
-  executionPolicySchema,
-  currentPlanSchema,
-  type ExecutionPolicy,
-} from "@scry/contracts";
+import { executionPolicySchema, currentPlanSchema, type ExecutionPolicy } from "@scry/contracts";
 
 import { executePlan } from "./executor.js";
 
@@ -26,9 +22,7 @@ async function main() {
   const plan = currentPlanSchema.parse(JSON.parse(await readFile(planPath, "utf8")));
   const policyPath = readFlag(flags, "--policy");
   const policy = policyPath
-    ? executionPolicySchema.parse(
-        JSON.parse(await readFile(path.resolve(policyPath), "utf8")),
-      )
+    ? executionPolicySchema.parse(JSON.parse(await readFile(path.resolve(policyPath), "utf8")))
     : defaultPolicy(plan.allowedOrigins, plan.budgets);
 
   const controller = new AbortController();
@@ -88,6 +82,8 @@ function usage() {
 }
 
 void main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+  process.stderr.write(
+    `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+  );
   process.exitCode = 1;
 });

@@ -26,4 +26,3 @@ safe-boundary verification are implemented in later phases.
 
 Chromium/Chrome is the initial supported browser. WebKit, Firefox, remote browser
 providers, and combined video export are outside this phase.
-

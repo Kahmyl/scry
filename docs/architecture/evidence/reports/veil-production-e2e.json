@@ -1,0 +1,1230 @@
+{
+  "schemaVersion": 1,
+  "command": ["pnpm", "campaign:veil:production-e2e"],
+  "startedAt": "2026-08-03T11:48:30.719Z",
+  "completedAt": "2026-08-03T11:48:53.104Z",
+  "durationMs": 22385,
+  "exitCode": 0,
+  "reportSha256": "329fdd958aca464724bc34412f18180dd042186b35591827bb6fe3cc54d79da1",
+  "report": {
+    "schemaVersion": 1,
+    "campaign": "veil-production-e2e",
+    "executedAt": "2026-08-03T11:48:53.077Z",
+    "environment": {
+      "transport": "real_http",
+      "browser": "production_executor_real_chrome",
+      "browserChannel": "chrome",
+      "storage": "LocalArtifactStore"
+    },
+    "counts": {
+      "total": 286,
+      "passed": 286,
+      "failed": 0,
+      "skipped": 0
+    },
+    "lifecycle": [
+      "executor_capture",
+      "veil_classification",
+      "veil_permit",
+      "signed_admission",
+      "storage",
+      "verified_retrieval",
+      "tamper_refusal",
+      "destruction"
+    ],
+    "coverage": {
+      "canarySurfaces": [
+        "dom-text",
+        "dom-attribute",
+        "accessibility",
+        "console",
+        "page-error",
+        "request",
+        "response",
+        "canvas",
+        "svg",
+        "webgl",
+        "video",
+        "clipboard",
+        "download",
+        "filename",
+        "trace",
+        "cache",
+        "diagnostic",
+        "report",
+        "memory-observable"
+      ],
+      "refusalChecks": [
+        "forged-admission-token",
+        "stored-byte-tampering",
+        "post-destruction-retrieval"
+      ],
+      "controlledReplicas": [
+        "credential",
+        "payment",
+        "recovery",
+        "health",
+        "financial",
+        "upload-download",
+        "cross-origin-authentication",
+        "protected-generated-value"
+      ],
+      "controlledReplicaExecution": "distinct_executePlan_fill_submit_server_transition_assert_capture_flows",
+      "coveredByCompanionCampaigns": {
+        "traceArchive": "veil-adversarial",
+        "crossOriginAuthentication": "veil-release-scope",
+        "processCrashAndRecovery": "veil-release-scope-and-docker-topology",
+        "multiProcessTopology": "docker-publish-production-topology",
+        "upgradeAndRollback": "verify-veil-release-transition"
+      }
+    },
+    "qualification": "PRODUCTION_EXECUTOR_PASS",
+    "readiness": "PASSED_AS_COMBINED_CAMPAIGN_COMPONENT",
+    "checks": [
+      {
+        "name": "executor completed",
+        "status": "passed"
+      },
+      {
+        "name": "all controlled replica HTTP workflows committed server state",
+        "status": "passed"
+      },
+      {
+        "name": "execution report and diagnostics exclude every independent surface canary",
+        "status": "passed"
+      },
+      {
+        "name": "real protectedTransaction completed one-time capsule mutation",
+        "status": "passed"
+      },
+      {
+        "name": "protected generated value reached only persistSecret boundary",
+        "status": "passed"
+      },
+      {
+        "name": "public generated value reached public capture persistence equivalent",
+        "status": "passed"
+      },
+      {
+        "name": "protected capsule was destroyed and evidence resumed without secret transfer",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction screenshot bytes exclude exact protected value",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction screenshot manifest binds policy decision and transaction",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction video bytes exclude exact protected value",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction video manifest binds policy decision and transaction",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction dom bytes exclude exact protected value",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction dom manifest binds policy decision and transaction",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction network bytes exclude exact protected value",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction network manifest binds policy decision and transaction",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction trace bytes exclude exact protected value",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction trace manifest binds policy decision and transaction",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction report bytes exclude exact protected value",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction report manifest binds policy decision and transaction",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction safe summary excludes protected value",
+        "status": "passed"
+      },
+      {
+        "name": "literal file upload used browser setInputFiles and reached server bytes",
+        "status": "passed"
+      },
+      {
+        "name": "literal server response produced an actual sanitized download",
+        "status": "passed"
+      },
+      {
+        "name": "cross-origin authentication iframe loaded in a distinct origin",
+        "status": "passed"
+      },
+      {
+        "name": "cross-origin auth completed iframe and popup postMessage transitions",
+        "status": "passed"
+      },
+      {
+        "name": "real accessibility tree carries independent canary before Veil suppression",
+        "status": "passed"
+      },
+      {
+        "name": "CDP heap snapshot observes protected retained-object canary before teardown",
+        "status": "passed"
+      },
+      {
+        "name": "authorized local clipboard write/read executed",
+        "status": "passed"
+      },
+      {
+        "name": "actual download filename contains independent canary",
+        "status": "passed"
+      },
+      {
+        "name": "actual downloaded bytes contain independent canary before destruction",
+        "status": "passed"
+      },
+      {
+        "name": "live cache and JS memory observables independently contain test canaries",
+        "status": "passed"
+      },
+      {
+        "name": "browser context teardown destroyed live cache memory clipboard and download realm",
+        "status": "passed"
+      },
+      {
+        "name": "renderer process target owning retained object is destroyed after context teardown",
+        "status": "passed"
+      },
+      {
+        "name": "old renderer CDP session is inaccessible after context teardown",
+        "status": "passed"
+      },
+      {
+        "name": "fresh renderer heap snapshot excludes destroyed context memory canary",
+        "status": "passed"
+      },
+      {
+        "name": "none of the 19 independent surface canaries entered admitted runtime evidence",
+        "status": "passed"
+      },
+      {
+        "name": "fresh authorized browser context reads platform clipboard before mutation and proves exact canary did not survive teardown",
+        "status": "passed"
+      },
+      {
+        "name": "mandatory clipboard cleanup separately writes and verifies empty platform state",
+        "status": "passed"
+      },
+      {
+        "name": "metadata filenames diagnostics reports and retained observables exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained archive bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "clipboard download cache and memory observables have no admitted representation",
+        "status": "passed"
+      },
+      {
+        "name": "executor produced admitted evidence",
+        "status": "passed"
+      },
+      {
+        "name": "all controlled replicas produced admitted screenshots",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot archive excludes all plaintext surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "visual canary pixels are absent",
+        "status": "passed"
+      },
+      {
+        "name": "non-protected visual control remains",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot archive excludes all plaintext surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "visual canary pixels are absent",
+        "status": "passed"
+      },
+      {
+        "name": "non-protected visual control remains",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot archive excludes all plaintext surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "visual canary pixels are absent",
+        "status": "passed"
+      },
+      {
+        "name": "non-protected visual control remains",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot archive excludes all plaintext surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "visual canary pixels are absent",
+        "status": "passed"
+      },
+      {
+        "name": "non-protected visual control remains",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot archive excludes all plaintext surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "visual canary pixels are absent",
+        "status": "passed"
+      },
+      {
+        "name": "non-protected visual control remains",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot archive excludes all plaintext surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "visual canary pixels are absent",
+        "status": "passed"
+      },
+      {
+        "name": "non-protected visual control remains",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot archive excludes all plaintext surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "visual canary pixels are absent",
+        "status": "passed"
+      },
+      {
+        "name": "non-protected visual control remains",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot archive excludes all plaintext surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "visual canary pixels are absent",
+        "status": "passed"
+      },
+      {
+        "name": "non-protected visual control remains",
+        "status": "passed"
+      },
+      {
+        "name": "video admitted through continuous segment authority",
+        "status": "passed"
+      },
+      {
+        "name": "video archive excludes all plaintext surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "admitted video decodes real frames",
+        "status": "passed"
+      },
+      {
+        "name": "decoded video frames exclude visual canary pixels",
+        "status": "passed"
+      },
+      {
+        "name": "decoded video retains non-protected visual control",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "dom: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "dom: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "network: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "network: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "dom: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "dom: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "network: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "network: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "dom: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "dom: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "network: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "network: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "dom: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "dom: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "network: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "network: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "dom: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "dom: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "network: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "network: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "dom: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "dom: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "network: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "network: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "dom: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "dom: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "network: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "network: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "screenshot: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "dom: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "dom: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "dom: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "network: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "network: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "network: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "network: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "network: retained bytes exclude all surface canaries",
+        "status": "passed"
+      },
+      {
+        "name": "video: admitted proof is bound to bytes",
+        "status": "passed"
+      },
+      {
+        "name": "video: stored through admission boundary",
+        "status": "passed"
+      },
+      {
+        "name": "video: verified retrieval",
+        "status": "passed"
+      },
+      {
+        "name": "video: forged proof refused",
+        "status": "passed"
+      },
+      {
+        "name": "video: tampered stored bytes refused",
+        "status": "passed"
+      },
+      {
+        "name": "video: quarantine destruction removed bytes",
+        "status": "passed"
+      },
+      {
+        "name": "video: retrieval after destruction refused",
+        "status": "passed"
+      },
+      {
+        "name": "protected transaction value is absent from all admitted executor artifacts",
+        "status": "passed"
+      }
+    ]
+  }
+}

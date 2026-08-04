@@ -1,0 +1,350 @@
+import { describe, expect, it } from "vitest";
+import { praxisResultSchema, type PraxisRequest, type PraxisResolution } from "@scry/contracts";
+import { GroundingError } from "../src/grounding.js";
+import {
+  PraxisAdapterError,
+  PraxisDispatchBoundary,
+  PraxisTransactionCoordinator,
+  PraxisTransactionStateMachine,
+  type PraxisTransactionAdapter,
+} from "../src/transaction.js";
+import {
+  authorizePraxisRequest,
+  registerPraxisVeilAuthority,
+  releasePraxisVeilGrants,
+} from "../src/veil-bridge.js";
+import { VeilAuthority } from "@scry/veil";
+import { compileVeilPolicy } from "@scry/veil";
+import type { Page } from "playwright";
+
+const veilPage = {} as Page;
+registerPraxisVeilAuthority(veilPage, {
+  authority: new VeilAuthority(
+    compileVeilPolicy({
+      profile: "balanced",
+      allowedOrigins: ["https://example.test"],
+      leaseTtlMs: 60_000,
+    }),
+  ),
+  userId: "test",
+  environmentId: "test",
+  browserContextId: "test-context",
+});
+const request = (operation: PraxisRequest["operation"] = { type: "activate" }): PraxisRequest =>
+  authorizePraxisRequest(veilPage, {
+    schemaVersion: 1,
+    transactionId: "tx-1",
+    operationId: "operation-1",
+    intent: {
+      concept: "save",
+      requiredCapabilities: ["pointer_activatable"],
+      preferredEvidence: {
+        roles: ["button"],
+        names: ["Save"],
+        labels: [],
+        descriptions: [],
+        placeholders: [],
+        inputTypes: [],
+      },
+      scope: { kind: "page" },
+      relations: [],
+      prohibited: ["hidden", "disabled"],
+      risk: "ordinary",
+      confidence: {
+        requiredFamilies: [],
+        minimum: 0.5,
+        minimumMargin: 0.05,
+        minimumFamilyCount: 2,
+      },
+    },
+    operation,
+    expectedEffect: { type: "none" },
+    risk: "ordinary",
+    policy: {
+      allowedOrigins: ["https://example.test"],
+      actionTimeoutMs: 1_000,
+      totalTimeoutMs: 2_000,
+    },
+    privacy: { state: "normal", allowedChannels: ["public_dom"], suppressedChannels: [] },
+    context: { pageId: "page-1", origin: "https://example.test", documentEpoch: 0 },
+  });
+const resolution: PraxisResolution = {
+  target: {
+    fingerprint: "a".repeat(64),
+    concept: "save",
+    scopeKind: "page",
+    capabilityDigest: "b".repeat(64),
+  },
+  confidence: 0.9,
+  runnerUpMargin: 0.4,
+  evidenceFamilies: ["accessibility", "structural"],
+  drift: "unchanged",
+  strategy: "native_click",
+};
+type Stage = "observe" | "ground" | "revalidate" | "dispatch" | "verifyLocal" | "verifyEffect";
+function adapter(
+  options: { fail?: Stage; abort?: Stage; controller?: AbortController } = {},
+): PraxisTransactionAdapter<object> & { dispatches: number } {
+  let dispatches = 0;
+  const stage = (name: Stage) => {
+    if (options.abort === name) options.controller?.abort();
+    if (options.fail === name) throw new PraxisAdapterError(`PRAXIS_${name.toUpperCase()}_FAILED`);
+  };
+  return {
+    get dispatches() {
+      return dispatches;
+    },
+    async observe() {
+      stage("observe");
+    },
+    async ground() {
+      stage("ground");
+      return { target: {}, resolution };
+    },
+    async revalidate() {
+      stage("revalidate");
+    },
+    async dispatch(_target, _request, _signal, boundary) {
+      dispatches += 1;
+      stage("dispatch");
+      boundary.beginMutation();
+      return { mutationOutcome: "unknown" };
+    },
+    async verifyLocal() {
+      stage("verifyLocal");
+      return "not_required";
+    },
+    async verifyEffect() {
+      stage("verifyEffect");
+      return "not_required";
+    },
+  };
+}
+
+describe("Praxis transaction coordinator", () => {
+  it("completes the lifecycle once with monotonic nonnegative timing", async () => {
+    const subject = adapter();
+    const events: string[] = [];
+    const result = await new PraxisTransactionCoordinator(subject, (e) => {
+      events.push(`${e.type}:${e.phase}`);
+    }).execute(request(), new AbortController().signal);
+    expect(result).toMatchObject({
+      status: "succeeded",
+      phase: "succeeded",
+      mutationOutcome: "applied",
+      verification: { local: "not_required", effect: "not_required" },
+    });
+    expect(() => praxisResultSchema.parse(result)).not.toThrow();
+    expect(subject.dispatches).toBe(1);
+    expect(events.at(0)).toBe("praxis.transaction_started:created");
+    expect(events.at(-1)).toBe("praxis.transaction_succeeded:succeeded");
+    for (const value of Object.values(result.timing))
+      if (typeof value === "number") expect(value).toBeGreaterThanOrEqual(0);
+  });
+  it.each(["observe", "ground", "revalidate"] as Stage[])(
+    "fails safely before dispatch at %s",
+    async (fail) => {
+      const subject = adapter({ fail });
+      const result = await new PraxisTransactionCoordinator(subject).execute(
+        request(),
+        new AbortController().signal,
+      );
+      expect(result).toMatchObject({ status: "failed", mutationOutcome: "not_started" });
+      expect(subject.dispatches).toBe(0);
+    },
+  );
+  it("preserves a proven non-applied dispatch failure and never redispatches", async () => {
+    const subject = adapter({ fail: "dispatch" });
+    const result = await new PraxisTransactionCoordinator(subject).execute(
+      request(),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      mutationOutcome: "not_applied",
+      diagnostics: { mutationBoundaryCrossed: false },
+    });
+    expect(subject.dispatches).toBe(1);
+  });
+  it("derives unknown only after the authoritative mutation boundary", async () => {
+    const subject = adapter();
+    subject.dispatch = async (_target, _request, _signal, boundary) => {
+      boundary.beginMutation();
+      throw new Error("browser lost");
+    };
+    const result = await new PraxisTransactionCoordinator(subject).execute(
+      request(),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      status: "inconclusive",
+      mutationOutcome: "unknown",
+      retry: "unsafe",
+      safeActions: ["do_not_retry"],
+      diagnostics: { mutationBoundaryCrossed: true },
+    });
+  });
+  it("rejects a successful mutating adapter that bypasses the mutation boundary", async () => {
+    const subject = adapter();
+    subject.dispatch = async () => ({ mutationOutcome: "unknown" });
+    const result = await new PraxisTransactionCoordinator(subject).execute(
+      request(),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      code: "PRAXIS_INTERNAL_ERROR",
+      mutationOutcome: "not_applied",
+    });
+  });
+  it.each(["verifyLocal", "verifyEffect"] as Stage[])(
+    "makes post-dispatch %s failure inconclusive",
+    async (fail) => {
+      const subject = adapter({ fail });
+      const result = await new PraxisTransactionCoordinator(subject).execute(
+        request(),
+        new AbortController().signal,
+      );
+      expect(result).toMatchObject({
+        status: "inconclusive",
+        mutationOutcome: "unknown",
+        retry: "unsafe",
+      });
+      expect(subject.dispatches).toBe(1);
+    },
+  );
+  it.each([
+    ["verifyLocal", "failed"],
+    ["verifyEffect", "unknown"],
+  ] as const)(
+    "does not accept an explicit %s verification result of %s",
+    async (stage, outcome) => {
+      const subject = adapter();
+      subject[stage] = async () => outcome;
+      const result = await new PraxisTransactionCoordinator(subject).execute(
+        request(),
+        new AbortController().signal,
+      );
+      expect(result).toMatchObject({
+        status: "inconclusive",
+        mutationOutcome: "unknown",
+        retry: "unsafe",
+      });
+      expect(subject.dispatches).toBe(1);
+    },
+  );
+  it("cancels before observation without dispatch", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const subject = adapter();
+    const result = await new PraxisTransactionCoordinator(subject).execute(
+      request(),
+      controller.signal,
+    );
+    expect(result).toMatchObject({
+      status: "cancelled",
+      mutationOutcome: "not_started",
+      retry: "safe",
+    });
+    expect(subject.dispatches).toBe(0);
+  });
+  it("maps the total transaction timeout without dispatch", async () => {
+    const subject = adapter();
+    subject.observe = async (_request, signal) =>
+      new Promise<void>((_resolve, reject) =>
+        signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }),
+      );
+    const base = request();
+    releasePraxisVeilGrants(base);
+    const input = authorizePraxisRequest(veilPage, {
+      ...base,
+      policy: { ...base.policy, totalTimeoutMs: 10 },
+    });
+    const result = await new PraxisTransactionCoordinator(subject).execute(
+      input,
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      code: "PRAXIS_TRANSACTION_TIMED_OUT",
+      mutationOutcome: "not_started",
+      retry: "safe",
+    });
+    expect(subject.dispatches).toBe(0);
+  });
+  it.each(["dispatch", "verifyLocal", "verifyEffect"] as Stage[])(
+    "cancels during %s conservatively",
+    async (abort) => {
+      const controller = new AbortController();
+      const subject = adapter({ abort, controller });
+      const result = await new PraxisTransactionCoordinator(subject).execute(
+        request(),
+        controller.signal,
+      );
+      expect(result).toMatchObject({
+        status: "cancelled",
+        mutationOutcome: "unknown",
+        retry: "unsafe",
+      });
+      expect(subject.dispatches).toBe(1);
+    },
+  );
+  it("maps grounding and unexpected errors without leaking messages", async () => {
+    const grounding = adapter();
+    grounding.ground = async () => {
+      throw new GroundingError("TARGET_AMBIGUOUS", {
+        candidateCount: 2,
+        eligibleCount: 2,
+        confidence: 0.8,
+        confidenceMargin: 0,
+        scope: { kind: "page" },
+        rejectedConstraints: [],
+        drift: "unchanged",
+        safeActions: ["narrow_scope"],
+        resolutionSource: "unified",
+        visualCandidateCount: 0,
+        observation: { status: "succeeded" },
+      });
+    };
+    expect(
+      await new PraxisTransactionCoordinator(grounding).execute(
+        request(),
+        new AbortController().signal,
+      ),
+    ).toMatchObject({
+      status: "failed",
+      code: "PRAXIS_TARGET_AMBIGUOUS",
+      provenance: "intent",
+      safeActions: ["narrow_scope"],
+    });
+    const unknown = adapter();
+    unknown.observe = async () => {
+      throw new Error("sensitive runtime message");
+    };
+    const result = await new PraxisTransactionCoordinator(unknown).execute(
+      request(),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      code: "PRAXIS_INTERNAL_ERROR",
+      diagnostics: { reasonCode: "ERROR" },
+    });
+    expect(JSON.stringify(result)).not.toContain("sensitive runtime message");
+  });
+  it("rejects illegal and repeated transitions", () => {
+    const state = new PraxisTransactionStateMachine();
+    expect(() => state.transition("grounding")).toThrow(/PHASE_TRANSITION_REJECTED/);
+    state.transition("observing");
+    expect(() => state.transition("observing")).toThrow(/PHASE_TRANSITION_REJECTED/);
+    state.transition("failed");
+    expect(() => state.transition("grounding")).toThrow(/TERMINAL_TRANSITION_REJECTED/);
+  });
+  it("makes the mutation boundary monotonic and single-use", () => {
+    const boundary = new PraxisDispatchBoundary(true);
+    expect(() => boundary.beginMutation()).toThrow(/MUTATION_BEFORE_DISPATCH/);
+    boundary.enterDispatch();
+    boundary.beginMutation();
+    expect(boundary.mutationStarted()).toBe(true);
+    expect(() => boundary.beginMutation()).toThrow(/BOUNDARY_REPEATED/);
+  });
+});

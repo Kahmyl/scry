@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -8,11 +8,14 @@ import {
   type RecordingTimelineEntry,
 } from "@scry/contracts";
 import type { Page } from "playwright";
+import type { VeilVideoSegmentFinalization, VeilVideoSegmentPermit } from "@scry/contracts";
 
 import { availableArtifact } from "./artifacts.js";
+import type { VeilVideoSegmentAuthority, VeilVideoSegmentBinding } from "@scry/veil";
 
 type SegmentReason = "run_started" | "safe_resume" | "page_switch";
-type StopReason = "protected_operation" | "page_switch" | "run_completed" | "run_failed" | "browser_closed";
+type StopReason =
+  "protected_operation" | "page_switch" | "run_completed" | "run_failed" | "browser_closed";
 type RecordingEvent =
   | "recording.segment_started"
   | "recording.segment_stopped"
@@ -31,6 +34,11 @@ type ActiveSegment = {
   startedAt: string;
   filePath: string;
   relativePath: string;
+  veilPermit?: VeilVideoSegmentPermit;
+  veilBinding?: VeilVideoSegmentBinding;
+  veilPoll?: ReturnType<typeof setInterval>;
+  veilCheckpoint?: Promise<void> | undefined;
+  veilFailure?: unknown;
 };
 
 type OpenGap = {
@@ -46,6 +54,8 @@ export type RecordingCoordinatorOptions = {
   emit?: (type: RecordingEvent, payload: Record<string, unknown>) => Promise<void>;
   now?: () => Date;
   createId?: () => string;
+  videoAuthority?: VeilVideoSegmentAuthority;
+  videoBinding?: () => VeilVideoSegmentBinding;
 };
 
 export class RecordingCoordinator {
@@ -61,7 +71,9 @@ export class RecordingCoordinator {
 
   constructor(private readonly options: RecordingCoordinatorOptions) {}
 
-  hasActiveSegment() { return Boolean(this.activeSegment); }
+  hasActiveSegment() {
+    return Boolean(this.activeSegment);
+  }
 
   startSegment(input: { page?: Page; reason: SegmentReason }) {
     return this.serial(async () => {
@@ -77,7 +89,10 @@ export class RecordingCoordinator {
       this.activePage = page;
       const id = this.options.createId?.() ?? randomUUID();
       const sequence = this.timelineEntries.length;
-      const relativePath = path.posix.join("video", `segment-${String(sequence).padStart(4, "0")}-${id}.webm`);
+      const relativePath = path.posix.join(
+        "video",
+        `segment-${String(sequence).padStart(4, "0")}-${id}.webm`,
+      );
       const filePath = path.join(this.options.outputDirectory, ...relativePath.split("/"));
       await mkdir(path.dirname(filePath), { recursive: true });
       const segment: ActiveSegment = {
@@ -91,6 +106,7 @@ export class RecordingCoordinator {
         relativePath,
       };
       try {
+        await this.armVideoVeil(segment);
         // Tracing and recording share Playwright's Chromium screencast. Let the
         // active screencast negotiate its own dimensions so the WebM canvas
         // always matches the incoming frames. Forcing the run viewport here
@@ -102,7 +118,12 @@ export class RecordingCoordinator {
         return;
       }
       this.activeSegment = segment;
-      await this.emit("recording.segment_started", { id, sequence, pageId: segment.pageId, reason: input.reason });
+      await this.emit("recording.segment_started", {
+        id,
+        sequence,
+        pageId: segment.pageId,
+        reason: input.reason,
+      });
     });
   }
 
@@ -177,14 +198,32 @@ export class RecordingCoordinator {
     await this.closeGap();
     const id = this.options.createId?.() ?? randomUUID();
     const sequence = this.timelineEntries.length;
-    const relativePath = path.posix.join("video", `segment-${String(sequence).padStart(4, "0")}-${id}.webm`);
+    const relativePath = path.posix.join(
+      "video",
+      `segment-${String(sequence).padStart(4, "0")}-${id}.webm`,
+    );
     const filePath = path.join(this.options.outputDirectory, ...relativePath.split("/"));
     await mkdir(path.dirname(filePath), { recursive: true });
-    const segment: ActiveSegment = { id, sequence, page, pageId: this.pageId(page), reason, startedAt: this.now(), filePath, relativePath };
+    const segment: ActiveSegment = {
+      id,
+      sequence,
+      page,
+      pageId: this.pageId(page),
+      reason,
+      startedAt: this.now(),
+      filePath,
+      relativePath,
+    };
     try {
+      await this.armVideoVeil(segment);
       await bounded(page.screencast.start({ path: filePath }), "Screencast start timed out");
       this.activeSegment = segment;
-      await this.emit("recording.segment_started", { id, sequence, pageId: segment.pageId, reason });
+      await this.emit("recording.segment_started", {
+        id,
+        sequence,
+        pageId: segment.pageId,
+        reason,
+      });
     } catch {
       this.timelineEntries.push(this.unavailable(segment.startedAt, "SCREENCAST_START_FAILED"));
       await this.sealUnsafe("SCREENCAST_START_FAILED");
@@ -195,6 +234,8 @@ export class RecordingCoordinator {
     const segment = this.activeSegment;
     if (!segment) return;
     this.activeSegment = undefined;
+    if (segment.veilPoll) clearInterval(segment.veilPoll);
+    await segment.veilCheckpoint?.catch(() => undefined);
     let stopFailed = false;
     try {
       await bounded(segment.page.screencast.stop(), "Screencast stop timed out");
@@ -221,7 +262,30 @@ export class RecordingCoordinator {
       return;
     }
     try {
-      const artifact = await availableArtifact("video", "video/webm", segment.filePath, segment.relativePath);
+      await stat(segment.filePath);
+      if (segment.veilFailure) throw segment.veilFailure;
+      let videoFinalization: VeilVideoSegmentFinalization | undefined;
+      if (segment.veilPermit && segment.veilBinding && this.options.videoAuthority) {
+        await this.options.videoAuthority.checkpoint(
+          segment.page,
+          segment.veilPermit,
+          segment.veilBinding,
+        );
+        videoFinalization = this.options.videoAuthority.finalize(
+          segment.veilPermit,
+          segment.veilBinding,
+        );
+      }
+      const artifact = await availableArtifact(
+        "video",
+        "video/webm",
+        segment.filePath,
+        segment.relativePath,
+        {
+          classification: "public",
+          ...(videoFinalization ? { videoFinalization } : {}),
+        },
+      );
       if (quarantined || this.sealed) {
         await rm(segment.filePath, { force: true }).catch(() => undefined);
         artifact.availability = "destroyed";
@@ -246,7 +310,39 @@ export class RecordingCoordinator {
       artifact.observation = { ...artifact.observation, timelineEntry: entry };
       this.timelineEntries.push(entry);
       await this.emit("recording.segment_stopped", { reason, entry });
-    } catch {
+    } catch (error) {
+      await rm(segment.filePath, { force: true }).catch(() => undefined);
+      if (error instanceof Error && error.message.includes("VEIL_VIDEO_CAPTURE_PERMIT_REQUIRED")) {
+        const artifact: Artifact = {
+          id: randomUUID(),
+          kind: "video",
+          availability: "destroyed",
+          privacyClassification: "uncertain",
+          failureProvenance: "privacy",
+          reasonCode: "VEIL_VIDEO_CAPTURE_PERMIT_REQUIRED",
+          contentType: "video/webm",
+          relativePath: segment.relativePath,
+          observation: { bytesDestroyed: true, reasonCode: "VEIL_VIDEO_CAPTURE_PERMIT_REQUIRED" },
+        };
+        this.recordedArtifacts.push(artifact);
+        this.timelineEntries.push({
+          type: "video_segment",
+          id: segment.id,
+          sequence: segment.sequence,
+          pageId: segment.pageId,
+          startedAt: segment.startedAt,
+          endedAt,
+          reason: segment.reason,
+          status: "quarantined",
+          privacyStatus: "quarantined",
+          artifactId: artifact.id,
+        });
+        await this.emit("recording.segment_stopped", {
+          reason,
+          entry: this.timelineEntries.at(-1),
+        });
+        return;
+      }
       this.timelineEntries.push({
         type: "video_segment",
         id: segment.id,
@@ -262,6 +358,29 @@ export class RecordingCoordinator {
       await this.emit("recording.segment_stopped", { entry: this.timelineEntries.at(-1) });
       await this.sealUnsafe("SEGMENT_VALIDATION_FAILED");
     }
+  }
+
+  private async armVideoVeil(segment: ActiveSegment) {
+    if (!this.options.videoAuthority || !this.options.videoBinding)
+      throw new Error("VEIL_VIDEO_AUTHORITY_REQUIRED");
+    const binding = this.options.videoBinding();
+    const permit = this.options.videoAuthority.issue(segment.id, binding);
+    segment.veilBinding = binding;
+    segment.veilPermit = permit;
+    await this.options.videoAuthority.checkpoint(segment.page, permit, binding);
+    segment.veilPoll = setInterval(() => {
+      if (segment.veilCheckpoint || segment.veilFailure) return;
+      segment.veilCheckpoint = this.options
+        .videoAuthority!.checkpoint(segment.page, permit, binding)
+        .then(() => undefined)
+        .catch((error) => {
+          segment.veilFailure = error;
+          void segment.page.screencast.stop().catch(() => undefined);
+        })
+        .finally(() => {
+          segment.veilCheckpoint = undefined;
+        });
+    }, 100);
   }
 
   private async closeGap() {
@@ -286,7 +405,14 @@ export class RecordingCoordinator {
   }
 
   private unavailable(startedAt: string, failureCode: string): RecordingTimelineEntry {
-    return { type: "unavailable_interval", id: this.options.createId?.() ?? randomUUID(), sequence: this.timelineEntries.length, startedAt, endedAt: this.now(), failureCode };
+    return {
+      type: "unavailable_interval",
+      id: this.options.createId?.() ?? randomUUID(),
+      sequence: this.timelineEntries.length,
+      startedAt,
+      endedAt: this.now(),
+      failureCode,
+    };
   }
 
   private pageId(page: Page) {
@@ -312,7 +438,10 @@ export class RecordingCoordinator {
 
   private serial<T>(operation: () => Promise<T>): Promise<T> {
     const next = this.transition.then(operation, operation);
-    this.transition = next.then(() => undefined, () => undefined);
+    this.transition = next.then(
+      () => undefined,
+      () => undefined,
+    );
     return next;
   }
 }

@@ -1,10 +1,10 @@
 import { ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AuthService } from "../src/auth.service.js";
-import type { IdentityRepository } from "../src/identity.repository.js";
-import { ScryRepository } from "../src/repository.js";
-import type { Database } from "../src/database.js";
+import { AuthService } from "../src/auth/auth.service.js";
+import type { IdentityRepository } from "../src/auth/repositories/identity.repository.js";
+import { ScryRepository } from "../src/access/index.js";
+import type { Database } from "../src/infrastructure/database.js";
 
 const originalServiceToken = process.env.SCRY_SERVICE_TOKEN;
 const originalSupabaseUrl = process.env.SUPABASE_URL;
@@ -21,9 +21,9 @@ describe("AuthService", () => {
     delete process.env.SUPABASE_URL;
     const service = new AuthService({} as IdentityRepository);
 
-    await expect(
-      service.authenticate("Bearer service-token-with-enough-entropy"),
-    ).resolves.toEqual({ kind: "service", subject: "scry-service" });
+    await expect(service.authenticate("Bearer service-token-with-enough-entropy")).resolves.toEqual(
+      { kind: "service", subject: "scry-service" },
+    );
     await expect(service.authenticate("Bearer wrong-token")).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
@@ -34,12 +34,8 @@ describe("AuthService", () => {
     delete process.env.SUPABASE_URL;
     const service = new AuthService({} as IdentityRepository);
 
-    await expect(service.authenticate(undefined)).rejects.toBeInstanceOf(
-      UnauthorizedException,
-    );
-    await expect(service.authenticate("Basic value")).rejects.toBeInstanceOf(
-      UnauthorizedException,
-    );
+    await expect(service.authenticate(undefined)).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(service.authenticate("Basic value")).rejects.toBeInstanceOf(UnauthorizedException);
     await expect(service.authenticate("Bearer one two")).rejects.toBeInstanceOf(
       UnauthorizedException,
     );

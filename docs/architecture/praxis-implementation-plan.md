@@ -1,5 +1,7 @@
 # Praxis implementation plan
 
+> **Governing architecture decision:** This document is the authoritative implementation boundary for Praxis. Changes that introduce another owner for live application perception or interaction require an explicit superseding architecture decision.
+
 ## Status
 
 - **Type:** subsystem correction inside Scry
@@ -8,6 +10,7 @@
 - **Authoring surface:** MCP is authoritative for Mission and Flow writes
 - **Dashboard surface:** observational, reporting, and explicit human approval only
 - **Primary concern:** reliable, safe, low-latency interaction with standards-compliant, customized, and poorly implemented web applications
+- **Implemented gates:** Milestones 0–3 accepted internally; production consumer migration begins in Milestone 4
 
 ## Executive decision
 
@@ -172,14 +175,14 @@ Praxis uses capability-based support instead of website-specific claims.
 
 ### 5.1 Compatibility tiers
 
-| Tier | Surface | Expected handling |
-|---|---|---|
-| A | Semantic native HTML | Fast semantic path with native dispatch |
-| B | Accessible custom components | Accessibility, computed behavior, and native/pointer/keyboard strategy |
-| C | Poor markup with observable behavior | Text, structure, hit-testing, focus, runtime behavior, and effect evidence |
-| D | Visually rendered or canvas UI | Bounded visual/OCR/geometry grounding and explicit coordinate capability |
-| E | Known exceptional application | Reviewed, origin-bound, versioned application adapter |
-| F | Inaccessible or prohibited surface | Typed safe refusal with evidence and next actions |
+| Tier | Surface                              | Expected handling                                                          |
+| ---- | ------------------------------------ | -------------------------------------------------------------------------- |
+| A    | Semantic native HTML                 | Fast semantic path with native dispatch                                    |
+| B    | Accessible custom components         | Accessibility, computed behavior, and native/pointer/keyboard strategy     |
+| C    | Poor markup with observable behavior | Text, structure, hit-testing, focus, runtime behavior, and effect evidence |
+| D    | Visually rendered or canvas UI       | Bounded visual/OCR/geometry grounding and explicit coordinate capability   |
+| E    | Known exceptional application        | Reviewed, origin-bound, versioned application adapter                      |
+| F    | Inaccessible or prohibited surface   | Typed safe refusal with evidence and next actions                          |
 
 ### 5.2 Explicit hard boundaries
 
@@ -1238,19 +1241,19 @@ Praxis is complete when:
 
 ## 23. Known risks and controls
 
-| Risk | Control |
-|---|---|
-| Boundary becomes a monolith | Separate responsibilities internally while retaining one transaction authority |
-| Universal support becomes unsafe guessing | Hard evidence, confidence, margin, risk, revalidation, and refusal gates |
-| OCR makes common interactions slow | Adaptive escalation, bounded regions, warm workers, cancellation |
-| History causes stale targeting | History only orders evidence; live revalidation remains mandatory |
-| Application findings are mistaken for failures | Independent execution and quality classifications |
-| Adapters become site-specific bypasses | Versioned registry, origin binding, policy, privacy, verification, and release review |
-| Migration creates two authorities | One decision and one dispatch per transaction; compatibility only projects results |
-| Reports leak sensitive content | Safe schemas, redaction, bounded evidence, privacy gauntlet |
-| Retry duplicates mutations | Mandatory mutation outcome and retry disposition |
-| Dashboard removal blocks required human action | Preserve explicit approval, authorization, inspection, and safety controls |
-| Performance optimization lowers confidence | Latency budget exhaustion returns failure; thresholds remain invariant |
+| Risk                                           | Control                                                                               |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Boundary becomes a monolith                    | Separate responsibilities internally while retaining one transaction authority        |
+| Universal support becomes unsafe guessing      | Hard evidence, confidence, margin, risk, revalidation, and refusal gates              |
+| OCR makes common interactions slow             | Adaptive escalation, bounded regions, warm workers, cancellation                      |
+| History causes stale targeting                 | History only orders evidence; live revalidation remains mandatory                     |
+| Application findings are mistaken for failures | Independent execution and quality classifications                                     |
+| Adapters become site-specific bypasses         | Versioned registry, origin binding, policy, privacy, verification, and release review |
+| Migration creates two authorities              | One decision and one dispatch per transaction; compatibility only projects results    |
+| Reports leak sensitive content                 | Safe schemas, redaction, bounded evidence, privacy gauntlet                           |
+| Retry duplicates mutations                     | Mandatory mutation outcome and retry disposition                                      |
+| Dashboard removal blocks required human action | Preserve explicit approval, authorization, inspection, and safety controls            |
+| Performance optimization lowers confidence     | Latency budget exhaustion returns failure; thresholds remain invariant                |
 
 ## 24. Immediate implementation backlog
 

@@ -1,0 +1,528 @@
+{
+  "schemaVersion": 1,
+  "command": ["pnpm", "campaign:praxis:resilience"],
+  "startedAt": "2026-08-03T11:52:42.540Z",
+  "completedAt": "2026-08-03T11:53:04.024Z",
+  "durationMs": 21484,
+  "exitCode": 0,
+  "reportSha256": "0c2ae438707099fd157da865d0e0a60d8c5c60b748e49d8cd2f6aad77257de19",
+  "report": {
+    "schemaVersion": 1,
+    "campaign": "praxis-resilience",
+    "environment": {
+      "realHttp": true,
+      "realChromium": true,
+      "persistence": false
+    },
+    "counts": {
+      "total": 80,
+      "passed": 80,
+      "failed": 0,
+      "skipped": 0
+    },
+    "campaigns": {
+      "safety": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0
+      },
+      "hostile": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0
+      }
+    },
+    "endurance": {
+      "iterations": 100,
+      "failures": 0,
+      "dispatchCount": 100,
+      "uniqueFingerprints": 1,
+      "memoryGrowthRatio": -0.00759505613737145,
+      "p50": 24.73408399999971,
+      "p95": 27.189291999999114,
+      "passed": true
+    },
+    "scenarios": [
+      {
+        "id": "concurrent-mutations-1",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 345.4558330000001
+      },
+      {
+        "id": "concurrent-mutations-2",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 201.905708
+      },
+      {
+        "id": "concurrent-mutations-3",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 188.95741700000008
+      },
+      {
+        "id": "concurrent-mutations-4",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 179.96516700000006
+      },
+      {
+        "id": "concurrent-mutations-5",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 198.77324999999996
+      },
+      {
+        "id": "concurrent-mutations-6",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 186.78037500000005
+      },
+      {
+        "id": "concurrent-mutations-7",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 198.38766599999985
+      },
+      {
+        "id": "concurrent-mutations-8",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 180.9878749999998
+      },
+      {
+        "id": "concurrent-mutations-9",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 180.73558400000002
+      },
+      {
+        "id": "concurrent-mutations-10",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 180.9692500000001
+      },
+      {
+        "id": "cancel-during-verification-1",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 178.07649999999967
+      },
+      {
+        "id": "cancel-during-verification-2",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 178.01570900000024
+      },
+      {
+        "id": "cancel-during-verification-3",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 180.17274999999972
+      },
+      {
+        "id": "cancel-during-verification-4",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 179.9613330000002
+      },
+      {
+        "id": "cancel-during-verification-5",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 173.90387499999997
+      },
+      {
+        "id": "verification-timeout-1",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 431.0229999999997
+      },
+      {
+        "id": "verification-timeout-2",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 452.57166700000016
+      },
+      {
+        "id": "verification-timeout-3",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 446.23962500000016
+      },
+      {
+        "id": "verification-timeout-4",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 435.02637500000037
+      },
+      {
+        "id": "verification-timeout-5",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 442.37924999999996
+      },
+      {
+        "id": "navigation-race-1",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 252.93187500000022
+      },
+      {
+        "id": "navigation-race-2",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 217.60166600000048
+      },
+      {
+        "id": "navigation-race-3",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 222.86820799999987
+      },
+      {
+        "id": "navigation-race-4",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 215.99716700000045
+      },
+      {
+        "id": "navigation-race-5",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 226.81387500000073
+      },
+      {
+        "id": "dispatch-replacement-1",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 168.35849999999937
+      },
+      {
+        "id": "dispatch-replacement-2",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 163.5102080000006
+      },
+      {
+        "id": "dispatch-replacement-3",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 166.5856249999997
+      },
+      {
+        "id": "dispatch-replacement-4",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 161.81487500000003
+      },
+      {
+        "id": "dispatch-replacement-5",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 164.7208330000003
+      },
+      {
+        "id": "network-effect-1",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 147.70674999999937
+      },
+      {
+        "id": "network-effect-2",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 158.23599999999988
+      },
+      {
+        "id": "network-effect-3",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 153.3538749999998
+      },
+      {
+        "id": "network-effect-4",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 148.1423330000016
+      },
+      {
+        "id": "network-effect-5",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 147.8749169999992
+      },
+      {
+        "id": "pre-cancel-1",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 104.62716699999874
+      },
+      {
+        "id": "pre-cancel-2",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 105.38475000000108
+      },
+      {
+        "id": "pre-cancel-3",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 105.8487499999992
+      },
+      {
+        "id": "pre-cancel-4",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 107.17754099999911
+      },
+      {
+        "id": "pre-cancel-5",
+        "campaign": "safety",
+        "status": "passed",
+        "durationMs": 108.36766699999862
+      },
+      {
+        "id": "open-shadow-1",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 146.1802090000001
+      },
+      {
+        "id": "open-shadow-2",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 140.0010829999992
+      },
+      {
+        "id": "open-shadow-3",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 149.03616599999987
+      },
+      {
+        "id": "open-shadow-4",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 147.07216599999992
+      },
+      {
+        "id": "open-shadow-5",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 147.11883300000045
+      },
+      {
+        "id": "open-shadow-6",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 138.9641670000001
+      },
+      {
+        "id": "open-shadow-7",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 138.88924999999836
+      },
+      {
+        "id": "open-shadow-8",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 140.5930419999986
+      },
+      {
+        "id": "malformed-control-1",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 146.73095900000044
+      },
+      {
+        "id": "malformed-control-2",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 139.5377499999995
+      },
+      {
+        "id": "malformed-control-3",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 139.6996249999993
+      },
+      {
+        "id": "malformed-control-4",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 146.36995799999931
+      },
+      {
+        "id": "malformed-control-5",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 147.58808300000055
+      },
+      {
+        "id": "malformed-control-6",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 159.38287500000115
+      },
+      {
+        "id": "malformed-control-7",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 145.3402500000011
+      },
+      {
+        "id": "malformed-control-8",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 147.8597920000011
+      },
+      {
+        "id": "iframe-target-1",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 192.54975000000013
+      },
+      {
+        "id": "iframe-target-2",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 197.59991699999955
+      },
+      {
+        "id": "iframe-target-3",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 218.65808300000026
+      },
+      {
+        "id": "iframe-target-4",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 232.08474999999999
+      },
+      {
+        "id": "canvas-target-1",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 412.32879200000025
+      },
+      {
+        "id": "canvas-target-2",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 201.98675000000003
+      },
+      {
+        "id": "canvas-target-3",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 189.01066699999865
+      },
+      {
+        "id": "canvas-target-4",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 186.91800000000148
+      },
+      {
+        "id": "icon-target-1",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 147.2977919999994
+      },
+      {
+        "id": "icon-target-2",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 145.77879099999882
+      },
+      {
+        "id": "icon-target-3",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 138.97775000000001
+      },
+      {
+        "id": "icon-target-4",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 147.83516599999894
+      },
+      {
+        "id": "obstructed-target-1",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 636.9105410000011
+      },
+      {
+        "id": "obstructed-target-2",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 667.688415999999
+      },
+      {
+        "id": "obstructed-target-3",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 653.8442079999986
+      },
+      {
+        "id": "obstructed-target-4",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 657.9016250000004
+      },
+      {
+        "id": "deep-delayed-1",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 286.3978329999991
+      },
+      {
+        "id": "deep-delayed-2",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 336.3705000000009
+      },
+      {
+        "id": "deep-delayed-3",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 332.59320800000205
+      },
+      {
+        "id": "deep-delayed-4",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 390.5554999999986
+      },
+      {
+        "id": "styled-div-1",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 145.64174999999886
+      },
+      {
+        "id": "styled-div-2",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 149.75804100000096
+      },
+      {
+        "id": "styled-div-3",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 145.3794999999991
+      },
+      {
+        "id": "styled-div-4",
+        "campaign": "hostile",
+        "status": "passed",
+        "durationMs": 148.69162499999948
+      }
+    ]
+  }
+}

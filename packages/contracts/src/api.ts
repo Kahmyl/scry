@@ -23,10 +23,7 @@ export const createEnvironmentSchema = z
       .url()
       .refine((value) => {
         const url = new URL(value);
-        return (
-          ["http:", "https:"].includes(url.protocol) &&
-          value === url.origin
-        );
+        return ["http:", "https:"].includes(url.protocol) && value === url.origin;
       }, "baseOrigin must be a canonical HTTP(S) origin without a trailing slash"),
     policy: executionPolicySchema,
     secretRefs: z.array(uuidSchema).max(100).default([]),
@@ -34,10 +31,12 @@ export const createEnvironmentSchema = z
   .strict();
 
 export const updateEnvironmentSchema = createEnvironmentSchema.omit({ name: true });
-export const validateCredentialReferencesSchema = z.object({
-  projectId: uuidSchema,
-  secretRefs: z.array(uuidSchema).max(100),
-}).strict();
+export const validateCredentialReferencesSchema = z
+  .object({
+    projectId: uuidSchema,
+    secretRefs: z.array(uuidSchema).max(100),
+  })
+  .strict();
 
 export const createCredentialSchema = z
   .object({

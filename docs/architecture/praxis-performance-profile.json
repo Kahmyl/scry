@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "referenceEnvironment": "darwin-arm64-node22-chrome150",
+  "corpusDigest": "946de43c84fd3f84d46106492b55b4a03dfd12e334e4468e4d6ac5b90fe1c8dc",
+  "baseline": { "totalMs": 53083, "semanticP50Ms": 151, "semanticP95Ms": 667, "visualP95Ms": 859 },
+  "limits": {
+    "semanticP50Ms": 159,
+    "semanticP95Ms": 701,
+    "visualP95Ms": 959,
+    "retainedMemoryGrowthPercent": 10,
+    "cancellationMs": 250
+  }
+}

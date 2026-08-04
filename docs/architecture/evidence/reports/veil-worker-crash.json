@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "evidenceType": "veil-worker-crash-readiness",
+  "status": "passed",
+  "startedAt": "2026-08-03T11:54:01Z",
+  "completedAt": "2026-08-03T11:55:19Z",
+  "exitStatus": 0,
+  "environment": {
+    "topology": "fresh-isolated-docker-compose",
+    "composeProject": "scry-veil-evidence",
+    "database": "postgresql-empty-volume",
+    "queue": "bullmq-redis-empty-volume",
+    "workerTermination": "SIGKILL",
+    "apiPort": 4010,
+    "postgresPort": 54339,
+    "redisPort": 56399
+  },
+  "commands": {
+    "topology": "SCRY_POSTGRES_PORT=54339 SCRY_REDIS_PORT=56399 SCRY_API_PORT=4010 SCRY_COMPOSE_PROJECT=scry-veil-evidence docker compose -p scry-veil-evidence up -d --build --wait postgres redis migrate api worker",
+    "campaign": "set -a; source apps/api/.env; set +a; DATABASE_URL='postgres://scry:scry-local@127.0.0.1:54339/scry' SCRY_API_URL='http://127.0.0.1:4010' SCRY_COMPOSE_PROJECT='scry-veil-evidence' SCRY_POSTGRES_PORT=54339 SCRY_REDIS_PORT=56399 SCRY_API_PORT=4010 pnpm campaign:veil:worker-crash",
+    "cleanup": "docker compose -p scry-veil-evidence down -v --remove-orphans"
+  },
+  "rawReport": {
+    "campaign": "veil-worker-crash-recovery",
+    "status": "passed",
+    "runId": "b6c2fcf5-6848-46bd-9424-7a24f7528d91",
+    "posts": 1,
+    "attempts": "2",
+    "ledger": "dispatching",
+    "checkpoints": "1",
+    "leaked": "0",
+    "scannedFiles": 4
+  },
+  "rawReportCanonicalJson": "{\"campaign\":\"veil-worker-crash-recovery\",\"status\":\"passed\",\"runId\":\"b6c2fcf5-6848-46bd-9424-7a24f7528d91\",\"posts\":1,\"attempts\":\"2\",\"ledger\":\"dispatching\",\"checkpoints\":\"1\",\"leaked\":\"0\",\"scannedFiles\":4}",
+  "rawReportSha256": "46c12fc24d41e0d264295e7bb24e6c16bccc991894d600d9e7e324da967ea7b0",
+  "assertions": {
+    "singleProtectedMutation": true,
+    "workerRetriedAfterSigkill": true,
+    "durableDispatchBoundaryPreserved": true,
+    "checkpointRecovered": true,
+    "canaryLeakCount": 0,
+    "artifactBytesScanned": true
+  }
+}

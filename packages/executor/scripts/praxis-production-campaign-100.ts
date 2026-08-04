@@ -1,0 +1,722 @@
+import { createServer } from "node:http";
+import { chromium, type Page } from "playwright";
+import type {
+  ExpectedEffect,
+  InteractionTargetIntent,
+  PraxisLifecycleEvent,
+  PraxisOperation,
+  PraxisResult,
+} from "@scry/contracts";
+import { executePraxisCampaignConsumer as executePraxisConsumer } from "./praxis-campaign-veil.js";
+
+type Invoke = (
+  intent: InteractionTargetIntent,
+  operation: PraxisOperation,
+  options?: {
+    effect?: ExpectedEffect;
+    timeout?: number;
+    origins?: string[];
+    privacy?: { state: string; allowedChannels: string[]; suppressedChannels: string[] };
+    input?: (
+      reference: string,
+      classification: "public" | "known_secret" | "captured_secret" | "captured_public",
+    ) => Promise<string>;
+    signal?: AbortSignal;
+  },
+) => Promise<{ result: PraxisResult; events: PraxisLifecycleEvent[] }>;
+type Case = {
+  id: string;
+  category: string;
+  route: string;
+  html: string;
+  script: string;
+  run(page: Page, invoke: Invoke): Promise<void>;
+};
+type Outcome = {
+  id: string;
+  category: string;
+  status: "passed" | "failed";
+  durationMs: number;
+  diagnostics?: unknown;
+};
+class ExpectationError extends Error {
+  constructor(
+    message: string,
+    readonly evidence: unknown = {},
+  ) {
+    super(message);
+    this.name = "ExpectationError";
+  }
+}
+const cases: Case[] = [];
+function add(id: string, category: string, html: string, script: string, run: Case["run"]) {
+  cases.push({ id, category, route: `/case/${id}`, html, script, run });
+}
+
+const activationShapes = [
+  (n: string) => `<button aria-label="${n}">${n}</button>`,
+  (n: string) => `<button><span>${n}</span></button>`,
+  (n: string) => `<div role="button" tabindex="0" aria-label="${n}">${n}</div>`,
+  (n: string) => `<a href="#done" role="button" aria-label="${n}">${n}</a>`,
+  (n: string) => `<input type="button" value="${n}" aria-label="${n}">`,
+];
+for (let i = 1; i <= 20; i++) {
+  const name = `Execute batch ${i}`;
+  const shape = activationShapes[(i - 1) % activationShapes.length]!;
+  add(
+    `activation-${i}`,
+    i % 5 === 3 ? "custom_activation" : "semantic_activation",
+    `${shape(name)}<output data-scry-readable>idle</output>`,
+    `const c=document.querySelector('button,[role=button],a,input');c.addEventListener('click',e=>{if(c.tagName==='A')e.preventDefault();window.hits++;document.querySelector('output').textContent='done-${i}';});c.addEventListener('keydown',e=>{if(e.key==='Enter'){window.hits++;document.querySelector('output').textContent='done-${i}';}});`,
+    async (p, invoke) => {
+      const { result } = await invoke(button(name), { type: "activate" });
+      success(result, name);
+      eq(await counter(p, "hits"), 1, "dispatch count");
+      eq(await p.locator("output").textContent(), `done-${i}`, "visible effect");
+    },
+  );
+}
+
+for (let i = 1; i <= 15; i++) {
+  const name = `Manifest field ${i}`,
+    value = `manifest-${i}-value`;
+  const editor = i % 5 === 0;
+  const markup = editor
+    ? `<span id="l${i}">${name}</span><div contenteditable="true" role="textbox" aria-labelledby="l${i}"></div>`
+    : i % 3 === 0
+      ? `<label for="f${i}"><strong>${name}</strong></label><section><input id="f${i}" placeholder="${name}"></section>`
+      : `<label>${name}<input placeholder="${name}"></label>`;
+  add(
+    `entry-${i}`,
+    editor ? "contenteditable" : "text_entry",
+    `${markup}<output data-scry-readable>empty</output>`,
+    `const f=document.querySelector('input,[contenteditable]');f.addEventListener('input',()=>document.querySelector('output').textContent='accepted-${i}');`,
+    async (p, invoke) => {
+      const { result } = await invoke(
+        text(name),
+        { type: "enter_text", input: { reference: `v${i}`, classification: "public" } },
+        { input: async () => value },
+      );
+      success(result, name);
+      const actual = editor
+        ? await p.locator("[contenteditable]").textContent()
+        : await p.locator("input").inputValue();
+      eq(actual, value, "entered value");
+      eq(await p.locator("output").textContent(), `accepted-${i}`, "entry effect");
+    },
+  );
+}
+
+for (let i = 1; i <= 8; i++) {
+  const name = `Routing mode ${i}`,
+    value = i % 2 ? "express" : "buffered";
+  add(
+    `select-${i}`,
+    "selection",
+    `<label for="s">${name}</label><select id="s"><option value="standard">Standard</option><option value="express">Express</option><option value="buffered">Buffered</option></select><output data-scry-readable>standard</output>`,
+    `document.querySelector('select').addEventListener('change',e=>document.querySelector('output').textContent=e.target.value);`,
+    async (p, invoke) => {
+      const { result } = await invoke(
+        select(name),
+        { type: "select_option", input: { reference: "choice", classification: "public" } },
+        { input: async () => value },
+      );
+      success(result, name);
+      eq(await p.locator("select").inputValue(), value, "selected value");
+      eq(await p.locator("output").textContent(), value, "selection effect");
+    },
+  );
+}
+
+for (let i = 1; i <= 8; i++) {
+  const name = `Compliance flag ${i}`,
+    role = i % 2 === 0;
+  const control = role
+    ? `<div role="checkbox" tabindex="0" aria-label="${name}" aria-checked="false">${name}</div>`
+    : `<label><input type="checkbox">${name}</label>`;
+  add(
+    `toggle-${i}`,
+    role ? "custom_toggle" : "native_toggle",
+    `${control}<output data-scry-readable>off</output>`,
+    role
+      ? `const c=document.querySelector('[role=checkbox]');c.addEventListener('click',()=>{c.setAttribute('aria-checked','true');window.hits++;document.querySelector('output').textContent='on';});`
+      : `document.querySelector('input').addEventListener('change',e=>{window.hits++;document.querySelector('output').textContent=e.target.checked?'on':'off';});`,
+    async (p, invoke) => {
+      const { result } = await invoke(toggle(name), { type: "set_checked", checked: true });
+      success(result, name);
+      eq(await counter(p, "hits"), 1, "toggle dispatch");
+      eq(await p.locator("output").textContent(), "on", "toggle effect");
+      if (role)
+        eq(
+          await p.locator("[role=checkbox]").getAttribute("aria-checked"),
+          "true",
+          "ARIA checked state",
+        );
+      else truth(await p.locator("input").isChecked(), "native checked state");
+    },
+  );
+}
+
+for (let i = 1; i <= 10; i++) {
+  const name = `Approve ledger ${i}`,
+    scopeName = `Authoritative ledger ${i}`;
+  add(
+    `scope-${i}`,
+    "scope",
+    `<section aria-label="Archive ledger ${i}"><h2>Archive ledger ${i}</h2><button>${name}</button></section><section aria-label="${scopeName}"><h2>${scopeName}</h2><button>${name}</button><output data-scry-readable>waiting</output></section>`,
+    `document.querySelectorAll('button')[0].onclick=()=>window.wrong++;document.querySelectorAll('button')[1].onclick=()=>{window.hits++;document.querySelector('output').textContent='approved';};`,
+    async (p, invoke) => {
+      const { result } = await invoke(button(name, { kind: "region", name: scopeName }), {
+        type: "activate",
+      });
+      success(result, name);
+      eq(await counter(p, "wrong"), 0, "wrong scope count");
+      eq(await counter(p, "hits"), 1, "right scope count");
+    },
+  );
+}
+
+for (let i = 1; i <= 6; i++) {
+  const name = `Resolve collision ${i}`;
+  add(
+    `ambiguous-${i}`,
+    "ambiguity",
+    `<button>${name}</button><button>${name}</button><output data-scry-readable>untouched</output>`,
+    `document.querySelectorAll('button').forEach(b=>b.onclick=()=>{window.hits++;document.querySelector('output').textContent='changed';});`,
+    async (p, invoke) => {
+      const { result } = await invoke(button(name), { type: "activate" });
+      failure(result, "PRAXIS_TARGET_AMBIGUOUS");
+      eq(await counter(p, "hits"), 0, "ambiguity dispatch");
+    },
+  );
+}
+for (let i = 1; i <= 4; i++) {
+  const name = `Unavailable command ${i}`;
+  const markup = i % 2 ? `<button disabled>${name}</button>` : `<span>${name}</span>`;
+  add(
+    `unsupported-${i}`,
+    "unsupported",
+    `${markup}<output data-scry-readable>untouched</output>`,
+    `document.querySelector('button')?.addEventListener('click',()=>window.hits++);`,
+    async (p, invoke) => {
+      const { result } = await invoke(button(name), { type: "activate" });
+      truth(result.status !== "succeeded", "unsupported target succeeded", result);
+      eq(await counter(p, "hits"), 0, "unsupported dispatch");
+    },
+  );
+}
+
+for (let i = 1; i <= 5; i++) {
+  const name = `Deferred control ${i}`,
+    delay = 80 + i * 35;
+  add(
+    `delayed-${i}`,
+    "delayed_render",
+    `<main>Loading ${i}</main>`,
+    `setTimeout(()=>{document.querySelector('main').innerHTML='<button>${name}</button><output data-scry-readable>ready</output>';document.querySelector('button').onclick=()=>{window.hits++;document.querySelector('output').textContent='complete';};},${delay});`,
+    async (p, invoke) => {
+      const { result } = await invoke(button(name), { type: "activate" }, { timeout: 1800 });
+      success(result, name);
+      eq(await counter(p, "hits"), 1, "delayed dispatch");
+    },
+  );
+}
+for (let i = 1; i <= 3; i++) {
+  const name = `Rotating control ${i}`;
+  add(
+    `replacement-${i}`,
+    "dynamic_replacement",
+    `<button>${name}</button><output data-scry-readable>original</output>`,
+    `const old=document.querySelector('button');old.addEventListener('pointerover',()=>{const fresh=old.cloneNode(true);fresh.onclick=()=>{window.wrong++;document.querySelector('output').textContent='replacement';};old.replaceWith(fresh);},{once:true});old.onclick=()=>window.hits++;`,
+    async (p, invoke) => {
+      const { result } = await invoke(button(name), { type: "activate" });
+      failure(result, "PRAXIS_DISPATCH_FAILED");
+      eq(result.status, "inconclusive", "replacement outcome");
+      eq(result.mutationOutcome, "unknown", "replacement mutation outcome");
+      eq(result.retry, "unsafe", "replacement retry disposition");
+      truth(
+        result.safeActions.includes("do_not_retry"),
+        "replacement failure permitted retry",
+        result,
+      );
+      eq(await counter(p, "hits"), 0, "old dispatch");
+      eq(await counter(p, "wrong"), 0, "replacement dispatch");
+    },
+  );
+}
+
+for (let i = 1; i <= 4; i++) {
+  const name = `Publish packet ${i}`,
+    expected = `published-${i}`;
+  add(
+    `effect-value-${i}`,
+    "effect_verification",
+    `<button>${name}</button><output data-scry-readable>draft</output>`,
+    `document.querySelector('button').onclick=()=>{window.hits++;document.querySelector('output').textContent='${expected}';};`,
+    async (p, invoke) => {
+      const { result } = await invoke(
+        button(name),
+        { type: "activate" },
+        { effect: valueEffect(expected) },
+      );
+      success(result, name);
+      eq(await counter(p, "hits"), 1, "effect dispatch");
+    },
+  );
+}
+for (let i = 1; i <= 2; i++) {
+  const name = `Broken packet ${i}`;
+  add(
+    `effect-missing-${i}`,
+    "incorrect_effect",
+    `<button>${name}</button><output data-scry-readable>draft</output>`,
+    `document.querySelector('button').onclick=()=>window.hits++;`,
+    async (p, invoke) => {
+      const { result } = await invoke(
+        button(name),
+        { type: "activate" },
+        { effect: valueEffect(`never-${i}`), timeout: 450 },
+      );
+      failure(result, "PRAXIS_EXPECTED_EFFECT_NOT_OBSERVED");
+      eq(await counter(p, "hits"), 1, "single failed-effect dispatch");
+    },
+  );
+}
+add(
+  "navigation-query-effect",
+  "navigation",
+  `<button>Open audited destination</button>`,
+  `document.querySelector('button').onclick=()=>location.href='/destination/100?audit=yes';`,
+  async (p, invoke) => {
+    const { result } = await invoke(
+      button("Open audited destination"),
+      { type: "activate" },
+      { effect: { type: "navigation", url: "/destination/100?audit=yes", match: "path" } },
+    );
+    success(result, "Open audited destination");
+    eq(new URL(p.url()).pathname, "/destination/100", "destination path");
+  },
+);
+
+for (let i = 1; i <= 3; i++) {
+  const name = `Restricted action ${i}`;
+  add(
+    `origin-denial-${i}`,
+    "security",
+    `<button>${name}</button><output data-scry-readable>safe</output>`,
+    `document.querySelector('button').onclick=()=>{window.hits++;document.querySelector('output').textContent='unsafe';};`,
+    async (p, invoke) => {
+      const { result } = await invoke(
+        button(name),
+        { type: "activate" },
+        { origins: [`https://denied-${i}.invalid`] },
+      );
+      failure(result, "PRAXIS_ORIGIN_NOT_ALLOWED");
+      eq(await counter(p, "hits"), 0, "policy dispatch");
+    },
+  );
+}
+for (let i = 1; i <= 2; i++) {
+  const name = `Private visual command ${i}`;
+  const intent = {
+    ...button(name),
+    preferredEvidence: {
+      roles: ["button" as const],
+      names: [],
+      labels: [],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+      visual: { sources: ["ocr" as const], expectedText: name, protectedUse: false },
+    },
+    confidence: { requiredFamilies: ["visual" as const], minimumFamilyCount: 1 },
+  };
+  add(
+    `privacy-denial-${i}`,
+    "privacy",
+    `<button>${name}</button>`,
+    `document.querySelector('button').onclick=()=>window.hits++;`,
+    async (p, invoke) => {
+      const { result } = await invoke(
+        intent,
+        { type: "activate" },
+        {
+          privacy: {
+            state: "protected",
+            allowedChannels: ["public_dom", "accessibility"],
+            suppressedChannels: ["visual", "ocr"],
+          },
+        },
+      );
+      failure(result, "PRAXIS_REQUIRED_CHANNEL_FORBIDDEN");
+      eq(await counter(p, "hits"), 0, "privacy dispatch");
+    },
+  );
+}
+
+for (let i = 1; i <= 5; i++) {
+  const label = `Read metric ${i}`,
+    value = `METRIC-${i}-${700 + i}`;
+  add(
+    `read-${i}`,
+    "acquisition",
+    `<dl><dt>${label}</dt><dd data-scry-readable>${value}</dd></dl>`,
+    ``,
+    async (_p, invoke) => {
+      const { result } = await invoke(read(label), {
+        type: "read_value",
+        classification: "public",
+        permittedMethods: ["dom_text"],
+      });
+      success(result, label);
+      eq(result.output?.value, value, "acquired value");
+    },
+  );
+}
+
+for (let i = 1; i <= 2; i++) {
+  const name = `Keyboard command ${i}`;
+  add(
+    `keyboard-${i}`,
+    "keyboard",
+    `<button>${name}</button><output data-scry-readable>idle</output>`,
+    `document.querySelector('button').onclick=()=>{window.hits++;document.querySelector('output').textContent='keyboard-done';};`,
+    async (p, invoke) => {
+      const { result } = await invoke(
+        { ...button(name), requiredCapabilities: ["focusable", "keyboard_activatable"] },
+        { type: "press_key", key: "Enter" },
+      );
+      success(result, name);
+      eq(await counter(p, "hits"), 1, "keyboard activation");
+    },
+  );
+}
+add(
+  "scroll-nested-container",
+  "scroll",
+  `<div title="Audit scroll container" tabindex="0" style="height:80px;overflow:auto"><div style="height:600px">Audit scroll content</div></div>`,
+  ``,
+  async (p, invoke) => {
+    const intent = base("Audit scroll container", ["focusable", "readable_value"]);
+    const { result } = await invoke(intent, { type: "scroll", direction: "down" });
+    success(result, intent.concept);
+    truth(
+      (await p.locator("[tabindex]").evaluate((e) => e.scrollTop)) > 0,
+      "container did not scroll",
+    );
+  },
+);
+add(
+  "wait-state-lifecycle",
+  "wait",
+  `<button id="enable" disabled>Delayed enable command</button><button id="disable">Delayed disable command</button><div id="hide" title="Delayed hidden region" data-scry-readable>Visible region</div><div id="show" title="Delayed visible region" data-scry-readable style="display:none">Revealed region</div><div id="attach-host"></div><div id="detach" title="Delayed detached region" data-scry-readable>Detaching region</div>`,
+  `setTimeout(()=>document.querySelector('#enable').disabled=false,140);setTimeout(()=>document.querySelector('#disable').disabled=true,280);setTimeout(()=>document.querySelector('#hide').style.display='none',420);setTimeout(()=>document.querySelector('#show').style.display='block',560);setTimeout(()=>document.querySelector('#attach-host').innerHTML='<div title="Delayed attached region" data-scry-readable>Attached region</div>',700);setTimeout(()=>document.querySelector('#detach').remove(),840);`,
+  async (_p, invoke) => {
+    const states: [
+      string,
+      InteractionTargetIntent,
+      "enabled" | "disabled" | "hidden" | "visible" | "attached" | "detached",
+    ][] = [
+      ["enabled", { ...button("Delayed enable command"), prohibited: ["hidden"] }, "enabled"],
+      ["disabled", { ...button("Delayed disable command"), prohibited: ["hidden"] }, "disabled"],
+      [
+        "hidden",
+        { ...base("Delayed hidden region", ["readable_value"]), prohibited: [] },
+        "hidden",
+      ],
+      [
+        "visible",
+        { ...base("Delayed visible region", ["readable_value"]), prohibited: [] },
+        "visible",
+      ],
+      [
+        "attached",
+        { ...base("Delayed attached region", ["readable_value"]), prohibited: [] },
+        "attached",
+      ],
+      [
+        "detached",
+        { ...base("Delayed detached region", ["readable_value"]), prohibited: [] },
+        "detached",
+      ],
+    ];
+    for (const [, intent, state] of states) {
+      const { result } = await invoke(intent, { type: "wait_for_state", state }, { timeout: 1000 });
+      success(result, intent.concept);
+    }
+  },
+);
+
+async function main() {
+  truth(cases.length === 100, `campaign definition contains ${cases.length} scenarios`);
+  const byPath = new Map(cases.map((c) => [c.route, c]));
+  const server = createServer((request, response) => {
+    const path = new URL(request.url ?? "/", "http://local").pathname;
+    if (path.startsWith("/destination/")) {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end(page("Destination", "<h1>Audited destination</h1>", ""));
+      return;
+    }
+    const c = byPath.get(path);
+    if (!c) {
+      response.writeHead(404);
+      response.end("missing");
+      return;
+    }
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(page(c.id, c.html, c.script));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("HTTP server unavailable");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const browser = await chromium.launch({
+    headless: true,
+    channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+  });
+  const outcomes: Outcome[] = [];
+  let ordinal = 0;
+  try {
+    for (const c of cases) {
+      const started = performance.now();
+      const context = await browser.newContext();
+      const p = await context.newPage();
+      let last: PraxisResult | undefined;
+      try {
+        await p.goto(origin + c.route, { waitUntil: "load" });
+        const invoke: Invoke = async (intent, operation, options = {}) => {
+          const events: PraxisLifecycleEvent[] = [];
+          ordinal++;
+          last = await executePraxisConsumer({
+            page: p,
+            intent,
+            operation,
+            expectedEffect: options.effect,
+            signal: options.signal ?? new AbortController().signal,
+            resolveInput: options.input,
+            context: {
+              channel: "action",
+              ordinal,
+              allowedOrigins: options.origins ?? [origin],
+              timeoutMs: options.timeout ?? 1600,
+              privacy: options.privacy,
+              emit: (e) => events.push(e),
+            },
+          });
+          return { result: last, events };
+        };
+        await c.run(p, invoke);
+        outcomes.push({
+          id: c.id,
+          category: c.category,
+          status: "passed",
+          durationMs: performance.now() - started,
+        });
+      } catch (error) {
+        outcomes.push({
+          id: c.id,
+          category: c.category,
+          status: "failed",
+          durationMs: performance.now() - started,
+          diagnostics: {
+            expectation: diagnostic(error),
+            result: last,
+            browser: await browserState(p).catch(() => ({ unavailable: true })),
+          },
+        });
+      } finally {
+        await context.close();
+      }
+    }
+  } finally {
+    await browser.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+  const report = {
+    schemaVersion: 1,
+    campaign: "praxis-core-100-independent",
+    executedAt: new Date().toISOString(),
+    environment: {
+      transport: "real_http",
+      browser: "real_chromium",
+      persistence: false,
+      missionFlowInfrastructure: false,
+    },
+    counts: {
+      total: outcomes.length,
+      passed: outcomes.filter((x) => x.status === "passed").length,
+      failed: outcomes.filter((x) => x.status === "failed").length,
+      skipped: 0,
+    },
+    categories: Object.fromEntries(
+      [...new Set(outcomes.map((x) => x.category))].map((category) => [
+        category,
+        {
+          total: outcomes.filter((x) => x.category === category).length,
+          passed: outcomes.filter((x) => x.category === category && x.status === "passed").length,
+        },
+      ]),
+    ),
+    scenarios: outcomes,
+  };
+  process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+  process.exit(report.counts.failed ? 1 : 0);
+}
+function page(title: string, body: string, script: string) {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>body{font:16px system-ui;margin:24px}button,input,select,[role=button],[role=checkbox],[contenteditable]{font:inherit;padding:8px;margin:7px;min-width:150px}section{padding:12px;border:1px solid #aaa}output{display:block}</style></head><body>${body}<script>window.hits=0;window.wrong=0;${script}</script></body></html>`;
+}
+function base(
+  concept: string,
+  caps: InteractionTargetIntent["requiredCapabilities"],
+  scope: InteractionTargetIntent["scope"] = { kind: "page" },
+): InteractionTargetIntent {
+  return {
+    concept,
+    requiredCapabilities: caps,
+    preferredEvidence: {
+      roles: [],
+      names: [concept],
+      labels: [concept],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+    },
+    scope,
+    relations: [],
+    prohibited: ["hidden", "disabled"],
+    risk: "ordinary",
+    confidence: { requiredFamilies: [] },
+  };
+}
+function button(name: string, scope?: InteractionTargetIntent["scope"]) {
+  return {
+    ...base(name, ["pointer_activatable"], scope),
+    preferredEvidence: {
+      roles: ["button" as const],
+      names: [name],
+      labels: [],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+    },
+  };
+}
+function text(name: string) {
+  return {
+    ...base(name, ["focusable", "accepts_text", "editable"]),
+    preferredEvidence: {
+      roles: ["textbox" as const],
+      names: [name],
+      labels: [name],
+      descriptions: [],
+      placeholders: [name],
+      inputTypes: ["text"],
+    },
+  };
+}
+function select(name: string) {
+  return {
+    ...base(name, ["focusable", "selects_option"]),
+    preferredEvidence: {
+      roles: ["combobox" as const],
+      names: [name],
+      labels: [name],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+    },
+  };
+}
+function toggle(name: string) {
+  return {
+    ...base(name, ["focusable", "toggleable"]),
+    preferredEvidence: {
+      roles: ["checkbox" as const],
+      names: [name],
+      labels: [name],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: ["checkbox"],
+    },
+  };
+}
+function read(name: string) {
+  return {
+    ...base(name, ["readable_value"]),
+    risk: "read_only" as const,
+    preferredEvidence: {
+      roles: ["value" as const],
+      names: [],
+      labels: [],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+      expectedText: name,
+    },
+  };
+}
+function valueEffect(expected: string): ExpectedEffect {
+  return {
+    type: "value_change",
+    target: {
+      ...read(expected),
+      preferredEvidence: {
+        roles: ["value"],
+        names: [],
+        labels: [],
+        descriptions: [],
+        placeholders: [],
+        inputTypes: [],
+        expectedText: expected,
+      },
+    },
+    expected,
+  };
+}
+function success(
+  result: PraxisResult,
+  concept: string,
+): asserts result is Extract<PraxisResult, { status: "succeeded" }> {
+  truth(result.status === "succeeded", `expected success for ${concept}`, result);
+  eq(result.resolution.target.concept, concept, "selected concept", result);
+}
+function failure(result: PraxisResult, code: string) {
+  truth(result.status !== "succeeded", `expected failure ${code}`, result);
+  eq(result.code, code, "failure code", result);
+}
+function truth(value: unknown, message: string, evidence: unknown = {}) {
+  if (!value) throw new ExpectationError(message, evidence);
+}
+function eq(actual: unknown, expected: unknown, label: string, evidence: unknown = {}) {
+  if (!Object.is(actual, expected))
+    throw new ExpectationError(
+      `${label}: expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`,
+      evidence,
+    );
+}
+async function counter(p: Page, key: string) {
+  return p.evaluate((k) => Number((window as unknown as Record<string, unknown>)[k] ?? 0), key);
+}
+async function browserState(p: Page) {
+  return p.evaluate(() => ({
+    url: location.href,
+    title: document.title,
+    text: (document.body.innerText ?? "").replace(/\s+/g, " ").trim().slice(0, 800),
+    hits: Number((window as unknown as Record<string, unknown>).hits ?? 0),
+    wrong: Number((window as unknown as Record<string, unknown>).wrong ?? 0),
+  }));
+}
+function diagnostic(error: unknown) {
+  return error instanceof ExpectationError
+    ? { kind: error.name, message: error.message, evidence: error.evidence }
+    : error instanceof Error
+      ? { kind: error.name, message: error.message }
+      : String(error);
+}
+await main();
