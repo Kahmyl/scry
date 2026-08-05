@@ -24,8 +24,8 @@ x-app-environment: &app-environment
   VEIL_ADMISSION_KEY: "${VEIL_ADMISSION_KEY:-local-only-veil-admission-key-change-me}"
 
 x-release-environment: &release-environment
-  SCRY_RELEASE_ID: "${SCRY_RELEASE_ID:-local-20260802-capability-grounding}"
-  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-5b4c1cdc9432b1378c75d4c57c674c63735a500d7e5fb7956d872d7c1cffa52f}"
+  SCRY_RELEASE_ID: "${SCRY_RELEASE_ID:-local-20260806-compiled-plan}"
+  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-973ebe6c5bfa07401865f6cc7ca41e62212ebb79b74a6af28ac3df57ddc803ac}"
 
 x-node-build: &node-build
   context: .
