@@ -16,6 +16,11 @@ const forbidden = [
   "/rerun",
   "/objectives",
   "/flow-revisions",
+  "Evidence privacy by environment",
+  "Increase privacy",
+  "Capture minimum",
+  "VEIL_USER_REQUESTED_PRIVACY",
+  "/environments/",
 ];
 const retained = ["Praxis interactions", "Cancel", "MCP setup", "Approve", "Reject"];
 const violations = forbidden.filter((value) => bundle.includes(value));

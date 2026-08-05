@@ -26,6 +26,7 @@ export function createProbeProcessor(
   options: SharedWorkerIdentity & {
     probes: ProbeRuntimeRepository;
     observationRuntimeHash: string;
+    veilAdmissionKey: string;
   },
 ) {
   return async (job: Job<ProbeJob>) => {
@@ -46,6 +47,10 @@ export function createProbeProcessor(
         policy: executionPolicySchema.parse(runtime.policy),
         browserChannel: options.browserChannel,
         outputDirectory: directory,
+        privacy: {
+          environmentId: runtime.environmentId,
+          veilAdmissionKey: options.veilAdmissionKey,
+        },
         secretResolver: (reference) => options.probes.resolveCredential(runtime, reference),
         captureBrowserState: (state) => {
           capturedState = state;

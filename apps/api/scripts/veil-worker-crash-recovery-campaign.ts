@@ -12,6 +12,10 @@ const db = new Pool({
 const api = process.env.SCRY_API_URL ?? "http://127.0.0.1:4000";
 const token = process.env.SCRY_SERVICE_TOKEN;
 if (!token) throw new Error("SCRY_SERVICE_TOKEN is required");
+if (process.env.VEIL_CRASH_EPHEMERAL_DATABASE !== "true")
+  throw new Error(
+    "VEIL_CRASH_EPHEMERAL_DATABASE=true is required: this destructive recovery campaign may run only against a disposable database topology.",
+  );
 const compose =
   process.env.SCRY_COMPOSE_FILE ?? path.resolve(process.cwd(), "../../docker-compose.yml");
 const composeArgs = [

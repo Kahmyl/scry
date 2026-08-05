@@ -149,6 +149,7 @@ const workers = createWorkerFleet({
     schemaFingerprint,
     heartbeatMs,
     browserChannel,
+    veilAdmissionKey,
     observationRuntimeHash: observationRuntime.runtimeHash,
   }),
 });

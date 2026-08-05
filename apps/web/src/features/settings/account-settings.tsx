@@ -30,7 +30,6 @@ import {
 } from "../../infrastructure/api/client.js";
 import { Modal } from "../../shared/components/dashboard-controls.js";
 import { EmptyBlock, PageTitle } from "../../shared/components/dashboard-primitives.js";
-import { veilPolicyIdentity, veilTighteningOptions } from "../../shared/state/dashboard-state.js";
 import { publicConfig } from "../../infrastructure/config/runtime-config.js";
 
 export function AccountSettings({ userEmail }: { userEmail: string }) {
