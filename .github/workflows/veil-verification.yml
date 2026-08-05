@@ -43,6 +43,7 @@ jobs:
       VEIL_ADMISSION_KEY: veil-ci-admission-key-at-least-32-bytes
       WORKER_STALE_MS: "5000"
       WORKER_HEARTBEAT_MS: "500"
+      VEIL_CRASH_EPHEMERAL_DATABASE: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

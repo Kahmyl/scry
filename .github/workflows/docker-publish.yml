@@ -75,7 +75,7 @@ jobs:
           SCRY_BROWSER_CHANNEL=chrome pnpm campaign:veil:public-apps
           printf 'SCRY_SERVICE_TOKEN=veil-release-worker-crash-service-token\nSCRY_ORCHESTRATION_ENABLED=true\n' > apps/api/.env
           SCRY_SERVICE_TOKEN=veil-release-worker-crash-service-token docker compose up -d --build --wait postgres redis migrate api worker
-          SCRY_SERVICE_TOKEN=veil-release-worker-crash-service-token pnpm campaign:veil:worker-crash
+          SCRY_SERVICE_TOKEN=veil-release-worker-crash-service-token VEIL_CRASH_EPHEMERAL_DATABASE=true pnpm campaign:veil:worker-crash
           docker compose down -v --remove-orphans
           echo "SCRY_SCHEMA_FINGERPRINT=$(node scripts/schema-fingerprint.mjs)" >> "$GITHUB_ENV"
 

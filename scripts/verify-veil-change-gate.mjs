@@ -3,6 +3,10 @@ import { extname, join, relative, resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const workflow = readFileSync(resolve(root, ".github/workflows/veil-verification.yml"), "utf8");
 const publish = readFileSync(resolve(root, ".github/workflows/docker-publish.yml"), "utf8");
+const crashCampaign = readFileSync(
+  resolve(root, "apps/api/scripts/veil-worker-crash-recovery-campaign.ts"),
+  "utf8",
+);
 const triggers = [
   "packages/contracts/**",
   "packages/executor/**",
@@ -49,6 +53,12 @@ if (evidencePreparation < 0 || productionGate < 0 || evidencePreparation > produ
   failures.push("Veil production evidence directory is not prepared before its fallible gates");
 if (!/name: veil-production-[\s\S]*?path: artifacts\/veil\s+if-no-files-found: warn/.test(workflow))
   failures.push("Veil production evidence upload can mask an earlier campaign failure");
+if (!crashCampaign.includes('VEIL_CRASH_EPHEMERAL_DATABASE !== "true"'))
+  failures.push("Veil worker-crash campaign does not refuse shared databases");
+if (!workflow.includes('VEIL_CRASH_EPHEMERAL_DATABASE: "true"'))
+  failures.push("Veil worker-crash workflow does not declare its disposable database topology");
+if (!publish.includes("VEIL_CRASH_EPHEMERAL_DATABASE=true pnpm campaign:veil:worker-crash"))
+  failures.push("release workflow does not declare the worker-crash database disposable");
 const productionRoots = [
   resolve(root, "packages/executor/src"),
   resolve(root, "packages/artifact/src"),

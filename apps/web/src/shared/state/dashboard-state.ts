@@ -63,14 +63,6 @@ export function reconcileProjectSelection(
   return projects[0]?.id ?? "";
 }
 
-export function veilTighteningOptions(
-  profile: "balanced" | "private" | "minimal_capture" | "custom",
-) {
-  if (profile === "minimal_capture") return [] as const;
-  if (profile === "private") return ["minimal_capture"] as const;
-  return ["private", "minimal_capture"] as const;
-}
-
 export function veilPolicyIdentity(policyDigest: string) {
   if (!/^[a-f0-9]{64}$/.test(policyDigest)) throw new Error("VEIL_POLICY_DIGEST_INVALID");
   return policyDigest.slice(0, 12);

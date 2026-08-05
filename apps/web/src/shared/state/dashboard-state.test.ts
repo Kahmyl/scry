@@ -5,7 +5,6 @@ import {
   reconcileProjectSelection,
   resolveDashboardView,
   veilPolicyIdentity,
-  veilTighteningOptions,
 } from "./dashboard-state.js";
 
 describe("dashboard state", () => {
@@ -36,12 +35,6 @@ describe("dashboard state", () => {
     expect(dashboardAuthority.prohibitedDashboardMutations).toContain("run_rerun");
     expect(dashboardAuthority.retainedHumanControls).toContain("active_run_cancel");
     expect(dashboardAuthority.retainedHumanControls).toContain("calibration_approval");
-  });
-
-  it("offers only stricter Veil profiles", () => {
-    expect(veilTighteningOptions("balanced")).toEqual(["private", "minimal_capture"]);
-    expect(veilTighteningOptions("private")).toEqual(["minimal_capture"]);
-    expect(veilTighteningOptions("minimal_capture")).toEqual([]);
   });
 
   it("renders the exact API policy digest identity", () => {

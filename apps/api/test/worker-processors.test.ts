@@ -40,6 +40,7 @@ describe("worker processor boundaries", () => {
       ...identity,
       probes: probes as never,
       observationRuntimeHash: "runtime",
+      veilAdmissionKey: "test-key",
     });
     await expect(
       processor(

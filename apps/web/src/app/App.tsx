@@ -86,7 +86,6 @@ import {
   reconcileProjectSelection,
   resolveDashboardView,
   veilPolicyIdentity,
-  veilTighteningOptions,
   type DashboardView as View,
 } from "../shared/state/index.js";
 import { MissionDetailPage, MissionReportsPage, Missions } from "../features/missions/index.js";

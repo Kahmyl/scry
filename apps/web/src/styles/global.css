@@ -6703,6 +6703,14 @@ select:focus-visible {
   gap: 13px;
   border-bottom: 1px solid var(--line-soft);
 }
+.credential-actions {
+  grid-column: 3 / -1;
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
 .credential-list > div:last-child {
   border-bottom: 0;
 }

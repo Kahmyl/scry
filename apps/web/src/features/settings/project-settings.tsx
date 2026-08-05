@@ -17,28 +17,22 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   api,
-  patch,
   post,
   remove,
   type Calibration,
   type Credential,
   type CredentialIncident,
-  type Environment,
   type McpAccessToken,
   type Project,
-  type VeilPreferenceRecord,
 } from "../../infrastructure/api/client.js";
 import { Modal } from "../../shared/components/dashboard-controls.js";
 import { EmptyBlock, PageTitle } from "../../shared/components/dashboard-primitives.js";
-import { veilPolicyIdentity, veilTighteningOptions } from "../../shared/state/dashboard-state.js";
 import { publicConfig } from "../../infrastructure/config/runtime-config.js";
 
 export function Settings({ projectId }: { projectId: string }) {
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [calibrations, setCalibrations] = useState<Calibration[]>([]);
   const [incidents, setIncidents] = useState<CredentialIncident[]>([]);
-  const [environments, setEnvironments] = useState<Environment[]>([]);
-  const [veil, setVeil] = useState<VeilPreferenceRecord[]>([]);
   const [dialog, setDialog] = useState(false);
   const [error, setError] = useState("");
 
@@ -47,19 +41,11 @@ export function Settings({ projectId }: { projectId: string }) {
       api<Credential[]>(`/projects/${projectId}/credentials`),
       api<Calibration[]>(`/projects/${projectId}/calibrations`),
       api<CredentialIncident[]>(`/projects/${projectId}/credential-incidents`),
-      api<Environment[]>(`/projects/${projectId}/environments`),
     ])
-      .then(async ([nextCredentials, nextCalibrations, nextIncidents, nextEnvironments]) => {
-        const veilRecords = await Promise.all(
-          nextEnvironments.map((environment) =>
-            api<VeilPreferenceRecord>(`/environments/${environment.id}/veil`),
-          ),
-        );
+      .then(([nextCredentials, nextCalibrations, nextIncidents]) => {
         setCredentials(nextCredentials);
         setCalibrations(nextCalibrations);
         setIncidents(nextIncidents);
-        setEnvironments(nextEnvironments);
-        setVeil(veilRecords);
       })
       .catch((cause) => setError(message(cause)));
   }, [projectId]);
@@ -109,21 +95,6 @@ export function Settings({ projectId }: { projectId: string }) {
     }
   };
 
-  const tightenVeil = async (environmentId: string, profile: "private" | "minimal_capture") => {
-    setError("");
-    try {
-      const updated = await patch<VeilPreferenceRecord>(`/environments/${environmentId}/veil`, {
-        profile,
-        reasonCode: "VEIL_USER_REQUESTED_PRIVACY",
-      });
-      setVeil((current) =>
-        current.map((record) => (record.environmentId === environmentId ? updated : record)),
-      );
-    } catch (cause) {
-      setError(message(cause));
-    }
-  };
-
   return (
     <>
       <PageTitle
@@ -150,58 +121,6 @@ export function Settings({ projectId }: { projectId: string }) {
           <span>
             <Check size={14} /> Flow-scoped access
           </span>
-        </div>
-      </section>
-      <section className="panel credential-settings">
-        <div className="credential-settings-head">
-          <div>
-            <span className="eyebrow">VEIL PRIVACY</span>
-            <h3>Effective capture profiles</h3>
-            <p>
-              Settings can only become stricter. Sensitive visual masking, structured-evidence
-              sanitation, and unknown-evidence quarantine cannot be disabled.
-            </p>
-          </div>
-        </div>
-        <div className="credential-list">
-          {environments.map((environment) => {
-            const record = veil.find((candidate) => candidate.environmentId === environment.id);
-            return (
-              <div key={environment.id}>
-                <span className="credential-icon">
-                  <ShieldCheck size={17} />
-                </span>
-                <div>
-                  <strong>
-                    {environment.name} ·{" "}
-                    {record?.effectivePolicy.profile.replaceAll("_", " ") ?? "loading"}
-                  </strong>
-                  <small>
-                    {record
-                      ? `Policy ${veilPolicyIdentity(record.effectivePolicy.digest)} · ${record.effectivePolicy.allowedOrigins.length} allowed origin(s) · ${record.effectivePolicy.leaseTtlMs} ms leases`
-                      : "Loading effective policy"}
-                  </small>
-                </div>
-                {record &&
-                  veilTighteningOptions(record.effectivePolicy.profile).map((profile) => (
-                    <button
-                      key={profile}
-                      className="secondary-button"
-                      onClick={() => void tightenVeil(environment.id, profile)}
-                    >
-                      Use {profile.replaceAll("_", " ")}
-                    </button>
-                  ))}
-              </div>
-            );
-          })}
-          {!environments.length && (
-            <EmptyBlock
-              icon={<ShieldCheck />}
-              title="No environments"
-              copy="Veil preferences are environment-scoped and appear after an execution environment is created."
-            />
-          )}
         </div>
       </section>
       <section className="panel credential-settings">
@@ -283,7 +202,7 @@ export function Settings({ projectId }: { projectId: string }) {
                 </small>
               </div>
               {calibration.status === "draft" && calibration.attestationId && (
-                <>
+                <div className="credential-actions">
                   <button
                     className="secondary-button"
                     onClick={() => void decideCalibration(calibration, "reject")}
@@ -296,7 +215,7 @@ export function Settings({ projectId }: { projectId: string }) {
                   >
                     Approve
                   </button>
-                </>
+                </div>
               )}
             </div>
           ))}

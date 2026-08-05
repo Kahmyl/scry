@@ -1,10 +1,12 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { CurrentPlan, ExecutionPolicy, InteractionTargetIntent } from "@scry/contracts";
+import { registerPraxisVeilAuthority } from "@scry/praxis";
+import { browserObservationRuntimeHealth, executePraxisConsumer } from "@scry/praxis";
+import { VeilAuthority } from "@scry/veil";
 import { chromium } from "playwright";
 
 import { executePlan } from "./executor.js";
-import { browserObservationRuntimeHealth } from "@scry/praxis";
-import { executePraxisConsumer } from "@scry/praxis";
+import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
 import type { BrowserStorageState } from "./types.js";
 import { playwrightBrowserChannel } from "@scry/praxis";
 
@@ -26,9 +28,15 @@ export async function probeFlowPlan(input: {
   policy: ExecutionPolicy;
   browserChannel: string;
   outputDirectory: string;
+  privacy: {
+    environmentId: string;
+    veilAdmissionKey: string;
+  };
   secretResolver?: (reference: string) => Promise<string>;
   captureBrowserState?: (state: BrowserStorageState) => void | Promise<void>;
 }): Promise<ProbeExecutionResult> {
+  if (!input.privacy.environmentId) throw new Error("PROBE_ENVIRONMENT_REQUIRED");
+  if (!input.privacy.veilAdmissionKey) throw new Error("VEIL_ADMISSION_KEY_REQUIRED");
   const runtime = browserObservationRuntimeHealth();
   if (!runtime.healthy)
     return {
@@ -49,6 +57,8 @@ export async function probeFlowPlan(input: {
       policy: input.policy,
       outputDirectory: input.outputDirectory,
       browserChannel: input.browserChannel,
+      environmentId: input.privacy.environmentId,
+      veilAdmissionKey: input.privacy.veilAdmissionKey,
       ...(input.secretResolver ? { secretResolver: input.secretResolver } : {}),
       ...(input.captureBrowserState ? { captureBrowserState: input.captureBrowserState } : {}),
     };
@@ -86,6 +96,12 @@ export async function probeFlowPlan(input: {
   const readiness: Array<Record<string, unknown>> = [];
   const diagnostics: Array<Record<string, unknown>> = [];
   const page = await browser.newPage();
+  const unregisterPraxisVeil = registerPraxisVeilAuthority(page, {
+    authority: new VeilAuthority(resolveVeilPolicyForExecution(input.policy)),
+    userId: "probe",
+    environmentId: input.privacy.environmentId,
+    browserContextId: `probe-${randomUUID()}`,
+  });
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   try {
@@ -141,6 +157,7 @@ export async function probeFlowPlan(input: {
       pageFingerprint: hash({ url: page.url(), targets: targets.map((item) => item.fingerprint) }),
     };
   } finally {
+    unregisterPraxisVeil();
     await browser.close();
   }
 }
