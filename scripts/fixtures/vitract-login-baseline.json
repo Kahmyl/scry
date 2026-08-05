@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "scenario": "vitract-preview-partner-login",
+  "target": {
+    "url": "https://preview.vitract.com/login",
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "sourceRun": {
+    "runId": "1bd449d2-9651-483d-81a7-de49faaa2bac",
+    "attempt": 1,
+    "recordedAt": "2026-07-30T14:56:20.476Z"
+  },
+  "observedOutcome": {
+    "authenticationSucceeded": true,
+    "dashboardVerified": true,
+    "flowSucceeded": false,
+    "failedStepId": "open-menu",
+    "failedStepTitle": "Open partner navigation",
+    "failureCode": "TARGET_NOT_FOUND",
+    "failureMessage": "Timed out waiting for getByRole('button', { name: 'Open menu', exact: true })",
+    "failureDurationMs": 30125,
+    "requiredAssertions": {
+      "passed": 3,
+      "failed": 0,
+      "unevaluated": 6
+    }
+  },
+  "characterization": {
+    "expectedTarget": {
+      "role": "button",
+      "name": "Open menu",
+      "exact": true
+    },
+    "actualLayout": "desktop-sidebar-expanded",
+    "actualVisibleNavigation": [
+      "Dashboard",
+      "Orders",
+      "Kits & reports",
+      "Clients",
+      "Practitioners",
+      "Team",
+      "Log out"
+    ],
+    "rootCause": "The authored interaction contract assumed a collapsed or mobile navigation state, but execution used a desktop layout where the sidebar was already visible.",
+    "probeQualityFailure": true,
+    "loginFailure": false
+  },
+  "baselineExpectation": {
+    "currentImplementation": "fail",
+    "futureImplementation": "skip redundant menu-opening action and interact directly with the visible desktop navigation target"
+  }
+}
