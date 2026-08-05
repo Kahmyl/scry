@@ -3,7 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { currentPlanSchema, executionPolicySchema } from "@scry/contracts";
+import {
+  currentPlanSchema,
+  executionPolicySchema,
+  type InteractionTargetIntent,
+} from "@scry/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { probeFlowPlan } from "../src/probe.js";
@@ -15,12 +19,23 @@ const directories: string[] = [];
 beforeAll(async () => {
   server = createServer((_request, response) => {
     response.setHeader("content-type", "text/html");
-    response.end(
-      '<main><button type="button" aria-label="Open documentation">Docs</button></main>',
-    );
+    response.end(`
+      <main>
+        <button type="button" aria-label="Open documentation">
+          Docs
+        </button>
+
+        <nav aria-label="Partner navigation">
+          <a href="/dashboard">Dashboard</a>
+          <a href="/orders">Orders</a>
+        </nav>
+      </main>
+    `);
   });
 
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", resolve),
+  );
 
   const address = server.address();
 
@@ -35,7 +50,9 @@ afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 
   await Promise.all(
-    directories.map((directory) => rm(directory, { recursive: true, force: true })),
+    directories.map((directory) =>
+      rm(directory, { recursive: true, force: true }),
+    ),
   );
 });
 
@@ -89,30 +106,7 @@ describe("probe Veil composition boundary", () => {
           title: "Inspect missing control",
           action: {
             type: "waitFor",
-            target: {
-              concept: "missing_control",
-              requiredCapabilities: ["pointer_activatable"],
-              preferredEvidence: {
-                roles: ["button"],
-                names: ["Control that does not exist"],
-                labels: ["Control that does not exist"],
-                descriptions: [],
-                placeholders: [],
-                inputTypes: [],
-              },
-              scope: {
-                kind: "page",
-              },
-              relations: [],
-              prohibited: ["hidden", "disabled"],
-              risk: "read_only",
-              confidence: {
-                requiredFamilies: [],
-                minimum: 0.35,
-                minimumMargin: 0,
-                minimumFamilyCount: 1,
-              },
-            },
+            target: target("missing_control", "button", "Control that does not exist"),
             state: "visible",
           },
           assertions: [],
@@ -133,10 +127,45 @@ describe("probe Veil composition boundary", () => {
       ]),
     );
   }, 20_000);
+
+  it("marks a missing visibility-change click as redundant when its effect target is already visible", async () => {
+    const result = await probeFlowPlan({
+      ...(await probeInput("inspection")),
+      plan: planWithAlreadyExpandedNavigation(),
+    });
+
+    expect(result.allResolved).toBe(true);
+
+    expect(result.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stepId: "open-menu",
+          channel: "action",
+          status: "redundant",
+          reason: "expected_effect_already_satisfied",
+        }),
+        expect.objectContaining({
+          stepId: "open-orders",
+          channel: "action",
+          status: "resolved",
+        }),
+      ]),
+    );
+
+    expect(result.diagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stepId: "open-menu",
+        }),
+      ]),
+    );
+  }, 20_000);
 });
 
 async function probeInput(level: "inspection" | "reversible") {
-  const outputDirectory = await mkdtemp(path.join(tmpdir(), "scry-probe-veil-test-"));
+  const outputDirectory = await mkdtemp(
+    path.join(tmpdir(), "scry-probe-veil-test-"),
+  );
 
   directories.push(outputDirectory);
 
@@ -166,30 +195,11 @@ function planWithInspectionTarget() {
       title: "Inspect documentation control",
       action: {
         type: "waitFor",
-        target: {
-          concept: "open_documentation",
-          requiredCapabilities: ["pointer_activatable"],
-          preferredEvidence: {
-            roles: ["button"],
-            names: ["Open documentation"],
-            labels: ["Open documentation"],
-            descriptions: [],
-            placeholders: [],
-            inputTypes: [],
-          },
-          scope: {
-            kind: "page",
-          },
-          relations: [],
-          prohibited: ["hidden", "disabled"],
-          risk: "read_only",
-          confidence: {
-            requiredFamilies: [],
-            minimum: 0.35,
-            minimumMargin: 0,
-            minimumFamilyCount: 1,
-          },
-        },
+        target: target(
+          "open_documentation",
+          "button",
+          "Open documentation",
+        ),
         state: "visible",
       },
       assertions: [],
@@ -200,13 +210,85 @@ function planWithInspectionTarget() {
   ]);
 }
 
+function planWithAlreadyExpandedNavigation() {
+  const ordersTarget = target("orders", "link", "Orders");
+
+  return plan([
+    {
+      id: "open-menu",
+      title: "Open partner navigation",
+      action: {
+        type: "click",
+        target: target("open_menu", "button", "Open menu"),
+        expectedEffect: {
+          type: "visibility_change",
+          target: ordersTarget,
+          visible: true,
+        },
+      },
+      assertions: [],
+      evidence: [],
+      onFailure: "stop",
+      captureIntent: "final",
+    },
+    {
+      id: "open-orders",
+      title: "Open orders",
+      action: {
+        type: "click",
+        target: ordersTarget,
+        expectedEffect: {
+          type: "navigation",
+          url: "/orders",
+          match: "path",
+        },
+      },
+      assertions: [],
+      evidence: [],
+      onFailure: "stop",
+      captureIntent: "final",
+    },
+  ]);
+}
+
+function target(
+  concept: string,
+  role: string,
+  name: string,
+): InteractionTargetIntent {
+  return {
+    concept,
+    requiredCapabilities: ["pointer_activatable"],
+    preferredEvidence: {
+      roles: [role],
+      names: [name],
+      labels: [name],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+    },
+    scope: {
+      kind: "page",
+    },
+    relations: [],
+    prohibited: ["hidden", "disabled"],
+    risk: "read_only",
+    confidence: {
+      requiredFamilies: [],
+      minimum: 0.35,
+      minimumMargin: 0,
+      minimumFamilyCount: 1,
+    },
+  };
+}
+
 function plan(extraSteps: unknown[]) {
   return currentPlanSchema.parse({
     name: "Probe Veil boundary",
     objective: "Inspect through the production probe boundary",
     allowedOrigins: [origin],
     budgets: {
-      maxActions: 3,
+      maxActions: 4,
       maxDurationMs: 15_000,
       maxNavigations: 2,
     },
