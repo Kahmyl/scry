@@ -21,6 +21,7 @@
     "verify:praxis-inventory": "node scripts/verify-praxis-interaction-inventory.mjs",
     "verify:praxis-change-gate": "node scripts/verify-praxis-change-gate.mjs",
     "baseline:praxis": "node scripts/praxis-baseline.mjs",
+    "baseline:authoring": "node scripts/authoring-baseline.mjs",
     "campaign:praxis": "pnpm --filter @scry/executor campaign:praxis",
     "campaign:praxis:100": "pnpm --filter @scry/executor campaign:praxis:100",
     "campaign:praxis:resilience": "pnpm --filter @scry/executor campaign:praxis:resilience",
