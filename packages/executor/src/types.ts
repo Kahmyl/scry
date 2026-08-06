@@ -94,6 +94,13 @@ export type ExecuteOptions = {
   groundingHistory?: (
     intentDigest: string,
   ) => Promise<import("@scry/contracts").SemanticFingerprint | undefined>;
+  onGroundingDiagnostic?: (
+    diagnostic: import("@scry/praxis").GroundingDiagnostic & {
+      intentDigest: string;
+      outcome: "resolved" | "rejected";
+      code?: string;
+    },
+  ) => void | Promise<void>;
   signal?: AbortSignal;
   onEvent?: (event: RunEvent) => void | Promise<void>;
   onPraxisResult?: (result: import("@scry/contracts").PraxisResult) => void | Promise<void>;

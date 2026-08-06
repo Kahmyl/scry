@@ -12,6 +12,7 @@ import { PraxisAdapter, type PraxisInputResolver } from "./adapter.js";
 import { PraxisDocumentEpoch } from "./observation.js";
 import { PraxisTransactionCoordinator } from "./transaction.js";
 import { authorizePraxisRequest, releasePraxisVeilGrants } from "./veil-bridge.js";
+import { registerGroundingObserver } from "./grounding.js";
 
 export type PraxisConsumerContext = {
   runId?: string;
@@ -32,6 +33,13 @@ export type PraxisConsumerContext = {
   privacy?: PraxisRequest["privacy"];
   emit?: (event: PraxisLifecycleEvent) => void | Promise<void>;
   record?: (result: PraxisResult) => void | Promise<void>;
+  onGroundingDiagnostic?: (
+    diagnostic: import("./grounding.js").GroundingDiagnostic & {
+      intentDigest: string;
+      outcome: "resolved" | "rejected";
+      code?: string;
+    },
+  ) => void | Promise<void>;
 };
 
 export type PraxisConsumerInput = {
@@ -45,6 +53,13 @@ export type PraxisConsumerInput = {
 };
 
 export async function executePraxisConsumer(input: PraxisConsumerInput): Promise<PraxisResult> {
+  if (input.context.onGroundingDiagnostic) {
+    registerGroundingObserver(
+      input.page,
+      input.context.onGroundingDiagnostic,
+    );
+  }
+
   const request = authorizePraxisRequest(input.page, await buildPraxisRequest(input));
   try {
     const result = await new PraxisTransactionCoordinator(

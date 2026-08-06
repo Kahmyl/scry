@@ -17,7 +17,10 @@ import {
   playwrightBrowserChannel,
   visualRedactionInitScript,
 } from "./browser-runtime-artifacts.js";
-import { PraxisGroundingPolicyV1 } from "./observation.js";
+import {
+  PraxisDocumentEpoch,
+  PraxisGroundingPolicyV1,
+} from "./observation.js";
 import { collectPraxisEvidence } from "./evidence.js";
 import { escalationLevel } from "./latency.js";
 
@@ -315,11 +318,17 @@ export async function resolveTarget(
       safeActions: ["narrow_scope", "request_calibration"],
     });
   if (ranked.length > 1 && (margin <= 0 || margin < policy.margin))
-    throw await reject(page, intentDigest, "TARGET_AMBIGUOUS", {
-      ...base,
-      selectedFingerprint: best.fingerprint,
-      safeActions: ["narrow_scope", "request_calibration"],
-    });
+    throw await reject(
+      page,
+      intentDigest,
+      "TARGET_AMBIGUOUS",
+      {
+        ...base,
+        selectedFingerprint: best.fingerprint,
+        safeActions: ["narrow_scope", "request_calibration"],
+      },
+      ranked,
+    );
   if (drift === "suspicious" || drift === "incompatible")
     throw await reject(page, intentDigest, "GROUNDING_DRIFT_REQUIRES_CALIBRATION", {
       ...base,
@@ -1046,6 +1055,175 @@ function selectAdapter(intent: InteractionTargetIntent, meta: ObservedControl): 
   if (intent.requiredCapabilities.includes("selects_option")) return "native_select";
   return "native_click";
 }
+
+export async function resolveTargetCandidates(
+  page: Page,
+  intent: InteractionTargetIntent,
+  boundary: { allowedOrigins?: readonly string[] } = {},
+): Promise<import("@scry/contracts").PraxisCandidateResponse> {
+  const intentDigest = createHash("sha256")
+    .update(stableJson(intent))
+    .digest("hex");
+
+  try {
+    const grounded = await resolveTarget(page, intent, boundary);
+
+    const epoch = await PraxisDocumentEpoch.current(page, grounded.frame);
+    const fingerprint = grounded.diagnostic.selectedFingerprint!;
+
+    return {
+      resolution: "resolved",
+      candidates: [
+        {
+          id: `candidate-${fingerprint.digest.slice(0, 16)}`,
+          fingerprint: fingerprint.digest,
+          confidence: grounded.diagnostic.confidence,
+          runnerUpMargin: grounded.diagnostic.confidenceMargin,
+          evidenceFamilies: grounded.diagnostic.evidenceFamilies ?? [],
+          strategy: grounded.adapter,
+          resumeToken: {
+            id: `resume-${fingerprint.digest.slice(0, 16)}`,
+            intentDigest,
+            fingerprint: fingerprint.digest,
+            documentEpoch: epoch,
+            expiresAt: new Date(Date.now() + 30_000).toISOString(),
+          },
+        },
+      ],
+      diagnostic: {
+        intentDigest,
+        documentEpoch: epoch,
+      },
+    };
+  } catch (error) {
+    if (!(error instanceof GroundingError)) {
+      throw error;
+    }
+
+    const epoch = await PraxisDocumentEpoch.current(page);
+
+    if (
+      error.code === "TARGET_AMBIGUOUS" ||
+      error.code === "INSUFFICIENT_EVIDENCE"
+    ) {
+      return {
+        resolution:
+          error.code === "TARGET_AMBIGUOUS"
+            ? "needs_agent_choice"
+            : "needs_scoped_inspection",
+        candidates: error.candidates.slice(0, 10).map((candidate, index) => ({
+          id: `candidate-${index + 1}-${candidate.fingerprint.digest.slice(0, 12)}`,
+          fingerprint: candidate.fingerprint.digest,
+          confidence: candidate.score.total,
+          runnerUpMargin: error.diagnostic.confidenceMargin,
+          evidenceFamilies: Object.keys(candidate.score.families).filter(
+            (value): value is import("@scry/contracts").EvidenceFamily =>
+              [
+                "native_control",
+                "accessibility",
+                "textual",
+                "structural",
+                "visual",
+                "historical",
+                "runtime",
+                "effect",
+              ].includes(value),
+          ),
+          strategy: candidate.adapter,
+          resumeToken: {
+            id: `resume-${candidate.fingerprint.digest.slice(0, 12)}`,
+            intentDigest,
+            fingerprint: candidate.fingerprint.digest,
+            documentEpoch: epoch,
+            expiresAt: new Date(Date.now() + 30_000).toISOString(),
+          },
+        })),
+        diagnostic: {
+          intentDigest,
+          documentEpoch: epoch,
+        },
+      };
+    }
+
+    return {
+      resolution: "blocked",
+      candidates: [],
+      diagnostic: {
+        intentDigest,
+        documentEpoch: epoch,
+      },
+    };
+  }
+}
+
+
+export async function validateCandidateResumeToken(
+  page: Page,
+  token: import("@scry/contracts").PraxisResumeToken,
+): Promise<void> {
+  const now = Date.now();
+
+  if (Date.parse(token.expiresAt) <= now) {
+    throw new GroundingError(
+      "TARGET_CHANGED_BEFORE_ACTION",
+      {
+        ...emptyDiagnostic({ kind: "page" }, 0),
+        safeActions: ["retry_after_render", "request_calibration"],
+      },
+      token.intentDigest,
+    );
+  }
+
+  const epoch = await PraxisDocumentEpoch.current(page);
+
+  if (epoch !== token.documentEpoch) {
+    throw new GroundingError(
+      "TARGET_CHANGED_BEFORE_ACTION",
+      {
+        ...emptyDiagnostic({ kind: "page" }, 0),
+        safeActions: ["retry_after_render", "request_calibration"],
+      },
+      token.intentDigest,
+    );
+  }
+}
+
+
+
+export async function validateCandidateResume(
+  page: Page,
+  token: import("@scry/contracts").PraxisResumeToken,
+  intent: InteractionTargetIntent,
+): Promise<void> {
+  if (token.intentDigest !== createHash("sha256").update(stableJson(intent)).digest("hex")) {
+    throw new GroundingError(
+      "TARGET_CHANGED_BEFORE_ACTION",
+      {
+        ...emptyDiagnostic(intent.scope, 0),
+        safeActions: ["revise_intent", "request_calibration"],
+      },
+      token.intentDigest,
+    );
+  }
+
+  await validateCandidateResumeToken(page, token);
+
+  const grounded = await resolveTarget(page, intent);
+
+  const fingerprint = grounded.diagnostic.selectedFingerprint?.digest;
+
+  if (!fingerprint || fingerprint !== token.fingerprint) {
+    throw new GroundingError(
+      "TARGET_CHANGED_BEFORE_ACTION",
+      {
+        ...grounded.diagnostic,
+        safeActions: ["retry_after_render", "request_calibration"],
+      },
+      token.intentDigest,
+    );
+  }
+}
+
 function riskPolicy(intent: InteractionTargetIntent) {
   const high = ["destructive", "authentication", "credential", "protected", "live"].includes(
     intent.risk,
@@ -1149,15 +1327,17 @@ async function reject(
   intentDigest: string,
   code: string,
   diagnostic: GroundingDiagnostic,
+  candidates: readonly Candidate[] = [],
 ) {
   await observers.get(page)?.({ ...diagnostic, code, intentDigest, outcome: "rejected" });
-  return new GroundingError(code, diagnostic);
+  return new GroundingError(code, diagnostic, intentDigest, candidates);
 }
 export class GroundingError extends Error {
   constructor(
     public readonly code: string,
     public readonly diagnostic: GroundingDiagnostic,
     public readonly intentDigest?: string,
+    public readonly candidates: readonly Candidate[] = [],
   ) {
     super(code);
     this.name = "GroundingError";

@@ -2,7 +2,11 @@ import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { InteractionTargetIntent, PraxisOperation, PraxisRequest } from "@scry/contracts";
 import { PraxisAdapter } from "../src/adapter.js";
-import { PraxisMutationLease, selectPraxisStrategy } from "../src/runtime.js";
+import {
+  PraxisGroundingEngine,
+  PraxisMutationLease,
+  selectPraxisStrategy,
+} from "../src/runtime.js";
 import { PraxisDocumentEpoch } from "../src/observation.js";
 import { PraxisAdapterError, PraxisTransactionCoordinator } from "../src/transaction.js";
 import { executePraxisConsumer } from "../src/consumer.js";
@@ -69,6 +73,31 @@ const request = (operation: PraxisOperation, target = intent("Save")): PraxisReq
     },
     context: { pageId: "page", origin: "https://example.test", documentEpoch: 0 },
   });
+
+
+describe("Praxis candidate resume fencing", () => {
+  it("rejects a stale candidate before runtime resume dispatch", async () => {
+    await page.setContent("<button>Save</button>");
+
+    const engine = new PraxisGroundingEngine(page);
+
+    await expect(
+      engine.resume(
+        request({ type: "activate" }),
+        {
+          id: "resume-save",
+          intentDigest: "a".repeat(64),
+          fingerprint: "b".repeat(64),
+          documentEpoch: 0,
+          expiresAt: new Date(Date.now() + 30_000).toISOString(),
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({
+      code: "TARGET_CHANGED_BEFORE_ACTION",
+    });
+  }, 15_000);
+});
 
 describe("Praxis strategy, dispatch, and verification", () => {
   it("selects typed least-invasive strategies", () => {

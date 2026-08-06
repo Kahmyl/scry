@@ -189,6 +189,49 @@ export const praxisResolutionSchema = z
     strategy: interactionAdapterSchema,
   })
   .strict();
+
+
+export const praxisCandidateResolutionSchema = z.enum([
+  "resolved",
+  "needs_agent_choice",
+  "needs_scoped_inspection",
+  "blocked",
+]);
+
+export const praxisResumeTokenSchema = z
+  .object({
+    id: identifier,
+    intentDigest: digest,
+    fingerprint: digest,
+    documentEpoch: z.number().int().nonnegative(),
+    expiresAt: z.string().datetime(),
+  })
+  .strict();
+
+export const praxisCandidateSchema = z
+  .object({
+    id: identifier,
+    fingerprint: digest,
+    confidence: z.number().min(0).max(1),
+    runnerUpMargin: z.number().min(0).max(1),
+    evidenceFamilies: z.array(evidenceFamilySchema).max(8),
+    strategy: interactionAdapterSchema,
+    resumeToken: praxisResumeTokenSchema,
+  })
+  .strict();
+
+export const praxisCandidateResponseSchema = z
+  .object({
+    resolution: praxisCandidateResolutionSchema,
+    candidates: z.array(praxisCandidateSchema).max(10),
+    diagnostic: z
+      .object({
+        intentDigest: digest,
+        documentEpoch: z.number().int().nonnegative(),
+      })
+      .strict(),
+  })
+  .strict();
 export const praxisVerificationSchema = z
   .object({
     local: z.enum(["passed", "not_required", "failed", "unknown"]),
@@ -408,6 +451,19 @@ export type PraxisSuccess = z.infer<typeof praxisSuccessSchema>;
 export type PraxisFailure = z.infer<typeof praxisFailureSchema>;
 export type PraxisResult = z.infer<typeof praxisResultSchema>;
 export type PraxisResolution = z.infer<typeof praxisResolutionSchema>;
+
+export type PraxisCandidateResolution = z.infer<
+  typeof praxisCandidateResolutionSchema
+>;
+export type PraxisResumeToken = z.infer<
+  typeof praxisResumeTokenSchema
+>;
+export type PraxisCandidate = z.infer<
+  typeof praxisCandidateSchema
+>;
+export type PraxisCandidateResponse = z.infer<
+  typeof praxisCandidateResponseSchema
+>;
 export type PraxisVerification = z.infer<typeof praxisVerificationSchema>;
 export type PraxisAcquisitionOutput = z.infer<typeof praxisAcquisitionOutputSchema>;
 export type PraxisLifecycleEvent = z.infer<typeof praxisLifecycleEventSchema>;

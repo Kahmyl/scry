@@ -238,6 +238,81 @@ describe("33-scenario production-shaped HTTP grounding cohort B", () => {
       await p.close();
     }
   });
+  it("records safe grounding diagnostics without browser handles", async () => {
+    const diagnostics: unknown[] = [];
+    const directory = await mkdtemp(path.join(tmpdir(), "scry-grounding-diagnostic-"));
+    outputDirectories.push(directory);
+
+    const plan = currentPlanSchema.parse({
+      name: "Grounding diagnostic observer",
+      objective: "Capture ambiguous grounding safely",
+      allowedOrigins: [origin],
+      budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 2 },
+      checkpoints: [],
+      steps: [
+        {
+          id: "open",
+          title: "Open",
+          action: { type: "navigate", url: `${origin}/scenario/41` },
+          evidence: [],
+          assertions: [],
+          onFailure: "stop",
+          captureIntent: "final",
+        },
+        {
+          id: "click",
+          title: "Ambiguous click",
+          action: {
+            type: "click",
+            target: buttonTarget("Continue"),
+            expectedEffect: { type: "none" },
+          },
+          evidence: [],
+          assertions: [],
+          onFailure: "continue",
+          captureIntent: "final",
+        },
+      ],
+    });
+
+    try {
+      await executePlan({
+        plan,
+        policy: executionPolicySchema.parse({
+          allowedOrigins: [origin],
+          allowPrivateNetwork: true,
+        }),
+        outputDirectory: directory,
+        browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+        onGroundingDiagnostic: async (diagnostic) => {
+          diagnostics.push(diagnostic);
+        },
+      });
+
+      const diagnostic = diagnostics.find(
+        (item) =>
+          typeof item === "object" &&
+          item !== null &&
+          "code" in item &&
+          item.code === "TARGET_AMBIGUOUS",
+      ) as Record<string, unknown> | undefined;
+
+      expect(diagnostic).toBeDefined();
+      expect(diagnostic?.outcome).toBe("rejected");
+      expect(diagnostic?.intentDigest).toMatch(/^[a-f0-9]{64}$/);
+
+      const serialized = JSON.stringify(diagnostic);
+      expect(serialized).not.toContain('"locator":');
+      expect(serialized).not.toContain('"frame":');
+      expect(serialized).not.toContain('"page":');
+      expect(diagnostic).not.toHaveProperty("locator");
+      expect(diagnostic).not.toHaveProperty("frame");
+      expect(diagnostic).not.toHaveProperty("page");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("036 scopes a combobox to the correct form", async () => {
     const p = await pageFor(36);
     try {

@@ -13,6 +13,7 @@ import {
   ExpectedEffectError,
   GroundingError,
   resolveTarget,
+  validateCandidateResume,
   type GroundingResult,
 } from "./grounding.js";
 import {
@@ -98,6 +99,24 @@ export class PraxisGroundedTarget {
 
 export class PraxisGroundingEngine {
   constructor(private readonly page: Page) {}
+
+  async resume(
+    request: PraxisRequest,
+    token: import("@scry/contracts").PraxisResumeToken,
+    signal: AbortSignal,
+  ) {
+    validatePraxisVeilGrants(request);
+    checkAbort(signal);
+
+    await validateCandidateResume(
+      this.page,
+      token,
+      request.intent,
+    );
+
+    return this.resolve(request, signal);
+  }
+
   async resolve(request: PraxisRequest, signal: AbortSignal) {
     validatePraxisVeilGrants(request);
     checkAbort(signal);

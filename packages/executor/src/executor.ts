@@ -33,7 +33,11 @@ import {
   writeJson,
 } from "./artifacts.js";
 import { playwrightBrowserChannel, visualRedactionInitScript } from "@scry/praxis";
-import { registerGroundingHistoryProvider, resolveTargetLocator } from "@scry/praxis";
+import {
+  registerGroundingHistoryProvider,
+  registerGroundingObserver,
+  resolveTargetLocator,
+} from "@scry/praxis";
 import { requirePraxisSuccess, type PraxisConsumerContext } from "@scry/praxis";
 import { registerPraxisVeilAuthority } from "@scry/praxis";
 import { RecordingCoordinator } from "./recording-coordinator.js";
@@ -103,6 +107,17 @@ import type {
   PolicyViolationRecord,
   StepExecutionResult,
 } from "./types.js";
+
+function registerPraxisGroundingObservers(
+  page: Page,
+  options: ExecuteOptions,
+) {
+  if (options.groundingHistory)
+    registerGroundingHistoryProvider(page, options.groundingHistory);
+
+  if (options.onGroundingDiagnostic)
+    registerGroundingObserver(page, options.onGroundingDiagnostic);
+}
 
 export async function executePlan(options: ExecuteOptions): Promise<ExecutionReport> {
   const violations = validatePlanAgainstPolicy(options.plan, options.policy);
@@ -230,7 +245,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       environmentId: options.environmentId ?? "local-environment",
       browserContextId: safeProvenance?.contextId ?? attemptId,
     });
-    if (options.groundingHistory) registerGroundingHistoryProvider(page, options.groundingHistory);
+    registerPraxisGroundingObservers(page, options);
     safeProvenance = new BrowserSessionProvenance(randomUUID(), "safe");
     let policyEpoch = 0;
     const rejectPolicy = async (
@@ -438,8 +453,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
                   environmentId: options.environmentId ?? "local-environment",
                   browserContextId: capsule.provenance.contextId,
                 });
-                if (options.groundingHistory)
-                  registerGroundingHistoryProvider(capsule.page, options.groundingHistory);
+                registerPraxisGroundingObservers(capsule.page, options);
                 await attachRequestInterception(
                   capsule.context,
                   capsule.page,
