@@ -251,9 +251,12 @@ function planWithAlreadyExpandedNavigation() {
   ]);
 }
 
+type InteractionRole =
+  InteractionTargetIntent["preferredEvidence"]["roles"][number];
+
 function target(
   concept: string,
-  role: string,
+  role: InteractionRole,
   name: string,
 ): InteractionTargetIntent {
   return {

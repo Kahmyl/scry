@@ -1,3 +1,7 @@
+export {
+  createAuthoringRuntimeOwner,
+  type AuthoringRuntimeOwner,
+} from "./authoring-runtime-owner.js";
 export { createWorkerFleet } from "./worker-orchestration.js";
 export {
   createCalibrationProcessor,

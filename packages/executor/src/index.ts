@@ -4,6 +4,7 @@ export * from "./recording-coordinator.js";
 export * from "./trace-coordinator.js";
 export * from "./checkpoint-coordinator.js";
 export * from "./browser-session.js";
+export * from "./authoring-browser-session.js";
 export * from "./protected-transaction-coordinator.js";
 export * from "./calibration.js";
 export * from "./probe.js";

@@ -15,13 +15,17 @@ import { createArtifactStoreFromEnv } from "@scry/artifact";
 
 import { AppModule } from "./app.module.js";
 import { ArtifactRetentionService } from "./artifacts/index.js";
+import { AuthoringRuntimeRepository } from "./authoring/index.js";
 import { CalibrationRuntimeRepository } from "./calibration/index.js";
 import { Database } from "./infrastructure/database.js";
 import { ExecutionRepository } from "./runtime/index.js";
 import { ProbeRuntimeRepository } from "./calibration/index.js";
 import { RunQueueService } from "./runtime/index.js";
 import { RedisConnection } from "./infrastructure/redis.js";
-import { createWorkerFleet } from "./workers/index.js";
+import {
+  createAuthoringRuntimeOwner,
+  createWorkerFleet,
+} from "./workers/index.js";
 import {
   createCalibrationProcessor,
   createProbeProcessor,
@@ -38,6 +42,7 @@ const redis = app.get(RedisConnection);
 const runQueue = app.get(RunQueueService);
 const calibrations = app.get(CalibrationRuntimeRepository);
 const probes = app.get(ProbeRuntimeRepository);
+const authoringRuntimes = app.get(AuthoringRuntimeRepository);
 const database = app.get(Database);
 const workerId = `${os.hostname()}:${process.pid}:${randomUUID()}`;
 const artifactRoot = path.resolve(process.env.ARTIFACT_ROOT ?? "artifacts/runs");
@@ -116,6 +121,17 @@ const staleRecovery = setInterval(
   Math.max(staleMs, 5_000),
 );
 
+const authoringRuntimeOwner = createAuthoringRuntimeOwner({
+  repository: authoringRuntimes,
+  workerId,
+  browserChannel,
+  veilAdmissionKey,
+  heartbeatMs,
+  pollMs: Number(process.env.AUTHORING_RUNTIME_POLL_MS ?? 1_000),
+});
+
+await authoringRuntimeOwner.start();
+
 const workers = createWorkerFleet({
   connection: redis.client,
   staleMs,
@@ -167,6 +183,7 @@ async function recoverStaleWork() {
   }
   await calibrations.recoverStale(new Date(Date.now() - staleMs));
   await probes.recoverStale(new Date(Date.now() - staleMs));
+  await authoringRuntimes.recoverStale(new Date(Date.now() - staleMs));
 }
 
 async function runArtifactRetention() {
@@ -193,6 +210,7 @@ async function shutdown() {
   clearInterval(workerHeartbeat);
   clearInterval(staleRecovery);
   clearInterval(retentionSweep);
+  await authoringRuntimeOwner.close();
   await workers.close();
   await app.close();
 }
