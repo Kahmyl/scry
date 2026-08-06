@@ -310,8 +310,9 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       isolate: async () => {
         if (recordingVeilState !== "suspended") throw new Error("RECORDING_NOT_SUSPENDED");
         if (
-          recordingPreparation.mode === "protected_recording_gap" ||
-          !recordingPreparation.videoMaskEstablished
+          !recording!.isSealed() &&
+          (recordingPreparation.mode === "protected_recording_gap" ||
+            !recordingPreparation.videoMaskEstablished)
         ) {
           await recording!.createProtectedGap({
             operationId: recordingOperationId,
@@ -322,8 +323,9 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       },
       resume: async () => {
         if (recordingVeilState !== "isolated") throw new Error("RECORDING_NOT_ISOLATED");
-        if (!recording!.hasActiveSegment())
+        if (!recording!.isSealed() && !recording!.hasActiveSegment()) {
           await recording!.startSegment({ reason: "safe_resume" });
+        }
         recordingVeilState = "active";
       },
       seal: async ({ code }) => {

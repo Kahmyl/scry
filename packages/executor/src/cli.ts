@@ -19,6 +19,7 @@ async function main() {
   const outputDirectory = path.resolve(readFlag(flags, "--output") ?? `artifacts/${Date.now()}`);
   const browserChannel = readFlag(flags, "--channel");
   const headed = flags.includes("--headed");
+  const veilAdmissionKey = process.env.VEIL_ADMISSION_KEY;
   const plan = currentPlanSchema.parse(JSON.parse(await readFile(planPath, "utf8")));
   const policyPath = readFlag(flags, "--policy");
   const policy = policyPath
@@ -36,6 +37,7 @@ async function main() {
       policy,
       outputDirectory,
       ...(browserChannel ? { browserChannel } : {}),
+      ...(veilAdmissionKey ? { veilAdmissionKey } : {}),
       headless: !headed,
       signal: controller.signal,
       secretResolver: resolveEnvironmentSecret,
