@@ -435,6 +435,63 @@ describe("current Scry MCP surface", () => {
     await server.close();
   });
 
+  it("starts an interactive Probe Session without changing the queued default", async () => {
+    const requests: Array<{ path: string; body?: Record<string, unknown> }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(String(input));
+        requests.push({
+          path: url.pathname,
+          ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}),
+        });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              state: "queued",
+              authoring: { status: "starting" },
+            }),
+            { status: 200 },
+          ),
+        );
+      }),
+    );
+
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "start_probe_session",
+      arguments: {
+        ...context,
+        draftId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        draftVersion: 1,
+        mode: "interactive",
+        level: "inspection",
+      },
+    });
+
+    expect(response.isError).not.toBe(true);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      path: "/api/flow-drafts/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/probes",
+      body: {
+        ...context,
+        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        draftVersion: 1,
+        mode: "interactive",
+        level: "inspection",
+        disposableDataConfirmed: false,
+      },
+    });
+    expect(JSON.stringify(response.content)).toContain(
+      "Interactive Probe Session starting.",
+    );
+
+    await client.close();
+    await server.close();
+  });
+
   it("approves only an exact attested revision with explicit user authorization", async () => {
     const requests: Array<{ path: string; body: unknown }> = [];
     vi.stubGlobal(

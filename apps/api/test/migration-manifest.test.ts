@@ -64,6 +64,19 @@ describe("schema migration manifest", () => {
     expect(setNotNull).toBeGreaterThan(backfill);
   });
 
+  it("adds Probe mode repeat-safely while preserving queued behavior", async () => {
+    const cutover = await readFile(
+      new URL("migrations/stateful-probe-authoring.sql", root),
+      "utf8",
+    );
+
+    expect(cutover).toContain(
+      "ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'queued'",
+    );
+    expect(cutover).toContain("probe_sessions_mode_check");
+    expect(cutover).toContain("CHECK (mode IN ('queued', 'interactive'))");
+  });
+
   it("keeps only one live browser lease per Probe Session while retaining lease history", async () => {
     const cutover = await readFile(
       new URL("migrations/stateful-probe-authoring.sql", root),
@@ -72,8 +85,13 @@ describe("schema migration manifest", () => {
 
     expect(cutover).toContain("CREATE TABLE IF NOT EXISTS authoring_browser_leases");
     expect(cutover).not.toContain("probe_session_id uuid NOT NULL UNIQUE");
+    expect(cutover).toContain("UNIQUE (id, probe_session_id)");
     expect(cutover).toContain("authoring_browser_leases_live_probe_idx");
     expect(cutover).toContain("WHERE state IN ('provisioning', 'active', 'suspended', 'releasing')");
     expect(cutover).toContain("CREATE TABLE IF NOT EXISTS probe_authoring_sessions");
+    expect(cutover).toContain("FOREIGN KEY (browser_lease_id, probe_session_id)");
+    expect(cutover).toContain(
+      "REFERENCES authoring_browser_leases(id, probe_session_id)",
+    );
   });
 });

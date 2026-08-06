@@ -38,6 +38,7 @@ export function registerStartProbeSessionTool(server: McpServer, client: ScryApi
         draftId: uuid,
         environmentId: uuid,
         draftVersion: z.number().int().positive(),
+        mode: z.enum(["queued", "interactive"]).default("queued"),
         level: z.enum(["inspection", "reversible", "calibration_transaction"]),
         disposableDataConfirmed: z.boolean().default(false),
         authorizationId: uuid.optional(),
@@ -54,7 +55,9 @@ export function registerStartProbeSessionTool(server: McpServer, client: ScryApi
             idempotencyKey: idempotencyKey ?? stableKey("probe", { draftId, ...body }),
           }),
         },
-        "Probe Session queued.",
+        body.mode === "interactive"
+          ? "Interactive Probe Session starting."
+          : "Probe Session queued.",
       ),
   );
 }

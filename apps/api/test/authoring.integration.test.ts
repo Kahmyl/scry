@@ -338,6 +338,137 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     expect(draftState.rows[0]!.state).toBe("editing");
   });
 
+  it("starts one interactive authoring session with budgets and a browser lease", async () => {
+    const plan = currentPlanSchema.parse({
+      name: "Explore preview",
+      objective: "Explore the preview application",
+      preconditions: [],
+      allowedOrigins: ["https://example.test"],
+      budgets: {
+        maxActions: 7,
+        maxDurationMs: 45_000,
+        maxNavigations: 3,
+      },
+      checkpoints: [],
+      steps: [
+        {
+          id: "open",
+          title: "Open preview",
+          action: {
+            type: "navigate",
+            url: "https://example.test",
+          },
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "final",
+        },
+      ],
+    });
+
+    const created = await service.createDraft(principal, {
+      ...context,
+      projectId: project,
+      environmentId: environment,
+      name: "Explore preview",
+      description: "",
+      content: {
+        objective: "Explore the preview application",
+        preconditions: [],
+        expectedOutcomes: ["Authoring session starts"],
+        prohibitedSideEffects: [],
+      },
+      plan,
+      idempotencyKey: `draft-interactive-${randomUUID()}`,
+    });
+
+    const probe = await service.startProbe(principal, created.id!, {
+      ...context,
+      environmentId: environment,
+      draftVersion: 1,
+      mode: "interactive",
+      level: "inspection",
+      disposableDataConfirmed: false,
+      idempotencyKey: `probe-interactive-${randomUUID()}`,
+    });
+
+    expect(probe).toMatchObject({
+      state: "queued",
+      mode: "interactive",
+      replayed: false,
+      authoring: {
+        status: "starting",
+        documentEpoch: 0,
+        actionsUsed: 0,
+        actionBudget: 7,
+        durationBudgetMs: "45000",
+      },
+      browserLease: {
+        state: "provisioning",
+      },
+    });
+
+    const persisted = await database.query<{
+      mode: string;
+      status: string;
+      actionBudget: number;
+      durationBudgetMs: string;
+      leaseState: string;
+      outboxCount: string;
+      eventTypes: string[];
+    }>(
+      `SELECT
+         p.mode,
+         a.status,
+         a.action_budget AS "actionBudget",
+         a.duration_budget_ms::text AS "durationBudgetMs",
+         l.state AS "leaseState",
+         (
+           SELECT count(*)::text
+           FROM probe_outbox o
+           WHERE o.probe_session_id=p.id
+         ) AS "outboxCount",
+         (
+           SELECT array_agg(e.type ORDER BY e.sequence)
+           FROM probe_events e
+           WHERE e.probe_session_id=p.id
+         ) AS "eventTypes"
+       FROM probe_sessions p
+       JOIN probe_authoring_sessions a
+         ON a.probe_session_id=p.id
+       JOIN authoring_browser_leases l
+         ON l.id=a.browser_lease_id
+       WHERE p.id=$1`,
+      [probe.id],
+    );
+
+    expect(persisted.rows[0]).toMatchObject({
+      mode: "interactive",
+      status: "starting",
+      actionBudget: 7,
+      durationBudgetMs: "45000",
+      leaseState: "provisioning",
+      outboxCount: "0",
+      eventTypes: ["authoring_session_started", "browser_lease_attached"],
+    });
+
+    await expect(
+      service.startProbe(principal, created.id!, {
+        ...context,
+        environmentId: environment,
+        draftVersion: 1,
+        mode: "interactive",
+        level: "inspection",
+        disposableDataConfirmed: false,
+        idempotencyKey: `probe-interactive-conflict-${randomUUID()}`,
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: "INTERACTIVE_PROBE_ALREADY_ACTIVE",
+      }),
+    });
+  });
+
   it("publishes a compiled plan without probe-confirmed redundant steps", async () => {
     const ordersTarget = target("orders", "link", "Orders");
 

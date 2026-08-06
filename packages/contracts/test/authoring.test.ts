@@ -58,6 +58,32 @@ describe("authoring boundary contracts", () => {
     ).toBe(true);
   });
 
+  it("keeps queued execution as the default while accepting interactive authoring", () => {
+    const base = {
+      ...context,
+      environmentId: id,
+      draftVersion: 1,
+      level: "inspection",
+      idempotencyKey: "probe-mode-1",
+    };
+
+    const queued = startProbeSessionSchema.parse(base);
+    const interactive = startProbeSessionSchema.parse({
+      ...base,
+      mode: "interactive",
+      idempotencyKey: "probe-mode-2",
+    });
+
+    expect(queued.mode).toBe("queued");
+    expect(interactive.mode).toBe("interactive");
+    expect(
+      startProbeSessionSchema.safeParse({
+        ...base,
+        mode: "deterministic",
+      }).success,
+    ).toBe(false);
+  });
+
   it("defines the stateful authoring runtime lifecycle separately from queued Probe execution", () => {
     for (const status of [
       "starting",

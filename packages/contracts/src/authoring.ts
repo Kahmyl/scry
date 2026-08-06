@@ -124,6 +124,7 @@ export const startProbeSessionSchema = objectiveContextSchema
   .extend({
     environmentId: uuid,
     draftVersion: z.number().int().positive(),
+    mode: z.enum(["queued", "interactive"]).default("queued"),
     level: probeLevelSchema,
     disposableDataConfirmed: z.boolean().default(false),
     authorizationId: uuid.optional(),

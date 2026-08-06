@@ -1,3 +1,20 @@
+ALTER TABLE probe_sessions
+  ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'queued';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'probe_sessions_mode_check'
+      AND conrelid = 'probe_sessions'::regclass
+  ) THEN
+    ALTER TABLE probe_sessions
+      ADD CONSTRAINT probe_sessions_mode_check
+      CHECK (mode IN ('queued', 'interactive'));
+  END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS authoring_browser_leases (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   probe_session_id uuid NOT NULL REFERENCES probe_sessions(id) ON DELETE CASCADE,

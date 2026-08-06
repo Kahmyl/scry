@@ -389,6 +389,7 @@ export class AuthoringService {
          p.mission_id AS "missionId",
          p.objective_id AS "objectiveId",
          p.draft_version AS "draftVersion",
+         p.mode,
          p.level,
          p.state,
          p.result,
@@ -396,12 +397,50 @@ export class AuthoringService {
          p.reason_code AS "reasonCode",
          p.created_at AS "createdAt",
          p.started_at AS "startedAt",
-         p.completed_at AS "completedAt"
+         p.completed_at AS "completedAt",
+         CASE
+           WHEN authoring.probe_session_id IS NULL THEN NULL
+           ELSE jsonb_build_object(
+             'status', authoring.status,
+             'activePageId', authoring.active_page_id,
+             'activeFrameId', authoring.active_frame_id,
+             'currentUrl', authoring.current_url,
+             'documentEpoch', authoring.document_epoch,
+             'actionsUsed', authoring.actions_used,
+             'actionBudget', authoring.action_budget,
+             'durationBudgetMs', authoring.duration_budget_ms::text,
+             'deadlineAt', authoring.deadline_at,
+             'veilState', authoring.veil_state,
+             'resumePointer', authoring.resume_pointer,
+             'lastObservationId', authoring.last_observation_id,
+             'pendingInteraction', authoring.pending_interaction,
+             'createdAt', authoring.created_at,
+             'updatedAt', authoring.updated_at,
+             'completedAt', authoring.completed_at
+           )
+         END AS authoring,
+         CASE
+           WHEN lease.id IS NULL THEN NULL
+           ELSE jsonb_build_object(
+             'id', lease.id,
+             'state', lease.state,
+             'runtimeOwnerId', lease.runtime_owner_id,
+             'heartbeatAt', lease.heartbeat_at,
+             'expiresAt', lease.expires_at,
+             'createdAt', lease.created_at,
+             'updatedAt', lease.updated_at,
+             'releasedAt', lease.released_at
+           )
+         END AS "browserLease"
        FROM probe_sessions p
        JOIN missions m
          ON m.id=p.mission_id
        JOIN projects project
          ON project.id=m.project_id
+       LEFT JOIN probe_authoring_sessions authoring
+         ON authoring.probe_session_id=p.id
+       LEFT JOIN authoring_browser_leases lease
+         ON lease.id=authoring.browser_lease_id
        WHERE p.id=$1
          AND (
            $2::uuid IS NULL
@@ -469,8 +508,9 @@ export class AuthoringService {
       const existing = await q<{
         id: string;
         state: string;
+        mode: "queued" | "interactive";
       }>(
-        `SELECT id,state
+        `SELECT id,state,mode
          FROM probe_sessions
          WHERE draft_id=$1
            AND idempotency_key=$2`,
@@ -508,6 +548,32 @@ export class AuthoringService {
         }
       }
 
+      if (input.mode === "interactive") {
+        const active = await q(
+          `SELECT 1
+           FROM probe_sessions p
+           JOIN probe_authoring_sessions authoring
+             ON authoring.probe_session_id=p.id
+           WHERE p.draft_id=$1
+             AND p.mode='interactive'
+             AND authoring.status IN (
+               'starting',
+               'active',
+               'suspended',
+               'completing'
+             )
+           LIMIT 1`,
+          [draftId],
+        );
+
+        if (active.rowCount) {
+          throw new ConflictException({
+            code: "INTERACTIVE_PROBE_ALREADY_ACTIVE",
+          });
+        }
+      }
+
+      const plan = currentPlanSchema.parse(d.plan);
       const id = randomUUID();
 
       await q(
@@ -518,6 +584,7 @@ export class AuthoringService {
           objective_id,
           environment_id,
           draft_version,
+          mode,
           level,
           authorization_id,
           disposable_data_confirmed,
@@ -526,7 +593,7 @@ export class AuthoringService {
           idempotency_key
         )
         VALUES(
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
         )`,
         [
           id,
@@ -535,6 +602,7 @@ export class AuthoringService {
           input.objectiveId,
           input.environmentId,
           input.draftVersion,
+          input.mode,
           input.level,
           input.authorizationId ?? null,
           input.disposableDataConfirmed,
@@ -552,15 +620,144 @@ export class AuthoringService {
         [draftId],
       );
 
-      await q(
-        `INSERT INTO probe_outbox(
-          probe_session_id,
-          release_id,
-          schema_fingerprint
-        )
-        VALUES($1,$2,$3)`,
-        [id, releaseId(), schemaFingerprint()],
-      );
+      let authoring:
+        | {
+            status: string;
+            documentEpoch: number;
+            actionsUsed: number;
+            actionBudget: number;
+            durationBudgetMs: string;
+            deadlineAt: Date;
+            veilState: Record<string, unknown>;
+          }
+        | undefined;
+
+      let browserLease:
+        | {
+            id: string;
+            state: string;
+            expiresAt: Date;
+          }
+        | undefined;
+
+      if (input.mode === "queued") {
+        await q(
+          `INSERT INTO probe_outbox(
+            probe_session_id,
+            release_id,
+            schema_fingerprint
+          )
+          VALUES($1,$2,$3)`,
+          [id, releaseId(), schemaFingerprint()],
+        );
+      } else {
+        const leaseId = randomUUID();
+
+        const lease = await q<{
+          id: string;
+          state: string;
+          expiresAt: Date;
+        }>(
+          `INSERT INTO authoring_browser_leases(
+             id,
+             probe_session_id,
+             state,
+             expires_at
+           )
+           VALUES(
+             $1,
+             $2,
+             'provisioning',
+             now() + make_interval(secs => $3::double precision / 1000)
+           )
+           RETURNING
+             id,
+             state,
+             expires_at AS "expiresAt"`,
+          [leaseId, id, plan.budgets.maxDurationMs],
+        );
+
+        const session = await q<{
+          status: string;
+          documentEpoch: number;
+          actionsUsed: number;
+          actionBudget: number;
+          durationBudgetMs: string;
+          deadlineAt: Date;
+          veilState: Record<string, unknown>;
+        }>(
+          `INSERT INTO probe_authoring_sessions(
+             probe_session_id,
+             browser_lease_id,
+             status,
+             action_budget,
+             duration_budget_ms,
+             deadline_at,
+             veil_state
+           )
+           VALUES(
+             $1,
+             $2,
+             'starting',
+             $3,
+             $4,
+             now() + make_interval(secs => $4::double precision / 1000),
+             $5::jsonb
+           )
+           RETURNING
+             status,
+             document_epoch AS "documentEpoch",
+             actions_used AS "actionsUsed",
+             action_budget AS "actionBudget",
+             duration_budget_ms::text AS "durationBudgetMs",
+             deadline_at AS "deadlineAt",
+             veil_state AS "veilState"`,
+          [
+            id,
+            leaseId,
+            plan.budgets.maxActions,
+            plan.budgets.maxDurationMs,
+            JSON.stringify({ status: "initializing" }),
+          ],
+        );
+
+        await q(
+          `INSERT INTO probe_events(
+             probe_session_id,
+             sequence,
+             type,
+             safe_payload
+           )
+           VALUES
+             (
+               $1,
+               1,
+               'authoring_session_started',
+               $2::jsonb
+             ),
+             (
+               $1,
+               2,
+               'browser_lease_attached',
+               $3::jsonb
+             )`,
+          [
+            id,
+            JSON.stringify({
+              actionBudget: plan.budgets.maxActions,
+              durationBudgetMs: plan.budgets.maxDurationMs,
+              documentEpoch: 0,
+            }),
+            JSON.stringify({
+              browserLeaseId: leaseId,
+              state: "provisioning",
+            }),
+          ],
+        );
+
+        authoring = session.rows[0]!;
+        browserLease = lease.rows[0]!;
+      }
 
       await this.event(
         q,
@@ -568,9 +765,12 @@ export class AuthoringService {
         d.version,
         "probe_started",
         input.agentSessionId,
-        "Probe Session queued",
+        input.mode === "interactive"
+          ? "Interactive Probe Session starting"
+          : "Probe Session queued",
         {
           probeSessionId: id,
+          mode: input.mode,
           level: input.level,
         },
       );
@@ -578,7 +778,10 @@ export class AuthoringService {
       return {
         id,
         state: "queued",
+        mode: input.mode,
         replayed: false,
+        ...(authoring ? { authoring } : {}),
+        ...(browserLease ? { browserLease } : {}),
       };
     });
   }
@@ -591,40 +794,126 @@ export class AuthoringService {
   ) {
     this.requireWrite(principal);
 
-    const result = await this.db.query(
-      `UPDATE probe_sessions p
-       SET cancellation_requested_at=now(),
-           state=CASE
-             WHEN state='queued' THEN 'cancelled'
-             ELSE state
-           END,
-           completed_at=CASE
-             WHEN state='queued' THEN now()
-             ELSE completed_at
-           END
-       FROM missions m,agent_sessions s
-       WHERE p.id=$1
-         AND p.mission_id=$2
-         AND m.id=p.mission_id
-         AND s.id=$3
-         AND s.mission_id=p.mission_id
-         AND (
-           $4::uuid IS NULL
-           OR m.project_id IN (
-             SELECT project_id
-             FROM projects
-             WHERE workspace_id=$4
+    return this.db.transaction(async (client) => {
+      const q = bind(client);
+
+      const owned = await q<{
+        id: string;
+        draftId: string;
+        mode: "queued" | "interactive";
+        state: string;
+      }>(
+        `SELECT
+           p.id,
+           p.draft_id AS "draftId",
+           p.mode,
+           p.state
+         FROM probe_sessions p
+         JOIN missions m
+           ON m.id=p.mission_id
+         JOIN agent_sessions s
+           ON s.id=$3
+          AND s.mission_id=p.mission_id
+         WHERE p.id=$1
+           AND p.mission_id=$2
+           AND (
+             $4::uuid IS NULL
+             OR m.project_id IN (
+               SELECT project_id
+               FROM projects
+               WHERE workspace_id=$4
+             )
            )
-         )
-       RETURNING p.id,p.state`,
-      [probeId, missionId, agentSessionId, workspace(principal)],
-    );
+         FOR UPDATE OF p`,
+        [probeId, missionId, agentSessionId, workspace(principal)],
+      );
 
-    if (!result.rowCount) {
-      throw new NotFoundException("Probe Session not found");
-    }
+      if (!owned.rowCount) {
+        throw new NotFoundException("Probe Session not found");
+      }
 
-    return result.rows[0];
+      const probe = owned.rows[0]!;
+
+      await q(
+        `UPDATE probe_sessions
+         SET cancellation_requested_at=now(),
+             state=CASE
+               WHEN state='queued' THEN 'cancelled'
+               ELSE state
+             END,
+             completed_at=CASE
+               WHEN state='queued' THEN now()
+               ELSE completed_at
+             END
+         WHERE id=$1`,
+        [probeId],
+      );
+
+      if (probe.mode === "interactive") {
+        await q(
+          `UPDATE probe_authoring_sessions
+           SET status='cancelled',
+               completed_at=COALESCE(completed_at,now()),
+               updated_at=now(),
+               pending_interaction=NULL
+           WHERE probe_session_id=$1
+             AND status IN (
+               'starting',
+               'active',
+               'suspended',
+               'completing'
+             )`,
+          [probeId],
+        );
+
+        await q(
+          `UPDATE authoring_browser_leases
+           SET state='released',
+               released_at=now(),
+               updated_at=now()
+           WHERE probe_session_id=$1
+             AND state IN (
+               'provisioning',
+               'active',
+               'suspended',
+               'releasing'
+             )`,
+          [probeId],
+        );
+
+        await q(
+          `INSERT INTO probe_events(
+             probe_session_id,
+             sequence,
+             type,
+             safe_payload
+           )
+           SELECT
+             $1,
+             COALESCE(max(sequence),0)+1,
+             'authoring_session_cancelled',
+             '{}'::jsonb
+           FROM probe_events
+           WHERE probe_session_id=$1`,
+          [probeId],
+        );
+      }
+
+      await q(
+        `UPDATE flow_drafts
+         SET state='editing',
+             updated_at=now()
+         WHERE id=$1
+           AND state='probing'`,
+        [probe.draftId],
+      );
+
+      return {
+        id: probeId,
+        state: probe.state === "queued" ? "cancelled" : probe.state,
+        mode: probe.mode,
+      };
+    });
   }
 
   async compile(principal: Principal, draftId: string, input: CompileFlowDraftInput) {
