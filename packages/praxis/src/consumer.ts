@@ -12,7 +12,7 @@ import { PraxisAdapter, type PraxisInputResolver } from "./adapter.js";
 import { PraxisDocumentEpoch } from "./observation.js";
 import { PraxisTransactionCoordinator } from "./transaction.js";
 import { authorizePraxisRequest, releasePraxisVeilGrants } from "./veil-bridge.js";
-import { registerGroundingObserver } from "./grounding.js";
+import { registerGroundingObserver, resolveTargetCandidates } from "./grounding.js";
 
 export type PraxisConsumerContext = {
   runId?: string;
@@ -71,6 +71,18 @@ export async function executePraxisConsumer(input: PraxisConsumerInput): Promise
   } finally {
     releasePraxisVeilGrants(request);
   }
+}
+
+export async function inspectPraxisCandidates(
+  input: Pick<PraxisConsumerInput, "page" | "intent" | "context">,
+) {
+  return resolveTargetCandidates(
+    input.page,
+    input.intent,
+    {
+      allowedOrigins: input.context.allowedOrigins,
+    },
+  );
 }
 
 export async function requirePraxisSuccess(input: PraxisConsumerInput) {

@@ -10,3 +10,5 @@ export {
   safeWorkerCode,
 } from "./processors/probe-calibration.processor.js";
 export { createRunProcessor } from "./processors/run.processor.js";
+
+export { createPraxisProcessor } from "./processors/praxis.processor.js";

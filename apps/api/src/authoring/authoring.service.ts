@@ -701,7 +701,7 @@ export class AuthoringService {
              'starting',
              $3,
              $4,
-             now() + make_interval(secs => $4::double precision / 1000),
+             now() + make_interval(secs => ($6::double precision) / 1000),
              $5::jsonb
            )
            RETURNING
@@ -718,6 +718,7 @@ export class AuthoringService {
             plan.budgets.maxActions,
             plan.budgets.maxDurationMs,
             JSON.stringify({ status: "initializing" }),
+            plan.budgets.maxDurationMs,
           ],
         );
 

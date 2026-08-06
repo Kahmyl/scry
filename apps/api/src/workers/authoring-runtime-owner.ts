@@ -2,11 +2,14 @@ import {
   currentActionSchema,
   executionPolicySchema,
   type ClaimedAuthoringRuntimeCommand,
+  type InteractionTargetIntent,
+  type PraxisCandidateResponse,
 } from "@scry/contracts";
 import {
   createAuthoringBrowserSession,
   type AuthoringBrowserSession,
 } from "@scry/executor";
+import { inspectPraxisCandidates } from "@scry/praxis";
 
 import type {
   AuthoringRuntimeCommandRepository,
@@ -18,6 +21,11 @@ type CreateSession = typeof createAuthoringBrowserSession;
 export type AuthoringRuntimeOwner = {
   start(): Promise<void>;
   close(): Promise<void>;
+  inspect(
+    browserLeaseId: string,
+    intent: InteractionTargetIntent,
+    allowedOrigins: string[],
+  ): Promise<PraxisCandidateResponse>;
 };
 
 type OwnedSession = {
@@ -312,7 +320,31 @@ export function createAuthoringRuntimeOwner(options: {
     }
   }
 
+  async function inspect(
+    browserLeaseId: string,
+    intent: InteractionTargetIntent,
+    allowedOrigins: string[],
+  ) {
+    const owned = sessions.get(browserLeaseId);
+
+    if (!owned) {
+      throw new Error("AUTHORING_BROWSER_SESSION_UNAVAILABLE");
+    }
+
+    return inspectPraxisCandidates({
+      page: owned.session.page,
+      intent,
+      context: {
+        channel: "probe",
+        ordinal: 0,
+        timeoutMs: 10_000,
+        allowedOrigins,
+      },
+    });
+  }
+
   return {
+    inspect,
     async start() {
       if (poll || closing) {
         return;

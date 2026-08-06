@@ -34,6 +34,10 @@ const praxisCutoffPath = fileURLToPath(
   new URL("../migrations/praxis-cutoff.sql", import.meta.url),
 );
 
+const praxisCandidateInspectionPath = fileURLToPath(
+  new URL("../migrations/praxis-candidate-inspection.sql", import.meta.url),
+);
+
 const veilObservationPreferencesPath = fileURLToPath(
   new URL("../migrations/veil-observation-preferences.sql", import.meta.url),
 );
@@ -72,6 +76,10 @@ const authoringCutover = await readFile(authoringCutoverPath, "utf8");
 const praxisReporting = await readFile(praxisReportingPath, "utf8");
 
 const praxisCutoff = await readFile(praxisCutoffPath, "utf8");
+const praxisCandidateInspection = await readFile(
+  praxisCandidateInspectionPath,
+  "utf8",
+);
 
 const veilObservationPreferences = await readFile(
   veilObservationPreferencesPath,
@@ -171,6 +179,10 @@ const preferencesBaseline = expandFoundation(
   .replace("\\ir praxis-reporting.sql", () => praxisReporting)
   .replace("\\ir praxis-cutoff.sql", () => praxisCutoff)
   .replace(
+    /\\ir\s+praxis-candidate-inspection\.sql/g,
+    () => praxisCandidateInspection,
+  )
+  .replace(
     "\\ir veil-observation-preferences.sql",
     () => veilObservationPreferences,
   );
@@ -185,6 +197,10 @@ const veilFullBaseline = expandFoundation(
   .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
   .replace("\\ir praxis-reporting.sql", () => praxisReporting)
   .replace("\\ir praxis-cutoff.sql", () => praxisCutoff)
+  .replace(
+    /\\ir\s+praxis-candidate-inspection\.sql/g,
+    () => praxisCandidateInspection,
+  )
   .replace(
     "\\ir veil-observation-preferences.sql",
     () => veilObservationPreferences,
@@ -263,6 +279,10 @@ const baseline = expandFoundation(baselineSource)
   .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
   .replace("\\ir praxis-reporting.sql", () => praxisReporting)
   .replace("\\ir praxis-cutoff.sql", () => praxisCutoff)
+  .replace(
+    "\\ir praxis-candidate-inspection.sql",
+    () => praxisCandidateInspection,
+  )
   .replace(
     "\\ir veil-observation-preferences.sql",
     () => veilObservationPreferences,

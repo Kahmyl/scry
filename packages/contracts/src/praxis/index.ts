@@ -220,10 +220,19 @@ export const praxisCandidateSchema = z
   })
   .strict();
 
+export const praxisCandidatePolicySchema = z
+  .object({
+    allowsAgentCandidateChoice: z.boolean(),
+    allowsSelectorHint: z.boolean(),
+    requiresExplicitAuthorization: z.boolean(),
+  })
+  .strict();
+
 export const praxisCandidateResponseSchema = z
   .object({
     resolution: praxisCandidateResolutionSchema,
     candidates: z.array(praxisCandidateSchema).max(10),
+    policy: praxisCandidatePolicySchema,
     diagnostic: z
       .object({
         intentDigest: digest,
@@ -460,6 +469,9 @@ export type PraxisResumeToken = z.infer<
 >;
 export type PraxisCandidate = z.infer<
   typeof praxisCandidateSchema
+>;
+export type PraxisCandidatePolicy = z.infer<
+  typeof praxisCandidatePolicySchema
 >;
 export type PraxisCandidateResponse = z.infer<
   typeof praxisCandidateResponseSchema

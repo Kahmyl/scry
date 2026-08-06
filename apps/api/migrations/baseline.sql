@@ -390,6 +390,7 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir authoring-execution-cutover.sql
 \ir praxis-reporting.sql
 \ir praxis-cutoff.sql
+\ir praxis-candidate-inspection.sql
 \ir veil-observation-preferences.sql
 \ir veil-artifact-retention.sql
 \ir compiled-plan-cutover.sql

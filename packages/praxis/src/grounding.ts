@@ -1066,6 +1066,13 @@ export async function resolveTargetCandidates(
     .update(stableJson(intent))
     .digest("hex");
 
+  const riskPolicy = interactionRiskPolicy(intent);
+  const candidatePolicy = {
+    allowsAgentCandidateChoice: riskPolicy.allowsAgentCandidateChoice,
+    allowsSelectorHint: riskPolicy.allowsSelectorHint,
+    requiresExplicitAuthorization: riskPolicy.requiresExplicitAuthorization,
+  };
+
   try {
     const grounded = await resolveTarget(page, intent, boundary);
 
@@ -1074,6 +1081,7 @@ export async function resolveTargetCandidates(
 
     return {
       resolution: "resolved",
+      policy: candidatePolicy,
       candidates: [
         {
           id: `candidate-${fingerprint.digest.slice(0, 16)}`,
@@ -1107,11 +1115,18 @@ export async function resolveTargetCandidates(
       error.code === "TARGET_AMBIGUOUS" ||
       error.code === "INSUFFICIENT_EVIDENCE"
     ) {
-      return {
-        resolution:
-          error.code === "TARGET_AMBIGUOUS"
+      const riskPolicy = interactionRiskPolicy(intent);
+
+      const resolution =
+        error.code === "TARGET_AMBIGUOUS"
+          ? riskPolicy.allowsAgentCandidateChoice
             ? "needs_agent_choice"
-            : "needs_scoped_inspection",
+            : "needs_scoped_inspection"
+          : "needs_scoped_inspection";
+
+      return {
+        resolution,
+        policy: candidatePolicy,
         candidates: error.candidates.slice(0, 10).map((candidate, index) => ({
           id: `candidate-${index + 1}-${candidate.fingerprint.digest.slice(0, 12)}`,
           fingerprint: candidate.fingerprint.digest,
@@ -1148,6 +1163,7 @@ export async function resolveTargetCandidates(
 
     return {
       resolution: "blocked",
+      policy: candidatePolicy,
       candidates: [],
       diagnostic: {
         intentDigest,

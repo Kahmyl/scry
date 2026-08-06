@@ -23,6 +23,7 @@ import { CalibrationRuntimeRepository } from "./calibration/index.js";
 import { Database } from "./infrastructure/database.js";
 import { ExecutionRepository } from "./runtime/index.js";
 import { ProbeRuntimeRepository } from "./calibration/index.js";
+import { PraxisRuntimeRepository } from "./praxis/index.js";
 import { RunQueueService } from "./runtime/index.js";
 import { RedisConnection } from "./infrastructure/redis.js";
 import {
@@ -32,6 +33,7 @@ import {
 import {
   createCalibrationProcessor,
   createProbeProcessor,
+  createPraxisProcessor,
   safeDependencyCode,
   safeWorkerCode,
 } from "./workers/index.js";
@@ -45,6 +47,7 @@ const redis = app.get(RedisConnection);
 const runQueue = app.get(RunQueueService);
 const calibrations = app.get(CalibrationRuntimeRepository);
 const probes = app.get(ProbeRuntimeRepository);
+const praxis = app.get(PraxisRuntimeRepository);
 const authoringRuntimes = app.get(AuthoringRuntimeRepository);
 const authoringRuntimeCommands = app.get(
   AuthoringRuntimeCommandRepository,
@@ -174,6 +177,13 @@ const workers = createWorkerFleet({
     browserChannel,
     veilAdmissionKey,
     observationRuntimeHash: observationRuntime.runtimeHash,
+  }),
+  processPraxis: createPraxisProcessor({
+    praxis,
+    authoringRuntimeOwner,
+    workerId,
+    releaseId,
+    schemaFingerprint,
   }),
 });
 

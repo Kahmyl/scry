@@ -1,10 +1,11 @@
 import { chromium } from "playwright";
 import { describe, expect, it } from "vitest";
 
-import { resolveTargetCandidates } from "../src/grounding.js";
+import { inspectPraxisCandidates } from "../src/consumer.js";
 
 describe("Praxis candidate resolution", () => {
-  it("returns an agent-choice state for ambiguous targets", async () => {
+
+  it("returns resolved with a resumable candidate when exactly one target remains", async () => {
     const browser = await chromium.launch({
       headless: true,
       channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
@@ -15,10 +16,11 @@ describe("Praxis candidate resolution", () => {
 
       await page.setContent(`
         <button>Continue</button>
-        <button>Continue</button>
       `);
 
-      const result = await resolveTargetCandidates(page, {
+      const result = await inspectPraxisCandidates({
+        page,
+        intent: {
         concept: "Continue",
         requiredCapabilities: ["pointer_activatable"],
         preferredEvidence: {
@@ -39,9 +41,80 @@ describe("Praxis candidate resolution", () => {
           minimumMargin: 0.05,
           minimumFamilyCount: 1,
         },
+        },
+        context: {
+          channel: "probe",
+          ordinal: 0,
+          timeoutMs: 10_000,
+          allowedOrigins: ["https://example.com"],
+        },
+      });
+
+      expect(result.resolution).toBe("resolved");
+      expect(result.candidates).toHaveLength(1);
+      expect(result.candidates[0]).toMatchObject({
+        fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        resumeToken: {
+          fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+      });
+    } finally {
+      await browser.close();
+    }
+  }, 15_000);
+
+  it("returns an agent-choice state for ambiguous targets", async () => {
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
+
+    try {
+      const page = await browser.newPage();
+
+      await page.setContent(`
+        <button>Continue</button>
+        <button>Continue</button>
+      `);
+
+      const result = await inspectPraxisCandidates({
+        page,
+        intent: {
+        concept: "Continue",
+        requiredCapabilities: ["pointer_activatable"],
+        preferredEvidence: {
+          roles: ["button"],
+          names: ["Continue"],
+          labels: [],
+          descriptions: [],
+          placeholders: [],
+          inputTypes: [],
+        },
+        scope: { kind: "page" },
+        relations: [],
+        prohibited: ["hidden", "disabled"],
+        risk: "ordinary",
+        confidence: {
+          requiredFamilies: [],
+          minimum: 0.35,
+          minimumMargin: 0.05,
+          minimumFamilyCount: 1,
+        },
+        },
+        context: {
+          channel: "probe",
+          ordinal: 0,
+          timeoutMs: 10_000,
+          allowedOrigins: ["https://example.com"],
+        },
       });
 
       expect(result.resolution).toBe("needs_agent_choice");
+      expect(result.policy).toMatchObject({
+        allowsAgentCandidateChoice: true,
+        allowsSelectorHint: true,
+        requiresExplicitAuthorization: false,
+      });
       expect(result.candidates.length).toBe(2);
       expect(result.candidates[0]).toMatchObject({
         fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -67,7 +140,9 @@ describe("Praxis candidate resolution", () => {
       const page = await browser.newPage();
       await page.setContent("");
 
-      const result = await resolveTargetCandidates(page, {
+      const result = await inspectPraxisCandidates({
+        page,
+        intent: {
         concept: "Save",
         requiredCapabilities: ["pointer_activatable"],
         preferredEvidence: {
@@ -88,9 +163,19 @@ describe("Praxis candidate resolution", () => {
           minimumMargin: 0.05,
           minimumFamilyCount: 1,
         },
+        },
+        context: {
+          channel: "probe",
+          ordinal: 0,
+          timeoutMs: 10_000,
+          allowedOrigins: ["https://example.com"],
+        },
       });
 
       expect(result.resolution).toBe("blocked");
+      expect(result.candidates).toEqual([]);
+      expect(result.diagnostic.intentDigest).toMatch(/^[a-f0-9]{64}$/);
+      expect(result.diagnostic.documentEpoch).toBeGreaterThanOrEqual(0);
     } finally {
       await browser.close();
     }
@@ -176,6 +261,116 @@ describe("candidate fingerprint fencing", () => {
       ).rejects.toMatchObject({
         code: "TARGET_CHANGED_BEFORE_ACTION",
       });
+    } finally {
+      await browser.close();
+    }
+  }, 15_000);
+});
+
+describe("risk-aware candidate resolution", () => {
+  it("does not expose destructive ambiguity as an agent choice", async () => {
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
+
+    try {
+      const page = await browser.newPage();
+
+      await page.setContent(`
+        <button>Delete</button>
+        <button>Delete</button>
+      `);
+
+      const result = await inspectPraxisCandidates({
+        page,
+        intent: {
+        concept: "Delete",
+        requiredCapabilities: ["pointer_activatable"],
+        preferredEvidence: {
+          roles: ["button"],
+          names: ["Delete"],
+          labels: [],
+          descriptions: [],
+          placeholders: [],
+          inputTypes: [],
+        },
+        scope: { kind: "page" },
+        relations: [],
+        prohibited: ["hidden", "disabled"],
+        risk: "destructive",
+        confidence: {
+          requiredFamilies: [],
+          minimum: 0.35,
+          minimumMargin: 0.05,
+          minimumFamilyCount: 1,
+        },
+        },
+        context: {
+          channel: "probe",
+          ordinal: 0,
+          timeoutMs: 10_000,
+          allowedOrigins: ["https://example.com"],
+        },
+      });
+
+      expect(result.resolution).toBe("needs_scoped_inspection");
+      expect(result.policy).toMatchObject({
+        allowsAgentCandidateChoice: false,
+        requiresExplicitAuthorization: true,
+      });
+    } finally {
+      await browser.close();
+    }
+  }, 15_000);
+
+  it("allows ordinary ambiguity to remain agent selectable", async () => {
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
+
+    try {
+      const page = await browser.newPage();
+
+      await page.setContent(`
+        <button>Continue</button>
+        <button>Continue</button>
+      `);
+
+      const result = await inspectPraxisCandidates({
+        page,
+        intent: {
+        concept: "Continue",
+        requiredCapabilities: ["pointer_activatable"],
+        preferredEvidence: {
+          roles: ["button"],
+          names: ["Continue"],
+          labels: [],
+          descriptions: [],
+          placeholders: [],
+          inputTypes: [],
+        },
+        scope: { kind: "page" },
+        relations: [],
+        prohibited: ["hidden", "disabled"],
+        risk: "ordinary",
+        confidence: {
+          requiredFamilies: [],
+          minimum: 0.35,
+          minimumMargin: 0.05,
+          minimumFamilyCount: 1,
+        },
+        },
+        context: {
+          channel: "probe",
+          ordinal: 0,
+          timeoutMs: 10_000,
+          allowedOrigins: ["https://example.com"],
+        },
+      });
+
+      expect(result.resolution).toBe("needs_agent_choice");
     } finally {
       await browser.close();
     }

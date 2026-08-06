@@ -13,6 +13,11 @@ const reporting = await readFile(new URL("praxis-reporting.sql", root), "utf8");
 
 const cutoff = await readFile(new URL("praxis-cutoff.sql", root), "utf8");
 
+const praxisCandidateInspection = await readFile(
+  new URL("praxis-candidate-inspection.sql", root),
+  "utf8",
+);
+
 const preferences = await readFile(
   new URL("veil-observation-preferences.sql", root),
   "utf8",
@@ -49,6 +54,8 @@ const baseline = (await readFile(new URL("baseline.sql", root), "utf8"))
   .replace("\\ir authoring-execution-cutover.sql", () => authoring)
   .replace("\\ir praxis-reporting.sql", () => reporting)
   .replace("\\ir praxis-cutoff.sql", () => cutoff)
+  .replace("\\ir praxis-candidate-inspection.sql", () => praxisCandidateInspection)
+  .replace("\\ir praxis-candidate-inspection.sql", () => praxisCandidateInspection)
   .replace("\\ir veil-observation-preferences.sql", () => preferences)
   .replace("\\ir veil-artifact-retention.sql", () => retention)
   .replace("\\ir compiled-plan-cutover.sql", () => compiledPlan)

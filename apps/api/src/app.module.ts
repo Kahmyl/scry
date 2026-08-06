@@ -9,6 +9,7 @@ import { FlowsModule } from "./flows/index.js";
 import { InfrastructureModule } from "./infrastructure/index.js";
 import { MissionsModule } from "./missions/index.js";
 import { OrchestrationModule } from "./orchestration/index.js";
+import { PraxisModule } from "./praxis/index.js";
 import { RuntimeModule } from "./runtime/index.js";
 import { RunsModule } from "./runs/index.js";
 import { SystemModule } from "./system/index.js";
@@ -26,6 +27,7 @@ import { VeilModule } from "./veil/index.js";
     FlowsModule,
     MissionsModule,
     OrchestrationModule,
+    PraxisModule,
     RuntimeModule,
     RunsModule,
     VeilModule,

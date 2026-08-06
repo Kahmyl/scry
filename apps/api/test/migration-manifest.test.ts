@@ -52,6 +52,7 @@ describe("schema migration manifest", () => {
       expect(source).toContain("stateful-probe-authoring.sql");
       expect(source).toContain("interactive-runtime-commands.sql");
       expect(source).toContain("interactive-runtime-lifecycle.sql");
+      expect(source).toContain("praxis-candidate-inspection.sql");
     }
   });
 

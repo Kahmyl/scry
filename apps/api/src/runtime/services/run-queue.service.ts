@@ -13,6 +13,12 @@ import { ExecutionRepository } from "../repositories/execution.repository.js";
 export const RUN_QUEUE_NAME = "scry-runs";
 export const CALIBRATION_QUEUE_NAME = "scry-calibrations";
 export const PROBE_QUEUE_NAME = "scry-probes";
+export const PRAXIS_QUEUE_NAME = "scry-praxis";
+export type PraxisJob = {
+  requestId: string;
+  releaseId: string;
+  schemaFingerprint: string;
+};
 export type RunJob = { runId: string; releaseId: string; schemaFingerprint: string };
 export type CalibrationJob = {
   calibrationSessionId: string;
@@ -26,6 +32,7 @@ export class RunQueueService implements OnModuleDestroy, OnModuleInit {
   readonly queue: Queue<RunJob>;
   readonly calibrationQueue: Queue<CalibrationJob>;
   readonly probeQueue: Queue<ProbeJob>;
+  readonly praxisQueue: Queue<PraxisJob>;
   private dispatcher?: NodeJS.Timeout;
 
   constructor(
@@ -47,6 +54,11 @@ export class RunQueueService implements OnModuleDestroy, OnModuleInit {
       defaultJobOptions: { attempts: 1, removeOnComplete: 100, removeOnFail: 500 },
     });
     this.probeQueue = new Queue<ProbeJob>(PROBE_QUEUE_NAME, {
+      connection: redis.client,
+      defaultJobOptions: { attempts: 1, removeOnComplete: 100, removeOnFail: 500 },
+    });
+
+    this.praxisQueue = new Queue<PraxisJob>(PRAXIS_QUEUE_NAME, {
       connection: redis.client,
       defaultJobOptions: { attempts: 1, removeOnComplete: 100, removeOnFail: 500 },
     });
@@ -179,5 +191,6 @@ export class RunQueueService implements OnModuleDestroy, OnModuleInit {
     await this.queue.close();
     await this.calibrationQueue.close();
     await this.probeQueue.close();
+    await this.praxisQueue.close();
   }
 }

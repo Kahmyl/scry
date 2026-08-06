@@ -3,8 +3,10 @@ import { Worker, type Job, type WorkerOptions } from "bullmq";
 import {
   CALIBRATION_QUEUE_NAME,
   PROBE_QUEUE_NAME,
+  PRAXIS_QUEUE_NAME,
   RUN_QUEUE_NAME,
   type CalibrationJob,
+  type PraxisJob,
   type ProbeJob,
   type RunJob,
 } from "../runtime/index.js";
@@ -16,6 +18,7 @@ export interface WorkerFleetOptions {
   processRun: (job: Job<RunJob>) => Promise<unknown>;
   processCalibration: (job: Job<CalibrationJob>) => Promise<unknown>;
   processProbe: (job: Job<ProbeJob>) => Promise<unknown>;
+  processPraxis: (job: Job<PraxisJob>) => Promise<unknown>;
 }
 
 export interface WorkerFleet {
@@ -36,6 +39,11 @@ export function createWorkerFleet(options: WorkerFleetOptions): WorkerFleet {
   const probe = new Worker<ProbeJob>(PROBE_QUEUE_NAME, options.processProbe, {
     connection: options.connection,
     concurrency: 1,
+    lockDuration: 60_000,
+  });
+  const praxis = new Worker<PraxisJob>(PRAXIS_QUEUE_NAME, options.processPraxis, {
+    connection: options.connection,
+    concurrency: 2,
     lockDuration: 60_000,
   });
 
@@ -61,10 +69,17 @@ export function createWorkerFleet(options: WorkerFleetOptions): WorkerFleet {
       code: safeWorkerCode(error),
     });
   });
+  praxis.on("failed", (job, error) => {
+    writeFailure({
+      message: "Praxis job failed",
+      requestId: job?.data.requestId,
+      code: safeWorkerCode(error),
+    });
+  });
 
   return {
     async close() {
-      await Promise.all([run.close(), calibration.close(), probe.close()]);
+      await Promise.all([run.close(), calibration.close(), probe.close(), praxis.close()]);
     },
   };
 }
