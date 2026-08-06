@@ -1812,7 +1812,7 @@ export function classifyProbeCompilationInput(
   };
 }
 
-function deriveCompiledPlan(plan: CurrentPlan, targetContracts: unknown): CurrentPlan {
+export function deriveCompiledPlan(plan: CurrentPlan, targetContracts: unknown): CurrentPlan {
   const removed = new Set(redundantStepIds(targetContracts));
 
   if (!removed.size) {

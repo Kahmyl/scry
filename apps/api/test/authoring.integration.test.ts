@@ -1,8 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
 import { currentPlanSchema, type InteractionTargetIntent } from "@scry/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import {
+  AuthenticationAttemptRepository,
+  AuthenticationAuthoringService,
+} from "../src/authentication-authoring/index.js";
 import { AuthoringService } from "../src/authoring/index.js";
 import { Database } from "../src/infrastructure/database.js";
 
@@ -630,6 +635,395 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
 
     expect(revision.rows[0]!.plan.steps.some((step) => step.id === "open-menu")).toBe(false);
   });
+
+  it("authors the Vitract login vertical through authentication, adaptive compilation, certification, and replay", async () => {
+    const fixture = JSON.parse(
+      await readFile(
+        new URL("../../../scripts/fixtures/vitract-login-baseline.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    const vitractEnvironment = randomUUID();
+    const probe = randomUUID();
+    const lease = randomUUID();
+    const ordersTarget = target("orders", "link", "Orders");
+
+    await database.query(
+      `INSERT INTO environments(id,project_id,name,base_origin,policy)
+       VALUES($1,$2,'Vitract Preview','https://preview.vitract.com',$3::jsonb)`,
+      [
+        vitractEnvironment,
+        project,
+        JSON.stringify({
+          allowedOrigins: ["https://preview.vitract.com"],
+          allowPrivateNetwork: false,
+          allowDownloads: false,
+          allowPopups: false,
+          maxActions: 10,
+          maxDurationMs: 120_000,
+          maxNavigations: 3,
+        }),
+      ],
+    );
+
+    const plan = currentPlanSchema.parse({
+      name: "Vitract partner orders",
+      objective: "Authenticate to Vitract and open partner orders",
+      preconditions: [],
+      allowedOrigins: ["https://preview.vitract.com"],
+      budgets: {
+        maxActions: 4,
+        maxDurationMs: 45_000,
+        maxNavigations: 3,
+      },
+      checkpoints: [],
+      steps: [
+        {
+          id: "open-login",
+          title: "Open Vitract login",
+          action: {
+            type: "navigate",
+            url: fixture.target.url,
+          },
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "final",
+        },
+        {
+          id: "open-menu",
+          title: fixture.observedOutcome.failedStepTitle,
+          action: {
+            type: "click",
+            target: target("open_menu", "button", "Open menu"),
+            expectedEffect: {
+              type: "visibility_change",
+              target: ordersTarget,
+              visible: true,
+            },
+          },
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "final",
+        },
+        {
+          id: "open-orders",
+          title: "Open orders",
+          action: {
+            type: "click",
+            target: ordersTarget,
+            expectedEffect: {
+              type: "navigation",
+              url: "/orders",
+              match: "path",
+            },
+          },
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "final",
+        },
+      ],
+    });
+
+    const created = await service.createDraft(principal, {
+      ...context,
+      projectId: project,
+      environmentId: vitractEnvironment,
+      name: "Vitract partner orders",
+      description: "",
+      content: {
+        objective: "Authenticate to Vitract and open partner orders",
+        preconditions: [],
+        expectedOutcomes: ["Orders navigation succeeds"],
+        prohibitedSideEffects: ["Do not retry credential submission"],
+      },
+      plan,
+      idempotencyKey: `draft-vitract-${randomUUID()}`,
+    });
+
+    await insertCompletedProbe(database, {
+      probeId: probe,
+      draftId: created.id!,
+      mission,
+      objective,
+      environment: vitractEnvironment,
+      session,
+      draftVersion: 1,
+      result: {
+        allResolved: true,
+        runtimeHealthy: true,
+        targets: [
+          {
+            stepId: "open-menu",
+            channel: "action",
+            status: "redundant",
+            reason: "expected_effect_already_satisfied",
+            expectedEffectTarget: {
+              role: "link",
+              accessibleName: "Orders",
+            },
+          },
+          {
+            stepId: "open-orders",
+            channel: "action",
+            status: "resolved",
+            confidence: 0.96,
+            confidenceMargin: 0.4,
+            fingerprint: {
+              role: "link",
+              accessibleName: "Orders",
+            },
+            strategy: "dom",
+          },
+        ],
+        readiness: [],
+        diagnostics: [
+          {
+            code: "REDUNDANT_INTERACTION",
+            severity: "info",
+            message:
+              "Open menu was unnecessary because desktop partner navigation was already visible.",
+            source: fixture.characterization.actualLayout,
+          },
+        ],
+        qualityFindings: [
+          {
+            code: "REDUNDANT_INTERACTION",
+            stepId: "open-menu",
+            reason: "expected_effect_already_satisfied",
+            visibleNavigation: fixture.characterization.actualVisibleNavigation,
+          },
+        ],
+        pageFingerprint: "c".repeat(64),
+        authenticationFingerprint: "d".repeat(64),
+      },
+    });
+
+    await database.query(
+      `INSERT INTO authoring_browser_leases(
+         id,
+         probe_session_id,
+         state,
+         runtime_owner_id,
+         heartbeat_at,
+         expires_at
+       )
+       VALUES($1,$2,'active','vitract-authoring-runtime',now(),now()+interval '5 minutes')`,
+      [lease, probe],
+    );
+
+    const authentication = new AuthenticationAuthoringService(
+      {},
+      new AuthenticationAttemptRepository(database),
+    );
+    const authContext = {
+      probeSessionId: probe,
+      applicationOrigin: "https://preview.vitract.com",
+      entryUrl: fixture.target.url,
+      usernameInspection: {
+        candidates: [
+          {
+            target: authTarget("Vitract username field", "1"),
+            confidence: 0.94,
+            runnerUpMargin: 0.5,
+            evidenceKinds: ["autocomplete_username", "type_email", "praxis_verified"],
+          },
+        ],
+      },
+      passwordInspection: {
+        candidates: [
+          {
+            target: authTarget("Vitract password field", "2"),
+            confidence: 0.95,
+            runnerUpMargin: 0.5,
+            evidenceKinds: ["type_password", "autocomplete_current_password", "praxis_verified"],
+          },
+        ],
+      },
+      submissionInspection: {
+        candidates: [
+          {
+            kind: "native_submit" as const,
+            target: authTarget("Vitract sign in", "3"),
+            confidence: 0.92,
+            evidenceKinds: ["form_relationship", "praxis_verified"],
+          },
+        ],
+      },
+      stateInspection: {
+        signals: [
+          "login_response_success" as const,
+          "url_not_login" as const,
+          "login_form_absent" as const,
+          "authenticated_navigation_present" as const,
+          "portal_shell_present" as const,
+        ],
+      },
+    };
+
+    const username = await authentication.discoverUsernameField(authContext);
+    const password = await authentication.discoverPasswordField(authContext);
+    const submission = await authentication.discoverSubmissionPath(authContext);
+    const submissionResult = await authentication.submitCredentialsOnce(authContext);
+    const authenticatedState = await authentication.detectAuthenticatedState(authContext);
+    const candidate = await authentication.createAuthenticationContractCandidate({
+      probeSessionId: probe,
+      applicationOrigin: authContext.applicationOrigin,
+      entryUrl: authContext.entryUrl,
+      username,
+      password,
+      submission,
+      submissionResult,
+      authenticatedState,
+      safeMetadata: {},
+    });
+
+    expect(submissionResult.status).toBe("submitted");
+    expect(authenticatedState.status).toBe("authenticated");
+    expect(authenticatedState.signals.length).toBeGreaterThanOrEqual(3);
+
+    const authContract = await service.createAuthenticationContract(principal, {
+      ...context,
+      projectId: project,
+      environmentId: vitractEnvironment,
+      name: "Vitract partner login",
+      applicationOrigin: candidate.applicationOrigin,
+      entryUrl: candidate.entryUrl,
+      usernameTarget: candidate.usernameTarget,
+      passwordTarget: candidate.passwordTarget,
+      submissionMethods: candidate.submissionMethods,
+      selectedMethodIndex: candidate.selectedMethodIndex,
+      success: candidate.success,
+      failureSignals: candidate.failureSignals,
+      sessionReuse: candidate.sessionReuse,
+      idempotencyKey: `auth-contract-vitract-${randomUUID()}`,
+    });
+
+    const compilation = await service.compile(principal, created.id!, {
+      ...context,
+      environmentId: vitractEnvironment,
+      draftVersion: 1,
+      probeSessionId: probe,
+      authenticationContractRevisionId: authContract.revisionId,
+      idempotencyKey: `compile-vitract-${randomUUID()}`,
+    });
+
+    expect(compilation).toMatchObject({
+      status: "execution_ready",
+      diagnostics: [],
+    });
+
+    const publication = await service.publish(principal, created.id!, {
+      ...context,
+      expectedVersion: 1,
+      compilationId: compilation.id!,
+      visibility: "mission_local",
+      purpose: "primary",
+      reason: "Vitract authoring transcript certified",
+      idempotencyKey: `publish-vitract-${randomUUID()}`,
+    });
+
+    const revision = await database.query<{ plan: typeof plan }>(
+      `SELECT plan
+       FROM flow_revisions
+       WHERE id=$1`,
+      [publication.revisionId],
+    );
+    expect(revision.rows[0]!.plan.steps.map((step) => step.id)).toEqual([
+      "open-login",
+      "open-orders",
+    ]);
+
+    const compiled = await database.query<{
+      compiledContractDigest: string;
+      authenticationContractRevisionId: string;
+    }>(
+      `SELECT
+         compiled_contract_digest AS "compiledContractDigest",
+         authentication_contract_revision_id AS "authenticationContractRevisionId"
+       FROM flow_compilations
+       WHERE id=$1`,
+      [compilation.id],
+    );
+
+    const certificationRun = await insertPassedRun(database, {
+      project,
+      mission,
+      objective,
+      session,
+      environment: vitractEnvironment,
+      flowRevisionId: publication.revisionId,
+      compiledContractId: compilation.id!,
+      compiledContractDigest: compiled.rows[0]!.compiledContractDigest,
+      plan: revision.rows[0]!.plan,
+      idempotencyKey: `certification-${randomUUID()}`,
+      role: "candidate",
+    });
+
+    const replayRun = await insertPassedRun(database, {
+      project,
+      mission,
+      objective,
+      session,
+      environment: vitractEnvironment,
+      flowRevisionId: publication.revisionId,
+      compiledContractId: compilation.id!,
+      compiledContractDigest: compiled.rows[0]!.compiledContractDigest,
+      plan: revision.rows[0]!.plan,
+      idempotencyKey: `fresh-replay-${randomUUID()}`,
+      role: "diagnostic",
+      rerunOfRunId: certificationRun,
+    });
+
+    const counts = await database.query<{
+      browserLeases: string;
+      authenticationAttempts: string;
+      submittedAttempts: string;
+      contracts: string;
+      passedRuns: string;
+      secretArtifacts: string;
+    }>(
+      `SELECT
+         (SELECT count(*)::text FROM authoring_browser_leases WHERE probe_session_id=$1)
+           AS "browserLeases",
+         (SELECT count(*)::text FROM authentication_attempts WHERE probe_session_id=$1)
+           AS "authenticationAttempts",
+         (SELECT count(*)::text FROM authentication_attempts
+          WHERE probe_session_id=$1
+            AND dispatch_state='dispatched'
+            AND result_classification='submitted')
+           AS "submittedAttempts",
+         (SELECT count(*)::text FROM authentication_contract_revisions WHERE id=$2)
+           AS "contracts",
+         (SELECT count(*)::text FROM runs
+          WHERE id=ANY($3::uuid[])
+            AND state='passed'
+            AND result_classification='application_pass'
+            AND compiled_contract_id=$4)
+           AS "passedRuns",
+         (SELECT count(*)::text FROM authentication_attempts
+          WHERE probe_session_id=$1
+            AND safe_metadata::text ~* '(password|token|clipboard|secret|authorization)')
+           AS "secretArtifacts"`,
+      [probe, authContract.revisionId, [certificationRun, replayRun], compilation.id],
+    );
+
+    expect(counts.rows[0]).toEqual({
+      browserLeases: "1",
+      authenticationAttempts: "1",
+      submittedAttempts: "1",
+      contracts: "1",
+      passedRuns: "2",
+      secretArtifacts: "0",
+    });
+    expect(compiled.rows[0]!.authenticationContractRevisionId).toBe(authContract.revisionId);
+    expect(JSON.stringify(candidate)).not.toMatch(/password=|token=|clipboard|selector|<html/i);
+    expect(fixture.characterization.rootCause).toContain("sidebar was already visible");
+    expect(fixture.observedOutcome.failureCode).toBe("TARGET_NOT_FOUND");
+    expect(replayRun).not.toBe(certificationRun);
+  });
 });
 
 async function insertCompletedProbe(
@@ -704,4 +1098,118 @@ function target(concept: string, role: InteractionRole, name: string): Interacti
       minimumFamilyCount: 1,
     },
   };
+}
+
+function authTarget(concept: string, suffix: string) {
+  return {
+    authority: "praxis" as const,
+    fingerprint: `${suffix}`.repeat(64).slice(0, 64),
+    concept,
+    scopeKind: "document",
+    capabilityDigest: `${Number(suffix) + 4}`.repeat(64).slice(0, 64),
+  };
+}
+
+async function insertPassedRun(
+  database: Database,
+  input: {
+    project: string;
+    mission: string;
+    objective: string;
+    session: string;
+    environment: string;
+    flowRevisionId: string;
+    compiledContractId: string;
+    compiledContractDigest: string;
+    plan: unknown;
+    idempotencyKey: string;
+    role: "candidate" | "diagnostic";
+    rerunOfRunId?: string;
+  },
+) {
+  const result = await database.query<{ id: string }>(
+    `INSERT INTO runs(
+       project_id,
+       mission_id,
+       objective_id,
+       agent_session_id,
+       environment_id,
+       flow_revision_id,
+       compiled_contract_id,
+       compiled_contract_digest,
+       state,
+       phase,
+       outcome_classification,
+       result_classification,
+       plan_snapshot,
+       environment_snapshot,
+       policy_snapshot,
+       veil_policy_snapshot,
+       execution_snapshot,
+       rerun_of_run_id,
+       idempotency_key
+     )
+     VALUES(
+       $1,$2,$3,$4,$5,$6,$7,$8,
+       'passed',
+       'completed',
+       'application_pass',
+       'application_pass',
+       $9::jsonb,
+       $10::jsonb,
+       $11::jsonb,
+       $12::jsonb,
+       $13::jsonb,
+       $14,
+       $15
+     )
+     RETURNING id`,
+    [
+      input.project,
+      input.mission,
+      input.objective,
+      input.session,
+      input.environment,
+      input.flowRevisionId,
+      input.compiledContractId,
+      input.compiledContractDigest,
+      JSON.stringify(input.plan),
+      JSON.stringify({
+        id: input.environment,
+        baseOrigin: "https://preview.vitract.com",
+      }),
+      JSON.stringify({
+        allowedOrigins: ["https://preview.vitract.com"],
+        allowPrivateNetwork: false,
+        allowDownloads: false,
+        allowPopups: false,
+        maxActions: 10,
+        maxDurationMs: 120_000,
+        maxNavigations: 3,
+      }),
+      JSON.stringify({ artifactRetention: "sanitized" }),
+      JSON.stringify({
+        browser: "chrome",
+        viewport: { width: 1280, height: 720 },
+        seed: 8,
+      }),
+      input.rerunOfRunId ?? null,
+      input.idempotencyKey,
+    ],
+  );
+
+  await database.query(
+    `INSERT INTO mission_run_links(
+       run_id,
+       mission_id,
+       objective_id,
+       role,
+       reason,
+       classified_by_agent_session_id
+     )
+     VALUES($1,$2,$3,$4,'PR8 deterministic validation',$5)`,
+    [result.rows[0]!.id, input.mission, input.objective, input.role, input.session],
+  );
+
+  return result.rows[0]!.id;
 }

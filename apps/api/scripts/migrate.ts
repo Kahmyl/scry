@@ -38,6 +38,10 @@ const praxisCandidateInspectionPath = fileURLToPath(
   new URL("../migrations/praxis-candidate-inspection.sql", import.meta.url),
 );
 
+const authenticationAuthoringPath = fileURLToPath(
+  new URL("../migrations/authentication-authoring.sql", import.meta.url),
+);
+
 const veilObservationPreferencesPath = fileURLToPath(
   new URL("../migrations/veil-observation-preferences.sql", import.meta.url),
 );
@@ -78,6 +82,11 @@ const praxisReporting = await readFile(praxisReportingPath, "utf8");
 const praxisCutoff = await readFile(praxisCutoffPath, "utf8");
 const praxisCandidateInspection = await readFile(
   praxisCandidateInspectionPath,
+  "utf8",
+);
+
+const authenticationAuthoring = await readFile(
+  authenticationAuthoringPath,
   "utf8",
 );
 
