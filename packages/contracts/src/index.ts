@@ -4,6 +4,7 @@ export * from "./flow.js";
 export * from "./mission.js";
 export * from "./orchestration.js";
 export * from "./authoring.js";
+export * from "./authoring-runtime-command.js";
 export * from "./calibration.js";
 export * from "./grounding.js";
 export {

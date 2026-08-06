@@ -2,12 +2,14 @@ import { Body, Controller, Get, Inject, Param, Patch, Post } from "@nestjs/commo
 import {
   compileFlowDraftSchema,
   createAuthenticationContractSchema,
+  createAuthoringRuntimeCommandSchema,
   createFlowDraftSchema,
   publishFlowDraftSchema,
   startProbeSessionSchema,
   updateFlowDraftSchema,
   type CompileFlowDraftInput,
   type CreateAuthenticationContractInput,
+  type CreateAuthoringRuntimeCommandInput,
   type CreateFlowDraftInput,
   type PublishFlowDraftInput,
   type StartProbeSessionInput,
@@ -19,6 +21,7 @@ import type { Principal } from "../auth/index.js";
 import { CurrentPrincipal } from "../auth/index.js";
 import { ZodValidationPipe } from "../common/validation.pipe.js";
 import { RunQueueService } from "../runtime/index.js";
+import { AuthoringRuntimeCommandService } from "./authoring-runtime-command.service.js";
 import { AuthoringService } from "./authoring.service.js";
 
 const cancelSchema = z
@@ -39,6 +42,8 @@ const abandonSchema = z
 export class AuthoringController {
   constructor(
     @Inject(AuthoringService) private readonly authoring: AuthoringService,
+    @Inject(AuthoringRuntimeCommandService)
+    private readonly commands: AuthoringRuntimeCommandService,
     @Inject(RunQueueService) private readonly queue: RunQueueService,
   ) {}
 
@@ -91,6 +96,16 @@ export class AuthoringController {
     }
 
     return result;
+  }
+
+  @Post("probe-sessions/:probeId/commands")
+  command(
+    @Param("probeId") id: string,
+    @CurrentPrincipal() p: Principal,
+    @Body(new ZodValidationPipe(createAuthoringRuntimeCommandSchema))
+    input: CreateAuthoringRuntimeCommandInput,
+  ) {
+    return this.commands.enqueue(p, id, input);
   }
 
   @Post("probe-sessions/:probeId/cancel")

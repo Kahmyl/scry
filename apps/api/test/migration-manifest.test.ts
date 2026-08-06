@@ -5,27 +5,32 @@ import { describe, expect, it } from "vitest";
 const root = new URL("../", import.meta.url);
 
 describe("schema migration manifest", () => {
-  it("orders stateful Probe authoring after the compiled-plan cutover", async () => {
+  it("orders interactive runtime commands after stateful Probe authoring", async () => {
     const baseline = await readFile(new URL("migrations/baseline.sql", root), "utf8");
 
     const preferences = baseline.indexOf("\\ir veil-observation-preferences.sql");
     const retention = baseline.indexOf("\\ir veil-artifact-retention.sql");
     const compiledPlan = baseline.indexOf("\\ir compiled-plan-cutover.sql");
     const statefulProbe = baseline.indexOf("\\ir stateful-probe-authoring.sql");
+    const interactiveCommands = baseline.indexOf(
+      "\\ir interactive-runtime-commands.sql",
+    );
 
     expect(preferences).toBeGreaterThan(-1);
     expect(retention).toBeGreaterThan(preferences);
     expect(compiledPlan).toBeGreaterThan(retention);
     expect(statefulProbe).toBeGreaterThan(compiledPlan);
+    expect(interactiveCommands).toBeGreaterThan(statefulProbe);
   });
 
-  it("recognizes the compiled-plan schema and applies the guarded stateful Probe cutover", async () => {
+  it("recognizes the compiled-plan schema and applies the guarded interactive command cutover", async () => {
     const migrate = await readFile(new URL("scripts/migrate.ts", root), "utf8");
 
     expect(migrate).toContain("compiledPlanFingerprint");
+    expect(migrate).toContain("statefulProbeAuthoringFingerprint");
     expect(migrate).toContain("supportedPreviousFingerprints");
-    expect(migrate).toContain("await client.query(statefulProbeAuthoring)");
-    expect(migrate).toContain("scry-stateful-probe-authoring-cutover");
+    expect(migrate).toContain("await client.query(interactiveRuntimeCommands)");
+    expect(migrate).toContain("scry-interactive-runtime-commands-cutover");
   });
 
   it("includes every schema migration in both fingerprint commands", async () => {
@@ -39,6 +44,7 @@ describe("schema migration manifest", () => {
       expect(source).toContain("veil-artifact-retention.sql");
       expect(source).toContain("compiled-plan-cutover.sql");
       expect(source).toContain("stateful-probe-authoring.sql");
+      expect(source).toContain("interactive-runtime-commands.sql");
     }
   });
 
@@ -92,6 +98,29 @@ describe("schema migration manifest", () => {
     expect(cutover).toContain("FOREIGN KEY (browser_lease_id, probe_session_id)");
     expect(cutover).toContain(
       "REFERENCES authoring_browser_leases(id, probe_session_id)",
+    );
+  });
+
+  it("persists fenced interactive commands and terminal results", async () => {
+    const cutover = await readFile(
+      new URL("migrations/interactive-runtime-commands.sql", root),
+      "utf8",
+    );
+
+    expect(cutover).toContain(
+      "CREATE TABLE IF NOT EXISTS authoring_runtime_commands",
+    );
+    expect(cutover).toContain(
+      "CREATE TABLE IF NOT EXISTS authoring_runtime_command_results",
+    );
+    expect(cutover).toContain("UNIQUE (probe_session_id, idempotency_key)");
+    expect(cutover).toContain("claimed_by_runtime_owner_id text");
+    expect(cutover).toContain("claim_token uuid UNIQUE");
+    expect(cutover).toContain(
+      "REFERENCES authoring_browser_leases(id, probe_session_id)",
+    );
+    expect(cutover).toContain(
+      "CHECK (outcome IN ('completed', 'failed', 'cancelled'))",
     );
   });
 });
