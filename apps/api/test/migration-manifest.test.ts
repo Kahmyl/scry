@@ -18,6 +18,9 @@ describe("schema migration manifest", () => {
     const interactiveLifecycle = baseline.indexOf(
       "\\ir interactive-runtime-lifecycle.sql",
     );
+    const authenticationAuthoring = baseline.indexOf(
+      "\\ir authentication-authoring.sql",
+    );
 
     expect(preferences).toBeGreaterThan(-1);
     expect(retention).toBeGreaterThan(preferences);
@@ -25,6 +28,7 @@ describe("schema migration manifest", () => {
     expect(statefulProbe).toBeGreaterThan(compiledPlan);
     expect(interactiveCommands).toBeGreaterThan(statefulProbe);
     expect(interactiveLifecycle).toBeGreaterThan(interactiveCommands);
+    expect(authenticationAuthoring).toBeGreaterThan(interactiveLifecycle);
   });
 
   it("recognizes the compiled-plan schema and applies the guarded interactive command cutover", async () => {
@@ -53,7 +57,20 @@ describe("schema migration manifest", () => {
       expect(source).toContain("interactive-runtime-commands.sql");
       expect(source).toContain("interactive-runtime-lifecycle.sql");
       expect(source).toContain("praxis-candidate-inspection.sql");
+      expect(source).toContain("authentication-authoring.sql");
     }
+  });
+
+  it("adds an authentication attempt ledger without secret-bearing columns", async () => {
+    const cutover = await readFile(
+      new URL("migrations/authentication-authoring.sql", root),
+      "utf8",
+    );
+
+    expect(cutover).toContain("CREATE TABLE IF NOT EXISTS authentication_attempts");
+    expect(cutover).toContain("credential_reference_id uuid");
+    expect(cutover).not.toMatch(/\b(password|token|clipboard)_/i);
+    expect(cutover).toContain("safe_metadata::text !~*");
   });
 
   it("keeps the retention upgrade repeat-safe", async () => {

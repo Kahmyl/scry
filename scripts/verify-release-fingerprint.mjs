@@ -65,6 +65,11 @@ const interactiveRuntimeLifecycle = await readFile(
   "utf8",
 );
 
+const authenticationAuthoring = await readFile(
+  new URL("authentication-authoring.sql", migrations),
+  "utf8",
+);
+
 const baseline = (await readFile(new URL("baseline.sql", migrations), "utf8"))
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule)
@@ -84,7 +89,8 @@ const baseline = (await readFile(new URL("baseline.sql", migrations), "utf8"))
   .replace(
     "\\ir interactive-runtime-lifecycle.sql",
     () => interactiveRuntimeLifecycle,
-  );
+  )
+  .replace("\\ir authentication-authoring.sql", () => authenticationAuthoring);
 
 const required = createHash("sha256").update(baseline).digest("hex");
 

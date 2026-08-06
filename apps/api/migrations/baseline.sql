@@ -397,3 +397,4 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir stateful-probe-authoring.sql
 \ir interactive-runtime-commands.sql
 \ir interactive-runtime-lifecycle.sql
+\ir authentication-authoring.sql

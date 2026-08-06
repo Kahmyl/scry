@@ -4,6 +4,7 @@ import { AccessModule } from "./access/index.js";
 import { ArtifactsModule } from "./artifacts/index.js";
 import { AuthModule } from "./auth/index.js";
 import { AuthoringModule } from "./authoring/index.js";
+import { AuthenticationAuthoringModule } from "./authentication-authoring/index.js";
 import { CalibrationModule } from "./calibration/index.js";
 import { FlowsModule } from "./flows/index.js";
 import { InfrastructureModule } from "./infrastructure/index.js";
@@ -23,6 +24,7 @@ import { VeilModule } from "./veil/index.js";
     AccessModule,
     ArtifactsModule,
     AuthoringModule,
+    AuthenticationAuthoringModule,
     CalibrationModule,
     FlowsModule,
     MissionsModule,
