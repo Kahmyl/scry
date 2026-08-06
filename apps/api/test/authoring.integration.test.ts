@@ -240,7 +240,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     });
   });
 
-  it("keeps the draft in editing when a completed probe returns a diagnostic", async () => {
+  it("keeps quality findings visible without blocking compilation", async () => {
     const plan = currentPlanSchema.parse({
       name: "Open preview",
       objective: "Open preview",
@@ -329,13 +329,16 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     });
 
     expect(compilation).toMatchObject({
-      status: "calibration_required",
-      diagnostics: [diagnostic],
+      status: "execution_ready",
+      diagnostics: [],
+      blockers: [],
+      warnings: [],
+      qualityFindings: [diagnostic],
     });
 
     const draftState = await database.query(`SELECT state FROM flow_drafts WHERE id=$1`, [draftId]);
 
-    expect(draftState.rows[0]!.state).toBe("editing");
+    expect(draftState.rows[0]!.state).toBe("publishable");
   });
 
   it("starts one interactive authoring session with budgets and a browser lease", async () => {

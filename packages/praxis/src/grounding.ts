@@ -23,6 +23,7 @@ import {
 } from "./observation.js";
 import { collectPraxisEvidence } from "./evidence.js";
 import { escalationLevel } from "./latency.js";
+import { interactionRiskPolicy } from "./risk-policy.js";
 
 type SafeAction =
   | "narrow_scope"
@@ -232,7 +233,7 @@ export async function resolveTarget(
       b.score.total - a.score.total || a.fingerprint.digest.localeCompare(b.fingerprint.digest),
   );
   const ranked = collapseEquivalentActions(intent, authoritative);
-  const policy = riskPolicy(intent);
+  const policy = interactionRiskPolicy(intent);
   const best = ranked[0];
   const confidence = best?.score.total ?? 0;
   const margin = best ? confidence - (ranked[1]?.score.total ?? 0) : 0;
@@ -240,10 +241,10 @@ export async function resolveTarget(
     !history || history.digest === best?.fingerprint.digest
       ? "unchanged"
       : best &&
-          best.score.total >= policy.minimum + 0.1 &&
+          best.score.total >= policy.minimumConfidence + 0.1 &&
           history.capabilityDigest === best.fingerprint.capabilityDigest
         ? "compatible"
-        : best && best.score.total >= policy.minimum
+        : best && best.score.total >= policy.minimumConfidence
           ? "suspicious"
           : "incompatible";
   const base: GroundingDiagnostic = {
@@ -259,7 +260,7 @@ export async function resolveTarget(
     visualCandidateCount,
     escalationLevel: escalationLevel({
       historyCompatible: Boolean(history && drift === "unchanged"),
-      semanticAuthoritative: Boolean(best && confidence >= policy.minimum),
+      semanticAuthoritative: Boolean(best && confidence >= policy.minimumConfidence),
       behaviorRequired: Boolean(
         best && ["focus_keyboard", "content_editable"].includes(best.adapter),
       ),
@@ -303,8 +304,8 @@ export async function resolveTarget(
   );
   if (
     !hasIdentityEvidence ||
-    confidence < policy.minimum ||
-    best.score.familyCount < policy.familyCount ||
+    confidence < policy.minimumConfidence ||
+    best.score.familyCount < policy.minimumIndependentEvidenceFamilies ||
     missingFamilies.length
   )
     throw await reject(page, intentDigest, "INSUFFICIENT_EVIDENCE", {
@@ -317,7 +318,7 @@ export async function resolveTarget(
       selectedFingerprint: best.fingerprint,
       safeActions: ["narrow_scope", "request_calibration"],
     });
-  if (ranked.length > 1 && (margin <= 0 || margin < policy.margin))
+  if (ranked.length > 1 && (margin <= 0 || margin < policy.minimumConfidenceMargin))
     throw await reject(
       page,
       intentDigest,
@@ -1224,17 +1225,6 @@ export async function validateCandidateResume(
   }
 }
 
-function riskPolicy(intent: InteractionTargetIntent) {
-  const high = ["destructive", "authentication", "credential", "protected", "live"].includes(
-    intent.risk,
-  );
-  return {
-    minimum: intent.confidence.minimum ?? (high ? 0.76 : 0.58),
-    margin: intent.confidence.minimumMargin ?? (high ? 0.14 : 0.08),
-    familyCount:
-      intent.confidence.minimumFamilyCount ?? (high ? 3 : intent.risk === "read_only" ? 1 : 2),
-  };
-}
 function degradedPermitted(intent: InteractionTargetIntent, channel: string) {
   return (
     channel === "visual" &&

@@ -960,31 +960,45 @@ export class AuthoringService {
             rows: [],
           };
 
-      const diagnostics: Array<Record<string, unknown>> = [];
+      const blockers: Array<Record<string, unknown>> = [];
+      const warnings: Array<Record<string, unknown>> = [];
+      const qualityFindings: Array<Record<string, unknown>> = [];
 
       if (!runtime.healthy) {
-        diagnostics.push(...runtime.diagnostics);
+        blockers.push(...runtime.diagnostics);
       }
 
       if (!probe.rowCount) {
-        diagnostics.push({
+        blockers.push({
           code: "PROBE_REQUIRED",
           message: "Compile from a completed Probe Session.",
         });
       } else if (probe.rows[0]!.state !== "completed") {
-        diagnostics.push({
+        blockers.push({
           code: "PROBE_INCOMPLETE",
           message: "Probe Session is not complete.",
         });
       } else {
-        diagnostics.push(...(probe.rows[0]!.result?.diagnostics ?? []));
+        const classified = classifyProbeCompilationInput(
+          probe.rows[0]!.result,
+        );
+
+        blockers.push(...classified.blockers);
+        warnings.push(...classified.warnings);
+        qualityFindings.push(...classified.qualityFindings);
       }
 
-      const status = !runtime.healthy
-        ? "runtime_unhealthy"
-        : diagnostics.length
-          ? "calibration_required"
-          : "execution_ready";
+      const diagnostics = [
+        ...blockers,
+        ...warnings,
+      ];
+
+      const status =
+        !runtime.healthy
+          ? "runtime_unhealthy"
+          : blockers.length
+            ? "calibration_required"
+            : "execution_ready";
 
       const probeResult = probe.rows[0]?.result ?? null;
 
@@ -1134,6 +1148,9 @@ export class AuthoringService {
         id,
         status,
         diagnostics,
+        blockers,
+        warnings,
+        qualityFindings,
         compiledContractDigest: digest,
       };
     });
@@ -1719,9 +1736,80 @@ type ProbeResult = {
   targets?: unknown;
   readiness?: Array<Record<string, unknown>>;
   diagnostics?: Array<Record<string, unknown>>;
+  blockers?: Array<Record<string, unknown>>;
+  warnings?: Array<Record<string, unknown>>;
+  qualityFindings?: Array<Record<string, unknown>>;
   pageFingerprint?: string;
   authenticationFingerprint?: string;
 };
+
+const PROBE_BLOCKER_CODES = new Set([
+  "TARGET_AMBIGUOUS",
+  "INSUFFICIENT_EVIDENCE",
+  "NO_CAPABILITY_COMPATIBLE_CONTROL",
+  "TARGET_SCOPE_INVALID",
+  "TARGET_CHANGED_BEFORE_ACTION",
+  "GROUNDING_DRIFT_REQUIRES_CALIBRATION",
+  "OBSERVATION_RUNTIME_UNAVAILABLE",
+  "OBSERVATION_FAILED",
+  "FLOW_CAPABILITY_UNAVAILABLE",
+]);
+
+const PROBE_QUALITY_FINDING_CODES = new Set([
+  "FIELD_HAS_NO_ASSOCIATED_LABEL",
+  "INTERACTIVE_DIV_WITHOUT_ROLE",
+  "DUPLICATE_ACCESSIBLE_NAME",
+  "HIDDEN_DUPLICATE_CONTROL",
+  "CONTROL_REQUIRES_COORDINATE_TARGETING",
+  "ICON_CONTROL_HAS_NO_ACCESSIBLE_NAME",
+  "FORM_HAS_NO_NATIVE_SUBMIT_PATH",
+  "MISSING_SEMANTIC_IDENTITY",
+  "CONFLICTING_ACCESSIBLE_NAME",
+  "KEYBOARD_PATH_UNAVAILABLE",
+  "LABEL_CONTROL_ASSOCIATION_FAILURE",
+  "AMBIGUOUS_DUPLICATE_IDENTITY",
+  "TARGET_OBSTRUCTED",
+  "UNSTABLE_CONTROL_IDENTITY",
+  "VISUAL_ACCESSIBILITY_MISMATCH",
+  "STATE_CHANGE_WITHOUT_FEEDBACK",
+  "INVALID_ARIA_PATTERN",
+  "SPECIALIZED_CUSTOM_CONTROL",
+  "UNSAFE_TARGET_GEOMETRY",
+  "CANVAS_ONLY_INTERACTION",
+]);
+
+export function classifyProbeCompilationInput(
+  result: ProbeResult | null | undefined,
+): {
+  blockers: Array<Record<string, unknown>>;
+  warnings: Array<Record<string, unknown>>;
+  qualityFindings: Array<Record<string, unknown>>;
+} {
+  const blockers = [...(result?.blockers ?? [])];
+  const warnings = [...(result?.warnings ?? [])];
+  const qualityFindings = [...(result?.qualityFindings ?? [])];
+
+  for (const diagnostic of result?.diagnostics ?? []) {
+    const code =
+      typeof diagnostic.code === "string"
+        ? diagnostic.code
+        : "";
+
+    if (PROBE_BLOCKER_CODES.has(code)) {
+      blockers.push(diagnostic);
+    } else if (PROBE_QUALITY_FINDING_CODES.has(code)) {
+      qualityFindings.push(diagnostic);
+    } else {
+      warnings.push(diagnostic);
+    }
+  }
+
+  return {
+    blockers,
+    warnings,
+    qualityFindings,
+  };
+}
 
 function deriveCompiledPlan(plan: CurrentPlan, targetContracts: unknown): CurrentPlan {
   const removed = new Set(redundantStepIds(targetContracts));
