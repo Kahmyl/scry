@@ -21,6 +21,11 @@ const retention = await readFile(new URL("veil-artifact-retention.sql", migratio
 
 const compiledPlan = await readFile(new URL("compiled-plan-cutover.sql", migrations), "utf8");
 
+const statefulProbeAuthoring = await readFile(
+  new URL("stateful-probe-authoring.sql", migrations),
+  "utf8",
+);
+
 const baseline = (await readFile(new URL("baseline.sql", migrations), "utf8"))
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule)
@@ -29,7 +34,8 @@ const baseline = (await readFile(new URL("baseline.sql", migrations), "utf8"))
   .replace("\\ir praxis-cutoff.sql", () => cutoff)
   .replace("\\ir veil-observation-preferences.sql", () => preferences)
   .replace("\\ir veil-artifact-retention.sql", () => retention)
-  .replace("\\ir compiled-plan-cutover.sql", () => compiledPlan);
+  .replace("\\ir compiled-plan-cutover.sql", () => compiledPlan)
+  .replace("\\ir stateful-probe-authoring.sql", () => statefulProbeAuthoring);
 
 const required = createHash("sha256").update(baseline).digest("hex");
 

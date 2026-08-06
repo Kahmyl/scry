@@ -5,26 +5,27 @@ import { describe, expect, it } from "vitest";
 const root = new URL("../", import.meta.url);
 
 describe("schema migration manifest", () => {
-  it("includes Veil migrations before the compiled-plan cutover", async () => {
+  it("orders stateful Probe authoring after the compiled-plan cutover", async () => {
     const baseline = await readFile(new URL("migrations/baseline.sql", root), "utf8");
 
     const preferences = baseline.indexOf("\\ir veil-observation-preferences.sql");
     const retention = baseline.indexOf("\\ir veil-artifact-retention.sql");
     const compiledPlan = baseline.indexOf("\\ir compiled-plan-cutover.sql");
+    const statefulProbe = baseline.indexOf("\\ir stateful-probe-authoring.sql");
 
     expect(preferences).toBeGreaterThan(-1);
     expect(retention).toBeGreaterThan(preferences);
     expect(compiledPlan).toBeGreaterThan(retention);
+    expect(statefulProbe).toBeGreaterThan(compiledPlan);
   });
 
-  it("recognizes the previous full schema and applies the guarded compiled-plan cutover", async () => {
+  it("recognizes the compiled-plan schema and applies the guarded stateful Probe cutover", async () => {
     const migrate = await readFile(new URL("scripts/migrate.ts", root), "utf8");
 
-    expect(migrate).toContain("veilFullFingerprint");
-    expect(migrate).toContain("previousVeilFullFingerprint");
+    expect(migrate).toContain("compiledPlanFingerprint");
     expect(migrate).toContain("supportedPreviousFingerprints");
-    expect(migrate).toContain("await client.query(compiledPlanCutover)");
-    expect(migrate).toContain("scry-compiled-plan-cutover");
+    expect(migrate).toContain("await client.query(statefulProbeAuthoring)");
+    expect(migrate).toContain("scry-stateful-probe-authoring-cutover");
   });
 
   it("includes every schema migration in both fingerprint commands", async () => {
@@ -37,6 +38,7 @@ describe("schema migration manifest", () => {
       expect(source).toContain("veil-observation-preferences.sql");
       expect(source).toContain("veil-artifact-retention.sql");
       expect(source).toContain("compiled-plan-cutover.sql");
+      expect(source).toContain("stateful-probe-authoring.sql");
     }
   });
 
@@ -60,5 +62,18 @@ describe("schema migration manifest", () => {
     expect(addColumn).toBeGreaterThan(-1);
     expect(backfill).toBeGreaterThan(addColumn);
     expect(setNotNull).toBeGreaterThan(backfill);
+  });
+
+  it("keeps only one live browser lease per Probe Session while retaining lease history", async () => {
+    const cutover = await readFile(
+      new URL("migrations/stateful-probe-authoring.sql", root),
+      "utf8",
+    );
+
+    expect(cutover).toContain("CREATE TABLE IF NOT EXISTS authoring_browser_leases");
+    expect(cutover).not.toContain("probe_session_id uuid NOT NULL UNIQUE");
+    expect(cutover).toContain("authoring_browser_leases_live_probe_idx");
+    expect(cutover).toContain("WHERE state IN ('provisioning', 'active', 'suspended', 'releasing')");
+    expect(cutover).toContain("CREATE TABLE IF NOT EXISTS probe_authoring_sessions");
   });
 });

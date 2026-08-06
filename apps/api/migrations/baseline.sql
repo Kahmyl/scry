@@ -393,3 +393,4 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir veil-observation-preferences.sql
 \ir veil-artifact-retention.sql
 \ir compiled-plan-cutover.sql
+\ir stateful-probe-authoring.sql

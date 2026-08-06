@@ -40,6 +40,10 @@ const compiledPlanCutoverPath = fileURLToPath(
   new URL("../migrations/compiled-plan-cutover.sql", import.meta.url),
 );
 
+const statefulProbeAuthoringPath = fileURLToPath(
+  new URL("../migrations/stateful-probe-authoring.sql", import.meta.url),
+);
+
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
 const protectedCapsule = await readFile(protectedCapsulePath, "utf8");
@@ -58,6 +62,8 @@ const veilArtifactRetention = await readFile(veilArtifactRetentionPath, "utf8");
 
 const compiledPlanCutover = await readFile(compiledPlanCutoverPath, "utf8");
 
+const statefulProbeAuthoring = await readFile(statefulProbeAuthoringPath, "utf8");
+
 const expandFoundation = (source: string) =>
   source
     .replace("\\ir calibration-foundation.sql", () => calibrationFoundation)
@@ -70,7 +76,8 @@ const base = expandFoundation(
     .replace("\\ir praxis-cutoff.sql\n", "")
     .replace("\\ir veil-observation-preferences.sql\n", "")
     .replace("\\ir veil-artifact-retention.sql\n", "")
-    .replace("\\ir compiled-plan-cutover.sql\n", ""),
+    .replace("\\ir compiled-plan-cutover.sql\n", "")
+    .replace("\\ir stateful-probe-authoring.sql\n", ""),
 );
 
 const authoringBaseline = expandFoundation(
@@ -79,7 +86,8 @@ const authoringBaseline = expandFoundation(
     .replace("\\ir praxis-cutoff.sql\n", "")
     .replace("\\ir veil-observation-preferences.sql\n", "")
     .replace("\\ir veil-artifact-retention.sql\n", "")
-    .replace("\\ir compiled-plan-cutover.sql\n", ""),
+    .replace("\\ir compiled-plan-cutover.sql\n", "")
+    .replace("\\ir stateful-probe-authoring.sql\n", ""),
 ).replace("\\ir authoring-execution-cutover.sql", () => authoringCutover);
 
 const reportingBaseline = expandFoundation(
@@ -87,7 +95,8 @@ const reportingBaseline = expandFoundation(
     .replace("\\ir praxis-cutoff.sql\n", "")
     .replace("\\ir veil-observation-preferences.sql\n", "")
     .replace("\\ir veil-artifact-retention.sql\n", "")
-    .replace("\\ir compiled-plan-cutover.sql\n", ""),
+    .replace("\\ir compiled-plan-cutover.sql\n", "")
+    .replace("\\ir stateful-probe-authoring.sql\n", ""),
 )
   .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
   .replace("\\ir praxis-reporting.sql", () => praxisReporting);
@@ -96,7 +105,8 @@ const praxisBaseline = expandFoundation(
   baselineSource
     .replace("\\ir veil-observation-preferences.sql\n", "")
     .replace("\\ir veil-artifact-retention.sql\n", "")
-    .replace("\\ir compiled-plan-cutover.sql\n", ""),
+    .replace("\\ir compiled-plan-cutover.sql\n", "")
+    .replace("\\ir stateful-probe-authoring.sql\n", ""),
 )
   .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
   .replace("\\ir praxis-reporting.sql", () => praxisReporting)
@@ -105,7 +115,8 @@ const praxisBaseline = expandFoundation(
 const preferencesBaseline = expandFoundation(
   baselineSource
     .replace("\\ir veil-artifact-retention.sql\n", "")
-    .replace("\\ir compiled-plan-cutover.sql\n", ""),
+    .replace("\\ir compiled-plan-cutover.sql\n", "")
+    .replace("\\ir stateful-probe-authoring.sql\n", ""),
 )
   .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
   .replace("\\ir praxis-reporting.sql", () => praxisReporting)
@@ -113,7 +124,9 @@ const preferencesBaseline = expandFoundation(
   .replace("\\ir veil-observation-preferences.sql", () => veilObservationPreferences);
 
 const veilFullBaseline = expandFoundation(
-  baselineSource.replace("\\ir compiled-plan-cutover.sql\n", ""),
+  baselineSource
+    .replace("\\ir compiled-plan-cutover.sql\n", "")
+    .replace("\\ir stateful-probe-authoring.sql\n", ""),
 )
   .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
   .replace("\\ir praxis-reporting.sql", () => praxisReporting)
@@ -121,13 +134,24 @@ const veilFullBaseline = expandFoundation(
   .replace("\\ir veil-observation-preferences.sql", () => veilObservationPreferences)
   .replace("\\ir veil-artifact-retention.sql", () => veilArtifactRetention);
 
-const baseline = expandFoundation(baselineSource)
+const compiledPlanBaseline = expandFoundation(
+  baselineSource.replace("\\ir stateful-probe-authoring.sql\n", ""),
+)
   .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
   .replace("\\ir praxis-reporting.sql", () => praxisReporting)
   .replace("\\ir praxis-cutoff.sql", () => praxisCutoff)
   .replace("\\ir veil-observation-preferences.sql", () => veilObservationPreferences)
   .replace("\\ir veil-artifact-retention.sql", () => veilArtifactRetention)
   .replace("\\ir compiled-plan-cutover.sql", () => compiledPlanCutover);
+
+const baseline = expandFoundation(baselineSource)
+  .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
+  .replace("\\ir praxis-reporting.sql", () => praxisReporting)
+  .replace("\\ir praxis-cutoff.sql", () => praxisCutoff)
+  .replace("\\ir veil-observation-preferences.sql", () => veilObservationPreferences)
+  .replace("\\ir veil-artifact-retention.sql", () => veilArtifactRetention)
+  .replace("\\ir compiled-plan-cutover.sql", () => compiledPlanCutover)
+  .replace("\\ir stateful-probe-authoring.sql", () => statefulProbeAuthoring);
 
 const fingerprint = digest(baseline);
 const previousFingerprint = digest(base);
@@ -136,6 +160,7 @@ const reportingFingerprint = digest(reportingBaseline);
 const praxisFingerprint = digest(praxisBaseline);
 const preferencesFingerprint = digest(preferencesBaseline);
 const veilFullFingerprint = digest(veilFullBaseline);
+const compiledPlanFingerprint = digest(compiledPlanBaseline);
 
 const previousVeilFullFingerprint =
   "8c0e5ae0ae72f9a163189abe903b317e38aacf6b1674f3441b62dd7129b48c6a";
@@ -190,6 +215,7 @@ try {
       preferencesFingerprint,
       veilFullFingerprint,
       previousVeilFullFingerprint,
+      compiledPlanFingerprint,
     ];
 
     if (supportedPreviousFingerprints.includes(installedFingerprint)) {
@@ -198,7 +224,9 @@ try {
       try {
         await client.query("BEGIN");
 
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-compiled-plan-cutover'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-stateful-probe-authoring-cutover'))",
+        );
 
         if (installedFingerprint === previousFingerprint) {
           await client.query(authoringCutover);
@@ -236,7 +264,11 @@ try {
           await client.query(veilArtifactRetention);
         }
 
-        await client.query(compiledPlanCutover);
+        if (installedFingerprint !== compiledPlanFingerprint) {
+          await client.query(compiledPlanCutover);
+        }
+
+        await client.query(statefulProbeAuthoring);
 
         await client.query(
           `UPDATE schema_baseline
@@ -248,7 +280,9 @@ try {
 
         await client.query("COMMIT");
 
-        process.stdout.write(`Applied guarded compiled-plan schema lifecycle ${fingerprint}\n`);
+        process.stdout.write(
+          `Applied guarded stateful Probe authoring schema lifecycle ${fingerprint}\n`,
+        );
       } catch (error) {
         await client.query("ROLLBACK");
         throw error;

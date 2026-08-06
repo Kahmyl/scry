@@ -1,8 +1,8 @@
 import { z } from "zod";
 
+import { flowRevisionContentSchema } from "./api.js";
 import { currentPlanSchema } from "./current.js";
 import { objectiveContextSchema } from "./mission.js";
-import { flowRevisionContentSchema } from "./api.js";
 
 const uuid = z.string().uuid();
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -15,7 +15,13 @@ export const flowDraftStateSchema = z.enum([
   "published",
   "abandoned",
 ]);
-export const probeLevelSchema = z.enum(["inspection", "reversible", "calibration_transaction"]);
+
+export const probeLevelSchema = z.enum([
+  "inspection",
+  "reversible",
+  "calibration_transaction",
+]);
+
 export const probeStateSchema = z.enum([
   "queued",
   "claimed",
@@ -25,6 +31,27 @@ export const probeStateSchema = z.enum([
   "cancelled",
   "timed_out",
 ]);
+
+export const probeAuthoringStatusSchema = z.enum([
+  "starting",
+  "active",
+  "suspended",
+  "completing",
+  "completed",
+  "cancelled",
+  "crashed",
+]);
+
+export const authoringBrowserLeaseStateSchema = z.enum([
+  "provisioning",
+  "active",
+  "suspended",
+  "releasing",
+  "released",
+  "expired",
+  "crashed",
+]);
+
 export const compilationStatusSchema = z.enum([
   "pending",
   "execution_ready",
@@ -34,6 +61,7 @@ export const compilationStatusSchema = z.enum([
   "stale",
   "superseded",
 ]);
+
 export const executionOutcomeClassSchema = z.enum([
   "application_pass",
   "application_failure",
@@ -55,7 +83,15 @@ export const browserRuntimeHealthSchema = z
     runtimeHash: digest,
     capabilityManifestHash: digest,
     diagnostics: z
-      .array(z.object({ code: z.string(), subsystem: z.string(), message: z.string() }).strict())
+      .array(
+        z
+          .object({
+            code: z.string(),
+            subsystem: z.string(),
+            message: z.string(),
+          })
+          .strict(),
+      )
       .default([]),
   })
   .strict();
@@ -171,12 +207,13 @@ export const authenticatedStateContractSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.minimumRequiredSignals > value.requiredSignals.length)
+    if (value.minimumRequiredSignals > value.requiredSignals.length) {
       context.addIssue({
         code: "custom",
         path: ["minimumRequiredSignals"],
         message: "Required signal count exceeds configured required signals.",
       });
+    }
   });
 
 export const createAuthenticationContractSchema = objectiveContextSchema
@@ -212,4 +249,10 @@ export type UpdateFlowDraftInput = z.infer<typeof updateFlowDraftSchema>;
 export type StartProbeSessionInput = z.infer<typeof startProbeSessionSchema>;
 export type CompileFlowDraftInput = z.infer<typeof compileFlowDraftSchema>;
 export type PublishFlowDraftInput = z.infer<typeof publishFlowDraftSchema>;
-export type CreateAuthenticationContractInput = z.infer<typeof createAuthenticationContractSchema>;
+export type CreateAuthenticationContractInput = z.infer<
+  typeof createAuthenticationContractSchema
+>;
+export type ProbeAuthoringStatus = z.infer<typeof probeAuthoringStatusSchema>;
+export type AuthoringBrowserLeaseState = z.infer<
+  typeof authoringBrowserLeaseStateSchema
+>;
