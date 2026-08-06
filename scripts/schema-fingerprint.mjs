@@ -38,6 +38,11 @@ const interactiveRuntimeCommands = await readFile(
   "utf8",
 );
 
+const interactiveRuntimeLifecycle = await readFile(
+  new URL("interactive-runtime-lifecycle.sql", root),
+  "utf8",
+);
+
 const baseline = (await readFile(new URL("baseline.sql", root), "utf8"))
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule)
@@ -51,6 +56,10 @@ const baseline = (await readFile(new URL("baseline.sql", root), "utf8"))
   .replace(
     "\\ir interactive-runtime-commands.sql",
     () => interactiveRuntimeCommands,
+  )
+  .replace(
+    "\\ir interactive-runtime-lifecycle.sql",
+    () => interactiveRuntimeLifecycle,
   );
 
 process.stdout.write(`${createHash("sha256").update(baseline).digest("hex")}\n`);

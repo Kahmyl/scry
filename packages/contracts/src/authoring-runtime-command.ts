@@ -1,9 +1,15 @@
 import { z } from "zod";
 
+import { currentActionSchema } from "./current.js";
+
 const uuid = z.string().uuid();
 
 export const authoringRuntimeCommandTypeSchema = z.enum([
   "observe_document",
+  "interact",
+  "suspend",
+  "resume",
+  "cancel",
 ]);
 
 export const authoringRuntimeCommandStateSchema = z.enum([
@@ -20,15 +26,64 @@ export const authoringRuntimeCommandOutcomeSchema = z.enum([
   "cancelled",
 ]);
 
-export const createAuthoringRuntimeCommandSchema = z
+const observePayloadSchema = z.object({}).strict();
+
+const interactPayloadSchema = z
   .object({
-    missionId: uuid,
-    agentSessionId: uuid,
-    type: authoringRuntimeCommandTypeSchema,
-    payload: z.record(z.string(), z.unknown()).default({}),
-    idempotencyKey: z.string().trim().min(8).max(200),
+    action: currentActionSchema,
   })
   .strict();
+
+const lifecyclePayloadSchema = z.object({}).strict();
+
+export const createAuthoringRuntimeCommandSchema = z
+  .discriminatedUnion("type", [
+    z
+      .object({
+        missionId: uuid,
+        agentSessionId: uuid,
+        type: z.literal("observe_document"),
+        payload: observePayloadSchema.default({}),
+        idempotencyKey: z.string().trim().min(8).max(200),
+      })
+      .strict(),
+    z
+      .object({
+        missionId: uuid,
+        agentSessionId: uuid,
+        type: z.literal("interact"),
+        payload: interactPayloadSchema,
+        idempotencyKey: z.string().trim().min(8).max(200),
+      })
+      .strict(),
+    z
+      .object({
+        missionId: uuid,
+        agentSessionId: uuid,
+        type: z.literal("suspend"),
+        payload: lifecyclePayloadSchema.default({}),
+        idempotencyKey: z.string().trim().min(8).max(200),
+      })
+      .strict(),
+    z
+      .object({
+        missionId: uuid,
+        agentSessionId: uuid,
+        type: z.literal("resume"),
+        payload: lifecyclePayloadSchema.default({}),
+        idempotencyKey: z.string().trim().min(8).max(200),
+      })
+      .strict(),
+    z
+      .object({
+        missionId: uuid,
+        agentSessionId: uuid,
+        type: z.literal("cancel"),
+        payload: lifecyclePayloadSchema.default({}),
+        idempotencyKey: z.string().trim().min(8).max(200),
+      })
+      .strict(),
+  ]);
 
 export const claimedAuthoringRuntimeCommandSchema = z
   .object({

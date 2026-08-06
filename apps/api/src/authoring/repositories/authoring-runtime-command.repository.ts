@@ -1,9 +1,10 @@
+import { createHash } from "node:crypto";
+
 import { Inject, Injectable } from "@nestjs/common";
 import type {
   AuthoringRuntimeCommandType,
   ClaimedAuthoringRuntimeCommand,
 } from "@scry/contracts";
-import { createHash } from "node:crypto";
 
 import { Database } from "../../infrastructure/index.js";
 
@@ -58,14 +59,25 @@ export class AuthoringRuntimeCommandRepository {
            AND probe.mission_id=$2
            AND probe.mode='interactive'
            AND probe.cancellation_requested_at IS NULL
-           AND authoring.status='active'
-           AND lease.state='active'
+           AND (
+             (
+               $4 IN ('observe_document','interact','suspend','cancel')
+               AND authoring.status='active'
+               AND lease.state='active'
+             )
+             OR (
+               $4 IN ('resume','cancel')
+               AND authoring.status='suspended'
+               AND lease.state='suspended'
+             )
+           )
            AND lease.expires_at>now()
          FOR UPDATE OF authoring,lease`,
         [
           input.probeSessionId,
           input.missionId,
           input.agentSessionId,
+          input.type,
         ],
       );
 
@@ -139,10 +151,25 @@ export class AuthoringRuntimeCommandRepository {
             AND authoring.browser_lease_id=lease.id
            WHERE command.browser_lease_id=$1
              AND lease.runtime_owner_id=$2
-             AND lease.state='active'
              AND lease.expires_at>now()
-             AND authoring.status='active'
              AND command.state='pending'
+             AND (
+               (
+                 lease.state='active'
+                 AND authoring.status='active'
+                 AND command.type IN (
+                   'observe_document',
+                   'interact',
+                   'suspend',
+                   'cancel'
+                 )
+               )
+               OR (
+                 lease.state='suspended'
+                 AND authoring.status='suspended'
+                 AND command.type IN ('resume','cancel')
+               )
+             )
            ORDER BY command.created_at
            FOR UPDATE OF command SKIP LOCKED
            LIMIT 1
@@ -195,6 +222,40 @@ export class AuthoringRuntimeCommandRepository {
     );
   }
 
+  cancelPending(probeSessionId: string, exceptCommandId?: string) {
+    return this.db
+      .query(
+        `WITH cancelled AS (
+           UPDATE authoring_runtime_commands
+           SET state='cancelled',
+               completed_at=now(),
+               updated_at=now()
+           WHERE probe_session_id=$1
+             AND state='pending'
+             AND ($2::uuid IS NULL OR id<>$2)
+           RETURNING id,probe_session_id
+         )
+         INSERT INTO authoring_runtime_command_results(
+           command_id,
+           probe_session_id,
+           outcome,
+           safe_result,
+           safe_error
+         )
+         SELECT
+           id,
+           probe_session_id,
+           'cancelled',
+           NULL,
+           '{"code":"AUTHORING_RUNTIME_CANCELLED"}'::jsonb
+         FROM cancelled
+         ON CONFLICT (command_id) DO NOTHING
+         RETURNING command_id`,
+        [probeSessionId, exceptCommandId ?? null],
+      )
+      .then((result) => result.rowCount);
+  }
+
   private async settle(
     input: SettleCommandInput,
     outcome: "completed" | "failed",
@@ -217,7 +278,7 @@ export class AuthoringRuntimeCommandRepository {
            AND command.claim_token=$4
            AND command.state='claimed'
            AND lease.runtime_owner_id=$3
-           AND lease.state='active'
+           AND lease.state IN ('active','suspended')
          FOR UPDATE OF command`,
         [
           input.commandId,

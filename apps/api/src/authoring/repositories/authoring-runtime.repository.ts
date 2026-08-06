@@ -103,11 +103,304 @@ export class AuthoringRuntimeRepository {
              updated_at=now()
          WHERE id=$1
            AND runtime_owner_id=$2
-           AND state='active'
+           AND state IN ('active','suspended')
          RETURNING id`,
         [browserLeaseId, workerId],
       )
       .then((result) => Boolean(result.rowCount));
+  }
+
+  async recordObservation(
+    browserLeaseId: string,
+    workerId: string,
+    observation: {
+      documentEpoch: number;
+      url: string;
+    },
+  ) {
+    return this.db.transaction(async (client) => {
+      const owned = await client.query<{
+        probeSessionId: string;
+      }>(
+        `SELECT lease.probe_session_id AS "probeSessionId"
+         FROM authoring_browser_leases lease
+         JOIN probe_authoring_sessions authoring
+           ON authoring.browser_lease_id=lease.id
+          AND authoring.probe_session_id=lease.probe_session_id
+         WHERE lease.id=$1
+           AND lease.runtime_owner_id=$2
+           AND lease.state='active'
+           AND authoring.status='active'
+           AND authoring.deadline_at>now()
+         FOR UPDATE OF lease,authoring`,
+        [browserLeaseId, workerId],
+      );
+
+      const probeSessionId = owned.rows[0]?.probeSessionId;
+
+      if (!probeSessionId) {
+        return false;
+      }
+
+      const event = await client.query<{ id: string }>(
+        `INSERT INTO probe_events(
+           probe_session_id,
+           sequence,
+           type,
+           safe_payload
+         )
+         SELECT
+           $1,
+           COALESCE(max(sequence),0)+1,
+           'authoring_document_observed',
+           $2::jsonb
+         FROM probe_events
+         WHERE probe_session_id=$1
+         RETURNING id`,
+        [
+          probeSessionId,
+          JSON.stringify({
+            documentEpoch: observation.documentEpoch,
+            url: observation.url,
+          }),
+        ],
+      );
+
+      await client.query(
+        `UPDATE probe_authoring_sessions
+         SET current_url=$2,
+             document_epoch=GREATEST(document_epoch,$3),
+             last_observation_id=$4,
+             updated_at=now()
+         WHERE probe_session_id=$1
+           AND browser_lease_id=$5
+           AND status='active'`,
+        [
+          probeSessionId,
+          observation.url,
+          observation.documentEpoch,
+          event.rows[0]?.id ?? null,
+          browserLeaseId,
+        ],
+      );
+
+      return true;
+    });
+  }
+
+  async suspend(browserLeaseId: string, workerId: string) {
+    return this.db.transaction(async (client) => {
+      const owned = await client.query<{
+        probeSessionId: string;
+      }>(
+        `SELECT lease.probe_session_id AS "probeSessionId"
+         FROM authoring_browser_leases lease
+         JOIN probe_authoring_sessions authoring
+           ON authoring.browser_lease_id=lease.id
+          AND authoring.probe_session_id=lease.probe_session_id
+         WHERE lease.id=$1
+           AND lease.runtime_owner_id=$2
+           AND lease.state='active'
+           AND authoring.status='active'
+         FOR UPDATE OF lease,authoring`,
+        [browserLeaseId, workerId],
+      );
+
+      const probeSessionId = owned.rows[0]?.probeSessionId;
+
+      if (!probeSessionId) {
+        return false;
+      }
+
+      await client.query(
+        `UPDATE authoring_browser_leases
+         SET state='suspended',
+             heartbeat_at=now(),
+             updated_at=now()
+         WHERE id=$1
+           AND runtime_owner_id=$2
+           AND state='active'`,
+        [browserLeaseId, workerId],
+      );
+
+      await client.query(
+        `UPDATE probe_authoring_sessions
+         SET status='suspended',
+             resume_pointer=jsonb_build_object(
+               'currentUrl',
+               current_url,
+               'documentEpoch',
+               document_epoch
+             ),
+             updated_at=now()
+         WHERE probe_session_id=$1
+           AND browser_lease_id=$2
+           AND status='active'`,
+        [probeSessionId, browserLeaseId],
+      );
+
+      await client.query(
+        `INSERT INTO probe_events(
+           probe_session_id,
+           sequence,
+           type,
+           safe_payload
+         )
+         SELECT
+           $1,
+           COALESCE(max(sequence),0)+1,
+           'authoring_runtime_suspended',
+           '{}'::jsonb
+         FROM probe_events
+         WHERE probe_session_id=$1`,
+        [probeSessionId],
+      );
+
+      return true;
+    });
+  }
+
+  async resume(browserLeaseId: string, workerId: string) {
+    return this.db.transaction(async (client) => {
+      const owned = await client.query<{
+        probeSessionId: string;
+      }>(
+        `SELECT lease.probe_session_id AS "probeSessionId"
+         FROM authoring_browser_leases lease
+         JOIN probe_authoring_sessions authoring
+           ON authoring.browser_lease_id=lease.id
+          AND authoring.probe_session_id=lease.probe_session_id
+         WHERE lease.id=$1
+           AND lease.runtime_owner_id=$2
+           AND lease.state='suspended'
+           AND authoring.status='suspended'
+           AND authoring.deadline_at>now()
+         FOR UPDATE OF lease,authoring`,
+        [browserLeaseId, workerId],
+      );
+
+      const probeSessionId = owned.rows[0]?.probeSessionId;
+
+      if (!probeSessionId) {
+        return false;
+      }
+
+      await client.query(
+        `UPDATE authoring_browser_leases
+         SET state='active',
+             heartbeat_at=now(),
+             updated_at=now()
+         WHERE id=$1
+           AND runtime_owner_id=$2
+           AND state='suspended'`,
+        [browserLeaseId, workerId],
+      );
+
+      await client.query(
+        `UPDATE probe_authoring_sessions
+         SET status='active',
+             resume_pointer=NULL,
+             updated_at=now()
+         WHERE probe_session_id=$1
+           AND browser_lease_id=$2
+           AND status='suspended'`,
+        [probeSessionId, browserLeaseId],
+      );
+
+      await client.query(
+        `INSERT INTO probe_events(
+           probe_session_id,
+           sequence,
+           type,
+           safe_payload
+         )
+         SELECT
+           $1,
+           COALESCE(max(sequence),0)+1,
+           'authoring_runtime_resumed',
+           '{}'::jsonb
+         FROM probe_events
+         WHERE probe_session_id=$1`,
+        [probeSessionId],
+      );
+
+      return true;
+    });
+  }
+
+  async crash(
+    browserLeaseId: string,
+    workerId: string,
+    code: string,
+  ) {
+    return this.db.transaction(async (client) => {
+      const owned = await client.query<{
+        probeSessionId: string;
+      }>(
+        `SELECT probe_session_id AS "probeSessionId"
+         FROM authoring_browser_leases
+         WHERE id=$1
+           AND runtime_owner_id=$2
+           AND state IN (
+             'provisioning',
+             'active',
+             'suspended',
+             'releasing'
+           )
+         FOR UPDATE`,
+        [browserLeaseId, workerId],
+      );
+
+      const probeSessionId = owned.rows[0]?.probeSessionId;
+
+      if (!probeSessionId) {
+        return false;
+      }
+
+      await client.query(
+        `UPDATE authoring_browser_leases
+         SET state='crashed',
+             updated_at=now()
+         WHERE id=$1
+           AND runtime_owner_id=$2`,
+        [browserLeaseId, workerId],
+      );
+
+      await client.query(
+        `UPDATE probe_authoring_sessions
+         SET status='crashed',
+             completed_at=COALESCE(completed_at,now()),
+             updated_at=now(),
+             pending_interaction=NULL
+         WHERE probe_session_id=$1
+           AND status NOT IN ('completed','cancelled','crashed')`,
+        [probeSessionId],
+      );
+
+      await client.query(
+        `INSERT INTO probe_events(
+           probe_session_id,
+           sequence,
+           type,
+           safe_payload
+         )
+         SELECT
+           $1,
+           COALESCE(max(sequence),0)+1,
+           'authoring_runtime_crashed',
+           $2::jsonb
+         FROM probe_events
+         WHERE probe_session_id=$1`,
+        [
+          probeSessionId,
+          JSON.stringify({
+            code,
+          }),
+        ],
+      );
+
+      return true;
+    });
   }
 
   async release(

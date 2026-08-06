@@ -15,12 +15,16 @@ describe("schema migration manifest", () => {
     const interactiveCommands = baseline.indexOf(
       "\\ir interactive-runtime-commands.sql",
     );
+    const interactiveLifecycle = baseline.indexOf(
+      "\\ir interactive-runtime-lifecycle.sql",
+    );
 
     expect(preferences).toBeGreaterThan(-1);
     expect(retention).toBeGreaterThan(preferences);
     expect(compiledPlan).toBeGreaterThan(retention);
     expect(statefulProbe).toBeGreaterThan(compiledPlan);
     expect(interactiveCommands).toBeGreaterThan(statefulProbe);
+    expect(interactiveLifecycle).toBeGreaterThan(interactiveCommands);
   });
 
   it("recognizes the compiled-plan schema and applies the guarded interactive command cutover", async () => {
@@ -30,7 +34,9 @@ describe("schema migration manifest", () => {
     expect(migrate).toContain("statefulProbeAuthoringFingerprint");
     expect(migrate).toContain("supportedPreviousFingerprints");
     expect(migrate).toContain("await client.query(interactiveRuntimeCommands)");
-    expect(migrate).toContain("scry-interactive-runtime-commands-cutover");
+    expect(migrate).toContain("await client.query(interactiveRuntimeLifecycle)");
+    expect(migrate).toContain("interactiveRuntimeCommandsFingerprint");
+    expect(migrate).toContain("scry-interactive-runtime-lifecycle-cutover");
   });
 
   it("includes every schema migration in both fingerprint commands", async () => {
@@ -45,6 +51,7 @@ describe("schema migration manifest", () => {
       expect(source).toContain("compiled-plan-cutover.sql");
       expect(source).toContain("stateful-probe-authoring.sql");
       expect(source).toContain("interactive-runtime-commands.sql");
+      expect(source).toContain("interactive-runtime-lifecycle.sql");
     }
   });
 
@@ -123,4 +130,19 @@ describe("schema migration manifest", () => {
       "CHECK (outcome IN ('completed', 'failed', 'cancelled'))",
     );
   });
+  it("expands interactive command types through a forward-only migration", async () => {
+    const cutover = await readFile(
+      new URL("migrations/interactive-runtime-lifecycle.sql", root),
+      "utf8",
+    );
+
+    expect(cutover).toContain(
+      "DROP CONSTRAINT authoring_runtime_commands_type_check",
+    );
+    expect(cutover).toContain("'interact'");
+    expect(cutover).toContain("'suspend'");
+    expect(cutover).toContain("'resume'");
+    expect(cutover).toContain("'cancel'");
+  });
+
 });

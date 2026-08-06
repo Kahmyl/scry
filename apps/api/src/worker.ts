@@ -15,7 +15,10 @@ import { createArtifactStoreFromEnv } from "@scry/artifact";
 
 import { AppModule } from "./app.module.js";
 import { ArtifactRetentionService } from "./artifacts/index.js";
-import { AuthoringRuntimeRepository } from "./authoring/index.js";
+import {
+  AuthoringRuntimeCommandRepository,
+  AuthoringRuntimeRepository,
+} from "./authoring/index.js";
 import { CalibrationRuntimeRepository } from "./calibration/index.js";
 import { Database } from "./infrastructure/database.js";
 import { ExecutionRepository } from "./runtime/index.js";
@@ -43,6 +46,9 @@ const runQueue = app.get(RunQueueService);
 const calibrations = app.get(CalibrationRuntimeRepository);
 const probes = app.get(ProbeRuntimeRepository);
 const authoringRuntimes = app.get(AuthoringRuntimeRepository);
+const authoringRuntimeCommands = app.get(
+  AuthoringRuntimeCommandRepository,
+);
 const database = app.get(Database);
 const workerId = `${os.hostname()}:${process.pid}:${randomUUID()}`;
 const artifactRoot = path.resolve(process.env.ARTIFACT_ROOT ?? "artifacts/runs");
@@ -123,6 +129,7 @@ const staleRecovery = setInterval(
 
 const authoringRuntimeOwner = createAuthoringRuntimeOwner({
   repository: authoringRuntimes,
+  commands: authoringRuntimeCommands,
   workerId,
   browserChannel,
   veilAdmissionKey,

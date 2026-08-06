@@ -1,6 +1,9 @@
 import { createServer, type Server } from "node:http";
 
-import { executionPolicySchema } from "@scry/contracts";
+import {
+  executionPolicySchema,
+  type InteractionTargetIntent,
+} from "@scry/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createAuthoringBrowserSession } from "../src/authoring-browser-session.js";
@@ -15,6 +18,10 @@ beforeAll(async () => {
       <main>
         <h1>${request.url === "/second" ? "Second page" : "First page"}</h1>
         <a href="/second">Continue</a>
+        <label>
+          Name
+          <input aria-label="Name" />
+        </label>
       </main>
     `);
   });
@@ -37,7 +44,7 @@ afterAll(async () => {
 });
 
 describe("persistent authoring browser session", () => {
-  it("keeps one Veil-authorized page alive across multiple authoring observations", async () => {
+  it("keeps one Veil-authorized page alive across observations and interactions", async () => {
     const session = await createAuthoringBrowserSession({
       sessionId: "11111111-1111-4111-8111-111111111111",
       environmentId: "authoring-test-environment",
@@ -57,22 +64,108 @@ describe("persistent authoring browser session", () => {
       await session.observeDocument();
 
       expect(session.documentEpoch()).toBe(1);
-      expect(await session.page.getByRole("heading").textContent()).toBe("First page");
+      expect(await session.page.getByRole("heading").textContent()).toBe(
+        "First page",
+      );
 
-      await session.observeDocument();
+      await session.interact({
+        type: "fill",
+        target: target("name", "textbox", "Name"),
+        value: "Habib",
+      });
+
+      expect(
+        await session.page.getByRole("textbox", { name: "Name" }).inputValue(),
+      ).toBe("Habib");
       expect(session.documentEpoch()).toBe(1);
 
-      await session.page.getByRole("link", { name: "Continue" }).click();
-      await session.page.waitForLoadState("domcontentloaded");
-      await session.observeDocument();
+      await session.interact({
+        type: "click",
+        target: target("continue", "link", "Continue"),
+        expectedEffect: {
+          type: "navigation",
+          url: "/second",
+          match: "path",
+        },
+      });
 
       expect(session.documentEpoch()).toBe(2);
-      expect(await session.page.getByRole("heading").textContent()).toBe("Second page");
+      expect(await session.page.getByRole("heading").textContent()).toBe(
+        "Second page",
+      );
       expect(session.page.url()).toBe(`${origin}/second`);
+
+      session.suspend();
+      expect(session.state()).toBe("suspended");
+
+      await expect(session.observeDocument()).rejects.toThrow(
+        "AUTHORING_BROWSER_SESSION_NOT_ACTIVE",
+      );
+
+      session.resume();
+      expect(session.state()).toBe("active");
     } finally {
       await session.close();
     }
 
     expect(session.state()).toBe("released");
   }, 20_000);
+
+  it("rejects protected or indirect-value authoring interactions", async () => {
+    const session = await createAuthoringBrowserSession({
+      sessionId: "22222222-2222-4222-8222-222222222222",
+      environmentId: "authoring-test-environment",
+      veilAdmissionKey: "authoring-test-only-veil-admission-key-32-bytes",
+      browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+      policy: executionPolicySchema.parse({
+        allowedOrigins: [origin],
+        allowPrivateNetwork: true,
+      }),
+    });
+
+    try {
+      await session.page.goto(origin, { waitUntil: "domcontentloaded" });
+
+      await expect(
+        session.interact({
+          type: "fill",
+          target: target("name", "textbox", "Name"),
+          secretRef: "33333333-3333-4333-8333-333333333333",
+        }),
+      ).rejects.toThrow("AUTHORING_INTERACTION_NOT_ALLOWED");
+    } finally {
+      await session.close();
+    }
+  }, 20_000);
 });
+
+function target(
+  concept: string,
+  role: InteractionTargetIntent["preferredEvidence"]["roles"][number],
+  name: string,
+): InteractionTargetIntent {
+  return {
+    concept,
+    requiredCapabilities: ["pointer_activatable"],
+    preferredEvidence: {
+      roles: [role],
+      names: [name],
+      labels: [name],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+    },
+    scope: {
+      kind: "page",
+    },
+    relations: [],
+    prohibited: ["hidden", "disabled"],
+    risk: "read_only",
+    confidence: {
+      requiredFamilies: [],
+      minimum: 0.35,
+      minimumMargin: 0,
+      minimumFamilyCount: 1,
+    },
+  };
+}

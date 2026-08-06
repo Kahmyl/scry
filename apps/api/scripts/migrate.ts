@@ -54,6 +54,10 @@ const interactiveRuntimeCommandsPath = fileURLToPath(
   new URL("../migrations/interactive-runtime-commands.sql", import.meta.url),
 );
 
+const interactiveRuntimeLifecyclePath = fileURLToPath(
+  new URL("../migrations/interactive-runtime-lifecycle.sql", import.meta.url),
+);
+
 const calibrationFoundation = await readFile(
   calibrationFoundationPath,
   "utf8",
@@ -94,6 +98,11 @@ const interactiveRuntimeCommands = await readFile(
   "utf8",
 );
 
+const interactiveRuntimeLifecycle = await readFile(
+  interactiveRuntimeLifecyclePath,
+  "utf8",
+);
+
 const expandFoundation = (source: string) =>
   source
     .replace("\\ir calibration-foundation.sql", () => calibrationFoundation)
@@ -108,7 +117,8 @@ const base = expandFoundation(
     .replace("\\ir veil-artifact-retention.sql\n", "")
     .replace("\\ir compiled-plan-cutover.sql\n", "")
     .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", ""),
+    .replace("\\ir interactive-runtime-commands.sql\n", "")
+    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
 );
 
 const authoringBaseline = expandFoundation(
@@ -119,7 +129,8 @@ const authoringBaseline = expandFoundation(
     .replace("\\ir veil-artifact-retention.sql\n", "")
     .replace("\\ir compiled-plan-cutover.sql\n", "")
     .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", ""),
+    .replace("\\ir interactive-runtime-commands.sql\n", "")
+    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
 ).replace("\\ir authoring-execution-cutover.sql", () => authoringCutover);
 
 const reportingBaseline = expandFoundation(
@@ -129,7 +140,8 @@ const reportingBaseline = expandFoundation(
     .replace("\\ir veil-artifact-retention.sql\n", "")
     .replace("\\ir compiled-plan-cutover.sql\n", "")
     .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", ""),
+    .replace("\\ir interactive-runtime-commands.sql\n", "")
+    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
 )
   .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
   .replace("\\ir praxis-reporting.sql", () => praxisReporting);
@@ -140,7 +152,8 @@ const praxisBaseline = expandFoundation(
     .replace("\\ir veil-artifact-retention.sql\n", "")
     .replace("\\ir compiled-plan-cutover.sql\n", "")
     .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", ""),
+    .replace("\\ir interactive-runtime-commands.sql\n", "")
+    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
 )
   .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
   .replace("\\ir praxis-reporting.sql", () => praxisReporting)
@@ -151,7 +164,8 @@ const preferencesBaseline = expandFoundation(
     .replace("\\ir veil-artifact-retention.sql\n", "")
     .replace("\\ir compiled-plan-cutover.sql\n", "")
     .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", ""),
+    .replace("\\ir interactive-runtime-commands.sql\n", "")
+    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
 )
   .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
   .replace("\\ir praxis-reporting.sql", () => praxisReporting)
@@ -165,7 +179,8 @@ const veilFullBaseline = expandFoundation(
   baselineSource
     .replace("\\ir compiled-plan-cutover.sql\n", "")
     .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", ""),
+    .replace("\\ir interactive-runtime-commands.sql\n", "")
+    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
 )
   .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
   .replace("\\ir praxis-reporting.sql", () => praxisReporting)
@@ -182,7 +197,8 @@ const veilFullBaseline = expandFoundation(
 const compiledPlanBaseline = expandFoundation(
   baselineSource
     .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", ""),
+    .replace("\\ir interactive-runtime-commands.sql\n", "")
+    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
 )
   .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
   .replace("\\ir praxis-reporting.sql", () => praxisReporting)
@@ -198,7 +214,9 @@ const compiledPlanBaseline = expandFoundation(
   .replace("\\ir compiled-plan-cutover.sql", () => compiledPlanCutover);
 
 const statefulProbeAuthoringBaseline = expandFoundation(
-  baselineSource.replace("\\ir interactive-runtime-commands.sql\n", ""),
+  baselineSource
+    .replace("\\ir interactive-runtime-commands.sql\n", "")
+    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
 )
   .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
   .replace("\\ir praxis-reporting.sql", () => praxisReporting)
@@ -215,6 +233,30 @@ const statefulProbeAuthoringBaseline = expandFoundation(
   .replace(
     "\\ir stateful-probe-authoring.sql",
     () => statefulProbeAuthoring,
+  );
+
+const interactiveRuntimeCommandsBaseline = expandFoundation(
+  baselineSource.replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
+)
+  .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
+  .replace("\\ir praxis-reporting.sql", () => praxisReporting)
+  .replace("\\ir praxis-cutoff.sql", () => praxisCutoff)
+  .replace(
+    "\\ir veil-observation-preferences.sql",
+    () => veilObservationPreferences,
+  )
+  .replace(
+    "\\ir veil-artifact-retention.sql",
+    () => veilArtifactRetention,
+  )
+  .replace("\\ir compiled-plan-cutover.sql", () => compiledPlanCutover)
+  .replace(
+    "\\ir stateful-probe-authoring.sql",
+    () => statefulProbeAuthoring,
+  )
+  .replace(
+    "\\ir interactive-runtime-commands.sql",
+    () => interactiveRuntimeCommands,
   );
 
 const baseline = expandFoundation(baselineSource)
@@ -237,6 +279,10 @@ const baseline = expandFoundation(baselineSource)
   .replace(
     "\\ir interactive-runtime-commands.sql",
     () => interactiveRuntimeCommands,
+  )
+  .replace(
+    "\\ir interactive-runtime-lifecycle.sql",
+    () => interactiveRuntimeLifecycle,
   );
 
 const fingerprint = digest(baseline);
@@ -249,6 +295,9 @@ const veilFullFingerprint = digest(veilFullBaseline);
 const compiledPlanFingerprint = digest(compiledPlanBaseline);
 const statefulProbeAuthoringFingerprint = digest(
   statefulProbeAuthoringBaseline,
+);
+const interactiveRuntimeCommandsFingerprint = digest(
+  interactiveRuntimeCommandsBaseline,
 );
 
 const previousVeilFullFingerprint =
@@ -311,6 +360,7 @@ try {
       previousVeilFullFingerprint,
       compiledPlanFingerprint,
       statefulProbeAuthoringFingerprint,
+      interactiveRuntimeCommandsFingerprint,
     ];
 
     if (supportedPreviousFingerprints.includes(installedFingerprint)) {
@@ -320,7 +370,7 @@ try {
         await client.query("BEGIN");
 
         await client.query(
-          "SELECT pg_advisory_xact_lock(hashtext('scry-interactive-runtime-commands-cutover'))",
+          "SELECT pg_advisory_xact_lock(hashtext('scry-interactive-runtime-lifecycle-cutover'))",
         );
 
         if (installedFingerprint === previousFingerprint) {
@@ -363,18 +413,26 @@ try {
 
         if (
           installedFingerprint !== compiledPlanFingerprint &&
-          installedFingerprint !== statefulProbeAuthoringFingerprint
+          installedFingerprint !== statefulProbeAuthoringFingerprint &&
+          installedFingerprint !== interactiveRuntimeCommandsFingerprint
         ) {
           await client.query(compiledPlanCutover);
         }
 
         if (
-          installedFingerprint !== statefulProbeAuthoringFingerprint
+          installedFingerprint !== statefulProbeAuthoringFingerprint &&
+          installedFingerprint !== interactiveRuntimeCommandsFingerprint
         ) {
           await client.query(statefulProbeAuthoring);
         }
 
-        await client.query(interactiveRuntimeCommands);
+        if (
+          installedFingerprint !== interactiveRuntimeCommandsFingerprint
+        ) {
+          await client.query(interactiveRuntimeCommands);
+        }
+
+        await client.query(interactiveRuntimeLifecycle);
 
         await client.query(
           `UPDATE schema_baseline
@@ -387,7 +445,7 @@ try {
         await client.query("COMMIT");
 
         process.stdout.write(
-          `Applied guarded interactive runtime command schema lifecycle ${fingerprint}\n`,
+          `Applied guarded interactive runtime lifecycle ${fingerprint}\n`,
         );
       } catch (error) {
         await client.query("ROLLBACK");
@@ -397,7 +455,7 @@ try {
       }
     } else if (installedFingerprint !== fingerprint) {
       throw new Error(
-        `Schema fingerprint mismatch: installed=${installedFingerprint ?? "missing"} required=${fingerprint}. Stop all writers and run the guarded interactive-runtime-command pre-production cutover; compatibility migration is intentionally unsupported.`,
+        `Schema fingerprint mismatch: installed=${installedFingerprint ?? "missing"} required=${fingerprint}. Stop all writers and run the guarded interactive-runtime lifecycle pre-production cutover; compatibility migration is intentionally unsupported.`,
       );
     } else {
       process.stdout.write(
