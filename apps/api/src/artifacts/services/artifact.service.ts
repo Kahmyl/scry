@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Inject,
   Injectable,
   NotFoundException,
@@ -133,10 +134,10 @@ export class ArtifactService {
   }
 
   async extractHtml(principal: Principal, artifactId: string, selector: string) {
+    const normalized = validateSimpleSelector(selector);
     const artifact = await this.metadata(principal, artifactId);
     if (!artifact.contentType.includes("html"))
       throw new UnsupportedMediaTypeException("Artifact is not HTML");
-    const normalized = validateSimpleSelector(selector);
     const html = new TextDecoder().decode(
       await this.store.get(artifact.storageKey, artifact.admission),
     );
@@ -168,7 +169,10 @@ function parseRange(value: string | undefined, size: number) {
 function validateSimpleSelector(selector: string) {
   const value = selector.trim();
   if (!/^(?:[a-zA-Z][\w-]*|#[\w-]+|\.[\w-]+|\[data-testid=["'][^"']{1,200}["']\])$/.test(value)) {
-    throw new Error('Selector must be a tag, #id, .class, or [data-testid="value"]');
+    throw new BadRequestException({
+      code: "ARTIFACT_SELECTOR_UNSUPPORTED",
+      message: 'Selector must be a tag, #id, .class, or [data-testid="value"]',
+    });
   }
   return value;
 }

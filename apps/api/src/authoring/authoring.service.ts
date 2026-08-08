@@ -140,6 +140,7 @@ export class AuthoringService {
     return this.db.transaction(async (client) => {
       const q = bind(client);
       const d = await this.requireDraft(q, principal, draftId, true);
+      this.requireDraftContext(d, input);
 
       await this.requireContext(
         q,
@@ -323,6 +324,7 @@ export class AuthoringService {
     return this.db.transaction(async (client) => {
       const q = bind(client);
       const d = await this.requireDraft(q, principal, draftId, true);
+      this.requireDraftContext(d, input);
 
       await this.requireContext(
         q,
@@ -474,6 +476,7 @@ export class AuthoringService {
     return this.db.transaction(async (client) => {
       const q = bind(client);
       const d = await this.requireDraft(q, principal, draftId, true);
+      this.requireDraftContext(d, input);
 
       await this.requireContext(
         q,
@@ -935,6 +938,7 @@ export class AuthoringService {
     return this.db.transaction(async (client) => {
       const q = bind(client);
       const d = await this.requireDraft(q, principal, draftId, true);
+      this.requireDraftContext(d, input);
 
       await this.requireContext(
         q,
@@ -1203,6 +1207,7 @@ export class AuthoringService {
         blockers,
         warnings,
         qualityFindings,
+        contractVersion: transcript.contractVersion,
         compiledContractDigest: digest,
       };
     });
@@ -1215,6 +1220,7 @@ export class AuthoringService {
     return this.db.transaction(async (client) => {
       const q = bind(client);
       const d = await this.requireDraft(q, principal, draftId, true);
+      this.requireDraftContext(d, input);
 
       await this.requireContext(
         q,
@@ -1298,7 +1304,7 @@ export class AuthoringService {
         }
       }
 
-      if (compilation.contractVersion === "v2-learned-interactions" && compilation.flowRevisionId) {
+      if (compilation.flowRevisionId) {
         const candidate = await q<{ flowId: string; revision: number }>(
           `SELECT fr.flow_id AS "flowId",fr.revision
            FROM flow_revisions fr
@@ -1379,6 +1385,7 @@ export class AuthoringService {
           revisionId: compilation.flowRevisionId,
           revision,
           compilationId: compilation.id,
+          compiledContractId: compilation.id,
         };
       }
 
@@ -1561,6 +1568,7 @@ export class AuthoringService {
         revisionId,
         revision,
         compilationId: input.compilationId,
+        compiledContractId: input.compilationId,
       };
     });
   }
@@ -1584,6 +1592,7 @@ export class AuthoringService {
     const certification = await this.db.transaction(async (client) => {
       const q = bind(client);
       const d = await this.requireDraft(q, principal, draftId, true);
+      this.requireDraftContext(d, input);
       await this.requireContext(
         q,
         principal,
@@ -1635,8 +1644,8 @@ export class AuthoringService {
          FOR UPDATE`,
         [compilation.id, draftId],
       );
-      if (!contract.rowCount || contract.rows[0]!.contractVersion !== "v2-learned-interactions") {
-        throw new ConflictException({ code: "LEARNED_COMPILATION_REQUIRED" });
+      if (!contract.rowCount) {
+        throw new ConflictException({ code: "EXECUTION_READY_COMPILATION_REQUIRED" });
       }
 
       const environment = await q<{
@@ -1790,6 +1799,7 @@ export class AuthoringService {
     });
 
     return {
+      compiledContractId: compilation.id,
       compilation,
       certification,
     };
@@ -1976,6 +1986,22 @@ export class AuthoringService {
   private requireWrite(principal: Principal) {
     if (principal.kind === "user" && principal.role === "viewer") {
       throw new ForbiddenException("Write access required");
+    }
+  }
+
+  private requireDraftContext(
+    draft: { missionId: string; objectiveId: string; environmentId: string },
+    input: { missionId: string; objectiveId: string; environmentId?: string },
+  ) {
+    if (
+      draft.missionId !== input.missionId ||
+      draft.objectiveId !== input.objectiveId ||
+      (input.environmentId !== undefined && draft.environmentId !== input.environmentId)
+    ) {
+      throw new ConflictException({
+        code: "AUTHORING_DRAFT_CONTEXT_MISMATCH",
+        safeActions: ["use_draft_objective_context", "create_objective_scoped_draft"],
+      });
     }
   }
 

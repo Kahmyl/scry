@@ -16,6 +16,8 @@ import { registerPublishFlowDraftTool } from "./publish-flow-draft.tool.js";
 import { registerListAuthenticationContractsTool } from "./list-authentication-contracts.tool.js";
 import { registerListAuthenticatedSessionLeasesTool } from "./list-authenticated-session-leases.tool.js";
 import { registerRevokeAuthenticatedSessionLeaseTool } from "./revoke-authenticated-session-lease.tool.js";
+import { registerBindCredentialFillStepTool } from "./bind-credential-fill-step.tool.js";
+import { registerBindProtectedTransactionStepTool } from "./bind-protected-transaction-step.tool.js";
 
 export function registerAuthoringTools(server: McpServer, client: ScryApiClient) {
   registerValidateTestPlanTool(server, client);
@@ -33,4 +35,6 @@ export function registerAuthoringTools(server: McpServer, client: ScryApiClient)
   registerListAuthenticationContractsTool(server, client);
   registerListAuthenticatedSessionLeasesTool(server, client);
   registerRevokeAuthenticatedSessionLeaseTool(server, client);
+  registerBindCredentialFillStepTool(server, client);
+  registerBindProtectedTransactionStepTool(server, client);
 }

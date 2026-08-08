@@ -17,10 +17,7 @@ import {
   playwrightBrowserChannel,
   visualRedactionInitScript,
 } from "./browser-runtime-artifacts.js";
-import {
-  PraxisDocumentEpoch,
-  PraxisGroundingPolicyV1,
-} from "./observation.js";
+import { PraxisDocumentEpoch, PraxisGroundingPolicyV1 } from "./observation.js";
 import { collectPraxisEvidence } from "./evidence.js";
 import { escalationLevel } from "./latency.js";
 import { interactionRiskPolicy } from "./risk-policy.js";
@@ -791,6 +788,10 @@ function observeControlInPage(element: Element, relations: SemanticRelation[]): 
   ).trim();
   const style = getComputedStyle(html);
   const rect = html.getBoundingClientRect();
+  const renderedText = (html.innerText || element.textContent || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
   const visible =
     style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
   const disabled = "disabled" in input && Boolean(input.disabled);
@@ -936,10 +937,17 @@ function observeControlInPage(element: Element, relations: SemanticRelation[]): 
       element.getAttribute("title") ??
       ""
     ).trim(),
-    text: (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 500),
+    text: renderedText,
     placeholder,
     inputType: tag === "input" ? input.type : "",
-    context: (element.parentElement?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 500),
+    context: (
+      (element.parentElement as HTMLElement | null)?.innerText ??
+      element.parentElement?.textContent ??
+      ""
+    )
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 500),
     destination: tag === "a" ? (element.getAttribute("href") ?? "") : "",
     path,
     bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
@@ -1062,9 +1070,7 @@ export async function resolveTargetCandidates(
   intent: InteractionTargetIntent,
   boundary: { allowedOrigins?: readonly string[] } = {},
 ): Promise<import("@scry/contracts").PraxisCandidateResponse> {
-  const intentDigest = createHash("sha256")
-    .update(stableJson(intent))
-    .digest("hex");
+  const intentDigest = createHash("sha256").update(stableJson(intent)).digest("hex");
 
   const riskPolicy = interactionRiskPolicy(intent);
   const candidatePolicy = {
@@ -1111,10 +1117,7 @@ export async function resolveTargetCandidates(
 
     const epoch = await PraxisDocumentEpoch.current(page);
 
-    if (
-      error.code === "TARGET_AMBIGUOUS" ||
-      error.code === "INSUFFICIENT_EVIDENCE"
-    ) {
+    if (error.code === "TARGET_AMBIGUOUS" || error.code === "INSUFFICIENT_EVIDENCE") {
       const riskPolicy = interactionRiskPolicy(intent);
 
       const resolution =
@@ -1173,7 +1176,6 @@ export async function resolveTargetCandidates(
   }
 }
 
-
 export async function validateCandidateResumeToken(
   page: Page,
   token: import("@scry/contracts").PraxisResumeToken,
@@ -1204,8 +1206,6 @@ export async function validateCandidateResumeToken(
     );
   }
 }
-
-
 
 export async function validateCandidateResume(
   page: Page,

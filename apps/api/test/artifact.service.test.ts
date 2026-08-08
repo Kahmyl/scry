@@ -156,4 +156,24 @@ describe("ArtifactService", () => {
     ]);
     expect(extraction.matches[0]?.html).not.toContain("after");
   });
+
+  it("returns a typed client error for unsupported selectors", async () => {
+    const repository = { getArtifact: vi.fn() };
+    const service = new ArtifactService(repository as never, {} as never);
+
+    await expect(
+      service.extractHtml(
+        { kind: "service", subject: "scry-service" },
+        "33333333-3333-4333-8333-333333333333",
+        "header button",
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        code: "ARTIFACT_SELECTOR_UNSUPPORTED",
+        message: 'Selector must be a tag, #id, .class, or [data-testid="value"]',
+      },
+      status: 400,
+    });
+    expect(repository.getArtifact).not.toHaveBeenCalled();
+  });
 });

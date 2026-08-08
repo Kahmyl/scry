@@ -5,50 +5,26 @@ const migrations = new URL("../apps/api/migrations/", import.meta.url);
 
 const compose = await readFile(new URL("../docker-compose.yml", import.meta.url), "utf8");
 
-const calibration = await readFile(
-  new URL("calibration-foundation.sql", migrations),
-  "utf8",
-);
+const calibration = await readFile(new URL("calibration-foundation.sql", migrations), "utf8");
 
-const capsule = await readFile(
-  new URL("protected-capsule.sql", migrations),
-  "utf8",
-);
+const capsule = await readFile(new URL("protected-capsule.sql", migrations), "utf8");
 
-const authoring = await readFile(
-  new URL("authoring-execution-cutover.sql", migrations),
-  "utf8",
-);
+const authoring = await readFile(new URL("authoring-execution-cutover.sql", migrations), "utf8");
 
-const reporting = await readFile(
-  new URL("praxis-reporting.sql", migrations),
-  "utf8",
-);
+const reporting = await readFile(new URL("praxis-reporting.sql", migrations), "utf8");
 
-const cutoff = await readFile(
-  new URL("praxis-cutoff.sql", migrations),
-  "utf8",
-);
+const cutoff = await readFile(new URL("praxis-cutoff.sql", migrations), "utf8");
 
 const praxisCandidateInspection = await readFile(
   new URL("praxis-candidate-inspection.sql", migrations),
   "utf8",
 );
 
-const preferences = await readFile(
-  new URL("veil-observation-preferences.sql", migrations),
-  "utf8",
-);
+const preferences = await readFile(new URL("veil-observation-preferences.sql", migrations), "utf8");
 
-const retention = await readFile(
-  new URL("veil-artifact-retention.sql", migrations),
-  "utf8",
-);
+const retention = await readFile(new URL("veil-artifact-retention.sql", migrations), "utf8");
 
-const compiledPlan = await readFile(
-  new URL("compiled-plan-cutover.sql", migrations),
-  "utf8",
-);
+const compiledPlan = await readFile(new URL("compiled-plan-cutover.sql", migrations), "utf8");
 
 const statefulProbeAuthoring = await readFile(
   new URL("stateful-probe-authoring.sql", migrations),
@@ -70,6 +46,11 @@ const authenticationAuthoring = await readFile(
   "utf8",
 );
 
+const adaptiveAuthoring = await readFile(
+  new URL("adaptive-authoring-pr9-pr12.sql", migrations),
+  "utf8",
+);
+
 const baseline = (await readFile(new URL("baseline.sql", migrations), "utf8"))
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule)
@@ -82,15 +63,10 @@ const baseline = (await readFile(new URL("baseline.sql", migrations), "utf8"))
   .replace("\\ir veil-artifact-retention.sql", () => retention)
   .replace("\\ir compiled-plan-cutover.sql", () => compiledPlan)
   .replace("\\ir stateful-probe-authoring.sql", () => statefulProbeAuthoring)
-  .replace(
-    "\\ir interactive-runtime-commands.sql",
-    () => interactiveRuntimeCommands,
-  )
-  .replace(
-    "\\ir interactive-runtime-lifecycle.sql",
-    () => interactiveRuntimeLifecycle,
-  )
-  .replace("\\ir authentication-authoring.sql", () => authenticationAuthoring);
+  .replace("\\ir interactive-runtime-commands.sql", () => interactiveRuntimeCommands)
+  .replace("\\ir interactive-runtime-lifecycle.sql", () => interactiveRuntimeLifecycle)
+  .replace("\\ir authentication-authoring.sql", () => authenticationAuthoring)
+  .replace("\\ir adaptive-authoring-pr9-pr12.sql", () => adaptiveAuthoring);
 
 const required = createHash("sha256").update(baseline).digest("hex");
 

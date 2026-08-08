@@ -88,6 +88,8 @@ describe("current Scry MCP surface", () => {
       "list_authentication_contracts",
       "list_authenticated_session_leases",
       "revoke_authenticated_session_lease",
+      "bind_credential_fill_step",
+      "bind_protected_transaction_step",
       "start_run",
       "get_run",
       "get_veil_findings",

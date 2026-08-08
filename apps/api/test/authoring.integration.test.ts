@@ -221,6 +221,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     });
 
     expect(publication.revision).toBe(1);
+    expect(publication.compiledContractId).toBe(compilation.id);
 
     expect(
       Number(
@@ -244,6 +245,116 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
         code: "FLOW_DRAFT_IMMUTABLE",
       }),
     });
+  });
+
+  it("certifies a v1 compatibility compilation and exposes its run contract ID", async () => {
+    const plan = currentPlanSchema.parse({
+      name: "Inspect preview",
+      objective: "Inspect preview",
+      preconditions: [],
+      allowedOrigins: ["https://example.test"],
+      budgets: { maxActions: 1, maxDurationMs: 10_000, maxNavigations: 1 },
+      checkpoints: [],
+      steps: [
+        {
+          id: "open",
+          title: "Open preview",
+          action: { type: "navigate", url: "https://example.test" },
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "final",
+        },
+      ],
+    });
+    const created = await service.createDraft(principal, {
+      ...context,
+      projectId: project,
+      environmentId: environment,
+      name: "Inspect preview compatibility flow",
+      description: "",
+      content: {
+        objective: "Inspect preview",
+        preconditions: [],
+        expectedOutcomes: ["Preview opens"],
+        prohibitedSideEffects: [],
+      },
+      plan,
+      idempotencyKey: `draft-v1-certification-${randomUUID()}`,
+    });
+    const probe = randomUUID();
+    await insertCompletedProbe(database, {
+      probeId: probe,
+      draftId: created.id!,
+      mission,
+      objective,
+      environment,
+      session,
+      draftVersion: 1,
+      result: {
+        allResolved: true,
+        runtimeHealthy: true,
+        targets: [],
+        readiness: [],
+        diagnostics: [],
+        pageFingerprint: "a".repeat(64),
+      },
+    });
+
+    const previousCompilerFlag = process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED;
+    process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED = "false";
+    try {
+      const result = await service.compileAndCertify(principal, created.id!, {
+        ...context,
+        environmentId: environment,
+        draftVersion: 1,
+        probeSessionId: probe,
+        idempotencyKey: `compile-v1-certification-${randomUUID()}`,
+        viewport: { width: 1280, height: 720 },
+        seed: 1,
+      });
+
+      expect(result.compilation.contractVersion).toBe("v1-existing");
+      expect(result.compiledContractId).toBe(result.compilation.id);
+      expect(result.certification).toMatchObject({ status: "certification_pending" });
+      if (!("certificationRunId" in result.certification)) {
+        throw new Error("Certification Run was not queued");
+      }
+      const attempts = new RunAttemptRepository(database);
+      const claimToken = randomUUID();
+      const attempt = await attempts.claimAttempt(
+        result.certification.certificationRunId,
+        "v1-certification-worker",
+        claimToken,
+      );
+      await attempts.markRunning(result.certification.certificationRunId, attempt!.id, claimToken);
+      await attempts.markFinalizing(
+        result.certification.certificationRunId,
+        attempt!.id,
+        claimToken,
+      );
+      await attempts.completeAttempt(
+        result.certification.certificationRunId,
+        attempt!.id,
+        claimToken,
+        "passed",
+        "passed",
+      );
+
+      const publication = await service.publish(principal, created.id!, {
+        ...context,
+        expectedVersion: 1,
+        compilationId: result.compiledContractId!,
+        visibility: "mission_local",
+        purpose: "primary",
+        reason: "Certified v1 compatibility contract",
+        idempotencyKey: `publish-v1-certification-${randomUUID()}`,
+      });
+      expect(publication.compiledContractId).toBe(result.compiledContractId);
+    } finally {
+      if (previousCompilerFlag === undefined) delete process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED;
+      else process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED = previousCompilerFlag;
+    }
   });
 
   it("keeps quality findings visible without blocking compilation", async () => {
@@ -389,6 +500,24 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       },
       plan,
       idempotencyKey: `draft-interactive-${randomUUID()}`,
+    });
+
+    await expect(
+      service.startProbe(principal, created.id!, {
+        ...context,
+        objectiveId: randomUUID(),
+        environmentId: environment,
+        draftVersion: 1,
+        mode: "queued",
+        level: "inspection",
+        disposableDataConfirmed: false,
+        idempotencyKey: `probe-wrong-objective-${randomUUID()}`,
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: "AUTHORING_DRAFT_CONTEXT_MISMATCH",
+      }),
+      status: 409,
     });
 
     const probe = await service.startProbe(principal, created.id!, {
@@ -839,7 +968,6 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     );
 
     const authentication = new AuthenticationAuthoringService(
-      {},
       new AuthenticationAttemptRepository(database),
     );
     const authContext = {
@@ -941,6 +1069,8 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     else process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED = previousCompilerFlag;
     const compilation = certifiedCompilation.compilation;
 
+    expect(certifiedCompilation.compiledContractId).toBe(compilation.id);
+
     expect(compilation).toMatchObject({
       status: "execution_ready",
       diagnostics: [
@@ -991,6 +1121,8 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       reason: "Vitract authoring transcript certified",
       idempotencyKey: `publish-vitract-${randomUUID()}`,
     });
+
+    expect(publication.compiledContractId).toBe(compilation.id);
 
     const revision = await database.query<{ plan: typeof plan }>(
       `SELECT plan

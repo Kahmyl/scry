@@ -180,7 +180,7 @@ export class RunAttemptRepository {
         [runId],
       );
       const resultClassification =
-        state === "passed"
+        state === "passed" && outcomeClassification === "passed"
           ? "application_pass"
           : state === "cancelled"
             ? "cancelled"

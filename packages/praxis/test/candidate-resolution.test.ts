@@ -4,6 +4,57 @@ import { describe, expect, it } from "vitest";
 import { inspectPraxisCandidates } from "../src/consumer.js";
 
 describe("Praxis candidate resolution", () => {
+  it("resolves a pointer-activatable link row from exact expected text", async () => {
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
+
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`
+        <table><tbody>
+          <tr role="link" onclick="void 0">
+            <td><a href="/applications/scry">Scry Acceptance 2026-08-08 1502</a></td>
+            <td>Test</td><td>active</td>
+          </tr>
+        </tbody></table>
+      `);
+
+      const result = await inspectPraxisCandidates({
+        page,
+        intent: {
+          concept: "the created Test application row",
+          requiredCapabilities: ["pointer_activatable"],
+          preferredEvidence: {
+            roles: ["link"],
+            names: [],
+            labels: [],
+            descriptions: [],
+            placeholders: [],
+            inputTypes: [],
+            expectedText: "Scry Acceptance 2026-08-08 1502 Test active",
+          },
+          scope: { kind: "page" },
+          relations: [],
+          prohibited: ["hidden", "disabled"],
+          risk: "ordinary",
+          confidence: { requiredFamilies: [] },
+        },
+        context: {
+          channel: "probe",
+          ordinal: 0,
+          timeoutMs: 10_000,
+          allowedOrigins: ["https://example.com"],
+        },
+      });
+
+      expect(result.resolution).toBe("resolved");
+      expect(result.candidates).toHaveLength(1);
+    } finally {
+      await browser.close();
+    }
+  }, 15_000);
 
   it("returns resolved with a resumable candidate when exactly one target remains", async () => {
     const browser = await chromium.launch({
@@ -21,26 +72,26 @@ describe("Praxis candidate resolution", () => {
       const result = await inspectPraxisCandidates({
         page,
         intent: {
-        concept: "Continue",
-        requiredCapabilities: ["pointer_activatable"],
-        preferredEvidence: {
-          roles: ["button"],
-          names: ["Continue"],
-          labels: [],
-          descriptions: [],
-          placeholders: [],
-          inputTypes: [],
-        },
-        scope: { kind: "page" },
-        relations: [],
-        prohibited: ["hidden", "disabled"],
-        risk: "ordinary",
-        confidence: {
-          requiredFamilies: [],
-          minimum: 0.35,
-          minimumMargin: 0.05,
-          minimumFamilyCount: 1,
-        },
+          concept: "Continue",
+          requiredCapabilities: ["pointer_activatable"],
+          preferredEvidence: {
+            roles: ["button"],
+            names: ["Continue"],
+            labels: [],
+            descriptions: [],
+            placeholders: [],
+            inputTypes: [],
+          },
+          scope: { kind: "page" },
+          relations: [],
+          prohibited: ["hidden", "disabled"],
+          risk: "ordinary",
+          confidence: {
+            requiredFamilies: [],
+            minimum: 0.35,
+            minimumMargin: 0.05,
+            minimumFamilyCount: 1,
+          },
         },
         context: {
           channel: "probe",
@@ -80,26 +131,26 @@ describe("Praxis candidate resolution", () => {
       const result = await inspectPraxisCandidates({
         page,
         intent: {
-        concept: "Continue",
-        requiredCapabilities: ["pointer_activatable"],
-        preferredEvidence: {
-          roles: ["button"],
-          names: ["Continue"],
-          labels: [],
-          descriptions: [],
-          placeholders: [],
-          inputTypes: [],
-        },
-        scope: { kind: "page" },
-        relations: [],
-        prohibited: ["hidden", "disabled"],
-        risk: "ordinary",
-        confidence: {
-          requiredFamilies: [],
-          minimum: 0.35,
-          minimumMargin: 0.05,
-          minimumFamilyCount: 1,
-        },
+          concept: "Continue",
+          requiredCapabilities: ["pointer_activatable"],
+          preferredEvidence: {
+            roles: ["button"],
+            names: ["Continue"],
+            labels: [],
+            descriptions: [],
+            placeholders: [],
+            inputTypes: [],
+          },
+          scope: { kind: "page" },
+          relations: [],
+          prohibited: ["hidden", "disabled"],
+          risk: "ordinary",
+          confidence: {
+            requiredFamilies: [],
+            minimum: 0.35,
+            minimumMargin: 0.05,
+            minimumFamilyCount: 1,
+          },
         },
         context: {
           channel: "probe",
@@ -143,26 +194,26 @@ describe("Praxis candidate resolution", () => {
       const result = await inspectPraxisCandidates({
         page,
         intent: {
-        concept: "Save",
-        requiredCapabilities: ["pointer_activatable"],
-        preferredEvidence: {
-          roles: ["button"],
-          names: ["Save"],
-          labels: [],
-          descriptions: [],
-          placeholders: [],
-          inputTypes: [],
-        },
-        scope: { kind: "page" },
-        relations: [],
-        prohibited: ["hidden", "disabled"],
-        risk: "ordinary",
-        confidence: {
-          requiredFamilies: [],
-          minimum: 0.35,
-          minimumMargin: 0.05,
-          minimumFamilyCount: 1,
-        },
+          concept: "Save",
+          requiredCapabilities: ["pointer_activatable"],
+          preferredEvidence: {
+            roles: ["button"],
+            names: ["Save"],
+            labels: [],
+            descriptions: [],
+            placeholders: [],
+            inputTypes: [],
+          },
+          scope: { kind: "page" },
+          relations: [],
+          prohibited: ["hidden", "disabled"],
+          risk: "ordinary",
+          confidence: {
+            requiredFamilies: [],
+            minimum: 0.35,
+            minimumMargin: 0.05,
+            minimumFamilyCount: 1,
+          },
         },
         context: {
           channel: "probe",
@@ -285,26 +336,26 @@ describe("risk-aware candidate resolution", () => {
       const result = await inspectPraxisCandidates({
         page,
         intent: {
-        concept: "Delete",
-        requiredCapabilities: ["pointer_activatable"],
-        preferredEvidence: {
-          roles: ["button"],
-          names: ["Delete"],
-          labels: [],
-          descriptions: [],
-          placeholders: [],
-          inputTypes: [],
-        },
-        scope: { kind: "page" },
-        relations: [],
-        prohibited: ["hidden", "disabled"],
-        risk: "destructive",
-        confidence: {
-          requiredFamilies: [],
-          minimum: 0.35,
-          minimumMargin: 0.05,
-          minimumFamilyCount: 1,
-        },
+          concept: "Delete",
+          requiredCapabilities: ["pointer_activatable"],
+          preferredEvidence: {
+            roles: ["button"],
+            names: ["Delete"],
+            labels: [],
+            descriptions: [],
+            placeholders: [],
+            inputTypes: [],
+          },
+          scope: { kind: "page" },
+          relations: [],
+          prohibited: ["hidden", "disabled"],
+          risk: "destructive",
+          confidence: {
+            requiredFamilies: [],
+            minimum: 0.35,
+            minimumMargin: 0.05,
+            minimumFamilyCount: 1,
+          },
         },
         context: {
           channel: "probe",
@@ -341,26 +392,26 @@ describe("risk-aware candidate resolution", () => {
       const result = await inspectPraxisCandidates({
         page,
         intent: {
-        concept: "Continue",
-        requiredCapabilities: ["pointer_activatable"],
-        preferredEvidence: {
-          roles: ["button"],
-          names: ["Continue"],
-          labels: [],
-          descriptions: [],
-          placeholders: [],
-          inputTypes: [],
-        },
-        scope: { kind: "page" },
-        relations: [],
-        prohibited: ["hidden", "disabled"],
-        risk: "ordinary",
-        confidence: {
-          requiredFamilies: [],
-          minimum: 0.35,
-          minimumMargin: 0.05,
-          minimumFamilyCount: 1,
-        },
+          concept: "Continue",
+          requiredCapabilities: ["pointer_activatable"],
+          preferredEvidence: {
+            roles: ["button"],
+            names: ["Continue"],
+            labels: [],
+            descriptions: [],
+            placeholders: [],
+            inputTypes: [],
+          },
+          scope: { kind: "page" },
+          relations: [],
+          prohibited: ["hidden", "disabled"],
+          risk: "ordinary",
+          confidence: {
+            requiredFamilies: [],
+            minimum: 0.35,
+            minimumMargin: 0.05,
+            minimumFamilyCount: 1,
+          },
         },
         context: {
           channel: "probe",

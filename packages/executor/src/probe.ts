@@ -62,10 +62,11 @@ export async function probeFlowPlan(input: {
   }
 
   if (input.level !== "inspection") {
-    const steps =
+    const partition =
       input.level === "reversible"
-        ? input.plan.steps.filter((step) => reversible(step.action))
-        : input.plan.steps;
+        ? reversibleProbePartition(input.plan.steps)
+        : { steps: input.plan.steps, omitted: [] };
+    const { steps, omitted } = partition;
 
     const options = {
       plan: {
@@ -91,7 +92,7 @@ export async function probeFlowPlan(input: {
 
     const report = await executePlan(options);
 
-    const diagnostics = report.steps.flatMap((step) =>
+    const diagnostics: Array<Record<string, unknown>> = report.steps.flatMap((step) =>
       step.action.status === "failed" || step.readiness?.status === "failed"
         ? [
             {
@@ -102,18 +103,34 @@ export async function probeFlowPlan(input: {
           ]
         : [],
     );
+    if (omitted[0]) {
+      diagnostics.push({
+        code: "PROBE_REQUIRES_CALIBRATION_TRANSACTION",
+        stepId: omitted[0].id,
+        channel: "action",
+        retry: "requires_authorization",
+        safeActions: ["start_calibration_transaction_probe"],
+        mutationOutcome: "not_started",
+      });
+    }
 
     return {
-      allResolved: report.state === "passed",
+      allResolved: report.state === "passed" && omitted.length === 0,
       runtimeHealthy: report.state !== "infrastructure_error",
-      targets: report.steps.map((step) => ({
-        stepId: step.id,
-        status: step.action.status,
-      })),
-      readiness: report.steps.map((step) => ({
-        stepId: step.id,
-        ...step.readiness,
-      })),
+      targets: [
+        ...report.steps.map((step) => ({
+          stepId: step.id,
+          status: step.action.status,
+        })),
+        ...omitted.map((step) => ({ stepId: step.id, status: "unevaluated" })),
+      ],
+      readiness: [
+        ...report.steps.map((step) => ({
+          stepId: step.id,
+          ...step.readiness,
+        })),
+        ...omitted.map((step) => ({ stepId: step.id })),
+      ],
       diagnostics,
       pageFingerprint: hash({
         state: report.state,
@@ -363,6 +380,15 @@ function reversible(action: CurrentPlan["steps"][number]["action"]) {
   }
 
   return false;
+}
+
+export function reversibleProbePartition(steps: CurrentPlan["steps"]) {
+  const boundary = steps.findIndex((step) => !reversible(step.action));
+  if (boundary === -1) return { steps, omitted: [] as CurrentPlan["steps"] };
+  return {
+    steps: steps.slice(0, boundary),
+    omitted: steps.slice(boundary),
+  };
 }
 
 function safe(error: unknown) {

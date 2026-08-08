@@ -35,7 +35,7 @@ x-app-environment: &app-environment
 
 x-release-environment: &release-environment
   SCRY_RELEASE_ID: "${SCRY_RELEASE_ID:-local-20260806-compiled-plan}"
-  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-d31db29f39bacdd8d0e270598647609c6a13036aa9cab8ecc9b5a2fa3e33e24b}"
+  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-01d52bd699c707bc293b5b81701de4e137e4f4ac1054d701675dc9db1b06b28c}"
 
 x-node-build: &node-build
   context: .

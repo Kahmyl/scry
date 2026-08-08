@@ -7,7 +7,7 @@ const digest = "c".repeat(64);
 describe("authentication authoring kernel integration", () => {
   it("discovers fields, verifies submission, submits once, detects auth state, and creates a candidate", async () => {
     const attempts = new IntegrationAttemptRepository();
-    const service = new AuthenticationAuthoringService({} as never, attempts as never);
+    const service = new AuthenticationAuthoringService(attempts as never);
     const probeSessionId = "00000000-0000-4000-8000-000000000011";
     const context = {
       probeSessionId,

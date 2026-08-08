@@ -1,7 +1,10 @@
 import { BadRequestException } from "@nestjs/common";
 import { describe, expect, it } from "vitest";
 
-import { AuthenticationAuthoringService } from "../src/authentication-authoring/index.js";
+import {
+  AuthenticationAttemptRepository,
+  AuthenticationAuthoringService,
+} from "../src/authentication-authoring/index.js";
 
 const digest = "a".repeat(64);
 const probeSessionId = "00000000-0000-4000-8000-000000000001";
@@ -22,7 +25,7 @@ function makeService(overrides: Partial<FakeAttemptRepository> = {}) {
   Object.assign(attempts, overrides);
   return {
     attempts,
-    service: new AuthenticationAuthoringService({} as never, attempts as never),
+    service: new AuthenticationAuthoringService(attempts as never),
   };
 }
 
@@ -80,6 +83,13 @@ function context() {
 }
 
 describe("AuthenticationAuthoringService", () => {
+  it("exposes only runtime-resolvable constructor dependencies to Nest", () => {
+    expect(AuthenticationAuthoringService.length).toBe(1);
+    expect(Reflect.getMetadata("design:paramtypes", AuthenticationAuthoringService)).toEqual([
+      AuthenticationAttemptRepository,
+    ]);
+  });
+
   it("discovers username fields using the required evidence priority", async () => {
     const { service } = makeService();
 

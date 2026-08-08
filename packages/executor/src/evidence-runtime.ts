@@ -114,7 +114,7 @@ export async function captureRequestedEvidence(
     } else {
       try {
         const file = path.join(root, "dom", `${stepId}.html`);
-        await writeFile(file, await sanitizedDomStructure(page), "utf8");
+        await writeFile(file, await sanitizedDomStructure(page, redactor), "utf8");
         const artifact = await availableArtifact("dom", "text/html", file, `dom/${stepId}.html`, {
           classification: "public",
           sanitation: {
@@ -260,18 +260,51 @@ export async function captureScreenshotWithFallback(page: Page, file: string, fu
   return true;
 }
 
-async function sanitizedDomStructure(page: Page): Promise<string> {
-  return page.evaluate(() => {
+export async function sanitizedDomStructure(
+  page: Page,
+  redactor: Pick<SecretRedactor, "redact">,
+): Promise<string> {
+  const structure = await page.evaluate(() => {
     const source = document.documentElement;
     const clone = source.cloneNode(true) as HTMLElement;
     clone.querySelectorAll("script,style,noscript,template").forEach((element) => element.remove());
+    const semanticTextSelector =
+      "a,button,label,h1,h2,h3,[role=button],[role=link],[role=tab],[role=switch]";
     const walker = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT);
     const remove: Node[] = [];
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) remove.push(node);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.nodeType === Node.COMMENT_NODE) {
+        remove.push(node);
+        continue;
+      }
+      const parent = node.parentElement;
+      if (!parent?.closest(semanticTextSelector)) {
+        remove.push(node);
+        continue;
+      }
+      node.textContent = (node.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+      if (!node.textContent) remove.push(node);
+    }
     remove.forEach((node) => node.parentNode?.removeChild(node));
     clone.querySelectorAll("*").forEach((element) => {
       const inputType = element instanceof HTMLInputElement ? element.type : undefined;
+      const semanticAttributes = new Map(
+        [...element.attributes]
+          .filter((attribute) =>
+            [
+              "role",
+              "aria-label",
+              "aria-expanded",
+              "aria-haspopup",
+              "aria-selected",
+              "aria-checked",
+              "placeholder",
+            ].includes(attribute.name),
+          )
+          .map((attribute) => [attribute.name, attribute.value.slice(0, 200)]),
+      );
       for (const attribute of [...element.attributes]) element.removeAttribute(attribute.name);
+      for (const [name, value] of semanticAttributes) element.setAttribute(name, value);
       if (inputType) element.setAttribute("type", safeInputType(inputType));
     });
     return `<!doctype html>${clone.outerHTML}`;
@@ -299,6 +332,7 @@ async function sanitizedDomStructure(page: Page): Promise<string> {
         : "text";
     }
   });
+  return redactor.redact(structure);
 }
 
 function safeNetworkEvidence(records: Array<Record<string, unknown>>) {

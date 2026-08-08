@@ -17,7 +17,7 @@ describe("Vitract authoring vertical", () => {
       ),
     );
     const attempts = new SingleShotAttemptRepository();
-    const authentication = new AuthenticationAuthoringService({} as never, attempts as never);
+    const authentication = new AuthenticationAuthoringService(attempts as never);
     const ordersTarget = target("orders", "link", "Orders");
     const plan = currentPlanSchema.parse({
       name: "Vitract partner orders",

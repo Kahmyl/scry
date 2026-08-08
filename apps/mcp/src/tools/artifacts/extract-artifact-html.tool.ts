@@ -10,8 +10,14 @@ export function registerExtractArtifactHtmlTool(server: McpServer, client: ScryA
       {
         title: "Extract artifact HTML",
         description:
-          "Extract bounded structural HTML and normalized text using a validated CSS selector.",
-        inputSchema: { artifactId: uuid, selector: z.string().trim().min(1).max(500) },
+          "Extract bounded structural HTML and normalized text using one tag, #id, .class, or [data-testid=\"value\"] selector; combinators are not supported.",
+        inputSchema: {
+          artifactId: uuid,
+          selector: z
+            .string()
+            .trim()
+            .regex(/^(?:[a-zA-Z][\w-]*|#[\w-]+|\.[\w-]+|\[data-testid=["'][^"']{1,200}["']\])$/),
+        },
         annotations: readOnly,
       },
       async ({ artifactId, selector }) =>

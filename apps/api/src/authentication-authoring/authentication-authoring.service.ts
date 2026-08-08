@@ -53,7 +53,6 @@ export interface AuthenticationAuthoringKernel {
 @Injectable()
 export class AuthenticationAuthoringService implements AuthenticationAuthoringKernel {
   constructor(
-    _praxis: unknown,
     @Inject(AuthenticationAttemptRepository)
     private readonly attempts: AuthenticationAttemptRepository,
   ) {}
