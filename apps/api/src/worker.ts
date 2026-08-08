@@ -9,8 +9,11 @@ import {
   PRAXIS_CONTRACT_VERSION,
   PRAXIS_RUNTIME_VERSION,
   PRAXIS_SCORING_POLICY_VERSION,
+  type CurrentPlan,
+  type ExecutionPolicy,
 } from "@scry/contracts";
 import { verifyBrowserObservationRuntime } from "@scry/praxis";
+import { compileDefaultVeilPolicy } from "@scry/veil";
 import { createArtifactStoreFromEnv } from "@scry/artifact";
 
 import { AppModule } from "./app.module.js";
@@ -21,15 +24,17 @@ import {
 } from "./authoring/index.js";
 import { CalibrationRuntimeRepository } from "./calibration/index.js";
 import { Database } from "./infrastructure/database.js";
-import { ExecutionRepository } from "./runtime/index.js";
+import {
+  ExecutionCapabilityFactory,
+  ExecutionKernelRepository,
+  ExecutionKernelService,
+  ExecutionRepository,
+} from "./runtime/index.js";
 import { ProbeRuntimeRepository } from "./calibration/index.js";
 import { PraxisRuntimeRepository } from "./praxis/index.js";
 import { RunQueueService } from "./runtime/index.js";
 import { RedisConnection } from "./infrastructure/redis.js";
-import {
-  createAuthoringRuntimeOwner,
-  createWorkerFleet,
-} from "./workers/index.js";
+import { createAuthoringRuntimeOwner, createWorkerFleet } from "./workers/index.js";
 import {
   createCalibrationProcessor,
   createProbeProcessor,
@@ -43,15 +48,16 @@ const app = await NestFactory.createApplicationContext(AppModule, {
   logger: ["log", "warn", "error"],
 });
 const executions = app.get(ExecutionRepository);
+const executionKernel = app.get(ExecutionKernelService);
+const executionCapabilities = app.get(ExecutionCapabilityFactory);
+const executionKernelRepository = app.get(ExecutionKernelRepository);
 const redis = app.get(RedisConnection);
 const runQueue = app.get(RunQueueService);
 const calibrations = app.get(CalibrationRuntimeRepository);
 const probes = app.get(ProbeRuntimeRepository);
 const praxis = app.get(PraxisRuntimeRepository);
 const authoringRuntimes = app.get(AuthoringRuntimeRepository);
-const authoringRuntimeCommands = app.get(
-  AuthoringRuntimeCommandRepository,
-);
+const authoringRuntimeCommands = app.get(AuthoringRuntimeCommandRepository);
 const database = app.get(Database);
 const workerId = `${os.hostname()}:${process.pid}:${randomUUID()}`;
 const artifactRoot = path.resolve(process.env.ARTIFACT_ROOT ?? "artifacts/runs");
@@ -138,7 +144,154 @@ const authoringRuntimeOwner = createAuthoringRuntimeOwner({
   veilAdmissionKey,
   heartbeatMs,
   pollMs: Number(process.env.AUTHORING_RUNTIME_POLL_MS ?? 1_000),
+  createSession: async (session) => {
+    const sessionId = session.sessionId;
+    const environmentId = session.environmentId;
+    const policy = session.policy;
+    const operationId = `authoring-session-${sessionId}`;
+    const correlationId = randomUUID();
+    const capabilities = executionCapabilities.createSession({
+      sessionId,
+      operationId,
+      correlationId,
+      mode: "observe",
+      options: authoringKernelOptions(sessionId, environmentId, policy),
+    });
+    const request = executionCapabilities.request({
+        sessionId,
+        operationId,
+        correlationId,
+        mode: "observe",
+        plan: authoringObservationPlan(policy),
+        policy,
+        capabilities,
+        idempotencyKey: operationId,
+      });
+    return executionKernel.openAuthoringSession({
+      request,
+      capabilities,
+      session,
+    });
+  },
+  executeObservation: async ({
+    sessionId,
+    environmentId,
+    policy,
+    operationId,
+    correlationId: requestedCorrelationId,
+    perform,
+  }) => {
+    const correlationId = requestedCorrelationId ?? randomUUID();
+    const capabilities = executionCapabilities.createSession({
+      sessionId,
+      operationId,
+      correlationId,
+      mode: "observe",
+      options: authoringKernelOptions(sessionId, environmentId, policy),
+    });
+    const observed = await executionKernel.observe({
+      request: executionCapabilities.request({
+        sessionId,
+        operationId,
+        correlationId,
+        mode: "observe",
+        plan: authoringObservationPlan(policy),
+        policy,
+        capabilities,
+        idempotencyKey: operationId,
+      }),
+      capabilities,
+      perform,
+    });
+    return observed.value;
+  },
+  executeInteraction: async ({
+    sessionId,
+    environmentId,
+    policy,
+    page,
+    action,
+    ordinal,
+    operationId,
+    correlationId: requestedCorrelationId,
+    mutationIdentity,
+    expectedEffect,
+    objectiveDelta,
+    signal,
+  }) => {
+    const correlationId = requestedCorrelationId ?? randomUUID();
+    const capabilities = executionCapabilities.createSession({
+      sessionId,
+      operationId,
+      correlationId,
+      mode: "rehearse",
+      options: {
+        outputDirectory: path.join(artifactRoot, "authoring", sessionId),
+        browserChannel,
+        environmentId,
+        veilAdmissionKey,
+        veilPolicySnapshot: compileDefaultVeilPolicy(policy),
+        secretResolver: (reference) => authoringRuntimes.resolveCredential(sessionId, reference),
+        ...(signal ? { signal } : {}),
+      },
+    });
+    return executionKernel.interact({
+      request: {
+        sessionId,
+        operationId,
+        correlationId,
+        mode: "rehearse",
+        policy,
+        mutationIdentity: mutationIdentity ?? `authoring-${operationId}`,
+        ...(objectiveDelta ? { semanticContext: objectiveDelta } : {}),
+      },
+      capabilities,
+      page,
+      action,
+      ...(expectedEffect ? { expectedEffect } : {}),
+      ordinal,
+    });
+  },
 });
+
+function authoringKernelOptions(
+  sessionId: string,
+  environmentId: string,
+  policy: ExecutionPolicy,
+) {
+  return {
+    outputDirectory: path.join(artifactRoot, "authoring", sessionId),
+    browserChannel,
+    environmentId,
+    veilAdmissionKey,
+    veilPolicySnapshot: compileDefaultVeilPolicy(policy),
+    secretResolver: (reference: string) =>
+      authoringRuntimes.resolveCredential(sessionId, reference),
+  };
+}
+
+function authoringObservationPlan(policy: ExecutionPolicy): CurrentPlan {
+  return {
+    name: "Authoring kernel observation",
+    objective: "Admit one bounded authoring observation",
+    preconditions: [],
+    allowedOrigins: policy.allowedOrigins,
+    budgets: { maxActions: 1, maxDurationMs: 30_000, maxNavigations: 1 },
+    checkpoints: [],
+    steps: [
+      {
+        id: "authoring-observation",
+        title: "Observe the current document",
+        action: { type: "navigate", url: policy.allowedOrigins[0]! },
+        assertions: [],
+        onFailure: "stop",
+        evidence: [],
+        captureIntent: "transient",
+        transientJustification: "The kernel contract represents an in-session observation.",
+      },
+    ],
+  };
+}
 
 await authoringRuntimeOwner.start();
 
@@ -158,6 +311,8 @@ const workers = createWorkerFleet({
     artifactStoreRemote: artifactStorage.remote,
     veilAdmissionKey,
     browserChannel,
+    kernel: executionKernel,
+    capabilities: executionCapabilities,
   }),
   processCalibration: createCalibrationProcessor({
     calibrations,
@@ -167,6 +322,8 @@ const workers = createWorkerFleet({
     heartbeatMs,
     browserChannel,
     veilAdmissionKey,
+    kernel: executionKernel,
+    capabilities: executionCapabilities,
   }),
   processProbe: createProbeProcessor({
     probes,
@@ -177,6 +334,8 @@ const workers = createWorkerFleet({
     browserChannel,
     veilAdmissionKey,
     observationRuntimeHash: observationRuntime.runtimeHash,
+    kernel: executionKernel,
+    capabilities: executionCapabilities,
   }),
   processPraxis: createPraxisProcessor({
     praxis,
@@ -200,7 +359,9 @@ async function recoverStaleWork() {
   }
   await calibrations.recoverStale(new Date(Date.now() - staleMs));
   await probes.recoverStale(new Date(Date.now() - staleMs));
+  await authoringRuntimeCommands.recoverStaleClaims(new Date(Date.now() - staleMs));
   await authoringRuntimes.recoverStale(new Date(Date.now() - staleMs));
+  await executionKernelRepository.purgeExpiredValues();
 }
 
 async function runArtifactRetention() {

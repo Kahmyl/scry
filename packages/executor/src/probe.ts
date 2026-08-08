@@ -10,9 +10,9 @@ import {
 import { VeilAuthority } from "@scry/veil";
 import { chromium } from "playwright";
 
-import { executePlan } from "./executor.js";
 import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
-import type { BrowserStorageState } from "./types.js";
+import { executePlan } from "./executor.js";
+import type { BrowserStorageState, ExecuteOptions, ExecutionReport } from "./types.js";
 
 export type ProbeExecutionLevel = "inspection" | "reversible" | "calibration_transaction";
 
@@ -39,6 +39,7 @@ export async function probeFlowPlan(input: {
   };
   secretResolver?: (reference: string) => Promise<string>;
   captureBrowserState?: (state: BrowserStorageState) => void | Promise<void>;
+  execute?: (options: ExecuteOptions) => Promise<ExecutionReport>;
 }): Promise<ProbeExecutionResult> {
   if (!input.privacy.environmentId) {
     throw new Error("PROBE_ENVIRONMENT_REQUIRED");
@@ -90,7 +91,7 @@ export async function probeFlowPlan(input: {
         : {}),
     };
 
-    const report = await executePlan(options);
+    const report = await (input.execute ?? executePlan)(options);
 
     const diagnostics: Array<Record<string, unknown>> = report.steps.flatMap((step) =>
       step.action.status === "failed" || step.readiness?.status === "failed"

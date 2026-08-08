@@ -298,11 +298,13 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       emit: (type, payload) => emit(type, payload),
       videoAuthority: veilVideoSegments,
       videoBinding: veilCaptureBinding,
+      abortCapture: () => context.close(),
     });
     trace = new TraceCoordinator({
       context,
       outputDirectory: options.outputDirectory,
       sanitize: (target) => sanitizeTraceArchive(target, redactor),
+      abortCapture: () => context.close(),
     });
     let recordingVeilState: ReturnType<PrivacyCollector["state"]>["status"] = "active";
     let recordingOperationId = "protected-operation";

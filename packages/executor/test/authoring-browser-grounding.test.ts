@@ -1,27 +1,32 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  createAuthoringBrowserSession,
-} from "../src/index.js";
+import { createAuthoringBrowserSession } from "../src/index.js";
 
 import { inspectPraxisCandidates } from "@scry/praxis";
+import { kernelInteractionExecutor } from "./kernel-harness.js";
 
 describe("authoring browser Praxis grounding", () => {
   it("grounds against the owned authoring browser page", async () => {
+    const policy = {
+      allowedOrigins: ["https://example.com"],
+      allowPrivateNetwork: false,
+      allowDownloads: false as const,
+      allowPopups: false as const,
+      maxActions: 5,
+      maxDurationMs: 30_000,
+      maxNavigations: 1,
+    };
     const session = await createAuthoringBrowserSession({
       sessionId: "test-session",
       environmentId: "test-environment",
       veilAdmissionKey: "test-key",
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
-      policy: {
-        allowedOrigins: ["https://example.com"],
-        allowPrivateNetwork: false,
-        allowDownloads: false,
-        allowPopups: false,
-        maxActions: 5,
-        maxDurationMs: 30_000,
-        maxNavigations: 1,
-      },
+      policy,
+      executeInteraction: kernelInteractionExecutor({
+        sessionId: "test-session",
+        environmentId: "test-environment",
+        policy,
+      }),
     });
 
     try {

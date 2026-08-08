@@ -31,7 +31,8 @@ export function registerGetProbeSessionTool(server: McpServer, client: ScryApiCl
     "get_probe_session",
     {
       title: "Get Probe Session",
-      description: "Monitor authoring progress and read the consolidated safe correction set.",
+      description:
+        "Compatibility polling tool for authoring progress. Prefer advance_authoring_turn once an interactive Probe is active.",
       inputSchema: { probeSessionId: uuid },
       annotations: readOnly,
     },

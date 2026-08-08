@@ -1,0 +1,669 @@
+import { randomUUID } from "node:crypto";
+
+import { currentPlanSchema, executionPolicySchema } from "@scry/contracts";
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  createExecutionCapabilityManifest,
+  evidenceOutcomeFromReport,
+  ExecutionKernel,
+  privacyOutcomeFromReport,
+} from "../src/execution-kernel.js";
+
+const policy = executionPolicySchema.parse({
+  allowedOrigins: ["https://example.test"],
+  allowPrivateNetwork: false,
+});
+
+describe("execution kernel admission", () => {
+  it("builds structurally complete manifests for every mode", () => {
+    for (const mode of ["observe", "rehearse", "transact", "certify", "run"] as const) {
+      const manifest = createExecutionCapabilityManifest({ mode, correlationId: randomUUID() });
+      expect(Object.keys(manifest.capabilities).sort()).toEqual([
+        "browser",
+        "calibration",
+        "checkpoint",
+        "evidence",
+        "journal",
+        "praxis",
+        "protected_operations",
+        "veil",
+      ]);
+    }
+  });
+
+  it("rejects an incomplete bundle before journal admission or browser startup", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({
+      mode: "run",
+      correlationId,
+      states: { browser: "unavailable" },
+    });
+    const begin = vi.fn(async () => undefined);
+    const kernel = new ExecutionKernel();
+    await expect(
+      kernel.execute({
+        request: {
+          sessionId: "session",
+          operationId: "operation",
+          correlationId,
+          mode: "run",
+          plan: plan({ type: "navigate", url: "https://example.test" }),
+          policy,
+          capabilityManifestDigest: manifest.digest,
+          idempotencyKey: "kernel-test-operation",
+        },
+        capabilities: {
+          manifest,
+          journal: { begin, complete: vi.fn(), fail: vi.fn() },
+          options: { outputDirectory: "/tmp/unused" },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "EXECUTION_CAPABILITY_INCOMPLETE",
+      missingCapabilities: ["browser"],
+    });
+    expect(begin).not.toHaveBeenCalled();
+  });
+
+  it("denies non-observational work in observe mode before dispatch", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "observe", correlationId });
+    const kernel = new ExecutionKernel();
+    await expect(
+      kernel.execute({
+        request: {
+          sessionId: "session",
+          operationId: "operation",
+          correlationId,
+          mode: "observe",
+          plan: plan({ type: "fill", target: target(), value: "public-value" }),
+          policy,
+          capabilityManifestDigest: manifest.digest,
+          idempotencyKey: "kernel-observe-operation",
+        },
+        capabilities: {
+          manifest,
+          journal: { begin: vi.fn(), complete: vi.fn(), fail: vi.fn() },
+          options: { outputDirectory: "/tmp/unused" },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "EXECUTION_MODE_POLICY_DENIED" });
+  });
+
+  it("requires a durable idempotency identity for mutating plans", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "transact", correlationId });
+    const begin = vi.fn(async () => undefined);
+    const kernel = new ExecutionKernel();
+    await expect(
+      kernel.execute({
+        request: {
+          sessionId: "session",
+          operationId: "mutation-without-identity",
+          correlationId,
+          mode: "transact",
+          plan: plan({ type: "fill", target: target(), value: "public-value" }),
+          policy,
+          capabilityManifestDigest: manifest.digest,
+        },
+        capabilities: {
+          manifest,
+          journal: { begin, complete: vi.fn(), fail: vi.fn() },
+          options: { outputDirectory: "/tmp/unused" },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "EXECUTION_MUTATION_IDENTITY_REQUIRED" });
+    expect(begin).not.toHaveBeenCalled();
+  });
+
+  it("binds manifest mode and correlation identity before journal admission", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "run", correlationId });
+    const begin = vi.fn();
+    await expect(
+      new ExecutionKernel().execute({
+        request: {
+          sessionId: "session",
+          operationId: "binding-mismatch",
+          correlationId: randomUUID(),
+          mode: "run",
+          plan: plan({ type: "navigate", url: "https://example.test" }),
+          policy,
+          capabilityManifestDigest: manifest.digest,
+          idempotencyKey: "binding-mismatch-request",
+        },
+        capabilities: {
+          manifest,
+          journal: { begin, complete: vi.fn(), fail: vi.fn() },
+          options: { outputDirectory: "/tmp/unused" },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "EXECUTION_CAPABILITY_BINDING_MISMATCH" });
+    expect(begin).not.toHaveBeenCalled();
+  });
+
+  it("rejects a policy-denied capability required by a protected plan before dispatch", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({
+      mode: "run",
+      correlationId,
+      states: { protected_operations: "policy_denied" },
+    });
+    const dispatch = vi.fn();
+    const begin = vi.fn();
+    const protectedPlan = currentPlanSchema.parse({
+      ...plan({ type: "navigate", url: "https://example.test" }),
+      steps: [
+        {
+          id: "protected",
+          title: "Protected",
+          action: protectedAction(),
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "transient",
+          transientJustification: "Admission test does not execute the transaction.",
+        },
+      ],
+    });
+    await expect(
+      new ExecutionKernel(dispatch as never).execute({
+        request: {
+          sessionId: "session",
+          operationId: "protected-denied",
+          correlationId,
+          mode: "run",
+          plan: protectedPlan,
+          policy,
+          capabilityManifestDigest: manifest.digest,
+          idempotencyKey: "protected-denied-request",
+          mutationIdentity: "protected-denied-mutation",
+        },
+        capabilities: {
+          manifest,
+          journal: { begin, complete: vi.fn(), fail: vi.fn() },
+          options: { outputDirectory: "/tmp/unused" },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "EXECUTION_CAPABILITY_INCOMPLETE",
+      missingCapabilities: ["protected_operations"],
+    });
+    expect(begin).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("persists unknown after a worker loss around a real mutating plan and fences retry", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "run", correlationId });
+    const dispatch = vi.fn(async () => {
+      throw new Error("WORKER_PROCESS_LOST_AFTER_DISPATCH");
+    });
+    const states = new Map<string, string>();
+    const mutationFence = {
+      claim: vi.fn(async ({ mutationIdentity }: { mutationIdentity: string }) => ({
+        state: states.get(mutationIdentity) ?? "planned",
+        fencingToken: 1,
+      })),
+      transition: vi.fn(
+        async (input: { mutationIdentity: string; expected: string; next: string }) => {
+          const current = states.get(input.mutationIdentity) ?? "planned";
+          if (current !== input.expected) return false;
+          states.set(input.mutationIdentity, input.next);
+          return true;
+        },
+      ),
+    };
+    const fail = vi.fn(async () => undefined);
+    const settle = vi.fn(async (input: { mutation?: { mutationIdentity: string; next: string } }) => {
+      if (input.mutation) states.set(input.mutation.mutationIdentity, input.mutation.next);
+    });
+    const capabilities = {
+      manifest,
+      mutationFence,
+      journal: { begin: vi.fn(async () => undefined), complete: vi.fn(), fail, settle },
+      options: { outputDirectory: "/tmp/unused" },
+    };
+    const request = {
+      sessionId: "logical-run",
+      operationId: "attempt-one",
+      correlationId,
+      mode: "run" as const,
+      plan: plan({ type: "fill", target: target(), value: "public-value" }),
+      policy,
+      capabilityManifestDigest: manifest.digest,
+      idempotencyKey: "attempt-one-request",
+      mutationIdentity: "logical-run-mutation",
+    };
+    const kernel = new ExecutionKernel(dispatch as never);
+    await expect(kernel.execute({ request, capabilities })).rejects.toThrow(
+      "WORKER_PROCESS_LOST_AFTER_DISPATCH",
+    );
+    expect(states.get("logical-run-mutation")).toBe("outcome_unknown");
+    expect(settle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: expect.objectContaining({ mutationOutcome: "unknown" }),
+      }),
+    );
+
+    await expect(
+      kernel.execute({
+        request: { ...request, operationId: "attempt-two", idempotencyKey: "attempt-two-request" },
+        capabilities,
+      }),
+    ).rejects.toMatchObject({
+      code: "EXECUTION_UNKNOWN_MUTATION_REQUIRES_RECONCILIATION",
+    });
+    expect(dispatch).toHaveBeenCalledOnce();
+  });
+
+  it("does not redispatch an action whose browser call failed after possible mutation", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "rehearse", correlationId });
+    const states = new Map<string, string>();
+    const press = vi.fn(async () => {
+      throw new Error("WORKER_PROCESS_LOST_AFTER_DISPATCH");
+    });
+    const page = { url: () => "https://example.test", keyboard: { press } } as never;
+    const capabilities = {
+      manifest,
+      mutationFence: {
+        claim: async ({ mutationIdentity }: { mutationIdentity: string }) => ({
+          state: states.get(mutationIdentity) ?? "planned",
+          fencingToken: 1,
+        }),
+        transition: async (input: { mutationIdentity: string; expected: string; next: string }) => {
+          const current = states.get(input.mutationIdentity) ?? "planned";
+          if (current !== input.expected) return false;
+          states.set(input.mutationIdentity, input.next);
+          return true;
+        },
+      },
+      journal: {
+        begin: vi.fn(async () => undefined),
+        complete: vi.fn(async () => undefined),
+        fail: vi.fn(async () => undefined),
+        settle: vi.fn(
+          async (input: { mutation?: { mutationIdentity: string; next: string } }) => {
+            if (input.mutation) states.set(input.mutation.mutationIdentity, input.mutation.next);
+          },
+        ),
+      },
+      options: { outputDirectory: "/tmp/unused" },
+    };
+    const kernel = new ExecutionKernel();
+    const request = {
+      sessionId: "authoring-session",
+      operationId: "command-one",
+      correlationId,
+      mode: "rehearse" as const,
+      policy,
+      mutationIdentity: "stable-authoring-mutation",
+    };
+    await expect(
+      kernel.interact({
+        request,
+        capabilities,
+        page,
+        action: { type: "press", key: "Enter" },
+        ordinal: 1,
+      }),
+    ).resolves.toMatchObject({ functionalResult: "failed", mutationOutcome: "unknown" });
+    expect(states.get("stable-authoring-mutation")).toBe("outcome_unknown");
+
+    await expect(
+      kernel.interact({
+        request: { ...request, operationId: "command-two" },
+        capabilities,
+        page,
+        action: { type: "press", key: "Enter" },
+        ordinal: 1,
+      }),
+    ).rejects.toMatchObject({
+      code: "EXECUTION_UNKNOWN_MUTATION_REQUIRES_RECONCILIATION",
+    });
+    expect(press).toHaveBeenCalledOnce();
+  });
+
+  it("maps quarantined and failed evidence facts without claiming verified privacy", () => {
+    const report = reportFixture();
+    expect(privacyOutcomeFromReport(report)).toBe("sealed");
+    expect(evidenceOutcomeFromReport(report)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ channel: "screenshot", state: "failed" }),
+        expect.objectContaining({ channel: "trace", state: "quarantined" }),
+      ]),
+    );
+  });
+
+  it("does not claim privacy verification when a successful report has no privacy proof", () => {
+    const report = {
+      ...reportFixture(),
+      state: "passed" as const,
+      outcomeClassification: "passed" as const,
+      steps: [],
+      artifacts: [],
+      artifactTimeline: [],
+    };
+    expect(privacyOutcomeFromReport(report)).toBe("unverified");
+    expect(evidenceOutcomeFromReport(report)).toEqual([]);
+  });
+
+  it("classifies capture failure independently from functional and quarantine outcomes", () => {
+    const report = {
+      ...reportFixture(),
+      state: "passed" as const,
+      outcomeClassification: "passed" as const,
+      artifacts: [],
+      artifactTimeline: [],
+    };
+    expect(privacyOutcomeFromReport(report)).toBe("degraded");
+    expect(evidenceOutcomeFromReport(report)).toEqual([
+      expect.objectContaining({ channel: "screenshot", state: "failed" }),
+    ]);
+  });
+
+  it("settles a journal failure and mutation fence to one authoritative unknown state", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "run", correlationId });
+    let mutationState = "planned";
+    let operationState = "admitted";
+    let settlementAttempt = 0;
+    const settle = vi.fn(async (input: {
+      state: string;
+      mutation?: { next: string };
+    }) => {
+      settlementAttempt += 1;
+      if (settlementAttempt === 1) throw new Error("JOURNAL_WRITE_FAILED");
+      mutationState = input.mutation?.next ?? mutationState;
+      operationState = input.state;
+    });
+    const kernel = new ExecutionKernel(async () => ({
+      ...reportFixture(),
+      state: "passed",
+      outcomeClassification: "passed",
+      steps: [],
+      artifacts: [],
+      artifactTimeline: [],
+    }));
+    const request = {
+      sessionId: "atomic-session",
+      operationId: "atomic-attempt",
+      correlationId,
+      mode: "run" as const,
+      plan: plan({ type: "fill", target: target(), value: "public-value" }),
+      policy,
+      capabilityManifestDigest: manifest.digest,
+      idempotencyKey: "atomic-attempt-request",
+      mutationIdentity: "atomic-logical-mutation",
+    };
+    await expect(
+      kernel.execute({
+        request,
+        capabilities: {
+          manifest,
+          journal: { begin: vi.fn(), complete: vi.fn(), fail: vi.fn(), settle },
+          mutationFence: {
+            claim: async () => ({ state: mutationState, fencingToken: 1 }),
+            transition: async ({ expected, next }) => {
+              if (mutationState !== expected) return false;
+              mutationState = next;
+              return true;
+            },
+          },
+          options: { outputDirectory: "/tmp/unused" },
+        },
+      }),
+    ).rejects.toThrow("JOURNAL_WRITE_FAILED");
+    expect(settle).toHaveBeenCalledTimes(2);
+    expect(mutationState).toBe("outcome_unknown");
+    expect(operationState).toBe("failed");
+    expect(settle).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: "failed",
+        mutation: expect.objectContaining({ next: "reconciled_succeeded" }),
+      }),
+    );
+  });
+
+  it("retries a proven pre-dispatch target change under a stable logical mutation identity", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "run", correlationId });
+    let mutationState = "planned";
+    let fencingToken = 1;
+    const operationIds: string[] = [];
+    const dispatch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("PRAXIS_TARGET_CHANGED_BEFORE_ACTION"))
+      .mockResolvedValueOnce({
+        ...reportFixture(),
+        state: "passed",
+        outcomeClassification: "passed",
+        steps: [],
+        artifacts: [],
+        artifactTimeline: [],
+      });
+    const capabilities = {
+      manifest,
+      journal: {
+        begin: vi.fn(async ({ request }: { request: { operationId: string } }) => {
+          operationIds.push(request.operationId);
+        }),
+        complete: vi.fn(),
+        fail: vi.fn(),
+        settle: vi.fn(async (input: { mutation?: { next: string } }) => {
+          if (input.mutation) mutationState = input.mutation.next;
+        }),
+      },
+      mutationFence: {
+        claim: vi.fn(async () => {
+          if (mutationState === "reconciled_not_applied") {
+            mutationState = "planned";
+            fencingToken += 1;
+          }
+          return { state: mutationState, fencingToken };
+        }),
+        transition: vi.fn(async ({ expected, next }: { expected: string; next: string }) => {
+          if (mutationState !== expected) return false;
+          mutationState = next;
+          return true;
+        }),
+      },
+      options: { outputDirectory: "/tmp/unused" },
+    };
+    const request = {
+      sessionId: "retry-session",
+      operationId: "logical-operation-attempt-1",
+      correlationId,
+      mode: "run" as const,
+      plan: plan({ type: "fill", target: target(), value: "public-value" }),
+      policy,
+      capabilityManifestDigest: manifest.digest,
+      idempotencyKey: "retry-attempt-1",
+      mutationIdentity: "stable-logical-mutation",
+    };
+    const kernel = new ExecutionKernel(dispatch as never);
+    await expect(kernel.execute({ request, capabilities })).rejects.toThrow(
+      "PRAXIS_TARGET_CHANGED_BEFORE_ACTION",
+    );
+    expect(mutationState).toBe("reconciled_not_applied");
+    await expect(
+      kernel.execute({
+        request: {
+          ...request,
+          operationId: "logical-operation-attempt-2",
+          idempotencyKey: "retry-attempt-2",
+        },
+        capabilities,
+      }),
+    ).resolves.toMatchObject({ outcome: { mutationOutcome: "not_applied" } });
+    expect(operationIds).toEqual(["logical-operation-attempt-1", "logical-operation-attempt-2"]);
+    expect(capabilities.mutationFence.claim).toHaveBeenCalledTimes(2);
+    expect(mutationState).toBe("reconciled_not_applied");
+  });
+});
+
+function protectedAction() {
+  const button = target("Issue", "button", ["pointer_activatable"]);
+  const value = target("Secret", "value", ["readable_value"]);
+  return {
+    type: "protectedTransaction" as const,
+    operationId: "protected-operation",
+    entry: {
+      url: "https://example.test",
+      assertions: [{ type: "visible" as const, target: button }],
+    },
+    inputs: {},
+    preparation: {
+      effectPolicy: { ignoredRequests: [] },
+      actions: [
+        {
+          type: "assertion" as const,
+          assertion: { type: "visible" as const, target: button },
+          effect: "read_only" as const,
+        },
+      ],
+      assertions: [{ type: "enabled" as const, target: button }],
+    },
+    mutation: {
+      kind: "one_time" as const,
+      action: {
+        type: "click" as const,
+        target: button,
+        expectedEffect: { type: "new_region" as const, target: value },
+      },
+      reconciliation: { strategy: "none" as const, acceptUnknownOutcome: true },
+    },
+    extraction: {
+      outputs: [
+        {
+          classification: "protected" as const,
+          reference: "issued-secret",
+          acquisition: {
+            target: value,
+            classification: "unknown_secret" as const,
+            permittedMethods: ["semantic_field_value" as const],
+            validation: { minimumLength: 1, maximumLength: 20_000 },
+          },
+          storage: { scope: "run" as const, credentialName: "Issued secret" },
+        },
+      ],
+      timeoutMs: 1_000,
+      scheduling: "fair_shared_timeout" as const,
+    },
+    acquisitionReadiness: {
+      ceremonyIntent: button,
+      expectedContainerModel: {
+        version: 2 as const,
+        digest: "a".repeat(64),
+        concept: "Issue",
+        scopeKind: "page" as const,
+        capabilityDigest: "b".repeat(64),
+        structuralPath: [],
+      },
+      valueIntent: value,
+      approvedMethods: ["semantic_field_value" as const],
+      minimumConfidence: 0.6,
+      minimumConfidenceMargin: 0,
+      recoveryPolicy: "abandon" as const,
+      recoveryWindowMs: 1_000,
+    },
+    continuation: { strategies: [{ mode: "terminal" as const }] },
+  };
+}
+
+function reportFixture(): import("../src/types.js").ExecutionReport {
+  const now = new Date().toISOString();
+  return {
+    runId: "run",
+    attemptId: "attempt",
+    planName: "Evidence mapping",
+    state: "failed",
+    outcomeClassification: "confirmed_product_failure",
+    startedAt: now,
+    completedAt: now,
+    durationMs: 1,
+    requiredAssertions: { passed: 0, failed: 1, unevaluated: 0 },
+    diagnostics: [],
+    policyViolations: [],
+    steps: [
+      {
+        id: "step",
+        title: "Step",
+        status: "failed",
+        action: { status: "failed" },
+        assertions: [],
+        artifacts: [],
+        evidence: [],
+        evidenceFailures: [{ kind: "screenshot", error: "SCREENSHOT_CAPTURE_FAILED" }],
+      },
+    ],
+    artifacts: [
+      {
+        id: "trace",
+        kind: "trace",
+        availability: "quarantined",
+        privacyClassification: "uncertain",
+        contentType: "application/zip",
+        reasonCode: "TRACE_CLASSIFICATION_UNPROVEN",
+      },
+    ],
+    artifactTimeline: [],
+  };
+}
+
+function plan(action: Record<string, unknown>) {
+  return currentPlanSchema.parse({
+    name: "Kernel test",
+    objective: "Prove admission",
+    preconditions: [],
+    allowedOrigins: ["https://example.test"],
+    budgets: { maxActions: 1, maxDurationMs: 5_000, maxNavigations: 1 },
+    checkpoints: [],
+    steps: [
+      {
+        id: "operation",
+        title: "Operation",
+        action,
+        assertions: [],
+        onFailure: "stop",
+        evidence: [],
+        captureIntent: "final",
+      },
+    ],
+  });
+}
+
+function target(
+  concept = "Email",
+  role: import("@scry/contracts").InteractionTargetIntent["preferredEvidence"]["roles"][number] = "textbox",
+  requiredCapabilities: import("@scry/contracts").InteractionTargetIntent["requiredCapabilities"] = [
+    "accepts_text",
+    "focusable",
+    "editable",
+  ],
+): import("@scry/contracts").InteractionTargetIntent {
+  return {
+    concept,
+    requiredCapabilities,
+    preferredEvidence: {
+      roles: [role],
+      names: [concept],
+      labels: [concept],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+    },
+    scope: { kind: "page" },
+    relations: [],
+    prohibited: ["hidden", "disabled"],
+    risk: "ordinary",
+    confidence: {
+      requiredFamilies: [],
+      minimum: 0.35,
+      minimumMargin: 0,
+      minimumFamilyCount: 1,
+    },
+  };
+}

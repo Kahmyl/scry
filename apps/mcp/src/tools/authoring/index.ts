@@ -18,8 +18,10 @@ import { registerListAuthenticatedSessionLeasesTool } from "./list-authenticated
 import { registerRevokeAuthenticatedSessionLeaseTool } from "./revoke-authenticated-session-lease.tool.js";
 import { registerBindCredentialFillStepTool } from "./bind-credential-fill-step.tool.js";
 import { registerBindProtectedTransactionStepTool } from "./bind-protected-transaction-step.tool.js";
+import { registerAdvanceAuthoringTurnTool } from "./advance-authoring-turn.tool.js";
 
 export function registerAuthoringTools(server: McpServer, client: ScryApiClient) {
+  registerAdvanceAuthoringTurnTool(server, client);
   registerValidateTestPlanTool(server, client);
   registerCreateFlowDraftTool(server, client);
   registerUpdateFlowDraftTool(server, client);

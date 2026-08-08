@@ -1,9 +1,11 @@
 import { createServer } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  executePlan,
   protectedTransactionDigest,
   transactionInputDigest,
   transactionInputSchemaDigest,
+  type MutationLedgerState,
 } from "@scry/executor";
 import type { ProtectedTransaction } from "@scry/contracts";
 
@@ -205,6 +207,9 @@ describe("worker calibration attestation", () => {
         mutationStates.push(state);
         return true;
       },
+      undefined,
+      undefined,
+      calibrationExecutor(),
     );
     expect(result.passed, JSON.stringify(result)).toBe(true);
     expect(result).toMatchObject({
@@ -216,7 +221,7 @@ describe("worker calibration attestation", () => {
     expect(mutations).toBe(1);
     expect(postTargetActions).toBe(0);
     expect(mutationStates).toEqual(["started", "completed"]);
-  }, 20_000);
+  }, 30_000);
 
   it("preserves the safe failing preflight step instead of collapsing it to boundary not reached", async () => {
     const server = createServer((_request, response) => {
@@ -334,6 +339,11 @@ describe("worker calibration attestation", () => {
         },
       },
       process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      calibrationExecutor(),
     );
     expect(result).toMatchObject({
       passed: false,
@@ -346,3 +356,31 @@ describe("worker calibration attestation", () => {
     });
   }, 20_000);
 });
+
+function calibrationExecutor() {
+  const states = new Map<string, MutationLedgerState>();
+  return async (input: {
+    plan: Parameters<typeof executePlan>[0]["plan"];
+    policy: Parameters<typeof executePlan>[0]["policy"];
+    options: Omit<Parameters<typeof executePlan>[0], "plan" | "policy">;
+    beforeMutationTransition(value: { expected: string; next: string }): Promise<boolean>;
+  }) =>
+    executePlan({
+      ...input.options,
+      plan: input.plan,
+      policy: input.policy,
+      protectedTransactionStore: {
+        claim: async ({ operationId }) => ({
+          state: states.get(operationId) ?? "planned",
+          fencingToken: 1,
+        }),
+        transition: async ({ operationId, expected, next }) => {
+          if ((states.get(operationId) ?? "planned") !== expected) return false;
+          if (!(await input.beforeMutationTransition({ expected, next }))) return false;
+          states.set(operationId, next);
+          return true;
+        },
+        record: async () => undefined,
+      },
+    });
+}

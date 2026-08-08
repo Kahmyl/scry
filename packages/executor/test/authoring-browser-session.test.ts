@@ -1,12 +1,10 @@
 import { createServer, type Server } from "node:http";
 
-import {
-  executionPolicySchema,
-  type InteractionTargetIntent,
-} from "@scry/contracts";
+import { executionPolicySchema, type InteractionTargetIntent } from "@scry/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createAuthoringBrowserSession } from "../src/authoring-browser-session.js";
+import { kernelInteractionExecutor } from "./kernel-harness.js";
 
 let server: Server;
 let origin: string;
@@ -45,14 +43,20 @@ afterAll(async () => {
 
 describe("persistent authoring browser session", () => {
   it("keeps one Veil-authorized page alive across observations and interactions", async () => {
+    const policy = executionPolicySchema.parse({
+      allowedOrigins: [origin],
+      allowPrivateNetwork: true,
+    });
     const session = await createAuthoringBrowserSession({
       sessionId: "11111111-1111-4111-8111-111111111111",
       environmentId: "authoring-test-environment",
       veilAdmissionKey: "authoring-test-only-veil-admission-key-32-bytes",
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
-      policy: executionPolicySchema.parse({
-        allowedOrigins: [origin],
-        allowPrivateNetwork: true,
+      policy,
+      executeInteraction: kernelInteractionExecutor({
+        sessionId: "11111111-1111-4111-8111-111111111111",
+        environmentId: "authoring-test-environment",
+        policy,
       }),
     });
 
@@ -64,19 +68,27 @@ describe("persistent authoring browser session", () => {
       await session.observeDocument();
 
       expect(session.documentEpoch()).toBe(1);
-      expect(await session.page.getByRole("heading").textContent()).toBe(
-        "First page",
+      expect(await session.page.getByRole("heading").textContent()).toBe("First page");
+
+      await session.interact(
+        {
+          type: "fill",
+          target: target("name", "textbox", "Name"),
+          value: "Habib",
+          timeoutMs: 1_000,
+        },
+        {
+          operationId: "fill-name",
+          expectedEffect: {
+            type: "value_change",
+            target: target("name", "textbox", "Name"),
+            expected: "Habib",
+          },
+          objectiveDelta: "Set the public display name",
+        },
       );
 
-      await session.interact({
-        type: "fill",
-        target: target("name", "textbox", "Name"),
-        value: "Habib",
-      });
-
-      expect(
-        await session.page.getByRole("textbox", { name: "Name" }).inputValue(),
-      ).toBe("Habib");
+      expect(await session.page.getByRole("textbox", { name: "Name" }).inputValue()).toBe("Habib");
       expect(session.documentEpoch()).toBe(1);
 
       await session.interact({
@@ -90,10 +102,24 @@ describe("persistent authoring browser session", () => {
       });
 
       expect(session.documentEpoch()).toBe(2);
-      expect(await session.page.getByRole("heading").textContent()).toBe(
-        "Second page",
-      );
+      expect(await session.page.getByRole("heading").textContent()).toBe("Second page");
       expect(session.page.url()).toBe(`${origin}/second`);
+
+      const missingEffect = await session.interact(
+        { type: "fill", target: target("name", "textbox", "Name"), value: "Other", timeoutMs: 200 },
+        {
+          operationId: "missing-effect",
+          expectedEffect: {
+            type: "value_change",
+            target: target("name", "textbox", "Name"),
+            expected: "Never observed",
+          },
+        },
+      );
+      expect(missingEffect.outcome).toMatchObject({
+        functionalResult: "failed",
+        reasonCode: "EXPECTED_EFFECT_NOT_OBSERVED",
+      });
 
       session.suspend();
       expect(session.state()).toBe("suspended");
@@ -112,14 +138,20 @@ describe("persistent authoring browser session", () => {
   }, 20_000);
 
   it("rejects protected or indirect-value authoring interactions", async () => {
+    const policy = executionPolicySchema.parse({
+      allowedOrigins: [origin],
+      allowPrivateNetwork: true,
+    });
     const session = await createAuthoringBrowserSession({
       sessionId: "22222222-2222-4222-8222-222222222222",
       environmentId: "authoring-test-environment",
       veilAdmissionKey: "authoring-test-only-veil-admission-key-32-bytes",
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
-      policy: executionPolicySchema.parse({
-        allowedOrigins: [origin],
-        allowPrivateNetwork: true,
+      policy,
+      executeInteraction: kernelInteractionExecutor({
+        sessionId: "22222222-2222-4222-8222-222222222222",
+        environmentId: "authoring-test-environment",
+        policy,
       }),
     });
 

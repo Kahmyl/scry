@@ -1,10 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { Inject, Injectable } from "@nestjs/common";
-import type {
-  AuthoringRuntimeCommandType,
-  ClaimedAuthoringRuntimeCommand,
-} from "@scry/contracts";
+import type { AuthoringRuntimeCommandType, ClaimedAuthoringRuntimeCommand } from "@scry/contracts";
 
 import { Database } from "../../infrastructure/index.js";
 
@@ -38,6 +35,37 @@ export class AuthoringRuntimeCommandRepository {
     input: EnqueueAuthoringRuntimeCommandInput,
   ): Promise<EnqueuedAuthoringRuntimeCommand> {
     return this.db.transaction(async (client) => {
+      const requestHash = hash({
+        type: input.type,
+        payload: input.payload,
+        missionId: input.missionId,
+        agentSessionId: input.agentSessionId,
+      });
+      const replay = await client.query<{
+        id: string;
+        state: EnqueuedAuthoringRuntimeCommand["state"];
+        requestHash: string;
+      }>(
+        `SELECT command.id,command.state,command.request_hash AS "requestHash"
+         FROM authoring_runtime_commands command
+         JOIN probe_sessions probe
+           ON probe.id=command.probe_session_id
+          AND probe.mission_id=$4
+         JOIN agent_sessions agent
+           ON agent.id=$3
+          AND agent.mission_id=probe.mission_id
+          AND agent.status='active'
+         WHERE command.probe_session_id=$1
+           AND command.idempotency_key=$2`,
+        [input.probeSessionId, input.idempotencyKey, input.agentSessionId, input.missionId],
+      );
+      if (replay.rowCount) {
+        if (replay.rows[0]!.requestHash !== requestHash) {
+          throw new Error("AUTHORING_COMMAND_IDEMPOTENCY_CONFLICT");
+        }
+        return { id: replay.rows[0]!.id, state: replay.rows[0]!.state, replayed: true };
+      }
+
       const runtime = await client.query<{
         probeSessionId: string;
         browserLeaseId: string;
@@ -61,7 +89,7 @@ export class AuthoringRuntimeCommandRepository {
            AND probe.cancellation_requested_at IS NULL
            AND (
              (
-               $4 IN ('observe_document','interact','suspend','cancel')
+               $4 IN ('observe_document','interact','advance_turn','suspend','cancel')
                AND authoring.status='active'
                AND lease.state='active'
              )
@@ -73,12 +101,7 @@ export class AuthoringRuntimeCommandRepository {
            )
            AND lease.expires_at>now()
          FOR UPDATE OF authoring,lease`,
-        [
-          input.probeSessionId,
-          input.missionId,
-          input.agentSessionId,
-          input.type,
-        ],
+        [input.probeSessionId, input.missionId, input.agentSessionId, input.type],
       );
 
       const active = runtime.rows[0];
@@ -86,13 +109,6 @@ export class AuthoringRuntimeCommandRepository {
       if (!active) {
         throw new Error("AUTHORING_RUNTIME_NOT_ACTIVE");
       }
-
-      const requestHash = hash({
-        type: input.type,
-        payload: input.payload,
-        missionId: input.missionId,
-        agentSessionId: input.agentSessionId,
-      });
 
       const command = await client.query<EnqueuedAuthoringRuntimeCommand>(
         `INSERT INTO authoring_runtime_commands(
@@ -160,6 +176,7 @@ export class AuthoringRuntimeCommandRepository {
                  AND command.type IN (
                    'observe_document',
                    'interact',
+                   'advance_turn',
                    'suspend',
                    'cancel'
                  )
@@ -196,17 +213,32 @@ export class AuthoringRuntimeCommandRepository {
     });
   }
 
+  heartbeatClaim(input: SettleCommandInput): Promise<boolean> {
+    return this.db
+      .query(
+        `UPDATE authoring_runtime_commands command
+         SET claimed_at=now(),updated_at=now()
+         FROM authoring_browser_leases lease
+         WHERE command.id=$1
+           AND command.browser_lease_id=$2
+           AND command.claimed_by_runtime_owner_id=$3
+           AND command.claim_token=$4
+           AND command.state='claimed'
+           AND lease.id=command.browser_lease_id
+           AND lease.runtime_owner_id=$3
+           AND lease.state IN ('active','suspended')
+         RETURNING command.id`,
+        [input.commandId, input.browserLeaseId, input.workerId, input.claimToken],
+      )
+      .then((result) => Boolean(result.rowCount));
+  }
+
   complete(
     input: SettleCommandInput & {
       safeResult: Record<string, unknown>;
     },
   ) {
-    return this.settle(
-      input,
-      "completed",
-      input.safeResult,
-      undefined,
-    );
+    return this.settle(input, "completed", input.safeResult, undefined);
   }
 
   fail(
@@ -214,12 +246,7 @@ export class AuthoringRuntimeCommandRepository {
       safeError: Record<string, unknown>;
     },
   ) {
-    return this.settle(
-      input,
-      "failed",
-      undefined,
-      input.safeError,
-    );
+    return this.settle(input, "failed", undefined, input.safeError);
   }
 
   cancelPending(probeSessionId: string, exceptCommandId?: string) {
@@ -256,6 +283,65 @@ export class AuthoringRuntimeCommandRepository {
       .then((result) => result.rowCount);
   }
 
+  async result(commandId: string) {
+    const result = await this.db.query<{
+      state: "pending" | "claimed" | "completed" | "failed" | "cancelled";
+      outcome: "completed" | "failed" | "cancelled" | null;
+      safeResult: Record<string, unknown> | null;
+      safeError: Record<string, unknown> | null;
+    }>(
+      `SELECT command.state,result.outcome,
+              result.safe_result AS "safeResult",result.safe_error AS "safeError"
+       FROM authoring_runtime_commands command
+       LEFT JOIN authoring_runtime_command_results result ON result.command_id=command.id
+       WHERE command.id=$1`,
+      [commandId],
+    );
+    return result.rows[0];
+  }
+
+  async recoverStaleClaims(before: Date): Promise<number> {
+    const result = await this.db.query(
+      `WITH stale AS (
+         SELECT id,probe_session_id,payload,type,
+           CASE
+             WHEN type='interact' AND payload->'action'->>'type' IN
+               ('click','fill','select','check','press','protectedTransaction') THEN true
+             WHEN type='advance_turn' AND EXISTS (
+               SELECT 1 FROM jsonb_array_elements(COALESCE(payload->'operations','[]'::jsonb)) op
+               WHERE op->'action'->>'type' IN
+                 ('click','fill','select','check','press','protectedTransaction')
+             ) THEN true
+             ELSE false
+           END AS mutating
+         FROM authoring_runtime_commands
+         WHERE state='claimed' AND claimed_at<$1
+         FOR UPDATE SKIP LOCKED
+       ), failed AS (
+         UPDATE authoring_runtime_commands command
+         SET state='failed',completed_at=now(),updated_at=now()
+         FROM stale
+         WHERE command.id=stale.id
+         RETURNING command.id,command.probe_session_id,stale.mutating
+       )
+       INSERT INTO authoring_runtime_command_results(
+         command_id,probe_session_id,outcome,safe_result,safe_error
+       )
+       SELECT id,probe_session_id,'failed',NULL,
+         jsonb_build_object(
+           'code','AUTHORING_COMMAND_LEASE_LOST',
+           'mutationOutcome',CASE WHEN mutating THEN 'unknown' ELSE 'not_applied' END,
+           'safeActions',CASE WHEN mutating
+             THEN jsonb_build_array('reconcile_mutation','do_not_retry')
+             ELSE jsonb_build_array('retry_same_idempotency_key') END
+         )
+       FROM failed
+       ON CONFLICT(command_id) DO NOTHING`,
+      [before],
+    );
+    return result.rowCount ?? 0;
+  }
+
   private async settle(
     input: SettleCommandInput,
     outcome: "completed" | "failed",
@@ -280,12 +366,7 @@ export class AuthoringRuntimeCommandRepository {
            AND lease.runtime_owner_id=$3
            AND lease.state IN ('active','suspended')
          FOR UPDATE OF command`,
-        [
-          input.commandId,
-          input.browserLeaseId,
-          input.workerId,
-          input.claimToken,
-        ],
+        [input.commandId, input.browserLeaseId, input.workerId, input.claimToken],
       );
 
       const probeSessionId = owned.rows[0]?.probeSessionId;

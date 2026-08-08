@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -19,11 +19,19 @@ afterEach(async () => {
 });
 
 async function fixture(
-  options: { failStart?: boolean; failStop?: boolean; omitFile?: boolean; closed?: boolean } = {},
+  options: {
+    failStart?: boolean;
+    failStop?: boolean;
+    omitFile?: boolean;
+    closed?: boolean;
+    stopDelayMs?: number;
+    transitionTimeoutMs?: number;
+  } = {},
 ) {
   const root = await mkdtemp(path.join(os.tmpdir(), "scry-recording-"));
   roots.push(root);
   let activePath: string | undefined;
+  let captureAborted = false;
   const startInputs: Array<{ path?: string; size?: { width: number; height: number } }> = [];
   const page = {
     isClosed: () => options.closed ?? false,
@@ -36,6 +44,8 @@ async function fixture(
       stop: async () => {
         if (options.failStop) throw new Error("stop failed");
         if (!activePath) throw new Error("not active");
+        if (options.stopDelayMs) await new Promise((resolve) => setTimeout(resolve, options.stopDelayMs));
+        if (captureAborted) return;
         if (!options.omitFile) await writeFile(activePath, Buffer.from("synthetic-webm-segment"));
         activePath = undefined;
       },
@@ -82,6 +92,11 @@ async function fixture(
       frameId: "main",
       documentEpoch: 1,
     }),
+    transitionTimeoutMs: options.transitionTimeoutMs,
+    abortCapture: async () => {
+      captureAborted = true;
+      activePath = undefined;
+    },
   });
   const authority = new VeilAuthority(
     compileVeilPolicy({ profile: "balanced", allowedOrigins: ["https://recording.test"] }),
@@ -193,9 +208,23 @@ describe("RecordingCoordinator", () => {
     await coordinator.startSegment({ page, reason: "run_started" });
     await coordinator.finalize();
     expect(coordinator.timeline()[0]).toEqual(
-      expect.objectContaining({ status: "failed", failureCode: "SEGMENT_VALIDATION_FAILED" }),
+      expect.objectContaining({ status: "failed", failureCode: "SEGMENT_FILE_MISSING" }),
     );
     expect(coordinator.isSealed()).toBe(true);
+  });
+
+  it("aborts a timed-out collector and prevents late segment bytes", async () => {
+    const { root, page, coordinator } = await fixture({
+      stopDelayMs: 30,
+      transitionTimeoutMs: 5,
+    });
+    await coordinator.startSegment({ page, reason: "run_started" });
+    await coordinator.finalize();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(coordinator.timeline()[0]).toEqual(
+      expect.objectContaining({ status: "failed", failureCode: "SCREENCAST_STOP_FAILED" }),
+    );
+    expect(await readdir(path.join(root, "video"))).toEqual([]);
   });
 
   it("seals rather than switching to a closed page", async () => {

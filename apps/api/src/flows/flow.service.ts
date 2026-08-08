@@ -28,6 +28,7 @@ import type { PoolClient, QueryResultRow } from "pg";
 import type { Principal } from "../auth/index.js";
 import { Database } from "../infrastructure/index.js";
 import { ReleaseAdmissionService } from "../runtime/index.js";
+import { adaptiveExecutionFlags } from "../runtime/index.js";
 import { snapshotVeilPolicy } from "../veil/index.js";
 import { FlowReadRepository } from "./flow-read.repository.js";
 
@@ -56,6 +57,11 @@ export class FlowService {
     return {
       releaseId: process.env.SCRY_RELEASE_ID ?? "development",
       schemaFingerprint: process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline",
+      adaptiveExecution: {
+        kernel: adaptiveExecutionFlags().executionKernel,
+        authoringTurn: adaptiveExecutionFlags().authoringTurn,
+        modes: ["observe", "rehearse", "transact", "certify", "run"],
+      },
       supportedActions: [
         "navigate",
         "click",

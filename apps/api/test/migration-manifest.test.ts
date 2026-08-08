@@ -12,15 +12,9 @@ describe("schema migration manifest", () => {
     const retention = baseline.indexOf("\\ir veil-artifact-retention.sql");
     const compiledPlan = baseline.indexOf("\\ir compiled-plan-cutover.sql");
     const statefulProbe = baseline.indexOf("\\ir stateful-probe-authoring.sql");
-    const interactiveCommands = baseline.indexOf(
-      "\\ir interactive-runtime-commands.sql",
-    );
-    const interactiveLifecycle = baseline.indexOf(
-      "\\ir interactive-runtime-lifecycle.sql",
-    );
-    const authenticationAuthoring = baseline.indexOf(
-      "\\ir authentication-authoring.sql",
-    );
+    const interactiveCommands = baseline.indexOf("\\ir interactive-runtime-commands.sql");
+    const interactiveLifecycle = baseline.indexOf("\\ir interactive-runtime-lifecycle.sql");
+    const authenticationAuthoring = baseline.indexOf("\\ir authentication-authoring.sql");
 
     expect(preferences).toBeGreaterThan(-1);
     expect(retention).toBeGreaterThan(preferences);
@@ -34,12 +28,13 @@ describe("schema migration manifest", () => {
   it("recognizes the compiled-plan schema and applies the guarded interactive command cutover", async () => {
     const migrate = await readFile(new URL("scripts/migrate.ts", root), "utf8");
 
-    expect(migrate).toContain("compiledPlanFingerprint");
-    expect(migrate).toContain("statefulProbeAuthoringFingerprint");
+    expect(migrate).toContain("releasedHistoricalFingerprints.compiled_plan");
+    expect(migrate).toContain("releasedHistoricalFingerprints.stateful_probe_authoring");
     expect(migrate).toContain("supportedPreviousFingerprints");
+    expect(migrate).toContain("deployedAdaptiveAuthoringFingerprint");
     expect(migrate).toContain("await client.query(interactiveRuntimeCommands)");
     expect(migrate).toContain("await client.query(interactiveRuntimeLifecycle)");
-    expect(migrate).toContain("interactiveRuntimeCommandsFingerprint");
+    expect(migrate).toContain("releasedHistoricalFingerprints.interactive_runtime_commands");
     expect(migrate).toContain("scry-interactive-runtime-lifecycle-cutover");
   });
 
@@ -58,6 +53,8 @@ describe("schema migration manifest", () => {
       expect(source).toContain("interactive-runtime-lifecycle.sql");
       expect(source).toContain("praxis-candidate-inspection.sql");
       expect(source).toContain("authentication-authoring.sql");
+      expect(source).toContain("adaptive-authoring-pr9-pr12.sql");
+      expect(source).toContain("adaptive-execution-foundation-m0-m1.sql");
     }
   });
 
@@ -101,9 +98,7 @@ describe("schema migration manifest", () => {
       "utf8",
     );
 
-    expect(cutover).toContain(
-      "ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'queued'",
-    );
+    expect(cutover).toContain("ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'queued'");
     expect(cutover).toContain("probe_sessions_mode_check");
     expect(cutover).toContain("CHECK (mode IN ('queued', 'interactive'))");
   });
@@ -118,12 +113,12 @@ describe("schema migration manifest", () => {
     expect(cutover).not.toContain("probe_session_id uuid NOT NULL UNIQUE");
     expect(cutover).toContain("UNIQUE (id, probe_session_id)");
     expect(cutover).toContain("authoring_browser_leases_live_probe_idx");
-    expect(cutover).toContain("WHERE state IN ('provisioning', 'active', 'suspended', 'releasing')");
+    expect(cutover).toContain(
+      "WHERE state IN ('provisioning', 'active', 'suspended', 'releasing')",
+    );
     expect(cutover).toContain("CREATE TABLE IF NOT EXISTS probe_authoring_sessions");
     expect(cutover).toContain("FOREIGN KEY (browser_lease_id, probe_session_id)");
-    expect(cutover).toContain(
-      "REFERENCES authoring_browser_leases(id, probe_session_id)",
-    );
+    expect(cutover).toContain("REFERENCES authoring_browser_leases(id, probe_session_id)");
   });
 
   it("persists fenced interactive commands and terminal results", async () => {
@@ -132,21 +127,13 @@ describe("schema migration manifest", () => {
       "utf8",
     );
 
-    expect(cutover).toContain(
-      "CREATE TABLE IF NOT EXISTS authoring_runtime_commands",
-    );
-    expect(cutover).toContain(
-      "CREATE TABLE IF NOT EXISTS authoring_runtime_command_results",
-    );
+    expect(cutover).toContain("CREATE TABLE IF NOT EXISTS authoring_runtime_commands");
+    expect(cutover).toContain("CREATE TABLE IF NOT EXISTS authoring_runtime_command_results");
     expect(cutover).toContain("UNIQUE (probe_session_id, idempotency_key)");
     expect(cutover).toContain("claimed_by_runtime_owner_id text");
     expect(cutover).toContain("claim_token uuid UNIQUE");
-    expect(cutover).toContain(
-      "REFERENCES authoring_browser_leases(id, probe_session_id)",
-    );
-    expect(cutover).toContain(
-      "CHECK (outcome IN ('completed', 'failed', 'cancelled'))",
-    );
+    expect(cutover).toContain("REFERENCES authoring_browser_leases(id, probe_session_id)");
+    expect(cutover).toContain("CHECK (outcome IN ('completed', 'failed', 'cancelled'))");
   });
   it("expands interactive command types through a forward-only migration", async () => {
     const cutover = await readFile(
@@ -154,13 +141,10 @@ describe("schema migration manifest", () => {
       "utf8",
     );
 
-    expect(cutover).toContain(
-      "DROP CONSTRAINT authoring_runtime_commands_type_check",
-    );
+    expect(cutover).toContain("DROP CONSTRAINT authoring_runtime_commands_type_check");
     expect(cutover).toContain("'interact'");
     expect(cutover).toContain("'suspend'");
     expect(cutover).toContain("'resume'");
     expect(cutover).toContain("'cancel'");
   });
-
 });

@@ -23,7 +23,7 @@ type RecordingEvent =
   | "recording.gap_ended"
   | "recording.sealed";
 
-const transitionTimeoutMs = 5_000;
+const defaultTransitionTimeoutMs = 5_000;
 
 type ActiveSegment = {
   id: string;
@@ -56,6 +56,8 @@ export type RecordingCoordinatorOptions = {
   createId?: () => string;
   videoAuthority?: VeilVideoSegmentAuthority;
   videoBinding?: () => VeilVideoSegmentBinding;
+  transitionTimeoutMs?: number;
+  abortCapture?: () => Promise<void>;
 };
 
 export class RecordingCoordinator {
@@ -111,7 +113,7 @@ export class RecordingCoordinator {
         // active screencast negotiate its own dimensions so the WebM canvas
         // always matches the incoming frames. Forcing the run viewport here
         // makes Playwright pad smaller shared frames with gray pixels.
-        await bounded(page.screencast.start({ path: filePath }), "Screencast start timed out");
+        await this.bounded(page.screencast.start({ path: filePath }), "SCREENCAST_START_TIMEOUT");
       } catch (error) {
         this.timelineEntries.push(this.unavailable(segment.startedAt, "SCREENCAST_START_FAILED"));
         await this.sealUnsafe("SCREENCAST_START_FAILED");
@@ -216,7 +218,7 @@ export class RecordingCoordinator {
     };
     try {
       await this.armVideoVeil(segment);
-      await bounded(page.screencast.start({ path: filePath }), "Screencast start timed out");
+      await this.bounded(page.screencast.start({ path: filePath }), "SCREENCAST_START_TIMEOUT");
       this.activeSegment = segment;
       await this.emit("recording.segment_started", {
         id,
@@ -238,7 +240,7 @@ export class RecordingCoordinator {
     await segment.veilCheckpoint?.catch(() => undefined);
     let stopFailed = false;
     try {
-      await bounded(segment.page.screencast.stop(), "Screencast stop timed out");
+      await this.bounded(segment.page.screencast.stop(), "SCREENCAST_STOP_TIMEOUT");
     } catch {
       stopFailed = true;
     }
@@ -262,15 +264,17 @@ export class RecordingCoordinator {
       return;
     }
     try {
-      await stat(segment.filePath);
+      await stat(segment.filePath).catch(() => {
+        throw new Error("SEGMENT_FILE_MISSING");
+      });
       if (segment.veilFailure) throw segment.veilFailure;
       let videoFinalization: VeilVideoSegmentFinalization | undefined;
       if (segment.veilPermit && segment.veilBinding && this.options.videoAuthority) {
-        await this.options.videoAuthority.checkpoint(
-          segment.page,
-          segment.veilPermit,
-          segment.veilBinding,
-        );
+        await this.options.videoAuthority
+          .checkpoint(segment.page, segment.veilPermit, segment.veilBinding)
+          .catch(() => {
+            throw new Error("VEIL_VIDEO_FINALIZATION_FAILED");
+          });
         videoFinalization = this.options.videoAuthority.finalize(
           segment.veilPermit,
           segment.veilBinding,
@@ -343,6 +347,7 @@ export class RecordingCoordinator {
         });
         return;
       }
+      const failureCode = segmentFailureCode(error);
       this.timelineEntries.push({
         type: "video_segment",
         id: segment.id,
@@ -353,10 +358,10 @@ export class RecordingCoordinator {
         reason: segment.reason,
         status: "failed",
         privacyStatus: "quarantined",
-        failureCode: "SEGMENT_VALIDATION_FAILED",
+        failureCode,
       });
       await this.emit("recording.segment_stopped", { entry: this.timelineEntries.at(-1) });
-      await this.sealUnsafe("SEGMENT_VALIDATION_FAILED");
+      await this.sealUnsafe(failureCode);
     }
   }
 
@@ -444,18 +449,30 @@ export class RecordingCoordinator {
     );
     return next;
   }
+
+  private async bounded<T>(operation: Promise<T>, code: string): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(async () => {
+            await this.options.abortCapture?.().catch(() => undefined);
+            reject(new Error(code));
+          }, this.options.transitionTimeoutMs ?? defaultTransitionTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
 }
 
-async function bounded<T>(operation: Promise<T>, message: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      operation,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), transitionTimeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
+function segmentFailureCode(error: unknown): string {
+  if (error instanceof Error) {
+    if (error.message === "SEGMENT_FILE_MISSING") return error.message;
+    if (error.message === "VEIL_VIDEO_FINALIZATION_FAILED") return error.message;
+    if (error.message.includes("VEIL_VIDEO")) return "VEIL_VIDEO_ADMISSION_FAILED";
   }
+  return "SEGMENT_MEDIA_VALIDATION_FAILED";
 }

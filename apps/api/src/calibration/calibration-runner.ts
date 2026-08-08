@@ -2,11 +2,10 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
-  executePlan,
   structureFingerprint,
+  type ExecuteOptions,
+  type ExecutionReport,
   type CalibrationStructure,
-  type MutationLedgerState,
-  type ProtectedTransactionStore,
 } from "@scry/executor";
 import { unzipSync } from "fflate";
 
@@ -22,7 +21,14 @@ export async function runCalibrationAttestation(
   markMutation?: (state: "started" | "completed" | "unknown") => Promise<boolean>,
   onPhase?: (phase: string) => Promise<boolean>,
   veilAdmissionKey = process.env.VEIL_ADMISSION_KEY,
+  execute?: (input: {
+    plan: ExecuteOptions["plan"];
+    policy: ExecuteOptions["policy"];
+    options: Omit<ExecuteOptions, "plan" | "policy">;
+    beforeMutationTransition(input: { expected: string; next: string }): Promise<boolean>;
+  }) => Promise<ExecutionReport>,
 ): Promise<CalibrationCompletion> {
+  if (!execute) throw new Error("EXECUTION_KERNEL_REQUIRED");
   const outputDirectory = await mkdtemp(path.join(tmpdir(), "scry-calibration-"));
   let boundary: { structure: CalibrationStructure; url: string } | undefined;
   const capturedProtectedValues: string[] = [];
@@ -30,25 +36,6 @@ export async function runCalibrationAttestation(
   let protectedFailure: Record<string, unknown> | undefined;
   let transactionResult: Record<string, unknown> | undefined;
   let mutationCount = 0;
-  const states = new Map<string, MutationLedgerState>();
-  const transactionStore: ProtectedTransactionStore = {
-    claim: async ({ operationId }) => ({
-      state: states.get(operationId) ?? "planned",
-      fencingToken: 1,
-    }),
-    transition: async ({ operationId, expected, next }) => {
-      if ((states.get(operationId) ?? "planned") !== expected) return false;
-      if (next === "dispatching") {
-        mutationCount += 1;
-        await onPhase?.("executing_protected_transaction");
-        if (mutationCount > 1 || !((await markMutation?.("started")) ?? true)) return false;
-      }
-      if (next === "acknowledged" && !((await markMutation?.("completed")) ?? true)) return false;
-      states.set(operationId, next);
-      return true;
-    },
-    record: async () => undefined,
-  };
   try {
     const targetIndex = runtime.plan.steps.findIndex(
       (step) =>
@@ -79,43 +66,57 @@ export async function runCalibrationAttestation(
           : step,
       ),
     };
-    const report = await executePlan({
+    const report = await execute({
       plan: calibrationPlan,
       policy: runtime.policy,
-      outputDirectory,
-      browserChannel,
-      ...(veilAdmissionKey ? { veilAdmissionKey } : {}),
-      ...(resolveCredential ? { secretResolver: resolveCredential } : {}),
-      protectedTransactionStore: transactionStore,
-      atomicSecretCapture: async ({ value }) => {
-        capturedProtectedValues.push(value);
-        return { credentialId: crypto.randomUUID() };
+      beforeMutationTransition: async ({ next }) => {
+        if (next === "dispatching") {
+          mutationCount += 1;
+          await onPhase?.("executing_protected_transaction");
+          if (mutationCount > 1 || !((await markMutation?.("started")) ?? true)) return false;
+        }
+        if (next === "acknowledged" && !((await markMutation?.("completed")) ?? true)) return false;
+        return true;
       },
-      publicValueCapture: async ({ reference, value }) => {
-        const valueId = crypto.randomUUID();
-        capturedPublicValues.set(valueId, value);
-        capturedPublicValues.set(reference, value);
-        return { valueId };
-      },
-      publicValueResolver: async (reference) => capturedPublicValues.get(reference) ?? reference,
-      calibrationRehearsal: {
-        operationId: runtime.operationId,
-        stopBeforeMutation: false,
-        onBoundary: async ({ structure, url }) => {
-          boundary = { structure, url };
-          await onPhase?.("boundary_reached");
-          await onPhase?.("arming_privacy");
+      options: {
+        outputDirectory,
+        browserChannel,
+        ...(veilAdmissionKey ? { veilAdmissionKey } : {}),
+        ...(resolveCredential ? { secretResolver: resolveCredential } : {}),
+        atomicSecretCapture: async ({ value }) => {
+          capturedProtectedValues.push(value);
+          return { credentialId: crypto.randomUUID() };
         },
-      },
-      onEvent: (event) => {
-        if (event.type === "privacy.operation_failed")
-          protectedFailure = safeProtectedFailure(event.payload);
-        if (
-          event.type === "privacy.operation_completed" &&
-          event.payload.result &&
-          typeof event.payload.result === "object"
-        )
-          transactionResult = event.payload.result as Record<string, unknown>;
+        publicValueCapture: async ({ reference, value }) => {
+          const valueId = crypto.randomUUID();
+          capturedPublicValues.set(valueId, value);
+          capturedPublicValues.set(reference, value);
+          return { valueId };
+        },
+        publicValueResolver: async (reference) => {
+          const value = capturedPublicValues.get(reference);
+          if (value === undefined) throw new Error("GENERATED_PUBLIC_VALUE_UNAVAILABLE");
+          return value;
+        },
+        calibrationRehearsal: {
+          operationId: runtime.operationId,
+          stopBeforeMutation: false,
+          onBoundary: async ({ structure, url }) => {
+            boundary = { structure, url };
+            await onPhase?.("boundary_reached");
+            await onPhase?.("arming_privacy");
+          },
+        },
+        onEvent: (event) => {
+          if (event.type === "privacy.operation_failed")
+            protectedFailure = safeProtectedFailure(event.payload);
+          if (
+            event.type === "privacy.operation_completed" &&
+            event.payload.result &&
+            typeof event.payload.result === "object"
+          )
+            transactionResult = event.payload.result as Record<string, unknown>;
+        },
       },
     });
     const failedStep = report.steps.find((step) => step.status === "failed");

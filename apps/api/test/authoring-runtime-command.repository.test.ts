@@ -4,20 +4,17 @@ import { AuthoringRuntimeCommandRepository } from "../src/authoring/index.js";
 
 function harness(responses: Array<{ rowCount: number; rows: unknown[] }>) {
   const client = {
-    query: vi.fn(
-      async (_text: string, _values?: unknown[]) =>
-        responses.shift() ?? { rowCount: 1, rows: [] },
-    ),
+    query: vi.fn(async (text: string, _values?: unknown[]) => {
+      if (text.includes('request_hash AS "requestHash"')) return { rowCount: 0, rows: [] };
+      return responses.shift() ?? { rowCount: 1, rows: [] };
+    }),
   };
 
   const database = {
     query: vi.fn(
-      async (_text: string, _values?: unknown[]) =>
-        responses.shift() ?? { rowCount: 1, rows: [] },
+      async (_text: string, _values?: unknown[]) => responses.shift() ?? { rowCount: 1, rows: [] },
     ),
-    transaction: vi.fn(
-      async (work: (value: typeof client) => Promise<unknown>) => work(client),
-    ),
+    transaction: vi.fn(async (work: (value: typeof client) => Promise<unknown>) => work(client)),
   };
 
   return {
@@ -66,13 +63,17 @@ describe("authoring runtime command transport", () => {
       replayed: false,
     });
 
-    expect(String(client.query.mock.calls[0]![0])).toContain(
-      "authoring.status='active'",
-    );
-    expect(String(client.query.mock.calls[0]![0])).toContain(
-      "lease.state='active'",
-    );
-    expect(String(client.query.mock.calls[1]![0])).toContain(
+    expect(String(client.query.mock.calls[1]![0])).toContain("authoring.status='active'");
+    expect(String(client.query.mock.calls[0]![0])).toContain("agent.status='active'");
+    expect(String(client.query.mock.calls[0]![0])).toContain("probe.mission_id=$4");
+    expect(client.query.mock.calls[0]![1]).toEqual([
+      "11111111-1111-4111-8111-111111111111",
+      "observe-command-1",
+      "55555555-5555-4555-8555-555555555555",
+      "44444444-4444-4444-8444-444444444444",
+    ]);
+    expect(String(client.query.mock.calls[1]![0])).toContain("lease.state='active'");
+    expect(String(client.query.mock.calls[2]![0])).toContain(
       "ON CONFLICT (probe_session_id,idempotency_key)",
     );
   });
@@ -105,19 +106,13 @@ describe("authoring runtime command transport", () => {
         },
         idempotencyKey: "observe-command-1",
       }),
-    ).rejects.toThrow(
-      "AUTHORING_COMMAND_IDEMPOTENCY_CONFLICT",
-    );
+    ).rejects.toThrow("AUTHORING_COMMAND_IDEMPOTENCY_CONFLICT");
 
-    const sql = String(client.query.mock.calls[1]![0]);
+    const sql = String(client.query.mock.calls[2]![0]);
 
     expect(sql).toContain("request_hash");
-    expect(sql).toContain(
-      "authoring_runtime_commands.request_hash=EXCLUDED.request_hash",
-    );
-    expect(client.query.mock.calls[1]![1]?.[5]).toMatch(
-      /^[a-f0-9]{64}$/,
-    );
+    expect(sql).toContain("authoring_runtime_commands.request_hash=EXCLUDED.request_hash");
+    expect(client.query.mock.calls[2]![1]?.[5]).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("claims the next pending command only for the active runtime owner", async () => {
@@ -138,10 +133,7 @@ describe("authoring runtime command transport", () => {
     ]);
 
     await expect(
-      repository.claimNext(
-        "22222222-2222-4222-8222-222222222222",
-        "worker-1",
-      ),
+      repository.claimNext("22222222-2222-4222-8222-222222222222", "worker-1"),
     ).resolves.toMatchObject({
       id: "33333333-3333-4333-8333-333333333333",
       claimToken: "66666666-6666-4666-8666-666666666666",
@@ -182,22 +174,14 @@ describe("authoring runtime command transport", () => {
       }),
     ).resolves.toBe(true);
 
-    expect(String(client.query.mock.calls[0]![0])).toContain(
-      "claimed_by_runtime_owner_id=$3",
-    );
-    expect(String(client.query.mock.calls[0]![0])).toContain(
-      "claim_token=$4",
-    );
-    expect(String(client.query.mock.calls[1]![0])).toContain(
-      "SET state=$2",
-    );
+    expect(String(client.query.mock.calls[0]![0])).toContain("claimed_by_runtime_owner_id=$3");
+    expect(String(client.query.mock.calls[0]![0])).toContain("claim_token=$4");
+    expect(String(client.query.mock.calls[1]![0])).toContain("SET state=$2");
     expect(client.query.mock.calls[1]![1]).toEqual([
       "33333333-3333-4333-8333-333333333333",
       "completed",
     ]);
-    expect(String(client.query.mock.calls[2]![0])).toContain(
-      "authoring_runtime_command_results",
-    );
+    expect(String(client.query.mock.calls[2]![0])).toContain("authoring_runtime_command_results");
     expect(client.query.mock.calls[2]![1]).toEqual([
       "33333333-3333-4333-8333-333333333333",
       "11111111-1111-4111-8111-111111111111",
@@ -236,16 +220,12 @@ describe("authoring runtime command transport", () => {
       }),
     ).resolves.toBe(true);
 
-    expect(String(client.query.mock.calls[1]![0])).toContain(
-      "SET state=$2",
-    );
+    expect(String(client.query.mock.calls[1]![0])).toContain("SET state=$2");
     expect(client.query.mock.calls[1]![1]).toEqual([
       "33333333-3333-4333-8333-333333333333",
       "failed",
     ]);
-    expect(String(client.query.mock.calls[2]![0])).toContain(
-      "safe_error",
-    );
+    expect(String(client.query.mock.calls[2]![0])).toContain("safe_error");
     expect(client.query.mock.calls[2]![1]).toEqual([
       "33333333-3333-4333-8333-333333333333",
       "11111111-1111-4111-8111-111111111111",
@@ -255,5 +235,15 @@ describe("authoring runtime command transport", () => {
         code: "AUTHORING_COMMAND_FAILED",
       }),
     ]);
+  });
+
+  it("terminally classifies stale mutating claims for reconciliation", async () => {
+    const { repository, database } = harness([{ rowCount: 1, rows: [] }]);
+    await expect(repository.recoverStaleClaims(new Date(0))).resolves.toBe(1);
+    const sql = String(database.query.mock.calls[0]![0]);
+    expect(sql).toContain("AUTHORING_COMMAND_LEASE_LOST");
+    expect(sql).toContain("reconcile_mutation");
+    expect(sql).toContain("WHERE state='claimed'");
+    expect(sql).toContain("claimed_at<$1");
   });
 });

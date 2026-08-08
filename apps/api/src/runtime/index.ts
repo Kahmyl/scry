@@ -21,3 +21,9 @@ export {
 } from "./services/run-queue.service.js";
 
 export { RuntimeModule } from "./runtime.module.js";
+export { adaptiveExecutionFlags, type AdaptiveExecutionFlags } from "./adaptive-execution-flags.js";
+export { ExecutionKernelRepository } from "./repositories/execution-kernel.repository.js";
+export {
+  ExecutionCapabilityFactory,
+  ExecutionKernelService,
+} from "./services/execution-kernel.service.js";

@@ -73,6 +73,7 @@ describe("current Scry MCP surface", () => {
       "retry_calibration",
       "cancel_calibration",
       "bind_calibration",
+      "advance_authoring_turn",
       "validate_test_plan",
       "create_flow_draft",
       "update_flow_draft",
@@ -104,6 +105,73 @@ describe("current Scry MCP surface", () => {
       "search_artifact",
       "extract_artifact_html",
     ]);
+    await client.close();
+    await server.close();
+  });
+
+  it("advances one grouped authoring turn with a single API request", async () => {
+    const requests: Array<{ method: string; path: string; body?: Record<string, unknown> }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(String(input));
+        requests.push({
+          method: init?.method ?? "GET",
+          path: url.pathname,
+          ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}),
+        });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              correlationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              operationsCompleted: [],
+              safeState: { documentEpoch: 1, url: "https://example.test/" },
+              decisionBoundary: {
+                type: "objective_completed",
+                reasonCode: "AUTHORING_TURN_COMPLETED",
+                safeActions: [],
+              },
+              timings: { totalMs: 1 },
+              bytesReturned: 128,
+            }),
+            { status: 200 },
+          ),
+        );
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "advance_authoring_turn",
+      arguments: {
+        ...context,
+        probeSessionId: "11111111-1111-4111-8111-111111111111",
+        objectiveDelta: "Open the read-only details page",
+        operations: [
+          {
+            operationId: "open-details",
+            action: { type: "navigate", url: "https://example.test/details" },
+            expectedEffect: { type: "navigation", url: "/details", match: "path" },
+          },
+        ],
+        authorization: { mutationAllowed: false, protectedOperationAllowed: false },
+        budgets: { maxOperations: 1, maxDurationMs: 5_000, maxPreDispatchRetries: 1 },
+        protectedInputReferences: [],
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      method: "POST",
+      path: "/api/probe-sessions/11111111-1111-4111-8111-111111111111/advance",
+      body: {
+        missionId: context.missionId,
+        agentSessionId: context.agentSessionId,
+        payload: {
+          objectiveDelta: "Open the read-only details page",
+          operations: [expect.objectContaining({ operationId: "open-details" })],
+        },
+      },
+    });
     await client.close();
     await server.close();
   });

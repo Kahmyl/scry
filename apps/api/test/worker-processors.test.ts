@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createExecutionCapabilityManifest } from "@scry/executor";
+import { compileDefaultVeilPolicy } from "@scry/veil";
 
 import {
   createCalibrationProcessor,
@@ -8,6 +10,7 @@ import {
   safeWorkerCode,
 } from "../src/workers/index.js";
 import { createRunProcessor } from "../src/workers/index.js";
+import { ExecutionKernelService } from "../src/runtime/index.js";
 
 const identity = {
   workerId: "worker-1",
@@ -15,7 +18,14 @@ const identity = {
   schemaFingerprint: "schema-1",
   heartbeatMs: 10,
   browserChannel: "chromium",
+  kernel: {} as never,
+  capabilities: {} as never,
 };
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
 describe("worker processor boundaries", () => {
   it("fences Run work before claiming when release metadata differs", async () => {
@@ -72,6 +82,218 @@ describe("worker processor boundaries", () => {
       ),
     ).rejects.toThrow("WORKER_RELEASE_MISMATCH");
     expect(calibrations.claim).not.toHaveBeenCalled();
+  });
+
+  it("fences a logical Run mutation across a worker retry after possible dispatch", async () => {
+    vi.stubEnv("SCRY_EXECUTION_KERNEL_ENABLED", "true");
+    const runId = "11111111-1111-4111-8111-111111111111";
+    const attempts = [
+      { id: "22222222-2222-4222-8222-222222222221", attemptNumber: 1 },
+      { id: "22222222-2222-4222-8222-222222222222", attemptNumber: 2 },
+    ];
+    const executions = {
+      claimAttempt: vi.fn(async () => attempts.shift()),
+      loadExecution: vi.fn(async () => ({
+        flowRevisionId: "flow-revision",
+        environmentId: "environment",
+        planSnapshot: mutatingRunPlan(),
+        policySnapshot: { allowedOrigins: ["https://example.test"], allowPrivateNetwork: false },
+        veilPolicySnapshot: compileDefaultVeilPolicy({
+          allowedOrigins: ["https://example.test"],
+          allowDownloads: false,
+        }),
+        executionSnapshot: { viewport: { width: 1280, height: 720 } },
+      })),
+      markRunning: vi.fn(async () => undefined),
+      setRunPhase: vi.fn(async () => undefined),
+      heartbeat: vi.fn(async () => true),
+      isCancellationRequested: vi.fn(async () => false),
+      failAttempt: vi.fn(async () => undefined),
+    };
+    const mutationStates = new Map<string, string>();
+    const requestInputs: Array<{ mutationIdentity?: string; operationId: string }> = [];
+    const capabilities = {
+      createRun: vi.fn(
+        (input: { correlationId: string; mode: "run" | "certify"; options: object }) => {
+          const manifest = createExecutionCapabilityManifest({
+            mode: input.mode,
+            correlationId: input.correlationId,
+          });
+          return {
+            manifest,
+            journal: {
+              begin: vi.fn(async () => undefined),
+              complete: vi.fn(async () => undefined),
+              fail: vi.fn(async () => undefined),
+              settle: vi.fn(
+                async (settlement: {
+                  mutation?: { mutationIdentity: string; next: string };
+                }) => {
+                  if (settlement.mutation) {
+                    mutationStates.set(
+                      settlement.mutation.mutationIdentity,
+                      settlement.mutation.next,
+                    );
+                  }
+                },
+              ),
+            },
+            mutationFence: {
+              claim: async ({ mutationIdentity }: { mutationIdentity: string }) => ({
+                state: mutationStates.get(mutationIdentity) ?? "planned",
+                fencingToken: 1,
+              }),
+              transition: async (input: {
+                mutationIdentity: string;
+                expected: string;
+                next: string;
+              }) => {
+                const current = mutationStates.get(input.mutationIdentity) ?? "planned";
+                if (current !== input.expected) return false;
+                mutationStates.set(input.mutationIdentity, input.next);
+                return true;
+              },
+            },
+            options: input.options,
+          };
+        },
+      ),
+      request: vi.fn(
+        (input: Record<string, unknown> & { capabilities: { manifest: { digest: string } } }) => {
+          requestInputs.push({
+            operationId: String(input.operationId),
+            ...(typeof input.mutationIdentity === "string"
+              ? { mutationIdentity: input.mutationIdentity }
+              : {}),
+          });
+          return {
+            sessionId: input.sessionId,
+            operationId: input.operationId,
+            correlationId: input.correlationId,
+            mode: input.mode,
+            plan: input.plan,
+            policy: input.policy,
+            capabilityManifestDigest: input.capabilities.manifest.digest,
+            idempotencyKey: input.idempotencyKey,
+            mutationIdentity: input.mutationIdentity,
+          };
+        },
+      ),
+    };
+    const dispatch = vi.fn(async () => {
+      throw new Error("WORKER_PROCESS_LOST_AFTER_DISPATCH");
+    });
+    const processor = createRunProcessor({
+      ...identity,
+      executions: executions as never,
+      artifactRoot: "/tmp/scry-worker-test",
+      artifactRetentionMs: 60_000,
+      artifactStore: {} as never,
+      artifactStoreRemote: false,
+      veilAdmissionKey: "test-key",
+      kernel: new ExecutionKernelService(dispatch as never),
+      capabilities: capabilities as never,
+    });
+
+    await expect(
+      processor({
+        ...job({ runId, releaseId: "release-1", schemaFingerprint: "schema-1" }),
+        opts: { attempts: 2 },
+      } as never),
+    ).rejects.toThrow("WORKER_PROCESS_LOST_AFTER_DISPATCH");
+    await expect(
+      processor({
+        ...job({ runId, releaseId: "release-1", schemaFingerprint: "schema-1" }),
+        attemptsMade: 1,
+        opts: { attempts: 2 },
+      } as never),
+    ).rejects.toThrow("EXECUTION_UNKNOWN_MUTATION_REQUIRES_RECONCILIATION");
+
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(requestInputs).toEqual([
+      {
+        operationId: "attempt-22222222-2222-4222-8222-222222222221",
+        mutationIdentity: `run-${runId}`,
+      },
+      {
+        operationId: "attempt-22222222-2222-4222-8222-222222222222",
+        mutationIdentity: `run-${runId}`,
+      },
+    ]);
+    expect(mutationStates.get(`run-${runId}`)).toBe("outcome_unknown");
+  });
+
+  it("routes read-only Probe inspection through the kernel exactly once", async () => {
+    const runtime = {
+      id: "11111111-1111-4111-8111-111111111111",
+      attemptId: "22222222-2222-4222-8222-222222222222",
+      environmentId: "33333333-3333-4333-8333-333333333333",
+      level: "inspection" as const,
+      plan: {
+        name: "Read-only shadow",
+        objective: "Open one page",
+        preconditions: [],
+        allowedOrigins: ["https://example.com"],
+        budgets: { maxActions: 1, maxDurationMs: 5_000, maxNavigations: 1 },
+        checkpoints: [],
+        steps: [
+          {
+            id: "open",
+            title: "Open",
+            action: { type: "navigate", url: "https://example.com" },
+            assertions: [],
+            onFailure: "stop",
+            evidence: [],
+            captureIntent: "final",
+          },
+        ],
+      },
+      policy: { allowedOrigins: ["https://example.com"], allowPrivateNetwork: false },
+    };
+    const probes = {
+      claim: vi.fn(async () => runtime),
+      running: vi.fn(async () => true),
+      heartbeat: vi.fn(async () => true),
+      cancelled: vi.fn(async () => false),
+      complete: vi.fn(async () => true),
+      fail: vi.fn(async () => undefined),
+      storeAuthenticatedState: vi.fn(async () => undefined),
+      resolveCredential: vi.fn(async () => "unused"),
+    };
+    const result = {
+      allResolved: true,
+      runtimeHealthy: true,
+      targets: [],
+      readiness: [],
+      diagnostics: [],
+      pageFingerprint: "stable-page",
+    };
+    const kernel = {
+      probe: vi.fn(async () => result),
+    };
+    const capabilities = {
+      createSession: vi.fn(() => ({ manifest: {}, options: {} })),
+      request: vi.fn(() => ({ operationId: "probe-shadow" })),
+    };
+    const processor = createProbeProcessor({
+      ...identity,
+      probes: probes as never,
+      observationRuntimeHash: "runtime",
+      veilAdmissionKey: "test-key",
+      kernel: kernel as never,
+      capabilities: capabilities as never,
+    });
+
+    await expect(
+      processor(
+        job({
+          probeSessionId: runtime.id,
+          releaseId: "release-1",
+          schemaFingerprint: "schema-1",
+        }) as never,
+      ),
+    ).resolves.toEqual({ state: "completed", allResolved: true });
+    expect(kernel.probe).toHaveBeenCalledOnce();
   });
 
   it("runs Praxis inspection through the owned authoring runtime page", async () => {
@@ -162,16 +384,11 @@ describe("worker processor boundaries", () => {
       requestId: "request-1",
     });
 
-    expect(praxis.resolveActiveBrowserLease).toHaveBeenCalledWith(
-      "probe-1",
-      "worker-1",
-    );
+    expect(praxis.resolveActiveBrowserLease).toHaveBeenCalledWith("probe-1", "worker-1");
 
-    expect(authoringRuntimeOwner.inspect).toHaveBeenCalledWith(
-      "lease-1",
-      expect.any(Object),
-      ["https://example.com"],
-    );
+    expect(authoringRuntimeOwner.inspect).toHaveBeenCalledWith("lease-1", expect.any(Object), [
+      "https://example.com",
+    ]);
 
     expect(praxis.complete).toHaveBeenCalledOnce();
   });
@@ -214,10 +431,7 @@ describe("worker processor boundaries", () => {
       state: "failed",
     });
 
-    expect(praxis.resolveActiveBrowserLease).toHaveBeenCalledWith(
-      "probe-1",
-      "worker-1",
-    );
+    expect(praxis.resolveActiveBrowserLease).toHaveBeenCalledWith("probe-1", "worker-1");
 
     expect(authoringRuntimeOwner.inspect).not.toHaveBeenCalled();
 
@@ -241,4 +455,46 @@ describe("worker processor boundaries", () => {
 
 function job(data: Record<string, unknown>) {
   return { data, attemptsMade: 0, opts: { attempts: 1 } };
+}
+
+function mutatingRunPlan() {
+  return {
+    name: "Worker retry mutation",
+    objective: "Apply one mutation",
+    preconditions: [],
+    allowedOrigins: ["https://example.test"],
+    budgets: { maxActions: 1, maxDurationMs: 5_000, maxNavigations: 1 },
+    checkpoints: [],
+    steps: [
+      {
+        id: "fill",
+        title: "Fill",
+        action: {
+          type: "fill",
+          target: {
+            concept: "Name",
+            requiredCapabilities: ["accepts_text", "focusable", "editable"],
+            preferredEvidence: {
+              roles: ["textbox"],
+              names: ["Name"],
+              labels: ["Name"],
+              descriptions: [],
+              placeholders: [],
+              inputTypes: [],
+            },
+            scope: { kind: "page" },
+            relations: [],
+            prohibited: ["hidden", "disabled"],
+            risk: "ordinary",
+            confidence: { requiredFamilies: [], minimumFamilyCount: 1 },
+          },
+          value: "public",
+        },
+        assertions: [],
+        onFailure: "stop",
+        evidence: [],
+        captureIntent: "final",
+      },
+    ],
+  };
 }

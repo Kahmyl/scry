@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 
 import { Database } from "../../infrastructure/index.js";
+import { decryptCredential } from "../../access/index.js";
 
 export type ClaimedAuthoringRuntime = {
   probeSessionId: string;
@@ -12,6 +13,29 @@ export type ClaimedAuthoringRuntime = {
 @Injectable()
 export class AuthoringRuntimeRepository {
   constructor(@Inject(Database) private readonly db: Database) {}
+
+  async resolveCredential(probeSessionId: string, reference: string): Promise<string> {
+    const result = await this.db.query<any>(
+      `SELECT credential.ciphertext,
+              credential.initialization_vector AS "initializationVector",
+              credential.authentication_tag AS "authenticationTag"
+       FROM probe_sessions probe
+       JOIN flow_drafts draft ON draft.id=probe.draft_id
+       JOIN environments environment
+         ON environment.id=probe.environment_id
+        AND environment.project_id=draft.project_id
+       JOIN project_credentials credential
+         ON credential.project_id=draft.project_id
+        AND credential.id=$2
+       WHERE probe.id=$1
+         AND credential.security_status='active'
+         AND credential.deleted_at IS NULL
+         AND environment.secret_refs ? ($2::uuid)::text`,
+      [probeSessionId, reference],
+    );
+    if (!result.rowCount) throw new Error("AUTHORING_CREDENTIAL_UNAVAILABLE");
+    return decryptCredential(result.rows[0]);
+  }
 
   async claimNext(workerId: string): Promise<ClaimedAuthoringRuntime | undefined> {
     return this.db.transaction(async (client) => {
@@ -72,6 +96,7 @@ export class AuthoringRuntimeRepository {
     const result = await this.db.query(
       `UPDATE authoring_browser_leases
        SET state='active',
+           activated_at=COALESCE(activated_at,now()),
            heartbeat_at=now(),
            updated_at=now()
        WHERE id=$1

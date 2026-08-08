@@ -39,6 +39,8 @@ export class TraceCoordinator implements PrivacyCollector {
       /** Only a pre-admission verifier with complete classification may opt in. */
       admitSanitized?: (path: string) => Promise<boolean>;
       now?: () => Date;
+      transitionTimeoutMs?: number;
+      abortCapture?: () => Promise<void>;
     },
   ) {}
 
@@ -53,7 +55,7 @@ export class TraceCoordinator implements PrivacyCollector {
       );
       const target = path.join(this.options.outputDirectory, ...relativePath.split("/"));
       await mkdir(path.dirname(target), { recursive: true });
-      await bounded(
+      await this.bounded(
         this.options.context.tracing.start({ screenshots: true, snapshots: true, sources: false }),
       );
       this.active = { id, startedAt: this.now(), reason, path: target, relativePath };
@@ -107,7 +109,7 @@ export class TraceCoordinator implements PrivacyCollector {
       this.active = undefined;
       const endedAt = this.now();
       try {
-        await bounded(this.options.context.tracing.stop({ path: active.path }));
+        await this.bounded(this.options.context.tracing.stop({ path: active.path }));
         if (quarantine || this.sealed) {
           await rm(active.path, { force: true });
           const artifact: Artifact = {
@@ -223,18 +225,21 @@ export class TraceCoordinator implements PrivacyCollector {
     );
     return next;
   }
-}
 
-async function bounded<T>(work: Promise<T>) {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("TRACE_TRANSITION_TIMEOUT")), 5_000);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
+  private async bounded<T>(work: Promise<T>) {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(async () => {
+            await this.options.abortCapture?.().catch(() => undefined);
+            reject(new Error("TRACE_TRANSITION_TIMEOUT"));
+          }, this.options.transitionTimeoutMs ?? 5_000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 }

@@ -1,12 +1,14 @@
 import { z } from "zod";
 
 import { currentActionSchema } from "./current.js";
+import { advanceAuthoringTurnPayloadSchema } from "./execution-kernel.js";
 
 const uuid = z.string().uuid();
 
 export const authoringRuntimeCommandTypeSchema = z.enum([
   "observe_document",
   "interact",
+  "advance_turn",
   "suspend",
   "resume",
   "cancel",
@@ -20,11 +22,7 @@ export const authoringRuntimeCommandStateSchema = z.enum([
   "cancelled",
 ]);
 
-export const authoringRuntimeCommandOutcomeSchema = z.enum([
-  "completed",
-  "failed",
-  "cancelled",
-]);
+export const authoringRuntimeCommandOutcomeSchema = z.enum(["completed", "failed", "cancelled"]);
 
 const observePayloadSchema = z.object({}).strict();
 
@@ -36,54 +34,62 @@ const interactPayloadSchema = z
 
 const lifecyclePayloadSchema = z.object({}).strict();
 
-export const createAuthoringRuntimeCommandSchema = z
-  .discriminatedUnion("type", [
-    z
-      .object({
-        missionId: uuid,
-        agentSessionId: uuid,
-        type: z.literal("observe_document"),
-        payload: observePayloadSchema.default({}),
-        idempotencyKey: z.string().trim().min(8).max(200),
-      })
-      .strict(),
-    z
-      .object({
-        missionId: uuid,
-        agentSessionId: uuid,
-        type: z.literal("interact"),
-        payload: interactPayloadSchema,
-        idempotencyKey: z.string().trim().min(8).max(200),
-      })
-      .strict(),
-    z
-      .object({
-        missionId: uuid,
-        agentSessionId: uuid,
-        type: z.literal("suspend"),
-        payload: lifecyclePayloadSchema.default({}),
-        idempotencyKey: z.string().trim().min(8).max(200),
-      })
-      .strict(),
-    z
-      .object({
-        missionId: uuid,
-        agentSessionId: uuid,
-        type: z.literal("resume"),
-        payload: lifecyclePayloadSchema.default({}),
-        idempotencyKey: z.string().trim().min(8).max(200),
-      })
-      .strict(),
-    z
-      .object({
-        missionId: uuid,
-        agentSessionId: uuid,
-        type: z.literal("cancel"),
-        payload: lifecyclePayloadSchema.default({}),
-        idempotencyKey: z.string().trim().min(8).max(200),
-      })
-      .strict(),
-  ]);
+export const createAuthoringRuntimeCommandSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      missionId: uuid,
+      agentSessionId: uuid,
+      type: z.literal("observe_document"),
+      payload: observePayloadSchema.default({}),
+      idempotencyKey: z.string().trim().min(8).max(200),
+    })
+    .strict(),
+  z
+    .object({
+      missionId: uuid,
+      agentSessionId: uuid,
+      type: z.literal("advance_turn"),
+      payload: advanceAuthoringTurnPayloadSchema,
+      idempotencyKey: z.string().trim().min(8).max(200),
+    })
+    .strict(),
+  z
+    .object({
+      missionId: uuid,
+      agentSessionId: uuid,
+      type: z.literal("interact"),
+      payload: interactPayloadSchema,
+      idempotencyKey: z.string().trim().min(8).max(200),
+    })
+    .strict(),
+  z
+    .object({
+      missionId: uuid,
+      agentSessionId: uuid,
+      type: z.literal("suspend"),
+      payload: lifecyclePayloadSchema.default({}),
+      idempotencyKey: z.string().trim().min(8).max(200),
+    })
+    .strict(),
+  z
+    .object({
+      missionId: uuid,
+      agentSessionId: uuid,
+      type: z.literal("resume"),
+      payload: lifecyclePayloadSchema.default({}),
+      idempotencyKey: z.string().trim().min(8).max(200),
+    })
+    .strict(),
+  z
+    .object({
+      missionId: uuid,
+      agentSessionId: uuid,
+      type: z.literal("cancel"),
+      payload: lifecyclePayloadSchema.default({}),
+      idempotencyKey: z.string().trim().min(8).max(200),
+    })
+    .strict(),
+]);
 
 export const claimedAuthoringRuntimeCommandSchema = z
   .object({
@@ -106,10 +112,7 @@ export const authoringRuntimeCommandResultSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    if (
-      value.outcome === "completed" &&
-      (value.safeResult === null || value.safeError !== null)
-    ) {
+    if (value.outcome === "completed" && (value.safeResult === null || value.safeError !== null)) {
       context.addIssue({
         code: "custom",
         path: ["safeResult"],
@@ -117,10 +120,7 @@ export const authoringRuntimeCommandResultSchema = z
       });
     }
 
-    if (
-      value.outcome === "failed" &&
-      (value.safeResult !== null || value.safeError === null)
-    ) {
+    if (value.outcome === "failed" && (value.safeResult !== null || value.safeError === null)) {
       context.addIssue({
         code: "custom",
         path: ["safeError"],
@@ -128,10 +128,7 @@ export const authoringRuntimeCommandResultSchema = z
       });
     }
 
-    if (
-      value.outcome === "cancelled" &&
-      value.safeResult !== null
-    ) {
+    if (value.outcome === "cancelled" && value.safeResult !== null) {
       context.addIssue({
         code: "custom",
         path: ["safeResult"],
@@ -140,26 +137,16 @@ export const authoringRuntimeCommandResultSchema = z
     }
   });
 
-export type AuthoringRuntimeCommandType = z.infer<
-  typeof authoringRuntimeCommandTypeSchema
->;
+export type AuthoringRuntimeCommandType = z.infer<typeof authoringRuntimeCommandTypeSchema>;
 
-export type AuthoringRuntimeCommandState = z.infer<
-  typeof authoringRuntimeCommandStateSchema
->;
+export type AuthoringRuntimeCommandState = z.infer<typeof authoringRuntimeCommandStateSchema>;
 
-export type AuthoringRuntimeCommandOutcome = z.infer<
-  typeof authoringRuntimeCommandOutcomeSchema
->;
+export type AuthoringRuntimeCommandOutcome = z.infer<typeof authoringRuntimeCommandOutcomeSchema>;
 
 export type CreateAuthoringRuntimeCommandInput = z.infer<
   typeof createAuthoringRuntimeCommandSchema
 >;
 
-export type ClaimedAuthoringRuntimeCommand = z.infer<
-  typeof claimedAuthoringRuntimeCommandSchema
->;
+export type ClaimedAuthoringRuntimeCommand = z.infer<typeof claimedAuthoringRuntimeCommandSchema>;
 
-export type AuthoringRuntimeCommandResult = z.infer<
-  typeof authoringRuntimeCommandResultSchema
->;
+export type AuthoringRuntimeCommandResult = z.infer<typeof authoringRuntimeCommandResultSchema>;

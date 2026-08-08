@@ -399,3 +399,4 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir interactive-runtime-lifecycle.sql
 \ir authentication-authoring.sql
 \ir adaptive-authoring-pr9-pr12.sql
+\ir adaptive-execution-foundation-m0-m1.sql

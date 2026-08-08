@@ -10,3 +10,4 @@ export * from "./protected-extractor.js";
 export * from "./calibration.js";
 export * from "./probe.js";
 export * from "./types.js";
+export * from "./execution-kernel.js";

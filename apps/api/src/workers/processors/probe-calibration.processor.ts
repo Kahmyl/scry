@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { currentPlanSchema, executionPolicySchema } from "@scry/contracts";
-import { probeFlowPlan, type BrowserStorageState } from "@scry/executor";
+import type { BrowserStorageState } from "@scry/executor";
+import { compileDefaultVeilPolicy } from "@scry/veil";
 import type { Job } from "bullmq";
 
 import {
@@ -12,7 +13,12 @@ import {
   type CalibrationRuntimeRepository,
   type ProbeRuntimeRepository,
 } from "../../calibration/index.js";
-import type { CalibrationJob, ProbeJob } from "../../runtime/index.js";
+import {
+  type CalibrationJob,
+  type ExecutionCapabilityFactory,
+  type ExecutionKernelService,
+  type ProbeJob,
+} from "../../runtime/index.js";
 
 interface SharedWorkerIdentity {
   workerId: string;
@@ -20,6 +26,8 @@ interface SharedWorkerIdentity {
   schemaFingerprint: string;
   heartbeatMs: number;
   browserChannel: string;
+  kernel: ExecutionKernelService;
+  capabilities: ExecutionCapabilityFactory;
 }
 
 export function createProbeProcessor(
@@ -41,21 +49,44 @@ export function createProbeProcessor(
       if (!(await options.probes.running(runtime))) return { state: "claim_fenced" };
       heartbeat = setInterval(() => void options.probes.heartbeat(runtime), options.heartbeatMs);
       if (await options.probes.cancelled(runtime)) throw new Error("PROBE_CANCELLED");
-      const result = await probeFlowPlan({
-        plan: currentPlanSchema.parse(runtime.plan),
-        level: runtime.level,
-        policy: executionPolicySchema.parse(runtime.policy),
-        browserChannel: options.browserChannel,
-        outputDirectory: directory,
-        privacy: {
+      const plan = currentPlanSchema.parse(runtime.plan);
+      const policy = executionPolicySchema.parse(runtime.policy);
+      const correlationId = randomUUID();
+      const mode =
+        runtime.level === "inspection"
+          ? "observe"
+          : runtime.level === "reversible"
+            ? "rehearse"
+            : "transact";
+      const capabilities = options.capabilities.createSession({
+        sessionId: runtime.id,
+        operationId: `probe-attempt-${runtime.attemptId}`,
+        correlationId,
+        mode,
+        options: {
+          browserChannel: options.browserChannel,
+          outputDirectory: directory,
           environmentId: runtime.environmentId,
           veilAdmissionKey: options.veilAdmissionKey,
-        },
-        secretResolver: (reference) => options.probes.resolveCredential(runtime, reference),
-        captureBrowserState: (state) => {
-          capturedState = state;
+          veilPolicySnapshot: compileDefaultVeilPolicy(policy),
+          secretResolver: (reference) => options.probes.resolveCredential(runtime, reference),
+          captureBrowserState: (state) => {
+            capturedState = state;
+          },
         },
       });
+      const request = options.capabilities.request({
+        sessionId: runtime.id,
+        operationId: `probe-attempt-${runtime.attemptId}`,
+        correlationId,
+        mode,
+        plan,
+        policy,
+        capabilities,
+        idempotencyKey: `probe-attempt-${runtime.attemptId}`,
+        mutationIdentity: `probe-${runtime.id}`,
+      });
+      const result = await options.kernel.probe({ request, capabilities, level: runtime.level });
       if (capturedState && result.allResolved) {
         await options.probes.storeAuthenticatedState(
           runtime,
@@ -114,6 +145,32 @@ export function createCalibrationProcessor(
         (state) => options.calibrations.markMutation(runtime, state),
         (phase) => options.calibrations.markPhase(runtime, phase),
         options.veilAdmissionKey,
+        async ({ plan, policy, options: executionOptions, beforeMutationTransition }) => {
+          const correlationId = randomUUID();
+          const capabilities = options.capabilities.createSession({
+            sessionId: runtime.sessionId,
+            operationId: `calibration-attempt-${runtime.attemptId}`,
+            correlationId,
+            mode: "certify",
+            beforeMutationTransition,
+            options: {
+              ...executionOptions,
+              veilPolicySnapshot: compileDefaultVeilPolicy(policy),
+            },
+          });
+          const request = options.capabilities.request({
+            sessionId: runtime.sessionId,
+            operationId: `calibration-attempt-${runtime.attemptId}`,
+            correlationId,
+            mode: "certify",
+            plan,
+            policy,
+            capabilities,
+            idempotencyKey: `calibration-attempt-${runtime.attemptId}`,
+            mutationIdentity: `calibration-${runtime.sessionId}`,
+          });
+          return (await options.kernel.execute({ request, capabilities })).report;
+        },
       );
       await options.calibrations.complete(runtime, result);
       return { state: result.passed ? "passed" : "failed" };

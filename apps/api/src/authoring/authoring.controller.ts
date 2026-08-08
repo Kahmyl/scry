@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post } from "@nestjs/common";
 import {
+  advanceAuthoringTurnCommandSchema,
   compileFlowDraftSchema,
   compileAndCertifyFlowSchema,
   createAuthenticationContractSchema,
@@ -10,6 +11,7 @@ import {
   updateFlowDraftSchema,
   type CompileFlowDraftInput,
   type CompileAndCertifyFlowInput,
+  type AdvanceAuthoringTurnCommand,
   type CreateAuthenticationContractInput,
   type CreateAuthoringRuntimeCommandInput,
   type CreateFlowDraftInput,
@@ -108,6 +110,16 @@ export class AuthoringController {
     input: CreateAuthoringRuntimeCommandInput,
   ) {
     return this.commands.enqueue(p, id, input);
+  }
+
+  @Post("probe-sessions/:probeId/advance")
+  advance(
+    @Param("probeId") id: string,
+    @CurrentPrincipal() p: Principal,
+    @Body(new ZodValidationPipe(advanceAuthoringTurnCommandSchema))
+    input: AdvanceAuthoringTurnCommand,
+  ) {
+    return this.commands.advance(p, id, input);
   }
 
   @Post("probe-sessions/:probeId/cancel")

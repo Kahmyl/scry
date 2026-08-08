@@ -101,6 +101,11 @@ export type ScryCapabilities = {
   evidenceChannels: string[];
   artifactCapabilities: string[];
   collectorCapabilities: string[];
+  adaptiveExecution?: {
+    kernel: boolean;
+    authoringTurn: boolean;
+    modes: Array<"observe" | "rehearse" | "transact" | "certify" | "run">;
+  };
   groundingCapabilities?: string[];
   intelligenceCapabilities?: { modelAssistance: boolean; visualGrounding: string };
   missionContext?: { requiredForWrites: boolean; transport: "explicit"; phases: string[] };

@@ -1,31 +1,18 @@
 import {
   currentActionSchema,
-  currentPlanSchema,
   type CurrentAction,
   type ExecutionPolicy,
+  type ExpectedEffect,
+  type OperationOutcome,
 } from "@scry/contracts";
-import { SecretRedactor } from "@scry/policy";
-import {
-  playwrightBrowserChannel,
-  registerPraxisVeilAuthority,
-} from "@scry/praxis";
+import { playwrightBrowserChannel, registerPraxisVeilAuthority } from "@scry/praxis";
 import { VeilAuthority } from "@scry/veil";
-import {
-  chromium,
-  type Browser,
-  type BrowserContext,
-  type Page,
-} from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 
-import { executeAction } from "./action-runtime.js";
 import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
 
 export type AuthoringBrowserSessionState =
-  | "active"
-  | "suspended"
-  | "releasing"
-  | "released"
-  | "crashed";
+  "active" | "suspended" | "releasing" | "released" | "crashed";
 
 export type AuthoringBrowserSession = {
   readonly browser: Browser;
@@ -37,12 +24,24 @@ export type AuthoringBrowserSession = {
     documentEpoch: number;
     url: string;
   }>;
-  interact(action: CurrentAction): Promise<{
+  interact(
+    action: CurrentAction,
+    context?: {
+      operationId?: string;
+      correlationId?: string;
+      mutationIdentity?: string;
+      expectedEffect?: ExpectedEffect;
+      objectiveDelta?: string;
+      signal?: AbortSignal;
+    },
+  ): Promise<{
     documentEpoch: number;
     url: string;
+    outcome: OperationOutcome;
   }>;
   suspend(): void;
   resume(): void;
+  cancelActiveOperation(): Promise<void>;
   close(): Promise<void>;
 };
 
@@ -52,6 +51,17 @@ export async function createAuthoringBrowserSession(input: {
   veilAdmissionKey: string;
   browserChannel: string;
   policy: ExecutionPolicy;
+  executeInteraction(input: {
+    page: Page;
+    action: CurrentAction;
+    ordinal: number;
+    operationId: string;
+    correlationId?: string;
+    mutationIdentity?: string;
+    expectedEffect?: ExpectedEffect;
+    objectiveDelta?: string;
+    signal?: AbortSignal;
+  }): Promise<OperationOutcome>;
 }): Promise<AuthoringBrowserSession> {
   if (!input.sessionId) {
     throw new Error("AUTHORING_SESSION_ID_REQUIRED");
@@ -83,42 +93,6 @@ export async function createAuthoringBrowserSession(input: {
       userId: "probe-authoring",
       environmentId: input.environmentId,
       browserContextId: `probe-authoring-${input.sessionId}`,
-    });
-
-    const plan = currentPlanSchema.parse({
-      name: "Interactive authoring",
-      objective: "Execute one bounded interactive authoring action",
-      preconditions: [],
-      allowedOrigins: input.policy.allowedOrigins,
-      budgets: {
-        maxActions: Math.max(1, input.policy.maxActions ?? 1),
-        maxDurationMs: Math.max(
-          1_000,
-          input.policy.maxDurationMs ?? 30_000,
-        ),
-        maxNavigations: Math.max(
-          1,
-          input.policy.maxNavigations ?? 1,
-        ),
-      },
-      checkpoints: [],
-      steps: [
-        {
-          id: "authoring-placeholder",
-          title: "Interactive authoring placeholder",
-          action: {
-            type: "screenshot",
-            name: "authoring-placeholder",
-            fullPage: false,
-          },
-          assertions: [],
-          onFailure: "stop",
-          evidence: [],
-          captureIntent: "transient",
-          transientJustification:
-            "Internal placeholder used only to satisfy the reusable plan contract.",
-        },
-      ],
     });
 
     let lifecycle: AuthoringBrowserSessionState = "active";
@@ -177,56 +151,38 @@ export async function createAuthoringBrowserSession(input: {
 
       observeDocument: observe,
 
-      async interact(candidate) {
+      async interact(candidate, interactionContext = {}) {
         if (lifecycle !== "active") {
           throw new Error("AUTHORING_BROWSER_SESSION_NOT_ACTIVE");
         }
 
         const action = currentActionSchema.parse(candidate);
 
-        if (
-          action.type === "protectedTransaction" ||
-          action.type === "capturePublicValue" ||
-          (action.type === "fill" &&
-            (action.secretRef ||
-              action.capturedSecretRef ||
-              action.capturedValueRef ||
-              action.generatedValueRef))
-        ) {
-          throw new Error("AUTHORING_INTERACTION_NOT_ALLOWED");
-        }
-
         interactionOrdinal += 1;
 
-        await executeAction(
-          page!,
-          action,
-          {
-            plan,
-            policy: input.policy,
-            outputDirectory: ".",
-            environmentId: input.environmentId,
-          },
-          new AbortController().signal,
-          new SecretRedactor(),
-          new Map(),
-          new Map(),
-          undefined,
-          undefined,
-          {
-            runId: input.sessionId,
-            stepId: `authoring-${interactionOrdinal}`,
-            channel: "action",
-            ordinal: interactionOrdinal,
-            allowedOrigins: input.policy.allowedOrigins,
-            timeoutMs:
-              "timeoutMs" in action && action.timeoutMs
-                ? action.timeoutMs
-                : 30_000,
-          },
-        );
+        const operationId =
+          interactionContext.operationId ?? `authoring-interaction-${interactionOrdinal}`;
+        const expectedEffect = interactionContext.expectedEffect ?? { type: "none" };
 
-        return observe();
+        const outcome = await input.executeInteraction({
+          page: page!,
+          action,
+          ordinal: interactionOrdinal,
+          operationId,
+          ...(interactionContext.correlationId
+            ? { correlationId: interactionContext.correlationId }
+            : {}),
+          ...(interactionContext.mutationIdentity
+            ? { mutationIdentity: interactionContext.mutationIdentity }
+            : {}),
+          expectedEffect,
+          ...(interactionContext.objectiveDelta
+            ? { objectiveDelta: interactionContext.objectiveDelta }
+            : {}),
+          ...(interactionContext.signal ? { signal: interactionContext.signal } : {}),
+        });
+        const observation = await observe();
+        return { ...observation, outcome };
       },
 
       suspend() {
@@ -243,6 +199,18 @@ export async function createAuthoringBrowserSession(input: {
         }
 
         lifecycle = "active";
+      },
+
+      async cancelActiveOperation() {
+        if (closed) return;
+        closed = true;
+        lifecycle = "crashed";
+        try {
+          unregisterVeil();
+          await context!.close();
+        } finally {
+          await browser.close().catch(() => undefined);
+        }
       },
 
       async close() {

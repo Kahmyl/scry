@@ -18,20 +18,11 @@ const praxisCandidateInspection = await readFile(
   "utf8",
 );
 
-const preferences = await readFile(
-  new URL("veil-observation-preferences.sql", root),
-  "utf8",
-);
+const preferences = await readFile(new URL("veil-observation-preferences.sql", root), "utf8");
 
-const retention = await readFile(
-  new URL("veil-artifact-retention.sql", root),
-  "utf8",
-);
+const retention = await readFile(new URL("veil-artifact-retention.sql", root), "utf8");
 
-const compiledPlan = await readFile(
-  new URL("compiled-plan-cutover.sql", root),
-  "utf8",
-);
+const compiledPlan = await readFile(new URL("compiled-plan-cutover.sql", root), "utf8");
 
 const statefulProbeAuthoring = await readFile(
   new URL("stateful-probe-authoring.sql", root),
@@ -53,26 +44,40 @@ const authenticationAuthoring = await readFile(
   "utf8",
 );
 
-const baseline = (await readFile(new URL("baseline.sql", root), "utf8"))
+const adaptiveAuthoring = await readFile(new URL("adaptive-authoring-pr9-pr12.sql", root), "utf8");
+
+const adaptiveExecutionFoundation = await readFile(
+  new URL("adaptive-execution-foundation-m0-m1.sql", root),
+  "utf8",
+);
+
+const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "utf8"), [
+  ["authoring-execution-cutover.sql", authoring],
+  ["praxis-reporting.sql", reporting],
+  ["praxis-cutoff.sql", cutoff],
+  ["praxis-candidate-inspection.sql", praxisCandidateInspection],
+  ["veil-observation-preferences.sql", preferences],
+  ["veil-artifact-retention.sql", retention],
+  ["compiled-plan-cutover.sql", compiledPlan],
+  ["stateful-probe-authoring.sql", statefulProbeAuthoring],
+  ["interactive-runtime-commands.sql", interactiveRuntimeCommands],
+  ["interactive-runtime-lifecycle.sql", interactiveRuntimeLifecycle],
+  ["authentication-authoring.sql", authenticationAuthoring],
+  ["adaptive-authoring-pr9-pr12.sql", adaptiveAuthoring],
+  ["adaptive-execution-foundation-m0-m1.sql", adaptiveExecutionFoundation],
+])
   .replace("\\ir calibration-foundation.sql", () => calibration)
-  .replace("\\ir protected-capsule.sql", () => capsule)
-  .replace("\\ir authoring-execution-cutover.sql", () => authoring)
-  .replace("\\ir praxis-reporting.sql", () => reporting)
-  .replace("\\ir praxis-cutoff.sql", () => cutoff)
-  .replace("\\ir praxis-candidate-inspection.sql", () => praxisCandidateInspection)
-  .replace("\\ir praxis-candidate-inspection.sql", () => praxisCandidateInspection)
-  .replace("\\ir veil-observation-preferences.sql", () => preferences)
-  .replace("\\ir veil-artifact-retention.sql", () => retention)
-  .replace("\\ir compiled-plan-cutover.sql", () => compiledPlan)
-  .replace("\\ir stateful-probe-authoring.sql", () => statefulProbeAuthoring)
-  .replace(
-    "\\ir interactive-runtime-commands.sql",
-    () => interactiveRuntimeCommands,
-  )
-  .replace(
-    "\\ir interactive-runtime-lifecycle.sql",
-    () => interactiveRuntimeLifecycle,
-  )
-  .replace("\\ir authentication-authoring.sql", () => authenticationAuthoring);
+  .replace("\\ir protected-capsule.sql", () => capsule);
 
 process.stdout.write(`${createHash("sha256").update(baseline).digest("hex")}\n`);
+
+function expandIncludes(source, migrations) {
+  return migrations.reduce(
+    (current, [name, contents]) =>
+      current.replace(
+        new RegExp(`\\\\ir\\s+${name.replaceAll(".", "\\.")}(?:\\r?\\n|$)`, "g"),
+        () => contents,
+      ),
+    source,
+  );
+}

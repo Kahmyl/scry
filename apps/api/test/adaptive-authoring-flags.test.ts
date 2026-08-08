@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { adaptiveAuthoringFlags } from "../src/authoring/adaptive-authoring-flags.js";
+import { adaptiveExecutionFlags } from "../src/runtime/index.js";
 
 describe("adaptive authoring rollout controls", () => {
   it("keeps established PR1-PR8 behavior enabled and new release gates opt-in", () => {
@@ -35,6 +36,24 @@ describe("adaptive authoring rollout controls", () => {
       transcriptCompiler: true,
       certificationPublicationGate: true,
       releaseCorpusGate: true,
+    });
+  });
+});
+
+describe("adaptive execution rollout controls", () => {
+  it("keeps the kernel authoritative while allowing the grouped turn to be disabled", () => {
+    expect(adaptiveExecutionFlags({})).toEqual({
+      executionKernel: true,
+      authoringTurn: false,
+    });
+    expect(
+      adaptiveExecutionFlags({
+        SCRY_EXECUTION_KERNEL_ENABLED: "false",
+        SCRY_AUTHORING_TURN_ENABLED: "true",
+      }),
+    ).toEqual({
+      executionKernel: true,
+      authoringTurn: true,
     });
   });
 });

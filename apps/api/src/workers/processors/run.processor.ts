@@ -10,10 +10,15 @@ import {
   veilPolicySnapshotSchema,
   type Artifact,
 } from "@scry/contracts";
-import { executePlan, type ExecuteOptions, type ExecutionReport } from "@scry/executor";
+import type { ExecutionReport } from "@scry/executor";
 import type { Job } from "bullmq";
 
-import type { ExecutionRepository, RunJob } from "../../runtime/index.js";
+import {
+  type ExecutionCapabilityFactory,
+  type ExecutionKernelService,
+  type ExecutionRepository,
+  type RunJob,
+} from "../../runtime/index.js";
 
 export interface RunProcessorOptions {
   executions: ExecutionRepository;
@@ -27,6 +32,8 @@ export interface RunProcessorOptions {
   artifactStoreRemote: boolean;
   veilAdmissionKey: string;
   browserChannel: string;
+  kernel: ExecutionKernelService;
+  capabilities: ExecutionCapabilityFactory;
 }
 
 export function createRunProcessor(options: RunProcessorOptions) {
@@ -57,6 +64,7 @@ export function createRunProcessor(options: RunProcessorOptions) {
       const execution = snapshot.executionSnapshot as {
         viewport: { width: number; height: number };
         readinessTimeoutMultiplier?: number;
+        certificationCandidate?: boolean;
       };
       await options.executions.markRunning(job.data.runId, attempt.id, claimToken);
       await options.executions.setRunPhase(job.data.runId, "executing_action");
@@ -80,94 +88,47 @@ export function createRunProcessor(options: RunProcessorOptions) {
         job.data.runId,
         `attempt-${attempt.attemptNumber}`,
       );
-      const executionOptions: Omit<ExecuteOptions, "plan"> & { plan: typeof plan } = {
-        plan,
-        policy,
-        veilPolicySnapshot,
-        outputDirectory,
+      const correlationId = randomUUID();
+      const mode = execution.certificationCandidate ? "certify" : "run";
+      const capabilities = options.capabilities.createRun({
+        sessionId: job.data.runId,
+        operationId: `attempt-${attempt.id}`,
+        correlationId,
+        mode,
         runId: job.data.runId,
         attemptId: attempt.id,
-        veilAdmissionKey: options.veilAdmissionKey,
-        browserChannel: options.browserChannel,
-        viewport: execution.viewport,
-        ...(execution.readinessTimeoutMultiplier !== undefined
-          ? { readinessTimeoutMultiplier: execution.readinessTimeoutMultiplier }
-          : {}),
-        signal: controller.signal,
-        secretResolver: (credentialId) =>
-          options.executions.resolveCredential(job.data.runId, credentialId),
-        secretCapture: (name, value) =>
-          options.executions.captureCredential(job.data.runId, name, value),
-        atomicSecretCapture: (input) =>
-          options.executions.persistCapturedSecret({ runId: job.data.runId, ...input }),
-        publicValueCapture: (input) =>
-          options.executions.persistGeneratedPublicValue({ runId: job.data.runId, ...input }),
-        publicValueResolver: (valueId) =>
-          options.executions.resolveGeneratedPublicValue(job.data.runId, valueId),
-        protectedTransactionStore: {
-          claim: (input) =>
-            options.executions.claimProtectedTransaction(
-              job.data.runId,
-              claimToken,
-              input,
-            ) as never,
-          transition: (input) =>
-            options.executions.transitionProtectedMutation(job.data.runId, claimToken, input),
-          record: (input) =>
-            options.executions.recordProtectedTransaction(job.data.runId, claimToken, input),
-        },
-        checkpointStore: {
-          establish: (input) => options.executions.establishCheckpoint(job.data.runId, input),
-          claim: (checkpointId) => options.executions.claimCheckpoint(job.data.runId, checkpointId),
-          complete: (checkpointId, outcome, reasonCode) =>
-            options.executions.completeCheckpoint(
-              job.data.runId,
-              checkpointId,
-              outcome,
-              reasonCode,
-            ),
-        },
+        claimToken,
         flowRevisionId: String(snapshot.flowRevisionId),
         environmentId: String(snapshot.environmentId),
-        calibrationVerifier: (input) =>
-          options.executions.verifyCalibrationAttestation(
-            job.data.runId,
-            input.attestationId,
-            input.operationId,
-            input.operationDigest,
-            input.structureFingerprint,
-          ),
-        markCredentialCompromised: async (credentialId, code, operationId) => {
-          await options.executions.markCapturedCredentialCompromised(
-            job.data.runId,
-            credentialId,
-            code,
-            operationId,
-          );
+        options: {
+          veilPolicySnapshot,
+          outputDirectory,
+          veilAdmissionKey: options.veilAdmissionKey,
+          browserChannel: options.browserChannel,
+          viewport: execution.viewport,
+          ...(execution.readinessTimeoutMultiplier !== undefined
+            ? { readinessTimeoutMultiplier: execution.readinessTimeoutMultiplier }
+            : {}),
+          signal: controller.signal,
+          onEvent: async (event) => {
+            const phase = phaseForEvent(event.type);
+            if (phase) await options.executions.setRunPhase(job.data.runId, phase);
+            await options.executions.appendEvent(attempt.id, claimToken, event);
+          },
         },
-        recordContextProvenance: (input) =>
-          options.executions.recordContextProvenance(job.data.runId, input),
-        recoverAcquisition: async (input) =>
-          ((await options.executions.protectedRecoveryDecision(
-            job.data.runId,
-            input.operationId,
-          )) as
-            | {
-                action: "retry" | "request_secure_assistance" | "revoke" | "abandon" | "expired";
-                correctedScope?: import("@scry/contracts").SemanticScope;
-              }
-            | undefined) ?? { action: "retry" },
-        groundingHistory: (intentDigest) =>
-          options.executions.groundingHistory(job.data.runId, intentDigest),
-        onPraxisResult: (result) =>
-          options.executions.recordPraxisResult(job.data.runId, attempt.id, result),
-        onEvent: async (event) => {
-          const phase = phaseForEvent(event.type);
-          if (phase) await options.executions.setRunPhase(job.data.runId, phase);
-          await options.executions.appendEvent(attempt.id, claimToken, event);
-        },
-      };
-      const report = await executePlan(executionOptions as Parameters<typeof executePlan>[0]);
+      });
+      const request = options.capabilities.request({
+        sessionId: job.data.runId,
+        operationId: `attempt-${attempt.id}`,
+        correlationId,
+        mode,
+        plan,
+        policy,
+        capabilities,
+        idempotencyKey: `run-attempt-${attempt.id}`,
+        mutationIdentity: `run-${job.data.runId}`,
+      });
+      const report = (await options.kernel.execute({ request, capabilities })).report;
       await options.executions.markFinalizing(job.data.runId, attempt.id, claimToken);
       await options.executions.setRunPhase(job.data.runId, "finalizing");
       await persistReport(options, report, outputDirectory, attempt.id, claimToken);

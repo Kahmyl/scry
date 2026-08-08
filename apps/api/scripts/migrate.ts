@@ -6,6 +6,16 @@ import { executionPolicySchema } from "@scry/contracts";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 import pg from "pg";
 
+import {
+  calculateHistoricalFingerprints,
+  assertReleasedFingerprintReconstruction,
+  expandBaselineStage,
+  OPTIONAL_BASELINE_MIGRATIONS,
+  supportedHistoricalFingerprints,
+  RELEASED_HISTORICAL_FINGERPRINTS,
+  type OptionalBaselineMigration,
+} from "./migration-fingerprint-compatibility.js";
+
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://scry:scry-local@127.0.0.1:54329/scry";
 
 const baselinePath = fileURLToPath(new URL("../migrations/baseline.sql", import.meta.url));
@@ -63,16 +73,15 @@ const interactiveRuntimeLifecyclePath = fileURLToPath(
 const adaptiveAuthoringPath = fileURLToPath(
   new URL("../migrations/adaptive-authoring-pr9-pr12.sql", import.meta.url),
 );
+const adaptiveExecutionFoundationPath = fileURLToPath(
+  new URL("../migrations/adaptive-execution-foundation-m0-m1.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
 const protectedCapsule = await readFile(protectedCapsulePath, "utf8");
 
 const baselineSource = await readFile(baselinePath, "utf8");
-const compatibilityBaselineSource = baselineSource.replace(
-  "\\ir adaptive-authoring-pr9-pr12.sql\n",
-  "",
-);
 
 const authoringCutover = await readFile(authoringCutoverPath, "utf8");
 
@@ -96,173 +105,50 @@ const interactiveRuntimeCommands = await readFile(interactiveRuntimeCommandsPath
 const interactiveRuntimeLifecycle = await readFile(interactiveRuntimeLifecyclePath, "utf8");
 
 const adaptiveAuthoring = await readFile(adaptiveAuthoringPath, "utf8");
+const adaptiveExecutionFoundation = await readFile(adaptiveExecutionFoundationPath, "utf8");
 
 const expandFoundation = (source: string) =>
   source
     .replace("\\ir calibration-foundation.sql", () => calibrationFoundation)
     .replace("\\ir protected-capsule.sql", () => protectedCapsule);
 
-const base = expandFoundation(
-  compatibilityBaselineSource
-    .replace("\\ir authoring-execution-cutover.sql\n", "")
-    .replace("\\ir praxis-reporting.sql\n", "")
-    .replace("\\ir praxis-cutoff.sql\n", "")
-    .replace("\\ir veil-observation-preferences.sql\n", "")
-    .replace("\\ir veil-artifact-retention.sql\n", "")
-    .replace("\\ir compiled-plan-cutover.sql\n", "")
-    .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", "")
-    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
-);
+const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
+  "authoring-execution-cutover.sql": authoringCutover,
+  "praxis-reporting.sql": praxisReporting,
+  "praxis-cutoff.sql": praxisCutoff,
+  "praxis-candidate-inspection.sql": praxisCandidateInspection,
+  "veil-observation-preferences.sql": veilObservationPreferences,
+  "veil-artifact-retention.sql": veilArtifactRetention,
+  "compiled-plan-cutover.sql": compiledPlanCutover,
+  "stateful-probe-authoring.sql": statefulProbeAuthoring,
+  "interactive-runtime-commands.sql": interactiveRuntimeCommands,
+  "interactive-runtime-lifecycle.sql": interactiveRuntimeLifecycle,
+  "authentication-authoring.sql": authenticationAuthoring,
+  "adaptive-authoring-pr9-pr12.sql": adaptiveAuthoring,
+  "adaptive-execution-foundation-m0-m1.sql": adaptiveExecutionFoundation,
+};
 
-const authoringBaseline = expandFoundation(
-  compatibilityBaselineSource
-    .replace("\\ir praxis-reporting.sql\n", "")
-    .replace("\\ir praxis-cutoff.sql\n", "")
-    .replace("\\ir veil-observation-preferences.sql\n", "")
-    .replace("\\ir veil-artifact-retention.sql\n", "")
-    .replace("\\ir compiled-plan-cutover.sql\n", "")
-    .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", "")
-    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
-).replace("\\ir authoring-execution-cutover.sql", () => authoringCutover);
+const stagedBaseline = (included: readonly OptionalBaselineMigration[]) =>
+  expandFoundation(expandBaselineStage(baselineSource, optionalMigrationSources, included));
 
-const reportingBaseline = expandFoundation(
-  compatibilityBaselineSource
-    .replace("\\ir praxis-cutoff.sql\n", "")
-    .replace("\\ir veil-observation-preferences.sql\n", "")
-    .replace("\\ir veil-artifact-retention.sql\n", "")
-    .replace("\\ir compiled-plan-cutover.sql\n", "")
-    .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", "")
-    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
-)
-  .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
-  .replace("\\ir praxis-reporting.sql", () => praxisReporting);
-
-const praxisBaseline = expandFoundation(
-  compatibilityBaselineSource
-    .replace("\\ir veil-observation-preferences.sql\n", "")
-    .replace("\\ir veil-artifact-retention.sql\n", "")
-    .replace("\\ir compiled-plan-cutover.sql\n", "")
-    .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", "")
-    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
-)
-  .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
-  .replace("\\ir praxis-reporting.sql", () => praxisReporting)
-  .replace("\\ir praxis-cutoff.sql", () => praxisCutoff);
-
-const preferencesBaseline = expandFoundation(
-  compatibilityBaselineSource
-    .replace("\\ir veil-artifact-retention.sql\n", "")
-    .replace("\\ir compiled-plan-cutover.sql\n", "")
-    .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", "")
-    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
-)
-  .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
-  .replace("\\ir praxis-reporting.sql", () => praxisReporting)
-  .replace("\\ir praxis-cutoff.sql", () => praxisCutoff)
-  .replace(/\\ir\s+praxis-candidate-inspection\.sql/g, () => praxisCandidateInspection)
-  .replace("\\ir veil-observation-preferences.sql", () => veilObservationPreferences);
-
-const veilFullBaseline = expandFoundation(
-  compatibilityBaselineSource
-    .replace("\\ir compiled-plan-cutover.sql\n", "")
-    .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", "")
-    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
-)
-  .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
-  .replace("\\ir praxis-reporting.sql", () => praxisReporting)
-  .replace("\\ir praxis-cutoff.sql", () => praxisCutoff)
-  .replace(/\\ir\s+praxis-candidate-inspection\.sql/g, () => praxisCandidateInspection)
-  .replace("\\ir veil-observation-preferences.sql", () => veilObservationPreferences)
-  .replace("\\ir veil-artifact-retention.sql", () => veilArtifactRetention);
-
-const compiledPlanBaseline = expandFoundation(
-  compatibilityBaselineSource
-    .replace("\\ir stateful-probe-authoring.sql\n", "")
-    .replace("\\ir interactive-runtime-commands.sql\n", "")
-    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
-)
-  .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
-  .replace("\\ir praxis-reporting.sql", () => praxisReporting)
-  .replace("\\ir praxis-cutoff.sql", () => praxisCutoff)
-  .replace("\\ir veil-observation-preferences.sql", () => veilObservationPreferences)
-  .replace("\\ir veil-artifact-retention.sql", () => veilArtifactRetention)
-  .replace("\\ir compiled-plan-cutover.sql", () => compiledPlanCutover);
-
-const statefulProbeAuthoringBaseline = expandFoundation(
-  compatibilityBaselineSource
-    .replace("\\ir interactive-runtime-commands.sql\n", "")
-    .replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
-)
-  .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
-  .replace("\\ir praxis-reporting.sql", () => praxisReporting)
-  .replace("\\ir praxis-cutoff.sql", () => praxisCutoff)
-  .replace("\\ir veil-observation-preferences.sql", () => veilObservationPreferences)
-  .replace("\\ir veil-artifact-retention.sql", () => veilArtifactRetention)
-  .replace("\\ir compiled-plan-cutover.sql", () => compiledPlanCutover)
-  .replace("\\ir stateful-probe-authoring.sql", () => statefulProbeAuthoring);
-
-const interactiveRuntimeCommandsBaseline = expandFoundation(
-  compatibilityBaselineSource.replace("\\ir interactive-runtime-lifecycle.sql\n", ""),
-)
-  .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
-  .replace("\\ir praxis-reporting.sql", () => praxisReporting)
-  .replace("\\ir praxis-cutoff.sql", () => praxisCutoff)
-  .replace("\\ir veil-observation-preferences.sql", () => veilObservationPreferences)
-  .replace("\\ir veil-artifact-retention.sql", () => veilArtifactRetention)
-  .replace("\\ir compiled-plan-cutover.sql", () => compiledPlanCutover)
-  .replace("\\ir stateful-probe-authoring.sql", () => statefulProbeAuthoring)
-  .replace("\\ir interactive-runtime-commands.sql", () => interactiveRuntimeCommands);
-
-const baseline = expandFoundation(baselineSource)
-  .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
-  .replace("\\ir praxis-reporting.sql", () => praxisReporting)
-  .replace("\\ir praxis-cutoff.sql", () => praxisCutoff)
-  .replace("\\ir praxis-candidate-inspection.sql", () => praxisCandidateInspection)
-  .replace("\\ir veil-observation-preferences.sql", () => veilObservationPreferences)
-  .replace("\\ir veil-artifact-retention.sql", () => veilArtifactRetention)
-  .replace("\\ir compiled-plan-cutover.sql", () => compiledPlanCutover)
-  .replace("\\ir stateful-probe-authoring.sql", () => statefulProbeAuthoring)
-  .replace("\\ir interactive-runtime-commands.sql", () => interactiveRuntimeCommands)
-  .replace("\\ir interactive-runtime-lifecycle.sql", () => interactiveRuntimeLifecycle)
-  .replace("\\ir authentication-authoring.sql", () => authenticationAuthoring)
-  .replace("\\ir adaptive-authoring-pr9-pr12.sql", () => adaptiveAuthoring);
+const baseline = stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS);
 
 const fingerprint = digest(baseline);
-const previousFingerprint = digest(base);
-const authoringFingerprint = digest(authoringBaseline);
-const reportingFingerprint = digest(reportingBaseline);
-const praxisFingerprint = digest(praxisBaseline);
-const preferencesFingerprint = digest(preferencesBaseline);
-const veilFullFingerprint = digest(veilFullBaseline);
-const compiledPlanFingerprint = digest(compiledPlanBaseline);
-const statefulProbeAuthoringFingerprint = digest(statefulProbeAuthoringBaseline);
-const interactiveRuntimeCommandsFingerprint = digest(interactiveRuntimeCommandsBaseline);
-const interactiveRuntimeLifecycleFingerprint = digest(
-  expandFoundation(baselineSource)
-    .replace("\\ir authoring-execution-cutover.sql", () => authoringCutover)
-    .replace("\\ir praxis-reporting.sql", () => praxisReporting)
-    .replace("\\ir praxis-cutoff.sql", () => praxisCutoff)
-    .replace("\\ir praxis-candidate-inspection.sql", () => praxisCandidateInspection)
-    .replace("\\ir veil-observation-preferences.sql", () => veilObservationPreferences)
-    .replace("\\ir veil-artifact-retention.sql", () => veilArtifactRetention)
-    .replace("\\ir compiled-plan-cutover.sql", () => compiledPlanCutover)
-    .replace("\\ir stateful-probe-authoring.sql", () => statefulProbeAuthoring)
-    .replace("\\ir interactive-runtime-commands.sql", () => interactiveRuntimeCommands)
-    .replace("\\ir interactive-runtime-lifecycle.sql", () => interactiveRuntimeLifecycle)
-    .replace("\\ir authentication-authoring.sql", () => authenticationAuthoring)
-    .replace("\\ir adaptive-authoring-pr9-pr12.sql\n", ""),
-);
 
 const previousVeilFullFingerprint =
   "8c0e5ae0ae72f9a163189abe903b317e38aacf6b1674f3441b62dd7129b48c6a";
 const legacyInteractiveRuntimeFingerprint =
   "1dd96bf7b7a8e4273ec2f9da327c58182e3ca7516d0c71377af69482fb437c84";
+const deployedAdaptiveAuthoringFingerprint =
+  "01d52bd699c707bc293b5b81701de4e137e4f4ac1054d701675dc9db1b06b28c";
+const historicalFingerprints = calculateHistoricalFingerprints({
+  baselineSource,
+  migrationSources: optionalMigrationSources,
+  expandFoundation,
+  previousVeilFullFingerprint,
+});
+assertReleasedFingerprintReconstruction(historicalFingerprints);
+const releasedHistoricalFingerprints = RELEASED_HISTORICAL_FINGERPRINTS;
 
 const pool = new pg.Pool({
   connectionString: databaseUrl,
@@ -306,30 +192,64 @@ try {
 
     const installedFingerprint = installed.rows[0]?.schema_fingerprint;
 
-    const supportedPreviousFingerprints = [
-      previousFingerprint,
-      authoringFingerprint,
-      reportingFingerprint,
-      praxisFingerprint,
-      preferencesFingerprint,
-      veilFullFingerprint,
-      previousVeilFullFingerprint,
-      compiledPlanFingerprint,
-      statefulProbeAuthoringFingerprint,
-      interactiveRuntimeCommandsFingerprint,
-      interactiveRuntimeLifecycleFingerprint,
-    ];
+    const supportedPreviousFingerprints = supportedHistoricalFingerprints(
+      releasedHistoricalFingerprints,
+    );
 
-    if (installedFingerprint === legacyInteractiveRuntimeFingerprint) {
+    if (
+      [
+        releasedHistoricalFingerprints.pre_adaptive_execution,
+        deployedAdaptiveAuthoringFingerprint,
+      ].includes(installedFingerprint)
+    ) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-execution-foundation-m0-m1'))",
+        );
+        await client.query(adaptiveExecutionFoundation);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
+           WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied adaptive execution foundation ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (
+      [
+        legacyInteractiveRuntimeFingerprint,
+        releasedHistoricalFingerprints.interactive_runtime_lifecycle,
+        releasedHistoricalFingerprints.praxis_candidate_inspection,
+        releasedHistoricalFingerprints.authentication_authoring,
+      ].includes(installedFingerprint)
+    ) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query(
           "SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-authoring-cutover'))",
         );
-        await assertLegacyInteractiveRuntimeShape(client);
-        await client.query(authenticationAuthoring);
+        if (installedFingerprint === legacyInteractiveRuntimeFingerprint) {
+          await assertLegacyInteractiveRuntimeShape(client);
+        }
+        if (
+          installedFingerprint === legacyInteractiveRuntimeFingerprint ||
+          installedFingerprint === releasedHistoricalFingerprints.interactive_runtime_lifecycle
+        ) {
+          await client.query(praxisCandidateInspection);
+        }
+        if (installedFingerprint !== releasedHistoricalFingerprints.authentication_authoring) {
+          await client.query(authenticationAuthoring);
+        }
         await client.query(adaptiveAuthoring);
+        await client.query(adaptiveExecutionFoundation);
         await client.query(
           `UPDATE schema_baseline
            SET schema_fingerprint=$1,applied_at=now()
@@ -337,7 +257,7 @@ try {
           [fingerprint],
         );
         await client.query("COMMIT");
-        process.stdout.write(`Applied guarded adaptive authoring cutover ${fingerprint}\n`);
+        process.stdout.write(`Applied guarded post-lifecycle cutover ${fingerprint}\n`);
       } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -354,29 +274,31 @@ try {
           "SELECT pg_advisory_xact_lock(hashtext('scry-interactive-runtime-lifecycle-cutover'))",
         );
 
-        if (installedFingerprint === previousFingerprint) {
+        if (installedFingerprint === releasedHistoricalFingerprints.base) {
           await client.query(authoringCutover);
         }
 
         if (
-          installedFingerprint === previousFingerprint ||
-          installedFingerprint === authoringFingerprint
+          installedFingerprint === releasedHistoricalFingerprints.base ||
+          installedFingerprint === releasedHistoricalFingerprints.authoring
         ) {
           await client.query(praxisReporting);
         }
 
         if (
-          [previousFingerprint, authoringFingerprint, reportingFingerprint].includes(
-            installedFingerprint,
-          )
+          [
+            releasedHistoricalFingerprints.base,
+            releasedHistoricalFingerprints.authoring,
+            releasedHistoricalFingerprints.reporting,
+          ].includes(installedFingerprint)
         ) {
           await client.query(praxisCutoff);
         }
 
         if (
-          installedFingerprint !== preferencesFingerprint &&
-          installedFingerprint !== veilFullFingerprint &&
-          installedFingerprint !== previousVeilFullFingerprint
+          installedFingerprint !== releasedHistoricalFingerprints.preferences &&
+          installedFingerprint !== releasedHistoricalFingerprints.veil_full &&
+          installedFingerprint !== releasedHistoricalFingerprints.previous_veil_full
         ) {
           await client.query(veilObservationPreferences);
         }
@@ -384,34 +306,39 @@ try {
         await backfillVeilPolicySnapshots(client);
 
         if (
-          installedFingerprint !== veilFullFingerprint &&
-          installedFingerprint !== previousVeilFullFingerprint
+          installedFingerprint !== releasedHistoricalFingerprints.veil_full &&
+          installedFingerprint !== releasedHistoricalFingerprints.previous_veil_full
         ) {
           await client.query(veilArtifactRetention);
         }
 
         if (
-          installedFingerprint !== compiledPlanFingerprint &&
-          installedFingerprint !== statefulProbeAuthoringFingerprint &&
-          installedFingerprint !== interactiveRuntimeCommandsFingerprint
+          installedFingerprint !== releasedHistoricalFingerprints.compiled_plan &&
+          installedFingerprint !== releasedHistoricalFingerprints.stateful_probe_authoring &&
+          installedFingerprint !== releasedHistoricalFingerprints.interactive_runtime_commands
         ) {
           await client.query(compiledPlanCutover);
         }
 
         if (
-          installedFingerprint !== statefulProbeAuthoringFingerprint &&
-          installedFingerprint !== interactiveRuntimeCommandsFingerprint
+          installedFingerprint !== releasedHistoricalFingerprints.stateful_probe_authoring &&
+          installedFingerprint !== releasedHistoricalFingerprints.interactive_runtime_commands
         ) {
           await client.query(statefulProbeAuthoring);
         }
 
-        if (installedFingerprint !== interactiveRuntimeCommandsFingerprint) {
+        if (installedFingerprint !== releasedHistoricalFingerprints.interactive_runtime_commands) {
           await client.query(interactiveRuntimeCommands);
         }
 
         await client.query(interactiveRuntimeLifecycle);
 
+        await client.query(praxisCandidateInspection);
+
+        await client.query(authenticationAuthoring);
+
         await client.query(adaptiveAuthoring);
+        await client.query(adaptiveExecutionFoundation);
 
         await client.query(
           `UPDATE schema_baseline
