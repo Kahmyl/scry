@@ -343,13 +343,34 @@ export const acquisitionMethodSchema = z.enum([
   "dom_text",
   "input_value",
   "semantic_field_value",
+  "text_content",
+  "selected_text",
+  "keyboard_copy",
   "copy_control",
+  "clipboard_event",
   "scoped_text_selection",
   "focused_keyboard_selection",
+  "download_content",
+  "protected_network_value",
   "approved_network_field",
   "application_adapter",
+  "ocr_region",
   "protected_visual_reading",
   "secure_user_assistance",
+]);
+export const protectedValueObjectiveSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("capture_value"),
+      expectedValueType: z.enum(["public", "known_secret", "unknown_secret"]),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("verify_user_copy_experience"),
+      expectedValueType: z.enum(["public", "known_secret", "unknown_secret"]),
+    })
+    .strict(),
 ]);
 export const acquisitionValidationSchema = z
   .object({
@@ -364,6 +385,7 @@ export const acquisitionIntentSchema = z
     target: interactionTargetIntentSchema,
     classification: z.enum(["public", "known_secret", "unknown_secret"]),
     permittedMethods: z.array(acquisitionMethodSchema).min(1).max(10),
+    objective: protectedValueObjectiveSchema.optional(),
     validation: acquisitionValidationSchema.default({ minimumLength: 1, maximumLength: 20_000 }),
     adapter: z
       .object({

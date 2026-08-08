@@ -25,7 +25,10 @@ export class FlowReadRepository {
               fr.content AS "latestContent", fr.plan AS "latestPlan",
               f.created_at AS "createdAt", f.updated_at AS "updatedAt"
        FROM flows f JOIN flow_revisions fr ON fr.id = f.latest_revision_id
-       WHERE f.project_id=$1 AND ($2='all' OR f.visibility=$2) ORDER BY f.updated_at DESC`,
+       WHERE f.project_id=$1
+         AND f.publication_state='published'
+         AND ($2='all' OR f.visibility=$2)
+       ORDER BY f.updated_at DESC`,
         [projectId, visibility],
       )
     ).rows;

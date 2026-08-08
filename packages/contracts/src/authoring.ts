@@ -16,11 +16,7 @@ export const flowDraftStateSchema = z.enum([
   "abandoned",
 ]);
 
-export const probeLevelSchema = z.enum([
-  "inspection",
-  "reversible",
-  "calibration_transaction",
-]);
+export const probeLevelSchema = z.enum(["inspection", "reversible", "calibration_transaction"]);
 
 export const probeStateSchema = z.enum([
   "queued",
@@ -72,6 +68,93 @@ export const executionOutcomeClassSchema = z.enum([
   "cancelled",
   "legacy_authoring_attempt",
 ]);
+
+const codeSchema = z.string().regex(/^[A-Z][A-Z0-9_]*$/);
+const safeRecordSchema = z.record(z.string(), z.unknown());
+
+export const learnedInteractionRecordSchema = z
+  .object({
+    schemaVersion: z.literal(1).default(1),
+    interactionId: z.string().trim().min(1).max(200),
+    stepId: z.string().trim().min(1).max(200).optional(),
+    intent: safeRecordSchema,
+    operation: safeRecordSchema,
+    functionalResult: z.enum(["passed", "failed", "blocked", "inconclusive"]),
+    mutationOutcome: z.enum(["not_started", "not_applied", "applied", "unknown"]),
+    successfulEvidenceFamilies: z
+      .array(
+        z.enum([
+          "native_control",
+          "accessibility",
+          "textual",
+          "structural",
+          "visual",
+          "historical",
+          "runtime",
+          "effect",
+        ]),
+      )
+      .max(8),
+    scope: safeRecordSchema,
+    relationships: z.array(safeRecordSchema).max(20).default([]),
+    capabilityProfile: safeRecordSchema,
+    expectedEffect: safeRecordSchema,
+    adapterType: z
+      .enum([
+        "input_value",
+        "text_content",
+        "selected_text",
+        "keyboard_copy",
+        "copy_control",
+        "clipboard_event",
+        "download_content",
+        "protected_network_value",
+        "ocr_region",
+      ])
+      .optional(),
+    sanitizedFingerprint: safeRecordSchema,
+    qualityFindings: z.array(safeRecordSchema).max(100).default([]),
+    usedSelectorHint: z.boolean().default(false),
+    unresolvedMutation: z.boolean().default(false),
+    veilPolicyViolated: z.boolean().default(false),
+    expectedEffectVerified: z.boolean().default(true),
+    deterministic: z.boolean().default(true),
+  })
+  .strict();
+
+export const compilationContractVersionSchema = z.enum(["v1-existing", "v2-learned-interactions"]);
+
+export const compilationPublicationGateSchema = z
+  .object({
+    status: z.enum([
+      "not_required",
+      "certification_required",
+      "certification_pending",
+      "certified",
+      "rejected",
+    ]),
+    certificationRunId: uuid.optional(),
+    rejectionReasons: z.array(codeSchema).default([]),
+    requiredOutcome: z.literal("application_pass").default("application_pass"),
+  })
+  .strict();
+
+export const releaseGateMetricSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    category: z.enum([
+      "authoring",
+      "praxis",
+      "compiler",
+      "quality",
+      "protected_acquisition",
+      "certification",
+      "publication",
+    ]),
+    value: z.number(),
+    unit: z.enum(["count", "ratio", "ms"]).default("count"),
+  })
+  .strict();
 
 export const browserRuntimeHealthSchema = z
   .object({
@@ -153,6 +236,19 @@ export const compileFlowDraftSchema = objectiveContextSchema
     probeSessionId: uuid.optional(),
     authenticationContractRevisionId: uuid.optional(),
     idempotencyKey: z.string().trim().min(8).max(200),
+  })
+  .strict();
+
+export const compileAndCertifyFlowSchema = compileFlowDraftSchema
+  .extend({
+    viewport: z
+      .object({
+        width: z.number().int().min(320).max(3_840),
+        height: z.number().int().min(320).max(2_160),
+      })
+      .strict()
+      .default({ width: 1280, height: 720 }),
+    seed: z.number().int().min(0).max(4_294_967_295).default(1),
   })
   .strict();
 
@@ -249,11 +345,10 @@ export type CreateFlowDraftInput = z.infer<typeof createFlowDraftSchema>;
 export type UpdateFlowDraftInput = z.infer<typeof updateFlowDraftSchema>;
 export type StartProbeSessionInput = z.infer<typeof startProbeSessionSchema>;
 export type CompileFlowDraftInput = z.infer<typeof compileFlowDraftSchema>;
+export type CompileAndCertifyFlowInput = z.infer<typeof compileAndCertifyFlowSchema>;
 export type PublishFlowDraftInput = z.infer<typeof publishFlowDraftSchema>;
-export type CreateAuthenticationContractInput = z.infer<
-  typeof createAuthenticationContractSchema
->;
+export type CreateAuthenticationContractInput = z.infer<typeof createAuthenticationContractSchema>;
 export type ProbeAuthoringStatus = z.infer<typeof probeAuthoringStatusSchema>;
-export type AuthoringBrowserLeaseState = z.infer<
-  typeof authoringBrowserLeaseStateSchema
->;
+export type AuthoringBrowserLeaseState = z.infer<typeof authoringBrowserLeaseStateSchema>;
+export type LearnedInteractionRecord = z.infer<typeof learnedInteractionRecordSchema>;
+export type CompilationContractVersion = z.infer<typeof compilationContractVersionSchema>;

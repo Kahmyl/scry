@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post } from "@nestjs/common";
 import {
   compileFlowDraftSchema,
+  compileAndCertifyFlowSchema,
   createAuthenticationContractSchema,
   createAuthoringRuntimeCommandSchema,
   createFlowDraftSchema,
@@ -8,6 +9,7 @@ import {
   startProbeSessionSchema,
   updateFlowDraftSchema,
   type CompileFlowDraftInput,
+  type CompileAndCertifyFlowInput,
   type CreateAuthenticationContractInput,
   type CreateAuthoringRuntimeCommandInput,
   type CreateFlowDraftInput,
@@ -129,6 +131,17 @@ export class AuthoringController {
     @Body(new ZodValidationPipe(compileFlowDraftSchema)) input: CompileFlowDraftInput,
   ) {
     return this.authoring.compile(p, id, input);
+  }
+
+  @Post("flow-drafts/:draftId/compile-and-certify")
+  async compileAndCertify(
+    @Param("draftId") id: string,
+    @CurrentPrincipal() p: Principal,
+    @Body(new ZodValidationPipe(compileAndCertifyFlowSchema)) input: CompileAndCertifyFlowInput,
+  ) {
+    const result = await this.authoring.compileAndCertify(p, id, input);
+    await this.queue.dispatchPending();
+    return result;
   }
 
   @Post("flow-drafts/:draftId/publish")

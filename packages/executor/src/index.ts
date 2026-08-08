@@ -6,6 +6,7 @@ export * from "./checkpoint-coordinator.js";
 export * from "./browser-session.js";
 export * from "./authoring-browser-session.js";
 export * from "./protected-transaction-coordinator.js";
+export * from "./protected-extractor.js";
 export * from "./calibration.js";
 export * from "./probe.js";
 export * from "./types.js";

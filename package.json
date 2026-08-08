@@ -22,6 +22,7 @@
     "verify:praxis-change-gate": "node scripts/verify-praxis-change-gate.mjs",
     "baseline:praxis": "node scripts/praxis-baseline.mjs",
     "baseline:authoring": "node scripts/authoring-baseline.mjs",
+    "verify:adaptive-authoring-release": "node scripts/verify-adaptive-authoring-release.mjs",
     "campaign:praxis": "pnpm --filter @scry/executor campaign:praxis",
     "campaign:praxis:100": "pnpm --filter @scry/executor campaign:praxis:100",
     "campaign:praxis:resilience": "pnpm --filter @scry/executor campaign:praxis:resilience",

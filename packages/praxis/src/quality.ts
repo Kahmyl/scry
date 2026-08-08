@@ -17,12 +17,54 @@ export const PRAXIS_QUALITY_FINDING_CODES = [
   "CANVAS_ONLY_INTERACTION",
 ] as const;
 
-export function analyzePraxisQuality(
+export type MalformedControlFacts = {
+  interactiveWithoutRole?: boolean;
+  missingLabelAssociation?: boolean;
+  incorrectLabelAssociation?: boolean;
+  duplicateAccessibleName?: boolean;
+  hiddenDuplicate?: boolean;
+  customControl?: boolean;
+  visualOnlyIdentity?: boolean;
+  canvasOnly?: boolean;
+};
+
+export function classifyMalformedControlFacts(facts: MalformedControlFacts) {
+  const codes: Array<(typeof PRAXIS_QUALITY_FINDING_CODES)[number]> = [];
+  if (facts.interactiveWithoutRole || facts.visualOnlyIdentity)
+    codes.push("MISSING_SEMANTIC_IDENTITY");
+  if (facts.missingLabelAssociation || facts.incorrectLabelAssociation)
+    codes.push("LABEL_CONTROL_ASSOCIATION_FAILURE");
+  if (facts.duplicateAccessibleName) codes.push("AMBIGUOUS_DUPLICATE_IDENTITY");
+  if (facts.hiddenDuplicate) codes.push("UNSTABLE_CONTROL_IDENTITY");
+  if (facts.customControl) codes.push("SPECIALIZED_CUSTOM_CONTROL");
+  if (facts.canvasOnly) codes.push("CANVAS_ONLY_INTERACTION");
+  return codes;
+}
+
+export async function analyzePraxisQuality(
   target: PraxisGroundedTarget,
   request: PraxisRequest,
-): PraxisQualityFinding[] {
+): Promise<PraxisQualityFinding[]> {
   const findings: PraxisQualityFinding[] = [];
   const families = new Set(target.resolution.evidenceFamilies);
+  const semantics = await target.handle.use((locator) =>
+    locator.evaluate((element) => {
+      const tag = element.tagName.toLowerCase();
+      const role = element.getAttribute("role");
+      const ariaLabel = element.getAttribute("aria-label")?.trim() ?? "";
+      const text = element.textContent?.trim() ?? "";
+      const labels =
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLSelectElement ||
+        element instanceof HTMLTextAreaElement
+          ? (element.labels?.length ?? 0)
+          : 0;
+      const interactiveNative = ["button", "a", "input", "select", "textarea"].includes(tag);
+      const clickable = element instanceof HTMLElement && typeof element.onclick === "function";
+      const customRole = ["combobox", "listbox", "menu", "dialog"].includes(role ?? "");
+      return { tag, role, ariaLabel, text, labels, interactiveNative, clickable, customRole };
+    }),
+  );
   if (!families.has("accessibility") && request.intent.preferredEvidence.roles.length)
     findings.push(
       finding(
@@ -33,6 +75,25 @@ export function analyzePraxisQuality(
         "Expose the intended role and accessible name through native HTML or valid ARIA.",
       ),
     );
+  for (const code of classifyMalformedControlFacts({
+    interactiveWithoutRole: semantics.clickable && !semantics.interactiveNative && !semantics.role,
+    missingLabelAssociation:
+      ["input", "select", "textarea"].includes(semantics.tag) &&
+      semantics.labels === 0 &&
+      !semantics.ariaLabel,
+    customControl: semantics.customRole && !semantics.interactiveNative,
+  })) {
+    if (findings.some((item) => item.code === code)) continue;
+    findings.push(
+      finding(
+        code,
+        "warning",
+        0.95,
+        "The resolved control has malformed or incomplete interaction semantics.",
+        "Use native controls or implement complete accessible role, name, focus, and state semantics.",
+      ),
+    );
+  }
   if (["focus_keyboard", "content_editable", "application_adapter"].includes(target.strategy))
     findings.push(
       finding(

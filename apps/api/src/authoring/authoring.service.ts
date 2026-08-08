@@ -9,7 +9,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient, QueryResultRow } from "pg";
 import {
   currentPlanSchema,
+  executionPolicySchema,
+  learnedInteractionRecordSchema,
   type CompileFlowDraftInput,
+  type CompileAndCertifyFlowInput,
   type CreateAuthenticationContractInput,
   type CreateFlowDraftInput,
   type CurrentPlan,
@@ -22,6 +25,8 @@ import { browserObservationRuntimeHealth } from "@scry/praxis";
 import type { Principal } from "../auth/index.js";
 import { Database } from "../infrastructure/index.js";
 import { ReleaseAdmissionService } from "../runtime/index.js";
+import { snapshotVeilPolicy } from "../veil/index.js";
+import { adaptiveAuthoringFlags } from "./adaptive-authoring-flags.js";
 
 type Query = <T extends QueryResultRow = QueryResultRow>(
   text: string,
@@ -459,6 +464,12 @@ export class AuthoringService {
   async startProbe(principal: Principal, draftId: string, input: StartProbeSessionInput) {
     await this.admission.assertAcceptingWork();
     this.requireWrite(principal);
+    if (input.mode === "interactive" && !adaptiveAuthoringFlags().interactiveProbeSessions) {
+      throw new ConflictException({
+        code: "INTERACTIVE_PROBE_SESSIONS_DISABLED",
+        safeActions: ["start_queued_probe_session"],
+      });
+    }
 
     return this.db.transaction(async (client) => {
       const q = bind(client);
@@ -980,28 +991,25 @@ export class AuthoringService {
           message: "Probe Session is not complete.",
         });
       } else {
-        const classified = classifyProbeCompilationInput(
-          probe.rows[0]!.result,
-        );
+        const classified = classifyProbeCompilationInput(probe.rows[0]!.result);
 
         blockers.push(...classified.blockers);
         warnings.push(...classified.warnings);
         qualityFindings.push(...classified.qualityFindings);
       }
 
-      const diagnostics = [
-        ...blockers,
-        ...warnings,
-      ];
-
-      const status =
-        !runtime.healthy
-          ? "runtime_unhealthy"
-          : blockers.length
-            ? "calibration_required"
-            : "execution_ready";
-
       const probeResult = probe.rows[0]?.result ?? null;
+      const transcript = compileSuccessfulInteractions(probeResult);
+      blockers.push(...transcript.blockers);
+      warnings.push(...transcript.warnings);
+
+      const diagnostics = [...blockers, ...warnings];
+
+      const status = !runtime.healthy
+        ? "runtime_unhealthy"
+        : blockers.length
+          ? "calibration_required"
+          : "execution_ready";
 
       const compiledPlan = deriveCompiledPlan(
         currentPlanSchema.parse(d.plan),
@@ -1036,9 +1044,11 @@ export class AuthoringService {
       );
 
       const contract = {
+        version: transcript.contractVersion,
         planDigest,
         targetContracts: probeResult?.targets ?? [],
         readinessContracts: probeResult?.readiness ?? [],
+        learnedInteractionRecords: transcript.learnedRecords,
         runtimeHash: runtime.runtimeHash,
         capabilityManifestHash: runtime.capabilityManifestHash,
         authorizationDigest,
@@ -1076,6 +1086,9 @@ export class AuthoringService {
           compiled_plan,
           plan_digest,
           compiled_contract_digest,
+          contract_version,
+          learned_interaction_records,
+          publication_gate,
           capability_manifest_hash,
           runtime_hash,
           page_fingerprint,
@@ -1091,9 +1104,9 @@ export class AuthoringService {
         )
         VALUES(
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-          $11::jsonb,$12,$13,$14,$15,$16,$17,
-          $18::jsonb,$19::jsonb,$20::jsonb,
-          $21,$22,$23,$24,now()
+          $11::jsonb,$12,$13,$14,$15::jsonb,$16::jsonb,$17,$18,$19,
+          $20,$21::jsonb,$22::jsonb,$23::jsonb,
+          $24,$25,$26,$27,now()
         )`,
         [
           id,
@@ -1109,6 +1122,9 @@ export class AuthoringService {
           JSON.stringify(compiledPlan),
           planDigest,
           digest,
+          transcript.contractVersion,
+          JSON.stringify(transcript.learnedRecords),
+          JSON.stringify(publicationGateFor(status, transcript.contractVersion)),
           runtime.capabilityManifestHash,
           runtime.runtimeHash,
           probeResult?.pageFingerprint ?? null,
@@ -1130,6 +1146,41 @@ export class AuthoringService {
          WHERE id=$1`,
         [draftId, status === "execution_ready" ? "publishable" : "editing"],
       );
+
+      await recordReleaseMetric(q, {
+        projectId: d.projectId,
+        missionId: input.missionId,
+        objectiveId: input.objectiveId,
+        compilationId: id,
+        category: "compiler",
+        name:
+          status === "execution_ready"
+            ? "transcript_compilation_succeeded"
+            : "transcript_compilation_rejected",
+        safeDimensions: {
+          status,
+          contractVersion: transcript.contractVersion,
+          blockerCodes: blockers.flatMap((item) =>
+            typeof item.code === "string" ? [item.code] : [],
+          ),
+        },
+      });
+      if (qualityFindings.length) {
+        await recordReleaseMetric(q, {
+          projectId: d.projectId,
+          missionId: input.missionId,
+          objectiveId: input.objectiveId,
+          compilationId: id,
+          category: "quality",
+          name: "functional_compilation_with_quality_findings",
+          value: qualityFindings.length,
+          safeDimensions: {
+            findingCodes: qualityFindings.flatMap((item) =>
+              typeof item.code === "string" ? [item.code] : [],
+            ),
+          },
+        });
+      }
 
       await this.event(
         q,
@@ -1188,13 +1239,19 @@ export class AuthoringService {
         draftVersion: number;
         compiledPlan: CurrentPlan;
         planDigest: string;
+        contractVersion: string;
+        publicationGate: Record<string, unknown>;
+        flowRevisionId: string | null;
       }>(
         `SELECT
            id,
            status,
            draft_version AS "draftVersion",
            compiled_plan AS "compiledPlan",
-           plan_digest AS "planDigest"
+           plan_digest AS "planDigest",
+           contract_version AS "contractVersion",
+           publication_gate AS "publicationGate",
+           flow_revision_id AS "flowRevisionId"
          FROM flow_compilations
          WHERE id=$1
            AND draft_id=$2
@@ -1214,6 +1271,115 @@ export class AuthoringService {
         throw new ConflictException({
           code: "EXECUTION_READY_COMPILATION_REQUIRED",
         });
+      }
+
+      if (
+        compilation.contractVersion === "v2-learned-interactions" ||
+        certificationPublicationGateEnabled()
+      ) {
+        const certified = await certificationSatisfied(q, compilation.id);
+        if (!certified) {
+          await q(
+            `UPDATE flow_compilations
+             SET publication_gate=$2::jsonb
+             WHERE id=$1`,
+            [
+              compilation.id,
+              JSON.stringify({
+                status: "certification_required",
+                rejectionReasons: ["CERTIFICATION_RUN_REQUIRED"],
+                requiredOutcome: "application_pass",
+              }),
+            ],
+          );
+          throw new ConflictException({
+            code: "CERTIFICATION_RUN_REQUIRED",
+          });
+        }
+      }
+
+      if (compilation.contractVersion === "v2-learned-interactions" && compilation.flowRevisionId) {
+        const candidate = await q<{ flowId: string; revision: number }>(
+          `SELECT fr.flow_id AS "flowId",fr.revision
+           FROM flow_revisions fr
+           JOIN flows f ON f.id=fr.flow_id
+           WHERE fr.id=$1
+             AND fr.publication_state='candidate'
+             AND f.project_id=$2
+           FOR UPDATE OF fr,f`,
+          [compilation.flowRevisionId, d.projectId],
+        );
+        if (!candidate.rowCount) {
+          throw new ConflictException({ code: "CERTIFICATION_CANDIDATE_REQUIRED" });
+        }
+        const { flowId, revision } = candidate.rows[0]!;
+        await q(
+          `UPDATE flows
+           SET latest_revision_id=$2,publication_state='published',visibility=$3,purpose=$4,
+               name=$5,description=$6,updated_at=now()
+           WHERE id=$1`,
+          [
+            flowId,
+            compilation.flowRevisionId,
+            input.visibility,
+            input.purpose,
+            d.name,
+            d.description,
+          ],
+        );
+        await q(
+          `INSERT INTO mission_flow_links(
+             mission_id,objective_id,flow_id,visibility,purpose,reason,created_by_agent_session_id
+           ) VALUES($1,$2,$3,$4,$5,$6,$7)
+           ON CONFLICT DO NOTHING`,
+          [
+            input.missionId,
+            input.objectiveId,
+            flowId,
+            input.visibility,
+            input.purpose,
+            input.reason,
+            input.agentSessionId,
+          ],
+        );
+        await q(
+          `UPDATE flow_compilations
+           SET publication_gate=jsonb_build_object(
+                 'status','certified','certificationRunId',certification_run_id::text,
+                 'rejectionReasons','[]'::jsonb,'requiredOutcome','application_pass'
+               )
+           WHERE id=$1`,
+          [compilation.id],
+        );
+        await q(
+          `UPDATE flow_drafts
+           SET flow_id=$2,state='published',published_revision_id=$3,updated_at=now()
+           WHERE id=$1`,
+          [draftId, flowId, compilation.flowRevisionId],
+        );
+        await recordReleaseMetric(q, {
+          projectId: d.projectId,
+          missionId: input.missionId,
+          objectiveId: input.objectiveId,
+          compilationId: compilation.id,
+          category: "publication",
+          name: "certified_revision_published",
+        });
+        await this.event(
+          q,
+          draftId,
+          d.version,
+          "published",
+          input.agentSessionId,
+          `Published certified Flow revision ${revision}`,
+          { flowId, revisionId: compilation.flowRevisionId, compilationId: compilation.id },
+        );
+        return {
+          flowId,
+          revisionId: compilation.flowRevisionId,
+          revision,
+          compilationId: compilation.id,
+        };
       }
 
       const compiledPlan = currentPlanSchema.parse(compilation.compiledPlan);
@@ -1343,9 +1509,27 @@ export class AuthoringService {
 
       await q(
         `UPDATE flow_compilations
-         SET flow_revision_id=$2
+         SET flow_revision_id=$2,
+             publication_gate=$3::jsonb,
+             certification_run_id=COALESCE(certification_run_id, (
+               SELECT id
+               FROM runs
+               WHERE compiled_contract_id=$1
+                 AND state='passed'
+                 AND result_classification='application_pass'
+               ORDER BY created_at DESC
+               LIMIT 1
+             ))
          WHERE id=$1`,
-        [input.compilationId, revisionId],
+        [
+          input.compilationId,
+          revisionId,
+          JSON.stringify({
+            status: certificationPublicationGateEnabled() ? "certified" : "not_required",
+            rejectionReasons: [],
+            requiredOutcome: "application_pass",
+          }),
+        ],
       );
 
       await q(
@@ -1379,6 +1563,236 @@ export class AuthoringService {
         compilationId: input.compilationId,
       };
     });
+  }
+
+  async compileAndCertify(
+    principal: Principal,
+    draftId: string,
+    input: CompileAndCertifyFlowInput,
+  ) {
+    const compilation = await this.compile(principal, draftId, input);
+    if (compilation.status !== "execution_ready") {
+      return {
+        compilation,
+        certification: {
+          status: "rejected",
+          rejectionReasons: ["COMPILATION_NOT_EXECUTION_READY"],
+        },
+      };
+    }
+
+    const certification = await this.db.transaction(async (client) => {
+      const q = bind(client);
+      const d = await this.requireDraft(q, principal, draftId, true);
+      await this.requireContext(
+        q,
+        principal,
+        d.projectId,
+        input.missionId,
+        input.objectiveId,
+        input.agentSessionId,
+        input.environmentId,
+      );
+
+      const existing = await q<{
+        runId: string;
+        state: string;
+        resultClassification: string | null;
+      }>(
+        `SELECT r.id AS "runId",r.state,r.result_classification AS "resultClassification"
+         FROM flow_compilations fc
+         JOIN runs r ON r.id=fc.certification_run_id
+         WHERE fc.id=$1`,
+        [compilation.id],
+      );
+      if (existing.rowCount) {
+        return {
+          status:
+            existing.rows[0]!.state === "passed" &&
+            existing.rows[0]!.resultClassification === "application_pass"
+              ? "certified"
+              : ["failed", "cancelled", "timed_out", "infrastructure_error"].includes(
+                    existing.rows[0]!.state,
+                  )
+                ? "rejected"
+                : "certification_pending",
+          certificationRunId: existing.rows[0]!.runId,
+          rejectionReasons: [],
+          replayed: true,
+        };
+      }
+
+      const contract = await q<{
+        contractVersion: string;
+        compiledContractDigest: string;
+        compiledPlan: CurrentPlan;
+      }>(
+        `SELECT contract_version AS "contractVersion",
+                compiled_contract_digest AS "compiledContractDigest",
+                compiled_plan AS "compiledPlan"
+         FROM flow_compilations
+         WHERE id=$1 AND draft_id=$2 AND status='execution_ready'
+         FOR UPDATE`,
+        [compilation.id, draftId],
+      );
+      if (!contract.rowCount || contract.rows[0]!.contractVersion !== "v2-learned-interactions") {
+        throw new ConflictException({ code: "LEARNED_COMPILATION_REQUIRED" });
+      }
+
+      const environment = await q<{
+        name: string;
+        baseOrigin: string;
+        policy: unknown;
+        secretRefs: string[];
+        veilPreferences: import("@scry/contracts").VeilPolicyPreferences | null;
+      }>(
+        `SELECT e.name,e.base_origin AS "baseOrigin",e.policy,e.secret_refs AS "secretRefs",
+                veil.preferences AS "veilPreferences"
+         FROM environments e
+         LEFT JOIN veil_environment_preferences veil ON veil.environment_id=e.id
+         WHERE e.id=$1 AND e.project_id=$2
+         FOR SHARE OF e`,
+        [input.environmentId, d.projectId],
+      );
+      if (!environment.rowCount) throw new NotFoundException("Environment not found");
+
+      const flowId = d.flowId ?? randomUUID();
+      const revisionId = randomUUID();
+      const currentRevision = d.flowId
+        ? await q<{ revision: number }>(
+            `SELECT COALESCE(max(revision),0)::integer AS revision
+             FROM flow_revisions WHERE flow_id=$1`,
+            [flowId],
+          )
+        : { rows: [{ revision: 0 }], rowCount: 1 };
+      const revision = currentRevision.rows[0]!.revision + 1;
+
+      if (!d.flowId) {
+        await q(
+          `INSERT INTO flows(
+             id,project_id,name,description,latest_revision_id,visibility,purpose,
+             origin_mission_id,origin_objective_id,created_by_agent_session_id,publication_state
+           ) VALUES($1,$2,$3,$4,$5,'internal','verification',$6,$7,$8,'candidate')`,
+          [
+            flowId,
+            d.projectId,
+            d.name,
+            d.description,
+            revisionId,
+            input.missionId,
+            input.objectiveId,
+            input.agentSessionId,
+          ],
+        );
+      }
+
+      await q(
+        `INSERT INTO flow_revisions(
+           id,flow_id,revision,content,plan,validation,created_by_agent_session_id,reason,
+           publication_state
+         ) VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,$8,'candidate')`,
+        [
+          revisionId,
+          flowId,
+          revision,
+          JSON.stringify(d.content),
+          JSON.stringify(contract.rows[0]!.compiledPlan),
+          JSON.stringify({
+            valid: true,
+            compiled: true,
+            certificationCandidate: true,
+            compilationId: compilation.id,
+            sourceDraftVersion: d.version,
+          }),
+          input.agentSessionId,
+          "Immutable certification candidate",
+        ],
+      );
+
+      const policy = executionPolicySchema.parse(environment.rows[0]!.policy);
+      const veilPolicy = snapshotVeilPolicy(policy, environment.rows[0]!.veilPreferences);
+      const runId = randomUUID();
+      await q(
+        `INSERT INTO runs(
+           id,project_id,mission_id,objective_id,agent_session_id,environment_id,
+           flow_revision_id,compiled_contract_id,compiled_contract_digest,state,phase,
+           plan_snapshot,environment_snapshot,policy_snapshot,veil_policy_snapshot,
+           execution_snapshot,idempotency_key
+         ) VALUES(
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,'queued','queued',$10::jsonb,$11::jsonb,
+           $12::jsonb,$13::jsonb,$14::jsonb,$15
+         )`,
+        [
+          runId,
+          d.projectId,
+          input.missionId,
+          input.objectiveId,
+          input.agentSessionId,
+          input.environmentId,
+          revisionId,
+          compilation.id,
+          contract.rows[0]!.compiledContractDigest,
+          JSON.stringify(contract.rows[0]!.compiledPlan),
+          JSON.stringify({
+            id: input.environmentId,
+            ...environment.rows[0],
+            veilPreferences: undefined,
+          }),
+          JSON.stringify(policy),
+          JSON.stringify(veilPolicy),
+          JSON.stringify({ browser: "chromium", viewport: input.viewport, seed: input.seed }),
+          `certification:${compilation.id}`,
+        ],
+      );
+      await q(
+        `INSERT INTO mission_run_links(
+           run_id,mission_id,objective_id,role,reason,classified_by_agent_session_id
+         ) VALUES($1,$2,$3,'candidate','Fresh authoring certification Run',$4)`,
+        [runId, input.missionId, input.objectiveId, input.agentSessionId],
+      );
+      await q(
+        `INSERT INTO run_outbox(run_id,release_id,schema_fingerprint)
+         VALUES($1,$2,$3)`,
+        [runId, releaseId(), schemaFingerprint()],
+      );
+      await q(
+        `UPDATE flow_compilations
+         SET flow_revision_id=$2,
+             certification_run_id=$3,
+             publication_gate=$4::jsonb
+         WHERE id=$1`,
+        [
+          compilation.id,
+          revisionId,
+          runId,
+          JSON.stringify({
+            status: "certification_pending",
+            certificationRunId: runId,
+            rejectionReasons: [],
+            requiredOutcome: "application_pass",
+          }),
+        ],
+      );
+      await recordReleaseMetric(q, {
+        projectId: d.projectId,
+        missionId: input.missionId,
+        objectiveId: input.objectiveId,
+        compilationId: compilation.id,
+        category: "certification",
+        name: "certification_run_queued",
+      });
+      return {
+        status: "certification_pending",
+        certificationRunId: runId,
+        candidateRevisionId: revisionId,
+        rejectionReasons: [],
+      };
+    });
+
+    return {
+      compilation,
+      certification,
+    };
   }
 
   async createAuthenticationContract(
@@ -1733,15 +2147,24 @@ type ProbeTargetContract = {
   reason?: unknown;
 };
 
-type ProbeResult = {
+export type ProbeResult = {
   targets?: unknown;
   readiness?: Array<Record<string, unknown>>;
+  learnedContracts?: Array<Record<string, unknown>>;
   diagnostics?: Array<Record<string, unknown>>;
   blockers?: Array<Record<string, unknown>>;
   warnings?: Array<Record<string, unknown>>;
   qualityFindings?: Array<Record<string, unknown>>;
   pageFingerprint?: string;
   authenticationFingerprint?: string;
+  authoringTrajectory?: Record<string, unknown>;
+};
+
+export type TranscriptCompilationResult = {
+  learnedRecords: Array<Record<string, unknown>>;
+  blockers: Array<Record<string, unknown>>;
+  warnings: Array<Record<string, unknown>>;
+  contractVersion: "v1-existing" | "v2-learned-interactions";
 };
 
 const PROBE_BLOCKER_CODES = new Set([
@@ -1779,9 +2202,7 @@ const PROBE_QUALITY_FINDING_CODES = new Set([
   "CANVAS_ONLY_INTERACTION",
 ]);
 
-export function classifyProbeCompilationInput(
-  result: ProbeResult | null | undefined,
-): {
+export function classifyProbeCompilationInput(result: ProbeResult | null | undefined): {
   blockers: Array<Record<string, unknown>>;
   warnings: Array<Record<string, unknown>>;
   qualityFindings: Array<Record<string, unknown>>;
@@ -1791,10 +2212,7 @@ export function classifyProbeCompilationInput(
   const qualityFindings = [...(result?.qualityFindings ?? [])];
 
   for (const diagnostic of result?.diagnostics ?? []) {
-    const code =
-      typeof diagnostic.code === "string"
-        ? diagnostic.code
-        : "";
+    const code = typeof diagnostic.code === "string" ? diagnostic.code : "";
 
     if (PROBE_BLOCKER_CODES.has(code)) {
       blockers.push(diagnostic);
@@ -1823,6 +2241,209 @@ export function deriveCompiledPlan(plan: CurrentPlan, targetContracts: unknown):
     ...plan,
     steps: plan.steps.filter((step) => !removed.has(step.id)),
   });
+}
+
+export function compileSuccessfulInteractions(
+  result: ProbeResult | null | undefined,
+): TranscriptCompilationResult {
+  const rawRecords = Array.isArray(result?.learnedContracts) ? result.learnedContracts : [];
+  const learnedRecords: Array<Record<string, unknown>> = [];
+  const blockers: Array<Record<string, unknown>> = [];
+  const warnings: Array<Record<string, unknown>> = [];
+
+  if (!transcriptCompilerEnabled()) {
+    return {
+      learnedRecords: [],
+      blockers,
+      warnings,
+      contractVersion: "v1-existing",
+    };
+  }
+
+  if (!rawRecords.length) {
+    blockers.push({
+      code: "SUCCESSFUL_AUTHORING_TRAJECTORY_REQUIRED",
+      message: "Compilation requires at least one successful learned interaction record.",
+    });
+  }
+
+  for (const [index, raw] of rawRecords.entries()) {
+    const sanitized = sanitizeLearnedRecord(raw);
+    const parsed = learnedInteractionRecordSchema.safeParse(sanitized);
+    if (!parsed.success) {
+      blockers.push({
+        code: "LEARNED_INTERACTION_INVALID",
+        index,
+        message: "Learned interaction record cannot be represented as a deterministic contract.",
+      });
+      continue;
+    }
+
+    const record = parsed.data;
+    const rejection = transcriptRejection(record);
+    if (rejection) {
+      blockers.push({
+        code: rejection,
+        index,
+        message: `Learned interaction ${record.interactionId} is not compilable.`,
+      });
+      continue;
+    }
+
+    learnedRecords.push(record);
+  }
+
+  return {
+    learnedRecords,
+    blockers,
+    warnings,
+    contractVersion: learnedRecords.length ? "v2-learned-interactions" : "v1-existing",
+  };
+}
+
+export function sanitizeLearnedRecord(raw: unknown): Record<string, unknown> {
+  const safe = deepSanitize(raw) as Record<string, unknown>;
+  return safe && typeof safe === "object" ? safe : {};
+}
+
+export function protectedAcquisitionAdapterRegistry() {
+  return {
+    input_value: { requiresCopyExperience: false, protectedCapable: true },
+    text_content: { requiresCopyExperience: false, protectedCapable: true },
+    selected_text: { requiresCopyExperience: false, protectedCapable: true },
+    keyboard_copy: { requiresCopyExperience: true, protectedCapable: true },
+    copy_control: { requiresCopyExperience: true, protectedCapable: true },
+    clipboard_event: { requiresCopyExperience: true, protectedCapable: true },
+    download_content: { requiresCopyExperience: false, protectedCapable: true },
+    protected_network_value: { requiresCopyExperience: false, protectedCapable: true },
+    ocr_region: { requiresCopyExperience: false, protectedCapable: true },
+  } as const;
+}
+
+function transcriptRejection(record: {
+  functionalResult: string;
+  mutationOutcome: string;
+  usedSelectorHint: boolean;
+  unresolvedMutation: boolean;
+  veilPolicyViolated: boolean;
+  expectedEffectVerified: boolean;
+  deterministic: boolean;
+}) {
+  if (record.functionalResult !== "passed") return "AUTHORING_INTERACTION_NOT_SUCCESSFUL";
+  if (record.unresolvedMutation || record.mutationOutcome === "unknown")
+    return "MUTATION_STATE_UNRESOLVED";
+  if (record.usedSelectorHint) return "SELECTOR_HINT_ONLY_CONTRACT_REJECTED";
+  if (!record.expectedEffectVerified) return "EXPECTED_EFFECT_REQUIRED";
+  if (record.veilPolicyViolated) return "VEIL_POLICY_VIOLATION";
+  if (!record.deterministic) return "NON_DETERMINISTIC_CONTRACT";
+  return undefined;
+}
+
+function deepSanitize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(deepSanitize);
+  if (!value || typeof value !== "object") return value;
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value)) {
+    if (unsafeTranscriptKey(key)) continue;
+    sanitized[key] = deepSanitize(nested);
+  }
+  return sanitized;
+}
+
+function unsafeTranscriptKey(key: string) {
+  if (key === "usedSelectorHint") return false;
+  return /selector|candidateHandle|rawDom|html|plaintext|clipboardValue|secretValue|tokenValue/i.test(
+    key,
+  );
+}
+
+function transcriptCompilerEnabled() {
+  return adaptiveAuthoringFlags().transcriptCompiler;
+}
+
+function certificationPublicationGateEnabled() {
+  return adaptiveAuthoringFlags().certificationPublicationGate;
+}
+
+function publicationGateFor(status: string, contractVersion: string) {
+  if (status !== "execution_ready") {
+    return {
+      status: "rejected",
+      rejectionReasons: ["COMPILATION_NOT_EXECUTION_READY"],
+      requiredOutcome: "application_pass",
+    };
+  }
+  if (contractVersion === "v1-existing" && !certificationPublicationGateEnabled()) {
+    return {
+      status: "not_required",
+      rejectionReasons: [],
+      requiredOutcome: "application_pass",
+    };
+  }
+  return {
+    status: "certification_required",
+    rejectionReasons: ["CERTIFICATION_RUN_REQUIRED"],
+    requiredOutcome: "application_pass",
+  };
+}
+
+async function certificationSatisfied(q: Query, compilationId: string) {
+  const certified = await q(
+    `SELECT 1
+     FROM flow_compilations fc
+     JOIN runs r ON r.id=fc.certification_run_id
+     WHERE fc.id=$1
+       AND r.compiled_contract_id=fc.id
+       AND r.flow_revision_id=fc.flow_revision_id
+       AND r.state='passed'
+       AND r.result_classification='application_pass'
+       AND fc.publication_gate->>'status'='certified'
+       AND NOT EXISTS(
+         SELECT 1 FROM credential_incidents ci WHERE ci.run_id=r.id
+       )
+     LIMIT 1`,
+    [compilationId],
+  );
+  return Boolean(certified.rowCount);
+}
+
+async function recordReleaseMetric(
+  q: Query,
+  input: {
+    projectId: string;
+    missionId: string;
+    objectiveId: string;
+    compilationId: string;
+    category:
+      | "authoring"
+      | "praxis"
+      | "compiler"
+      | "quality"
+      | "protected_acquisition"
+      | "certification"
+      | "publication";
+    name: string;
+    value?: number;
+    unit?: "count" | "ratio" | "ms";
+    safeDimensions?: Record<string, unknown>;
+  },
+) {
+  await q(
+    `INSERT INTO release_gate_metrics(
+       project_id,mission_id,objective_id,compilation_id,category,name,value,unit,safe_dimensions
+     ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`,
+    [
+      input.projectId,
+      input.missionId,
+      input.objectiveId,
+      input.compilationId,
+      input.category,
+      input.name,
+      input.value ?? 1,
+      input.unit ?? "count",
+      JSON.stringify(input.safeDimensions ?? {}),
+    ],
+  );
 }
 
 function redundantStepIds(targetContracts: unknown): string[] {

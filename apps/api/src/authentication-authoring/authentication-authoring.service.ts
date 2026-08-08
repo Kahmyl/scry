@@ -11,6 +11,7 @@ import {
 } from "@scry/contracts";
 
 import { AuthenticationAttemptRepository } from "./repositories/authentication-attempt.repository.js";
+import { adaptiveAuthoringFlags } from "../authoring/adaptive-authoring-flags.js";
 
 type AuthField = "username" | "password";
 type PraxisCandidate = {
@@ -21,7 +22,8 @@ type PraxisCandidate = {
   evidenceText?: string[];
 };
 type SubmissionCandidate = {
-  kind: "native_submit" | "form_button" | "enter_password" | "custom_control" | "application_adapter";
+  kind:
+    "native_submit" | "form_button" | "enter_password" | "custom_control" | "application_adapter";
   target?: AuthFieldResolution["target"];
   confidence: number;
   evidenceKinds?: string[];
@@ -57,6 +59,7 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
   ) {}
 
   async discoverUsernameField(context: AuthContext): Promise<AuthFieldResolution> {
+    this.requireEnabled();
     return this.resolveField("username", context.usernameInspection?.candidates ?? [], [
       "autocomplete_username",
       "autocomplete_email",
@@ -70,6 +73,7 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
   }
 
   async discoverPasswordField(context: AuthContext): Promise<AuthFieldResolution> {
+    this.requireEnabled();
     return this.resolveField("password", context.passwordInspection?.candidates ?? [], [
       "type_password",
       "autocomplete_current_password",
@@ -81,6 +85,7 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
   }
 
   async discoverSubmissionPath(context: AuthContext): Promise<AuthSubmissionResolution> {
+    this.requireEnabled();
     const order = [
       "native_submit",
       "form_button",
@@ -132,6 +137,7 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
   }
 
   async submitCredentialsOnce(context: AuthContext): Promise<AuthSubmissionResult> {
+    this.requireEnabled();
     return this.authorizeCredentialSubmission(context);
   }
 
@@ -202,6 +208,7 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
   }
 
   async detectAuthenticatedState(context: AuthContext): Promise<AuthStateResult> {
+    this.requireEnabled();
     const signals = [...new Set(context.stateInspection?.signals ?? [])];
     const requiredSignals: AuthStateResult["requiredSignals"] = signals.filter((signal) =>
       (["login_response_success", "url_not_login", "login_form_absent"] as const).includes(
@@ -226,6 +233,7 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
   }
 
   async createAuthenticationContractCandidate(transcript: AuthenticationTranscript) {
+    this.requireEnabled();
     if (
       transcript.username.status !== "resolved" ||
       transcript.password.status !== "resolved" ||
@@ -272,6 +280,12 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
     return authenticationContractCandidateSchema.parse(candidate);
   }
 
+  private requireEnabled() {
+    if (!adaptiveAuthoringFlags().authenticationKernel) {
+      throw new BadRequestException({ code: "AUTHENTICATION_KERNEL_DISABLED" });
+    }
+  }
+
   private resolveField(
     field: AuthField,
     candidates: PraxisCandidate[],
@@ -305,7 +319,10 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
         status: "ambiguous",
         field,
         confidence: best.candidate.confidence,
-        evidence: evidence(best.candidate.evidenceKinds ?? ["praxis_verified"], `${field} ambiguous`),
+        evidence: evidence(
+          best.candidate.evidenceKinds ?? ["praxis_verified"],
+          `${field} ambiguous`,
+        ),
         candidatesConsidered: candidates.length,
         qualityFindings: [`Multiple plausible ${field} fields require author assistance.`],
       };
@@ -324,9 +341,7 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
 }
 
 function bestEvidencePriority(kinds: string[], priority: string[]) {
-  const indexes = kinds
-    .map((kind) => priority.indexOf(kind))
-    .filter((index) => index >= 0);
+  const indexes = kinds.map((kind) => priority.indexOf(kind)).filter((index) => index >= 0);
   if (!indexes.length) return 0;
   return (priority.length - Math.min(...indexes)) / 10;
 }
@@ -372,7 +387,16 @@ function sanitizeTarget(target: AuthFieldResolution["target"]) {
 
 function rejectUnsafe(value: unknown) {
   const text = JSON.stringify(value).toLowerCase();
-  for (const unsafe of ["password=", "token=", "clipboard", "selector", "css=", "xpath", "screenshot", "<html"]) {
+  for (const unsafe of [
+    "password=",
+    "token=",
+    "clipboard",
+    "selector",
+    "css=",
+    "xpath",
+    "screenshot",
+    "<html",
+  ]) {
     if (text.includes(unsafe)) {
       throw new BadRequestException("AUTHENTICATION_CANDIDATE_CONTAINS_UNSAFE_ARTIFACT");
     }

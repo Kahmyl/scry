@@ -1,4 +1,5 @@
-import { Injectable, Inject } from "@nestjs/common";
+import { ConflictException, Injectable, Inject } from "@nestjs/common";
+import { adaptiveAuthoringFlags } from "../authoring/adaptive-authoring-flags.js";
 import { Database } from "../infrastructure/index.js";
 import { RunQueueService } from "../runtime/index.js";
 import { PraxisRuntimeRepository } from "./repositories/praxis-runtime.repository.js";
@@ -21,6 +22,9 @@ export class PraxisService {
     allowedOrigins: string[];
     probeSessionId: string;
   }) {
+    if (!adaptiveAuthoringFlags().candidateAssistedResolution) {
+      throw new ConflictException({ code: "CANDIDATE_ASSISTED_RESOLUTION_DISABLED" });
+    }
     const browserLeaseId = undefined;
 
     if (!browserLeaseId) {
@@ -47,8 +51,7 @@ export class PraxisService {
       {
         requestId: id,
         releaseId: process.env.SCRY_RELEASE_ID ?? "development",
-        schemaFingerprint:
-          process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline",
+        schemaFingerprint: process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline",
       },
       { jobId: id },
     );

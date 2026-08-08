@@ -10,6 +10,7 @@ import {
 } from "../src/authentication-authoring/index.js";
 import { AuthoringService } from "../src/authoring/index.js";
 import { Database } from "../src/infrastructure/database.js";
+import { RunAttemptRepository } from "../src/runtime/repositories/run-attempt.repository.js";
 
 const enabled = Boolean(process.env.SCRY_AUTHORING_TEST_DATABASE_URL);
 
@@ -796,6 +797,29 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
             visibleNavigation: fixture.characterization.actualVisibleNavigation,
           },
         ],
+        learnedContracts: [
+          {
+            schemaVersion: 1,
+            interactionId: "vitract-open-orders",
+            stepId: "open-orders",
+            intent: { role: "link", accessibleName: "Orders" },
+            operation: { type: "activate" },
+            functionalResult: "passed",
+            mutationOutcome: "applied",
+            successfulEvidenceFamilies: ["accessibility", "structural", "effect"],
+            scope: { origin: "https://preview.vitract.com" },
+            relationships: [{ kind: "navigation", name: "Partner" }],
+            capabilityProfile: { activate: true },
+            expectedEffect: { type: "navigation", path: "/orders" },
+            sanitizedFingerprint: { role: "link", accessibleName: "Orders" },
+            qualityFindings: [],
+            usedSelectorHint: false,
+            unresolvedMutation: false,
+            veilPolicyViolated: false,
+            expectedEffectVerified: true,
+            deterministic: true,
+          },
+        ],
         pageFingerprint: "c".repeat(64),
         authenticationFingerprint: "d".repeat(64),
       },
@@ -901,19 +925,62 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       idempotencyKey: `auth-contract-vitract-${randomUUID()}`,
     });
 
-    const compilation = await service.compile(principal, created.id!, {
+    const previousCompilerFlag = process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED;
+    process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED = "true";
+    const certifiedCompilation = await service.compileAndCertify(principal, created.id!, {
       ...context,
       environmentId: vitractEnvironment,
       draftVersion: 1,
       probeSessionId: probe,
       authenticationContractRevisionId: authContract.revisionId,
       idempotencyKey: `compile-vitract-${randomUUID()}`,
+      viewport: { width: 1280, height: 720 },
+      seed: 1,
     });
+    if (previousCompilerFlag === undefined) delete process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED;
+    else process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED = previousCompilerFlag;
+    const compilation = certifiedCompilation.compilation;
 
     expect(compilation).toMatchObject({
       status: "execution_ready",
-      diagnostics: [],
+      diagnostics: [
+        {
+          code: "REDUNDANT_INTERACTION",
+          severity: "info",
+          source: fixture.characterization.actualLayout,
+        },
+      ],
     });
+    expect(certifiedCompilation.certification).toMatchObject({
+      status: "certification_pending",
+    });
+
+    if (!("certificationRunId" in certifiedCompilation.certification)) {
+      throw new Error("Certification Run was not queued");
+    }
+    const certificationRun = certifiedCompilation.certification.certificationRunId;
+    await expect(
+      service.publish(principal, created.id!, {
+        ...context,
+        expectedVersion: 1,
+        compilationId: compilation.id!,
+        visibility: "mission_local",
+        purpose: "primary",
+        reason: "Certification is still pending",
+        idempotencyKey: `publish-pending-vitract-${randomUUID()}`,
+      }),
+    ).rejects.toMatchObject({ response: { code: "CERTIFICATION_RUN_REQUIRED" } });
+
+    const attempts = new RunAttemptRepository(database);
+    const claimToken = randomUUID();
+    const attempt = await attempts.claimAttempt(
+      certificationRun,
+      "integration-certification-worker",
+      claimToken,
+    );
+    await attempts.markRunning(certificationRun, attempt!.id, claimToken);
+    await attempts.markFinalizing(certificationRun, attempt!.id, claimToken);
+    await attempts.completeAttempt(certificationRun, attempt!.id, claimToken, "passed", "passed");
 
     const publication = await service.publish(principal, created.id!, {
       ...context,
@@ -947,20 +1014,6 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
        WHERE id=$1`,
       [compilation.id],
     );
-
-    const certificationRun = await insertPassedRun(database, {
-      project,
-      mission,
-      objective,
-      session,
-      environment: vitractEnvironment,
-      flowRevisionId: publication.revisionId,
-      compiledContractId: compilation.id!,
-      compiledContractDigest: compiled.rows[0]!.compiledContractDigest,
-      plan: revision.rows[0]!.plan,
-      idempotencyKey: `certification-${randomUUID()}`,
-      role: "candidate",
-    });
 
     const replayRun = await insertPassedRun(database, {
       project,

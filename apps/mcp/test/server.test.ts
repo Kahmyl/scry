@@ -83,6 +83,7 @@ describe("current Scry MCP surface", () => {
       "get_probe_session",
       "cancel_probe_session",
       "compile_flow_draft",
+      "compile_and_certify_flow",
       "publish_flow_draft",
       "list_authentication_contracts",
       "list_authenticated_session_leases",
@@ -484,9 +485,7 @@ describe("current Scry MCP surface", () => {
         disposableDataConfirmed: false,
       },
     });
-    expect(JSON.stringify(response.content)).toContain(
-      "Interactive Probe Session starting.",
-    );
+    expect(JSON.stringify(response.content)).toContain("Interactive Probe Session starting.");
 
     await client.close();
     await server.close();

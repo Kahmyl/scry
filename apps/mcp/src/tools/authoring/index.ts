@@ -11,6 +11,7 @@ import { registerStartProbeSessionTool } from "./start-probe-session.tool.js";
 import { registerGetProbeSessionTool } from "./get-probe-session.tool.js";
 import { registerCancelProbeSessionTool } from "./cancel-probe-session.tool.js";
 import { registerCompileFlowDraftTool } from "./compile-flow-draft.tool.js";
+import { registerCompileAndCertifyFlowTool } from "./compile-and-certify-flow.tool.js";
 import { registerPublishFlowDraftTool } from "./publish-flow-draft.tool.js";
 import { registerListAuthenticationContractsTool } from "./list-authentication-contracts.tool.js";
 import { registerListAuthenticatedSessionLeasesTool } from "./list-authenticated-session-leases.tool.js";
@@ -27,6 +28,7 @@ export function registerAuthoringTools(server: McpServer, client: ScryApiClient)
   registerGetProbeSessionTool(server, client);
   registerCancelProbeSessionTool(server, client);
   registerCompileFlowDraftTool(server, client);
+  registerCompileAndCertifyFlowTool(server, client);
   registerPublishFlowDraftTool(server, client);
   registerListAuthenticationContractsTool(server, client);
   registerListAuthenticatedSessionLeasesTool(server, client);

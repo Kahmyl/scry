@@ -197,6 +197,43 @@ export class RunAttemptRepository {
         [runId, state, outcomeClassification, resultClassification],
       );
       await client.query(
+        `UPDATE flow_compilations
+         SET publication_gate=jsonb_build_object(
+               'status',CASE
+                 WHEN $2='passed' AND $3='application_pass'
+                   AND NOT EXISTS(SELECT 1 FROM credential_incidents WHERE run_id=$1)
+                 THEN 'certified' ELSE 'rejected' END,
+               'certificationRunId',$1::text,
+               'rejectionReasons',CASE
+                 WHEN EXISTS(SELECT 1 FROM credential_incidents WHERE run_id=$1)
+                   THEN jsonb_build_array('PRIVACY_INCIDENT')
+                 WHEN $2='passed' AND $3='application_pass' THEN '[]'::jsonb
+                 ELSE jsonb_build_array(upper($3))
+               END,
+               'requiredOutcome','application_pass'
+             )
+         WHERE certification_run_id=$1`,
+        [runId, state, resultClassification],
+      );
+      await client.query(
+        `INSERT INTO release_gate_metrics(
+           project_id,mission_id,objective_id,compilation_id,category,name,value,safe_dimensions
+         )
+         SELECT r.project_id,r.mission_id,r.objective_id,r.compiled_contract_id,
+                'certification',
+                CASE WHEN $2='passed' AND $3='application_pass'
+                  AND NOT EXISTS(SELECT 1 FROM credential_incidents WHERE run_id=$1)
+                  THEN 'certification_run_passed'
+                  WHEN EXISTS(SELECT 1 FROM credential_incidents WHERE run_id=$1)
+                  THEN 'certification_privacy_rejected'
+                  ELSE 'certification_run_rejected' END,
+                1,
+                jsonb_build_object('resultClassification',$3)
+         FROM runs r
+         WHERE r.id=$1 AND r.compiled_contract_id IS NOT NULL`,
+        [runId, state, resultClassification],
+      );
+      await client.query(
         `INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata)
         SELECT mission_id,objective_id,agent_session_id,'run_completed',$2,$3::jsonb FROM runs WHERE id=$1`,
         [runId, `Run completed: ${state}`, JSON.stringify({ runId, state, outcomeClassification })],
@@ -281,6 +318,29 @@ export class RunAttemptRepository {
           `UPDATE mission_objective_orchestration SET state='blocked',blocker_code='INFRASTRUCTURE_FAILURE',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE active_run_id=$1`,
           [runId],
         );
+      if (!retry) {
+        await client.query(
+          `UPDATE flow_compilations
+           SET publication_gate=jsonb_build_object(
+                 'status','rejected','certificationRunId',$1::text,
+                 'rejectionReasons',jsonb_build_array('INFRASTRUCTURE_FAILURE'),
+                 'requiredOutcome','application_pass'
+               )
+           WHERE certification_run_id=$1`,
+          [runId],
+        );
+        await client.query(
+          `INSERT INTO release_gate_metrics(
+             project_id,mission_id,objective_id,compilation_id,category,name,value,
+             safe_dimensions
+           )
+           SELECT project_id,mission_id,objective_id,compiled_contract_id,
+                  'certification','certification_infrastructure_failure',1,
+                  jsonb_build_object('retryExhausted',true)
+           FROM runs WHERE id=$1 AND compiled_contract_id IS NOT NULL`,
+          [runId],
+        );
+      }
     });
   }
 
