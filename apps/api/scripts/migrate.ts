@@ -76,6 +76,9 @@ const adaptiveAuthoringPath = fileURLToPath(
 const adaptiveExecutionFoundationPath = fileURLToPath(
   new URL("../migrations/adaptive-execution-foundation-m0-m1.sql", import.meta.url),
 );
+const adaptiveSessionsPath = fileURLToPath(
+  new URL("../migrations/adaptive-sessions-m3.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -106,6 +109,7 @@ const interactiveRuntimeLifecycle = await readFile(interactiveRuntimeLifecyclePa
 
 const adaptiveAuthoring = await readFile(adaptiveAuthoringPath, "utf8");
 const adaptiveExecutionFoundation = await readFile(adaptiveExecutionFoundationPath, "utf8");
+const adaptiveSessions = await readFile(adaptiveSessionsPath, "utf8");
 
 const expandFoundation = (source: string) =>
   source
@@ -126,14 +130,19 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "authentication-authoring.sql": authenticationAuthoring,
   "adaptive-authoring-pr9-pr12.sql": adaptiveAuthoring,
   "adaptive-execution-foundation-m0-m1.sql": adaptiveExecutionFoundation,
+  "adaptive-sessions-m3.sql": adaptiveSessions,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) =>
   expandFoundation(expandBaselineStage(baselineSource, optionalMigrationSources, included));
 
 const baseline = stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS);
+const preAdaptiveSessionsBaseline = stagedBaseline(
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "adaptive-sessions-m3.sql"),
+);
 
 const fingerprint = digest(baseline);
+const preAdaptiveSessionsFingerprint = digest(preAdaptiveSessionsBaseline);
 
 const previousVeilFullFingerprint =
   "8c0e5ae0ae72f9a163189abe903b317e38aacf6b1674f3441b62dd7129b48c6a";
@@ -196,7 +205,28 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (
+    if (installedFingerprint === preAdaptiveSessionsFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-sessions-m3'))",
+        );
+        await client.query(adaptiveSessions);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
+           WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied adaptive sessions M3 ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (
       [
         releasedHistoricalFingerprints.pre_adaptive_execution,
         deployedAdaptiveAuthoringFingerprint,

@@ -424,6 +424,15 @@ export class ProtectedTransactionKernel {
       }
     }
 
+    facts.protectedAcquisitionEvidence =
+      facts.capsule === "destroyed" || facts.capsule === "force_terminated"
+        ? facts.protectedAcquisitionEvidence.map((evidence) => ({
+            ...evidence,
+            capsule: facts.capsule as "destroyed" | "force_terminated",
+            evidenceClosure: "sealed" as const,
+          }))
+        : [];
+
     if (facts.mutation.dispatch === "not_started" && facts.reasonCode) {
       await d.gate.seal({ code: facts.reasonCode });
       await this.persistFinal(transaction, claim.fencingToken, "aborted", facts);
@@ -439,9 +448,15 @@ export class ProtectedTransactionKernel {
     }
 
     const persistenceComplete = transaction.extraction.outputs.every((output) =>
-      output.classification === "protected"
-        ? facts.protectedPersistence === "confirmed"
-        : facts.publicPersistence === "confirmed",
+      output.acquisition.objective?.kind === "verify_user_copy_experience"
+        ? facts.protectedAcquisitionEvidence.some(
+            (evidence) =>
+              evidence.reference === output.reference &&
+              evidence.outcome === "copy_experience_verified",
+          )
+        : output.classification === "protected"
+          ? facts.protectedPersistence === "confirmed"
+          : facts.publicPersistence === "confirmed",
     );
     if (capsulePrivacyFailed || facts.capsule === "destruction_failed" || !persistenceComplete) {
       facts.reconciliation = await reconcileProtectedMutation(
@@ -493,6 +508,10 @@ export class ProtectedTransactionKernel {
     }
     if (continuation.status === "continuing_unrecorded") {
       facts.evidence = "permanently_suppressed";
+      facts.protectedAcquisitionEvidence = facts.protectedAcquisitionEvidence.map((evidence) => ({
+        ...evidence,
+        evidenceClosure: "permanently_suppressed",
+      }));
       await d.gate.seal({ code: "CONTINUING_UNRECORDED" });
       await d.gate.terminate("continuing_unrecorded");
       await this.persistFinal(transaction, claim.fencingToken, "continuing_unrecorded", facts);
@@ -517,6 +536,11 @@ export class ProtectedTransactionKernel {
       contextId: capsule?.provenance.contextId ?? randomUUID(),
     });
     facts.evidence = "resumed";
+    facts.protectedAcquisitionEvidence = facts.protectedAcquisitionEvidence.map((evidence) => ({
+      ...evidence,
+      capsule: facts.capsule === "force_terminated" ? "force_terminated" : "destroyed",
+      evidenceClosure: "resumed",
+    }));
     await d.onContextProvenance?.({
       contextId: safeSession.provenance.contextId,
       provenance: safeSession.provenance.value(),
@@ -590,6 +614,7 @@ function initialFacts() {
     publicValueReferences: {} as Record<string, string>,
     preparationEffects: [] as ProtectedTransactionResult["preparationEffects"],
     diagnostics: [] as ProtectedTransactionResult["diagnostics"],
+    protectedAcquisitionEvidence: [] as ProtectedTransactionResult["protectedAcquisitionEvidence"],
     reasonCode: undefined as string | undefined,
     failurePhase: undefined as string | undefined,
     retryClass: undefined as string | undefined,

@@ -53,7 +53,18 @@ export async function extractAndPersistProtectedOutputs(
   );
   for (const { output, extraction } of extracted) {
     facts.diagnostics.push(...extraction.diagnostics);
-    if (!extraction.value) {
+    if (extraction.result?.kind === "copy_experience_verified") {
+      facts.protectedAcquisitionEvidence.push({
+        reference: output.reference,
+        adapter: extraction.result.adapter,
+        objective: "verify_user_copy_experience",
+        outcome: "copy_experience_verified",
+        capsule: "destroyed",
+        evidenceClosure: "sealed",
+      });
+      continue;
+    }
+    if (!extraction.result || extraction.result.kind !== "captured_value") {
       if (output.classification === "protected") facts.protectedExtraction = "not_found";
       else facts.publicExtraction = "not_found";
       facts.reasonCode =
@@ -65,19 +76,27 @@ export async function extractAndPersistProtectedOutputs(
       continue;
     }
     if (output.classification === "protected") {
-      dependencies.redactor.add(extraction.value);
+      dependencies.redactor.add(extraction.result.value);
       facts.protectedExtraction = "captured";
       try {
         const stored = await dependencies.persistSecret({
           operationId: transaction.operationId,
           reference: output.reference,
           name: output.storage.credentialName,
-          value: extraction.value,
+          value: extraction.result.value,
           scope: output.storage.scope,
         });
         facts.credentialReferences[output.reference] = stored.credentialId;
         facts.protectedPersistence = "confirmed";
         facts.credentialSecurity = "active";
+        facts.protectedAcquisitionEvidence.push({
+          reference: output.reference,
+          adapter: extraction.result.adapter,
+          objective: "capture_value",
+          outcome: "value_persisted",
+          capsule: "destroyed",
+          evidenceClosure: "sealed",
+        });
       } catch {
         facts.protectedPersistence = "uncertain";
         facts.credentialSecurity = "compromised";
@@ -90,7 +109,7 @@ export async function extractAndPersistProtectedOutputs(
           operationId: transaction.operationId,
           reference: output.reference,
           name: output.storage.name,
-          value: extraction.value,
+          value: extraction.result.value,
           scope: output.storage.scope,
         });
         facts.publicValueReferences[output.reference] = stored.valueId;
@@ -107,11 +126,18 @@ export function protectedOutputsPersisted(
   transaction: ProtectedTransaction,
   facts: ProtectedTransactionFacts,
 ) {
-  return transaction.extraction.outputs.every((output) =>
-    output.classification === "protected"
+  return transaction.extraction.outputs.every((output) => {
+    if (output.acquisition.objective?.kind === "verify_user_copy_experience") {
+      return facts.protectedAcquisitionEvidence.some(
+        (evidence) =>
+          evidence.reference === output.reference &&
+          evidence.outcome === "copy_experience_verified",
+      );
+    }
+    return output.classification === "protected"
       ? output.reference in facts.credentialReferences
-      : output.reference in facts.publicValueReferences,
-  );
+      : output.reference in facts.publicValueReferences;
+  });
 }
 
 export async function recoverProtectedAcquisition(

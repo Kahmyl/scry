@@ -4,6 +4,17 @@ import {
   PRAXIS_SCORING_POLICY_VERSION,
 } from "@scry/contracts";
 
+export class ScryApiError extends Error {
+  constructor(
+    readonly code: string,
+    readonly status: number,
+    readonly safeActions: string[] = [],
+  ) {
+    super(`Scry API request failed: ${code}`);
+    this.name = "ScryApiError";
+  }
+}
+
 export class ScryApiClient {
   private capabilitiesPromise?: Promise<ScryCapabilities>;
   constructor(
@@ -45,7 +56,10 @@ export class ScryApiClient {
       (expectedRelease && capabilities.releaseId !== expectedRelease) ||
       (expectedSchema && capabilities.schemaFingerprint !== expectedSchema)
     ) {
-      throw new Error("SCRY_RELEASE_MISMATCH");
+      throw new ScryApiError("SCRY_RELEASE_MISMATCH", 409, [
+        "restart_mcp_with_current_release",
+        "verify_api_release",
+      ]);
     }
     if (
       !capabilities.praxis ||
@@ -54,7 +68,10 @@ export class ScryApiClient {
       capabilities.praxis.scoringPolicyVersion !== PRAXIS_SCORING_POLICY_VERSION ||
       capabilities.praxis.cutoff !== true
     ) {
-      throw new Error("SCRY_PRAXIS_VERSION_MISMATCH");
+      throw new ScryApiError("SCRY_PRAXIS_VERSION_MISMATCH", 409, [
+        "restart_mcp_with_current_release",
+        "verify_api_release",
+      ]);
     }
     return capabilities;
   }
@@ -82,16 +99,36 @@ export class ScryApiClient {
     const response = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     const body = await response.json().catch(() => undefined);
     if (!response.ok) {
-      const detail =
-        body && typeof body === "object"
-          ? Object.keys(body).length === 1 && "message" in body
-            ? String(body.message)
-            : JSON.stringify(body)
-          : `HTTP ${response.status}`;
-      throw new Error(`Scry API request failed: ${detail}`);
+      const envelope = asRecord(body);
+      const detail = asRecord(envelope?.message) ?? envelope;
+      const code =
+        stringField(detail, "code") ??
+        stringField(envelope, "code") ??
+        (typeof envelope?.message === "string" ? envelope.message : undefined) ??
+        `HTTP_${response.status}`;
+      const safeActions =
+        stringArrayField(detail, "safeActions") ?? stringArrayField(envelope, "safeActions") ?? [];
+      throw new ScryApiError(code, response.status, safeActions);
     }
     return body as T;
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function stringField(value: Record<string, unknown> | undefined, key: string) {
+  return typeof value?.[key] === "string" ? value[key] : undefined;
+}
+
+function stringArrayField(value: Record<string, unknown> | undefined, key: string) {
+  const candidate = value?.[key];
+  return Array.isArray(candidate) && candidate.every((item) => typeof item === "string")
+    ? candidate
+    : undefined;
 }
 
 export type ScryCapabilities = {

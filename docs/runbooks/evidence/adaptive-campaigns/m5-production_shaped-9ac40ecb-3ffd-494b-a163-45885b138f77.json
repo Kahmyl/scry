@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "9ac40ecb-3ffd-494b-a163-45885b138f77",
+  "correlationId": "00d42b9e-65f8-4bd7-9b51-8b5d770513f0",
+  "milestone": "M5",
+  "target": "production_shaped",
+  "releaseId": "local-unreleased",
+  "schemaFingerprint": "unverified-schema",
+  "runtimeVersion": "local-runtime",
+  "gitCommit": "uncommitted",
+  "startedAt": "2026-08-08T22:29:41.573Z",
+  "completedAt": "2026-08-08T22:30:12.738Z",
+  "requiredChecks": [
+    {
+      "id": "m5-typecheck",
+      "description": "The complete workspace typechecks",
+      "status": "passed"
+    },
+    {
+      "id": "m5-authoring-release",
+      "description": "The strict adaptive authoring release corpus passes",
+      "status": "failed",
+      "reasonCode": "CAMPAIGN_COMMAND_FAILED",
+      "safeDetail": {
+        "exitCode": 1
+      }
+    },
+    {
+      "id": "m5-praxis-release",
+      "description": "Praxis release workflow and production campaign wiring pass",
+      "status": "passed"
+    },
+    {
+      "id": "m5-veil-release",
+      "description": "Veil release workflow and artifact admission wiring pass",
+      "status": "passed"
+    },
+    {
+      "id": "m5-dashboard-release",
+      "description": "The production dashboard build and read-only boundary pass",
+      "status": "passed"
+    },
+    {
+      "id": "m5-fingerprint",
+      "description": "Release, schema, runtime, and migration fingerprints agree",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [],
+  "metrics": {
+    "totalWallClockMs": 31164.302209,
+    "agentDecisionBoundaries": 0,
+    "mcpRequests": 0,
+    "apiRequests": 0,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 0,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "artifact_retrieval": {
+        "count": 1,
+        "p50Ms": 3906.5474170000016,
+        "p95Ms": 3906.5474170000016,
+        "maxMs": 3906.5474170000016
+      },
+      "certification": {
+        "count": 1,
+        "p50Ms": 14124.081875,
+        "p95Ms": 14124.081875,
+        "maxMs": 14124.081875
+      },
+      "compilation": {
+        "count": 1,
+        "p50Ms": 12571.50725,
+        "p95Ms": 12571.50725,
+        "maxMs": 12571.50725
+      },
+      "evidence_finalization": {
+        "count": 1,
+        "p50Ms": 213.70716700000048,
+        "p95Ms": 213.70716700000048,
+        "maxMs": 213.70716700000048
+      },
+      "praxis_grounding": {
+        "count": 1,
+        "p50Ms": 175.70416699999987,
+        "p95Ms": 175.70416699999987,
+        "maxMs": 175.70416699999987
+      },
+      "queue_wait": {
+        "count": 1,
+        "p50Ms": 171.65058399999907,
+        "p95Ms": 171.65058399999907,
+        "maxMs": 171.65058399999907
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "m5-authoring-release",
+        "phase": "certification",
+        "durationMs": 14124.081875
+      },
+      {
+        "operationId": "m5-typecheck",
+        "phase": "compilation",
+        "durationMs": 12571.50725
+      },
+      {
+        "operationId": "m5-dashboard-release",
+        "phase": "artifact_retrieval",
+        "durationMs": 3906.5474170000016
+      },
+      {
+        "operationId": "m5-veil-release",
+        "phase": "evidence_finalization",
+        "durationMs": 213.70716700000048
+      },
+      {
+        "operationId": "m5-praxis-release",
+        "phase": "praxis_grounding",
+        "durationMs": 175.70416699999987
+      },
+      {
+        "operationId": "m5-fingerprint",
+        "phase": "queue_wait",
+        "durationMs": 171.65058399999907
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:compilation",
+        "operationId": "m5-typecheck",
+        "source": "campaign_client",
+        "correlationId": "00d42b9e-65f8-4bd7-9b51-8b5d770513f0",
+        "eventId": "00d42b9e-65f8-4bd7-9b51-8b5d770513f0-m5-typecheck",
+        "value": 12571.50725
+      },
+      {
+        "metric": "phase:certification",
+        "operationId": "m5-authoring-release",
+        "source": "campaign_client",
+        "correlationId": "00d42b9e-65f8-4bd7-9b51-8b5d770513f0",
+        "eventId": "00d42b9e-65f8-4bd7-9b51-8b5d770513f0-m5-authoring-release",
+        "value": 14124.081875
+      },
+      {
+        "metric": "phase:praxis_grounding",
+        "operationId": "m5-praxis-release",
+        "source": "campaign_client",
+        "correlationId": "00d42b9e-65f8-4bd7-9b51-8b5d770513f0",
+        "eventId": "00d42b9e-65f8-4bd7-9b51-8b5d770513f0-m5-praxis-release",
+        "value": 175.70416699999987
+      },
+      {
+        "metric": "phase:evidence_finalization",
+        "operationId": "m5-veil-release",
+        "source": "campaign_client",
+        "correlationId": "00d42b9e-65f8-4bd7-9b51-8b5d770513f0",
+        "eventId": "00d42b9e-65f8-4bd7-9b51-8b5d770513f0-m5-veil-release",
+        "value": 213.70716700000048
+      },
+      {
+        "metric": "phase:artifact_retrieval",
+        "operationId": "m5-dashboard-release",
+        "source": "campaign_client",
+        "correlationId": "00d42b9e-65f8-4bd7-9b51-8b5d770513f0",
+        "eventId": "00d42b9e-65f8-4bd7-9b51-8b5d770513f0-m5-dashboard-release",
+        "value": 3906.5474170000016
+      },
+      {
+        "metric": "phase:queue_wait",
+        "operationId": "m5-fingerprint",
+        "source": "campaign_client",
+        "correlationId": "00d42b9e-65f8-4bd7-9b51-8b5d770513f0",
+        "eventId": "00d42b9e-65f8-4bd7-9b51-8b5d770513f0-m5-fingerprint",
+        "value": 171.65058399999907
+      }
+    ]
+  },
+  "artifactRefs": [
+    "command:m5-typecheck",
+    "command:m5-authoring-release",
+    "command:m5-praxis-release",
+    "command:m5-veil-release",
+    "command:m5-dashboard-release",
+    "command:m5-fingerprint"
+  ],
+  "verdict": "fail"
+}

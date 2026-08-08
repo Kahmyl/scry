@@ -6,7 +6,10 @@ export type AdaptiveFixture = {
   close(): Promise<void>;
 };
 
-export async function startAdaptiveFixture(port = 0): Promise<AdaptiveFixture> {
+export async function startAdaptiveFixture(
+  port = 0,
+  advertisedHost = "127.0.0.1",
+): Promise<AdaptiveFixture> {
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://fixture.invalid");
     response.setHeader("content-type", "text/html; charset=utf-8");
@@ -17,12 +20,12 @@ export async function startAdaptiveFixture(port = 0): Promise<AdaptiveFixture> {
     }
     response.end(fixturePage());
   });
-  server.listen(port, "127.0.0.1");
+  server.listen(port, advertisedHost === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0");
   await once(server, "listening");
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("CAMPAIGN_FIXTURE_BIND_FAILED");
   return {
-    origin: `http://127.0.0.1:${address.port}`,
+    origin: `http://${advertisedHost}:${address.port}`,
     close: () => closeServer(server),
   };
 }

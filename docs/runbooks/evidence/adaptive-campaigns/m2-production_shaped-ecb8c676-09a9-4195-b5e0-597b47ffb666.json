@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "ecb8c676-09a9-4195-b5e0-597b47ffb666",
+  "correlationId": "10947fc4-dafc-4d88-a7d4-bb8b6a8ce294",
+  "milestone": "M2",
+  "target": "production_shaped",
+  "releaseId": "local-unreleased",
+  "schemaFingerprint": "unverified-schema",
+  "runtimeVersion": "local-runtime",
+  "gitCommit": "uncommitted",
+  "startedAt": "2026-08-08T22:27:32.504Z",
+  "completedAt": "2026-08-08T22:27:37.427Z",
+  "requiredChecks": [
+    {
+      "id": "m2-api-evidence",
+      "description": "Canonical evidence outcomes, attempt isolation, and artifact compensation pass",
+      "status": "passed"
+    },
+    {
+      "id": "m2-executor-evidence",
+      "description": "Recording ownership and trace admission failure paths pass",
+      "status": "passed"
+    },
+    {
+      "id": "m2-run-detail",
+      "description": "Run detail ordering, Advanced disclosure, and recording states pass",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [
+    {
+      "id": "m2-later-scope",
+      "description": "M3 and later acceptance remain outside this milestone verdict",
+      "status": "awaiting_codex_verification",
+      "reasonCode": "FUTURE_MILESTONE_SCOPE"
+    }
+  ],
+  "metrics": {
+    "totalWallClockMs": 4920.279458000001,
+    "agentDecisionBoundaries": 0,
+    "mcpRequests": 0,
+    "apiRequests": 0,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 0,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "artifact_retrieval": {
+        "count": 1,
+        "p50Ms": 1142.246916,
+        "p95Ms": 1142.246916,
+        "maxMs": 1142.246916
+      },
+      "document_observation": {
+        "count": 1,
+        "p50Ms": 1491.5825,
+        "p95Ms": 1491.5825,
+        "maxMs": 1491.5825
+      },
+      "evidence_finalization": {
+        "count": 1,
+        "p50Ms": 2285.786209,
+        "p95Ms": 2285.786209,
+        "maxMs": 2285.786209
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "m2-api-evidence",
+        "phase": "evidence_finalization",
+        "durationMs": 2285.786209
+      },
+      {
+        "operationId": "m2-run-detail",
+        "phase": "document_observation",
+        "durationMs": 1491.5825
+      },
+      {
+        "operationId": "m2-executor-evidence",
+        "phase": "artifact_retrieval",
+        "durationMs": 1142.246916
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:evidence_finalization",
+        "operationId": "m2-api-evidence",
+        "source": "campaign_client",
+        "correlationId": "10947fc4-dafc-4d88-a7d4-bb8b6a8ce294",
+        "eventId": "10947fc4-dafc-4d88-a7d4-bb8b6a8ce294-m2-api-evidence",
+        "value": 2285.786209
+      },
+      {
+        "metric": "phase:artifact_retrieval",
+        "operationId": "m2-executor-evidence",
+        "source": "campaign_client",
+        "correlationId": "10947fc4-dafc-4d88-a7d4-bb8b6a8ce294",
+        "eventId": "10947fc4-dafc-4d88-a7d4-bb8b6a8ce294-m2-executor-evidence",
+        "value": 1142.246916
+      },
+      {
+        "metric": "phase:document_observation",
+        "operationId": "m2-run-detail",
+        "source": "campaign_client",
+        "correlationId": "10947fc4-dafc-4d88-a7d4-bb8b6a8ce294",
+        "eventId": "10947fc4-dafc-4d88-a7d4-bb8b6a8ce294-m2-run-detail",
+        "value": 1491.5825
+      }
+    ]
+  },
+  "artifactRefs": [
+    "command:m2-api-evidence",
+    "command:m2-executor-evidence",
+    "command:m2-run-detail"
+  ],
+  "verdict": "pass"
+}

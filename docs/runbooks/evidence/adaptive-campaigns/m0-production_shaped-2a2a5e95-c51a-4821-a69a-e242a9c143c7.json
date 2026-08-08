@@ -1,0 +1,219 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "2a2a5e95-c51a-4821-a69a-e242a9c143c7",
+  "correlationId": "1034e272-3642-4fbb-8468-40829cdf049c",
+  "milestone": "M0",
+  "target": "production_shaped",
+  "releaseId": "local-20260806-compiled-plan",
+  "schemaFingerprint": "0b5b22f1baadede32c37165bc96e6d7bc481a0cbbde9c01cebd48deaccad4527",
+  "runtimeVersion": "local-dev",
+  "gitCommit": "working-tree",
+  "startedAt": "2026-08-08T22:01:58.965Z",
+  "completedAt": "2026-08-08T22:01:59.648Z",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "campaign-execution",
+      "description": "Campaign execution reaches a terminal classified outcome",
+      "status": "failed",
+      "reasonCode": "MCP_TOOL_CALL_FAILED"
+    },
+    {
+      "id": "measurement-integrity",
+      "description": "All required counts, phases, and deployed-component traversals are backed by observed events",
+      "status": "failed",
+      "reasonCode": "MEASUREMENT_UNAVAILABLE",
+      "safeDetail": {
+        "failures": [
+          "MISSING_PHASE:queue_wait",
+          "MISSING_PHASE:browser_startup",
+          "MISSING_PHASE:document_observation",
+          "MISSING_PHASE:praxis_grounding",
+          "MISSING_PHASE:interaction_execution",
+          "MISSING_PHASE:expected_effect_verification",
+          "MISSING_PHASE:evidence_finalization",
+          "MISSING_PHASE:artifact_retrieval",
+          "MISSING_SOURCE_METRIC:queue_event:phase:queue_wait",
+          "MISSING_SOURCE_METRIC:worker_event:phase:document_observation",
+          "MISSING_SOURCE_METRIC:browser_event:phase:browser_startup",
+          "MISSING_SOURCE_METRIC:artifact_event:phase:evidence_finalization",
+          "MISSING_SOURCE_METRIC:artifact_event:phase:artifact_retrieval"
+        ]
+      }
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [],
+  "metrics": {
+    "totalWallClockMs": 678.984959,
+    "agentDecisionBoundaries": 0,
+    "mcpRequests": 1,
+    "apiRequests": 1,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 0,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "api": {
+        "count": 1,
+        "p50Ms": 7.960624999999993,
+        "p95Ms": 7.960624999999993,
+        "maxMs": 7.960624999999993
+      },
+      "database": {
+        "count": 1,
+        "p50Ms": 4.930084000000022,
+        "p95Ms": 4.930084000000022,
+        "maxMs": 4.930084000000022
+      },
+      "mcp_round_trip": {
+        "count": 1,
+        "p50Ms": 524.992666,
+        "p95Ms": 524.992666,
+        "maxMs": 524.992666
+      },
+      "mcp_session_start_round_trip": {
+        "count": 1,
+        "p50Ms": 58.555165999999986,
+        "p95Ms": 58.555165999999986,
+        "maxMs": 58.555165999999986
+      },
+      "redis": {
+        "count": 1,
+        "p50Ms": 4.518042000000037,
+        "p95Ms": 4.518042000000037,
+        "maxMs": 4.518042000000037
+      },
+      "worker": {
+        "count": 1,
+        "p50Ms": 6.331124999999986,
+        "p95Ms": 6.331124999999986,
+        "maxMs": 6.331124999999986
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "mcp-1034e272-3642-4fbb-8468-40829cdf049c-2",
+        "phase": "mcp_round_trip",
+        "durationMs": 524.992666
+      },
+      {
+        "operationId": "mcp-1034e272-3642-4fbb-8468-40829cdf049c-1",
+        "phase": "mcp_session_start_round_trip",
+        "durationMs": 58.555165999999986
+      },
+      {
+        "operationId": "api",
+        "phase": "api",
+        "durationMs": 7.960624999999993
+      },
+      {
+        "operationId": "worker",
+        "phase": "worker",
+        "durationMs": 6.331124999999986
+      },
+      {
+        "operationId": "database",
+        "phase": "database",
+        "durationMs": 4.930084000000022
+      },
+      {
+        "operationId": "redis",
+        "phase": "redis",
+        "durationMs": 4.518042000000037
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:database",
+        "operationId": "database",
+        "source": "campaign_client",
+        "correlationId": "1034e272-3642-4fbb-8468-40829cdf049c",
+        "eventId": "database-2a2a5e95-c51a-4821-a69a-e242a9c143c7",
+        "value": 4.930084000000022
+      },
+      {
+        "metric": "phase:redis",
+        "operationId": "redis",
+        "source": "campaign_client",
+        "correlationId": "1034e272-3642-4fbb-8468-40829cdf049c",
+        "eventId": "redis-2a2a5e95-c51a-4821-a69a-e242a9c143c7",
+        "value": 4.518042000000037
+      },
+      {
+        "metric": "apiRequests",
+        "operationId": "capabilities-2a2a5e95-c51a-4821-a69a-e242a9c143c7",
+        "source": "api_http",
+        "correlationId": "1034e272-3642-4fbb-8468-40829cdf049c",
+        "eventId": "capabilities-2a2a5e95-c51a-4821-a69a-e242a9c143c7",
+        "value": 1
+      },
+      {
+        "metric": "phase:api",
+        "operationId": "api",
+        "source": "api_http",
+        "correlationId": "1034e272-3642-4fbb-8468-40829cdf049c",
+        "eventId": "api-2a2a5e95-c51a-4821-a69a-e242a9c143c7",
+        "value": 7.960624999999993
+      },
+      {
+        "metric": "phase:worker",
+        "operationId": "worker",
+        "source": "control_plane_query",
+        "correlationId": "1034e272-3642-4fbb-8468-40829cdf049c",
+        "eventId": "worker-2a2a5e95-c51a-4821-a69a-e242a9c143c7",
+        "value": 6.331124999999986
+      },
+      {
+        "metric": "phase:mcp_session_start_round_trip",
+        "operationId": "mcp-1034e272-3642-4fbb-8468-40829cdf049c-1",
+        "source": "mcp_http",
+        "correlationId": "1034e272-3642-4fbb-8468-40829cdf049c",
+        "eventId": "mcp-1034e272-3642-4fbb-8468-40829cdf049c-1-duration",
+        "value": 58.555165999999986
+      },
+      {
+        "metric": "mcpRequests",
+        "operationId": "mcp-1034e272-3642-4fbb-8468-40829cdf049c-2",
+        "source": "mcp_http",
+        "correlationId": "1034e272-3642-4fbb-8468-40829cdf049c",
+        "eventId": "mcp-1034e272-3642-4fbb-8468-40829cdf049c-2",
+        "value": 1
+      },
+      {
+        "metric": "phase:mcp_round_trip",
+        "operationId": "mcp-1034e272-3642-4fbb-8468-40829cdf049c-2",
+        "source": "mcp_http",
+        "correlationId": "1034e272-3642-4fbb-8468-40829cdf049c",
+        "eventId": "mcp-1034e272-3642-4fbb-8468-40829cdf049c-2-duration",
+        "value": 524.992666
+      }
+    ]
+  },
+  "artifactRefs": [],
+  "verdict": "fail"
+}

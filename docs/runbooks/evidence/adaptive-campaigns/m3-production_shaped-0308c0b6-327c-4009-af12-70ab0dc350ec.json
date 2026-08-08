@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "0308c0b6-327c-4009-af12-70ab0dc350ec",
+  "correlationId": "08e54171-7b45-4280-8e64-e7d368229862",
+  "milestone": "M3",
+  "target": "production_shaped",
+  "releaseId": "local-unreleased",
+  "schemaFingerprint": "unverified-schema",
+  "runtimeVersion": "local-runtime",
+  "gitCommit": "uncommitted",
+  "startedAt": "2026-08-08T22:13:27.563Z",
+  "completedAt": "2026-08-08T22:13:32.764Z",
+  "requiredChecks": [
+    {
+      "id": "m3-contract",
+      "description": "Adaptive Session contracts reject invalid state and operation inputs",
+      "status": "passed"
+    },
+    {
+      "id": "m3-service",
+      "description": "Adaptive Session service enforces idempotency, fencing, and bounded turns",
+      "status": "passed"
+    },
+    {
+      "id": "m3-restart-resume",
+      "description": "A real browser session restarts and resumes from a durable safe boundary",
+      "status": "passed"
+    },
+    {
+      "id": "m3-durable-repository",
+      "description": "Missionless session persistence and concurrent journal ordering pass on Postgres",
+      "status": "failed",
+      "reasonCode": "CAMPAIGN_ENVIRONMENT_REQUIRED",
+      "safeDetail": {
+        "missing": [
+          "SCRY_AUTHORING_TEST_DATABASE_URL"
+        ]
+      }
+    },
+    {
+      "id": "m3-mcp-surface",
+      "description": "Adaptive Session MCP tools expose typed lifecycle and grouped-turn operations",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [
+    {
+      "id": "m3-later-scope",
+      "description": "M4 and later acceptance remain outside this milestone verdict",
+      "status": "awaiting_codex_verification",
+      "reasonCode": "FUTURE_MILESTONE_SCOPE"
+    }
+  ],
+  "metrics": {
+    "totalWallClockMs": 5196.226541,
+    "agentDecisionBoundaries": 0,
+    "mcpRequests": 0,
+    "apiRequests": 0,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 0,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "browser_startup": {
+        "count": 1,
+        "p50Ms": 2096.609042,
+        "p95Ms": 2096.609042,
+        "maxMs": 2096.609042
+      },
+      "document_observation": {
+        "count": 1,
+        "p50Ms": 728.39125,
+        "p95Ms": 728.39125,
+        "maxMs": 728.39125
+      },
+      "expected_effect_verification": {
+        "count": 1,
+        "p50Ms": 854.2449580000002,
+        "p95Ms": 854.2449580000002,
+        "maxMs": 854.2449580000002
+      },
+      "interaction_execution": {
+        "count": 1,
+        "p50Ms": 1516.0698340000001,
+        "p95Ms": 1516.0698340000001,
+        "maxMs": 1516.0698340000001
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "m3-restart-resume",
+        "phase": "browser_startup",
+        "durationMs": 2096.609042
+      },
+      {
+        "operationId": "m3-service",
+        "phase": "interaction_execution",
+        "durationMs": 1516.0698340000001
+      },
+      {
+        "operationId": "m3-mcp-surface",
+        "phase": "expected_effect_verification",
+        "durationMs": 854.2449580000002
+      },
+      {
+        "operationId": "m3-contract",
+        "phase": "document_observation",
+        "durationMs": 728.39125
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:document_observation",
+        "operationId": "m3-contract",
+        "source": "campaign_client",
+        "correlationId": "08e54171-7b45-4280-8e64-e7d368229862",
+        "eventId": "08e54171-7b45-4280-8e64-e7d368229862-m3-contract",
+        "value": 728.39125
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "m3-service",
+        "source": "campaign_client",
+        "correlationId": "08e54171-7b45-4280-8e64-e7d368229862",
+        "eventId": "08e54171-7b45-4280-8e64-e7d368229862-m3-service",
+        "value": 1516.0698340000001
+      },
+      {
+        "metric": "phase:browser_startup",
+        "operationId": "m3-restart-resume",
+        "source": "campaign_client",
+        "correlationId": "08e54171-7b45-4280-8e64-e7d368229862",
+        "eventId": "08e54171-7b45-4280-8e64-e7d368229862-m3-restart-resume",
+        "value": 2096.609042
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "m3-mcp-surface",
+        "source": "campaign_client",
+        "correlationId": "08e54171-7b45-4280-8e64-e7d368229862",
+        "eventId": "08e54171-7b45-4280-8e64-e7d368229862-m3-mcp-surface",
+        "value": 854.2449580000002
+      }
+    ]
+  },
+  "artifactRefs": [
+    "command:m3-contract",
+    "command:m3-service",
+    "command:m3-restart-resume",
+    "command:m3-mcp-surface"
+  ],
+  "verdict": "fail"
+}

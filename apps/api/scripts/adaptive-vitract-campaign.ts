@@ -2,6 +2,7 @@ import {
   checkProductionTopology,
   closeCampaignContext,
   createCampaignContext,
+  generatedVitractCampaignSpec,
   recordCampaignFailure,
   retainResult,
   verifyMissionless,
@@ -14,11 +15,14 @@ if (milestone !== "M0" && milestone !== "M1") throw new Error("ADAPTIVE_MILESTON
 const context = await createCampaignContext();
 try {
   await checkProductionTopology(context);
+  const vitract = await generatedVitractCampaignSpec(context, milestone);
   const deployed = await runDeployedCampaign({
     milestone,
     target: "vitract_preview",
     correlationId: context.correlationId,
     metrics: context.metrics,
+    spec: vitract.spec,
+    forbiddenValues: vitract.forbiddenValues,
   });
   context.requiredChecks.push(...deployed.requiredChecks);
   await verifyMissionless(context);

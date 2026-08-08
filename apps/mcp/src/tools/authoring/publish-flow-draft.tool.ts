@@ -15,7 +15,7 @@ import {
 } from "@scry/contracts";
 import { z } from "zod";
 
-import type { ScryApiClient } from "../../api-client.js";
+import { ScryApiError, type ScryApiClient } from "../../api-client.js";
 import {
   missionContext,
   objectiveContext,
@@ -44,15 +44,32 @@ export function registerPublishFlowDraftTool(server: McpServer, client: ScryApiC
       },
       annotations: writes,
     },
-    async ({ draftId, idempotencyKey, ...body }) =>
-      result(
-        {
-          publication: await client.post(`/flow-drafts/${draftId}/publish`, {
-            ...body,
-            idempotencyKey: idempotencyKey ?? stableKey("publish", { draftId, ...body }),
-          }),
-        },
-        "Execution-ready Flow revision published.",
-      ),
+    async ({ draftId, idempotencyKey, ...body }) => {
+      try {
+        await client.requireCurrentRelease();
+        const publication = await client.post(`/flow-drafts/${draftId}/publish`, {
+          ...body,
+          idempotencyKey: idempotencyKey ?? stableKey("publish", { draftId, ...body }),
+        });
+        return result(
+          { publication },
+          "Execution-ready Flow revision published with its exact compiled contract identity.",
+        );
+      } catch (error) {
+        if (!(error instanceof ScryApiError)) throw error;
+        return {
+          ...result(
+            {
+              rejection: {
+                code: error.code,
+                safeActions: error.safeActions,
+              },
+            },
+            "Flow publication was rejected.",
+          ),
+          isError: true,
+        };
+      }
+    },
   );
 }

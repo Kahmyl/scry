@@ -35,6 +35,7 @@ import { PraxisRuntimeRepository } from "./praxis/index.js";
 import { RunQueueService } from "./runtime/index.js";
 import { RedisConnection } from "./infrastructure/redis.js";
 import { createAuthoringRuntimeOwner, createWorkerFleet } from "./workers/index.js";
+import { learnedInteractionsFromAction } from "./authoring/learned-interaction.js";
 import {
   createCalibrationProcessor,
   createProbeProcessor,
@@ -158,15 +159,15 @@ const authoringRuntimeOwner = createAuthoringRuntimeOwner({
       options: authoringKernelOptions(sessionId, environmentId, policy),
     });
     const request = executionCapabilities.request({
-        sessionId,
-        operationId,
-        correlationId,
-        mode: "observe",
-        plan: authoringObservationPlan(policy),
-        policy,
-        capabilities,
-        idempotencyKey: operationId,
-      });
+      sessionId,
+      operationId,
+      correlationId,
+      mode: "observe",
+      plan: authoringObservationPlan(policy),
+      policy,
+      capabilities,
+      idempotencyKey: operationId,
+    });
     return executionKernel.openAuthoringSession({
       request,
       capabilities,
@@ -220,6 +221,7 @@ const authoringRuntimeOwner = createAuthoringRuntimeOwner({
     signal,
   }) => {
     const correlationId = requestedCorrelationId ?? randomUUID();
+    const praxisResults: import("@scry/contracts").PraxisResult[] = [];
     const capabilities = executionCapabilities.createSession({
       sessionId,
       operationId,
@@ -232,10 +234,13 @@ const authoringRuntimeOwner = createAuthoringRuntimeOwner({
         veilAdmissionKey,
         veilPolicySnapshot: compileDefaultVeilPolicy(policy),
         secretResolver: (reference) => authoringRuntimes.resolveCredential(sessionId, reference),
+        onPraxisResult: (result) => {
+          praxisResults.push(result);
+        },
         ...(signal ? { signal } : {}),
       },
     });
-    return executionKernel.interact({
+    const outcome = await executionKernel.interact({
       request: {
         sessionId,
         operationId,
@@ -251,14 +256,21 @@ const authoringRuntimeOwner = createAuthoringRuntimeOwner({
       ...(expectedEffect ? { expectedEffect } : {}),
       ordinal,
     });
+    await authoringRuntimes.recordLearnedInteractions(
+      sessionId,
+      learnedInteractionsFromAction(action, praxisResults, operationId, {
+        veilEvidenceClosed:
+          outcome.privacyResult === "verified" &&
+          outcome.evidenceResult.every(
+            (evidence) => evidence.state === "available" || evidence.state === "suppressed",
+          ),
+      }),
+    );
+    return outcome;
   },
 });
 
-function authoringKernelOptions(
-  sessionId: string,
-  environmentId: string,
-  policy: ExecutionPolicy,
-) {
+function authoringKernelOptions(sessionId: string, environmentId: string, policy: ExecutionPolicy) {
   return {
     outputDirectory: path.join(artifactRoot, "authoring", sessionId),
     browserChannel,

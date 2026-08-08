@@ -108,15 +108,10 @@ import type {
   StepExecutionResult,
 } from "./types.js";
 
-function registerPraxisGroundingObservers(
-  page: Page,
-  options: ExecuteOptions,
-) {
-  if (options.groundingHistory)
-    registerGroundingHistoryProvider(page, options.groundingHistory);
+function registerPraxisGroundingObservers(page: Page, options: ExecuteOptions) {
+  if (options.groundingHistory) registerGroundingHistoryProvider(page, options.groundingHistory);
 
-  if (options.onGroundingDiagnostic)
-    registerGroundingObserver(page, options.onGroundingDiagnostic);
+  if (options.onGroundingDiagnostic) registerGroundingObserver(page, options.onGroundingDiagnostic);
 }
 
 export async function executePlan(options: ExecuteOptions): Promise<ExecutionReport> {
@@ -298,13 +293,36 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       emit: (type, payload) => emit(type, payload),
       videoAuthority: veilVideoSegments,
       videoBinding: veilCaptureBinding,
-      abortCapture: () => context.close(),
+      abortCapture: async () => {
+        await context?.close();
+      },
     });
     trace = new TraceCoordinator({
       context,
       outputDirectory: options.outputDirectory,
       sanitize: (target) => sanitizeTraceArchive(target, redactor),
-      abortCapture: () => context.close(),
+      admitSanitized: async () => {
+        const decision = veilAuthority.decide({
+          context: {
+            userId: "executor",
+            environmentId: options.environmentId ?? "local-environment",
+            transactionId: attemptId,
+            origin: canonicalVeilOrigin(page?.url(), options.plan.allowedOrigins[0]!),
+            browserContextId: safeProvenance?.contextId ?? attemptId,
+            pageId: runId,
+            frameId: "main-frame",
+            documentEpoch: state.captureEpoch,
+          },
+          operation: "admit_evidence",
+          channel: "trace",
+          classification: "public",
+          scope: "document",
+        });
+        return decision.disposition === "allow" || decision.disposition === "sanitize";
+      },
+      abortCapture: async () => {
+        await context?.close();
+      },
     });
     let recordingVeilState: ReturnType<PrivacyCollector["state"]>["status"] = "active";
     let recordingOperationId = "protected-operation";

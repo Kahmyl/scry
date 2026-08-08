@@ -2,6 +2,7 @@ import {
   checkProductionTopology,
   closeCampaignContext,
   createCampaignContext,
+  generatedCoreCampaignSpec,
   recordCampaignFailure,
   retainResult,
   verifyMissionless,
@@ -11,12 +12,15 @@ import { runDeployedCampaign } from "./deployed-adaptive-campaign.js";
 const context = await createCampaignContext();
 try {
   await checkProductionTopology(context);
+  const spec = await generatedCoreCampaignSpec(context, "M0");
   const deployed = await runDeployedCampaign({
     milestone: "M0",
     target: "production_shaped",
     correlationId: context.correlationId,
     metrics: context.metrics,
     fixtureOrigin: context.fixture.origin,
+    spec,
+    forbiddenValues: context.forbiddenValues,
   });
   context.requiredChecks.push(...deployed.requiredChecks);
   await verifyMissionless(context);

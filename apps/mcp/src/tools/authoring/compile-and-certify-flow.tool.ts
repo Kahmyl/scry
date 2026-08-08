@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import type { ScryApiClient } from "../../api-client.js";
+import { ScryApiError, type ScryApiClient } from "../../api-client.js";
 import {
   objectiveContext,
   stableKey,
@@ -35,16 +35,32 @@ export function registerCompileAndCertifyFlowTool(server: McpServer, client: Scr
       },
       annotations: writes,
     },
-    async ({ draftId, idempotencyKey, ...body }) =>
-      result(
-        {
-          result: await client.post(`/flow-drafts/${draftId}/compile-and-certify`, {
-            ...body,
-            idempotencyKey:
-              idempotencyKey ?? stableKey("compile-and-certify", { draftId, ...body }),
-          }),
-        },
-        "Flow draft compiled and a fresh certification Run queued.",
-      ),
+    async ({ draftId, idempotencyKey, ...body }) => {
+      try {
+        await client.requireCurrentRelease();
+        const certification = await client.post(`/flow-drafts/${draftId}/compile-and-certify`, {
+          ...body,
+          idempotencyKey: idempotencyKey ?? stableKey("compile-and-certify", { draftId, ...body }),
+        });
+        return result(
+          { result: certification },
+          "Flow draft compilation and certification state resolved.",
+        );
+      } catch (error) {
+        if (!(error instanceof ScryApiError)) throw error;
+        return {
+          ...result(
+            {
+              rejection: {
+                code: error.code,
+                safeActions: error.safeActions,
+              },
+            },
+            "Flow draft compilation or certification was rejected.",
+          ),
+          isError: true,
+        };
+      }
+    },
   );
 }

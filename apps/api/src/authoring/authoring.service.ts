@@ -11,6 +11,7 @@ import {
   currentPlanSchema,
   executionPolicySchema,
   learnedInteractionRecordSchema,
+  protectedAcquisitionEvidenceSchema,
   type CompileFlowDraftInput,
   type CompileAndCertifyFlowInput,
   type CreateAuthenticationContractInput,
@@ -957,6 +958,66 @@ export class AuthoringService {
         });
       }
 
+      const replay = await q<{
+        id: string;
+        status: string;
+        diagnostics: Array<Record<string, unknown>>;
+        contractVersion: string;
+        compiledContractDigest: string;
+        missionId: string;
+        objectiveId: string;
+        environmentId: string;
+        probeSessionId: string | null;
+        authenticationContractRevisionId: string | null;
+        agentSessionId: string;
+      }>(
+        `SELECT id,status,diagnostics,
+                contract_version AS "contractVersion",
+                compiled_contract_digest AS "compiledContractDigest",
+                mission_id AS "missionId",
+                objective_id AS "objectiveId",
+                environment_id AS "environmentId",
+                probe_session_id AS "probeSessionId",
+                authentication_contract_revision_id AS "authenticationContractRevisionId",
+                created_by_agent_session_id AS "agentSessionId"
+         FROM flow_compilations
+         WHERE draft_id=$1
+           AND draft_version=$2
+           AND idempotency_key=$3
+         FOR UPDATE`,
+        [draftId, d.version, input.idempotencyKey],
+      );
+
+      if (replay.rowCount) {
+        const existing = replay.rows[0]!;
+        if (
+          existing.missionId !== input.missionId ||
+          existing.objectiveId !== input.objectiveId ||
+          existing.environmentId !== input.environmentId ||
+          existing.probeSessionId !== (input.probeSessionId ?? null) ||
+          existing.authenticationContractRevisionId !==
+            (input.authenticationContractRevisionId ?? null) ||
+          existing.agentSessionId !== input.agentSessionId
+        ) {
+          throw new ConflictException({
+            code: "IDEMPOTENCY_KEY_REUSED",
+            safeActions: ["retry_with_original_request", "use_new_idempotency_key"],
+          });
+        }
+
+        return {
+          id: existing.id,
+          status: existing.status,
+          diagnostics: existing.diagnostics,
+          blockers: [],
+          warnings: [],
+          qualityFindings: [],
+          contractVersion: existing.contractVersion,
+          compiledContractDigest: existing.compiledContractDigest,
+          replayed: true,
+        };
+      }
+
       const runtime = browserObservationRuntimeHealth();
 
       const probe = input.probeSessionId
@@ -1053,13 +1114,14 @@ export class AuthoringService {
         targetContracts: probeResult?.targets ?? [],
         readinessContracts: probeResult?.readiness ?? [],
         learnedInteractionRecords: transcript.learnedRecords,
+        protectedAcquisitionEvidence: transcript.protectedAcquisitionEvidence,
         runtimeHash: runtime.runtimeHash,
         capabilityManifestHash: runtime.capabilityManifestHash,
         authorizationDigest,
         calibrationDigest,
       };
 
-      const digest = hash(contract);
+      const digest = compiledContractDigest(contract);
       const id = randomUUID();
 
       await q(
@@ -1092,6 +1154,7 @@ export class AuthoringService {
           compiled_contract_digest,
           contract_version,
           learned_interaction_records,
+          protected_acquisition_evidence,
           publication_gate,
           capability_manifest_hash,
           runtime_hash,
@@ -1108,9 +1171,9 @@ export class AuthoringService {
         )
         VALUES(
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-          $11::jsonb,$12,$13,$14,$15::jsonb,$16::jsonb,$17,$18,$19,
-          $20,$21::jsonb,$22::jsonb,$23::jsonb,
-          $24,$25,$26,$27,now()
+          $11::jsonb,$12,$13,$14,$15::jsonb,$16::jsonb,$17::jsonb,$18,$19,$20,
+          $21,$22::jsonb,$23::jsonb,$24::jsonb,
+          $25,$26,$27,$28,now()
         )`,
         [
           id,
@@ -1128,6 +1191,7 @@ export class AuthoringService {
           digest,
           transcript.contractVersion,
           JSON.stringify(transcript.learnedRecords),
+          JSON.stringify(transcript.protectedAcquisitionEvidence),
           JSON.stringify(publicationGateFor(status, transcript.contractVersion)),
           runtime.capabilityManifestHash,
           runtime.runtimeHash,
@@ -1581,10 +1645,16 @@ export class AuthoringService {
     const compilation = await this.compile(principal, draftId, input);
     if (compilation.status !== "execution_ready") {
       return {
+        compiledContractId: compilation.id,
         compilation,
         certification: {
           status: "rejected",
           rejectionReasons: ["COMPILATION_NOT_EXECUTION_READY"],
+          safeActions: ["revise_flow", "compile_and_certify_flow"],
+          decisionBoundary: {
+            type: "compilation_rejected",
+            terminal: true,
+          },
         },
       };
     }
@@ -1607,26 +1677,39 @@ export class AuthoringService {
         runId: string;
         state: string;
         resultClassification: string | null;
+        candidateRevisionId: string | null;
       }>(
-        `SELECT r.id AS "runId",r.state,r.result_classification AS "resultClassification"
+        `SELECT r.id AS "runId",r.state,r.result_classification AS "resultClassification",
+                fc.flow_revision_id AS "candidateRevisionId"
          FROM flow_compilations fc
          JOIN runs r ON r.id=fc.certification_run_id
          WHERE fc.id=$1`,
         [compilation.id],
       );
       if (existing.rowCount) {
+        const run = existing.rows[0]!;
+        const certified = run.state === "passed" && run.resultClassification === "application_pass";
+        const rejected = ["failed", "cancelled", "timed_out", "infrastructure_error"].includes(
+          run.state,
+        );
         return {
-          status:
-            existing.rows[0]!.state === "passed" &&
-            existing.rows[0]!.resultClassification === "application_pass"
-              ? "certified"
-              : ["failed", "cancelled", "timed_out", "infrastructure_error"].includes(
-                    existing.rows[0]!.state,
-                  )
-                ? "rejected"
-                : "certification_pending",
-          certificationRunId: existing.rows[0]!.runId,
-          rejectionReasons: [],
+          status: certified ? "certified" : rejected ? "rejected" : "certification_pending",
+          certificationRunId: run.runId,
+          candidateRevisionId: run.candidateRevisionId,
+          rejectionReasons: rejected ? ["CERTIFICATION_RUN_DID_NOT_PASS"] : [],
+          safeActions: certified
+            ? ["publish_flow_draft"]
+            : rejected
+              ? ["revise_flow", "compile_and_certify_flow"]
+              : [],
+          ...(certified || rejected
+            ? {
+                decisionBoundary: {
+                  type: certified ? "certification_succeeded" : "certification_rejected",
+                  terminal: true,
+                },
+              }
+            : {}),
           replayed: true,
         };
       }
@@ -1798,10 +1881,97 @@ export class AuthoringService {
       };
     });
 
+    const resolvedCertification =
+      certification.status === "certification_pending"
+        ? await this.waitForCertificationTerminal(certification)
+        : certification;
+    const publishableMetadata =
+      resolvedCertification.status === "certified"
+        ? {
+            compiledContractId: compilation.id,
+            compilationId: compilation.id,
+            certificationRunId: resolvedCertification.certificationRunId,
+            candidateRevisionId: resolvedCertification.candidateRevisionId,
+          }
+        : undefined;
+
     return {
       compiledContractId: compilation.id,
       compilation,
-      certification,
+      certification: resolvedCertification,
+      ...(publishableMetadata ? { publishableMetadata } : {}),
+    };
+  }
+
+  private async waitForCertificationTerminal(certification: {
+    status: string;
+    certificationRunId: string;
+    candidateRevisionId?: string | null;
+    rejectionReasons: string[];
+    replayed?: boolean;
+  }) {
+    const timeoutMs = certificationWaitTimeoutMs();
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      await delay(Math.min(250, Math.max(1, deadline - Date.now())));
+      const current = await this.db.query<{
+        state: string;
+        resultClassification: string | null;
+      }>(
+        `SELECT state,result_classification AS "resultClassification"
+         FROM runs
+         WHERE id=$1`,
+        [certification.certificationRunId],
+      );
+      if (!current.rowCount) {
+        return {
+          ...certification,
+          status: "rejected",
+          rejectionReasons: ["CERTIFICATION_RUN_NOT_FOUND"],
+          safeActions: ["compile_and_certify_flow"],
+          decisionBoundary: {
+            type: "certification_rejected",
+            terminal: true,
+          },
+        };
+      }
+
+      const run = current.rows[0]!;
+      if (run.state === "passed" && run.resultClassification === "application_pass") {
+        return {
+          ...certification,
+          status: "certified",
+          rejectionReasons: [],
+          safeActions: ["publish_flow_draft"],
+          decisionBoundary: {
+            type: "certification_succeeded",
+            terminal: true,
+          },
+        };
+      }
+      if (["failed", "cancelled", "timed_out", "infrastructure_error"].includes(run.state)) {
+        return {
+          ...certification,
+          status: "rejected",
+          rejectionReasons: ["CERTIFICATION_RUN_DID_NOT_PASS"],
+          safeActions: ["revise_flow", "compile_and_certify_flow"],
+          decisionBoundary: {
+            type: "certification_rejected",
+            terminal: true,
+          },
+        };
+      }
+    }
+
+    return {
+      ...certification,
+      safeActions: ["compile_and_certify_flow"],
+      decisionBoundary: {
+        type: "certification_wait_timeout",
+        terminal: false,
+        resumeWithSameIdempotencyKey: true,
+      },
     };
   }
 
@@ -2184,6 +2354,7 @@ export type ProbeResult = {
   pageFingerprint?: string;
   authenticationFingerprint?: string;
   authoringTrajectory?: Record<string, unknown>;
+  protectedAcquisitionEvidence?: Array<Record<string, unknown>>;
 };
 
 export type TranscriptCompilationResult = {
@@ -2191,6 +2362,7 @@ export type TranscriptCompilationResult = {
   blockers: Array<Record<string, unknown>>;
   warnings: Array<Record<string, unknown>>;
   contractVersion: "v1-existing" | "v2-learned-interactions";
+  protectedAcquisitionEvidence: Array<Record<string, unknown>>;
 };
 
 const PROBE_BLOCKER_CODES = new Set([
@@ -2276,6 +2448,9 @@ export function compileSuccessfulInteractions(
   const learnedRecords: Array<Record<string, unknown>> = [];
   const blockers: Array<Record<string, unknown>> = [];
   const warnings: Array<Record<string, unknown>> = [];
+  const protectedAcquisitionEvidence = sanitizeProtectedAcquisitionEvidence(
+    result?.protectedAcquisitionEvidence,
+  );
 
   if (!transcriptCompilerEnabled()) {
     return {
@@ -2283,6 +2458,7 @@ export function compileSuccessfulInteractions(
       blockers,
       warnings,
       contractVersion: "v1-existing",
+      protectedAcquisitionEvidence,
     };
   }
 
@@ -2294,6 +2470,15 @@ export function compileSuccessfulInteractions(
   }
 
   for (const [index, raw] of rawRecords.entries()) {
+    const unsafeReason = unsafeTranscriptReason(raw);
+    if (unsafeReason) {
+      blockers.push({
+        code: unsafeReason,
+        index,
+        message: "Learned interaction contains forbidden authoring or protected evidence.",
+      });
+      continue;
+    }
     const sanitized = sanitizeLearnedRecord(raw);
     const parsed = learnedInteractionRecordSchema.safeParse(sanitized);
     if (!parsed.success) {
@@ -2324,7 +2509,29 @@ export function compileSuccessfulInteractions(
     blockers,
     warnings,
     contractVersion: learnedRecords.length ? "v2-learned-interactions" : "v1-existing",
+    protectedAcquisitionEvidence,
   };
+}
+
+export function sanitizeProtectedAcquisitionEvidence(raw: unknown) {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const candidate = entry as Record<string, unknown>;
+    const parsed = protectedAcquisitionEvidenceSchema.safeParse({
+      reference: candidate.reference,
+      adapter: candidate.adapter,
+      objective: candidate.objective,
+      outcome: candidate.outcome,
+      capsule: candidate.capsule,
+      evidenceClosure: candidate.evidenceClosure,
+    });
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+export function compiledContractDigest(contract: Record<string, unknown>) {
+  return hash(contract);
 }
 
 export function sanitizeLearnedRecord(raw: unknown): Record<string, unknown> {
@@ -2352,6 +2559,8 @@ function transcriptRejection(record: {
   usedSelectorHint: boolean;
   unresolvedMutation: boolean;
   veilPolicyViolated: boolean;
+  veilEvidenceClosed: boolean;
+  ephemeralHandleExpiresAt?: string | undefined;
   expectedEffectVerified: boolean;
   deterministic: boolean;
 }) {
@@ -2359,8 +2568,11 @@ function transcriptRejection(record: {
   if (record.unresolvedMutation || record.mutationOutcome === "unknown")
     return "MUTATION_STATE_UNRESOLVED";
   if (record.usedSelectorHint) return "SELECTOR_HINT_ONLY_CONTRACT_REJECTED";
+  if (record.ephemeralHandleExpiresAt && Date.parse(record.ephemeralHandleExpiresAt) <= Date.now())
+    return "EPHEMERAL_HANDLE_EXPIRED";
   if (!record.expectedEffectVerified) return "EXPECTED_EFFECT_REQUIRED";
   if (record.veilPolicyViolated) return "VEIL_POLICY_VIOLATION";
+  if (!record.veilEvidenceClosed) return "VEIL_EVIDENCE_NOT_CLOSED";
   if (!record.deterministic) return "NON_DETERMINISTIC_CONTRACT";
   return undefined;
 }
@@ -2378,9 +2590,50 @@ function deepSanitize(value: unknown): unknown {
 
 function unsafeTranscriptKey(key: string) {
   if (key === "usedSelectorHint") return false;
-  return /selector|candidateHandle|rawDom|html|plaintext|clipboardValue|secretValue|tokenValue/i.test(
+  return /selector|candidateHandle|rawDom|html|plaintext|clipboardValue|secretValue|tokenValue|coordinate|\b(?:x|y)\b|screenshot|imageData|canvasData/i.test(
     key,
   );
+}
+
+function unsafeTranscriptReason(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const reason = unsafeTranscriptReason(item);
+      if (reason) return reason;
+    }
+    return undefined;
+  }
+  if (!value || typeof value !== "object") {
+    return typeof value === "string" && secretShapedString(value)
+      ? "ENCODED_PROTECTED_VALUE_REJECTED"
+      : undefined;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (unsafeTranscriptKey(key)) return "FORBIDDEN_LEARNED_EVIDENCE";
+    const reason = unsafeTranscriptReason(nested);
+    if (reason) return reason;
+  }
+  return undefined;
+}
+
+function secretShapedString(value: string) {
+  const compact = value.trim();
+  return (
+    /^data:image\//i.test(compact) ||
+    /^base64:/i.test(compact) ||
+    /^-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(compact) ||
+    /^[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}$/.test(compact) ||
+    (/^[A-Za-z0-9+/]{24,}={0,2}$/.test(compact) && decodesToSensitiveText(compact))
+  );
+}
+
+function decodesToSensitiveText(value: string) {
+  try {
+    const decoded = Buffer.from(value, "base64").toString("utf8");
+    return /password|secret|token|api[_-]?key|credential/i.test(decoded);
+  } catch {
+    return false;
+  }
 }
 
 function transcriptCompilerEnabled() {
@@ -2426,6 +2679,26 @@ async function certificationSatisfied(q: Query, compilationId: string) {
        AND fc.publication_gate->>'status'='certified'
        AND NOT EXISTS(
          SELECT 1 FROM credential_incidents ci WHERE ci.run_id=r.id
+       )
+       AND NOT EXISTS(
+         SELECT 1 FROM protected_transactions transaction
+         WHERE transaction.run_id=r.id
+           AND (transaction.capsule_status NOT IN ('destroyed','force_terminated')
+             OR transaction.evidence_status NOT IN ('resumed','permanently_suppressed'))
+       )
+       AND NOT EXISTS(
+         SELECT 1
+         FROM attempts attempt
+         LEFT JOIN artifacts artifact ON artifact.attempt_id=attempt.id
+         LEFT JOIN artifact_timeline_entries timeline ON timeline.attempt_id=attempt.id
+         LEFT JOIN privacy_intervals privacy ON privacy.attempt_id=attempt.id
+         WHERE attempt.run_id=r.id
+           AND attempt.attempt_number=(
+             SELECT max(latest.attempt_number) FROM attempts latest WHERE latest.run_id=r.id
+           )
+           AND (artifact.availability IN ('failed','incomplete','quarantined')
+             OR timeline.entry_type IN ('unavailable_interval','quarantine_record')
+             OR (privacy.id IS NOT NULL AND privacy.ended_at IS NULL))
        )
      LIMIT 1`,
     [compilationId],
@@ -2530,4 +2803,14 @@ function releaseId() {
 
 function schemaFingerprint() {
   return process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline";
+}
+
+function certificationWaitTimeoutMs() {
+  const configured = Number(process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS ?? 20_000);
+  if (!Number.isFinite(configured)) return 20_000;
+  return Math.min(30_000, Math.max(0, Math.trunc(configured)));
+}
+
+function delay(durationMs: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, durationMs));
 }

@@ -202,18 +202,50 @@ export class RunAttemptRepository {
                'status',CASE
                  WHEN $2='passed' AND $3='application_pass'
                    AND NOT EXISTS(SELECT 1 FROM credential_incidents WHERE run_id=$1)
+                   AND NOT EXISTS(
+                     SELECT 1 FROM protected_transactions
+                     WHERE run_id=$1
+                       AND (capsule_status NOT IN ('destroyed','force_terminated')
+                         OR evidence_status NOT IN ('resumed','permanently_suppressed'))
+                   )
+                   AND NOT EXISTS(
+                     SELECT 1 FROM attempts a
+                     LEFT JOIN artifacts artifact ON artifact.attempt_id=a.id
+                     LEFT JOIN artifact_timeline_entries timeline ON timeline.attempt_id=a.id
+                     LEFT JOIN privacy_intervals privacy ON privacy.attempt_id=a.id
+                     WHERE a.id=$4
+                       AND (artifact.availability IN ('failed','incomplete','quarantined')
+                         OR timeline.entry_type IN ('unavailable_interval','quarantine_record')
+                         OR (privacy.id IS NOT NULL AND privacy.ended_at IS NULL))
+                   )
                  THEN 'certified' ELSE 'rejected' END,
                'certificationRunId',$1::text,
                'rejectionReasons',CASE
                  WHEN EXISTS(SELECT 1 FROM credential_incidents WHERE run_id=$1)
                    THEN jsonb_build_array('PRIVACY_INCIDENT')
+                 WHEN EXISTS(
+                   SELECT 1 FROM protected_transactions
+                   WHERE run_id=$1
+                     AND (capsule_status NOT IN ('destroyed','force_terminated')
+                       OR evidence_status NOT IN ('resumed','permanently_suppressed'))
+                 ) THEN jsonb_build_array('PROTECTED_CHANNEL_NOT_CLOSED')
+                 WHEN EXISTS(
+                   SELECT 1 FROM attempts a
+                   LEFT JOIN artifacts artifact ON artifact.attempt_id=a.id
+                   LEFT JOIN artifact_timeline_entries timeline ON timeline.attempt_id=a.id
+                   LEFT JOIN privacy_intervals privacy ON privacy.attempt_id=a.id
+                   WHERE a.id=$4
+                     AND (artifact.availability IN ('failed','incomplete','quarantined')
+                       OR timeline.entry_type IN ('unavailable_interval','quarantine_record')
+                       OR (privacy.id IS NOT NULL AND privacy.ended_at IS NULL))
+                 ) THEN jsonb_build_array('CERTIFICATION_EVIDENCE_NOT_VERIFIED')
                  WHEN $2='passed' AND $3='application_pass' THEN '[]'::jsonb
                  ELSE jsonb_build_array(upper($3))
                END,
                'requiredOutcome','application_pass'
              )
          WHERE certification_run_id=$1`,
-        [runId, state, resultClassification],
+        [runId, state, resultClassification, attemptId],
       );
       await client.query(
         `INSERT INTO release_gate_metrics(

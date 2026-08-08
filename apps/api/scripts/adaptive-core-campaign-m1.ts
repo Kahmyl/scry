@@ -8,6 +8,7 @@ import {
   checkProductionTopology,
   closeCampaignContext,
   createCampaignContext,
+  generatedCoreCampaignSpec,
   recordCampaignFailure,
   retainResult,
   verifyMissionless,
@@ -20,12 +21,15 @@ try {
   await checkProductionTopology(context);
   const baseline = await latestM0Baseline();
   baselineId = baseline.campaignId;
+  const spec = await generatedCoreCampaignSpec(context, "M1");
   const deployed = await runDeployedCampaign({
     milestone: "M1",
     target: "production_shaped",
     correlationId: context.correlationId,
     metrics: context.metrics,
     fixtureOrigin: context.fixture.origin,
+    spec,
+    forbiddenValues: context.forbiddenValues,
   });
   context.requiredChecks.push(...deployed.requiredChecks);
   await verifyMissionless(context);

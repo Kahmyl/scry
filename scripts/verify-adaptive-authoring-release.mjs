@@ -29,6 +29,7 @@ run([
   "test/protected-transaction-coordinator.test.ts",
   "test/probe-veil-boundary.test.ts",
   "test/vitract-preview.e2e.test.ts",
+  "--maxWorkers=1",
 ]);
 run([
   "--filter",

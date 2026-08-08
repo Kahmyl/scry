@@ -129,15 +129,26 @@ export class RunObservationService {
              FROM protected_transactions AS transaction
              LEFT JOIN protected_mutation_ledger AS mutation
                ON mutation.run_id = transaction.run_id AND mutation.operation_id = transaction.operation_id
-             WHERE transaction.run_id = $1 ORDER BY transaction.created_at`,
-          [runId],
+             JOIN attempts AS attempt ON attempt.id = $2
+             WHERE transaction.run_id = $1
+               AND transaction.created_at >= attempt.started_at
+               AND (attempt.completed_at IS NULL OR transaction.created_at <= attempt.completed_at)
+             ORDER BY transaction.created_at`,
+          [runId, currentAttemptId],
         ),
         this.database.query(
-          `SELECT id, credential_id AS "credentialId", operation_id AS "operationId", adapter_id AS "adapterId",
-                    state, reason_code AS "reasonCode", safe_diagnostics AS "safeDiagnostics",
-                    created_at AS "createdAt", resolved_at AS "resolvedAt"
-             FROM credential_incidents WHERE run_id = $1 ORDER BY created_at`,
-          [runId],
+          `SELECT incident.id, incident.credential_id AS "credentialId",
+                    incident.operation_id AS "operationId", incident.adapter_id AS "adapterId",
+                    incident.state, incident.reason_code AS "reasonCode",
+                    incident.safe_diagnostics AS "safeDiagnostics",
+                    incident.created_at AS "createdAt", incident.resolved_at AS "resolvedAt"
+             FROM credential_incidents AS incident
+             JOIN attempts AS attempt ON attempt.id = $2
+             WHERE incident.run_id = $1
+               AND incident.created_at >= attempt.started_at
+               AND (attempt.completed_at IS NULL OR incident.created_at <= attempt.completed_at)
+             ORDER BY incident.created_at`,
+          [runId, currentAttemptId],
         ),
       ]);
       const [transactionRows, findingRows] = await Promise.all([
@@ -219,6 +230,13 @@ export class RunObservationService {
     if (artifacts.some((artifact) => artifact.availability === "available"))
       safeActions.push("read_artifact");
     const veil = deriveVeilObservation(run, intervals.rows, artifactTimeline, artifacts, active);
+    const evidenceChannels = deriveEvidenceChannels(
+      run,
+      steps,
+      artifacts,
+      artifactTimeline,
+      active,
+    );
 
     return runObservationSchema.parse({
       run,
@@ -227,6 +245,7 @@ export class RunObservationService {
       steps,
       events: events.rows,
       artifacts,
+      evidenceChannels,
       artifactTimeline: artifactTimeline as RunObservation["artifactTimeline"],
       privacy: {
         intervals: intervals.rows,
@@ -272,6 +291,143 @@ export class RunObservationService {
   }
 }
 
+const evidenceChannels = [
+  "screenshot",
+  "video",
+  "trace",
+  "dom",
+  "network",
+  "console",
+  "report",
+] as const;
+
+function deriveEvidenceChannels(
+  run: Record<string, any>,
+  steps: Array<Record<string, any>>,
+  artifacts: Array<Record<string, any>>,
+  timeline: Array<Record<string, any>>,
+  active: boolean,
+): RunObservation["evidenceChannels"] {
+  const required = new Set<string>();
+  for (const step of steps) {
+    for (const entry of Array.isArray(step.evidence) ? step.evidence : []) {
+      const kind = typeof entry === "string" ? entry : entry?.kind;
+      if (evidenceChannels.includes(kind)) required.add(kind);
+    }
+  }
+  for (const step of Array.isArray(run.planSnapshot?.steps) ? run.planSnapshot.steps : []) {
+    for (const kind of Array.isArray(step.evidence) ? step.evidence : []) {
+      if (evidenceChannels.includes(kind)) required.add(kind);
+    }
+    if (step.action?.type === "screenshot") required.add("screenshot");
+  }
+
+  const controls = run.veilPolicySnapshot?.controls ?? {};
+  const requestedByPolicy = new Set<string>([
+    ...(controls.screenshots ? ["screenshot"] : []),
+    ...(controls.video ? ["video"] : []),
+    ...(controls.trace ? ["trace"] : []),
+    ...(controls.dom ? ["dom"] : []),
+    ...(controls.network ? ["network"] : []),
+    ...(controls.diagnostics ? ["console"] : []),
+  ]);
+
+  return evidenceChannels.map((channel) => {
+    const channelArtifacts = artifacts.filter((artifact) => artifact.kind === channel);
+    const channelTimeline = timeline.filter(
+      (entry) =>
+        entry.channel === channel ||
+        ((channel === "video" || channel === "trace") && entry.type === `${channel}_segment`),
+    );
+    const intent = required.has(channel)
+      ? ("required" as const)
+      : requestedByPolicy.has(channel) || channelArtifacts.length > 0 || channelTimeline.length > 0
+        ? ("requested" as const)
+        : ("not_requested" as const);
+    const failedArtifact = channelArtifacts.find((artifact) =>
+      ["failed", "incomplete"].includes(String(artifact.availability)),
+    );
+    const failedTimeline = channelTimeline.find(
+      (entry) => entry.status === "failed" || entry.type === "unavailable_interval",
+    );
+    const quarantinedArtifact = channelArtifacts.find((artifact) =>
+      ["quarantined", "destroyed"].includes(String(artifact.availability)),
+    );
+    const quarantinedTimeline = channelTimeline.find(
+      (entry) => entry.status === "quarantined" || entry.type === "quarantine_record",
+    );
+    const available = channelArtifacts.some((artifact) => artifact.availability === "available");
+    const artifactIds = channelArtifacts.map((artifact) => String(artifact.id));
+
+    if (failedArtifact || failedTimeline) {
+      const reasonCode = safeReason(
+        failedArtifact?.reasonCode ?? failedTimeline?.failureCode ?? failedTimeline?.reasonCode,
+      );
+      return {
+        channel,
+        intent,
+        state: "failed" as const,
+        reasonCode,
+        failureProvenance: evidenceFailureProvenance(failedArtifact?.failureProvenance),
+        artifactIds,
+        remediation: evidenceRemediation(reasonCode),
+      };
+    }
+    if (quarantinedArtifact || quarantinedTimeline) {
+      const reasonCode = safeReason(
+        quarantinedArtifact?.reasonCode ?? quarantinedTimeline?.reasonCode,
+      );
+      return {
+        channel,
+        intent,
+        state: "quarantined" as const,
+        reasonCode,
+        failureProvenance: evidenceFailureProvenance(
+          quarantinedArtifact?.failureProvenance ?? "privacy",
+        ),
+        artifactIds,
+        remediation: evidenceRemediation(reasonCode),
+      };
+    }
+    if (available) return { channel, intent, state: "available" as const, artifactIds };
+    if (intent === "not_requested")
+      return {
+        channel,
+        intent,
+        state: "suppressed" as const,
+        reasonCode: "EVIDENCE_NOT_REQUESTED",
+        failureProvenance: "policy" as const,
+        artifactIds,
+      };
+    if (active) return { channel, intent, state: "pending" as const, artifactIds };
+    return {
+      channel,
+      intent,
+      state: "failed" as const,
+      reasonCode: "EVIDENCE_MISSING",
+      failureProvenance: "executor" as const,
+      artifactIds,
+      remediation: evidenceRemediation("EVIDENCE_MISSING"),
+    };
+  });
+}
+
+function evidenceFailureProvenance(
+  provenance: unknown,
+): "privacy" | "executor" | "storage" | "media" | "policy" {
+  if (["privacy", "storage", "media", "policy"].includes(String(provenance)))
+    return provenance as "privacy" | "storage" | "media" | "policy";
+  return "executor";
+}
+
+function evidenceRemediation(reasonCode: string): string {
+  if (reasonCode.includes("PRIVACY") || reasonCode.includes("VEIL"))
+    return "Review the Veil evidence disposition before rerunning the affected capture.";
+  if (reasonCode.includes("STORAGE") || reasonCode.includes("UPLOAD"))
+    return "Verify artifact storage health, then rerun the affected capture.";
+  return "Rerun the affected capture after reviewing its safe diagnostics.";
+}
+
 function deriveVeilObservation(
   run: Record<string, any>,
   intervals: Array<Record<string, any>>,
@@ -289,6 +445,9 @@ function deriveVeilObservation(
         allowDownloads: false,
       });
   const gapRows = intervals.filter((entry) => entry.mode === "protected_recording_gap");
+  const unavailableRows = timeline.filter(
+    (entry) => entry.type === "unavailable_interval" || entry.status === "failed",
+  );
   const withheld = artifacts.filter(
     (artifact) =>
       ["quarantined", "destroyed", "failed", "incomplete"].includes(
@@ -312,26 +471,50 @@ function deriveVeilObservation(
         type: entry.type === "unavailable_interval" ? ("gap" as const) : ("disposition" as const),
         startedAt: iso(entry.startedAt),
         ...(entry.endedAt ? { endedAt: iso(entry.endedAt) } : {}),
-        reasonCode: safeReason(entry.reasonCode ?? "VEIL_EVIDENCE_WITHHELD"),
+        reasonCode: safeReason(entry.failureCode ?? entry.reasonCode ?? "VEIL_EVIDENCE_WITHHELD"),
         ...(artifactKindChannel(entry.channel)
           ? { channel: artifactKindChannel(entry.channel)! }
           : {}),
       })),
   ].sort((left, right) => left.sequence - right.sequence);
-  const gaps = gapRows.map((entry) => ({
-    startedAt: iso(entry.startedAt),
-    ...(entry.endedAt ? { endedAt: iso(entry.endedAt) } : {}),
-    reasonCode: safeReason(entry.failureCode ?? "VEIL_CAPTURE_GAP"),
-    remediation: remediationFor(entry.failureCode),
-  }));
-  const findings = withheld.map((artifact) => ({
-    code: safeVeilCode(artifact.reasonCode),
-    severity: artifact.availability === "failed" ? ("blocking" as const) : ("warning" as const),
-    reasonCode: safeReason(artifact.reasonCode),
-    ...(artifactKindChannel(artifact.kind) ? { channel: artifactKindChannel(artifact.kind)! } : {}),
-    occurredAt: iso(artifact.createdAt),
-    remediation: remediationFor(artifact.reasonCode),
-  }));
+  const gaps = [
+    ...gapRows.map((entry) => ({
+      startedAt: iso(entry.startedAt),
+      ...(entry.endedAt ? { endedAt: iso(entry.endedAt) } : {}),
+      reasonCode: safeReason(entry.failureCode ?? "VEIL_CAPTURE_GAP"),
+      remediation: remediationFor(entry.failureCode),
+    })),
+    ...unavailableRows.map((entry) => ({
+      startedAt: iso(entry.startedAt),
+      ...(entry.endedAt ? { endedAt: iso(entry.endedAt) } : {}),
+      reasonCode: safeReason(entry.failureCode ?? entry.reasonCode ?? "EVIDENCE_UNAVAILABLE"),
+      remediation: remediationFor(entry.failureCode ?? entry.reasonCode),
+    })),
+  ];
+  const findings = [
+    ...withheld.map((artifact) => ({
+      code: safeVeilCode(artifact.reasonCode),
+      severity: artifact.availability === "failed" ? ("blocking" as const) : ("warning" as const),
+      reasonCode: safeReason(artifact.reasonCode),
+      ...(artifactKindChannel(artifact.kind)
+        ? { channel: artifactKindChannel(artifact.kind)! }
+        : {}),
+      occurredAt: iso(artifact.createdAt),
+      remediation: remediationFor(artifact.reasonCode),
+    })),
+    ...unavailableRows.map((entry) => {
+      const reasonCode = safeReason(
+        entry.failureCode ?? entry.reasonCode ?? "EVIDENCE_UNAVAILABLE",
+      );
+      return {
+        code: safeVeilCode(reasonCode),
+        severity: "blocking" as const,
+        reasonCode,
+        occurredAt: iso(entry.startedAt),
+        remediation: remediationFor(reasonCode),
+      };
+    }),
+  ];
   const sealed =
     findings.some((finding) => finding.severity === "blocking") ||
     gapRows.some((entry) => !entry.endedAt);

@@ -1,46 +1,54 @@
-import { chromium } from "playwright";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 const enabled = process.env.SCRY_VITRACT_PREVIEW_E2E === "true";
+const workspaceRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
 
-describe.skipIf(!enabled)("Vitract preview adaptive-authoring acceptance", () => {
-  it("authenticates once and reaches partner orders without secret-bearing artifacts", async () => {
-    const url = required("SCRY_VITRACT_PREVIEW_URL");
-    const username = required("SCRY_VITRACT_PREVIEW_USERNAME");
-    const password = required("SCRY_VITRACT_PREVIEW_PASSWORD");
-    const browser = await chromium.launch({
-      headless: true,
-      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
-    });
-    try {
-      const page = await browser.newPage();
-      let submissions = 0;
-      page.on("request", (request) => {
-        if (request.method() === "POST" && /login|sign-?in|auth/i.test(request.url())) {
-          submissions += 1;
-        }
-      });
-      await page.goto(url, { waitUntil: "domcontentloaded" });
-      const email = page.getByRole("textbox", { name: /email|username/i });
-      const passwordInput = page.locator('input[type="password"]');
-      await email.waitFor({ state: "visible", timeout: 20_000 });
-      await passwordInput.waitFor({ state: "visible", timeout: 20_000 });
-      await email.fill(username);
-      await passwordInput.fill(password);
-      await page.getByRole("button", { name: /sign in|log ?in/i }).click();
-      const orders = page.getByRole("link", { name: /orders/i });
-      await orders.waitFor({ state: "visible", timeout: 20_000 });
-      expect(await orders.isVisible()).toBe(true);
-      expect(submissions).toBe(1);
-      expect(page.url()).not.toMatch(/login|sign-?in/i);
-    } finally {
-      await browser.close();
-    }
-  }, 45_000);
+describe.skipIf(!enabled)("Vitract Preview adaptive-authoring acceptance", () => {
+  it(
+    "runs protected login and read-only Developer inspection through Scry",
+    async () => {
+      const result = await runCampaign();
+      expect(result.exitCode, result.output).toBe(0);
+      expect(result.output).toContain('"verdict":"pass"');
+      expect(result.output).not.toMatch(/password|access[_-]?token|client[_-]?secret/i);
+    },
+    180_000,
+  );
 });
 
-function required(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required when SCRY_VITRACT_PREVIEW_E2E=true`);
-  return value;
+function runCampaign(): Promise<{ exitCode: number; output: string }> {
+  return new Promise((resolve, reject) => {
+    const environment = { ...process.env };
+    // The Vitract campaign targets the deployed control plane, never the destructive integration DB.
+    delete environment.SCRY_AUTHORING_TEST_DATABASE_URL;
+    const child = spawn("pnpm", ["campaign:adaptive:m1:vitract"], {
+      cwd: workspaceRoot,
+      env: {
+        ...environment,
+        SCRY_ENABLE_VITRACT_CAMPAIGN: "true",
+        SCRY_SERVICE_TOKEN:
+          process.env.SCRY_VITRACT_SERVICE_TOKEN ?? "local-only-scry-service-token-change-me",
+        SCRY_RELEASE_ID: process.env.SCRY_RELEASE_ID ?? "release-corpus",
+        SCRY_SCHEMA_FINGERPRINT: process.env.SCRY_SCHEMA_FINGERPRINT ?? "unverified-schema",
+        SCRY_RUNTIME_VERSION: process.env.SCRY_RUNTIME_VERSION ?? "release-corpus",
+        SCRY_GIT_COMMIT: process.env.SCRY_GIT_COMMIT ?? "working-tree",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      output += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      output += String(chunk);
+    });
+    child.once("error", reject);
+    child.once("exit", (code, signal) =>
+      resolve({ exitCode: signal ? 1 : (code ?? 1), output: output.slice(-8_000) }),
+    );
+  });
 }

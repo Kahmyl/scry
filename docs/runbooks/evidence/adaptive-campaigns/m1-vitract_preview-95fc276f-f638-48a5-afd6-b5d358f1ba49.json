@@ -1,0 +1,503 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "95fc276f-f638-48a5-afd6-b5d358f1ba49",
+  "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+  "milestone": "M1",
+  "target": "vitract_preview",
+  "releaseId": "release-corpus",
+  "schemaFingerprint": "unverified-schema",
+  "runtimeVersion": "release-corpus",
+  "gitCommit": "working-tree",
+  "startedAt": "2026-08-08T22:30:44.145Z",
+  "completedAt": "2026-08-08T22:31:00.175Z",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "adaptive-session-cleanup",
+      "description": "The campaign cancels its Adaptive Session and releases browser ownership",
+      "status": "passed"
+    },
+    {
+      "id": "redaction",
+      "description": "Protected values are absent from MCP responses and retrieved artifacts",
+      "status": "passed"
+    },
+    {
+      "id": "artifact-round-trip",
+      "description": "Every artifact emitted by the deployed journey finalizes and round-trips",
+      "status": "passed"
+    },
+    {
+      "id": "deployed-journey",
+      "description": "The deployed MCP authoring journey reaches an objective-completed boundary",
+      "status": "passed"
+    },
+    {
+      "id": "authoring-turn-surface",
+      "description": "M1 executes one grouped advance_adaptive_session authoring call",
+      "status": "passed"
+    },
+    {
+      "id": "missionless",
+      "description": "Campaign creates no Mission, Objective, Flow, or Flow draft records",
+      "status": "passed"
+    },
+    {
+      "id": "measurement-integrity",
+      "description": "All required counts, phases, and deployed-component traversals are backed by observed events",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [],
+  "metrics": {
+    "totalWallClockMs": 16028.869374999998,
+    "agentDecisionBoundaries": 1,
+    "mcpRequests": 1,
+    "apiRequests": 1,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 6876,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "api": {
+        "count": 1,
+        "p50Ms": 7.470875000000035,
+        "p95Ms": 7.470875000000035,
+        "maxMs": 7.470875000000035
+      },
+      "artifact_retrieval": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "browser_startup": {
+        "count": 1,
+        "p50Ms": 1176.994,
+        "p95Ms": 1176.994,
+        "maxMs": 1176.994
+      },
+      "database": {
+        "count": 1,
+        "p50Ms": 8.11854200000002,
+        "p95Ms": 8.11854200000002,
+        "maxMs": 8.11854200000002
+      },
+      "document_observation": {
+        "count": 1,
+        "p50Ms": 1176.994,
+        "p95Ms": 1176.994,
+        "maxMs": 1176.994
+      },
+      "evidence_finalization": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "expected_effect_verification": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "interaction_execution": {
+        "count": 11,
+        "p50Ms": 241,
+        "p95Ms": 5017,
+        "maxMs": 5017
+      },
+      "mcp_round_trip": {
+        "count": 1,
+        "p50Ms": 15823.574666999999,
+        "p95Ms": 15823.574666999999,
+        "maxMs": 15823.574666999999
+      },
+      "mcp_session_start_round_trip": {
+        "count": 1,
+        "p50Ms": 37.460166999999956,
+        "p95Ms": 37.460166999999956,
+        "maxMs": 37.460166999999956
+      },
+      "praxis_grounding": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "queue_wait": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "redis": {
+        "count": 1,
+        "p50Ms": 3.406000000000006,
+        "p95Ms": 3.406000000000006,
+        "maxMs": 3.406000000000006
+      },
+      "worker": {
+        "count": 1,
+        "p50Ms": 6.086083999999971,
+        "p95Ms": 6.086083999999971,
+        "maxMs": 6.086083999999971
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "mcp-ac62d2e0-658c-4a31-9e79-1d49ef122b2c-2",
+        "phase": "mcp_round_trip",
+        "durationMs": 15823.574666999999
+      },
+      {
+        "operationId": "vitract-navigate",
+        "phase": "interaction_execution",
+        "durationMs": 5017
+      },
+      {
+        "operationId": "vitract-sign-in",
+        "phase": "interaction_execution",
+        "durationMs": 3188
+      },
+      {
+        "operationId": "vitract-existing-application",
+        "phase": "interaction_execution",
+        "durationMs": 2496
+      },
+      {
+        "operationId": "vitract-developer",
+        "phase": "interaction_execution",
+        "durationMs": 2425
+      },
+      {
+        "operationId": "vitract-navigate",
+        "phase": "browser_startup",
+        "durationMs": 1176.994
+      },
+      {
+        "operationId": "vitract-navigate",
+        "phase": "document_observation",
+        "durationMs": 1176.994
+      },
+      {
+        "operationId": "vitract-credential-dialog",
+        "phase": "interaction_execution",
+        "durationMs": 687
+      },
+      {
+        "operationId": "vitract-add-credential",
+        "phase": "interaction_execution",
+        "durationMs": 241
+      },
+      {
+        "operationId": "vitract-applications",
+        "phase": "interaction_execution",
+        "durationMs": 140
+      },
+      {
+        "operationId": "vitract-test-mode",
+        "phase": "interaction_execution",
+        "durationMs": 115
+      },
+      {
+        "operationId": "vitract-email",
+        "phase": "interaction_execution",
+        "durationMs": 102
+      },
+      {
+        "operationId": "vitract-password",
+        "phase": "interaction_execution",
+        "durationMs": 58
+      },
+      {
+        "operationId": "mcp-ac62d2e0-658c-4a31-9e79-1d49ef122b2c-1",
+        "phase": "mcp_session_start_round_trip",
+        "durationMs": 37.460166999999956
+      },
+      {
+        "operationId": "database",
+        "phase": "database",
+        "durationMs": 8.11854200000002
+      },
+      {
+        "operationId": "api",
+        "phase": "api",
+        "durationMs": 7.470875000000035
+      },
+      {
+        "operationId": "worker",
+        "phase": "worker",
+        "durationMs": 6.086083999999971
+      },
+      {
+        "operationId": "vitract-close-dialog",
+        "phase": "interaction_execution",
+        "durationMs": 5
+      },
+      {
+        "operationId": "redis",
+        "phase": "redis",
+        "durationMs": 3.406000000000006
+      },
+      {
+        "operationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "phase": "queue_wait",
+        "durationMs": 0
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:database",
+        "operationId": "database",
+        "source": "campaign_client",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "database-95fc276f-f638-48a5-afd6-b5d358f1ba49",
+        "value": 8.11854200000002
+      },
+      {
+        "metric": "phase:redis",
+        "operationId": "redis",
+        "source": "campaign_client",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "redis-95fc276f-f638-48a5-afd6-b5d358f1ba49",
+        "value": 3.406000000000006
+      },
+      {
+        "metric": "apiRequests",
+        "operationId": "capabilities-95fc276f-f638-48a5-afd6-b5d358f1ba49",
+        "source": "api_http",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "capabilities-95fc276f-f638-48a5-afd6-b5d358f1ba49",
+        "value": 1
+      },
+      {
+        "metric": "phase:api",
+        "operationId": "api",
+        "source": "api_http",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "api-95fc276f-f638-48a5-afd6-b5d358f1ba49",
+        "value": 7.470875000000035
+      },
+      {
+        "metric": "phase:worker",
+        "operationId": "worker",
+        "source": "control_plane_query",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "worker-95fc276f-f638-48a5-afd6-b5d358f1ba49",
+        "value": 6.086083999999971
+      },
+      {
+        "metric": "phase:mcp_session_start_round_trip",
+        "operationId": "mcp-ac62d2e0-658c-4a31-9e79-1d49ef122b2c-1",
+        "source": "mcp_http",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "mcp-ac62d2e0-658c-4a31-9e79-1d49ef122b2c-1-duration",
+        "value": 37.460166999999956
+      },
+      {
+        "metric": "mcpRequests",
+        "operationId": "mcp-ac62d2e0-658c-4a31-9e79-1d49ef122b2c-2",
+        "source": "mcp_http",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "mcp-ac62d2e0-658c-4a31-9e79-1d49ef122b2c-2",
+        "value": 1
+      },
+      {
+        "metric": "phase:mcp_round_trip",
+        "operationId": "mcp-ac62d2e0-658c-4a31-9e79-1d49ef122b2c-2",
+        "source": "mcp_http",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "mcp-ac62d2e0-658c-4a31-9e79-1d49ef122b2c-2-duration",
+        "value": 15823.574666999999
+      },
+      {
+        "metric": "bytesReturnedToAgent",
+        "operationId": "mcp-ac62d2e0-658c-4a31-9e79-1d49ef122b2c-2-bytes",
+        "source": "mcp_http",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "mcp-ac62d2e0-658c-4a31-9e79-1d49ef122b2c-2-bytes",
+        "value": 6876
+      },
+      {
+        "metric": "agentDecisionBoundaries",
+        "operationId": "mcp-ac62d2e0-658c-4a31-9e79-1d49ef122b2c-2-boundary",
+        "source": "mcp_http",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "mcp-ac62d2e0-658c-4a31-9e79-1d49ef122b2c-2-boundary",
+        "value": 1
+      },
+      {
+        "metric": "phase:queue_wait",
+        "operationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "source": "queue_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "queue-not-applicable-ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "value": 0
+      },
+      {
+        "metric": "phase:browser_startup",
+        "operationId": "vitract-navigate",
+        "source": "browser_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "browser-ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "value": 1176.994
+      },
+      {
+        "metric": "phase:document_observation",
+        "operationId": "vitract-navigate",
+        "source": "worker_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "observation-ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "value": 1176.994
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "vitract-navigate",
+        "source": "worker_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "operation-6cf0d635-9c34-49aa-ac2c-021e782f5b1d-vitract-navigate",
+        "value": 5017
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "vitract-email",
+        "source": "worker_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "operation-6cf0d635-9c34-49aa-ac2c-021e782f5b1d-vitract-email",
+        "value": 102
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "vitract-password",
+        "source": "worker_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "operation-6cf0d635-9c34-49aa-ac2c-021e782f5b1d-vitract-password",
+        "value": 58
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "vitract-sign-in",
+        "source": "worker_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "operation-6cf0d635-9c34-49aa-ac2c-021e782f5b1d-vitract-sign-in",
+        "value": 3188
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "vitract-developer",
+        "source": "worker_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "operation-6cf0d635-9c34-49aa-ac2c-021e782f5b1d-vitract-developer",
+        "value": 2425
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "vitract-test-mode",
+        "source": "worker_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "operation-6cf0d635-9c34-49aa-ac2c-021e782f5b1d-vitract-test-mode",
+        "value": 115
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "vitract-applications",
+        "source": "worker_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "operation-6cf0d635-9c34-49aa-ac2c-021e782f5b1d-vitract-applications",
+        "value": 140
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "vitract-existing-application",
+        "source": "worker_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "operation-6cf0d635-9c34-49aa-ac2c-021e782f5b1d-vitract-existing-application",
+        "value": 2496
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "vitract-add-credential",
+        "source": "worker_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "operation-6cf0d635-9c34-49aa-ac2c-021e782f5b1d-vitract-add-credential",
+        "value": 241
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "vitract-credential-dialog",
+        "source": "worker_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "operation-6cf0d635-9c34-49aa-ac2c-021e782f5b1d-vitract-credential-dialog",
+        "value": 687
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "vitract-close-dialog",
+        "source": "worker_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "operation-6cf0d635-9c34-49aa-ac2c-021e782f5b1d-vitract-close-dialog",
+        "value": 5
+      },
+      {
+        "metric": "phase:praxis_grounding",
+        "operationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "source": "praxis_result",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "praxis-not-emitted-ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "value": 0
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "source": "praxis_result",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "effect-not-emitted-ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "value": 0
+      },
+      {
+        "metric": "phase:evidence_finalization",
+        "operationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "source": "artifact_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "evidence-not-requested-ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "value": 0
+      },
+      {
+        "metric": "phase:artifact_retrieval",
+        "operationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "source": "artifact_event",
+        "correlationId": "ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "eventId": "artifact-not-requested-ac62d2e0-658c-4a31-9e79-1d49ef122b2c",
+        "value": 0
+      }
+    ]
+  },
+  "artifactRefs": [],
+  "verdict": "pass"
+}

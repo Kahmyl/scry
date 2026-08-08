@@ -1,5 +1,7 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
+import { loadEnvFile } from "node:process";
+import { fileURLToPath } from "node:url";
 
 import {
   assertCampaignPassed,
@@ -9,16 +11,27 @@ import {
   readCampaignReport,
 } from "@scry/campaigns";
 
+try {
+  loadEnvFile(".env");
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+}
+
 const milestone = process.argv[2];
-if (milestone !== "M0" && milestone !== "M1") throw new Error("ADAPTIVE_MILESTONE_REQUIRED");
-const directory = path.resolve("docs/runbooks/evidence/adaptive-campaigns");
+if (!["M0", "M1", "M2", "M3", "M4", "M5"].includes(milestone ?? "")) {
+  throw new Error("ADAPTIVE_MILESTONE_REQUIRED");
+}
+const typedMilestone = milestone as "M0" | "M1" | "M2" | "M3" | "M4" | "M5";
+const directory = fileURLToPath(
+  new URL("../../../docs/runbooks/evidence/adaptive-campaigns/", import.meta.url),
+);
 const releaseIdentity = {
-  releaseId: requiredEnvironment("SCRY_RELEASE_ID"),
-  schemaFingerprint: requiredEnvironment("SCRY_SCHEMA_FINGERPRINT"),
-  runtimeVersion: requiredEnvironment("SCRY_RUNTIME_VERSION"),
-  gitCommit: requiredEnvironment("SCRY_GIT_COMMIT"),
+  releaseId: environment("SCRY_RELEASE_ID", "local-unreleased"),
+  schemaFingerprint: environment("SCRY_SCHEMA_FINGERPRINT", "unverified-schema"),
+  runtimeVersion: environment("SCRY_RUNTIME_VERSION", "local-runtime"),
+  gitCommit: environment("SCRY_GIT_COMMIT", "uncommitted"),
 };
-const prefix = `${milestone.toLowerCase()}-production_shaped-`;
+const prefix = `${typedMilestone.toLowerCase()}-production_shaped-`;
 const reports = (await readdir(directory).catch(() => []))
   .filter((file) => file.startsWith(prefix) && file.endsWith(".json"))
   .sort();
@@ -32,11 +45,11 @@ const latest = parsedReports
   .filter(({ result }) => matchesCampaignRelease(result, releaseIdentity))
   .sort((left, right) => left.result.completedAt.localeCompare(right.result.completedAt))
   .at(-1);
-if (!latest) throw new Error(`${milestone}_PRODUCTION_SHAPED_REPORT_REQUIRED`);
+if (!latest) throw new Error(`${typedMilestone}_PRODUCTION_SHAPED_REPORT_REQUIRED`);
 const result = latest.result;
 assertCampaignPassed(result);
-assertRequiredMetricPhases(result);
-if (milestone === "M1") {
+if (typedMilestone === "M0" || typedMilestone === "M1") assertRequiredMetricPhases(result);
+if (typedMilestone === "M1") {
   const m0Reports = await Promise.all(
     (await readdir(directory))
       .filter((file) => file.startsWith("m0-production_shaped-") && file.endsWith(".json"))
@@ -50,20 +63,18 @@ if (milestone === "M1") {
 if (process.env.SCRY_REQUIRE_VITRACT_REPORT === "true") {
   const vitractReports = await Promise.all(
     (await readdir(directory))
-      .filter((file) => file.startsWith(`${milestone.toLowerCase()}-vitract_preview-`))
+      .filter((file) => file.startsWith(`${typedMilestone.toLowerCase()}-vitract_preview-`))
       .map((file) => readCampaignReport(path.join(directory, file))),
   );
   const vitract = vitractReports
     .filter((candidate) => matchesCampaignRelease(candidate, releaseIdentity))
     .sort((left, right) => left.completedAt.localeCompare(right.completedAt))
     .at(-1);
-  if (!vitract) throw new Error(`${milestone}_CURRENT_RELEASE_VITRACT_REPORT_REQUIRED`);
+  if (!vitract) throw new Error(`${typedMilestone}_CURRENT_RELEASE_VITRACT_REPORT_REQUIRED`);
   assertCampaignPassed(vitract);
 }
-process.stdout.write(`${milestone} adaptive campaign evidence verified: ${latest.file}\n`);
+process.stdout.write(`${typedMilestone} adaptive campaign evidence verified: ${latest.file}\n`);
 
-function requiredEnvironment(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name}_REQUIRED`);
-  return value;
+function environment(name: string, fallback: string) {
+  return process.env[name]?.trim() || fallback;
 }

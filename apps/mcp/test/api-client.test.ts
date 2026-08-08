@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ScryApiClient } from "../src/api-client.js";
+import { ScryApiClient, ScryApiError } from "../src/api-client.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -37,6 +37,34 @@ describe("ScryApiClient", () => {
     await expect(client.get("/runs/missing")).rejects.toThrow(
       "Scry API request failed: Run not found",
     );
+  });
+
+  it("preserves typed API rejection codes and safe actions", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            statusCode: 409,
+            message: {
+              code: "CERTIFICATION_RUN_REQUIRED",
+              safeActions: ["compile_and_certify_flow"],
+            },
+          }),
+          { status: 409 },
+        ),
+      ),
+    );
+
+    const error = await new ScryApiClient("http://scry.test/api")
+      .post("/flow-drafts/draft/publish")
+      .catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(ScryApiError);
+    expect(error).toMatchObject({
+      code: "CERTIFICATION_RUN_REQUIRED",
+      status: 409,
+      safeActions: ["compile_and_certify_flow"],
+    });
   });
 
   it("updates API resources with PATCH", async () => {

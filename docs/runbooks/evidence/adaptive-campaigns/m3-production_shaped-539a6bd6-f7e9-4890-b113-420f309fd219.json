@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "539a6bd6-f7e9-4890-b113-420f309fd219",
+  "correlationId": "d46d91b7-3a55-49c2-9446-1f01171428fc",
+  "milestone": "M3",
+  "target": "production_shaped",
+  "releaseId": "local-unreleased",
+  "schemaFingerprint": "unverified-schema",
+  "runtimeVersion": "local-runtime",
+  "gitCommit": "uncommitted",
+  "startedAt": "2026-08-08T22:27:45.921Z",
+  "completedAt": "2026-08-08T22:27:52.097Z",
+  "requiredChecks": [
+    {
+      "id": "m3-contract",
+      "description": "Adaptive Session contracts reject invalid state and operation inputs",
+      "status": "passed"
+    },
+    {
+      "id": "m3-service",
+      "description": "Adaptive Session service enforces idempotency, fencing, and bounded turns",
+      "status": "passed"
+    },
+    {
+      "id": "m3-restart-resume",
+      "description": "A real browser session restarts and resumes from a durable safe boundary",
+      "status": "passed"
+    },
+    {
+      "id": "m3-durable-repository",
+      "description": "Missionless session persistence and concurrent journal ordering pass on Postgres",
+      "status": "passed"
+    },
+    {
+      "id": "m3-mcp-surface",
+      "description": "Adaptive Session MCP tools expose typed lifecycle and grouped-turn operations",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [
+    {
+      "id": "m3-later-scope",
+      "description": "M4 and later acceptance remain outside this milestone verdict",
+      "status": "awaiting_codex_verification",
+      "reasonCode": "FUTURE_MILESTONE_SCOPE"
+    }
+  ],
+  "metrics": {
+    "totalWallClockMs": 6175.104291,
+    "agentDecisionBoundaries": 0,
+    "mcpRequests": 0,
+    "apiRequests": 0,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 0,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "browser_startup": {
+        "count": 1,
+        "p50Ms": 1959.6432499999996,
+        "p95Ms": 1959.6432499999996,
+        "maxMs": 1959.6432499999996
+      },
+      "document_observation": {
+        "count": 1,
+        "p50Ms": 680.6334589999999,
+        "p95Ms": 680.6334589999999,
+        "maxMs": 680.6334589999999
+      },
+      "expected_effect_verification": {
+        "count": 1,
+        "p50Ms": 923.1707500000002,
+        "p95Ms": 923.1707500000002,
+        "maxMs": 923.1707500000002
+      },
+      "interaction_execution": {
+        "count": 1,
+        "p50Ms": 1451.992833,
+        "p95Ms": 1451.992833,
+        "maxMs": 1451.992833
+      },
+      "queue_wait": {
+        "count": 1,
+        "p50Ms": 1159.0171250000003,
+        "p95Ms": 1159.0171250000003,
+        "maxMs": 1159.0171250000003
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "m3-restart-resume",
+        "phase": "browser_startup",
+        "durationMs": 1959.6432499999996
+      },
+      {
+        "operationId": "m3-service",
+        "phase": "interaction_execution",
+        "durationMs": 1451.992833
+      },
+      {
+        "operationId": "m3-durable-repository",
+        "phase": "queue_wait",
+        "durationMs": 1159.0171250000003
+      },
+      {
+        "operationId": "m3-mcp-surface",
+        "phase": "expected_effect_verification",
+        "durationMs": 923.1707500000002
+      },
+      {
+        "operationId": "m3-contract",
+        "phase": "document_observation",
+        "durationMs": 680.6334589999999
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:document_observation",
+        "operationId": "m3-contract",
+        "source": "campaign_client",
+        "correlationId": "d46d91b7-3a55-49c2-9446-1f01171428fc",
+        "eventId": "d46d91b7-3a55-49c2-9446-1f01171428fc-m3-contract",
+        "value": 680.6334589999999
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "m3-service",
+        "source": "campaign_client",
+        "correlationId": "d46d91b7-3a55-49c2-9446-1f01171428fc",
+        "eventId": "d46d91b7-3a55-49c2-9446-1f01171428fc-m3-service",
+        "value": 1451.992833
+      },
+      {
+        "metric": "phase:browser_startup",
+        "operationId": "m3-restart-resume",
+        "source": "campaign_client",
+        "correlationId": "d46d91b7-3a55-49c2-9446-1f01171428fc",
+        "eventId": "d46d91b7-3a55-49c2-9446-1f01171428fc-m3-restart-resume",
+        "value": 1959.6432499999996
+      },
+      {
+        "metric": "phase:queue_wait",
+        "operationId": "m3-durable-repository",
+        "source": "campaign_client",
+        "correlationId": "d46d91b7-3a55-49c2-9446-1f01171428fc",
+        "eventId": "d46d91b7-3a55-49c2-9446-1f01171428fc-m3-durable-repository",
+        "value": 1159.0171250000003
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "m3-mcp-surface",
+        "source": "campaign_client",
+        "correlationId": "d46d91b7-3a55-49c2-9446-1f01171428fc",
+        "eventId": "d46d91b7-3a55-49c2-9446-1f01171428fc-m3-mcp-surface",
+        "value": 923.1707500000002
+      }
+    ]
+  },
+  "artifactRefs": [
+    "command:m3-contract",
+    "command:m3-service",
+    "command:m3-restart-resume",
+    "command:m3-durable-repository",
+    "command:m3-mcp-surface"
+  ],
+  "verdict": "pass"
+}

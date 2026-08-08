@@ -7,7 +7,50 @@ import {
   requestCalibrationSchema,
   recordingTimelineSchema,
   interactionTargetIntentSchema,
+  runEvidenceChannelOutcomeSchema,
+  runEvidenceChannelsSchema,
 } from "../src/index.js";
+
+describe("evidence channel outcomes", () => {
+  it("accepts canonical terminal and not-requested dispositions", () => {
+    expect(
+      runEvidenceChannelOutcomeSchema.parse({
+        channel: "screenshot",
+        intent: "not_requested",
+        state: "suppressed",
+        reasonCode: "EVIDENCE_NOT_REQUESTED",
+        failureProvenance: "policy",
+        artifactIds: [],
+      }),
+    ).toMatchObject({ state: "suppressed", intent: "not_requested" });
+  });
+
+  it("rejects internal failure provenance outside the public contract", () => {
+    expect(() =>
+      runEvidenceChannelOutcomeSchema.parse({
+        channel: "video",
+        intent: "requested",
+        state: "failed",
+        failureProvenance: "browser",
+        artifactIds: [],
+      }),
+    ).toThrow();
+  });
+
+  it("requires each canonical channel exactly once in a run observation", () => {
+    const outcome = {
+      channel: "screenshot" as const,
+      intent: "not_requested" as const,
+      state: "suppressed" as const,
+      artifactIds: [],
+    };
+    const runObservationEvidence = Array.from({ length: 7 }, () => outcome);
+
+    expect(() => runEvidenceChannelsSchema.parse(runObservationEvidence)).toThrow(
+      "run evidence outcomes must contain each channel exactly once",
+    );
+  });
+});
 
 const base = {
   name: "Issue credential",
@@ -505,8 +548,19 @@ describe("privacy result contract", () => {
       publicValueReferences: { id: "22222222-2222-4222-8222-222222222222" },
       safeActions: [],
       diagnostics: [],
+      protectedAcquisitionEvidence: [
+        {
+          reference: "secret",
+          adapter: "copy_control",
+          objective: "verify_user_copy_experience",
+          outcome: "copy_experience_verified",
+          capsule: "destroyed",
+          evidenceClosure: "resumed",
+        },
+      ],
     });
     expect(result.status).toBe("completed");
+    expect(result.protectedAcquisitionEvidence).toHaveLength(1);
   });
 
   it("rejects unsafe result actions", () => {

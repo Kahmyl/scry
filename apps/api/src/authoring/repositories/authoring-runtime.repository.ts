@@ -2,6 +2,7 @@ import { Inject, Injectable } from "@nestjs/common";
 
 import { Database } from "../../infrastructure/index.js";
 import { decryptCredential } from "../../access/index.js";
+import type { LearnedInteractionRecord } from "@scry/contracts";
 
 export type ClaimedAuthoringRuntime = {
   probeSessionId: string;
@@ -213,6 +214,52 @@ export class AuthoringRuntimeRepository {
     });
   }
 
+  async recordLearnedInteractions(
+    probeSessionId: string,
+    records: LearnedInteractionRecord[],
+  ): Promise<void> {
+    if (!records.length) return;
+    await this.db.transaction(async (client) => {
+      const probe = await client.query<{ result: Record<string, unknown> | null }>(
+        `SELECT result FROM probe_sessions WHERE id=$1 FOR UPDATE`,
+        [probeSessionId],
+      );
+      if (!probe.rowCount) throw new Error("AUTHORING_PROBE_SESSION_NOT_FOUND");
+
+      const current = probe.rows[0]?.result ?? {};
+      const existing = Array.isArray(current.learnedContracts)
+        ? (current.learnedContracts as LearnedInteractionRecord[])
+        : [];
+      const byId = new Map(existing.map((record) => [record.interactionId, record]));
+      for (const record of records) byId.set(record.interactionId, record);
+      const learnedContracts = [...byId.values()];
+      const result = {
+        ...current,
+        learnedContracts,
+        qualityFindings: learnedContracts.flatMap((record) => record.qualityFindings),
+        authoringTrajectory: {
+          schemaVersion: 1,
+          probeSessionId,
+          interactionIds: learnedContracts.map((record) => record.interactionId),
+        },
+      };
+
+      await client.query(`UPDATE probe_sessions SET result=$2::jsonb WHERE id=$1`, [
+        probeSessionId,
+        JSON.stringify(result),
+      ]);
+      await client.query(
+        `INSERT INTO probe_events(probe_session_id,sequence,type,safe_payload)
+         SELECT $1,COALESCE(max(sequence),0)+1,'authoring_interaction_learned',$2::jsonb
+         FROM probe_events WHERE probe_session_id=$1`,
+        [
+          probeSessionId,
+          JSON.stringify({ interactionIds: records.map((record) => record.interactionId) }),
+        ],
+      );
+    });
+  }
+
   async suspend(browserLeaseId: string, workerId: string) {
     return this.db.transaction(async (client) => {
       const owned = await client.query<{
@@ -353,11 +400,7 @@ export class AuthoringRuntimeRepository {
     });
   }
 
-  async crash(
-    browserLeaseId: string,
-    workerId: string,
-    code: string,
-  ) {
+  async crash(browserLeaseId: string, workerId: string, code: string) {
     return this.db.transaction(async (client) => {
       const owned = await client.query<{
         probeSessionId: string;
@@ -428,11 +471,7 @@ export class AuthoringRuntimeRepository {
     });
   }
 
-  async release(
-    browserLeaseId: string,
-    workerId: string,
-    outcome: "completed" | "cancelled",
-  ) {
+  async release(browserLeaseId: string, workerId: string, outcome: "completed" | "cancelled") {
     return this.db.transaction(async (client) => {
       const owned = await client.query<{ probeSessionId: string }>(
         `SELECT probe_session_id AS "probeSessionId"
@@ -496,9 +535,7 @@ export class AuthoringRuntimeRepository {
          WHERE probe_session_id=$1`,
         [
           probeSessionId,
-          outcome === "completed"
-            ? "authoring_runtime_released"
-            : "authoring_session_cancelled",
+          outcome === "completed" ? "authoring_runtime_released" : "authoring_session_cancelled",
         ],
       );
 

@@ -941,6 +941,29 @@ select:focus-visible {
   background: transparent;
   cursor: pointer;
 }
+.run-load-failure {
+  min-height: 360px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 36px;
+  text-align: center;
+  color: var(--muted);
+}
+.run-load-failure > svg {
+  color: var(--amber);
+}
+.run-load-failure h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: 20px;
+}
+.run-load-failure p {
+  margin: 0 0 8px;
+  max-width: 520px;
+  font-size: 11px;
+}
 
 .hero-panel {
   min-height: 245px;
@@ -2066,6 +2089,113 @@ select:focus-visible {
 .artifact-quarantined strong,
 .artifact-quarantined small {
   display: block;
+}
+.artifact-load-failure,
+.evidence-health-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  color: var(--amber);
+  background: #17120a;
+  border: 1px solid #5b4420;
+  border-radius: 8px;
+}
+.artifact-load-failure span,
+.artifact-load-failure strong,
+.artifact-load-failure small,
+.evidence-health-summary span,
+.evidence-health-summary strong,
+.evidence-health-summary small {
+  display: block;
+}
+.artifact-load-failure span,
+.evidence-health-summary span {
+  flex: 1;
+}
+.artifact-load-failure small,
+.evidence-health-summary small {
+  margin-top: 3px;
+  color: var(--dim);
+  font-size: 9px;
+}
+.artifact-load-failure button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #6e5427;
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+}
+.evidence-health-summary {
+  margin: 14px 14px 0;
+}
+.run-advanced {
+  margin-top: 13px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.run-advanced > summary {
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 18px;
+  cursor: pointer;
+  list-style: none;
+}
+.run-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.run-advanced > summary span,
+.run-advanced > summary strong,
+.run-advanced > summary small {
+  display: block;
+}
+.run-advanced > summary strong {
+  color: var(--text);
+  font-size: 12px;
+}
+.run-advanced > summary small {
+  margin-top: 4px;
+  color: var(--dim);
+  font-size: 9px;
+}
+.run-advanced > summary svg {
+  transition: transform 160ms ease;
+}
+.run-advanced[open] > summary svg {
+  transform: rotate(180deg);
+}
+.run-advanced > summary:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: -3px;
+}
+.run-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+  padding: 0 13px 13px;
+}
+.run-advanced-diagnostics {
+  grid-column: 1 / -1;
+}
+@media (max-width: 760px) {
+  .run-advanced-grid {
+    grid-template-columns: 1fr;
+  }
+  .run-advanced-diagnostics {
+    grid-column: auto;
+  }
+  .artifact-load-failure {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
 }
 .artifact-quarantined strong {
   font-size: 11px;

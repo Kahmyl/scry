@@ -17,6 +17,7 @@ const enabled = Boolean(process.env.SCRY_AUTHORING_TEST_DATABASE_URL);
 describe.skipIf(!enabled)("authoring, compilation, and publication boundary", () => {
   let database: Database;
   let service: AuthoringService;
+  const suiteCertificationWaitTimeout = process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS;
 
   const project = randomUUID();
   const mission = randomUUID();
@@ -37,6 +38,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
 
   beforeAll(async () => {
     process.env.DATABASE_URL = process.env.SCRY_AUTHORING_TEST_DATABASE_URL;
+    process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS = "0";
 
     database = new Database();
     service = new AuthoringService(database, {
@@ -106,7 +108,14 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     );
   });
 
-  afterAll(async () => database.onModuleDestroy());
+  afterAll(async () => {
+    if (suiteCertificationWaitTimeout === undefined) {
+      delete process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS;
+    } else {
+      process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS = suiteCertificationWaitTimeout;
+    }
+    await database.onModuleDestroy();
+  });
 
   it("edits without revisions, compiles once, and publishes one immutable revision", async () => {
     const plan = currentPlanSchema.parse({
@@ -302,9 +311,11 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     });
 
     const previousCompilerFlag = process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED;
+    const previousWaitTimeout = process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS;
     process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED = "false";
+    process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS = "0";
     try {
-      const result = await service.compileAndCertify(principal, created.id!, {
+      const compileInput = {
         ...context,
         environmentId: environment,
         draftVersion: 1,
@@ -312,15 +323,27 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
         idempotencyKey: `compile-v1-certification-${randomUUID()}`,
         viewport: { width: 1280, height: 720 },
         seed: 1,
-      });
+      } as const;
+      const result = await service.compileAndCertify(principal, created.id!, compileInput);
 
       expect(result.compilation.contractVersion).toBe("v1-existing");
       expect(result.compiledContractId).toBe(result.compilation.id);
       expect(result.certification).toMatchObject({ status: "certification_pending" });
+      expect(result.certification).toMatchObject({
+        decisionBoundary: {
+          type: "certification_wait_timeout",
+          terminal: false,
+          resumeWithSameIdempotencyKey: true,
+        },
+        safeActions: ["compile_and_certify_flow"],
+      });
       if (!("certificationRunId" in result.certification)) {
         throw new Error("Certification Run was not queued");
       }
       const attempts = new RunAttemptRepository(database);
+      process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS = "3000";
+      const pendingReplayPromise = service.compileAndCertify(principal, created.id!, compileInput);
+      await new Promise((resolve) => setTimeout(resolve, 100));
       const claimToken = randomUUID();
       const attempt = await attempts.claimAttempt(
         result.certification.certificationRunId,
@@ -340,6 +363,51 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
         "passed",
         "passed",
       );
+      const pendingReplay = await pendingReplayPromise;
+      expect(pendingReplay).toMatchObject({
+        compiledContractId: result.compiledContractId,
+        compilation: { id: result.compilation.id, replayed: true },
+        certification: {
+          status: "certified",
+          certificationRunId: result.certification.certificationRunId,
+          replayed: true,
+          decisionBoundary: { type: "certification_succeeded", terminal: true },
+          safeActions: ["publish_flow_draft"],
+        },
+        publishableMetadata: {
+          compiledContractId: result.compiledContractId,
+          compilationId: result.compiledContractId,
+        },
+      });
+
+      const completedReplay = await service.compileAndCertify(principal, created.id!, compileInput);
+      expect(completedReplay).toMatchObject({
+        compiledContractId: result.compiledContractId,
+        compilation: { id: result.compilation.id, replayed: true },
+        certification: {
+          status: "certified",
+          certificationRunId: result.certification.certificationRunId,
+          replayed: true,
+        },
+        publishableMetadata: {
+          compiledContractId: result.compiledContractId,
+          compilationId: result.compiledContractId,
+          certificationRunId: result.certification.certificationRunId,
+        },
+      });
+
+      const persisted = await database.query<{
+        compilationCount: number;
+        certificationRunCount: number;
+      }>(
+        `SELECT
+           (SELECT count(*)::integer FROM flow_compilations
+            WHERE draft_id=$1 AND idempotency_key=$2) AS "compilationCount",
+           (SELECT count(*)::integer FROM runs
+            WHERE compiled_contract_id=$3) AS "certificationRunCount"`,
+        [created.id!, compileInput.idempotencyKey, result.compiledContractId],
+      );
+      expect(persisted.rows[0]).toEqual({ compilationCount: 1, certificationRunCount: 1 });
 
       const publication = await service.publish(principal, created.id!, {
         ...context,
@@ -354,6 +422,8 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     } finally {
       if (previousCompilerFlag === undefined) delete process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED;
       else process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED = previousCompilerFlag;
+      if (previousWaitTimeout === undefined) delete process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS;
+      else process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS = previousWaitTimeout;
     }
   });
 
@@ -945,8 +1015,20 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
             usedSelectorHint: false,
             unresolvedMutation: false,
             veilPolicyViolated: false,
+            veilEvidenceClosed: true,
             expectedEffectVerified: true,
             deterministic: true,
+          },
+        ],
+        protectedAcquisitionEvidence: [
+          {
+            reference: "clientSecret",
+            adapter: "copy_control",
+            objective: "verify_user_copy_experience",
+            outcome: "copy_experience_verified",
+            capsule: "destroyed",
+            evidenceClosure: "resumed",
+            plaintext: "must-not-persist",
           },
         ],
         pageFingerprint: "c".repeat(64),
@@ -1112,6 +1194,38 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     await attempts.markFinalizing(certificationRun, attempt!.id, claimToken);
     await attempts.completeAttempt(certificationRun, attempt!.id, claimToken, "passed", "passed");
 
+    await database.query(
+      `INSERT INTO artifact_timeline_entries(
+         id,attempt_id,sequence,entry_type,started_at,ended_at,reason_code,metadata
+       ) VALUES($1,$2,0,'unavailable_interval',now(),now(),'SCREENCAST_STOP_FAILED',$3::jsonb)`,
+      [
+        randomUUID(),
+        attempt!.id,
+        JSON.stringify({
+          type: "unavailable_interval",
+          failureCode: "SCREENCAST_STOP_FAILED",
+        }),
+      ],
+    );
+
+    await expect(
+      service.publish(principal, created.id!, {
+        ...context,
+        expectedVersion: 1,
+        compilationId: compilation.id!,
+        visibility: "mission_local",
+        purpose: "primary",
+        reason: "Certification evidence is degraded",
+        idempotencyKey: `publish-degraded-vitract-${randomUUID()}`,
+      }),
+    ).rejects.toMatchObject({ response: { code: "CERTIFICATION_RUN_REQUIRED" } });
+
+    await database.query(
+      `DELETE FROM artifact_timeline_entries
+       WHERE attempt_id=$1 AND entry_type='unavailable_interval'`,
+      [attempt!.id],
+    );
+
     const publication = await service.publish(principal, created.id!, {
       ...context,
       expectedVersion: 1,
@@ -1138,13 +1252,28 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     const compiled = await database.query<{
       compiledContractDigest: string;
       authenticationContractRevisionId: string;
+      protectedAcquisitionEvidence: Array<Record<string, unknown>>;
     }>(
       `SELECT
          compiled_contract_digest AS "compiledContractDigest",
-         authentication_contract_revision_id AS "authenticationContractRevisionId"
+         authentication_contract_revision_id AS "authenticationContractRevisionId",
+         protected_acquisition_evidence AS "protectedAcquisitionEvidence"
        FROM flow_compilations
        WHERE id=$1`,
       [compilation.id],
+    );
+    expect(compiled.rows[0]!.protectedAcquisitionEvidence).toEqual([
+      {
+        reference: "clientSecret",
+        adapter: "copy_control",
+        objective: "verify_user_copy_experience",
+        outcome: "copy_experience_verified",
+        capsule: "destroyed",
+        evidenceClosure: "resumed",
+      },
+    ]);
+    expect(JSON.stringify(compiled.rows[0]!.protectedAcquisitionEvidence)).not.toContain(
+      "must-not-persist",
     );
 
     const replayRun = await insertPassedRun(database, {

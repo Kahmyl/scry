@@ -4,7 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Report } from "../../infrastructure/api/client.js";
 import { apiBlob } from "../../infrastructure/api/client.js";
-import { RecordingPlaylist } from "../evidence/evidence-media.js";
+import {
+  AuthenticatedArtifact,
+  AuthenticatedVideo,
+  RecordingPlaylist,
+} from "../evidence/evidence-media.js";
 import {
   deriveRecordingTimeline,
   deriveRecoveryTimeline,
@@ -46,6 +50,36 @@ const artifact = {
 };
 
 describe("recording timeline", () => {
+  it("shows a terminal artifact error and retries retrieval", async () => {
+    vi.mocked(apiBlob)
+      .mockRejectedValueOnce(new Error("Artifact request failed (410)"))
+      .mockResolvedValueOnce(new Blob(["image"]));
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn(() => "blob:retried-artifact"),
+      revokeObjectURL: vi.fn(),
+    });
+
+    render(<AuthenticatedArtifact artifact={{ ...artifact, kind: "screenshot" }} image />);
+
+    expect(await screen.findByText("screenshot unavailable")).toBeTruthy();
+    expect(screen.getByText("This evidence is no longer available.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+    await waitFor(() =>
+      expect(document.querySelector('img[alt="Screenshot from step "]')).toBeTruthy(),
+    );
+    expect(apiBlob).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a terminal recording error with a retry action", async () => {
+    vi.mocked(apiBlob).mockRejectedValueOnce(new Error("Artifact request failed (500)"));
+    render(<AuthenticatedVideo artifact={artifact} />);
+
+    expect(await screen.findByText("recording unavailable")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeTruthy();
+    expect(screen.queryByText(/Preparing recording/)).toBeNull();
+  });
+
   it("derives ordered entries for the current attempt", () => {
     const gap = {
       type: "protected_gap",

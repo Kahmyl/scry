@@ -9,6 +9,7 @@ import {
   LoaderCircle,
   Network,
   Play,
+  RefreshCw,
   ShieldCheck,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -25,18 +26,29 @@ export function AuthenticatedArtifact({
   image?: boolean;
 }) {
   const [url, setUrl] = useState<string>();
+  const [loadError, setLoadError] = useState("");
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     if (artifact.availability !== "available") return;
+    setUrl(undefined);
+    setLoadError("");
+    let disposed = false;
     let objectUrl: string | undefined;
-    void apiBlob(`/artifacts/${artifact.id}`).then((blob) => {
-      objectUrl = URL.createObjectURL(blob);
-      setUrl(objectUrl);
-    });
+    void apiBlob(`/artifacts/${artifact.id}`)
+      .then((blob) => {
+        if (disposed) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch((cause) => {
+        if (!disposed) setLoadError(artifactLoadMessage(cause));
+      });
     return () => {
+      disposed = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [artifact.id]);
+  }, [artifact.availability, artifact.id, retryKey]);
 
   if (artifact.availability === "quarantined" || artifact.availability === "destroyed") {
     return (
@@ -54,6 +66,15 @@ export function AuthenticatedArtifact({
   }
 
   if (image) {
+    if (loadError) {
+      return (
+        <ArtifactLoadFailure
+          kind="screenshot"
+          error={loadError}
+          onRetry={() => setRetryKey((key) => key + 1)}
+        />
+      );
+    }
     return (
       <a href={url} target="_blank" rel="noreferrer" aria-disabled={!url}>
         {url ? (
@@ -67,6 +88,15 @@ export function AuthenticatedArtifact({
           <Image size={14} /> {artifact.stepId ?? "Run screenshot"} <ExternalLink size={13} />
         </span>
       </a>
+    );
+  }
+  if (loadError) {
+    return (
+      <ArtifactLoadFailure
+        kind={artifact.kind}
+        error={loadError}
+        onRetry={() => setRetryKey((key) => key + 1)}
+      />
     );
   }
   return (
@@ -89,17 +119,28 @@ export function AuthenticatedArtifact({
 
 export function AuthenticatedVideo({ artifact }: { artifact: Report["artifacts"][number] }) {
   const [url, setUrl] = useState<string>();
+  const [loadError, setLoadError] = useState("");
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
+    setUrl(undefined);
+    setLoadError("");
+    let disposed = false;
     let objectUrl: string | undefined;
-    void apiBlob(`/artifacts/${artifact.id}`).then((blob) => {
-      objectUrl = URL.createObjectURL(blob);
-      setUrl(objectUrl);
-    });
+    void apiBlob(`/artifacts/${artifact.id}`)
+      .then((blob) => {
+        if (disposed) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch((cause) => {
+        if (!disposed) setLoadError(artifactLoadMessage(cause));
+      });
     return () => {
+      disposed = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [artifact.id]);
+  }, [artifact.id, retryKey]);
 
   return (
     <div className="run-recording">
@@ -113,7 +154,13 @@ export function AuthenticatedVideo({ artifact }: { artifact: Report["artifacts"]
         </div>
         <span>{formatBytes(Number(artifact.sizeBytes ?? 0))}</span>
       </div>
-      {url ? (
+      {loadError ? (
+        <ArtifactLoadFailure
+          kind="recording"
+          error={loadError}
+          onRetry={() => setRetryKey((key) => key + 1)}
+        />
+      ) : url ? (
         <EvidenceVideo src={url} label="Play run recording" />
       ) : (
         <div className="recording-loading">
@@ -122,6 +169,36 @@ export function AuthenticatedVideo({ artifact }: { artifact: Report["artifacts"]
       )}
     </div>
   );
+}
+
+function ArtifactLoadFailure({
+  kind,
+  error,
+  onRetry,
+}: {
+  kind: string;
+  error: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="artifact-load-failure" role="alert">
+      <AlertTriangle size={20} />
+      <span>
+        <strong>{kind} unavailable</strong>
+        <small>{error}</small>
+      </span>
+      <button type="button" onClick={onRetry}>
+        <RefreshCw size={14} /> Retry
+      </button>
+    </div>
+  );
+}
+
+function artifactLoadMessage(error: unknown) {
+  const detail = error instanceof Error ? error.message : String(error);
+  if (/\(401\)|\(403\)/.test(detail)) return "Access to this evidence could not be verified.";
+  if (/\(404\)|\(410\)/.test(detail)) return "This evidence is no longer available.";
+  return "Evidence retrieval failed. Retry the request or review Advanced diagnostics.";
 }
 
 function EvidenceVideo({ src, label }: { src: string; label: string }) {

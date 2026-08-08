@@ -5,9 +5,11 @@ import {
   Check,
   CheckCircle2,
   Clock3,
+  ChevronDown,
   Eye,
   Image,
   LoaderCircle,
+  RefreshCw,
   ShieldCheck,
   Square,
   TerminalSquare,
@@ -61,19 +63,39 @@ export function ReportView({
   const [error, setError] = useState("");
 
   const load = useCallback(() => {
+    setError("");
     void api<Report>(`/runs/${runId}`)
-      .then(setReport)
+      .then((nextReport) => {
+        setReport(nextReport);
+        setError("");
+      })
       .catch((cause) => setError(message(cause)));
   }, [runId]);
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  useEffect(() => {
+    if (!report || terminalStates.includes(report.run.state)) return;
     const timer = setInterval(() => {
-      if (!report || !terminalStates.includes(report.run.state)) load();
+      load();
     }, 1_500);
     return () => clearInterval(timer);
   }, [load, report]);
 
+  if (!report && error) {
+    return (
+      <div className="run-load-failure" role="alert">
+        <AlertTriangle size={24} />
+        <h1>Run details unavailable</h1>
+        <p>{error}</p>
+        <button className="secondary-button" type="button" onClick={load}>
+          <RefreshCw size={15} /> Retry
+        </button>
+      </div>
+    );
+  }
   if (!report) return <PageSkeleton />;
   const run = report.run;
   const currentAttempt = report.currentAttempt ?? report.attempts.at(-1);
@@ -172,106 +194,6 @@ export function ReportView({
           <AlertTriangle size={16} /> {error}
         </div>
       )}
-      <section className="panel">
-        <PanelHeader
-          title="Veil privacy"
-          kicker={`${report.veil.effectiveProfile.replaceAll("_", " ").toUpperCase()} · ${report.veil.status.toUpperCase()}`}
-        />
-        <div className="diagnostics">
-          <div>
-            <ShieldCheck size={15} />
-            <div>
-              <strong>Effective policy · {veilPolicyIdentity(report.veil.policyDigest)}</strong>
-              <span>
-                {report.veil.timeline.length} lifecycle entries · {report.veil.gaps.length} capture
-                gaps
-              </span>
-            </div>
-          </div>
-          {report.veil.findings.map((finding, index) => (
-            <div key={`${finding.code}-${index}`}>
-              <AlertTriangle size={15} />
-              <div>
-                <strong>
-                  {finding.code} · {finding.severity}
-                </strong>
-                <span>{finding.remediation}</span>
-                {finding.channel && (
-                  <code>
-                    {finding.channel} · {finding.reasonCode}
-                  </code>
-                )}
-              </div>
-            </div>
-          ))}
-          {report.veil.gaps.map((gap, index) => (
-            <div key={`${gap.startedAt}-${index}`}>
-              <Eye size={15} />
-              <div>
-                <strong>Capture withheld · {gap.reasonCode}</strong>
-                <span>{gap.remediation}</span>
-              </div>
-            </div>
-          ))}
-          {!report.veil.findings.length && !report.veil.gaps.length && (
-            <div className="clean-signal">
-              <ShieldCheck size={20} />
-              <strong>Veil verified</strong>
-              <span>No privacy finding or capture gap was recorded.</span>
-            </div>
-          )}
-        </div>
-      </section>
-      <section className="panel">
-        <PanelHeader
-          title="Praxis interactions"
-          kicker={`${report.praxis.transactions.length} TRANSACTIONS · ${report.praxis.findings.length} FINDINGS`}
-        />
-        <div className="diagnostics">
-          {report.praxis.transactions.map((transaction) => (
-            <div key={transaction.transactionId}>
-              <Activity size={15} />
-              <div>
-                <strong>
-                  {transaction.operationId} · {transaction.result.status}
-                </strong>
-                <span>
-                  {transaction.result.report.summary} · mutation{" "}
-                  {transaction.result.mutationOutcome} ·{" "}
-                  {Math.round(transaction.result.timing.totalMs)} ms
-                </span>
-                {transaction.result.mutationOutcome === "unknown" && (
-                  <code>Do not retry without reconciliation</code>
-                )}
-              </div>
-            </div>
-          ))}
-          {report.praxis.findings.map(({ id, finding }) => (
-            <div key={id}>
-              <AlertTriangle size={15} />
-              <div>
-                <strong>
-                  {finding.code} · {finding.severity}
-                </strong>
-                <span>{finding.remediation}</span>
-              </div>
-            </div>
-          ))}
-          {!report.praxis.transactions.length && !report.praxis.findings.length && (
-            <div className="clean-signal">
-              <Eye size={20} />
-              <strong>
-                {report.praxis.status === "complete"
-                  ? "No Praxis records"
-                  : "Praxis records unavailable"}
-              </strong>
-              <span>
-                Legacy runs remain fully observable through their existing events and diagnostics.
-              </span>
-            </div>
-          )}
-        </div>
-      </section>
       {report.integrity.status === "failed" && (
         <section className="failure-summary">
           <div className="failure-summary-icon">
@@ -541,6 +463,19 @@ export function ReportView({
           </div>
           <div className="panel">
             <PanelHeader title="Captured evidence" kicker="ARTIFACTS" />
+            {degradedEvidence.length > 0 && (
+              <div className="evidence-health-summary" role="status">
+                <AlertTriangle size={17} />
+                <span>
+                  <strong>Some evidence is unavailable</strong>
+                  <small>
+                    {degradedEvidence.length} artifact{degradedEvidence.length === 1 ? "" : "s"}{" "}
+                    were withheld, quarantined, or could not be collected. Open Advanced for
+                    details.
+                  </small>
+                </span>
+              </div>
+            )}
             {recordingTimeline.length > 0 ? (
               <RecordingPlaylist entries={recordingTimeline} artifacts={report.artifacts} />
             ) : (
@@ -556,7 +491,13 @@ export function ReportView({
               <EmptyBlock
                 icon={<Image />}
                 title="No screenshots available"
-                copy="Evidence appears as the worker finalizes artifacts."
+                copy={
+                  terminalStates.includes(run.state)
+                    ? degradedEvidence.some((artifact) => artifact.kind === "screenshot")
+                      ? "Screenshot collection finished without an available image. Review the evidence status above."
+                      : "This run completed without an available screenshot."
+                    : "Screenshots will appear after the worker finishes collecting evidence."
+                }
               />
             )}
             <div className="artifact-strip">
@@ -636,51 +577,149 @@ export function ReportView({
               </div>
             )}
           </div>
-          <div className="panel">
-            <PanelHeader
-              title="Diagnostics"
-              kicker={`${diagnostics.length + policyEvents.length + report.praxis.transactions.length} SIGNALS`}
-            />
-            <div className="diagnostics">
-              {policyEvents.map((event) => (
-                <div key={event.id}>
-                  <ShieldCheck size={15} />
-                  <div>
-                    <strong>
-                      {event.payload.disposition === "blocked_subresource"
-                        ? "OPTIONAL RESOURCE BLOCKED"
-                        : "POLICY REJECTION"}
-                      {event.payload.resourceType ? ` · ${String(event.payload.resourceType)}` : ""}
-                    </strong>
-                    <span>{String(event.payload.message ?? "")}</span>
-                    {Boolean(event.payload.target) && <code>{String(event.payload.target)}</code>}
-                  </div>
-                </div>
-              ))}
-              {diagnostics.map((event) => (
-                <div key={event.id}>
-                  <TerminalSquare size={15} />
-                  <div>
-                    <strong>{event.type.replace("diagnostic.", "")}</strong>
-                    <span>{String(event.payload.message ?? "")}</span>
-                    {Boolean(event.payload.url) && <code>{String(event.payload.url)}</code>}
-                  </div>
-                </div>
-              ))}
-              {!diagnostics.length &&
-                !policyEvents.length &&
-                !report.praxis.transactions.length && (
-                  <div className="clean-signal">
-                    <ShieldCheck size={20} />
-                    <strong>Clean session</strong>
-                    <span>No console, page, policy, Praxis, or failed-request signals.</span>
-                  </div>
-                )}
-            </div>
-          </div>
         </aside>
       </section>
+      <AdvancedRunDetails report={report} diagnostics={diagnostics} policyEvents={policyEvents} />
     </>
+  );
+}
+
+function AdvancedRunDetails({
+  report,
+  diagnostics,
+  policyEvents,
+}: {
+  report: Report;
+  diagnostics: Report["events"];
+  policyEvents: Report["events"];
+}) {
+  const deepLinked =
+    typeof window !== "undefined" &&
+    (window.location.hash === "#advanced" ||
+      new URLSearchParams(window.location.search).get("advanced") === "1");
+
+  return (
+    <details className="run-advanced" id="advanced" open={deepLinked || undefined}>
+      <summary>
+        <span>
+          <strong>Advanced</strong>
+          <small>Veil, Praxis, policy, and runtime diagnostics</small>
+        </span>
+        <ChevronDown size={18} aria-hidden="true" />
+      </summary>
+      <div className="run-advanced-grid">
+        <section className="panel">
+          <PanelHeader
+            title="Veil privacy"
+            kicker={`${report.veil.effectiveProfile.replaceAll("_", " ").toUpperCase()} · ${report.veil.status.toUpperCase()}`}
+          />
+          <div className="diagnostics">
+            <div>
+              <ShieldCheck size={15} />
+              <div>
+                <strong>Effective policy · {veilPolicyIdentity(report.veil.policyDigest)}</strong>
+                <span>
+                  {report.veil.timeline.length} lifecycle entries · {report.veil.gaps.length}{" "}
+                  capture gaps
+                </span>
+              </div>
+            </div>
+            {report.veil.findings.map((finding, index) => (
+              <div key={`${finding.code}-${index}`}>
+                <AlertTriangle size={15} />
+                <div>
+                  <strong>
+                    {finding.code} · {finding.severity}
+                  </strong>
+                  <span>{finding.remediation}</span>
+                  {finding.channel && (
+                    <code>
+                      {finding.channel} · {finding.reasonCode}
+                    </code>
+                  )}
+                </div>
+              </div>
+            ))}
+            {report.veil.gaps.map((gap, index) => (
+              <div key={`${gap.startedAt}-${index}`}>
+                <Eye size={15} />
+                <div>
+                  <strong>Capture withheld · {gap.reasonCode}</strong>
+                  <span>{gap.remediation}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="panel">
+          <PanelHeader
+            title="Praxis interactions"
+            kicker={`${report.praxis.transactions.length} TRANSACTIONS · ${report.praxis.findings.length} FINDINGS`}
+          />
+          <div className="diagnostics">
+            {report.praxis.transactions.map((transaction) => (
+              <div key={transaction.transactionId}>
+                <Activity size={15} />
+                <div>
+                  <strong>
+                    {transaction.operationId} · {transaction.result.status}
+                  </strong>
+                  <span>
+                    {transaction.result.report.summary} · mutation{" "}
+                    {transaction.result.mutationOutcome} ·{" "}
+                    {Math.round(transaction.result.timing.totalMs)} ms
+                  </span>
+                  {transaction.result.mutationOutcome === "unknown" && (
+                    <code>Do not retry without reconciliation</code>
+                  )}
+                </div>
+              </div>
+            ))}
+            {report.praxis.findings.map(({ id, finding }) => (
+              <div key={id}>
+                <AlertTriangle size={15} />
+                <div>
+                  <strong>
+                    {finding.code} · {finding.severity}
+                  </strong>
+                  <span>{finding.remediation}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="panel run-advanced-diagnostics">
+          <PanelHeader
+            title="Diagnostics"
+            kicker={`${diagnostics.length + policyEvents.length} SIGNALS`}
+          />
+          <div className="diagnostics">
+            {policyEvents.map((event) => (
+              <div key={event.id}>
+                <ShieldCheck size={15} />
+                <div>
+                  <strong>
+                    {event.payload.disposition === "blocked_subresource"
+                      ? "OPTIONAL RESOURCE BLOCKED"
+                      : "POLICY REJECTION"}
+                  </strong>
+                  <span>{String(event.payload.message ?? "")}</span>
+                </div>
+              </div>
+            ))}
+            {diagnostics.map((event) => (
+              <div key={event.id}>
+                <TerminalSquare size={15} />
+                <div>
+                  <strong>{event.type.replace("diagnostic.", "")}</strong>
+                  <span>{String(event.payload.message ?? "")}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </details>
   );
 }
 

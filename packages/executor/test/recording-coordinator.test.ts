@@ -44,7 +44,8 @@ async function fixture(
       stop: async () => {
         if (options.failStop) throw new Error("stop failed");
         if (!activePath) throw new Error("not active");
-        if (options.stopDelayMs) await new Promise((resolve) => setTimeout(resolve, options.stopDelayMs));
+        if (options.stopDelayMs)
+          await new Promise((resolve) => setTimeout(resolve, options.stopDelayMs));
         if (captureAborted) return;
         if (!options.omitFile) await writeFile(activePath, Buffer.from("synthetic-webm-segment"));
         activePath = undefined;
@@ -92,7 +93,9 @@ async function fixture(
       frameId: "main",
       documentEpoch: 1,
     }),
-    transitionTimeoutMs: options.transitionTimeoutMs,
+    ...(options.transitionTimeoutMs !== undefined
+      ? { transitionTimeoutMs: options.transitionTimeoutMs }
+      : {}),
     abortCapture: async () => {
       captureAborted = true;
       activePath = undefined;

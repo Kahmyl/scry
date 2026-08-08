@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 
 import { AccessModule } from "./access/index.js";
+import { AdaptiveSessionsModule } from "./adaptive-sessions/index.js";
 import { ArtifactsModule } from "./artifacts/index.js";
 import { AuthModule } from "./auth/index.js";
 import { AuthoringModule } from "./authoring/index.js";
@@ -22,6 +23,7 @@ import { VeilModule } from "./veil/index.js";
     AuthModule,
     SystemModule,
     AccessModule,
+    AdaptiveSessionsModule,
     ArtifactsModule,
     AuthoringModule,
     AuthenticationAuthoringModule,

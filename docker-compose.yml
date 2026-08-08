@@ -3,6 +3,8 @@ name: scry
 x-app-environment: &app-environment
   DATABASE_URL: postgres://scry:scry-local@postgres:5432/scry
   REDIS_URL: redis://redis:6379
+  # Local-development service identity shared by API, worker, MCP, and campaigns.
+  SCRY_SERVICE_TOKEN: "${SCRY_SERVICE_TOKEN:-local-only-scry-service-token-change-me}"
   ARTIFACT_ROOT: /workspace/apps/api/artifacts/runs
   ARTIFACT_STORAGE_PROVIDER: "${ARTIFACT_STORAGE_PROVIDER:-local}"
   ARTIFACT_STORAGE_PREFIX: "${ARTIFACT_STORAGE_PREFIX:-}"
@@ -35,7 +37,7 @@ x-app-environment: &app-environment
 
 x-release-environment: &release-environment
   SCRY_RELEASE_ID: "${SCRY_RELEASE_ID:-local-20260806-compiled-plan}"
-  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-6c4cb7089fa13b647e89be4c05f5db39d5206a6e2ac279833f9ac8cf3a28a30a}"
+  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-0b5b22f1baadede32c37165bc96e6d7bc481a0cbbde9c01cebd48deaccad4527}"
 
 x-node-build: &node-build
   context: .
@@ -91,7 +93,9 @@ services:
     restart: "no"
 
   api:
-    build: *node-build
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
     env_file:
       - path: apps/api/.env
         required: false
@@ -101,6 +105,7 @@ services:
       API_PORT: 4000
       API_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
       SCRY_ORCHESTRATION_ENABLED: "${SCRY_ORCHESTRATION_ENABLED:-true}"
+      SCRY_BROWSER_CHANNEL: chromium
     command: ["pnpm", "--filter", "@scry/api", "dev"]
     ports:
       - "${SCRY_API_PORT:-4000}:4000"
@@ -189,6 +194,7 @@ services:
     build: *node-build
     environment:
       <<: *release-environment
+      SCRY_SERVICE_TOKEN: "${SCRY_SERVICE_TOKEN:-local-only-scry-service-token-change-me}"
       SCRY_API_BASE_URL: http://api:4000/api
       SCRY_PUBLIC_API_BASE_URL: "${SCRY_PUBLIC_API_BASE_URL:-http://127.0.0.1:4000/api}"
       MCP_HOST: 0.0.0.0

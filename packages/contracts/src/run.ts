@@ -267,6 +267,33 @@ export const runObservationSectionStatusSchema = z.enum([
   "failed",
 ]);
 
+export const runEvidenceChannelOutcomeSchema = z
+  .object({
+    channel: z.enum(["screenshot", "video", "trace", "dom", "network", "console", "report"]),
+    intent: z.enum(["required", "requested", "not_requested"]),
+    state: z.enum(["pending", "available", "suppressed", "quarantined", "failed"]),
+    reasonCode: z
+      .string()
+      .regex(/^[A-Z][A-Z0-9_]*$/)
+      .optional(),
+    failureProvenance: z.enum(["privacy", "executor", "storage", "media", "policy"]).optional(),
+    artifactIds: z.array(z.string().uuid()),
+    remediation: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict();
+
+export const runEvidenceChannelsSchema = z
+  .array(runEvidenceChannelOutcomeSchema)
+  .length(7)
+  .superRefine((outcomes, context) => {
+    const channels = new Set(outcomes.map(({ channel }) => channel));
+    if (channels.size !== outcomes.length)
+      context.addIssue({
+        code: "custom",
+        message: "run evidence outcomes must contain each channel exactly once",
+      });
+  });
+
 export const runObservationSchema = z
   .object({
     run: z
@@ -375,6 +402,7 @@ export const runObservationSchema = z
         createdAt: z.union([z.string(), z.date()]),
       }),
     ),
+    evidenceChannels: runEvidenceChannelsSchema,
     artifactTimeline: artifactTimelineSchema,
     privacy: z.object({
       intervals: z.array(z.record(z.string(), z.unknown())),
@@ -415,3 +443,4 @@ export const runObservationSchema = z
   .strict();
 
 export type RunObservation = z.infer<typeof runObservationSchema>;
+export type EvidenceChannelOutcome = z.infer<typeof runEvidenceChannelOutcomeSchema>;

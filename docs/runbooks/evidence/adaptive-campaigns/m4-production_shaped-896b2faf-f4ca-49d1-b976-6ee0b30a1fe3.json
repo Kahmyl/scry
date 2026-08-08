@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "896b2faf-f4ca-49d1-b976-6ee0b30a1fe3",
+  "correlationId": "59e0dbab-2ca4-4e7b-8608-fab6578ea559",
+  "milestone": "M4",
+  "target": "production_shaped",
+  "releaseId": "local-unreleased",
+  "schemaFingerprint": "unverified-schema",
+  "runtimeVersion": "local-runtime",
+  "gitCommit": "uncommitted",
+  "startedAt": "2026-08-08T22:14:03.544Z",
+  "completedAt": "2026-08-08T22:14:14.042Z",
+  "requiredChecks": [
+    {
+      "id": "m4-learned-compilation",
+      "description": "Learned records are sanitized and compiler blockers remain typed",
+      "status": "passed"
+    },
+    {
+      "id": "m4-protected-acquisition",
+      "description": "Protected acquisition adapters return semantic proof without protected bytes",
+      "status": "passed"
+    },
+    {
+      "id": "m4-certification-publication",
+      "description": "Fresh certification and privacy closure gate exact-contract publication",
+      "status": "passed"
+    },
+    {
+      "id": "m4-mcp-compatibility",
+      "description": "Compile, certify, and publish MCP responses preserve typed safe failures",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [
+    {
+      "id": "m4-later-scope",
+      "description": "M5 and later acceptance remain outside this milestone verdict",
+      "status": "awaiting_codex_verification",
+      "reasonCode": "FUTURE_MILESTONE_SCOPE"
+    }
+  ],
+  "metrics": {
+    "totalWallClockMs": 10496.552083,
+    "agentDecisionBoundaries": 0,
+    "mcpRequests": 0,
+    "apiRequests": 0,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 0,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "certification": {
+        "count": 1,
+        "p50Ms": 2221.7049580000003,
+        "p95Ms": 2221.7049580000003,
+        "maxMs": 2221.7049580000003
+      },
+      "compilation": {
+        "count": 1,
+        "p50Ms": 2049.9866669999997,
+        "p95Ms": 2049.9866669999997,
+        "maxMs": 2049.9866669999997
+      },
+      "expected_effect_verification": {
+        "count": 1,
+        "p50Ms": 1035.651917000001,
+        "p95Ms": 1035.651917000001,
+        "maxMs": 1035.651917000001
+      },
+      "interaction_execution": {
+        "count": 1,
+        "p50Ms": 5188.5595,
+        "p95Ms": 5188.5595,
+        "maxMs": 5188.5595
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "m4-protected-acquisition",
+        "phase": "interaction_execution",
+        "durationMs": 5188.5595
+      },
+      {
+        "operationId": "m4-certification-publication",
+        "phase": "certification",
+        "durationMs": 2221.7049580000003
+      },
+      {
+        "operationId": "m4-learned-compilation",
+        "phase": "compilation",
+        "durationMs": 2049.9866669999997
+      },
+      {
+        "operationId": "m4-mcp-compatibility",
+        "phase": "expected_effect_verification",
+        "durationMs": 1035.651917000001
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:compilation",
+        "operationId": "m4-learned-compilation",
+        "source": "campaign_client",
+        "correlationId": "59e0dbab-2ca4-4e7b-8608-fab6578ea559",
+        "eventId": "59e0dbab-2ca4-4e7b-8608-fab6578ea559-m4-learned-compilation",
+        "value": 2049.9866669999997
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "m4-protected-acquisition",
+        "source": "campaign_client",
+        "correlationId": "59e0dbab-2ca4-4e7b-8608-fab6578ea559",
+        "eventId": "59e0dbab-2ca4-4e7b-8608-fab6578ea559-m4-protected-acquisition",
+        "value": 5188.5595
+      },
+      {
+        "metric": "phase:certification",
+        "operationId": "m4-certification-publication",
+        "source": "campaign_client",
+        "correlationId": "59e0dbab-2ca4-4e7b-8608-fab6578ea559",
+        "eventId": "59e0dbab-2ca4-4e7b-8608-fab6578ea559-m4-certification-publication",
+        "value": 2221.7049580000003
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "m4-mcp-compatibility",
+        "source": "campaign_client",
+        "correlationId": "59e0dbab-2ca4-4e7b-8608-fab6578ea559",
+        "eventId": "59e0dbab-2ca4-4e7b-8608-fab6578ea559-m4-mcp-compatibility",
+        "value": 1035.651917000001
+      }
+    ]
+  },
+  "artifactRefs": [
+    "command:m4-learned-compilation",
+    "command:m4-protected-acquisition",
+    "command:m4-certification-publication",
+    "command:m4-mcp-compatibility"
+  ],
+  "verdict": "pass"
+}

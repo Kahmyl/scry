@@ -126,9 +126,7 @@ describe("worker processor boundaries", () => {
               complete: vi.fn(async () => undefined),
               fail: vi.fn(async () => undefined),
               settle: vi.fn(
-                async (settlement: {
-                  mutation?: { mutationIdentity: string; next: string };
-                }) => {
+                async (settlement: { mutation?: { mutationIdentity: string; next: string } }) => {
                   if (settlement.mutation) {
                     mutationStates.set(
                       settlement.mutation.mutationIdentity,
@@ -294,6 +292,18 @@ describe("worker processor boundaries", () => {
       ),
     ).resolves.toEqual({ state: "completed", allResolved: true });
     expect(kernel.probe).toHaveBeenCalledOnce();
+    expect(probes.complete).toHaveBeenCalledWith(
+      runtime,
+      expect.objectContaining({
+        learnedContracts: [],
+        qualityFindings: [],
+        authoringTrajectory: expect.objectContaining({
+          schemaVersion: 1,
+          probeSessionId: runtime.id,
+          attemptId: runtime.attemptId,
+        }),
+      }),
+    );
   });
 
   it("runs Praxis inspection through the owned authoring runtime page", async () => {

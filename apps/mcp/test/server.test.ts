@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ScryApiClient } from "../src/api-client.js";
 import { createScryMcpServer } from "../src/server.js";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 const context = {
   missionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
   objectiveId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
@@ -39,6 +42,12 @@ describe("current Scry MCP surface", () => {
     expect((await client.listTools()).tools.map(({ name }) => name)).toEqual([
       "get_capabilities",
       "list_projects",
+      "start_adaptive_session",
+      "advance_adaptive_session",
+      "get_adaptive_session",
+      "suspend_adaptive_session",
+      "resume_adaptive_session",
+      "cancel_adaptive_session",
       "start_mission",
       "resume_mission",
       "attach_to_mission",
@@ -172,6 +181,154 @@ describe("current Scry MCP surface", () => {
         },
       },
     });
+    await client.close();
+    await server.close();
+  });
+
+  it("exposes the complete mission-independent Adaptive Session lifecycle", async () => {
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    const requests: Array<{ method: string; path: string; body?: Record<string, unknown> }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(String(input)).pathname;
+        requests.push({
+          method: init?.method ?? "GET",
+          path,
+          ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}),
+        });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify(
+              path.endsWith("/capabilities") ? admittedCapabilities : { id: sessionId },
+            ),
+            { status: 200 },
+          ),
+        );
+      }),
+    );
+
+    const { client, server } = await connected();
+    const projectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const environmentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    for (const request of [
+      {
+        name: "start_adaptive_session",
+        arguments: {
+          projectId,
+          environmentId,
+          objective: "Inspect the read-only account details",
+          allowedOrigins: ["https://example.test"],
+        },
+      },
+      {
+        name: "advance_adaptive_session",
+        arguments: {
+          sessionId,
+          operations: [
+            {
+              operationId: "inspect-details",
+              action: {
+                type: "navigate",
+                url: "https://example.test/details",
+                timeoutMs: 10_000,
+              },
+              expectedEffect: {
+                type: "navigation",
+                url: "https://example.test/details",
+                match: "exact",
+              },
+              mode: "rehearse",
+              protectedInputReferences: [],
+            },
+          ],
+          budgets: { maxOperations: 1, maxDurationMs: 30_000 },
+        },
+      },
+      { name: "get_adaptive_session", arguments: { sessionId } },
+      {
+        name: "suspend_adaptive_session",
+        arguments: { sessionId, expectedVersion: 2, reason: "Pause for review" },
+      },
+      {
+        name: "resume_adaptive_session",
+        arguments: { sessionId, expectedVersion: 3, reason: "Review completed" },
+      },
+      {
+        name: "cancel_adaptive_session",
+        arguments: { sessionId, expectedVersion: 4, reason: "Campaign completed" },
+      },
+    ]) {
+      const response = await client.callTool(request);
+      expect(response.isError, request.name).not.toBe(true);
+    }
+
+    expect(requests.map(({ method, path }) => ({ method, path }))).toEqual([
+      { method: "GET", path: "/api/capabilities" },
+      { method: "POST", path: "/api/adaptive-sessions" },
+      { method: "POST", path: `/api/adaptive-sessions/${sessionId}/advance` },
+      { method: "GET", path: `/api/adaptive-sessions/${sessionId}` },
+      { method: "POST", path: `/api/adaptive-sessions/${sessionId}/suspend` },
+      { method: "POST", path: `/api/adaptive-sessions/${sessionId}/resume` },
+      { method: "POST", path: `/api/adaptive-sessions/${sessionId}/cancel` },
+    ]);
+    for (const request of requests.filter(({ method }) => method === "POST")) {
+      expect(request.body?.idempotencyKey).toMatch(/^mcp-adaptive-session-/);
+    }
+    expect(requests[1]?.body).toMatchObject({
+      projectId,
+      environmentId,
+      objective: "Inspect the read-only account details",
+      allowedOrigins: ["https://example.test"],
+    });
+    expect(requests[2]?.body).toMatchObject({
+      operations: [
+        expect.objectContaining({
+          operationId: "inspect-details",
+          mode: "rehearse",
+        }),
+      ],
+      budgets: { maxOperations: 1, maxDurationMs: 30_000 },
+    });
+    await client.close();
+    await server.close();
+  });
+
+  it("preserves a typed release rejection before Adaptive Session state changes", async () => {
+    vi.stubEnv("SCRY_RELEASE_ID", "expected-release");
+    const requests: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        requests.push(path);
+        return Promise.resolve(
+          new Response(JSON.stringify({ ...admittedCapabilities, releaseId: "stale-release" }), {
+            status: 200,
+          }),
+        );
+      }),
+    );
+
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "start_adaptive_session",
+      arguments: {
+        projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        objective: "Inspect account details",
+        allowedOrigins: ["https://example.test"],
+      },
+    });
+
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      rejection: {
+        code: "SCRY_RELEASE_MISMATCH",
+        safeActions: ["restart_mcp_with_current_release", "verify_api_release"],
+      },
+    });
+    expect(requests).toEqual(["/api/capabilities"]);
     await client.close();
     await server.close();
   });
@@ -323,6 +480,172 @@ describe("current Scry MCP surface", () => {
       flowRevisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       compiledContractId: "99999999-9999-4999-8999-999999999999",
       browser: "chromium",
+    });
+    await client.close();
+    await server.close();
+  });
+
+  it("rejects compile and certify before writing when the API release mismatches", async () => {
+    vi.stubEnv("SCRY_RELEASE_ID", "expected-release");
+    const requests: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        requests.push(path);
+        return Promise.resolve(
+          new Response(JSON.stringify({ ...admittedCapabilities, releaseId: "stale-release" }), {
+            status: 200,
+          }),
+        );
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "compile_and_certify_flow",
+      arguments: {
+        ...context,
+        draftId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        draftVersion: 1,
+        probeSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      },
+    });
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      rejection: {
+        code: "SCRY_RELEASE_MISMATCH",
+        safeActions: ["restart_mcp_with_current_release", "verify_api_release"],
+      },
+    });
+    expect(requests).toEqual(["/api/capabilities"]);
+    await client.close();
+    await server.close();
+  });
+
+  it("rejects publication before writing when the API schema mismatches", async () => {
+    vi.stubEnv("SCRY_SCHEMA_FINGERPRINT", "expected-schema");
+    const requests: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        requests.push(path);
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ ...admittedCapabilities, schemaFingerprint: "stale-schema" }),
+            { status: 200 },
+          ),
+        );
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "publish_flow_draft",
+      arguments: {
+        ...context,
+        draftId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        expectedVersion: 1,
+        compilationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        reason: "Publish certified contract",
+      },
+    });
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      rejection: {
+        code: "SCRY_RELEASE_MISMATCH",
+        safeActions: ["restart_mcp_with_current_release", "verify_api_release"],
+      },
+    });
+    expect(requests).toEqual(["/api/capabilities"]);
+    await client.close();
+    await server.close();
+  });
+
+  it("returns the exact compiled contract identity from publication", async () => {
+    const compiledContractId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const requests: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        requests.push(path);
+        const body = path.endsWith("/capabilities")
+          ? admittedCapabilities
+          : {
+              flowId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              revisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+              revision: 1,
+              compilationId: compiledContractId,
+              compiledContractId,
+            };
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "publish_flow_draft",
+      arguments: {
+        ...context,
+        draftId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        expectedVersion: 1,
+        compilationId: compiledContractId,
+        reason: "Publish certified contract",
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      publication: { compilationId: compiledContractId, compiledContractId },
+    });
+    expect(requests).toEqual([
+      "/api/capabilities",
+      "/api/flow-drafts/dddddddd-dddd-4ddd-8ddd-dddddddddddd/publish",
+    ]);
+    await client.close();
+    await server.close();
+  });
+
+  it("preserves typed certification rejection actions through the authoring tool", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/capabilities")) {
+          return Promise.resolve(
+            new Response(JSON.stringify(admittedCapabilities), { status: 200 }),
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              statusCode: 409,
+              message: {
+                code: "EXECUTION_READY_COMPILATION_REQUIRED",
+                safeActions: ["revise_flow", "compile_and_certify_flow"],
+              },
+            }),
+            { status: 409 },
+          ),
+        );
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "compile_and_certify_flow",
+      arguments: {
+        ...context,
+        draftId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        draftVersion: 1,
+        probeSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      },
+    });
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      rejection: {
+        code: "EXECUTION_READY_COMPILATION_REQUIRED",
+        safeActions: ["revise_flow", "compile_and_certify_flow"],
+      },
     });
     await client.close();
     await server.close();

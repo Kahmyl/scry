@@ -140,6 +140,12 @@ export async function probeFlowPlan(input: {
       execution: {
         state: report.state,
         outcomeClassification: report.outcomeClassification,
+        veilEvidenceClosed: report.artifacts.every(
+          (artifact) =>
+            artifact.availability === "available" ||
+            ((artifact.availability === "destroyed" || artifact.availability === "quarantined") &&
+              artifact.observation?.bytesDestroyed === true),
+        ),
       },
     };
   }

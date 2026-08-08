@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { currentPlanSchema, executionPolicySchema } from "@scry/contracts";
+import { currentPlanSchema, executionPolicySchema, type PraxisResult } from "@scry/contracts";
 import type { BrowserStorageState } from "@scry/executor";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 import type { Job } from "bullmq";
@@ -19,6 +19,7 @@ import {
   type ExecutionKernelService,
   type ProbeJob,
 } from "../../runtime/index.js";
+import { learnedInteractionsFromPraxis } from "../../authoring/learned-interaction.js";
 
 interface SharedWorkerIdentity {
   workerId: string;
@@ -44,6 +45,7 @@ export function createProbeProcessor(
     if (!runtime) return { state: "not_claimed" };
     let heartbeat: NodeJS.Timeout | undefined;
     let capturedState: BrowserStorageState | undefined;
+    const praxisResults: PraxisResult[] = [];
     const directory = await mkdtemp(path.join(os.tmpdir(), "scry-probe-"));
     try {
       if (!(await options.probes.running(runtime))) return { state: "claim_fenced" };
@@ -73,6 +75,9 @@ export function createProbeProcessor(
           captureBrowserState: (state) => {
             capturedState = state;
           },
+          onPraxisResult: (result) => {
+            praxisResults.push(result);
+          },
         },
       });
       const request = options.capabilities.request({
@@ -95,7 +100,21 @@ export function createProbeProcessor(
           options.observationRuntimeHash,
         );
       }
-      await options.probes.complete(runtime, result);
+      await options.probes.complete(runtime, {
+        ...result,
+        learnedContracts: learnedInteractionsFromPraxis(plan, praxisResults, {
+          veilEvidenceClosed: result.execution?.veilEvidenceClosed === true,
+        }),
+        qualityFindings: praxisResults.flatMap((item) => item.qualityFindings),
+        authoringTrajectory: {
+          schemaVersion: 1,
+          probeSessionId: runtime.id,
+          attemptId: runtime.attemptId,
+          interactionIds: praxisResults
+            .filter((item) => item.status === "succeeded")
+            .map((item) => item.transactionId),
+        },
+      });
       return { state: "completed", allResolved: result.allResolved };
     } catch (error) {
       const code = safeWorkerCode(error, "PROBE_EXECUTION_FAILED");

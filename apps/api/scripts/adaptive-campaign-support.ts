@@ -15,11 +15,16 @@ import {
 import {
   currentPlanSchema,
   executionPolicySchema,
+  adaptiveSessionOperationInputSchema,
+  type AdaptiveSessionOperationInput,
   type InteractionTargetIntent,
 } from "@scry/contracts";
 import type { ExecutionReport } from "@scry/executor";
 import { Redis } from "ioredis";
 import pg from "pg";
+
+import { decryptCredential, encryptCredential } from "../src/access/credential.crypto.js";
+import type { DeployedCampaignSpec } from "./deployed-adaptive-campaign.js";
 
 export const CAMPAIGN_SECRET_REFERENCE = "11111111-1111-4111-8111-111111111111";
 
@@ -31,6 +36,8 @@ export type CampaignContext = {
   outputDirectory: string;
   metrics: CampaignMetricsCollector;
   secretValue: string;
+  forbiddenValues: string[];
+  campaignProjectId?: string;
   beforeCounts?: Record<string, number>;
   requiredChecks: CampaignCheck[];
   observationalChecks: CampaignCheck[];
@@ -43,7 +50,10 @@ export async function createCampaignContext(): Promise<CampaignContext> {
   let fixture: Awaited<ReturnType<typeof startAdaptiveFixture>>;
   let fixtureFailure: unknown;
   try {
-    fixture = await startAdaptiveFixture();
+    fixture = await startAdaptiveFixture(
+      0,
+      process.env.SCRY_CAMPAIGN_FIXTURE_HOST ?? "host.docker.internal",
+    );
   } catch (error) {
     fixtureFailure = error;
     fixture = {
@@ -52,6 +62,7 @@ export async function createCampaignContext(): Promise<CampaignContext> {
     };
   }
   const beforeCounts = await controlPlaneCounts().catch(() => undefined);
+  const secretValue = `campaign-canary-${randomUUID()}`;
   return {
     campaignId,
     correlationId,
@@ -59,7 +70,8 @@ export async function createCampaignContext(): Promise<CampaignContext> {
     fixture,
     outputDirectory: await mkdtemp(path.join(os.tmpdir(), "scry-adaptive-campaign-")),
     metrics: new CampaignMetricsCollector(correlationId),
-    secretValue: `campaign-canary-${randomUUID()}`,
+    secretValue,
+    forbiddenValues: [secretValue],
     ...(beforeCounts ? { beforeCounts } : {}),
     requiredChecks: [
       {
@@ -76,8 +88,372 @@ export async function createCampaignContext(): Promise<CampaignContext> {
 
 export async function closeCampaignContext(context: CampaignContext): Promise<void> {
   context.secretValue = "";
+  context.forbiddenValues = [];
   await context.fixture.close();
   await rm(context.outputDirectory, { recursive: true, force: true });
+}
+
+export async function generatedCoreCampaignSpec(
+  context: CampaignContext,
+  milestone: "M0" | "M1",
+): Promise<DeployedCampaignSpec> {
+  if (context.campaignProjectId) throw new Error("CAMPAIGN_CORE_SPEC_ALREADY_PROVISIONED");
+  const projectId = randomUUID();
+  const environmentId = randomUUID();
+  const emailCredentialId = randomUUID();
+  const passwordCredentialId = randomUUID();
+  const emailValue = `campaign-${context.campaignId}@example.test`;
+  const pool = new pg.Pool({ connectionString: databaseUrl() });
+  try {
+    await pool.query("BEGIN");
+    await pool.query(
+      `INSERT INTO projects(id,workspace_id,name,description)
+       VALUES($1,'00000000-0000-4000-8000-000000000001',$2,$3)`,
+      [projectId, `Adaptive campaign ${context.campaignId}`, "Ephemeral missionless campaign"],
+    );
+    await pool.query(
+      `INSERT INTO environments(id,project_id,name,base_origin,policy,secret_refs)
+       VALUES($1,$2,'Ephemeral fixture',$3,$4::jsonb,$5::jsonb)`,
+      [
+        environmentId,
+        projectId,
+        context.fixture.origin,
+        JSON.stringify(adaptiveFixturePolicy(context.fixture.origin)),
+        JSON.stringify([emailCredentialId, passwordCredentialId]),
+      ],
+    );
+    await insertCampaignCredential(pool, {
+      id: emailCredentialId,
+      projectId,
+      name: "Fixture email",
+      value: emailValue,
+    });
+    await insertCampaignCredential(pool, {
+      id: passwordCredentialId,
+      projectId,
+      name: "Fixture password",
+      value: context.secretValue,
+    });
+    await pool.query("COMMIT");
+  } catch (error) {
+    await pool.query("ROLLBACK");
+    throw error;
+  } finally {
+    await pool.end();
+  }
+  context.campaignProjectId = projectId;
+  context.forbiddenValues.push(emailValue);
+
+  return generatedCoreCampaignCalls({
+    milestone,
+    campaignId: context.campaignId,
+    correlationId: context.correlationId,
+    fixtureOrigin: context.fixture.origin,
+    projectId,
+    environmentId,
+    emailCredentialId,
+    passwordCredentialId,
+  });
+}
+
+export async function generatedVitractCampaignSpec(
+  context: CampaignContext,
+  milestone: "M0" | "M1",
+): Promise<{ spec: DeployedCampaignSpec; forbiddenValues: string[] }> {
+  if (process.env.SCRY_ENABLE_VITRACT_CAMPAIGN !== "true") {
+    throw new Error("SCRY_ENABLE_VITRACT_CAMPAIGN_REQUIRED");
+  }
+  const pool = new pg.Pool({ connectionString: databaseUrl() });
+  try {
+    const target = await pool.query<{
+      project_id: string;
+      environment_id: string;
+      email_id: string;
+      password_id: string;
+      email_ciphertext: Buffer;
+      email_iv: Buffer;
+      email_tag: Buffer;
+      password_ciphertext: Buffer;
+      password_iv: Buffer;
+      password_tag: Buffer;
+    }>(
+      `SELECT p.id AS project_id,
+              e.id AS environment_id,
+              email.id AS email_id,
+              password.id AS password_id,
+              email.ciphertext AS email_ciphertext,
+              email.initialization_vector AS email_iv,
+              email.authentication_tag AS email_tag,
+              password.ciphertext AS password_ciphertext,
+              password.initialization_vector AS password_iv,
+              password.authentication_tag AS password_tag
+         FROM projects p
+         JOIN environments e ON e.project_id=p.id
+         JOIN project_credentials email ON email.project_id=p.id
+           AND email.name='Vitract preview login email'
+         JOIN project_credentials password ON password.project_id=p.id
+           AND password.name='Vitract preview login password'
+        WHERE p.name='Vitract'
+          AND e.base_origin='https://preview.vitract.com'
+          AND email.security_status='active'
+          AND password.security_status='active'
+          AND email.deleted_at IS NULL
+          AND password.deleted_at IS NULL
+          AND e.secret_refs ? email.id::text
+          AND e.secret_refs ? password.id::text
+        ORDER BY e.created_at DESC
+        LIMIT 1`,
+    );
+    const row = target.rows[0];
+    if (!row) throw new Error("VITRACT_CAMPAIGN_PROTECTED_CREDENTIALS_UNAVAILABLE");
+    const emailValue = decryptCredential({
+      ciphertext: row.email_ciphertext,
+      initializationVector: row.email_iv,
+      authenticationTag: row.email_tag,
+    });
+    const passwordValue = decryptCredential({
+      ciphertext: row.password_ciphertext,
+      initializationVector: row.password_iv,
+      authenticationTag: row.password_tag,
+    });
+    const operations = vitractOperations(milestone, row.email_id, row.password_id);
+    const start = {
+      name: "start_adaptive_session",
+      arguments: {
+        projectId: row.project_id,
+        environmentId: row.environment_id,
+        objective:
+          milestone === "M0"
+            ? "Sign in to Vitract Preview and verify the Partner Portal"
+            : "Sign in, open Developer, select Test Mode, and inspect Add credential without creating a resource",
+        allowedOrigins: ["https://preview.vitract.com"],
+        correlationId: context.correlationId,
+        idempotencyKey: `vitract-${milestone.toLowerCase()}-start-${context.campaignId}`,
+      },
+    };
+    const turns =
+      milestone === "M0"
+        ? operations.map((operation, index) => ({
+            name: "advance_adaptive_session",
+            arguments: {
+              sessionId: "${SESSION_ID}",
+              operations: [operation],
+              budgets: { maxOperations: 1, maxDurationMs: 90_000 },
+              idempotencyKey: `vitract-m0-turn-${index + 1}-${context.campaignId}`,
+            },
+          }))
+        : [
+            {
+              name: "advance_adaptive_session",
+              arguments: {
+                sessionId: "${SESSION_ID}",
+                operations,
+                budgets: { maxOperations: operations.length, maxDurationMs: 240_000 },
+                idempotencyKey: `vitract-m1-turn-${context.campaignId}`,
+              },
+            },
+          ];
+    return { spec: { calls: [start, ...turns] }, forbiddenValues: [emailValue, passwordValue] };
+  } finally {
+    await pool.end();
+  }
+}
+
+function vitractOperations(
+  milestone: "M0" | "M1",
+  emailCredentialId: string,
+  passwordCredentialId: string,
+): AdaptiveSessionOperationInput[] {
+  const email = intent("login email", "textbox", "Enter your email", [
+    "accepts_text",
+    "focusable",
+    "editable",
+  ]);
+  const password = intent("login password", "textbox", "Enter your password", [
+    "accepts_text",
+    "focusable",
+    "editable",
+  ]);
+  const operations: AdaptiveSessionOperationInput[] = [
+    adaptiveOperation("navigate", { type: "navigate", url: "https://preview.vitract.com/login" }),
+    adaptiveOperation("email", { type: "fill", target: email, secretRef: emailCredentialId }, [
+      emailCredentialId,
+    ]),
+    adaptiveOperation(
+      "password",
+      { type: "fill", target: password, secretRef: passwordCredentialId },
+      [passwordCredentialId],
+    ),
+    adaptiveOperation("sign-in", {
+      type: "click",
+      target: intent("sign in", "button", "Login", ["pointer_activatable"]),
+      expectedEffect: { type: "navigation", url: "/partner", match: "path" },
+    }),
+  ];
+  if (milestone === "M1") {
+    operations.push(
+      adaptiveOperation("developer", {
+        type: "navigate",
+        url: "https://preview.vitract.com/partner/developer",
+      }),
+      adaptiveOperation("test-mode", {
+        type: "click",
+        target: intent("test mode environment", "button", "Test mode", ["pointer_activatable"]),
+        expectedEffect: { type: "none" },
+      }),
+      adaptiveOperation("applications", {
+        type: "click",
+        target: intent("developer applications", "link", "Applications", ["pointer_activatable"]),
+        expectedEffect: {
+          type: "navigation",
+          url: "/partner/developer/applications",
+          match: "path",
+        },
+      }),
+      adaptiveOperation("existing-application", {
+        type: "navigate",
+        url: "https://preview.vitract.com/partner/developer/applications/vtr_app_sandbox_83ec0973-f28f-f111-9b33-00224854e25a/credentials",
+      }),
+      adaptiveOperation("add-credential", {
+        type: "click",
+        target: intent("add credential", "button", "Add credential", ["pointer_activatable"]),
+        expectedEffect: { type: "none" },
+      }),
+      adaptiveOperation("credential-dialog", {
+        type: "waitFor",
+        target: intent("add credential dialog", "dialog", "Add credential", ["readable_value"]),
+        state: "visible",
+      }),
+      adaptiveOperation("close-dialog", {
+        type: "press",
+        key: "Escape",
+      }),
+    );
+  }
+  return operations;
+}
+
+function adaptiveOperation(
+  id: string,
+  action: AdaptiveSessionOperationInput["action"],
+  protectedInputReferences: string[] = [],
+): AdaptiveSessionOperationInput {
+  return adaptiveSessionOperationInputSchema.parse({
+    operationId: `vitract-${id}`,
+    idempotencyKey: `vitract-operation-${id}`,
+    action,
+    expectedEffect:
+      "expectedEffect" in action && action.expectedEffect
+        ? action.expectedEffect
+        : action.type === "navigate"
+          ? { type: "navigation", url: action.url, match: "exact" }
+          : { type: "none" },
+    mode: "transact",
+    protectedInputReferences,
+  });
+}
+
+export function generatedCoreCampaignCalls(input: {
+  milestone: "M0" | "M1";
+  campaignId: string;
+  correlationId: string;
+  fixtureOrigin: string;
+  projectId: string;
+  environmentId: string;
+  emailCredentialId: string;
+  passwordCredentialId: string;
+}): DeployedCampaignSpec {
+  const operations = fixtureAdaptiveOperations(
+    input.fixtureOrigin,
+    input.emailCredentialId,
+    input.passwordCredentialId,
+  );
+  const start = {
+    name: "start_adaptive_session",
+    arguments: {
+      projectId: input.projectId,
+      environmentId: input.environmentId,
+      objective: "Complete the deterministic fixture journey",
+      allowedOrigins: [input.fixtureOrigin],
+      correlationId: input.correlationId,
+      idempotencyKey: `campaign-start-${input.campaignId}`,
+    },
+  };
+  const turns =
+    input.milestone === "M0"
+      ? operations.map((operation, index) => ({
+          name: "advance_adaptive_session",
+          arguments: {
+            sessionId: "${SESSION_ID}",
+            operations: [operation],
+            budgets: { maxOperations: 1, maxDurationMs: 60_000 },
+            idempotencyKey: `campaign-m0-turn-${index + 1}-${input.campaignId}`,
+          },
+        }))
+      : [
+          {
+            name: "advance_adaptive_session",
+            arguments: {
+              sessionId: "${SESSION_ID}",
+              operations,
+              budgets: { maxOperations: operations.length, maxDurationMs: 120_000 },
+              idempotencyKey: `campaign-m1-turn-${input.campaignId}`,
+            },
+          },
+        ];
+  return { calls: [start, ...turns] };
+}
+
+function fixtureAdaptiveOperations(
+  origin: string,
+  emailCredentialId: string,
+  passwordCredentialId: string,
+): AdaptiveSessionOperationInput[] {
+  const plan = adaptiveFixturePlan(origin);
+  return plan.steps.map((candidate, index) => {
+    let action = candidate.action;
+    if (candidate.id === "email" && action.type === "fill") {
+      const { value: _value, ...protectedFill } = action;
+      action = { ...protectedFill, secretRef: emailCredentialId };
+    } else if (candidate.id === "password" && action.type === "fill") {
+      action = { ...action, secretRef: passwordCredentialId };
+    }
+    const protectedInputReferences =
+      action.type === "fill" && action.secretRef ? [action.secretRef] : [];
+    return adaptiveSessionOperationInputSchema.parse({
+      operationId: `fixture-${index + 1}-${candidate.id}`,
+      idempotencyKey: `campaign-operation-${index + 1}-${candidate.id}`,
+      action,
+      expectedEffect:
+        "expectedEffect" in action && action.expectedEffect
+          ? action.expectedEffect
+          : candidate.id === "navigate"
+            ? { type: "navigation", url: origin, match: "exact" }
+            : { type: "none" },
+      mode: "transact",
+      protectedInputReferences,
+    });
+  });
+}
+
+async function insertCampaignCredential(
+  pool: pg.Pool,
+  input: { id: string; projectId: string; name: string; value: string },
+) {
+  const encrypted = encryptCredential(input.value);
+  await pool.query(
+    `INSERT INTO project_credentials(
+       id,project_id,name,ciphertext,initialization_vector,authentication_tag
+     ) VALUES($1,$2,$3,$4,$5,$6)`,
+    [
+      input.id,
+      input.projectId,
+      input.name,
+      encrypted.ciphertext,
+      encrypted.initializationVector,
+      encrypted.authenticationTag,
+    ],
+  );
 }
 
 export function adaptiveFixturePlan(origin: string) {
@@ -139,7 +515,7 @@ export function adaptiveFixturePlan(origin: string) {
       }),
       step("details", "Verify deterministic result", {
         type: "waitFor",
-        target: intent("result", "heading", "Execution complete", []),
+        target: intent("result", "heading", "Execution complete", ["readable_value"]),
         state: "visible",
       }),
     ],
@@ -524,5 +900,12 @@ function requiredEnvironment(name: string) {
 
 function safeCode(error: unknown) {
   const value = error instanceof Error ? error.message : String(error);
-  return /^[A-Z][A-Z0-9_]*$/.test(value) ? value : "CAMPAIGN_INFRASTRUCTURE_FAILED";
+  const typed = value.match(/\b[A-Z][A-Z0-9_]{5,}\b/)?.[0];
+  if (typed) return typed;
+  const normalized = value
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 100);
+  return normalized ? `CAMPAIGN_${normalized}` : "CAMPAIGN_INFRASTRUCTURE_FAILED";
 }

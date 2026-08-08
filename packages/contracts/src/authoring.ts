@@ -117,6 +117,8 @@ export const learnedInteractionRecordSchema = z
     usedSelectorHint: z.boolean().default(false),
     unresolvedMutation: z.boolean().default(false),
     veilPolicyViolated: z.boolean().default(false),
+    veilEvidenceClosed: z.boolean(),
+    ephemeralHandleExpiresAt: z.string().datetime().optional(),
     expectedEffectVerified: z.boolean().default(true),
     deterministic: z.boolean().default(true),
   })

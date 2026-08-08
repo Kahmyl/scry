@@ -55,6 +55,7 @@ describe("schema migration manifest", () => {
       expect(source).toContain("authentication-authoring.sql");
       expect(source).toContain("adaptive-authoring-pr9-pr12.sql");
       expect(source).toContain("adaptive-execution-foundation-m0-m1.sql");
+      expect(source).toContain("adaptive-sessions-m3.sql");
     }
   });
 

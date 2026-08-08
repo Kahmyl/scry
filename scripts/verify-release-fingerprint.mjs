@@ -55,6 +55,7 @@ const adaptiveExecutionFoundation = await readFile(
   new URL("adaptive-execution-foundation-m0-m1.sql", migrations),
   "utf8",
 );
+const adaptiveSessions = await readFile(new URL("adaptive-sessions-m3.sql", migrations), "utf8");
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", migrations), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -70,6 +71,7 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", migration
   ["authentication-authoring.sql", authenticationAuthoring],
   ["adaptive-authoring-pr9-pr12.sql", adaptiveAuthoring],
   ["adaptive-execution-foundation-m0-m1.sql", adaptiveExecutionFoundation],
+  ["adaptive-sessions-m3.sql", adaptiveSessions],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

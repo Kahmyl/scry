@@ -974,6 +974,26 @@ const phaseResultSchema = z
     code: identifier.optional(),
   })
   .strict();
+export const protectedAcquisitionEvidenceSchema = z
+  .object({
+    reference: identifier,
+    adapter: z.enum([
+      "input_value",
+      "text_content",
+      "selected_text",
+      "keyboard_copy",
+      "copy_control",
+      "clipboard_event",
+      "download_content",
+      "protected_network_value",
+      "ocr_region",
+    ]),
+    objective: z.enum(["capture_value", "verify_user_copy_experience"]),
+    outcome: z.enum(["value_persisted", "copy_experience_verified"]),
+    capsule: z.enum(["destroyed", "force_terminated"]),
+    evidenceClosure: z.enum(["resumed", "permanently_suppressed", "sealed"]),
+  })
+  .strict();
 export const protectedTransactionResultSchema = z
   .object({
     status: z.enum([
@@ -1055,6 +1075,7 @@ export const protectedTransactionResultSchema = z
       )
       .default([]),
     diagnostics: z.array(extractionDiagnosticSchema).default([]),
+    protectedAcquisitionEvidence: z.array(protectedAcquisitionEvidenceSchema).default([]),
   })
   .strict();
 
@@ -1064,6 +1085,7 @@ export type CurrentAction = z.infer<typeof currentActionSchema>;
 export type ProtectedTransaction = z.infer<typeof protectedTransactionSchema>;
 export type ProtectedTransactionResult = z.infer<typeof protectedTransactionResultSchema>;
 export type ExtractionDiagnostic = z.infer<typeof extractionDiagnosticSchema>;
+export type ProtectedAcquisitionEvidence = z.infer<typeof protectedAcquisitionEvidenceSchema>;
 export type PrivacyMode = z.infer<typeof privacyModeSchema>;
 export type PrivacyState = z.infer<typeof privacyStateSchema>;
 export type EvidenceChannel = z.infer<typeof evidenceChannelSchema>;

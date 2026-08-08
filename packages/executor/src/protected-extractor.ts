@@ -1,6 +1,7 @@
 import type {
   AcquisitionIntent,
   ExtractionDiagnostic,
+  ProtectedAcquisitionEvidence,
   ProtectedTransaction,
 } from "@scry/contracts";
 import type { Locator, Page } from "playwright";
@@ -24,6 +25,17 @@ type ProtectedAcquisitionAdapter = (input: {
   target: Locator;
   acquisition: AcquisitionIntent;
 }) => Promise<string>;
+
+export type ProtectedAcquisitionResult =
+  | {
+      kind: "captured_value";
+      value: string;
+      adapter: ProtectedAcquisitionEvidence["adapter"];
+    }
+  | {
+      kind: "copy_experience_verified";
+      adapter: ProtectedAcquisitionEvidence["adapter"];
+    };
 
 const registeredProtectedAdapters = new Map<string, ProtectedAcquisitionAdapter>();
 
@@ -130,9 +142,18 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
         diagnostic.matchCount = "one";
         diagnostic.visibility = "visible";
         diagnostic.accessibility = "available";
-        const value = await acquireByMethod(page, result.locator, method, acquisition);
-        const normalized = value.trim();
-        if (valid(normalized, acquisition.validation)) return { value: normalized, diagnostics };
+        const acquired = await acquireByMethod(page, result.locator, method, acquisition);
+        if (acquired.kind === "copy_experience_verified") {
+          return { result: acquired, value: undefined, diagnostics };
+        }
+        const normalized = acquired.value.trim();
+        if (valid(normalized, acquisition.validation)) {
+          return {
+            result: { ...acquired, value: normalized },
+            value: normalized,
+            diagnostics,
+          };
+        }
         diagnostic.lastFailureCode = normalized ? "VALUE_VALIDATION_FAILED" : "VALUE_EMPTY";
       } catch (error) {
         diagnostic.lastFailureCode = error instanceof GroundingError ? error.code : safeCode(error);
@@ -148,7 +169,7 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
       setTimeout(resolve, Math.min(50, Math.max(0, deadline - Date.now()))),
     );
   }
-  return { value: undefined, diagnostics };
+  return { result: undefined, value: undefined, diagnostics };
 }
 
 export function protectedAcquisitionAdapterRegistry() {
@@ -182,74 +203,86 @@ async function acquireByMethod(
   target: Locator,
   method: AcquisitionIntent["permittedMethods"][number],
   acquisition: AcquisitionIntent,
-): Promise<string> {
+): Promise<ProtectedAcquisitionResult> {
   const intent = acquisition.target;
+  const capture = (value: string): ProtectedAcquisitionResult => ({
+    kind: "captured_value",
+    value,
+    adapter: canonicalMethod(method),
+  });
   switch (method) {
     case "input_value":
-      return target.inputValue();
+      return target.inputValue().then(capture);
     case "text_content":
     case "dom_text":
-      return target.textContent().then((value) => value ?? "");
+      return target.textContent().then((value) => capture(value ?? ""));
     case "semantic_field_value":
-      return target.evaluate((element) =>
-        element instanceof HTMLInputElement ||
-        element instanceof HTMLTextAreaElement ||
-        element instanceof HTMLSelectElement
-          ? element.value
-          : (element.textContent ?? ""),
-      );
+      return target
+        .evaluate((element) =>
+          element instanceof HTMLInputElement ||
+          element instanceof HTMLTextAreaElement ||
+          element instanceof HTMLSelectElement
+            ? element.value
+            : (element.textContent ?? ""),
+        )
+        .then(capture);
     case "copy_control": {
       const group = target.locator(
         "xpath=ancestor::*[self::fieldset or @role='group' or self::div][1]",
       );
       const copy = group.getByRole("button", { name: /copy/i });
       if ((await copy.count()) !== 1) throw new AcquisitionError("COPY_CONTROL_UNRESOLVED");
+      if (acquisition.objective?.kind === "verify_user_copy_experience") {
+        const copied = copyEventObserved(page, () => copy.click());
+        markVeilProtectedClipboardTouched(page);
+        if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
+        return { kind: "copy_experience_verified", adapter: "copy_control" };
+      }
       await copy.click();
       const lifecycleOwned = markVeilProtectedClipboardTouched(page);
       const value = await page.evaluate(() => navigator.clipboard.readText());
       if (!lifecycleOwned) await page.evaluate(() => navigator.clipboard.writeText(""));
-      return value;
+      return capture(value);
     }
     case "selected_text":
     case "scoped_text_selection":
-      return target.evaluate((element) => {
-        const selection = getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(element);
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-        const value = selection?.toString() ?? "";
-        selection?.removeAllRanges();
-        return value;
-      });
+      return target
+        .evaluate((element) => {
+          const selection = getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+          const value = selection?.toString() ?? "";
+          selection?.removeAllRanges();
+          return value;
+        })
+        .then(capture);
     case "keyboard_copy":
     case "clipboard_event":
     case "focused_keyboard_selection": {
       await target.focus();
       await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-      const value = await target.evaluate((element) =>
-        element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
-          ? element.value.substring(
-              element.selectionStart ?? 0,
-              element.selectionEnd ?? element.value.length,
-            )
-          : (getSelection()?.toString() ?? ""),
+      const copied = copyEventObserved(page, () =>
+        page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C"),
       );
+      markVeilProtectedClipboardTouched(page);
+      if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
       await page.keyboard.press("Escape").catch(() => undefined);
-      return value;
+      return { kind: "copy_experience_verified", adapter: canonicalMethod(method) };
     }
     case "download_content": {
       const [download] = await Promise.all([page.waitForEvent("download"), target.click()]);
       const stream = await download.createReadStream();
       if (!stream) throw new AcquisitionError("DOWNLOAD_STREAM_UNAVAILABLE");
-      return readBoundedText(stream, acquisition.validation.maximumLength);
+      return readBoundedText(stream, acquisition.validation.maximumLength).then(capture);
     }
     case "protected_network_value":
     case "approved_network_field": {
       const adapterId = acquisition.adapter?.id;
       const adapter = adapterId ? registeredProtectedAdapters.get(adapterId) : undefined;
       if (!adapter) throw new AcquisitionError("NETWORK_ADAPTER_REQUIRED");
-      return adapter({ page, target, acquisition });
+      return adapter({ page, target, acquisition }).then(capture);
     }
     case "application_adapter":
       throw new AcquisitionError("APPLICATION_ADAPTER_REQUIRED");
@@ -257,8 +290,28 @@ async function acquireByMethod(
       throw new AcquisitionError("SECURE_ASSISTANCE_REQUIRED");
     case "ocr_region":
     case "protected_visual_reading":
-      return acquireProtectedVisualText(page, intent);
+      return acquireProtectedVisualText(page, intent).then(capture);
   }
+}
+
+async function copyEventObserved(page: Page, perform: () => Promise<unknown>) {
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved = false;
+    document.addEventListener(
+      "copy",
+      () => {
+        (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved =
+          true;
+      },
+      { once: true },
+    );
+  });
+  await perform();
+  return page.evaluate(
+    () =>
+      (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved ===
+      true,
+  );
 }
 
 function assertObjectiveMethods(acquisition: AcquisitionIntent) {
@@ -276,12 +329,18 @@ function assertObjectiveMethods(acquisition: AcquisitionIntent) {
   }
 }
 
-function canonicalMethod(method: AcquisitionIntent["permittedMethods"][number]) {
+function canonicalMethod(
+  method: AcquisitionIntent["permittedMethods"][number],
+): ProtectedAcquisitionEvidence["adapter"] {
+  if (method === "semantic_field_value") return "input_value";
   if (method === "dom_text") return "text_content";
   if (method === "scoped_text_selection") return "selected_text";
   if (method === "focused_keyboard_selection") return "keyboard_copy";
   if (method === "approved_network_field") return "protected_network_value";
   if (method === "protected_visual_reading") return "ocr_region";
+  if (method === "application_adapter" || method === "secure_user_assistance") {
+    throw new AcquisitionError("ACQUISITION_ADAPTER_NOT_EXECUTABLE");
+  }
   return method;
 }
 

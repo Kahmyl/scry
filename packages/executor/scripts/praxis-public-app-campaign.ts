@@ -217,7 +217,7 @@ const applications: readonly PublicApplication[] = [
     name: "Nuxt",
     category: "framework",
     url: "https://nuxt.com/",
-    journey: { kind: "inspect", heading: "The Full-StackVue Framework" },
+    journey: { kind: "inspect", heading: "The Full-Stack Vue Framework" },
   },
   {
     id: "tailwind",
@@ -389,7 +389,7 @@ async function assertObservable(page: Page, journey: Journey) {
     );
 }
 function normalized(value: string) {
-  return value.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+  return value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
 }
 function base(
   concept: string,

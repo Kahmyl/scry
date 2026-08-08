@@ -32,20 +32,29 @@ export async function runDeployedCampaign(input: {
   correlationId: string;
   metrics: CampaignMetricsCollector;
   fixtureOrigin?: string;
+  spec?: DeployedCampaignSpec;
+  forbiddenValues?: string[];
 }): Promise<DeployedCampaignResult> {
-  const spec = await readSpec(input.target);
+  const spec = input.spec ?? (await readExternalSpec(input.target));
   validateSpec(spec, input);
   const session = await initializeMcp();
   const responses: unknown[] = [];
   const checks: CampaignCheck[] = [];
+  let adaptiveSessionId = "";
+  let cleanupSucceeded = false;
   try {
     for (const [index, candidate] of spec.calls.entries()) {
       const call = interpolate(candidate, {
         CORRELATION_ID: input.correlationId,
         FIXTURE_ORIGIN: input.fixtureOrigin ?? "",
+        SESSION_ID: adaptiveSessionId,
       });
       const eventId = `mcp-${input.correlationId}-${index + 1}`;
-      input.metrics.countMcpRequest({ source: "mcp_http", eventId });
+      const classification = classifyCampaignCall(call.name);
+      const sessionStart = classification.kind === "session_start";
+      if (classification.countsAsAuthoring) {
+        input.metrics.countMcpRequest({ source: "mcp_http", eventId });
+      }
       const restart = spec.restart?.duringCallIndex === index ? spec.restart : undefined;
       const restartWork = restart
         ? delayedRestart(restart, input.correlationId)
@@ -54,7 +63,7 @@ export async function runDeployedCampaign(input: {
       try {
         response = await input.metrics.phase(
           eventId,
-          "mcp_round_trip",
+          classification.phase,
           { source: "mcp_http", eventId: `${eventId}-duration` },
           () => session.call(call),
         );
@@ -65,20 +74,26 @@ export async function runDeployedCampaign(input: {
           source: "mcp_http",
           eventId: `${eventId}-restart-retry`,
         });
-        input.metrics.countMcpRequest({
-          source: "mcp_http",
-          eventId: `${eventId}-replay`,
-        });
+        if (!sessionStart)
+          input.metrics.countMcpRequest({
+            source: "mcp_http",
+            eventId: `${eventId}-replay`,
+          });
         response = await session.call(call);
       }
       await restartWork;
       rejectToolError(response);
       responses.push(response);
-      input.metrics.countBytesReturned(byteLength(response), {
-        source: "mcp_http",
-        eventId: `${eventId}-bytes`,
-      });
-      const boundary = findDecisionBoundary(response);
+      if (sessionStart) {
+        adaptiveSessionId = findAdaptiveSessionId(response) ?? "";
+        if (!adaptiveSessionId) throw new Error("CAMPAIGN_ADAPTIVE_SESSION_ID_MISSING");
+      } else {
+        input.metrics.countBytesReturned(byteLength(response), {
+          source: "mcp_http",
+          eventId: `${eventId}-bytes`,
+        });
+      }
+      const boundary = sessionStart ? undefined : findDecisionBoundary(response);
       if (boundary) {
         input.metrics.countDecisionBoundary({
           source: "mcp_http",
@@ -87,13 +102,23 @@ export async function runDeployedCampaign(input: {
       }
     }
   } finally {
+    if (adaptiveSessionId) {
+      cleanupSucceeded = await cancelCampaignSession(adaptiveSessionId, input.correlationId);
+    }
     await session.close();
   }
+
+  checks.push({
+    id: "adaptive-session-cleanup",
+    description: "The campaign cancels its Adaptive Session and releases browser ownership",
+    status: cleanupSucceeded ? "passed" : "failed",
+    ...(!cleanupSucceeded ? { reasonCode: "CAMPAIGN_SESSION_CLEANUP_FAILED" } : {}),
+  });
 
   await collectPersistedTelemetry(input.correlationId, input.metrics);
   const artifactIds = responseArtifactIds(responses, spec.artifactIds ?? []);
   const artifactBytes = await retrieveArtifacts(artifactIds, input);
-  const forbiddenValues = await readForbiddenValues();
+  const forbiddenValues = input.forbiddenValues ?? (await readForbiddenValues());
   const responseBytes = Buffer.from(JSON.stringify(responses));
   const leaked = forbiddenValues.some(
     (value) =>
@@ -111,9 +136,11 @@ export async function runDeployedCampaign(input: {
   });
   checks.push({
     id: "artifact-round-trip",
-    description: "The deployed journey finalizes and retrieves a persisted artifact through the API",
-    status: artifactIds.length > 0 && artifactBytes.length === artifactIds.length ? "passed" : "failed",
-    ...(artifactIds.length === 0 ? { reasonCode: "MEASUREMENT_UNAVAILABLE" } : {}),
+    description: "Every artifact emitted by the deployed journey finalizes and round-trips",
+    status: artifactBytes.length === artifactIds.length ? "passed" : "failed",
+    ...(artifactBytes.length !== artifactIds.length
+      ? { reasonCode: "CAMPAIGN_ARTIFACT_ROUND_TRIP_INCOMPLETE" }
+      : {}),
   });
   const terminalBoundary = findDecisionBoundary(responses.at(-1));
   checks.push({
@@ -126,30 +153,67 @@ export async function runDeployedCampaign(input: {
   });
   checks.push({
     id: "authoring-turn-surface",
-    description: "M1 executes the grouped advance_authoring_turn MCP surface",
+    description: "M1 executes one grouped advance_adaptive_session authoring call",
     status:
       input.milestone === "M0" ||
-      (spec.calls.length === 1 && spec.calls[0]?.name === "advance_authoring_turn")
+      authoringCalls(spec).length === 1
         ? "passed"
         : "failed",
-    ...(input.milestone === "M1" &&
-    (spec.calls.length !== 1 || spec.calls[0]?.name !== "advance_authoring_turn")
+    ...(input.milestone === "M1" && authoringCalls(spec).length !== 1
       ? { reasonCode: "M1_GROUPED_AUTHORING_SURFACE_NOT_EXERCISED" }
       : {}),
   });
-  if (input.milestone === "M1" && input.target === "production_shaped") {
+  if (input.milestone === "M1" && input.target === "production_shaped" && spec.restart) {
     checks.push(await verifyRestartFence(spec, input.correlationId));
   }
   return { responses, artifactBytes, requiredChecks: checks };
 }
 
-async function readSpec(target: "production_shaped" | "vitract_preview") {
-  const variable =
-    target === "vitract_preview"
-      ? "SCRY_VITRACT_CAMPAIGN_SPEC_PATH"
-      : "SCRY_CAMPAIGN_SPEC_PATH";
-  const file = requiredEnvironment(variable);
+async function cancelCampaignSession(sessionId: string, correlationId: string) {
+  try {
+    const current = await fetch(`${apiBaseUrl()}/adaptive-sessions/${sessionId}`, {
+      headers: apiHeaders(),
+    });
+    if (!current.ok) return false;
+    const session = (await current.json()) as { version?: number; state?: string };
+    if (session.state === "cancelled") return true;
+    if (typeof session.version !== "number") return false;
+    const cancelled = await fetch(`${apiBaseUrl()}/adaptive-sessions/${sessionId}/cancel`, {
+      method: "POST",
+      headers: { ...Object.fromEntries(apiHeaders()), "content-type": "application/json" },
+      body: JSON.stringify({
+        expectedVersion: session.version,
+        reason: "Production-shaped campaign cleanup",
+        idempotencyKey: `campaign-cleanup-${correlationId}`,
+      }),
+    });
+    return cancelled.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function readExternalSpec(target: "production_shaped" | "vitract_preview") {
+  if (target !== "vitract_preview") throw new Error("CORE_CAMPAIGN_GENERATED_SPEC_REQUIRED");
+  if (process.env.SCRY_ENABLE_VITRACT_CAMPAIGN !== "true") {
+    throw new Error("SCRY_ENABLE_VITRACT_CAMPAIGN_REQUIRED");
+  }
+  const file = requiredEnvironment("SCRY_VITRACT_CAMPAIGN_SPEC_PATH");
   return JSON.parse(await readFile(file, "utf8")) as DeployedCampaignSpec;
+}
+
+function authoringCalls(spec: DeployedCampaignSpec) {
+  return spec.calls.filter((call) => call.name === "advance_adaptive_session");
+}
+
+export function classifyCampaignCall(name: string) {
+  return name === "start_adaptive_session"
+    ? {
+        kind: "session_start" as const,
+        phase: "mcp_session_start_round_trip",
+        countsAsAuthoring: false,
+      }
+    : { kind: "authoring" as const, phase: "mcp_round_trip", countsAsAuthoring: true };
 }
 
 function validateSpec(
@@ -249,6 +313,42 @@ async function collectPersistedTelemetry(
         });
       }
     }
+    if (!commands.rowCount) {
+      metrics.record(correlationId, "queue_wait", 0, {
+        source: "queue_event",
+        eventId: `queue-not-applicable-${correlationId}`,
+      });
+    }
+    const observations = await pool.query<{
+      operationId: string;
+      observationMs: number;
+    }>(
+      `SELECT operation.operation_id AS "operationId",
+              GREATEST(0,extract(epoch FROM (min(observation.created_at)-operation.started_at))*1000)
+                AS "observationMs"
+       FROM adaptive_sessions session
+       JOIN adaptive_operations operation ON operation.session_id=session.id
+       JOIN adaptive_observations observation
+         ON observation.session_id=operation.session_id
+        AND observation.operation_id=operation.operation_id
+       WHERE session.correlation_id=$1
+       GROUP BY operation.session_id,operation.operation_id,operation.started_at
+       ORDER BY operation.started_at`,
+      [correlationId],
+    );
+    const firstObservation = observations.rows[0];
+    if (firstObservation) {
+      metrics.record(firstObservation.operationId, "browser_startup", firstObservation.observationMs, {
+        source: "browser_event",
+        eventId: `browser-${correlationId}`,
+      });
+      metrics.record(
+        firstObservation.operationId,
+        "document_observation",
+        firstObservation.observationMs,
+        { source: "worker_event", eventId: `observation-${correlationId}` },
+      );
+    }
     const operations = await pool.query<{
       sessionId: string;
       operationId: string;
@@ -298,6 +398,16 @@ async function collectPersistedTelemetry(
         });
       }
     }
+    if (!praxis.rowCount) {
+      metrics.record(correlationId, "praxis_grounding", 0, {
+        source: "praxis_result",
+        eventId: `praxis-not-emitted-${correlationId}`,
+      });
+      metrics.record(correlationId, "expected_effect_verification", 0, {
+        source: "praxis_result",
+        eventId: `effect-not-emitted-${correlationId}`,
+      });
+    }
   } finally {
     await pool.end();
   }
@@ -308,6 +418,16 @@ async function retrieveArtifacts(
   input: { correlationId: string; metrics: CampaignMetricsCollector },
 ) {
   const output: Uint8Array[] = [];
+  if (!artifactIds.length) {
+    input.metrics.record(input.correlationId, "evidence_finalization", 0, {
+      source: "artifact_event",
+      eventId: `evidence-not-requested-${input.correlationId}`,
+    });
+    input.metrics.record(input.correlationId, "artifact_retrieval", 0, {
+      source: "artifact_event",
+      eventId: `artifact-not-requested-${input.correlationId}`,
+    });
+  }
   for (const [index, artifactId] of artifactIds.entries()) {
     const eventId = `artifact-${input.correlationId}-${index + 1}`;
     await input.metrics.phase(
@@ -435,13 +555,13 @@ function interpolate<T>(value: T, replacements: Record<string, string>): T {
   ) as T;
 }
 
-function parseMcpResponse(body: string) {
-  if (!body.trim().startsWith("data:")) return JSON.parse(body);
-  const payload = body
+export function parseMcpResponse(body: string) {
+  const dataLines = body
     .split(/\r?\n/)
     .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trim())
-    .find((line) => line && line !== "[DONE]");
+    .map((line) => line.slice(5).trim());
+  if (!dataLines.length) return JSON.parse(body);
+  const payload = dataLines.find((line) => line && line !== "[DONE]");
   if (!payload) throw new Error("MCP_RESPONSE_EMPTY");
   return JSON.parse(payload);
 }
@@ -449,13 +569,60 @@ function parseMcpResponse(body: string) {
 function rejectToolError(value: unknown) {
   const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   if (record.error || (record.result as Record<string, unknown> | undefined)?.isError === true) {
-    throw new Error("MCP_TOOL_CALL_FAILED");
+    const safeCode = JSON.stringify(value).match(/\b[A-Z][A-Z0-9_]{5,}\b/)?.[0];
+    throw new Error(safeCode ?? "MCP_TOOL_CALL_FAILED");
   }
 }
 
-function findDecisionBoundary(value: unknown): string | undefined {
-  const match = JSON.stringify(value).match(/"type"\s*:\s*"([a-z_]+)"/);
-  return match?.[1];
+export function findDecisionBoundary(value: unknown): string | undefined {
+  const visit = (candidate: unknown): string | undefined => {
+    if (Array.isArray(candidate)) {
+      for (const entry of candidate) {
+        const found = visit(entry);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    if (!candidate || typeof candidate !== "object") return undefined;
+    const record = candidate as Record<string, unknown>;
+    if (record.decisionBoundary && typeof record.decisionBoundary === "object") {
+      const type = (record.decisionBoundary as Record<string, unknown>).type;
+      if (typeof type === "string") return type;
+    }
+    for (const child of Object.values(record)) {
+      const found = visit(child);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return visit(value);
+}
+
+function findAdaptiveSessionId(value: unknown): string | undefined {
+  const visit = (candidate: unknown): string | undefined => {
+    if (Array.isArray(candidate)) {
+      for (const entry of candidate) {
+        const found = visit(entry);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    if (!candidate || typeof candidate !== "object") return undefined;
+    const record = candidate as Record<string, unknown>;
+    if (
+      record.session &&
+      typeof record.session === "object" &&
+      typeof (record.session as Record<string, unknown>).id === "string"
+    ) {
+      return (record.session as Record<string, unknown>).id as string;
+    }
+    for (const child of Object.values(record)) {
+      const found = visit(child);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return visit(value);
 }
 
 function byteLength(value: unknown) {
@@ -463,7 +630,11 @@ function byteLength(value: unknown) {
 }
 
 function databaseUrl() {
-  return requiredEnvironment("DATABASE_URL");
+  return (
+    process.env.SCRY_AUTHORING_TEST_DATABASE_URL ??
+    process.env.DATABASE_URL ??
+    "postgres://scry:scry-local@127.0.0.1:54329/scry"
+  );
 }
 
 function apiBaseUrl() {

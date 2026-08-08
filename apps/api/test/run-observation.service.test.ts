@@ -31,6 +31,28 @@ describe("canonical run observation", () => {
       resource: `scry://artifact/${artifactId}`,
     });
     expect(observation.artifacts[0]).not.toHaveProperty("storageKey");
+    expect(observation.evidenceChannels).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channel: "screenshot",
+          intent: "required",
+          state: "failed",
+          reasonCode: "EVIDENCE_MISSING",
+        }),
+        expect.objectContaining({
+          channel: "video",
+          intent: "requested",
+          state: "available",
+          artifactIds: [artifactId],
+        }),
+        expect.objectContaining({
+          channel: "trace",
+          intent: "not_requested",
+          state: "suppressed",
+          reasonCode: "EVIDENCE_NOT_REQUESTED",
+        }),
+      ]),
+    );
     expect(observation.integrity).toEqual({ status: "complete", issues: [] });
     expect(observation.safeActions).toEqual(["rerun", "revise_flow", "read_artifact"]);
     expect(observation.veil).toMatchObject({
@@ -39,6 +61,99 @@ describe("canonical run observation", () => {
       status: "verified",
       findings: [],
     });
+  });
+
+  it("scopes protected operations and credential incidents to the current attempt", async () => {
+    const repository = { getRun: vi.fn().mockResolvedValue(failedRun()) };
+    const database = { query: vi.fn(async (text: string) => rowsFor(text)) };
+    const service = new RunObservationService(database as never, repository as never);
+
+    await service.observe({ kind: "service", subject: "scry-service" }, runId);
+
+    const protectedQuery = database.query.mock.calls.find(([text]) =>
+      text.includes("FROM protected_transactions"),
+    );
+    const incidentQuery = database.query.mock.calls.find(([text]) =>
+      text.includes("FROM credential_incidents AS incident"),
+    );
+    expect(protectedQuery?.[0]).toContain("transaction.created_at >= attempt.started_at");
+    expect((protectedQuery as unknown[])?.[1]).toEqual([runId, attemptId]);
+    expect(incidentQuery?.[0]).toContain("incident.created_at >= attempt.started_at");
+    expect((incidentQuery as unknown[])?.[1]).toEqual([runId, attemptId]);
+  });
+
+  it("projects quarantined evidence independently from functional failure", async () => {
+    const repository = { getRun: vi.fn().mockResolvedValue(failedRun()) };
+    const database = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes("FROM artifacts WHERE"))
+          return {
+            rows: [
+              {
+                ...rowsFor(text).rows[0],
+                kind: "screenshot",
+                availability: "quarantined",
+                privacyClassification: "uncertain",
+                failureProvenance: "privacy",
+                reasonCode: "VEIL_ADMISSION_REJECTED",
+              },
+            ],
+          };
+        if (text.includes("artifact_timeline_entries")) return { rows: [] };
+        return rowsFor(text);
+      }),
+    };
+    const service = new RunObservationService(database as never, repository as never);
+
+    const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
+
+    expect(
+      observation.evidenceChannels.find(({ channel }) => channel === "screenshot"),
+    ).toMatchObject({
+      intent: "required",
+      state: "quarantined",
+      failureProvenance: "privacy",
+      reasonCode: "VEIL_ADMISSION_REJECTED",
+    });
+    expect(observation.failure?.channel).toBe("readiness");
+  });
+
+  it("cannot report Veil verified when the timeline contains unavailable capture", async () => {
+    const repository = { getRun: vi.fn().mockResolvedValue(failedRun()) };
+    const database = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes("artifact_timeline_entries"))
+          return {
+            rows: [
+              {
+                id: timelineId,
+                sequence: 0,
+                type: "unavailable_interval",
+                metadata: {
+                  startedAt: new Date().toISOString(),
+                  endedAt: new Date().toISOString(),
+                  failureCode: "SCREENCAST_STOP_FAILED",
+                },
+              },
+            ],
+          };
+        if (text.includes("FROM artifacts WHERE")) return { rows: [] };
+        return rowsFor(text);
+      }),
+    };
+    const service = new RunObservationService(database as never, repository as never);
+
+    const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
+
+    expect(observation.veil.status).toBe("sealed");
+    expect(observation.veil.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "blocking",
+          reasonCode: "SCREENCAST_STOP_FAILED",
+        }),
+      ]),
+    );
   });
 
   it("reports cross-table observation corruption explicitly", async () => {
