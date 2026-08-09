@@ -42,6 +42,10 @@ describe("current Scry MCP surface", () => {
     expect((await client.listTools()).tools.map(({ name }) => name)).toEqual([
       "get_capabilities",
       "list_projects",
+      "start_direct_session",
+      "execute_direct_turn",
+      "observe_direct_session",
+      "close_direct_session",
       "start_adaptive_session",
       "advance_adaptive_session",
       "get_adaptive_session",
@@ -114,6 +118,34 @@ describe("current Scry MCP surface", () => {
       "search_artifact",
       "extract_artifact_html",
     ]);
+    await client.close();
+    await server.close();
+  });
+
+  it("exposes the bounded direct browser lifecycle without plaintext credentials", async () => {
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    const credentialId = "22222222-2222-4222-8222-222222222222";
+    const requests: Array<{ method: string; path: string; body?: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      requests.push({ method: init?.method ?? "GET", path, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
+      return Promise.resolve(new Response(JSON.stringify({ sessionId, state: path.endsWith(sessionId) && init?.method === "DELETE" ? "closed" : "active" }), { status: 200 }));
+    }));
+    const { client, server } = await connected();
+    for (const request of [
+      { name: "start_direct_session", arguments: { projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" } },
+      { name: "execute_direct_turn", arguments: { sessionId, actions: [{ type: "fillCredential", target: { strategy: "label", value: "Password" }, credentialId }] } },
+      { name: "observe_direct_session", arguments: { sessionId } },
+      { name: "close_direct_session", arguments: { sessionId } },
+    ]) expect((await client.callTool(request)).isError, request.name).not.toBe(true);
+    expect(requests.map(({ method, path }) => ({ method, path }))).toEqual([
+      { method: "POST", path: "/api/direct-sessions" },
+      { method: "POST", path: `/api/direct-sessions/${sessionId}/turns` },
+      { method: "GET", path: `/api/direct-sessions/${sessionId}` },
+      { method: "DELETE", path: `/api/direct-sessions/${sessionId}` },
+    ]);
+    expect(JSON.stringify(requests)).not.toContain("plaintext");
+    expect(requests[1]?.body).toMatchObject({ actions: [{ type: "fillCredential", credentialId }] });
     await client.close();
     await server.close();
   });

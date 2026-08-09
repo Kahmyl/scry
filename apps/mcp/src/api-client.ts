@@ -43,6 +43,10 @@ export class ScryApiClient {
     });
   }
 
+  async delete<T>(path: string): Promise<T> {
+    return this.request(path, { method: "DELETE" });
+  }
+
   capabilities() {
     this.capabilitiesPromise ??= this.get<ScryCapabilities>("/capabilities");
     return this.capabilitiesPromise;
@@ -143,6 +147,7 @@ export type ScryCapabilities = {
     authoringTurn: boolean;
     modes: Array<"observe" | "rehearse" | "transact" | "certify" | "run">;
   };
+  directBrowser?: { enabled: boolean; maxActionsPerTurn: number; sessionIdleTtlMs: number };
   groundingCapabilities?: string[];
   intelligenceCapabilities?: { modelAssistance: boolean; visualGrounding: string };
   missionContext?: { requiredForWrites: boolean; transport: "explicit"; phases: string[] };

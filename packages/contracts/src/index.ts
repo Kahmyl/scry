@@ -9,6 +9,7 @@ export * from "./authoring-runtime-command.js";
 export * from "./campaign.js";
 export * from "./adaptive-session.js";
 export * from "./execution-kernel.js";
+export * from "./direct-session.js";
 export * from "./calibration.js";
 export * from "./grounding.js";
 export {

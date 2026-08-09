@@ -24,6 +24,8 @@
     "baseline:authoring": "node scripts/authoring-baseline.mjs",
     "verify:adaptive-authoring-release": "node scripts/verify-adaptive-authoring-release.mjs",
     "verify:execution-kernel-boundary": "node scripts/verify-execution-kernel-boundary.mjs",
+    "verify:direct-browser-boundary": "node scripts/verify-direct-browser-boundary.mjs",
+    "campaign:direct:vitract": "node apps/api/scripts/direct-vitract-campaign.mjs",
     "campaign:adaptive:m0:core": "pnpm --filter @scry/api exec tsx scripts/adaptive-core-campaign-m0.ts",
     "campaign:adaptive:m0:vitract": "pnpm --filter @scry/api exec tsx scripts/adaptive-vitract-campaign.ts M0",
     "verify:adaptive:m0": "pnpm --filter @scry/campaigns test && pnpm --filter @scry/api exec tsx scripts/verify-adaptive-milestone.ts M0",

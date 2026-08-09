@@ -62,6 +62,11 @@ export class FlowService {
         authoringTurn: adaptiveExecutionFlags().authoringTurn,
         modes: ["observe", "rehearse", "transact", "certify", "run"],
       },
+      directBrowser: {
+        enabled: process.env.SCRY_DIRECT_BROWSER_ENABLED === "true",
+        maxActionsPerTurn: 10,
+        sessionIdleTtlMs: 1_800_000,
+      },
       supportedActions: [
         "navigate",
         "click",
