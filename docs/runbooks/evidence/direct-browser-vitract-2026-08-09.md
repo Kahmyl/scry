@@ -54,6 +54,6 @@ Four sandbox orders and two sandbox identities were created. The public API docu
 - Workspace typecheck: passed for all packages.
 - Direct API tests: 8 passed.
 - MCP tests: 24 passed.
-- API suite with both integration database variables set: 48 files and 212 tests passed, zero skipped.
+- API suite with both integration database variables set: 48 files and 214 tests passed, zero skipped.
 - Praxis suite with host browser permission: 11 files and 74 tests passed.
-- Executor suite: 235 passed, 1 skipped, 4 pre-existing failures in authoring target capabilities and keyboard selected-input acquisition. The direct recovery change does not modify Executor or those paths.
+- Executor suite: 242 passed, 1 skipped, 2 pre-existing failures in keyboard selected-input acquisition. The direct recovery change does not modify Executor or that path.
