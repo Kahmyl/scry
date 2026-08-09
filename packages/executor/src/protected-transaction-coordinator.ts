@@ -169,21 +169,59 @@ export class ProtectedTransactionKernel {
         fencingToken: claim.fencingToken,
         phase: "capsule_bootstrapping",
       });
-      capsule = await abortable(
-        d.capsuleFactory.create({
-          storageState: await safeSession.context.storageState({ indexedDB: true }),
-          prepare: d.prepareCapsule,
-        }),
-        d.signal,
-      );
+      let storageState: Awaited<ReturnType<SafeBrowserSession["context"]["storageState"]>>;
+      let sessionStorageState: { origin: string; entries: Array<[string, string]> };
+      try {
+        // IndexedDB serialization is optional for capsule handoff. Some applications keep
+        // non-serializable values there; cookies and web storage remain the portable auth state.
+        storageState = await safeSession.context
+          .storageState({ indexedDB: true })
+          .catch(() => safeSession.context.storageState());
+      } catch {
+        throw new PhaseError("PROTECTED_PORTABLE_STATE_EXPORT_FAILED", "bootstrap", "safe_to_retry");
+      }
+      try {
+        sessionStorageState = {
+          origin: new URL(safeSession.page.url()).origin,
+          entries: await safeSession.page.evaluate(() => Object.entries(sessionStorage)),
+        };
+      } catch {
+        throw new PhaseError("PROTECTED_SESSION_STATE_EXPORT_FAILED", "bootstrap", "safe_to_retry");
+      }
+      try {
+        capsule = await abortable(
+          d.capsuleFactory.create({
+            storageState,
+            sessionStorage: sessionStorageState,
+            prepare: d.prepareCapsule,
+          }),
+          d.signal,
+        );
+      } catch {
+        throw new PhaseError("PROTECTED_CAPSULE_CREATION_FAILED", "bootstrap", "safe_to_retry");
+      }
       facts.capsule = "active";
       await d.onContextProvenance?.({
         contextId: capsule.provenance.contextId,
         provenance: "protected",
         operationId: transaction.operationId,
       });
-      await capsule.page.goto(transaction.entry.url, { waitUntil: "domcontentloaded" });
-      await d.verifyAssertions(capsule.page, transaction.entry.assertions);
+      try {
+        await capsule.page.goto(transaction.entry.url, { waitUntil: "domcontentloaded" });
+      } catch {
+        throw new PhaseError("TRANSACTION_ENTRY_NAVIGATION_FAILED", "bootstrap", "safe_to_retry");
+      }
+      for (const assertion of transaction.entry.assertions) {
+        try {
+          await d.verifyAssertions(capsule.page, [assertion]);
+        } catch {
+          throw new PhaseError(
+            `TRANSACTION_ENTRY_${assertion.type.toUpperCase()}_ASSERTION_FAILED`,
+            "bootstrap",
+            "safe_to_retry",
+          );
+        }
+      }
       facts.bootstrap = { status: "succeeded" };
       await d.store.record({
         operationId: transaction.operationId,
@@ -360,26 +398,7 @@ export class ProtectedTransactionKernel {
       if (protectedOutputsPersisted(transaction, facts))
         facts.mutation.outcome = "confirmed_succeeded";
     } catch (error) {
-      const failure =
-        error instanceof PhaseError
-          ? error
-          : error instanceof CalibrationRequiredError
-            ? new PhaseError(
-                "CALIBRATION_REQUIRED",
-                facts.preparation.status === "running" ? "preparation" : "bootstrap",
-                "do_not_retry",
-              )
-            : new PhaseError(
-                "PROTECTED_TRANSACTION_FAILED",
-                facts.mutation.dispatch === "started"
-                  ? "mutation_dispatch"
-                  : facts.preparation.status === "running"
-                    ? "preparation"
-                    : "bootstrap",
-                facts.mutation.dispatch === "started"
-                  ? "retry_requires_reconciliation"
-                  : "safe_to_retry",
-              );
+      const failure = protectedPhaseFailure(error, facts);
       facts.reasonCode = failure.code;
       facts.failurePhase = failure.phase;
       facts.retryClass = failure.retryClass;
@@ -589,6 +608,33 @@ export class ProtectedTransactionKernel {
       facts: { ...facts, diagnostics: undefined },
     });
   }
+}
+
+function protectedPhaseFailure(error: unknown, facts: Facts) {
+  if (error instanceof PhaseError) return error;
+  const phase =
+    facts.mutation.dispatch === "started"
+      ? "mutation_dispatch"
+      : facts.preparation.status === "running"
+        ? "preparation"
+        : "bootstrap";
+  if (error instanceof CalibrationRequiredError)
+    return new PhaseError("CALIBRATION_REQUIRED", phase, "do_not_retry");
+  const candidate =
+    error && typeof error === "object" && "code" in error
+      ? (error as { code?: unknown }).code
+      : error instanceof Error
+        ? error.message
+        : undefined;
+  const code =
+    typeof candidate === "string" && /^[A-Z][A-Z0-9_]*$/.test(candidate)
+      ? candidate
+      : "PROTECTED_TRANSACTION_FAILED";
+  return new PhaseError(
+    code,
+    phase,
+    facts.mutation.dispatch === "started" ? "retry_requires_reconciliation" : "safe_to_retry",
+  );
 }
 
 /** Kept as a domain alias while callers are cut over to the kernel name. */

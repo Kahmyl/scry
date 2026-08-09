@@ -147,6 +147,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   let context: BrowserContext | undefined;
   let page: Page | undefined;
   let safeProvenance: BrowserSessionProvenance | undefined;
+  const borrowsSafeSession = Boolean(options.existingSafeSession);
   const state = new ExecutionState();
   let recording: RecordingCoordinator | undefined;
   let trace: TraceCoordinator | undefined;
@@ -220,20 +221,28 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     await emit("attempt.started", {
       planName: options.plan.name,
     });
-    const browserChannel = playwrightBrowserChannel(options.browserChannel);
-    browser = await chromium.launch({
-      headless: options.headless ?? true,
-      ...(browserChannel ? { channel: browserChannel } : {}),
-    });
-    const viewport = options.viewport ?? { width: 1280, height: 720 };
-    context = await browser.newContext({
-      viewport,
-      serviceWorkers: "block",
-      acceptDownloads: false,
-      ...(options.browserStorageState ? { storageState: options.browserStorageState } : {}),
-    });
+    if (options.existingSafeSession) {
+      browser = options.existingSafeSession.browser;
+      context = options.existingSafeSession.context;
+      page = options.existingSafeSession.page;
+      safeProvenance = options.existingSafeSession.provenance;
+    } else {
+      const browserChannel = playwrightBrowserChannel(options.browserChannel);
+      browser = await chromium.launch({
+        headless: options.headless ?? true,
+        ...(browserChannel ? { channel: browserChannel } : {}),
+      });
+      const viewport = options.viewport ?? { width: 1280, height: 720 };
+      context = await browser.newContext({
+        viewport,
+        serviceWorkers: "block",
+        acceptDownloads: false,
+        ...(options.browserStorageState ? { storageState: options.browserStorageState } : {}),
+      });
+      page = await context.newPage();
+      safeProvenance = new BrowserSessionProvenance(randomUUID(), "safe");
+    }
     await installVisualRedactionStyles(context);
-    page = await context.newPage();
     unregisterPraxisVeil = registerPraxisVeilAuthority(page, {
       authority: veilAuthority,
       userId: "executor",
@@ -241,7 +250,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       browserContextId: safeProvenance?.contextId ?? attemptId,
     });
     registerPraxisGroundingObservers(page, options);
-    safeProvenance = new BrowserSessionProvenance(randomUUID(), "safe");
     let policyEpoch = 0;
     const rejectPolicy = async (
       error: RuntimePolicyError,
@@ -920,10 +928,10 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         () => undefined,
       );
     }
-    if (context) {
+    if (context && !borrowsSafeSession) {
       await boundedClose(context.close()).catch(() => undefined);
     }
-    if (browser) await boundedClose(browser.close()).catch(() => undefined);
+    if (browser && !borrowsSafeSession) await boundedClose(browser.close()).catch(() => undefined);
     unregisterPraxisVeil?.();
     unregisterVeilAdmission();
   }

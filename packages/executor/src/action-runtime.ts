@@ -80,10 +80,10 @@ export async function executeAction(
       }
       if (value === undefined && action.capturedSecretRef) {
         const credentialReference = capturedSecrets.get(action.capturedSecretRef);
-        if (!credentialReference)
-          throw new Error(`Captured secret "${action.capturedSecretRef}" is unavailable`);
+        if (!credentialReference) throw new Error("PROTECTED_INPUT_REFERENCE_UNAVAILABLE");
+        if (!options.secretResolver) throw new Error("PROTECTED_INPUT_RESOLVER_UNAVAILABLE");
         try {
-          value = await (options.secretResolver ?? missingSecretResolver)(credentialReference);
+          value = await options.secretResolver(credentialReference);
         } catch (error) {
           throw new InfrastructureDependencyError(
             `Captured credential resolution failed: ${errorMessage(error)}`,
@@ -91,16 +91,16 @@ export async function executeAction(
         }
       }
       if (value === undefined && action.secretRef) {
+        if (!options.secretResolver) throw new Error("PROTECTED_INPUT_RESOLVER_UNAVAILABLE");
         try {
-          value = await (options.secretResolver ?? missingSecretResolver)(action.secretRef);
+          value = await options.secretResolver(action.secretRef);
         } catch (error) {
           throw new InfrastructureDependencyError(
             `Protected credential resolution failed: ${errorMessage(error)}`,
           );
         }
       }
-      if (value === undefined)
-        throw new Error(`Captured secret "${action.capturedSecretRef}" is unavailable`);
+      if (value === undefined) throw new Error("PROTECTED_INPUT_REFERENCE_UNAVAILABLE");
 
       const protectedFill = Boolean(action.secretRef || action.capturedSecretRef);
       if (protectedFill) redactor.add(value);
@@ -114,6 +114,7 @@ export async function executeAction(
             videoMaskEstablished: false,
           });
           await privacyGate.beginProtected();
+          await options.onMutationDispatch?.();
           await locator!.fill(value, optionalTimeout(action.timeoutMs));
           const valuePresent = await locator!.evaluate((element) =>
             "value" in (element as HTMLInputElement)
@@ -183,6 +184,7 @@ export async function executeAction(
       } else if (action.target) {
         throw new Error("PRAXIS_UNSUPPORTED_TARGET_KEY");
       } else {
+        await options.onMutationDispatch?.();
         await page.keyboard.press(action.key);
       }
       return;

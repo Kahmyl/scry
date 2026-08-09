@@ -12,10 +12,17 @@ let origin: string;
 beforeAll(async () => {
   server = createServer((request, response) => {
     response.setHeader("content-type", "text/html");
+    const heading =
+      request.url === "/second"
+        ? "Second page"
+        : request.url === "/docs"
+          ? "API Documentation"
+          : "First page";
     response.end(`
       <main>
-        <h1>${request.url === "/second" ? "Second page" : "First page"}</h1>
+        <h1>${heading}</h1>
         <a href="/second">Continue</a>
+        <a href="/docs" target="_blank">API documentation</a>
         <label>
           Name
           <input aria-label="Name" />
@@ -105,6 +112,44 @@ describe("persistent authoring browser session", () => {
       expect(await session.page.getByRole("heading").textContent()).toBe("Second page");
       expect(session.page.url()).toBe(`${origin}/second`);
 
+      const documentation = await session.interact(
+        {
+          type: "click",
+          target: target("api documentation", "link", "API documentation"),
+          expectedEffect: {
+            type: "new_region",
+            target: {
+              ...target("documentation heading", "heading", "API Documentation"),
+              requiredCapabilities: ["readable_value"],
+            },
+          },
+        },
+        {
+          operationId: "open-documentation-popup",
+          expectedEffect: {
+            type: "new_region",
+            target: {
+              ...target("documentation heading", "heading", "API Documentation"),
+              requiredCapabilities: ["readable_value"],
+            },
+          },
+        },
+      );
+
+      expect(documentation.outcome).toMatchObject({
+        functionalResult: "succeeded",
+        mutationOutcome: "applied",
+        resolvedTarget: {
+          version: 2,
+          concept: "api documentation",
+          scopeKind: "page",
+          structuralPath: [],
+        },
+      });
+      expect(session.page.url()).toBe(`${origin}/docs`);
+      expect(await session.page.getByRole("heading").textContent()).toBe("API Documentation");
+      expect(session.documentEpoch()).toBe(3);
+
       const missingEffect = await session.interact(
         { type: "fill", target: target("name", "textbox", "Name"), value: "Other", timeoutMs: 200 },
         {
@@ -158,13 +203,16 @@ describe("persistent authoring browser session", () => {
     try {
       await session.page.goto(origin, { waitUntil: "domcontentloaded" });
 
-      await expect(
-        session.interact({
-          type: "fill",
-          target: target("name", "textbox", "Name"),
-          secretRef: "33333333-3333-4333-8333-333333333333",
-        }),
-      ).rejects.toThrow("AUTHORING_INTERACTION_NOT_ALLOWED");
+      const unavailableProtectedInput = await session.interact({
+        type: "fill",
+        target: target("name", "textbox", "Name"),
+        secretRef: "33333333-3333-4333-8333-333333333333",
+      });
+      expect(unavailableProtectedInput.outcome).toMatchObject({
+        functionalResult: "failed",
+        mutationOutcome: "not_applied",
+        reasonCode: "PROTECTED_INPUT_RESOLVER_UNAVAILABLE",
+      });
     } finally {
       await session.close();
     }
@@ -178,7 +226,12 @@ function target(
 ): InteractionTargetIntent {
   return {
     concept,
-    requiredCapabilities: ["pointer_activatable"],
+    requiredCapabilities:
+      role === "textbox"
+        ? ["focusable", "accepts_text", "editable"]
+        : role === "heading"
+          ? ["readable_value"]
+          : ["pointer_activatable"],
     preferredEvidence: {
       roles: [role],
       names: [name],

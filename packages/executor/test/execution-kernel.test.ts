@@ -7,6 +7,7 @@ import {
   createExecutionCapabilityManifest,
   evidenceOutcomeFromReport,
   ExecutionKernel,
+  executeInteractionCompatibility,
   privacyOutcomeFromReport,
 } from "../src/execution-kernel.js";
 
@@ -91,6 +92,67 @@ describe("execution kernel admission", () => {
     ).rejects.toMatchObject({ code: "EXECUTION_MODE_POLICY_DENIED" });
   });
 
+  it("admits read-only waits in observe mode", () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "observe", correlationId });
+    const request = {
+      sessionId: "session",
+      operationId: "observe-wait",
+      correlationId,
+      mode: "observe" as const,
+      plan: plan({
+        type: "waitFor" as const,
+        target: target(),
+        state: "visible" as const,
+        timeoutMs: 1_000,
+      }),
+      policy,
+      capabilityManifestDigest: manifest.digest,
+      idempotencyKey: "kernel-observe-wait",
+    };
+
+    expect(
+      new ExecutionKernel().admitOnly({
+        request,
+        capabilities: {
+          manifest,
+          journal: { begin: vi.fn(), complete: vi.fn(), fail: vi.fn() },
+          options: { outputDirectory: "/tmp/unused" },
+        },
+      }),
+    ).toMatchObject({ operationId: "observe-wait", mode: "observe" });
+  });
+
+  it("crosses the mutation fence immediately before a direct browser dispatch", async () => {
+    const calls: string[] = [];
+    const outcome = await executeInteractionCompatibility({
+      sessionId: "session",
+      operationId: "direct-keypress",
+      page: {
+        keyboard: {
+          press: vi.fn(async () => {
+            calls.push("browser");
+          }),
+        },
+      } as never,
+      action: { type: "press", key: "Enter" },
+      ordinal: 1,
+      policy,
+      options: {
+        outputDirectory: "/tmp/unused",
+        onMutationDispatch: async () => {
+          calls.push("fence");
+        },
+      },
+    });
+
+    expect(calls).toEqual(["fence", "browser"]);
+    expect(outcome).toMatchObject({
+      functionalResult: "succeeded",
+      mutationOutcome: "applied",
+    });
+  });
+
   it("requires a durable idempotency identity for mutating plans", async () => {
     const correlationId = randomUUID();
     const manifest = createExecutionCapabilityManifest({ mode: "transact", correlationId });
@@ -115,6 +177,141 @@ describe("execution kernel admission", () => {
       }),
     ).rejects.toMatchObject({ code: "EXECUTION_MUTATION_IDENTITY_REQUIRED" });
     expect(begin).not.toHaveBeenCalled();
+  });
+
+  it("routes protected authoring interactions through the full kernel executor", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "transact", correlationId });
+    const report = {
+      ...reportFixture(),
+      state: "passed" as const,
+      outcomeClassification: "confirmed_success" as const,
+      diagnostics: [],
+      steps: [],
+    };
+    const dispatch = vi.fn(async () => report);
+    let mutationState = "planned";
+    const protectedInteraction = {
+      ...protectedAction(),
+      continuation: {
+        strategies: [
+          {
+            mode: "resume_parked_context" as const,
+            reentryUrl: "https://example.test",
+            assertions: [{ type: "visible" as const, target: target() }],
+            continueAtStepId: "after-protected",
+          },
+        ],
+      },
+    };
+    const safeSession = {
+      browser: {} as never,
+      context: {} as never,
+      page: {} as never,
+      provenance: {} as never,
+    };
+    const outcome = await new ExecutionKernel(dispatch as never).interact({
+      request: {
+        sessionId: "adaptive-session",
+        operationId: "protected-interaction",
+        correlationId,
+        mode: "transact",
+        policy,
+        mutationIdentity: "protected-interaction-mutation",
+      },
+      capabilities: {
+        manifest,
+        journal: {
+          begin: vi.fn(async () => undefined),
+          complete: vi.fn(async () => undefined),
+          fail: vi.fn(async () => undefined),
+          settle: vi.fn(async () => undefined),
+        },
+        mutationFence: {
+          claim: vi.fn(async () => ({ state: mutationState, fencingToken: 1 })),
+          transition: vi.fn(async ({ expected, next }) => {
+            if (mutationState !== expected) return false;
+            mutationState = next;
+            return true;
+          }),
+        },
+        options: { outputDirectory: "/tmp/unused" },
+      },
+      page: {} as never,
+      safeSession,
+      action: protectedInteraction,
+      expectedEffect: { type: "none" },
+      ordinal: 1,
+    });
+
+    expect(dispatch).toHaveBeenCalledOnce();
+    const dispatchedOptions = (
+      dispatch.mock.calls as unknown as Array<
+        [
+          {
+            plan: { steps: Array<{ id: string }> };
+            existingSafeSession?: unknown;
+          },
+        ]
+      >
+    )[0]![0];
+    const dispatchedPlan = dispatchedOptions.plan;
+    expect(dispatchedOptions).toMatchObject({ existingSafeSession: safeSession });
+    expect(dispatchedPlan.steps.map((step) => step.id)).toEqual([
+      "kernel-interaction",
+      "after-protected",
+    ]);
+    expect(outcome.functionalResult).toBe("succeeded");
+  });
+
+  it("preserves protected pre-dispatch failure reasons in the operation outcome", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "transact", correlationId });
+    const dispatch = vi.fn(async (options: { onEvent?: (event: unknown) => Promise<void> }) => {
+      await options.onEvent?.({
+        type: "privacy.operation_completed",
+        payload: {
+          result: {
+            mutation: { outcome: "not_attempted" },
+            reasonCode: "ACQUISITION_NOT_READY",
+          },
+        },
+      });
+      return reportFixture();
+    });
+    const outcome = await new ExecutionKernel(dispatch as never).execute({
+      request: {
+        sessionId: "adaptive-session",
+        operationId: "protected-failure",
+        correlationId,
+        mode: "transact",
+        plan: plan(protectedAction()),
+        policy,
+        capabilityManifestDigest: manifest.digest,
+        idempotencyKey: "protected-failure-idempotency",
+        mutationIdentity: "protected-failure-mutation",
+      },
+      capabilities: {
+        manifest,
+        journal: {
+          begin: vi.fn(async () => undefined),
+          complete: vi.fn(async () => undefined),
+          fail: vi.fn(async () => undefined),
+          settle: vi.fn(async () => undefined),
+        },
+        mutationFence: {
+          claim: vi.fn(async () => ({ state: "planned", fencingToken: 1 })),
+          transition: vi.fn(async () => true),
+        },
+        options: { outputDirectory: "/tmp/unused" },
+      },
+    });
+
+    expect(outcome.outcome).toMatchObject({
+      functionalResult: "failed",
+      mutationOutcome: "not_applied",
+      reasonCode: "ACQUISITION_NOT_READY",
+    });
   });
 
   it("binds manifest mode and correlation identity before journal admission", async () => {
@@ -216,9 +413,11 @@ describe("execution kernel admission", () => {
       ),
     };
     const fail = vi.fn(async () => undefined);
-    const settle = vi.fn(async (input: { mutation?: { mutationIdentity: string; next: string } }) => {
-      if (input.mutation) states.set(input.mutation.mutationIdentity, input.mutation.next);
-    });
+    const settle = vi.fn(
+      async (input: { mutation?: { mutationIdentity: string; next: string } }) => {
+        if (input.mutation) states.set(input.mutation.mutationIdentity, input.mutation.next);
+      },
+    );
     const capabilities = {
       manifest,
       mutationFence,
@@ -284,11 +483,9 @@ describe("execution kernel admission", () => {
         begin: vi.fn(async () => undefined),
         complete: vi.fn(async () => undefined),
         fail: vi.fn(async () => undefined),
-        settle: vi.fn(
-          async (input: { mutation?: { mutationIdentity: string; next: string } }) => {
-            if (input.mutation) states.set(input.mutation.mutationIdentity, input.mutation.next);
-          },
-        ),
+        settle: vi.fn(async (input: { mutation?: { mutationIdentity: string; next: string } }) => {
+          if (input.mutation) states.set(input.mutation.mutationIdentity, input.mutation.next);
+        }),
       },
       options: { outputDirectory: "/tmp/unused" },
     };
@@ -370,10 +567,7 @@ describe("execution kernel admission", () => {
     let mutationState = "planned";
     let operationState = "admitted";
     let settlementAttempt = 0;
-    const settle = vi.fn(async (input: {
-      state: string;
-      mutation?: { next: string };
-    }) => {
+    const settle = vi.fn(async (input: { state: string; mutation?: { next: string } }) => {
       settlementAttempt += 1;
       if (settlementAttempt === 1) throw new Error("JOURNAL_WRITE_FAILED");
       mutationState = input.mutation?.next ?? mutationState;

@@ -13,6 +13,7 @@ import {
 export type CapsuleFactory = {
   create(input: {
     storageState: Awaited<ReturnType<SafeBrowserSession["context"]["storageState"]>>;
+    sessionStorage?: { origin: string; entries: Array<[string, string]> };
     viewport?: { width: number; height: number };
     browserChannel?: string;
     prepare: (session: ProtectedBrowserSession) => Promise<void>;
@@ -22,6 +23,7 @@ export type CapsuleFactory = {
 export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
   async create(input: {
     storageState: Awaited<ReturnType<SafeBrowserSession["context"]["storageState"]>>;
+    sessionStorage?: { origin: string; entries: Array<[string, string]> };
     viewport?: { width: number; height: number };
     browserChannel?: string;
     prepare: (session: ProtectedBrowserSession) => Promise<void>;
@@ -39,6 +41,12 @@ export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
       ...(input.viewport ? { viewport: input.viewport } : {}),
     };
     const context = await browser.newContext(options);
+    if (input.sessionStorage) {
+      await context.addInitScript(({ origin, entries }) => {
+        if (window.location.origin !== origin) return;
+        for (const [key, value] of entries) window.sessionStorage.setItem(key, value);
+      }, input.sessionStorage);
+    }
     const page = await context.newPage();
     const provenance = new BrowserSessionProvenance(randomUUID(), "protected");
     const clipboardCollector = new VeilClipboardCollector(page);

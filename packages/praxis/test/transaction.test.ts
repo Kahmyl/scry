@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { praxisResultSchema, type PraxisRequest, type PraxisResolution } from "@scry/contracts";
 import { GroundingError } from "../src/grounding.js";
 import {
@@ -107,7 +107,7 @@ function adapter(
     async dispatch(_target, _request, _signal, boundary) {
       dispatches += 1;
       stage("dispatch");
-      boundary.beginMutation();
+      await boundary.beginMutation();
       return { mutationOutcome: "unknown" };
     },
     async verifyLocal() {
@@ -125,9 +125,14 @@ describe("Praxis transaction coordinator", () => {
   it("completes the lifecycle once with monotonic nonnegative timing", async () => {
     const subject = adapter();
     const events: string[] = [];
-    const result = await new PraxisTransactionCoordinator(subject, (e) => {
-      events.push(`${e.type}:${e.phase}`);
-    }).execute(request(), new AbortController().signal);
+    const beforeMutation = vi.fn(async () => undefined);
+    const result = await new PraxisTransactionCoordinator(
+      subject,
+      (e) => {
+        events.push(`${e.type}:${e.phase}`);
+      },
+      beforeMutation,
+    ).execute(request(), new AbortController().signal);
     expect(result).toMatchObject({
       status: "succeeded",
       phase: "succeeded",
@@ -136,6 +141,7 @@ describe("Praxis transaction coordinator", () => {
     });
     expect(() => praxisResultSchema.parse(result)).not.toThrow();
     expect(subject.dispatches).toBe(1);
+    expect(beforeMutation).toHaveBeenCalledOnce();
     expect(events.at(0)).toBe("praxis.transaction_started:created");
     expect(events.at(-1)).toBe("praxis.transaction_succeeded:succeeded");
     for (const value of Object.values(result.timing))
@@ -145,31 +151,37 @@ describe("Praxis transaction coordinator", () => {
     "fails safely before dispatch at %s",
     async (fail) => {
       const subject = adapter({ fail });
-      const result = await new PraxisTransactionCoordinator(subject).execute(
-        request(),
-        new AbortController().signal,
-      );
+      const beforeMutation = vi.fn(async () => undefined);
+      const result = await new PraxisTransactionCoordinator(
+        subject,
+        undefined,
+        beforeMutation,
+      ).execute(request(), new AbortController().signal);
       expect(result).toMatchObject({ status: "failed", mutationOutcome: "not_started" });
       expect(subject.dispatches).toBe(0);
+      expect(beforeMutation).not.toHaveBeenCalled();
     },
   );
   it("preserves a proven non-applied dispatch failure and never redispatches", async () => {
     const subject = adapter({ fail: "dispatch" });
-    const result = await new PraxisTransactionCoordinator(subject).execute(
-      request(),
-      new AbortController().signal,
-    );
+    const beforeMutation = vi.fn(async () => undefined);
+    const result = await new PraxisTransactionCoordinator(
+      subject,
+      undefined,
+      beforeMutation,
+    ).execute(request(), new AbortController().signal);
     expect(result).toMatchObject({
       status: "failed",
       mutationOutcome: "not_applied",
       diagnostics: { mutationBoundaryCrossed: false },
     });
     expect(subject.dispatches).toBe(1);
+    expect(beforeMutation).not.toHaveBeenCalled();
   });
   it("derives unknown only after the authoritative mutation boundary", async () => {
     const subject = adapter();
     subject.dispatch = async (_target, _request, _signal, boundary) => {
-      boundary.beginMutation();
+      await boundary.beginMutation();
       throw new Error("browser lost");
     };
     const result = await new PraxisTransactionCoordinator(subject).execute(
@@ -339,12 +351,12 @@ describe("Praxis transaction coordinator", () => {
     state.transition("failed");
     expect(() => state.transition("grounding")).toThrow(/TERMINAL_TRANSITION_REJECTED/);
   });
-  it("makes the mutation boundary monotonic and single-use", () => {
+  it("makes the mutation boundary monotonic and single-use", async () => {
     const boundary = new PraxisDispatchBoundary(true);
-    expect(() => boundary.beginMutation()).toThrow(/MUTATION_BEFORE_DISPATCH/);
+    await expect(boundary.beginMutation()).rejects.toThrow(/MUTATION_BEFORE_DISPATCH/);
     boundary.enterDispatch();
-    boundary.beginMutation();
+    await boundary.beginMutation();
     expect(boundary.mutationStarted()).toBe(true);
-    expect(() => boundary.beginMutation()).toThrow(/BOUNDARY_REPEATED/);
+    await expect(boundary.beginMutation()).rejects.toThrow(/BOUNDARY_REPEATED/);
   });
 });

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { currentActionSchema, currentPlanSchema } from "./current.js";
-import { expectedEffectSchema } from "./grounding.js";
+import { expectedEffectSchema, semanticFingerprintSchema } from "./grounding.js";
 import { executionPolicySchema } from "./policy.js";
 
 const uuid = z.string().uuid();
@@ -110,6 +110,7 @@ export const operationOutcomeSchema = z
     qualityFindings: z.array(z.record(z.string(), z.unknown())),
     durationMs: z.number().nonnegative(),
     reasonCode: z.string().trim().min(1).max(120).optional(),
+    resolvedTarget: semanticFingerprintSchema.optional(),
     nextDecisionBoundary: agentDecisionBoundarySchema.optional(),
   })
   .strict();

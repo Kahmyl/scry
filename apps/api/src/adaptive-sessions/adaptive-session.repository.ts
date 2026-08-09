@@ -251,12 +251,23 @@ export class AdaptiveSessionRepository {
       const boundary = {
         type: "mutation_reconciliation_required",
         reasonCode: "ADAPTIVE_OPERATION_INTERRUPTED",
-        safeActions: ["reconcile_operation", "resume_session"],
+        safeActions: ["get_adaptive_session", "cancel_adaptive_session"],
       };
       const updated = await q(
         `UPDATE adaptive_operations SET state='failed',mutation_outcome='unknown',
-           functional_result='inconclusive',decision_boundary=$3::jsonb,completed_at=now()
-         WHERE session_id=$1 AND operation_id=$2 AND state='running'`,
+           functional_result='inconclusive',safe_outcome=jsonb_build_object(
+             'operationId',$2,
+             'functionalResult','inconclusive',
+             'mutationOutcome','unknown',
+             'privacyResult','unverified',
+             'evidenceResult','[]'::jsonb,
+             'qualityFindings','[]'::jsonb,
+             'durationMs',0,
+             'reasonCode','ADAPTIVE_OPERATION_INTERRUPTED'
+           ),decision_boundary=$3::jsonb,completed_at=now()
+         WHERE session_id=$1 AND operation_id=$2 AND state='running'
+           AND semantic_intent->>'type' IN
+             ('click','fill','select','check','press','protectedTransaction')`,
         [sessionId, operationId, JSON.stringify(boundary)],
       );
       if (!updated.rowCount) return;
@@ -280,9 +291,12 @@ export class AdaptiveSessionRepository {
       state: string;
       dispatchBoundary: string;
       leaseHealthy: boolean;
+      mutating: boolean;
     }>(
       `SELECT operation.state,operation.dispatch_boundary AS "dispatchBoundary",
-              COALESCE(lease.lease_expires_at>now(),false) AS "leaseHealthy"
+              COALESCE(lease.lease_expires_at>now(),false) AS "leaseHealthy",
+              operation.semantic_intent->>'type' IN
+                ('click','fill','select','check','press','protectedTransaction') AS mutating
        FROM adaptive_operations operation
        LEFT JOIN adaptive_session_runtime_leases lease ON lease.session_id=operation.session_id
        WHERE operation.session_id=$1 AND operation.operation_id=$2`,
@@ -294,12 +308,13 @@ export class AdaptiveSessionRepository {
       ...row,
       requiresReconciliation:
         row.state === "running" &&
+        row.mutating &&
         !row.leaseHealthy &&
         row.dispatchBoundary !== "not_dispatched",
       canResume:
         row.state === "running" &&
         !row.leaseHealthy &&
-        row.dispatchBoundary === "not_dispatched",
+        (!row.mutating || row.dispatchBoundary === "not_dispatched"),
     };
   }
 
@@ -337,17 +352,20 @@ export class AdaptiveSessionRepository {
       const state = input.outcome.functionalResult === "succeeded" ? "completed" : "failed";
       const updated = await q(
         `UPDATE adaptive_operations SET
-           state=$3,capability_manifest_digest=$4,dispatch_boundary=$5,
-           mutation_outcome=$6,functional_result=$7,privacy_result=$8,
-           evidence_result=$9::jsonb,quality_findings=$10::jsonb,safe_outcome=$11::jsonb,
-           decision_boundary=$12::jsonb,completed_at=now()
+           state=$3,capability_manifest_digest=$4,
+           dispatch_boundary=CASE
+             WHEN dispatch_boundary='dispatching' THEN 'acknowledged'
+             ELSE dispatch_boundary
+           END,
+           mutation_outcome=$5,functional_result=$6,privacy_result=$7,
+           evidence_result=$8::jsonb,quality_findings=$9::jsonb,safe_outcome=$10::jsonb,
+           decision_boundary=$11::jsonb,completed_at=now()
          WHERE session_id=$1 AND operation_id=$2 AND state='running'`,
         [
           input.sessionId,
           input.operationId,
           state,
           input.capabilityManifestDigest,
-          input.outcome.mutationOutcome === "not_applied" ? "not_dispatched" : "acknowledged",
           input.outcome.mutationOutcome,
           input.outcome.functionalResult,
           input.outcome.privacyResult,
@@ -360,9 +378,15 @@ export class AdaptiveSessionRepository {
       if (!updated.rowCount)
         throw new ConflictException({ code: "ADAPTIVE_OPERATION_NOT_RUNNING" });
       await q(
-        `UPDATE adaptive_sessions SET decision_boundary=$2::jsonb,updated_at=now(),version=version+1
+        `UPDATE adaptive_sessions SET
+           state=CASE WHEN $3 THEN 'recovery_required' ELSE state END,
+           decision_boundary=$2::jsonb,updated_at=now(),version=version+1
          WHERE id=$1`,
-        [input.sessionId, JSON.stringify(input.decisionBoundary)],
+        [
+          input.sessionId,
+          JSON.stringify(input.decisionBoundary),
+          input.outcome.mutationOutcome === "unknown",
+        ],
       );
       await this.appendEvent(
         q,
@@ -392,39 +416,69 @@ export class AdaptiveSessionRepository {
   async markOperationFailed(sessionId: string, operationId: string, reasonCode: string) {
     await this.database.transaction(async (client) => {
       const q = bind(client);
-      const operation = await q<{ dispatchBoundary: string }>(
-        `SELECT dispatch_boundary AS "dispatchBoundary" FROM adaptive_operations
+      const operation = await q<{ dispatchBoundary: string; actionType: string }>(
+        `SELECT dispatch_boundary AS "dispatchBoundary",
+                semantic_intent->>'type' AS "actionType"
+         FROM adaptive_operations
          WHERE session_id=$1 AND operation_id=$2 AND state='running' FOR UPDATE`,
         [sessionId, operationId],
       );
       if (!operation.rowCount) return;
-      const crossedDispatch = operation.rows[0]!.dispatchBoundary !== "not_dispatched";
+      const mutating = [
+        "click",
+        "fill",
+        "select",
+        "check",
+        "press",
+        "protectedTransaction",
+      ].includes(operation.rows[0]!.actionType);
+      const crossedDispatch = mutating && operation.rows[0]!.dispatchBoundary !== "not_dispatched";
+      const policyRefused = reasonCode === "EXECUTION_MODE_POLICY_DENIED";
       const boundary = crossedDispatch
         ? {
             type: "mutation_reconciliation_required",
             reasonCode: "ADAPTIVE_OPERATION_OUTCOME_UNKNOWN",
-            safeActions: ["reconcile_operation", "resume_session"],
+            safeActions: ["get_adaptive_session", "cancel_adaptive_session"],
           }
         : {
-            type: "environment_unavailable",
+            type: policyRefused ? "policy_refused" : "environment_unavailable",
             reasonCode,
-            safeActions: ["resume_session"],
+            safeActions: ["get_adaptive_session", "advance_adaptive_session"],
           };
       const failed = await q(
         `UPDATE adaptive_operations SET state='failed',functional_result='failed',
            mutation_outcome=CASE WHEN $4 THEN 'unknown' ELSE 'not_applied' END,
-           completed_at=now(),decision_boundary=$3::jsonb
+           safe_outcome=jsonb_build_object(
+             'operationId',$2,
+             'functionalResult','failed',
+             'mutationOutcome',CASE WHEN $4 THEN 'unknown' ELSE 'not_applied' END,
+             'privacyResult','unverified',
+             'evidenceResult','[]'::jsonb,
+             'qualityFindings','[]'::jsonb,
+             'durationMs',0,
+             'reasonCode',$5::text
+           ),completed_at=now(),decision_boundary=$3::jsonb
          WHERE session_id=$1 AND operation_id=$2 AND state='running'`,
-        [sessionId, operationId, JSON.stringify(boundary), crossedDispatch],
+        [sessionId, operationId, JSON.stringify(boundary), crossedDispatch, reasonCode],
       );
       if (failed.rowCount) {
         await q(
-          `UPDATE adaptive_sessions SET state='recovery_required',version=version+1,
-             decision_boundary=$2::jsonb,updated_at=now() WHERE id=$1 AND state='active'`,
-          [sessionId, JSON.stringify(boundary)],
+          `UPDATE adaptive_sessions SET
+             state=CASE WHEN $3 THEN 'recovery_required' ELSE state END,
+             version=version+1,decision_boundary=$2::jsonb,updated_at=now()
+           WHERE id=$1 AND state='active'`,
+          [sessionId, JSON.stringify(boundary), crossedDispatch],
         );
         await this.appendEvent(q, sessionId, "operation_failed", { operationId, reasonCode });
-        await this.appendEvent(q, sessionId, "recovery_required", { reasonCode });
+        if (crossedDispatch) {
+          await this.appendEvent(q, sessionId, "recovery_required", { reasonCode });
+        } else {
+          await this.appendEvent(q, sessionId, "decision_boundary_reached", {
+            operationId,
+            type: boundary.type,
+            reasonCode,
+          });
+        }
       }
     });
   }
@@ -469,7 +523,7 @@ export class AdaptiveSessionRepository {
       .query(
         `UPDATE adaptive_session_runtime_leases SET
            lease_expires_at=now()+($4::text || ' milliseconds')::interval,heartbeat_at=now()
-         WHERE session_id=$1 AND owner_id=$2 AND fencing_token=$3 AND lease_expires_at>now()
+         WHERE session_id=$1 AND owner_id=$2 AND fencing_token=$3
          RETURNING fencing_token`,
         [input.sessionId, input.ownerId, input.fencingToken, input.leaseDurationMs],
       )

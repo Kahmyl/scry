@@ -32,6 +32,7 @@ export type PraxisConsumerContext = {
   timeoutMs: number;
   privacy?: PraxisRequest["privacy"];
   emit?: (event: PraxisLifecycleEvent) => void | Promise<void>;
+  beforeMutation?: () => void | Promise<void>;
   record?: (result: PraxisResult) => void | Promise<void>;
   onGroundingDiagnostic?: (
     diagnostic: import("./grounding.js").GroundingDiagnostic & {
@@ -54,10 +55,7 @@ export type PraxisConsumerInput = {
 
 export async function executePraxisConsumer(input: PraxisConsumerInput): Promise<PraxisResult> {
   if (input.context.onGroundingDiagnostic) {
-    registerGroundingObserver(
-      input.page,
-      input.context.onGroundingDiagnostic,
-    );
+    registerGroundingObserver(input.page, input.context.onGroundingDiagnostic);
   }
 
   const request = authorizePraxisRequest(input.page, await buildPraxisRequest(input));
@@ -65,6 +63,7 @@ export async function executePraxisConsumer(input: PraxisConsumerInput): Promise
     const result = await new PraxisTransactionCoordinator(
       new PraxisAdapter(input.page, input.resolveInput),
       input.context.emit,
+      input.context.beforeMutation,
     ).execute(request, input.signal);
     await input.context.record?.(result);
     return result;
@@ -76,13 +75,9 @@ export async function executePraxisConsumer(input: PraxisConsumerInput): Promise
 export async function inspectPraxisCandidates(
   input: Pick<PraxisConsumerInput, "page" | "intent" | "context">,
 ) {
-  return resolveTargetCandidates(
-    input.page,
-    input.intent,
-    {
-      allowedOrigins: input.context.allowedOrigins,
-    },
-  );
+  return resolveTargetCandidates(input.page, input.intent, {
+    allowedOrigins: input.context.allowedOrigins,
+  });
 }
 
 export async function requirePraxisSuccess(input: PraxisConsumerInput) {

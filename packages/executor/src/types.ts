@@ -43,6 +43,8 @@ export type ExecuteOptions = {
   headless?: boolean;
   viewport?: { width: number; height: number };
   browserStorageState?: BrowserStorageState;
+  /** Internal authoring boundary: execute against the already-owned safe session. */
+  existingSafeSession?: import("./browser-session.js").SafeBrowserSession;
   captureBrowserState?: (state: BrowserStorageState) => void | Promise<void>;
   secretResolver?: SecretResolver;
   secretCapture?: SecretCapture;
@@ -104,6 +106,8 @@ export type ExecuteOptions = {
   signal?: AbortSignal;
   onEvent?: (event: RunEvent) => void | Promise<void>;
   onPraxisResult?: (result: import("@scry/contracts").PraxisResult) => void | Promise<void>;
+  /** Durable fence hook invoked after target resolution, immediately before browser dispatch. */
+  onMutationDispatch?: () => void | Promise<void>;
   readinessTimeoutMultiplier?: number;
   veilAdmissionKey?: string;
   /** Immutable, run-bound Veil authority snapshot. Production workers must provide it. */

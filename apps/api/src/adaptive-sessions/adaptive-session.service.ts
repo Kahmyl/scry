@@ -108,7 +108,7 @@ export class AdaptiveSessionService {
           throw new ConflictException({
             code: "ADAPTIVE_OPERATION_RECONCILIATION_REQUIRED",
             mutationOutcome: "unknown",
-            safeActions: ["reconcile_operation", "resume_session"],
+            safeActions: ["get_adaptive_session", "cancel_adaptive_session"],
           });
         }
       }
@@ -127,12 +127,12 @@ export class AdaptiveSessionService {
       };
     } catch (error) {
       await Promise.resolve(this.runner.close(sessionId)).catch(() => undefined);
-      await this.sessions.markOperationFailed(
-        sessionId,
-        input.operationId,
-        errorCode(error, "ADAPTIVE_SESSION_EXECUTION_FAILED"),
-      );
-      throw error;
+      const code = errorCode(error, "ADAPTIVE_SESSION_EXECUTION_FAILED");
+      await this.sessions.markOperationFailed(sessionId, input.operationId, code);
+      throw new ConflictException({
+        code,
+        safeActions: ["get_adaptive_session", "advance_adaptive_session"],
+      });
     }
   }
 
@@ -185,6 +185,10 @@ function workspaceId(principal: Principal) {
 }
 
 function errorCode(error: unknown, fallback: string) {
+  if (typeof error === "object" && error && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string" && /^[A-Z0-9_]+$/.test(code)) return code;
+  }
   if (typeof error === "object" && error && "response" in error) {
     const response = (error as { response?: unknown }).response;
     if (typeof response === "object" && response && "code" in response) {
@@ -210,6 +214,7 @@ function compactOperationDelta(result: Record<string, unknown>) {
           mutationOutcome: outcome.mutationOutcome,
           privacyResult: outcome.privacyResult,
           ...(outcome.reasonCode ? { reasonCode: outcome.reasonCode } : {}),
+          ...(outcome.resolvedTarget ? { resolvedTarget: outcome.resolvedTarget } : {}),
           qualityFindingCount: Array.isArray(outcome.qualityFindings)
             ? outcome.qualityFindings.length
             : 0,

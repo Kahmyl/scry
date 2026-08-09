@@ -71,13 +71,49 @@ describe("AdaptiveSessionService", () => {
       runner as never,
       { assertAcceptingWork: vi.fn() } as never,
     );
-    await expect(service.advance(principal, randomUUID(), operation())).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(service.advance(principal, randomUUID(), operation())).rejects.toMatchObject({
+      response: {
+        code: "ADAPTIVE_SESSION_RUNTIME_NOT_BOUND",
+        safeActions: ["get_adaptive_session", "advance_adaptive_session"],
+      },
+    });
     expect(repository.markOperationFailed).toHaveBeenCalledWith(
       expect.any(String),
       "inspect",
       "ADAPTIVE_SESSION_RUNTIME_NOT_BOUND",
+    );
+  });
+
+  it("preserves a kernel admission code instead of collapsing it to an internal error", async () => {
+    const repository = {
+      beginOperation: vi.fn().mockResolvedValue({ replayed: false }),
+      settleOperation: vi.fn(),
+      markOperationFailed: vi.fn(),
+    };
+    const runner = {
+      execute: vi.fn().mockRejectedValue(
+        Object.assign(new Error("EXECUTION_MODE_POLICY_DENIED"), {
+          code: "EXECUTION_MODE_POLICY_DENIED",
+        }),
+      ),
+      close: vi.fn(),
+    };
+    const service = new AdaptiveSessionService(
+      repository as never,
+      runner as never,
+      { assertAcceptingWork: vi.fn() } as never,
+    );
+
+    await expect(service.advance(principal, randomUUID(), operation())).rejects.toMatchObject({
+      response: {
+        code: "EXECUTION_MODE_POLICY_DENIED",
+        safeActions: ["get_adaptive_session", "advance_adaptive_session"],
+      },
+    });
+    expect(repository.markOperationFailed).toHaveBeenCalledWith(
+      expect.any(String),
+      "inspect",
+      "EXECUTION_MODE_POLICY_DENIED",
     );
   });
 

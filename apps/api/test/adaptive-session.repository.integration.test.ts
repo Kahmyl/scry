@@ -167,6 +167,83 @@ integration("adaptive session repository integration", () => {
     ).rejects.toMatchObject({ response: { code: "ADAPTIVE_SESSION_TRANSITION_INVALID" } });
   });
 
+  it("derives acknowledgement only from the durable mutation fence", async () => {
+    const created = await repository.create(workspaceId, startInput("dispatch-truth-start"));
+    sessionIds.push(created.id);
+    const ownerId = randomUUID();
+    const lease = await repository.claimRuntimeLease({
+      sessionId: created.id,
+      ownerId,
+      leaseDurationMs: 30_000,
+    });
+
+    await repository.beginOperation(workspaceId, created.id, mutatingOperation("pre-dispatch"));
+    await repository.settleOperation({
+      sessionId: created.id,
+      operationId: "pre-dispatch",
+      capabilityManifestDigest: "c".repeat(64),
+      outcome: {
+        operationId: "pre-dispatch",
+        functionalResult: "failed",
+        mutationOutcome: "not_applied",
+        privacyResult: "unverified",
+        evidenceResult: [],
+        qualityFindings: [],
+        durationMs: 1,
+        reasonCode: "PRAXIS_REQUIRED_CHANNEL_FORBIDDEN",
+      },
+      decisionBoundary: {
+        type: "environment_unavailable",
+        reasonCode: "PRAXIS_REQUIRED_CHANNEL_FORBIDDEN",
+        safeActions: ["advance_session"],
+      },
+    });
+
+    await repository.beginOperation(workspaceId, created.id, mutatingOperation("dispatched"));
+    await repository.markOperationDispatching({
+      sessionId: created.id,
+      operationId: "dispatched",
+      ownerId,
+      fencingToken: lease.fencingToken,
+    });
+    await repository.settleOperation({
+      sessionId: created.id,
+      operationId: "dispatched",
+      capabilityManifestDigest: "d".repeat(64),
+      outcome: {
+        operationId: "dispatched",
+        functionalResult: "succeeded",
+        mutationOutcome: "applied",
+        privacyResult: "unverified",
+        evidenceResult: [],
+        qualityFindings: [],
+        durationMs: 1,
+      },
+      decisionBoundary: {
+        type: "objective_completed",
+        reasonCode: "OPERATION_COMPLETED",
+        safeActions: [],
+      },
+    });
+
+    const session = await repository.get(workspaceId, created.id);
+    expect(session).toMatchObject({ state: "active" });
+    expect(session.operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operationId: "pre-dispatch",
+          dispatchBoundary: "not_dispatched",
+          outcome: expect.objectContaining({ mutationOutcome: "not_applied" }),
+        }),
+        expect.objectContaining({
+          operationId: "dispatched",
+          dispatchBoundary: "acknowledged",
+          outcome: expect.objectContaining({ mutationOutcome: "applied" }),
+        }),
+      ]),
+    );
+  });
+
   it("fences a stale runtime owner and resumes with a new owner", async () => {
     const created = await repository.create(workspaceId, startInput("lease-restart-start"));
     sessionIds.push(created.id);
@@ -189,7 +266,20 @@ integration("adaptive session repository integration", () => {
        WHERE session_id=$1`,
       [created.id],
     );
-    const replacement = await repository.claimRuntimeLease({
+    await expect(
+      repository.heartbeatRuntimeLease({
+        sessionId: created.id,
+        ownerId: firstOwner,
+        fencingToken: first.fencingToken,
+        leaseDurationMs: 30_000,
+      }),
+    ).resolves.toBeUndefined();
+    await database.query(
+      `UPDATE adaptive_session_runtime_leases SET lease_expires_at=now()-interval '1 second'
+       WHERE session_id=$1`,
+      [created.id],
+    );
+    let replacement = await repository.claimRuntimeLease({
       sessionId: created.id,
       ownerId: secondOwner,
       leaseDurationMs: 30_000,
@@ -231,21 +321,67 @@ integration("adaptive session repository integration", () => {
     });
     expect(await repository.replayDisposition(created.id, "concurrent-0")).toMatchObject({
       leaseHealthy: true,
+      mutating: false,
       dispatchBoundary: "dispatching",
       requiresReconciliation: false,
       canResume: false,
     });
+    await database.query(
+      `UPDATE adaptive_session_runtime_leases SET lease_expires_at=now()-interval '1 second'
+       WHERE session_id=$1`,
+      [created.id],
+    );
+    expect(await repository.replayDisposition(created.id, "concurrent-0")).toMatchObject({
+      leaseHealthy: false,
+      mutating: false,
+      requiresReconciliation: false,
+      canResume: true,
+    });
+    replacement = await repository.claimRuntimeLease({
+      sessionId: created.id,
+      ownerId: secondOwner,
+      leaseDurationMs: 30_000,
+    });
     await repository.markOperationFailed(created.id, "concurrent-0", "BROWSER_DISCONNECTED");
+    const readOnlyFailure = await repository.get(workspaceId, created.id);
+    expect(readOnlyFailure).toMatchObject({ state: "active" });
+    expect(readOnlyFailure.operations[0]).toMatchObject({
+      state: "failed",
+      dispatchBoundary: "dispatching",
+      decisionBoundary: {
+        type: "environment_unavailable",
+        reasonCode: "BROWSER_DISCONNECTED",
+      },
+      outcome: {
+        functionalResult: "failed",
+        mutationOutcome: "not_applied",
+        reasonCode: "BROWSER_DISCONNECTED",
+      },
+    });
+
+    await repository.beginOperation(workspaceId, created.id, mutatingOperation("mutation-0"));
+    await repository.markOperationDispatching({
+      sessionId: created.id,
+      operationId: "mutation-0",
+      ownerId: secondOwner,
+      fencingToken: replacement.fencingToken,
+    });
+    await repository.markOperationFailed(created.id, "mutation-0", "BROWSER_DISCONNECTED");
     const recovered = await repository.get(workspaceId, created.id);
-    expect(recovered.operations[0]).toMatchObject({
+    expect(recovered).toMatchObject({ state: "recovery_required" });
+    expect(recovered.operations[8]).toMatchObject({
       state: "failed",
       dispatchBoundary: "dispatching",
       decisionBoundary: {
         type: "mutation_reconciliation_required",
         reasonCode: "ADAPTIVE_OPERATION_OUTCOME_UNKNOWN",
       },
+      outcome: {
+        functionalResult: "failed",
+        mutationOutcome: "unknown",
+        reasonCode: "BROWSER_DISCONNECTED",
+      },
     });
-    expect(recovered.operations[0]?.outcome).toBeNull();
   });
 
   function startInput(idempotencyKey: string) {
@@ -272,6 +408,17 @@ integration("adaptive session repository integration", () => {
         url: "https://example.test/details",
         match: "exact" as const,
       },
+      mode: "rehearse" as const,
+      protectedInputReferences: [],
+    };
+  }
+
+  function mutatingOperation(operationId: string) {
+    return {
+      operationId,
+      idempotencyKey: `idempotency-${operationId}`,
+      action: { type: "press" as const, key: "Enter" as const, timeoutMs: 10_000 },
+      expectedEffect: { type: "none" as const },
       mode: "rehearse" as const,
       protectedInputReferences: [],
     };

@@ -14,6 +14,7 @@ import {
 import { SecretRedactor } from "@scry/policy";
 import { armExpectedEffect, verifyExpectedEffect } from "@scry/praxis";
 import type { Page } from "playwright";
+import type { SafeBrowserSession } from "./browser-session.js";
 
 import { executeAction } from "./action-runtime.js";
 import { executePlan } from "./executor.js";
@@ -176,7 +177,7 @@ export class ExecutionKernel {
     });
     const startedAt = performance.now();
     const praxisResults: import("@scry/contracts").PraxisResult[] = [];
-    const protectedMutationOutcomes: Array<"not_applied" | "applied" | "unknown"> = [];
+    const protectedResults: ProtectedKernelResult[] = [];
     const originalPraxisResult = input.capabilities.options.onPraxisResult;
     const originalEvent = input.capabilities.options.onEvent;
     let fence: ActiveMutationFence | undefined;
@@ -191,8 +192,8 @@ export class ExecutionKernel {
           await originalPraxisResult?.(result);
         },
         onEvent: async (event) => {
-          const protectedOutcome = protectedMutationOutcome(event);
-          if (protectedOutcome) protectedMutationOutcomes.push(protectedOutcome);
+          const protectedResult = protectedKernelResult(event);
+          if (protectedResult) protectedResults.push(protectedResult);
           await originalEvent?.(event);
         },
       });
@@ -200,7 +201,7 @@ export class ExecutionKernel {
         request,
         report,
         praxisResults,
-        protectedMutationOutcomes,
+        protectedResults,
         startedAt,
       );
       await settleOperation(input.capabilities.journal, {
@@ -338,8 +339,10 @@ export class ExecutionKernel {
     >;
     capabilities: RuntimeExecutionCapabilities;
     page: Page;
+    safeSession?: SafeBrowserSession;
     action: CurrentAction;
     expectedEffect?: import("@scry/contracts").ExpectedEffect;
+    resolveEffectPage?: () => Promise<Page | undefined>;
     ordinal: number;
   }): Promise<OperationOutcome> {
     const syntheticRequest = executionRequestSchema.parse({
@@ -354,6 +357,22 @@ export class ExecutionKernel {
           }
         : {}),
     });
+    if (input.action.type === "protectedTransaction") {
+      return (
+        await this.execute({
+          request: syntheticRequest,
+          capabilities: input.safeSession
+            ? {
+                ...input.capabilities,
+                options: {
+                  ...input.capabilities.options,
+                  existingSafeSession: input.safeSession,
+                },
+              }
+            : input.capabilities,
+        })
+      ).outcome;
+    }
     const request = this.admit(syntheticRequest, input.capabilities);
     await input.capabilities.journal.begin({
       request,
@@ -382,12 +401,13 @@ export class ExecutionKernel {
       });
       if (outcome.functionalResult === "succeeded") {
         try {
+          const effectPage = (await input.resolveEffectPage?.()) ?? input.page;
           await verifyExpectedEffect(
-            input.page,
+            effectPage,
             expectedEffect,
             beforeUrl,
             ("timeoutMs" in input.action ? input.action.timeoutMs : undefined) ?? 10_000,
-            armedEffect,
+            effectPage === input.page ? armedEffect : undefined,
           );
         } catch (error) {
           outcome = operationOutcomeSchema.parse({
@@ -526,7 +546,6 @@ export class ExecutionKernel {
     }
     return { capabilities, request, fencingToken: claim.fencingToken };
   }
-
 }
 
 export async function executeInteractionCompatibility(input: {
@@ -548,10 +567,6 @@ export async function executeInteractionCompatibility(input: {
         ...input.options,
         plan: singleActionPlan(input.action, input.policy),
         policy: input.policy,
-        onPraxisResult: (result) => {
-          praxisResults.push(result);
-          return input.options.onPraxisResult?.(result);
-        },
       },
       input.options.signal ?? new AbortController().signal,
       new SecretRedactor(),
@@ -567,15 +582,30 @@ export async function executeInteractionCompatibility(input: {
         allowedOrigins: input.policy.allowedOrigins,
         timeoutMs:
           "timeoutMs" in input.action && input.action.timeoutMs ? input.action.timeoutMs : 30_000,
+        ...(input.options.onMutationDispatch
+          ? { beforeMutation: input.options.onMutationDispatch }
+          : {}),
+        record: async (result) => {
+          praxisResults.push(result);
+          await input.options.onPraxisResult?.(result);
+        },
       },
     );
     return operationOutcomeSchema.parse({
       operationId: input.operationId,
       functionalResult: "succeeded",
-      mutationOutcome: praxisMutationOutcome(praxisResults),
-      privacyResult: "unverified",
+      mutationOutcome:
+        isMutatingAction(input.action) && praxisResults.length === 0
+          ? "applied"
+          : praxisMutationOutcome(praxisResults),
+      privacyResult:
+        input.action.type === "fill" &&
+        Boolean(input.action.secretRef || input.action.capturedSecretRef)
+          ? "verified"
+          : "unverified",
       evidenceResult: [],
       qualityFindings: praxisResults.flatMap((result) => result.qualityFindings),
+      ...resolvedTargetOutcome(praxisResults),
       durationMs: performance.now() - startedAt,
     });
   } catch (error) {
@@ -587,12 +617,14 @@ export async function executeInteractionCompatibility(input: {
       mutationOutcome:
         observedMutation === "not_applied" &&
         isMutatingAction(input.action) &&
+        praxisResults.length === 0 &&
         !isProvenPreDispatchFailure(reasonCode)
           ? "unknown"
           : observedMutation,
       privacyResult: privacyOutcomeFromError(reasonCode),
       evidenceResult: evidenceOutcomeFromError(reasonCode),
       qualityFindings: praxisResults.flatMap((result) => result.qualityFindings),
+      ...resolvedTargetOutcome(praxisResults),
       durationMs: performance.now() - startedAt,
       reasonCode,
     });
@@ -621,7 +653,7 @@ export function createExecutionCapabilityManifest(input: {
 
 function modeDenied(mode: ExecutionMode, actions: CurrentAction[]): boolean {
   if (mode === "run" || mode === "certify" || mode === "transact") return false;
-  if (mode === "observe") return actions.some((action) => action.type !== "navigate");
+  if (mode === "observe") return actions.some(isMutatingAction);
   return actions.some((action) => action.type === "protectedTransaction");
 }
 
@@ -636,12 +668,48 @@ function singleActionPlan(
   policy: ExecutionRequest["policy"],
   semanticContext?: string,
 ) {
+  const continuationSteps =
+    action.type === "protectedTransaction"
+      ? action.continuation.strategies.flatMap((strategy) => {
+          if (!("continueAtStepId" in strategy)) return [];
+          const targetAssertion = strategy.assertions.find((assertion) => "target" in assertion);
+          const continuationTarget =
+            targetAssertion && "target" in targetAssertion ? targetAssertion.target : undefined;
+          return [
+            {
+              id: strategy.continueAtStepId,
+              title: "Resume after protected interaction",
+              action: continuationTarget
+                ? {
+                    type: "waitFor" as const,
+                    target: continuationTarget,
+                    state: "visible" as const,
+                    timeoutMs: targetAssertion?.timeoutMs,
+                  }
+                : {
+                    type: "navigate" as const,
+                    url: strategy.reentryUrl,
+                    timeoutMs: 10_000,
+                  },
+              assertions: [],
+              onFailure: "stop" as const,
+              evidence: [],
+              captureIntent: "transient" as const,
+              transientJustification: "Protected continuation contract boundary.",
+            },
+          ];
+        })
+      : [];
   return {
     name: "Kernel interactive operation",
     objective: semanticContext ?? "Execute one bounded semantic interaction",
     preconditions: [],
     allowedOrigins: policy.allowedOrigins,
-    budgets: { maxActions: 1, maxDurationMs: policy.maxDurationMs ?? 30_000, maxNavigations: 1 },
+    budgets: {
+      maxActions: 1 + continuationSteps.length,
+      maxDurationMs: policy.maxDurationMs ?? 30_000,
+      maxNavigations: 1 + continuationSteps.length,
+    },
     checkpoints: [],
     steps: [
       {
@@ -654,6 +722,7 @@ function singleActionPlan(
         captureIntent: "transient" as const,
         transientJustification: "Internal kernel operation contract.",
       },
+      ...continuationSteps,
     ],
   };
 }
@@ -662,14 +731,21 @@ function outcomeFromReport(
   request: ExecutionRequest,
   report: ExecutionReport,
   praxisResults: import("@scry/contracts").PraxisResult[],
-  protectedMutationOutcomes: Array<"not_applied" | "applied" | "unknown">,
+  protectedResults: ProtectedKernelResult[],
   startedAt: number,
 ): OperationOutcome {
-  const observedMutation = combinedMutationOutcome(praxisResults, protectedMutationOutcomes);
+  const observedMutation = combinedMutationOutcome(
+    praxisResults,
+    protectedResults.map((result) => result.mutationOutcome),
+  );
+  const protectedReasonCode = [...protectedResults]
+    .reverse()
+    .find((result) => result.reasonCode)?.reasonCode;
   const mutationOutcome =
     report.state !== "passed" &&
     observedMutation === "not_applied" &&
     praxisResults.length === 0 &&
+    protectedResults.length === 0 &&
     request.plan.steps.some((step) => isMutatingAction(step.action))
       ? "unknown"
       : observedMutation;
@@ -685,8 +761,13 @@ function outcomeFromReport(
     privacyResult: privacyOutcomeFromReport(report),
     evidenceResult: evidenceOutcomeFromReport(report),
     qualityFindings: praxisResults.flatMap((result) => result.qualityFindings),
+    ...resolvedTargetOutcome(praxisResults),
     durationMs: performance.now() - startedAt,
-    ...(report.error ? { reasonCode: safeCode(report.error) } : {}),
+    ...(report.error
+      ? { reasonCode: safeCode(report.error) }
+      : protectedReasonCode
+        ? { reasonCode: protectedReasonCode }
+        : {}),
   });
 }
 
@@ -700,18 +781,46 @@ function combinedMutationOutcome(
   return "not_applied";
 }
 
-function protectedMutationOutcome(
+function resolvedTargetOutcome(results: import("@scry/contracts").PraxisResult[]) {
+  const resolved = [...results].reverse().find((result) => result.status === "succeeded");
+  const target = resolved?.status === "succeeded" ? resolved.resolution.target : undefined;
+  if (!target) return {};
+  return {
+    resolvedTarget: {
+      version: 2 as const,
+      digest: target.fingerprint,
+      concept: target.concept,
+      scopeKind: target.scopeKind,
+      capabilityDigest: target.capabilityDigest,
+      structuralPath: [],
+    },
+  };
+}
+
+type ProtectedKernelResult = {
+  mutationOutcome: "not_applied" | "applied" | "unknown";
+  reasonCode?: string;
+};
+
+function protectedKernelResult(
   event: import("@scry/contracts").RunEvent,
-): "not_applied" | "applied" | "unknown" | undefined {
+): ProtectedKernelResult | undefined {
   if (event.type !== "privacy.operation_completed") return undefined;
   const result = event.payload.result;
   if (!result || typeof result !== "object") return undefined;
   const mutation = (result as Record<string, unknown>).mutation;
   if (!mutation || typeof mutation !== "object") return undefined;
   const outcome = (mutation as Record<string, unknown>).outcome;
-  if (outcome === "unknown") return "unknown";
-  if (outcome === "confirmed_succeeded") return "applied";
-  if (outcome === "not_attempted") return "not_applied";
+  const reasonCode = (result as Record<string, unknown>).reasonCode;
+  const safeReason =
+    typeof reasonCode === "string" && /^[A-Z][A-Z0-9_]*$/.test(reasonCode) ? reasonCode : undefined;
+  const withReason = (mutationOutcome: ProtectedKernelResult["mutationOutcome"]) => ({
+    mutationOutcome,
+    ...(safeReason ? { reasonCode: safeReason } : {}),
+  });
+  if (outcome === "unknown") return withReason("unknown");
+  if (outcome === "confirmed_succeeded") return withReason("applied");
+  if (outcome === "not_attempted") return withReason("not_applied");
   return undefined;
 }
 
@@ -735,6 +844,7 @@ function failureOutcome(
     privacyResult: privacyOutcomeFromError(reasonCode),
     evidenceResult: evidenceOutcomeFromError(reasonCode),
     qualityFindings: praxisResults.flatMap((result) => result.qualityFindings),
+    ...resolvedTargetOutcome(praxisResults),
     durationMs: performance.now() - startedAt,
     reasonCode,
   });
@@ -845,6 +955,9 @@ function isProvenPreDispatchFailure(reasonCode: string) {
   return [
     "PRAXIS_TARGET_CHANGED_BEFORE_ACTION",
     "PRAXIS_TARGET_NOT_FOUND",
+    "PRAXIS_INSUFFICIENT_EVIDENCE",
+    "PROTECTED_INPUT_REFERENCE_UNAVAILABLE",
+    "PROTECTED_INPUT_RESOLVER_UNAVAILABLE",
     "EXECUTION_MODE_POLICY_DENIED",
     "EXECUTION_CAPABILITY_INCOMPLETE",
   ].includes(reasonCode);

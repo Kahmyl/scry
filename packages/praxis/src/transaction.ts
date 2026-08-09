@@ -68,15 +68,19 @@ export type PraxisAdapterDispatch<TTarget = unknown> = {
 export class PraxisDispatchBoundary {
   #dispatchEntered = false;
   #mutationStarted = false;
-  constructor(private readonly mutating: boolean) {}
+  constructor(
+    private readonly mutating: boolean,
+    private readonly beforeMutation?: () => void | Promise<void>,
+  ) {}
   enterDispatch() {
     if (this.#dispatchEntered) throw new Error("PRAXIS_DISPATCH_BOUNDARY_REENTERED");
     this.#dispatchEntered = true;
   }
-  beginMutation() {
+  async beginMutation() {
     if (!this.#dispatchEntered) throw new Error("PRAXIS_MUTATION_BEFORE_DISPATCH");
     if (!this.mutating) throw new Error("PRAXIS_READ_ONLY_MUTATION_REJECTED");
     if (this.#mutationStarted) throw new Error("PRAXIS_MUTATION_BOUNDARY_REPEATED");
+    await this.beforeMutation?.();
     this.#mutationStarted = true;
   }
   dispatchEntered() {
@@ -153,6 +157,7 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
   constructor(
     private readonly adapter: PraxisTransactionAdapter<TTarget>,
     private readonly emit?: (event: PraxisLifecycleEvent) => void | Promise<void>,
+    private readonly beforeMutation?: () => void | Promise<void>,
   ) {}
 
   async execute(request: PraxisRequest, signal: AbortSignal): Promise<PraxisResult> {
@@ -168,7 +173,7 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
     const durations = new Map<PraxisPhase, number>();
     let target: TTarget | undefined;
     let resolution: PraxisResolution | undefined;
-    const dispatchBoundary = new PraxisDispatchBoundary(mutates(request));
+    const dispatchBoundary = new PraxisDispatchBoundary(mutates(request), this.beforeMutation);
     let mutationOutcome: PraxisMutationOutcome = "not_started";
     let verification: PraxisVerification = {
       local: "unknown",

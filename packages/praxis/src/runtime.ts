@@ -108,11 +108,7 @@ export class PraxisGroundingEngine {
     validatePraxisVeilGrants(request);
     checkAbort(signal);
 
-    await validateCandidateResume(
-      this.page,
-      token,
-      request.intent,
-    );
+    await validateCandidateResume(this.page, token, request.intent);
 
     return this.resolve(request, signal);
   }
@@ -299,7 +295,7 @@ export class PraxisDispatcher {
             });
         }
         checkAbort(signal);
-        if (mutating) boundary.beginMutation();
+        if (mutating) await boundary.beginMutation();
         output = await dispatchOperation(
           this.page,
           locator,
@@ -311,7 +307,7 @@ export class PraxisDispatcher {
         );
       });
       return {
-        mutationOutcome: mutating ? "unknown" : "not_applied",
+        mutationOutcome: mutating ? "applied" : "not_applied",
         ...(output ? { output } : {}),
       };
     } catch (error) {

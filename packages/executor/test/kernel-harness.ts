@@ -20,6 +20,7 @@ export function kernelInteractionExecutor(input: {
     ordinal: number;
     operationId: string;
     expectedEffect?: ExpectedEffect;
+    resolveEffectPage?: () => Promise<Page | undefined>;
     objectiveDelta?: string;
     signal?: AbortSignal;
   }) => {

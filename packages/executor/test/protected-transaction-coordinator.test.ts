@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { chromium, type Page } from "playwright";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Assertion, InteractionTargetIntent, ProtectedTransaction } from "@scry/contracts";
 import { SecretRedactor } from "@scry/policy";
 import { BrowserSessionProvenance } from "../src/browser-session.js";
@@ -197,7 +197,10 @@ async function verify(page: Page, assertions: Assertion[]) {
 }
 
 describe("protected transaction capsule", () => {
-  async function runClipboardCapsule(mode: "retry" | "persistent") {
+  async function runClipboardCapsule(
+    mode: "retry" | "persistent",
+    rejectIndexedDbExport = false,
+  ) {
     const secret = `capsule-clipboard-${mode}-${randomUUID()}`;
     const server = createServer((_request, response) => {
       response.setHeader("content-type", "text/html");
@@ -215,6 +218,13 @@ describe("protected transaction capsule", () => {
       channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
     });
     const context = await browser.newContext();
+    if (rejectIndexedDbExport) {
+      const storageState = context.storageState.bind(context);
+      vi.spyOn(context, "storageState").mockImplementation(async (options) => {
+        if (options?.indexedDB) throw new Error("synthetic IndexedDB export failure");
+        return storageState(options);
+      });
+    }
     await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
     const page = await context.newPage();
     await page.goto(origin);
@@ -309,6 +319,16 @@ describe("protected transaction capsule", () => {
       expect(run.gate.state()).toBe("normal");
       await run.page.goto(new URL(run.result.safeSession.page.url()).origin).catch(() => undefined);
       expect(await run.page.evaluate(() => navigator.clipboard.readText())).toBe("");
+    } finally {
+      await run.context.close();
+      await run.result.safeSession.browser.close();
+    }
+  }, 20_000);
+
+  it("falls back to portable browser state when IndexedDB export is unavailable", async () => {
+    const run = await runClipboardCapsule("retry", true);
+    try {
+      expect(run.result.result.status).toBe("completed");
     } finally {
       await run.context.close();
       await run.result.safeSession.browser.close();
