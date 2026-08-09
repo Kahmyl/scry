@@ -15,6 +15,9 @@ const ids = {
   environmentId: "33333333-3333-4333-8333-333333333333",
   emailCredentialId: "44444444-4444-4444-8444-444444444444",
   passwordCredentialId: "55555555-5555-4555-8555-555555555555",
+  missionId: "66666666-6666-4666-8666-666666666666",
+  objectiveId: "77777777-7777-4777-8777-777777777777",
+  flowDraftId: "88888888-8888-4888-8888-888888888888",
 };
 
 describe("self-contained adaptive core campaign specs", () => {
@@ -22,17 +25,20 @@ describe("self-contained adaptive core campaign specs", () => {
     const spec = generatedCoreCampaignCalls({ ...ids, milestone: "M0" });
 
     expect(spec.calls[0]).toMatchObject({
-      name: "start_adaptive_session",
+      name: "start_flow_authoring",
       arguments: {
         projectId: ids.projectId,
         environmentId: ids.environmentId,
+        missionId: ids.missionId,
+        objectiveId: ids.objectiveId,
+        flowDraftId: ids.flowDraftId,
         allowedOrigins: [ids.fixtureOrigin],
         correlationId: ids.correlationId,
       },
     });
     const advances = spec.calls.slice(1);
     expect(advances).toHaveLength(9);
-    expect(advances.every((call) => call.name === "advance_adaptive_session")).toBe(true);
+    expect(advances.every((call) => call.name === "advance_flow_authoring")).toBe(true);
     expect(
       advances.every(
         (call) =>
@@ -47,15 +53,15 @@ describe("self-contained adaptive core campaign specs", () => {
     const spec = generatedCoreCampaignCalls({ ...ids, milestone: "M1" });
 
     expect(spec.calls.map((call) => call.name)).toEqual([
-      "start_adaptive_session",
-      "advance_adaptive_session",
+      "start_flow_authoring",
+      "advance_flow_authoring",
     ]);
     const operations = spec.calls[1]?.arguments.operations as Array<{
       action: Record<string, unknown>;
       protectedInputReferences: string[];
       expectedEffect: { type: string };
     }>;
-    expect(operations).toHaveLength(9);
+    expect(operations).toHaveLength(5);
     const fills = operations.filter((operation) => operation.action.type === "fill");
     expect(fills).toHaveLength(2);
     expect(fills.map((operation) => operation.action.secretRef)).toEqual([
@@ -71,12 +77,12 @@ describe("self-contained adaptive core campaign specs", () => {
   });
 
   it("measures session startup separately from comparable authoring calls", () => {
-    expect(classifyCampaignCall("start_adaptive_session")).toEqual({
+    expect(classifyCampaignCall("start_flow_authoring")).toEqual({
       kind: "session_start",
       phase: "mcp_session_start_round_trip",
       countsAsAuthoring: false,
     });
-    expect(classifyCampaignCall("advance_adaptive_session")).toEqual({
+    expect(classifyCampaignCall("advance_flow_authoring")).toEqual({
       kind: "authoring",
       phase: "mcp_round_trip",
       countsAsAuthoring: true,

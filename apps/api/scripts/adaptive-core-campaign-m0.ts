@@ -5,7 +5,7 @@ import {
   generatedCoreCampaignSpec,
   recordCampaignFailure,
   retainResult,
-  verifyMissionless,
+  verifyMissionOwned,
 } from "./adaptive-campaign-support.js";
 import { runDeployedCampaign } from "./deployed-adaptive-campaign.js";
 
@@ -23,7 +23,7 @@ try {
     forbiddenValues: context.forbiddenValues,
   });
   context.requiredChecks.push(...deployed.requiredChecks);
-  await verifyMissionless(context);
+  await verifyMissionOwned(context);
   const retained = await retainResult(context, "M0");
   process.stdout.write(
     `${JSON.stringify({ verdict: retained.result.verdict, report: retained.file })}\n`,

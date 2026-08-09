@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 
-const strict = process.env.SCRY_RELEASE_CORPUS_GATE_ENABLED === "true";
+const strict = true;
 const databaseUrl = process.env.SCRY_AUTHORING_TEST_DATABASE_URL;
 const vitractEnabled = process.env.SCRY_VITRACT_PREVIEW_E2E === "true";
 

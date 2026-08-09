@@ -1,0 +1,290 @@
+{
+  "schemaVersion": 2,
+  "releaseId": "local-20260806-compiled-plan",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "schemaFingerprint": "deb3dc8d272b192a9e834f07afbf33aa37b8f3dfd8001f288657e0c940c210a8",
+  "runtimeVersion": "development",
+  "runtimeConfigurationDigest": "4d783097d53eea3565622cdd976bc702b7d63ee7d5e3fa1bb65ef2673631f3b3",
+  "milestone": "M2",
+  "target": "production_shaped",
+  "repetition": 1,
+  "missionId": "06449709-519f-4d1d-9217-86d212c86e1c",
+  "objectiveIds": [
+    "dddbfc1e-6714-4a3e-b0db-5cdb06ef02ec",
+    "d9e7e01d-f515-4077-aae9-36c6fe9ed895",
+    "34767af2-b402-43c5-b877-66a5b542da02",
+    "7b3e0d75-1928-48af-9083-d27416d36d2a"
+  ],
+  "flowIds": [
+    "4a8f2393-f268-48dc-9c9b-a394db966e70",
+    "b4e34ee7-1c24-4d99-a914-a1ba95e4dc5b",
+    "961b392b-f3e6-4cf7-9ffd-22eccd2b45e3",
+    "ec5f763b-e685-436d-bc72-e1598a349b1b"
+  ],
+  "runIds": [],
+  "correlationId": "e955d123-25c5-4e1e-9d0a-5235434b6884",
+  "boundaryUnderTest": "Server-owned semantic turns and explicit multi-Flow Mission handoffs",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "adaptive-session-cleanup",
+      "description": "The campaign cancels its Adaptive Session and releases browser ownership",
+      "status": "passed"
+    },
+    {
+      "id": "m2-native-only",
+      "description": "Every M2 browser interaction resolves through the one native driver without Praxis",
+      "status": "passed"
+    },
+    {
+      "id": "redaction",
+      "description": "Protected values are absent from MCP responses and retrieved artifacts",
+      "status": "passed"
+    },
+    {
+      "id": "artifact-round-trip",
+      "description": "Every artifact emitted by the deployed journey finalizes and round-trips",
+      "status": "passed"
+    },
+    {
+      "id": "deployed-journey",
+      "description": "The deployed MCP authoring journey reaches a terminal successful turn",
+      "status": "failed",
+      "reasonCode": "CAMPAIGN_TERMINAL_BOUNDARY_MISSING"
+    },
+    {
+      "id": "authoring-turn-surface",
+      "description": "M1 executes one grouped advance_flow_authoring call",
+      "status": "passed"
+    },
+    {
+      "id": "m2-semantic-turn-surface",
+      "description": "M2 authoring calls contain semantic intents and no low-level operation payload",
+      "status": "passed"
+    },
+    {
+      "id": "m2-independent-outcome-channels",
+      "description": "Every grouped turn reports functional, mutation, privacy, evidence, and quality separately",
+      "status": "passed"
+    },
+    {
+      "id": "m2-call-budget",
+      "description": "The complete M2 journey uses no more than four MCP calls",
+      "status": "passed"
+    },
+    {
+      "id": "m2-mission-flow-ownership",
+      "description": "One Mission owns every expected Objective and Flow",
+      "status": "failed",
+      "reasonCode": "M2_MISSION_FLOW_OWNERSHIP_MISMATCH"
+    },
+    {
+      "id": "m2-explicit-flow-handoffs",
+      "description": "Every Flow transition is explicitly journaled",
+      "status": "failed",
+      "reasonCode": "M2_FLOW_HANDOFF_JOURNAL_MISMATCH"
+    },
+    {
+      "id": "m2-operation-ownership",
+      "description": "Every operation is bound to its exact Mission Objective and Flow",
+      "status": "passed"
+    },
+    {
+      "id": "m2-call-reduction",
+      "description": "MCP coordination calls are reduced by at least 70 percent",
+      "status": "passed"
+    },
+    {
+      "id": "m2-no-repeated-state",
+      "description": "No unchanged-state read or full-plan rewrite occurs",
+      "status": "passed"
+    }
+  ],
+  "observationalFindings": [],
+  "cleanup": {
+    "required": false,
+    "state": "not_required",
+    "refs": []
+  },
+  "calls": {
+    "mcp": 3,
+    "api": 1,
+    "repeatedStateReads": 0
+  },
+  "resolution": {
+    "nativeResolved": 7,
+    "praxisFallbacks": 0
+  },
+  "reductions": {
+    "decisionBoundary": 0.9722222222222222,
+    "mcpCalls": 0.9166666666666666,
+    "agentBytes": 0.7390320733104239
+  },
+  "timings": {
+    "api": {
+      "count": 1,
+      "p50Ms": 10.650540999999976,
+      "p95Ms": 10.650540999999976,
+      "maxMs": 10.650540999999976,
+      "slowestOperationIds": []
+    },
+    "artifact_retrieval": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "browser_startup": {
+      "count": 2,
+      "p50Ms": 273.641,
+      "p95Ms": 273.641,
+      "maxMs": 273.641,
+      "slowestOperationIds": [
+        "m2-fac646cbc01473438aac5adb78bddf32ff4ac922",
+        "m2-fac646cbc01473438aac5adb78bddf32ff4ac922"
+      ]
+    },
+    "database": {
+      "count": 1,
+      "p50Ms": 5.35270799999995,
+      "p95Ms": 5.35270799999995,
+      "maxMs": 5.35270799999995,
+      "slowestOperationIds": []
+    },
+    "document_observation": {
+      "count": 2,
+      "p50Ms": 273.641,
+      "p95Ms": 273.641,
+      "maxMs": 273.641,
+      "slowestOperationIds": [
+        "m2-fac646cbc01473438aac5adb78bddf32ff4ac922",
+        "m2-fac646cbc01473438aac5adb78bddf32ff4ac922"
+      ]
+    },
+    "evidence_finalization": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "expected_effect_verification": {
+      "count": 16,
+      "p50Ms": 0.013416999998298706,
+      "p95Ms": 60069.600568999995,
+      "maxMs": 60069.600568999995,
+      "slowestOperationIds": [
+        "m2-8fafc08276ca23f70be4c0604ba0d5c8c040e48a",
+        "m2-8fafc08276ca23f70be4c0604ba0d5c8c040e48a"
+      ]
+    },
+    "interaction_execution": {
+      "count": 16,
+      "p50Ms": 31,
+      "p95Ms": 60144,
+      "maxMs": 60144,
+      "slowestOperationIds": [
+        "m2-8fafc08276ca23f70be4c0604ba0d5c8c040e48a",
+        "m2-8fafc08276ca23f70be4c0604ba0d5c8c040e48a",
+        "m2-580bd8ff53f19499889c7385c9e3acc087936ac5",
+        "m2-580bd8ff53f19499889c7385c9e3acc087936ac5",
+        "m2-ab8bd4310d3996332a312b224aedcdbe173953a3",
+        "m2-ab8bd4310d3996332a312b224aedcdbe173953a3"
+      ]
+    },
+    "mcp_round_trip": {
+      "count": 2,
+      "p50Ms": 113.77383399999962,
+      "p95Ms": 60808.084458000005,
+      "maxMs": 60808.084458000005,
+      "slowestOperationIds": [
+        "mcp-e955d123-25c5-4e1e-9d0a-5235434b6884-2",
+        "mcp-e955d123-25c5-4e1e-9d0a-5235434b6884-3"
+      ]
+    },
+    "mcp_session_start_round_trip": {
+      "count": 1,
+      "p50Ms": 89.77587499999993,
+      "p95Ms": 89.77587499999993,
+      "maxMs": 89.77587499999993,
+      "slowestOperationIds": [
+        "mcp-e955d123-25c5-4e1e-9d0a-5235434b6884-1"
+      ]
+    },
+    "native_resolution": {
+      "count": 14,
+      "p50Ms": 33.556500000002416,
+      "p95Ms": 62.8391249999986,
+      "maxMs": 62.8391249999986,
+      "slowestOperationIds": [
+        "m2-8fafc08276ca23f70be4c0604ba0d5c8c040e48a",
+        "m2-8fafc08276ca23f70be4c0604ba0d5c8c040e48a",
+        "m2-580bd8ff53f19499889c7385c9e3acc087936ac5",
+        "m2-580bd8ff53f19499889c7385c9e3acc087936ac5"
+      ]
+    },
+    "praxis_grounding": {
+      "count": 2,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "queue_wait": {
+      "count": 2,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "redis": {
+      "count": 1,
+      "p50Ms": 3.124667000000045,
+      "p95Ms": 3.124667000000045,
+      "maxMs": 3.124667000000045,
+      "slowestOperationIds": []
+    },
+    "worker": {
+      "count": 1,
+      "p50Ms": 42.637625000000014,
+      "p95Ms": 42.637625000000014,
+      "maxMs": 42.637625000000014,
+      "slowestOperationIds": [
+        "worker"
+      ]
+    }
+  },
+  "privacyScan": {
+    "checkedByteCount": 9113,
+    "leakedCanaryCount": 0
+  },
+  "evidenceRefs": [
+    "/Users/habib/Documents/monorepo/scry/docs/runbooks/evidence/mission-first/m1/m1-production-shaped-r1-b9627724-d4b5-4c7e-b16b-9ffbf272a4d2.json"
+  ],
+  "verdict": "fail"
+}

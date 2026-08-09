@@ -1,17 +1,17 @@
 import { randomUUID } from "node:crypto";
 
-import type { CurrentAction, RunEvent } from "@scry/contracts";
+import type { CurrentAction, InteractionTargetIntent, RunEvent } from "@scry/contracts";
 import {
   requirePraxisSuccess,
-  resolveTargetLocator,
   type PraxisConsumerContext,
 } from "@scry/praxis";
 import type { SecretRedactor } from "@scry/policy";
 import type { VeilRuntimeCoordinator } from "@scry/veil";
-import type { Locator, Page } from "playwright";
+import type { Page } from "playwright";
 
 import { capturePublicGeneratedValue } from "./public-value-capture.js";
 import type { ExecuteOptions } from "./types.js";
+import { navigateAndWaitNative } from "./native-browser-navigation.js";
 
 export async function executeAction(
   page: Page,
@@ -50,18 +50,64 @@ export async function executeAction(
       return;
     }
     case "navigate":
-      await page.goto(new URL(action.url, options.plan.allowedOrigins[0]).href, {
-        waitUntil: "domcontentloaded",
-        ...optionalTimeout(action.timeoutMs),
-      });
-      await waitForApplicationRender(page, action.timeoutMs);
+      await (options.executeNativeNavigation ?? navigateAndWaitNative)(
+        page,
+        new URL(action.url, options.plan.allowedOrigins[0]).href,
+        options.plan.allowedOrigins,
+        action.timeoutMs,
+        options.policy.trustedScriptOrigins,
+      );
       return;
+    case "sameOriginRequest": {
+      if (!options.executeSameOriginRequest) {
+        throw new InfrastructureDependencyError("SAME_ORIGIN_REQUEST_DRIVER_REQUIRED");
+      }
+      if (!privacyGate) throw new InfrastructureDependencyError("SAME_ORIGIN_REQUEST_PRIVACY_GATE_REQUIRED");
+      const operationId = `browser-session-request-${randomUUID()}`;
+      try {
+        // Cookie/token access and dispatch are inside the Veil gap; driver callbacks receive
+        // only the typed public request and never authenticate material or response bytes.
+        await privacyGate.prepare(operationId, {
+          mode: "protected_recording_gap",
+          videoMaskEstablished: false,
+        });
+        await privacyGate.beginProtected();
+        await options.executeSameOriginRequest(
+          page,
+          {
+            method: action.method, path: action.path, expectedStatus: action.expectedStatus,
+            ...(action.body ? { body: action.body } : {}),
+            ...(action.timeoutMs === undefined ? {} : { timeoutMs: action.timeoutMs }),
+          },
+          options.plan.allowedOrigins,
+          action.method === "GET"
+            ? undefined
+            : async () => {
+                await options.onMutationDispatch?.();
+              },
+        );
+        await privacyGate.markCaptured();
+        await privacyGate.beginSafeBoundary();
+        await privacyGate.confirmSafeBoundary({
+          kind: "known_safe_navigation",
+          urlPattern: exactUrlPattern(page.url()),
+        });
+      } catch (error) {
+        await privacyGate.seal({ code: "SAME_ORIGIN_REQUEST_PRIVACY_FAILED" }).catch(() => undefined);
+        throw error;
+      }
+      return;
+    }
     case "click":
+      if (await executeNative(page, action.target, { type: "click", ...nativeTimeout(action.timeoutMs) }, options)) return;
+      requirePraxisFallback(options);
       await requirePraxisSuccess({
         page,
         intent: action.target,
         operation: { type: "activate" },
-        expectedEffect: action.expectedEffect,
+        // Popup ownership is verified by the authoring session/kernel after it adopts
+        // a distinct page; Praxis cannot establish that browser-session invariant.
+        expectedEffect: action.expectedEffect.type === "new_page" ? { type: "none" } : action.expectedEffect,
         context: requirePraxisContext(praxisContext),
         signal,
       });
@@ -104,8 +150,6 @@ export async function executeAction(
 
       const protectedFill = Boolean(action.secretRef || action.capturedSecretRef);
       if (protectedFill) redactor.add(value);
-      const locator = protectedFill ? await resolveTargetLocator(page, action.target) : undefined;
-      if (locator) await maskSensitiveLocator(locator);
       if (protectedFill && privacyGate) {
         const operationId = `known-secret-fill-${randomUUID()}`;
         try {
@@ -114,14 +158,26 @@ export async function executeAction(
             videoMaskEstablished: false,
           });
           await privacyGate.beginProtected();
-          await options.onMutationDispatch?.();
-          await locator!.fill(value, optionalTimeout(action.timeoutMs));
-          const valuePresent = await locator!.evaluate((element) =>
-            "value" in (element as HTMLInputElement)
-              ? (element as HTMLInputElement).value.length > 0
-              : (element.textContent ?? "").length > 0,
+          const native = await executeNative(
+            page,
+            action.target,
+            { type: "fill", value, protected: true, ...nativeTimeout(action.timeoutMs) },
+            options,
           );
-          if (!valuePresent) throw new Error("LOCAL_STATE_NOT_OBSERVED");
+          if (!native) {
+            requirePraxisFallback(options);
+            await requirePraxisSuccess({
+              page,
+              intent: action.target,
+              operation: {
+                type: "enter_text",
+                input: { reference: "resolved-input", classification: "known_secret" },
+              },
+              context: requirePraxisContext(praxisContext),
+              signal,
+              resolveInput: async () => value!,
+            });
+          }
           await privacyGate.markCaptured();
           await privacyGate.beginSafeBoundary();
           await privacyGate.confirmSafeBoundary({
@@ -133,6 +189,13 @@ export async function executeAction(
           throw error;
         }
       } else {
+        if (await executeNative(
+          page,
+          action.target,
+          { type: "fill", value, protected: false, ...nativeTimeout(action.timeoutMs) },
+          options,
+        )) return;
+        requirePraxisFallback(options);
         await requirePraxisSuccess({
           page,
           intent: action.target,
@@ -151,6 +214,8 @@ export async function executeAction(
       return;
     }
     case "select":
+      if (await executeNative(page, action.target, { type: "select", value: action.value, ...nativeTimeout(action.timeoutMs) }, options)) return;
+      requirePraxisFallback(options);
       await requirePraxisSuccess({
         page,
         intent: action.target,
@@ -164,6 +229,8 @@ export async function executeAction(
       });
       return;
     case "check":
+      if (await executeNative(page, action.target, { type: "check", checked: action.checked, ...nativeTimeout(action.timeoutMs) }, options)) return;
+      requirePraxisFallback(options);
       await requirePraxisSuccess({
         page,
         intent: action.target,
@@ -174,6 +241,8 @@ export async function executeAction(
       return;
     case "press":
       if (action.target && approvedKey(action.key)) {
+        if (await executeNative(page, action.target, { type: "press", key: action.key }, options)) return;
+        requirePraxisFallback(options);
         await requirePraxisSuccess({
           page,
           intent: action.target,
@@ -190,6 +259,7 @@ export async function executeAction(
       return;
     case "scroll":
       if (action.target) {
+        if (await executeNative(page, action.target, { type: "scroll", deltaY: action.deltaY }, options)) return;
         await requirePraxisSuccess({
           page,
           intent: action.target,
@@ -202,6 +272,8 @@ export async function executeAction(
       }
       return;
     case "waitFor":
+      if (await executeNative(page, action.target, { type: "waitFor", state: action.state, ...nativeTimeout(action.timeoutMs) }, options)) return;
+      requirePraxisFallback(options);
       await requirePraxisSuccess({
         page,
         intent: action.target,
@@ -213,6 +285,46 @@ export async function executeAction(
     case "screenshot":
       return;
   }
+}
+
+function requirePraxisFallback(options: ExecuteOptions) {
+  if (options.nativeResolutionPolicy === "native_only") {
+    throw new Error("NATIVE_RESOLUTION_REQUIRED");
+  }
+}
+
+async function executeNative(
+  page: Page,
+  target: InteractionTargetIntent,
+  operation: Parameters<NonNullable<ExecuteOptions["executeNativeControl"]>>[2],
+  options: ExecuteOptions,
+) {
+  if (!options.executeNativeControl) return false;
+  const startedAt = performance.now();
+  try {
+    await options.executeNativeControl(
+      page,
+      target,
+      operation,
+      options.onMutationDispatch ? async () => { await options.onMutationDispatch?.(); } : undefined,
+    );
+    await options.onNativeResolution?.({ status: "resolved", durationMs: performance.now() - startedAt });
+    return true;
+  } catch (error) {
+    const code = error instanceof Error ? error.message : String(error);
+    if (["NATIVE_TARGET_NOT_FOUND", "NATIVE_TARGET_AMBIGUOUS", "NATIVE_SCOPE_UNSAFE"].includes(code)) {
+      await options.onNativeResolution?.({
+        status: "fallback", reasonCode: code, durationMs: performance.now() - startedAt,
+      });
+      if (options.nativeResolutionPolicy === "native_only") throw error;
+      return false;
+    }
+    throw error;
+  }
+}
+
+function nativeTimeout(timeoutMs: number | undefined): { timeoutMs?: number } {
+  return timeoutMs === undefined ? {} : { timeoutMs };
 }
 
 export async function missingSecretResolver(reference: string): Promise<string> {
@@ -246,59 +358,6 @@ function approvedKey(
   ].includes(key);
 }
 
-async function waitForApplicationRender(page: Page, timeoutMs = 10_000) {
-  const mountSelector = await page.evaluate(() => {
-    for (const selector of ["#root", "#app", "#__next"]) {
-      if (document.querySelector(selector)) return selector;
-    }
-    return undefined;
-  });
-  if (!mountSelector) return;
-
-  try {
-    await page.waitForFunction(
-      (selector) => {
-        const mount = document.querySelector(selector);
-        if (!mount) return false;
-        const text = (mount.textContent ?? "").replace(/\s+/g, " ").trim();
-        const hasContent = mount.childElementCount > 0 || text.length > 0;
-        const isLoadingPlaceholder =
-          /^(loading|please wait|initializing|starting)([.…!]*|\s+.*)?$/i.test(text);
-        return hasContent && !isLoadingPlaceholder;
-      },
-      mountSelector,
-      { timeout: timeoutMs },
-    );
-  } catch {
-    const visibleText = await page
-      .locator(mountSelector)
-      .innerText()
-      .catch(() => "");
-    if (/^(loading|please wait|initializing|starting)([.…!]*|\s+.*)?$/i.test(visibleText.trim())) {
-      throw new Error(
-        `Application remained in its loading state (${JSON.stringify(visibleText.trim())})`,
-      );
-    }
-    throw new Error(
-      `Application shell loaded, but ${mountSelector} remained empty and the application did not render`,
-    );
-  }
-  await page.waitForLoadState("networkidle", { timeout: 2_000 }).catch(() => undefined);
-}
-
-async function maskSensitiveLocator(locator: Locator) {
-  await locator.evaluate((element) => {
-    element.setAttribute("data-scry-redacted", "true");
-    const htmlElement = element as HTMLElement;
-    htmlElement.style.setProperty("color", "transparent", "important");
-    htmlElement.style.setProperty("-webkit-text-fill-color", "transparent", "important");
-    htmlElement.style.setProperty("background", "#000", "important");
-    htmlElement.style.setProperty("border-color", "#000", "important");
-    htmlElement.style.setProperty("caret-color", "transparent", "important");
-    htmlElement.style.setProperty("text-shadow", "none", "important");
-  });
-}
-
 async function missingPublicValueResolver(reference: string): Promise<string> {
   throw new Error(
     `Generated public value ${reference} cannot be resolved because no public-value resolver is configured`,
@@ -309,10 +368,10 @@ function throwIfAborted(signal: AbortSignal) {
   if (signal.aborted) throw signal.reason ?? new Error("Execution aborted");
 }
 
-function optionalTimeout(timeoutMs: number | undefined): { timeout?: number } {
-  return timeoutMs === undefined ? {} : { timeout: timeoutMs };
-}
-
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function exactUrlPattern(url: string): string {
+  return `^${url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 480)}$`;
 }

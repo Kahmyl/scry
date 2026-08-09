@@ -1,10 +1,10 @@
 # Adaptive Execution Foundation: M0-M5 Implementation Runbook
 
-Status: approved architecture and implementation handoff  
+Status: superseded on 2026-08-09 by [Scry Mission-First Live Execution Convergence](./mission-first-live-convergence-prd.md); retained as historical evidence only
 Date: 2026-08-08  
 Implementation owner: Kimi  
 Architecture and acceptance owner: Codex  
-First implementation assignment: M0 and M1 only
+Do not execute this runbook. Its mission-independent authoring direction is no longer approved.
 
 ## 1. Directive
 

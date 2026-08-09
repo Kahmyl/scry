@@ -29,6 +29,7 @@ import {
   ExecutionKernelRepository,
   ExecutionKernelService,
   ExecutionRepository,
+  NativeBrowserDriver,
 } from "./runtime/index.js";
 import { ProbeRuntimeRepository } from "./calibration/index.js";
 import { PraxisRuntimeRepository } from "./praxis/index.js";
@@ -60,6 +61,7 @@ const praxis = app.get(PraxisRuntimeRepository);
 const authoringRuntimes = app.get(AuthoringRuntimeRepository);
 const authoringRuntimeCommands = app.get(AuthoringRuntimeCommandRepository);
 const database = app.get(Database);
+const nativeBrowser = app.get(NativeBrowserDriver);
 const workerId = `${os.hostname()}:${process.pid}:${randomUUID()}`;
 const artifactRoot = path.resolve(process.env.ARTIFACT_ROOT ?? "artifacts/runs");
 const veilAdmissionKey = requireVeilAdmissionKey();
@@ -88,7 +90,9 @@ const praxisVersions = {
   scoringPolicyVersion: PRAXIS_SCORING_POLICY_VERSION,
 };
 
-const observationRuntime = await verifyBrowserObservationRuntime(browserChannel);
+const observationRuntime = await verifyBrowserObservationRuntime(browserChannel, () =>
+  nativeBrowser.openBrowser(),
+);
 if (!observationRuntime.healthy) {
   throw new Error(
     `OBSERVATION_RUNTIME_UNAVAILABLE:${observationRuntime.forbiddenIdentifiers.join(",")}`,
@@ -156,7 +160,7 @@ const authoringRuntimeOwner = createAuthoringRuntimeOwner({
       operationId,
       correlationId,
       mode: "observe",
-      options: authoringKernelOptions(sessionId, environmentId, policy),
+      options: authoringKernelOptions(sessionId, environmentId, policy, nativeBrowser),
     });
     const request = executionCapabilities.request({
       sessionId,
@@ -171,7 +175,10 @@ const authoringRuntimeOwner = createAuthoringRuntimeOwner({
     return executionKernel.openAuthoringSession({
       request,
       capabilities,
-      session,
+      session: {
+        ...session,
+        openBrowser: () => nativeBrowser.openBrowser(),
+      },
     });
   },
   executeObservation: async ({
@@ -188,7 +195,7 @@ const authoringRuntimeOwner = createAuthoringRuntimeOwner({
       operationId,
       correlationId,
       mode: "observe",
-      options: authoringKernelOptions(sessionId, environmentId, policy),
+      options: authoringKernelOptions(sessionId, environmentId, policy, nativeBrowser),
     });
     const observed = await executionKernel.observe({
       request: executionCapabilities.request({
@@ -270,12 +277,19 @@ const authoringRuntimeOwner = createAuthoringRuntimeOwner({
   },
 });
 
-function authoringKernelOptions(sessionId: string, environmentId: string, policy: ExecutionPolicy) {
+function authoringKernelOptions(
+  sessionId: string,
+  environmentId: string,
+  policy: ExecutionPolicy,
+  nativeBrowser: NativeBrowserDriver,
+) {
   return {
     outputDirectory: path.join(artifactRoot, "authoring", sessionId),
     browserChannel,
     environmentId,
     veilAdmissionKey,
+    openBrowser: (options?: import("playwright").BrowserContextOptions) =>
+      nativeBrowser.openBrowser(options),
     veilPolicySnapshot: compileDefaultVeilPolicy(policy),
     secretResolver: (reference: string) =>
       authoringRuntimes.resolveCredential(sessionId, reference),

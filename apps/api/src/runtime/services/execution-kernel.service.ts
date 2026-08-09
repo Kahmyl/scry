@@ -10,6 +10,7 @@ import {
 
 import { ExecutionRepository } from "../repositories/execution.repository.js";
 import { ExecutionKernelRepository } from "../repositories/execution-kernel.repository.js";
+import { NativeBrowserDriver } from "../native-browser-driver/index.js";
 
 type BaseCapabilityInput = {
   sessionId: string;
@@ -26,14 +27,36 @@ export class ExecutionCapabilityFactory {
   constructor(
     @Inject(ExecutionRepository) private readonly executions: ExecutionRepository,
     @Inject(ExecutionKernelRepository) private readonly kernelRepository: ExecutionKernelRepository,
+    @Inject(NativeBrowserDriver) private readonly nativeBrowser: NativeBrowserDriver,
   ) {}
 
   createSession(input: BaseCapabilityInput): RuntimeExecutionCapabilities {
     const options = input.options;
     const originalEvent = options.onEvent;
     const originalPraxisResult = options.onPraxisResult;
+    const originalNativeResolution = options.onNativeResolution;
+    const originalEffectVerification = options.onExpectedEffectVerification;
     const compatibilityOptions: RuntimeExecutionCapabilities["options"] = {
       ...options,
+      openBrowser: options.openBrowser ?? ((contextOptions) => this.nativeBrowser.openBrowser(contextOptions)),
+      executeNativeControl:
+        options.executeNativeControl ??
+        ((page, target, operation, beforeDispatch) =>
+          this.nativeBrowser.executeSemanticControl(page, target, operation, beforeDispatch)),
+      executeNativeNavigation:
+        options.executeNativeNavigation ??
+        ((page, url, allowedOrigins, timeoutMs, trustedScriptOrigins) =>
+          this.nativeBrowser.navigateAndWait(
+            page, url, allowedOrigins, timeoutMs, trustedScriptOrigins,
+          )),
+      executeSameOriginRequest:
+        options.executeSameOriginRequest ??
+        ((page, request, allowedOrigins, beforeDispatch) =>
+          this.nativeBrowser.sameOriginRequest(page, request, allowedOrigins, beforeDispatch)),
+      verifyNativeExpectedEffect:
+        options.verifyNativeExpectedEffect ??
+        ((page, effect, beforeUrl, timeoutMs) =>
+          this.nativeBrowser.verifyExpectedEffect(page, effect, beforeUrl, timeoutMs)),
       atomicSecretCapture:
         options.atomicSecretCapture ??
         ((capture) => {
@@ -133,6 +156,24 @@ export class ExecutionCapabilityFactory {
             },
           );
           await originalPraxisResult?.(result);
+        },
+        onNativeResolution: async (result) => {
+          await this.kernelRepository.appendEvent(
+            input.sessionId,
+            input.operationId,
+            "native.resolution",
+            result,
+          );
+          await originalNativeResolution?.(result);
+        },
+        onExpectedEffectVerification: async (result) => {
+          await this.kernelRepository.appendEvent(
+            input.sessionId,
+            input.operationId,
+            "effect.verification",
+            result,
+          );
+          await originalEffectVerification?.(result);
         },
       },
     };

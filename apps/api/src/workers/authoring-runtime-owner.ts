@@ -50,6 +50,7 @@ export function createAuthoringRuntimeOwner(options: {
   veilAdmissionKey: string;
   heartbeatMs: number;
   pollMs: number;
+  openBrowser?: Parameters<CreateSession>[0]["openBrowser"];
   admitSession?(input: {
     sessionId: string;
     environmentId: string;
@@ -121,6 +122,11 @@ export function createAuthoringRuntimeOwner(options: {
           veilAdmissionKey: options.veilAdmissionKey,
           browserChannel: options.browserChannel,
           policy,
+          openBrowser:
+            options.openBrowser ??
+            (async () => {
+              throw new Error("NATIVE_BROWSER_DRIVER_REQUIRED");
+            }),
           executeInteraction: options.executeInteraction
             ? (input) =>
                 options.executeInteraction!({

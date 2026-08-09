@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 2,
+  "releaseId": "local-20260806-compiled-plan",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "schemaFingerprint": "deb3dc8d272b192a9e834f07afbf33aa37b8f3dfd8001f288657e0c940c210a8",
+  "runtimeVersion": "development",
+  "runtimeConfigurationDigest": "4d783097d53eea3565622cdd976bc702b7d63ee7d5e3fa1bb65ef2673631f3b3",
+  "milestone": "M2",
+  "target": "production_shaped",
+  "repetition": 1,
+  "missionId": "98211163-0fd1-4413-b752-1e2e579efe35",
+  "objectiveIds": [
+    "a3bd721d-7d61-44ff-9ec3-e894ef495a80",
+    "8d3303f7-a97c-4e15-acfe-66d7c585bea0",
+    "d8772485-c43d-4e84-afbc-b2a0b48a6230",
+    "0684121d-0bbc-4efb-96d5-799b59820766"
+  ],
+  "flowIds": [
+    "5fa74470-ee1d-4668-b648-14c57f59939c",
+    "5f08c5a8-5dd7-4e1e-8909-8c82341a3212",
+    "d4de70ca-200a-464c-b124-01a3ace88a70",
+    "315888c0-085d-49dd-8ba8-c97f1b7c9d3d"
+  ],
+  "runIds": [],
+  "correlationId": "961a3b9d-5f55-4008-a3ef-1d318ad48d6a",
+  "boundaryUnderTest": "Server-owned semantic turns and explicit multi-Flow Mission handoffs",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "m2-production-shaped",
+      "description": "Campaign execution reaches a terminal classified outcome",
+      "status": "failed",
+      "reasonCode": "MCP_HTTP_401"
+    }
+  ],
+  "observationalFindings": [],
+  "cleanup": {
+    "required": false,
+    "state": "not_required",
+    "refs": []
+  },
+  "calls": {
+    "mcp": 1,
+    "api": 1,
+    "repeatedStateReads": 0
+  },
+  "resolution": {
+    "nativeResolved": 0,
+    "praxisFallbacks": 0
+  },
+  "reductions": {
+    "decisionBoundary": 1,
+    "mcpCalls": 0.9722222222222222,
+    "agentBytes": 1
+  },
+  "timings": {
+    "api": {
+      "count": 1,
+      "p50Ms": 7.4459999999999695,
+      "p95Ms": 7.4459999999999695,
+      "maxMs": 7.4459999999999695,
+      "slowestOperationIds": [
+        "api"
+      ]
+    },
+    "database": {
+      "count": 1,
+      "p50Ms": 4.382790999999997,
+      "p95Ms": 4.382790999999997,
+      "maxMs": 4.382790999999997,
+      "slowestOperationIds": [
+        "database"
+      ]
+    },
+    "praxis_grounding": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": [
+        "961a3b9d-5f55-4008-a3ef-1d318ad48d6a"
+      ]
+    },
+    "queue_wait": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": [
+        "961a3b9d-5f55-4008-a3ef-1d318ad48d6a"
+      ]
+    },
+    "redis": {
+      "count": 1,
+      "p50Ms": 2.898707999999999,
+      "p95Ms": 2.898707999999999,
+      "maxMs": 2.898707999999999,
+      "slowestOperationIds": [
+        "redis"
+      ]
+    },
+    "worker": {
+      "count": 1,
+      "p50Ms": 5.357000000000028,
+      "p95Ms": 5.357000000000028,
+      "maxMs": 5.357000000000028,
+      "slowestOperationIds": [
+        "worker"
+      ]
+    }
+  },
+  "privacyScan": {
+    "checkedByteCount": 1,
+    "leakedCanaryCount": 0
+  },
+  "evidenceRefs": [
+    "/Users/habib/Documents/monorepo/scry/docs/runbooks/evidence/mission-first/m1/m1-production-shaped-r1-b9627724-d4b5-4c7e-b16b-9ffbf272a4d2.json"
+  ],
+  "verdict": "fail"
+}

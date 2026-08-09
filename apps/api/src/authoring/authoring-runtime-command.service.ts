@@ -6,7 +6,6 @@ import type {
 
 import type { Principal } from "../auth/index.js";
 import { ReleaseAdmissionService } from "../runtime/index.js";
-import { adaptiveExecutionFlags } from "../runtime/index.js";
 import { AuthoringRuntimeCommandRepository } from "./repositories/authoring-runtime-command.repository.js";
 
 @Injectable()
@@ -64,10 +63,6 @@ export class AuthoringRuntimeCommandService {
   }
 
   async advance(principal: Principal, probeSessionId: string, input: AdvanceAuthoringTurnCommand) {
-    const flags = adaptiveExecutionFlags();
-    if (!flags.authoringTurn) {
-      throw new ConflictException({ code: "AUTHORING_TURN_DISABLED" });
-    }
     const command = await this.enqueue(principal, probeSessionId, {
       missionId: input.missionId,
       agentSessionId: input.agentSessionId,

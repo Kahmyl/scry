@@ -79,6 +79,12 @@ const adaptiveExecutionFoundationPath = fileURLToPath(
 const adaptiveSessionsPath = fileURLToPath(
   new URL("../migrations/adaptive-sessions-m3.sql", import.meta.url),
 );
+const missionFirstM1Path = fileURLToPath(
+  new URL("../migrations/mission-first-live-convergence-m1.sql", import.meta.url),
+);
+const missionAuthoringGroupedTurnsM2Path = fileURLToPath(
+  new URL("../migrations/mission-authoring-grouped-turns-m2.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -110,6 +116,8 @@ const interactiveRuntimeLifecycle = await readFile(interactiveRuntimeLifecyclePa
 const adaptiveAuthoring = await readFile(adaptiveAuthoringPath, "utf8");
 const adaptiveExecutionFoundation = await readFile(adaptiveExecutionFoundationPath, "utf8");
 const adaptiveSessions = await readFile(adaptiveSessionsPath, "utf8");
+const missionFirstM1 = await readFile(missionFirstM1Path, "utf8");
+const missionAuthoringGroupedTurnsM2 = await readFile(missionAuthoringGroupedTurnsM2Path, "utf8");
 
 const expandFoundation = (source: string) =>
   source
@@ -131,18 +139,36 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "adaptive-authoring-pr9-pr12.sql": adaptiveAuthoring,
   "adaptive-execution-foundation-m0-m1.sql": adaptiveExecutionFoundation,
   "adaptive-sessions-m3.sql": adaptiveSessions,
+  "mission-first-live-convergence-m1.sql": missionFirstM1,
+  "mission-authoring-grouped-turns-m2.sql": missionAuthoringGroupedTurnsM2,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) =>
   expandFoundation(expandBaselineStage(baselineSource, optionalMigrationSources, included));
 
 const baseline = stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS);
+const preMissionFirstM1Baseline = stagedBaseline(
+  OPTIONAL_BASELINE_MIGRATIONS.filter(
+    (name) =>
+      name !== "mission-first-live-convergence-m1.sql" &&
+      name !== "mission-authoring-grouped-turns-m2.sql",
+  ),
+);
 const preAdaptiveSessionsBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "adaptive-sessions-m3.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter(
+    (name) => name !== "adaptive-sessions-m3.sql" && name !== "mission-authoring-grouped-turns-m2.sql",
+  ),
+);
+const preMissionAuthoringGroupedTurnsM2Baseline = stagedBaseline(
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "mission-authoring-grouped-turns-m2.sql"),
 );
 
 const fingerprint = digest(baseline);
+const preMissionFirstM1Fingerprint = digest(preMissionFirstM1Baseline);
 const preAdaptiveSessionsFingerprint = digest(preAdaptiveSessionsBaseline);
+const preMissionAuthoringGroupedTurnsM2Fingerprint = digest(
+  preMissionAuthoringGroupedTurnsM2Baseline,
+);
 
 const previousVeilFullFingerprint =
   "8c0e5ae0ae72f9a163189abe903b317e38aacf6b1674f3441b62dd7129b48c6a";
@@ -205,7 +231,50 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preAdaptiveSessionsFingerprint) {
+    if (installedFingerprint === preMissionAuthoringGroupedTurnsM2Fingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-mission-authoring-grouped-turns-m2'))",
+        );
+        await client.query(missionAuthoringGroupedTurnsM2);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
+           WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied Mission authoring grouped turns M2 ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preMissionFirstM1Fingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-mission-first-live-convergence-m1'))",
+        );
+        await client.query(missionFirstM1);
+        await client.query(missionAuthoringGroupedTurnsM2);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
+           WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied Mission-first M1 ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preAdaptiveSessionsFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -213,6 +282,8 @@ try {
           "SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-sessions-m3'))",
         );
         await client.query(adaptiveSessions);
+        await client.query(missionFirstM1);
+        await client.query(missionAuthoringGroupedTurnsM2);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -239,6 +310,9 @@ try {
           "SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-execution-foundation-m0-m1'))",
         );
         await client.query(adaptiveExecutionFoundation);
+        await client.query(adaptiveSessions);
+        await client.query(missionFirstM1);
+        await client.query(missionAuthoringGroupedTurnsM2);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -280,6 +354,9 @@ try {
         }
         await client.query(adaptiveAuthoring);
         await client.query(adaptiveExecutionFoundation);
+        await client.query(adaptiveSessions);
+        await client.query(missionFirstM1);
+        await client.query(missionAuthoringGroupedTurnsM2);
         await client.query(
           `UPDATE schema_baseline
            SET schema_fingerprint=$1,applied_at=now()
@@ -369,6 +446,9 @@ try {
 
         await client.query(adaptiveAuthoring);
         await client.query(adaptiveExecutionFoundation);
+        await client.query(adaptiveSessions);
+        await client.query(missionFirstM1);
+        await client.query(missionAuthoringGroupedTurnsM2);
 
         await client.query(
           `UPDATE schema_baseline
@@ -389,7 +469,7 @@ try {
       }
     } else if (installedFingerprint !== fingerprint) {
       throw new Error(
-        `Schema fingerprint mismatch: installed=${installedFingerprint ?? "missing"} required=${fingerprint}. Stop all writers and run the guarded interactive-runtime lifecycle pre-production cutover; compatibility migration is intentionally unsupported.`,
+        `Schema fingerprint mismatch: installed=${installedFingerprint ?? "missing"} required=${fingerprint} supportedPreM1=${preMissionFirstM1Fingerprint}. Stop all writers and run the guarded pre-production cutover; compatibility migration is intentionally unsupported.`,
       );
     } else {
       process.stdout.write(`Clean baseline already present ${fingerprint}\n`);

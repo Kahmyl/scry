@@ -12,6 +12,7 @@ export type DeployedCampaignSpec = {
   calls: ToolCall[];
   artifactIds?: string[];
   expectedMutationIdentities?: string[];
+  expectedFlowCount?: number;
   restart?: {
     endpoint: string;
     duringCallIndex: number;
@@ -27,13 +28,14 @@ export type DeployedCampaignResult = {
 };
 
 export async function runDeployedCampaign(input: {
-  milestone: "M0" | "M1";
-  target: "production_shaped" | "vitract_preview";
+  milestone: "M0" | "M1" | "M2";
+  target: string;
   correlationId: string;
   metrics: CampaignMetricsCollector;
   fixtureOrigin?: string;
   spec?: DeployedCampaignSpec;
   forbiddenValues?: string[];
+  resolutionThresholds?: { minNativeResolved: number; maxPraxisFallbacks: number };
 }): Promise<DeployedCampaignResult> {
   const spec = input.spec ?? (await readExternalSpec(input.target));
   validateSpec(spec, input);
@@ -100,10 +102,14 @@ export async function runDeployedCampaign(input: {
           eventId: `${eventId}-boundary`,
         });
       }
+      if (input.milestone === "M2" && call.name === "advance_flow_authoring" && findTurnState(response) !== "completed") {
+        throw new Error("M2_TURN_NOT_COMPLETED");
+      }
+      if (call.name === "close_flow_authoring") cleanupSucceeded = true;
     }
   } finally {
-    if (adaptiveSessionId) {
-      cleanupSucceeded = await cancelCampaignSession(adaptiveSessionId, input.correlationId);
+    if (adaptiveSessionId && !cleanupSucceeded) {
+      cleanupSucceeded = await closeCampaignSession(adaptiveSessionId, input.correlationId);
     }
     await session.close();
   }
@@ -115,7 +121,33 @@ export async function runDeployedCampaign(input: {
     ...(!cleanupSucceeded ? { reasonCode: "CAMPAIGN_SESSION_CLEANUP_FAILED" } : {}),
   });
 
-  await collectPersistedTelemetry(input.correlationId, input.metrics);
+  const telemetry = await collectPersistedTelemetry(input.correlationId, input.metrics);
+  if (input.milestone === "M1") {
+    const threshold = input.resolutionThresholds ?? { minNativeResolved: 1, maxPraxisFallbacks: 0 };
+    const resolutionPassed = telemetry.nativeResolved >= threshold.minNativeResolved &&
+      telemetry.praxisCalls <= threshold.maxPraxisFallbacks;
+    checks.push({
+      id: "native-only-standard-controls",
+      description: "Native resolution and the single admitted Praxis fallback remain within target thresholds",
+      status: resolutionPassed ? "passed" : "failed",
+      ...(!resolutionPassed
+        ? { reasonCode: "M1_NATIVE_ONLY_CONTROL_INVARIANT_FAILED", safeDetail: telemetry }
+        : {}),
+    });
+  }
+  if (input.milestone === "M2") {
+    const threshold = input.resolutionThresholds ?? { minNativeResolved: 1, maxPraxisFallbacks: 0 };
+    const resolutionPassed = telemetry.nativeResolved >= threshold.minNativeResolved &&
+      telemetry.praxisCalls === 0;
+    checks.push({
+      id: "m2-native-only",
+      description: "Every M2 browser interaction resolves through the one native driver without Praxis",
+      status: resolutionPassed ? "passed" : "failed",
+      ...(!resolutionPassed
+        ? { reasonCode: "M2_NATIVE_ONLY_INVARIANT_FAILED", safeDetail: telemetry }
+        : {}),
+    });
+  }
   const artifactIds = responseArtifactIds(responses, spec.artifactIds ?? []);
   const artifactBytes = await retrieveArtifacts(artifactIds, input);
   const forbiddenValues = input.forbiddenValues ?? (await readForbiddenValues());
@@ -143,71 +175,94 @@ export async function runDeployedCampaign(input: {
       : {}),
   });
   const terminalBoundary = findDecisionBoundary(responses.at(-1));
+  const terminalTurnState = [...responses].reverse().map(findTurnState).find(Boolean);
   checks.push({
     id: "deployed-journey",
-    description: "The deployed MCP authoring journey reaches an objective-completed boundary",
-    status: terminalBoundary === "objective_completed" ? "passed" : "failed",
-    ...(terminalBoundary !== "objective_completed"
+    description: "The deployed MCP authoring journey reaches a terminal successful turn",
+    status: (input.milestone === "M2"
+      ? terminalTurnState === "completed"
+      : terminalBoundary === "objective_completed") ? "passed" : "failed",
+    ...((input.milestone === "M2" ? terminalTurnState !== "completed" : terminalBoundary !== "objective_completed")
       ? { reasonCode: "CAMPAIGN_TERMINAL_BOUNDARY_MISSING" }
       : {}),
   });
   checks.push({
     id: "authoring-turn-surface",
-    description: "M1 executes one grouped advance_adaptive_session authoring call",
+    description: input.milestone === "M2"
+      ? "M2 executes no more than two grouped semantic authoring turns"
+      : "M1 executes one grouped advance_flow_authoring call",
     status:
       input.milestone === "M0" ||
-      authoringCalls(spec).length === 1
+      input.milestone === "M1" && authoringCalls(spec).length === 1 ||
+      input.milestone === "M2" && authoringCalls(spec).length >= 1 && authoringCalls(spec).length <= 2
         ? "passed"
         : "failed",
     ...(input.milestone === "M1" && authoringCalls(spec).length !== 1
       ? { reasonCode: "M1_GROUPED_AUTHORING_SURFACE_NOT_EXERCISED" }
+      : input.milestone === "M2" && (authoringCalls(spec).length < 1 || authoringCalls(spec).length > 2)
+        ? { reasonCode: "M2_GROUPED_AUTHORING_SURFACE_NOT_EXERCISED" }
       : {}),
   });
   if (input.milestone === "M1" && input.target === "production_shaped" && spec.restart) {
     checks.push(await verifyRestartFence(spec, input.correlationId));
   }
+  if (input.milestone === "M2") {
+    const turns = authoringCalls(spec);
+    const semanticOnly = turns.every((call) =>
+      Array.isArray(call.arguments.intents) && !("operations" in call.arguments));
+    const channelsPresent = turns.every((_, index) => hasIndependentChannels(responses[index + 1]));
+    checks.push(
+      {
+        id: "m2-semantic-turn-surface",
+        description: "M2 authoring calls contain semantic intents and no low-level operation payload",
+        status: semanticOnly ? "passed" : "failed",
+        ...(!semanticOnly ? { reasonCode: "M2_LOW_LEVEL_OPERATION_SURFACE_REMAINS" } : {}),
+      },
+      {
+        id: "m2-independent-outcome-channels",
+        description: "Every grouped turn reports functional, mutation, privacy, evidence, and quality separately",
+        status: channelsPresent ? "passed" : "failed",
+        ...(!channelsPresent ? { reasonCode: "M2_OUTCOME_CHANNEL_MISSING" } : {}),
+      },
+      {
+        id: "m2-call-budget",
+        description: "The complete M2 journey uses no more than four MCP calls",
+        status: spec.calls.length <= 4 ? "passed" : "failed",
+        ...(spec.calls.length > 4 ? { reasonCode: "M2_MCP_CALL_BUDGET_EXCEEDED" } : {}),
+      },
+    );
+  }
   return { responses, artifactBytes, requiredChecks: checks };
 }
 
-async function cancelCampaignSession(sessionId: string, correlationId: string) {
+async function closeCampaignSession(sessionId: string, correlationId: string) {
   try {
-    const current = await fetch(`${apiBaseUrl()}/adaptive-sessions/${sessionId}`, {
-      headers: apiHeaders(),
-    });
-    if (!current.ok) return false;
-    const session = (await current.json()) as { version?: number; state?: string };
-    if (session.state === "cancelled") return true;
-    if (typeof session.version !== "number") return false;
-    const cancelled = await fetch(`${apiBaseUrl()}/adaptive-sessions/${sessionId}/cancel`, {
+    const closed = await fetch(`${apiBaseUrl()}/mission-flow-authoring/${sessionId}/close`, {
       method: "POST",
       headers: { ...Object.fromEntries(apiHeaders()), "content-type": "application/json" },
       body: JSON.stringify({
-        expectedVersion: session.version,
-        reason: "Production-shaped campaign cleanup",
         idempotencyKey: `campaign-cleanup-${correlationId}`,
       }),
     });
-    return cancelled.ok;
+    return closed.ok;
   } catch {
     return false;
   }
 }
 
-async function readExternalSpec(target: "production_shaped" | "vitract_preview") {
+async function readExternalSpec(target: string) {
   if (target !== "vitract_preview") throw new Error("CORE_CAMPAIGN_GENERATED_SPEC_REQUIRED");
-  if (process.env.SCRY_ENABLE_VITRACT_CAMPAIGN !== "true") {
-    throw new Error("SCRY_ENABLE_VITRACT_CAMPAIGN_REQUIRED");
-  }
+  if (process.env.SCRY_LIVE_ACCEPTANCE !== "true") throw new Error("SCRY_LIVE_ACCEPTANCE_REQUIRED");
   const file = requiredEnvironment("SCRY_VITRACT_CAMPAIGN_SPEC_PATH");
   return JSON.parse(await readFile(file, "utf8")) as DeployedCampaignSpec;
 }
 
 function authoringCalls(spec: DeployedCampaignSpec) {
-  return spec.calls.filter((call) => call.name === "advance_adaptive_session");
+  return spec.calls.filter((call) => call.name === "advance_flow_authoring");
 }
 
 export function classifyCampaignCall(name: string) {
-  return name === "start_adaptive_session"
+  return name === "start_flow_authoring"
     ? {
         kind: "session_start" as const,
         phase: "mcp_session_start_round_trip",
@@ -218,7 +273,7 @@ export function classifyCampaignCall(name: string) {
 
 function validateSpec(
   spec: DeployedCampaignSpec,
-  input: { milestone: "M0" | "M1"; target: "production_shaped" | "vitract_preview" },
+  input: { milestone: "M0" | "M1" | "M2"; target: string },
 ) {
   if (!Array.isArray(spec.calls) || !spec.calls.length) throw new Error("CAMPAIGN_CALLS_REQUIRED");
   const bytes = JSON.stringify(spec);
@@ -228,6 +283,20 @@ function validateSpec(
   for (const call of spec.calls) {
     if (!call.name || !call.arguments || typeof call.arguments !== "object") {
       throw new Error("CAMPAIGN_CALL_INVALID");
+    }
+  }
+  if (input.milestone === "M2") {
+    const permitted = new Set([
+      "start_flow_authoring",
+      "advance_flow_authoring",
+      "close_flow_authoring",
+    ]);
+    if (spec.calls.some((call) => !permitted.has(call.name))) {
+      throw new Error("M2_EXTERNAL_TOOL_FORBIDDEN");
+    }
+    if (spec.calls.filter((call) => call.name === "start_flow_authoring").length !== 1 ||
+        spec.calls.filter((call) => call.name === "close_flow_authoring").length !== 1) {
+      throw new Error("M2_AUTHORING_LIFECYCLE_INVALID");
     }
   }
   if (input.target === "vitract_preview") {
@@ -279,7 +348,7 @@ async function initializeMcp() {
   };
 }
 
-async function collectPersistedTelemetry(
+export async function collectPersistedTelemetry(
   correlationId: string,
   metrics: CampaignMetricsCollector,
 ) {
@@ -403,11 +472,46 @@ async function collectPersistedTelemetry(
         source: "praxis_result",
         eventId: `praxis-not-emitted-${correlationId}`,
       });
-      metrics.record(correlationId, "expected_effect_verification", 0, {
-        source: "praxis_result",
-        eventId: `effect-not-emitted-${correlationId}`,
-      });
     }
+    const native = await pool.query<{ operationId: string; sequence: number; safeFacts: Record<string, unknown> }>(
+      `SELECT event.operation_id AS "operationId",event.sequence,event.safe_facts AS "safeFacts"
+       FROM execution_kernel_events event
+       JOIN execution_kernel_operations operation
+         ON operation.session_id=event.session_id AND operation.operation_id=event.operation_id
+       WHERE operation.correlation_id=$1 AND event.phase='native.resolution'
+       ORDER BY event.id`,
+      [correlationId],
+    );
+    let nativeResolved = 0;
+    for (const event of native.rows) {
+      const duration = event.safeFacts.durationMs;
+      if (event.safeFacts.status === "resolved") nativeResolved += 1;
+      if (typeof duration === "number") {
+        metrics.record(event.operationId, "native_resolution", duration, {
+          source: "worker_event",
+          eventId: `native-${event.operationId}-${event.sequence}`,
+        });
+      }
+    }
+    const effects = await pool.query<{ operationId: string; sequence: number; safeFacts: Record<string, unknown> }>(
+      `SELECT event.operation_id AS "operationId",event.sequence,event.safe_facts AS "safeFacts"
+       FROM execution_kernel_events event
+       JOIN execution_kernel_operations operation
+         ON operation.session_id=event.session_id AND operation.operation_id=event.operation_id
+       WHERE operation.correlation_id=$1 AND event.phase='effect.verification'
+       ORDER BY event.id`,
+      [correlationId],
+    );
+    for (const event of effects.rows) {
+      const duration = event.safeFacts.durationMs;
+      if (typeof duration === "number") {
+        metrics.record(event.operationId, "expected_effect_verification", duration, {
+          source: "worker_event",
+          eventId: `effect-${event.operationId}-${event.sequence}`,
+        });
+      }
+    }
+    return { praxisCalls: praxis.rowCount ?? 0, nativeResolved };
   } finally {
     await pool.end();
   }
@@ -596,6 +700,51 @@ export function findDecisionBoundary(value: unknown): string | undefined {
     return undefined;
   };
   return visit(value);
+}
+
+function findTurnState(value: unknown): string | undefined {
+  return findNested(value, (record) => {
+    if (record.turn && typeof record.turn === "object") {
+      const state = (record.turn as Record<string, unknown>).state;
+      if (typeof state === "string") return state;
+    }
+    return undefined;
+  });
+}
+
+function hasIndependentChannels(value: unknown) {
+  return findNested(value, (record) => {
+    if (!record.channels || typeof record.channels !== "object") return undefined;
+    const channels = record.channels as Record<string, unknown>;
+    return ["functional", "mutation", "privacy", "evidence", "quality"].every((key) => key in channels)
+      ? "present"
+      : undefined;
+  }) === "present";
+}
+
+function findNested(
+  value: unknown,
+  select: (record: Record<string, unknown>) => string | undefined,
+): string | undefined {
+  if (typeof value === "string") {
+    try { return findNested(JSON.parse(value), select); } catch { return undefined; }
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = findNested(entry, select);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const selected = select(record);
+  if (selected) return selected;
+  for (const child of Object.values(record)) {
+    const found = findNested(child, select);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 function findAdaptiveSessionId(value: unknown): string | undefined {

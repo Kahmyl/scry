@@ -1,7 +1,9 @@
 # Adaptive Execution M0-M1 Operations
 
-Status: implementation verification pending Docker-backed campaigns  
+Status: superseded on 2026-08-09 by [Scry Mission-First Live Execution Convergence](./mission-first-live-convergence-prd.md); retained as historical M0-M1 operational evidence only
 Scope: execution kernel, bounded authoring turn, and adaptive campaign authority
+
+Do not use this file as the current product or implementation authority. Mission-first ownership and live acceptance requirements are defined by the canonical convergence runbook.
 
 ## Environment
 

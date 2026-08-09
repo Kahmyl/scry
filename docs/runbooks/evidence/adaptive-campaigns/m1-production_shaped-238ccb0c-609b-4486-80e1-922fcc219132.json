@@ -1,0 +1,498 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "238ccb0c-609b-4486-80e1-922fcc219132",
+  "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+  "milestone": "M1",
+  "target": "production_shaped",
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "schemaFingerprint": "19652555d3b56ee9b733eccd1c0abcd44b0c2a62974eeef5add2110d65f9d1b0",
+  "runtimeVersion": "m1-local",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "startedAt": "2026-08-09T12:04:38.438Z",
+  "completedAt": "2026-08-09T12:04:51.266Z",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "adaptive-session-cleanup",
+      "description": "The campaign cancels its Adaptive Session and releases browser ownership",
+      "status": "passed"
+    },
+    {
+      "id": "native-only-standard-controls",
+      "description": "Native resolution and the single admitted Praxis fallback remain within target thresholds",
+      "status": "passed"
+    },
+    {
+      "id": "redaction",
+      "description": "Protected values are absent from MCP responses and retrieved artifacts",
+      "status": "passed"
+    },
+    {
+      "id": "artifact-round-trip",
+      "description": "Every artifact emitted by the deployed journey finalizes and round-trips",
+      "status": "passed"
+    },
+    {
+      "id": "deployed-journey",
+      "description": "The deployed MCP authoring journey reaches an objective-completed boundary",
+      "status": "passed"
+    },
+    {
+      "id": "authoring-turn-surface",
+      "description": "M1 executes one grouped advance_flow_authoring call",
+      "status": "passed"
+    },
+    {
+      "id": "mission-owned",
+      "description": "Campaign creates exactly one Mission, Objective, and owned Flow draft",
+      "status": "passed"
+    },
+    {
+      "id": "measurement-integrity",
+      "description": "All required counts, phases, and deployed-component traversals are backed by observed events",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [],
+  "metrics": {
+    "totalWallClockMs": 12827.274083,
+    "agentDecisionBoundaries": 1,
+    "mcpRequests": 1,
+    "apiRequests": 1,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 3025,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "api": {
+        "count": 1,
+        "p50Ms": 6.037749999999988,
+        "p95Ms": 6.037749999999988,
+        "maxMs": 6.037749999999988
+      },
+      "artifact_retrieval": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "browser_startup": {
+        "count": 1,
+        "p50Ms": 2456.011,
+        "p95Ms": 2456.011,
+        "maxMs": 2456.011
+      },
+      "database": {
+        "count": 1,
+        "p50Ms": 8.661124999999998,
+        "p95Ms": 8.661124999999998,
+        "maxMs": 8.661124999999998
+      },
+      "document_observation": {
+        "count": 1,
+        "p50Ms": 2456.011,
+        "p95Ms": 2456.011,
+        "maxMs": 2456.011
+      },
+      "evidence_finalization": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "expected_effect_verification": {
+        "count": 4,
+        "p50Ms": 0.00729099998716265,
+        "p95Ms": 0.029165999963879585,
+        "maxMs": 0.029165999963879585
+      },
+      "interaction_execution": {
+        "count": 4,
+        "p50Ms": 8,
+        "p95Ms": 10081,
+        "maxMs": 10081
+      },
+      "mcp_round_trip": {
+        "count": 1,
+        "p50Ms": 12646.510208,
+        "p95Ms": 12646.510208,
+        "maxMs": 12646.510208
+      },
+      "mcp_session_start_round_trip": {
+        "count": 1,
+        "p50Ms": 34.185333000000014,
+        "p95Ms": 34.185333000000014,
+        "maxMs": 34.185333000000014
+      },
+      "native_resolution": {
+        "count": 2,
+        "p50Ms": 45.7601250000298,
+        "p95Ms": 10020.65975500003,
+        "maxMs": 10020.65975500003
+      },
+      "praxis_grounding": {
+        "count": 1,
+        "p50Ms": 31.713250000029802,
+        "p95Ms": 31.713250000029802,
+        "maxMs": 31.713250000029802
+      },
+      "queue_wait": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "redis": {
+        "count": 1,
+        "p50Ms": 3.072833000000003,
+        "p95Ms": 3.072833000000003,
+        "maxMs": 3.072833000000003
+      },
+      "worker": {
+        "count": 1,
+        "p50Ms": 10.352125000000001,
+        "p95Ms": 10.352125000000001,
+        "maxMs": 10.352125000000001
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "mcp-4b2453aa-313d-4843-aab5-7c284dc4076f-2",
+        "phase": "mcp_round_trip",
+        "durationMs": 12646.510208
+      },
+      {
+        "operationId": "xyz_bank-success",
+        "phase": "interaction_execution",
+        "durationMs": 10081
+      },
+      {
+        "operationId": "xyz_bank-success",
+        "phase": "native_resolution",
+        "durationMs": 10020.65975500003
+      },
+      {
+        "operationId": "xyz_bank-navigate",
+        "phase": "browser_startup",
+        "durationMs": 2456.011
+      },
+      {
+        "operationId": "xyz_bank-navigate",
+        "phase": "document_observation",
+        "durationMs": 2456.011
+      },
+      {
+        "operationId": "xyz_bank-customer-login",
+        "phase": "interaction_execution",
+        "durationMs": 50
+      },
+      {
+        "operationId": "xyz_bank-customer-login",
+        "phase": "native_resolution",
+        "durationMs": 45.7601250000298
+      },
+      {
+        "operationId": "mcp-4b2453aa-313d-4843-aab5-7c284dc4076f-1",
+        "phase": "mcp_session_start_round_trip",
+        "durationMs": 34.185333000000014
+      },
+      {
+        "operationId": "xyz_bank-success",
+        "phase": "praxis_grounding",
+        "durationMs": 31.713250000029802
+      },
+      {
+        "operationId": "worker",
+        "phase": "worker",
+        "durationMs": 10.352125000000001
+      },
+      {
+        "operationId": "database",
+        "phase": "database",
+        "durationMs": 8.661124999999998
+      },
+      {
+        "operationId": "xyz_bank-navigate",
+        "phase": "interaction_execution",
+        "durationMs": 8
+      },
+      {
+        "operationId": "api",
+        "phase": "api",
+        "durationMs": 6.037749999999988
+      },
+      {
+        "operationId": "xyz_bank-success",
+        "phase": "interaction_execution",
+        "durationMs": 4.324125000042841
+      },
+      {
+        "operationId": "redis",
+        "phase": "redis",
+        "durationMs": 3.072833000000003
+      },
+      {
+        "operationId": "xyz_bank-navigate",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.029165999963879585
+      },
+      {
+        "operationId": "xyz_bank-success",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.00741700001526624
+      },
+      {
+        "operationId": "xyz_bank-success",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.00729099998716265
+      },
+      {
+        "operationId": "xyz_bank-customer-login",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.003499999991618097
+      },
+      {
+        "operationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "phase": "queue_wait",
+        "durationMs": 0
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:database",
+        "operationId": "database",
+        "source": "campaign_client",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "database-238ccb0c-609b-4486-80e1-922fcc219132",
+        "value": 8.661124999999998
+      },
+      {
+        "metric": "phase:redis",
+        "operationId": "redis",
+        "source": "campaign_client",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "redis-238ccb0c-609b-4486-80e1-922fcc219132",
+        "value": 3.072833000000003
+      },
+      {
+        "metric": "apiRequests",
+        "operationId": "capabilities-238ccb0c-609b-4486-80e1-922fcc219132",
+        "source": "api_http",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "capabilities-238ccb0c-609b-4486-80e1-922fcc219132",
+        "value": 1
+      },
+      {
+        "metric": "phase:api",
+        "operationId": "api",
+        "source": "api_http",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "api-238ccb0c-609b-4486-80e1-922fcc219132",
+        "value": 6.037749999999988
+      },
+      {
+        "metric": "phase:worker",
+        "operationId": "worker",
+        "source": "control_plane_query",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "worker-238ccb0c-609b-4486-80e1-922fcc219132",
+        "value": 10.352125000000001
+      },
+      {
+        "metric": "phase:mcp_session_start_round_trip",
+        "operationId": "mcp-4b2453aa-313d-4843-aab5-7c284dc4076f-1",
+        "source": "mcp_http",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "mcp-4b2453aa-313d-4843-aab5-7c284dc4076f-1-duration",
+        "value": 34.185333000000014
+      },
+      {
+        "metric": "mcpRequests",
+        "operationId": "mcp-4b2453aa-313d-4843-aab5-7c284dc4076f-2",
+        "source": "mcp_http",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "mcp-4b2453aa-313d-4843-aab5-7c284dc4076f-2",
+        "value": 1
+      },
+      {
+        "metric": "phase:mcp_round_trip",
+        "operationId": "mcp-4b2453aa-313d-4843-aab5-7c284dc4076f-2",
+        "source": "mcp_http",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "mcp-4b2453aa-313d-4843-aab5-7c284dc4076f-2-duration",
+        "value": 12646.510208
+      },
+      {
+        "metric": "bytesReturnedToAgent",
+        "operationId": "mcp-4b2453aa-313d-4843-aab5-7c284dc4076f-2-bytes",
+        "source": "mcp_http",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "mcp-4b2453aa-313d-4843-aab5-7c284dc4076f-2-bytes",
+        "value": 3025
+      },
+      {
+        "metric": "agentDecisionBoundaries",
+        "operationId": "mcp-4b2453aa-313d-4843-aab5-7c284dc4076f-2-boundary",
+        "source": "mcp_http",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "mcp-4b2453aa-313d-4843-aab5-7c284dc4076f-2-boundary",
+        "value": 1
+      },
+      {
+        "metric": "phase:queue_wait",
+        "operationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "source": "queue_event",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "queue-not-applicable-4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "value": 0
+      },
+      {
+        "metric": "phase:browser_startup",
+        "operationId": "xyz_bank-navigate",
+        "source": "browser_event",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "browser-4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "value": 2456.011
+      },
+      {
+        "metric": "phase:document_observation",
+        "operationId": "xyz_bank-navigate",
+        "source": "worker_event",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "observation-4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "value": 2456.011
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "xyz_bank-navigate",
+        "source": "worker_event",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "operation-45a398da-558c-4684-ba21-29a76602ab48-xyz_bank-navigate",
+        "value": 8
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "xyz_bank-customer-login",
+        "source": "worker_event",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "operation-45a398da-558c-4684-ba21-29a76602ab48-xyz_bank-customer-login",
+        "value": 50
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "xyz_bank-success",
+        "source": "worker_event",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "operation-45a398da-558c-4684-ba21-29a76602ab48-xyz_bank-success",
+        "value": 10081
+      },
+      {
+        "metric": "phase:praxis_grounding",
+        "operationId": "xyz_bank-success",
+        "source": "praxis_result",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "praxis-xyz_bank-success-2-praxis_grounding",
+        "value": 31.713250000029802
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "xyz_bank-success",
+        "source": "praxis_result",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "praxis-xyz_bank-success-2-interaction_execution",
+        "value": 4.324125000042841
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "xyz_bank-success",
+        "source": "praxis_result",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "praxis-xyz_bank-success-2-expected_effect_verification",
+        "value": 0.00729099998716265
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "xyz_bank-customer-login",
+        "source": "worker_event",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "native-xyz_bank-customer-login-1",
+        "value": 45.7601250000298
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "xyz_bank-success",
+        "source": "worker_event",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "native-xyz_bank-success-1",
+        "value": 10020.65975500003
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "xyz_bank-navigate",
+        "source": "worker_event",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "effect-xyz_bank-navigate-1",
+        "value": 0.029165999963879585
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "xyz_bank-customer-login",
+        "source": "worker_event",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "effect-xyz_bank-customer-login-2",
+        "value": 0.003499999991618097
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "xyz_bank-success",
+        "source": "worker_event",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "effect-xyz_bank-success-3",
+        "value": 0.00741700001526624
+      },
+      {
+        "metric": "phase:evidence_finalization",
+        "operationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "source": "artifact_event",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "evidence-not-requested-4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "value": 0
+      },
+      {
+        "metric": "phase:artifact_retrieval",
+        "operationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "source": "artifact_event",
+        "correlationId": "4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "eventId": "artifact-not-requested-4b2453aa-313d-4843-aab5-7c284dc4076f",
+        "value": 0
+      }
+    ]
+  },
+  "artifactRefs": [],
+  "verdict": "pass"
+}

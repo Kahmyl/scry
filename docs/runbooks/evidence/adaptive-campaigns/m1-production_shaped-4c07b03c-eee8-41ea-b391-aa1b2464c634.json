@@ -1,0 +1,530 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "4c07b03c-eee8-41ea-b391-aa1b2464c634",
+  "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+  "milestone": "M1",
+  "target": "production_shaped",
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "schemaFingerprint": "19652555d3b56ee9b733eccd1c0abcd44b0c2a62974eeef5add2110d65f9d1b0",
+  "runtimeVersion": "m1-local",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "startedAt": "2026-08-09T11:59:31.254Z",
+  "completedAt": "2026-08-09T11:59:36.607Z",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "adaptive-session-cleanup",
+      "description": "The campaign cancels its Adaptive Session and releases browser ownership",
+      "status": "passed"
+    },
+    {
+      "id": "native-only-standard-controls",
+      "description": "Every standard authentication control resolves natively with zero Praxis calls",
+      "status": "passed"
+    },
+    {
+      "id": "redaction",
+      "description": "Protected values are absent from MCP responses and retrieved artifacts",
+      "status": "passed"
+    },
+    {
+      "id": "artifact-round-trip",
+      "description": "Every artifact emitted by the deployed journey finalizes and round-trips",
+      "status": "passed"
+    },
+    {
+      "id": "deployed-journey",
+      "description": "The deployed MCP authoring journey reaches an objective-completed boundary",
+      "status": "passed"
+    },
+    {
+      "id": "authoring-turn-surface",
+      "description": "M1 executes one grouped advance_flow_authoring call",
+      "status": "passed"
+    },
+    {
+      "id": "mission-owned",
+      "description": "Campaign creates exactly one Mission, Objective, and owned Flow draft",
+      "status": "passed"
+    },
+    {
+      "id": "measurement-integrity",
+      "description": "All required counts, phases, and deployed-component traversals are backed by observed events",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [],
+  "metrics": {
+    "totalWallClockMs": 5349.837375,
+    "agentDecisionBoundaries": 1,
+    "mcpRequests": 1,
+    "apiRequests": 1,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 3478,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "api": {
+        "count": 1,
+        "p50Ms": 6.594583,
+        "p95Ms": 6.594583,
+        "maxMs": 6.594583
+      },
+      "artifact_retrieval": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "browser_startup": {
+        "count": 1,
+        "p50Ms": 1976.029,
+        "p95Ms": 1976.029,
+        "maxMs": 1976.029
+      },
+      "database": {
+        "count": 1,
+        "p50Ms": 4.597458000000017,
+        "p95Ms": 4.597458000000017,
+        "maxMs": 4.597458000000017
+      },
+      "document_observation": {
+        "count": 1,
+        "p50Ms": 1976.029,
+        "p95Ms": 1976.029,
+        "maxMs": 1976.029
+      },
+      "evidence_finalization": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "expected_effect_verification": {
+        "count": 5,
+        "p50Ms": 0.006875000020954758,
+        "p95Ms": 0.029291999991983175,
+        "maxMs": 0.029291999991983175
+      },
+      "interaction_execution": {
+        "count": 5,
+        "p50Ms": 359,
+        "p95Ms": 1905,
+        "maxMs": 1905
+      },
+      "mcp_round_trip": {
+        "count": 1,
+        "p50Ms": 5176.774667,
+        "p95Ms": 5176.774667,
+        "maxMs": 5176.774667
+      },
+      "mcp_session_start_round_trip": {
+        "count": 1,
+        "p50Ms": 41.33779199999998,
+        "p95Ms": 41.33779199999998,
+        "maxMs": 41.33779199999998
+      },
+      "native_resolution": {
+        "count": 4,
+        "p50Ms": 33.19604199996684,
+        "p95Ms": 1902.6483330000192,
+        "maxMs": 1902.6483330000192
+      },
+      "praxis_grounding": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "queue_wait": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "redis": {
+        "count": 1,
+        "p50Ms": 2.8247080000000437,
+        "p95Ms": 2.8247080000000437,
+        "maxMs": 2.8247080000000437
+      },
+      "worker": {
+        "count": 1,
+        "p50Ms": 6.8652079999999955,
+        "p95Ms": 6.8652079999999955,
+        "maxMs": 6.8652079999999955
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "mcp-745307d9-e68b-489a-99d5-bea0c1990fbb-2",
+        "phase": "mcp_round_trip",
+        "durationMs": 5176.774667
+      },
+      {
+        "operationId": "orangehrm-navigate",
+        "phase": "browser_startup",
+        "durationMs": 1976.029
+      },
+      {
+        "operationId": "orangehrm-navigate",
+        "phase": "document_observation",
+        "durationMs": 1976.029
+      },
+      {
+        "operationId": "orangehrm-success",
+        "phase": "interaction_execution",
+        "durationMs": 1905
+      },
+      {
+        "operationId": "orangehrm-success",
+        "phase": "native_resolution",
+        "durationMs": 1902.6483330000192
+      },
+      {
+        "operationId": "orangehrm-navigate",
+        "phase": "interaction_execution",
+        "durationMs": 634
+      },
+      {
+        "operationId": "orangehrm-username",
+        "phase": "interaction_execution",
+        "durationMs": 359
+      },
+      {
+        "operationId": "orangehrm-username",
+        "phase": "native_resolution",
+        "durationMs": 354.0704590000096
+      },
+      {
+        "operationId": "mcp-745307d9-e68b-489a-99d5-bea0c1990fbb-1",
+        "phase": "mcp_session_start_round_trip",
+        "durationMs": 41.33779199999998
+      },
+      {
+        "operationId": "orangehrm-login",
+        "phase": "interaction_execution",
+        "durationMs": 36
+      },
+      {
+        "operationId": "orangehrm-login",
+        "phase": "native_resolution",
+        "durationMs": 33.19604199996684
+      },
+      {
+        "operationId": "orangehrm-password",
+        "phase": "interaction_execution",
+        "durationMs": 13
+      },
+      {
+        "operationId": "orangehrm-password",
+        "phase": "native_resolution",
+        "durationMs": 9.658999999985099
+      },
+      {
+        "operationId": "worker",
+        "phase": "worker",
+        "durationMs": 6.8652079999999955
+      },
+      {
+        "operationId": "api",
+        "phase": "api",
+        "durationMs": 6.594583
+      },
+      {
+        "operationId": "database",
+        "phase": "database",
+        "durationMs": 4.597458000000017
+      },
+      {
+        "operationId": "redis",
+        "phase": "redis",
+        "durationMs": 2.8247080000000437
+      },
+      {
+        "operationId": "orangehrm-navigate",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.029291999991983175
+      },
+      {
+        "operationId": "orangehrm-success",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.011999999987892807
+      },
+      {
+        "operationId": "orangehrm-username",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.006875000020954758
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:database",
+        "operationId": "database",
+        "source": "campaign_client",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "database-4c07b03c-eee8-41ea-b391-aa1b2464c634",
+        "value": 4.597458000000017
+      },
+      {
+        "metric": "phase:redis",
+        "operationId": "redis",
+        "source": "campaign_client",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "redis-4c07b03c-eee8-41ea-b391-aa1b2464c634",
+        "value": 2.8247080000000437
+      },
+      {
+        "metric": "apiRequests",
+        "operationId": "capabilities-4c07b03c-eee8-41ea-b391-aa1b2464c634",
+        "source": "api_http",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "capabilities-4c07b03c-eee8-41ea-b391-aa1b2464c634",
+        "value": 1
+      },
+      {
+        "metric": "phase:api",
+        "operationId": "api",
+        "source": "api_http",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "api-4c07b03c-eee8-41ea-b391-aa1b2464c634",
+        "value": 6.594583
+      },
+      {
+        "metric": "phase:worker",
+        "operationId": "worker",
+        "source": "control_plane_query",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "worker-4c07b03c-eee8-41ea-b391-aa1b2464c634",
+        "value": 6.8652079999999955
+      },
+      {
+        "metric": "phase:mcp_session_start_round_trip",
+        "operationId": "mcp-745307d9-e68b-489a-99d5-bea0c1990fbb-1",
+        "source": "mcp_http",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "mcp-745307d9-e68b-489a-99d5-bea0c1990fbb-1-duration",
+        "value": 41.33779199999998
+      },
+      {
+        "metric": "mcpRequests",
+        "operationId": "mcp-745307d9-e68b-489a-99d5-bea0c1990fbb-2",
+        "source": "mcp_http",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "mcp-745307d9-e68b-489a-99d5-bea0c1990fbb-2",
+        "value": 1
+      },
+      {
+        "metric": "phase:mcp_round_trip",
+        "operationId": "mcp-745307d9-e68b-489a-99d5-bea0c1990fbb-2",
+        "source": "mcp_http",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "mcp-745307d9-e68b-489a-99d5-bea0c1990fbb-2-duration",
+        "value": 5176.774667
+      },
+      {
+        "metric": "bytesReturnedToAgent",
+        "operationId": "mcp-745307d9-e68b-489a-99d5-bea0c1990fbb-2-bytes",
+        "source": "mcp_http",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "mcp-745307d9-e68b-489a-99d5-bea0c1990fbb-2-bytes",
+        "value": 3478
+      },
+      {
+        "metric": "agentDecisionBoundaries",
+        "operationId": "mcp-745307d9-e68b-489a-99d5-bea0c1990fbb-2-boundary",
+        "source": "mcp_http",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "mcp-745307d9-e68b-489a-99d5-bea0c1990fbb-2-boundary",
+        "value": 1
+      },
+      {
+        "metric": "phase:queue_wait",
+        "operationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "source": "queue_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "queue-not-applicable-745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "value": 0
+      },
+      {
+        "metric": "phase:browser_startup",
+        "operationId": "orangehrm-navigate",
+        "source": "browser_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "browser-745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "value": 1976.029
+      },
+      {
+        "metric": "phase:document_observation",
+        "operationId": "orangehrm-navigate",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "observation-745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "value": 1976.029
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-navigate",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "operation-726c7a82-b558-49b8-af40-837ed280ca9d-orangehrm-navigate",
+        "value": 634
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-username",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "operation-726c7a82-b558-49b8-af40-837ed280ca9d-orangehrm-username",
+        "value": 359
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-password",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "operation-726c7a82-b558-49b8-af40-837ed280ca9d-orangehrm-password",
+        "value": 13
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-login",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "operation-726c7a82-b558-49b8-af40-837ed280ca9d-orangehrm-login",
+        "value": 36
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-success",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "operation-726c7a82-b558-49b8-af40-837ed280ca9d-orangehrm-success",
+        "value": 1905
+      },
+      {
+        "metric": "phase:praxis_grounding",
+        "operationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "source": "praxis_result",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "praxis-not-emitted-745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "value": 0
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "orangehrm-username",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "native-orangehrm-username-1",
+        "value": 354.0704590000096
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "orangehrm-password",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "native-orangehrm-password-1",
+        "value": 9.658999999985099
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "orangehrm-login",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "native-orangehrm-login-1",
+        "value": 33.19604199996684
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "orangehrm-success",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "native-orangehrm-success-1",
+        "value": 1902.6483330000192
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-navigate",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "effect-orangehrm-navigate-1",
+        "value": 0.029291999991983175
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-username",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "effect-orangehrm-username-2",
+        "value": 0.006875000020954758
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-password",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "effect-orangehrm-password-2",
+        "value": 0.0052090000244788826
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-login",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "effect-orangehrm-login-2",
+        "value": 0.004167000006418675
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-success",
+        "source": "worker_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "effect-orangehrm-success-2",
+        "value": 0.011999999987892807
+      },
+      {
+        "metric": "phase:evidence_finalization",
+        "operationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "source": "artifact_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "evidence-not-requested-745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "value": 0
+      },
+      {
+        "metric": "phase:artifact_retrieval",
+        "operationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "source": "artifact_event",
+        "correlationId": "745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "eventId": "artifact-not-requested-745307d9-e68b-489a-99d5-bea0c1990fbb",
+        "value": 0
+      }
+    ]
+  },
+  "artifactRefs": [],
+  "verdict": "pass"
+}

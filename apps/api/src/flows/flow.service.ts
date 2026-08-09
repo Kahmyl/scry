@@ -28,7 +28,6 @@ import type { PoolClient, QueryResultRow } from "pg";
 import type { Principal } from "../auth/index.js";
 import { Database } from "../infrastructure/index.js";
 import { ReleaseAdmissionService } from "../runtime/index.js";
-import { adaptiveExecutionFlags } from "../runtime/index.js";
 import { snapshotVeilPolicy } from "../veil/index.js";
 import { FlowReadRepository } from "./flow-read.repository.js";
 
@@ -58,14 +57,9 @@ export class FlowService {
       releaseId: process.env.SCRY_RELEASE_ID ?? "development",
       schemaFingerprint: process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline",
       adaptiveExecution: {
-        kernel: adaptiveExecutionFlags().executionKernel,
-        authoringTurn: adaptiveExecutionFlags().authoringTurn,
+        kernel: true,
+        authoringTurn: true,
         modes: ["observe", "rehearse", "transact", "certify", "run"],
-      },
-      directBrowser: {
-        enabled: process.env.SCRY_DIRECT_BROWSER_ENABLED === "true",
-        maxActionsPerTurn: 10,
-        sessionIdleTtlMs: 1_800_000,
       },
       supportedActions: [
         "navigate",
@@ -212,7 +206,7 @@ export class FlowService {
         encryptedSessionReuse: "project-policy-opt-in",
       },
       orchestration: {
-        enabled: process.env.SCRY_ORCHESTRATION_ENABLED === "true",
+        enabled: true,
         projectConcurrencyLimit: 3,
         readinessAuthoritative: true,
       },
@@ -440,8 +434,12 @@ export class FlowService {
         compiledContractDigest: string;
         runtimeHash: string;
         capabilityManifestHash: string;
+        contractVersion: string;
       }>(
-        `SELECT id,compiled_contract_digest AS "compiledContractDigest",runtime_hash AS "runtimeHash",capability_manifest_hash AS "capabilityManifestHash" FROM flow_compilations WHERE id=$1 AND flow_revision_id=$2 AND environment_id=$3 AND mission_id=$4 AND objective_id=$5 AND status='execution_ready'`,
+        `SELECT id,compiled_contract_digest AS "compiledContractDigest",runtime_hash AS "runtimeHash",
+                capability_manifest_hash AS "capabilityManifestHash",contract_version AS "contractVersion"
+         FROM flow_compilations WHERE id=$1 AND flow_revision_id=$2 AND environment_id=$3
+           AND mission_id=$4 AND objective_id=$5 AND status='execution_ready'`,
         [
           input.compiledContractId,
           input.flowRevisionId,
@@ -458,8 +456,12 @@ export class FlowService {
       if (!compilation.rowCount)
         throw new ConflictException({
           code: "EXECUTION_READY_COMPILATION_REQUIRED",
-          safeActions: ["inspect_compilation", "start_probe_session", "compile_flow_draft"],
+          safeActions: ["get_flow_authoring", "advance_flow_authoring", "compile_and_certify_flow"],
         });
+      readImmutableFlowContractVersion(
+        compilation.rows[0]!.contractVersion,
+        input.flowRevisionId,
+      );
       if (
         compilation.rows[0]!.runtimeHash !== runtime.runtimeHash ||
         compilation.rows[0]!.capabilityManifestHash !== runtime.capabilityManifestHash
@@ -470,7 +472,7 @@ export class FlowService {
         );
         throw new ConflictException({
           code: "COMPILED_CONTRACT_STALE",
-          safeActions: ["start_probe_session", "recompile"],
+          safeActions: ["advance_flow_authoring", "compile_and_certify_flow"],
         });
       }
       const existingCandidate = await query(
@@ -808,6 +810,12 @@ export class FlowService {
     if (principal.kind === "user" && principal.role === "viewer")
       throw new ForbiddenException("Workspace viewers have read-only access");
   }
+}
+
+export function readImmutableFlowContractVersion(contractVersion: string, flowRevisionId: string | null) {
+  if (contractVersion === "v2-learned-interactions") return contractVersion;
+  if (contractVersion === "v1-existing" && flowRevisionId) return contractVersion;
+  throw new ConflictException({ code: "UNSUPPORTED_FLOW_CONTRACT_VERSION" });
 }
 
 function adapterReferences(plan: CurrentPlan) {

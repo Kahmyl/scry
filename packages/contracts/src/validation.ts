@@ -280,6 +280,7 @@ function actionIntents(action: CurrentAction) {
   }
   if (
     action.type === "navigate" ||
+    action.type === "sameOriginRequest" ||
     action.type === "scroll" ||
     action.type === "screenshot" ||
     action.type === "press"

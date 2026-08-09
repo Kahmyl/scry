@@ -11,8 +11,6 @@ const principal = {
 
 describe("authoring runtime command service recovery", () => {
   it("returns a stale-claim terminal result on same-key retry instead of polling forever", async () => {
-    vi.stubEnv("SCRY_AUTHORING_TURN_ENABLED", "true");
-    vi.stubEnv("SCRY_EXECUTION_KERNEL_ENABLED", "true");
     const commands = {
       enqueue: vi.fn(async () => ({ id: "command", state: "failed", replayed: true })),
       result: vi.fn(async () => ({
@@ -40,18 +38,6 @@ describe("authoring runtime command service recovery", () => {
     });
     expect(performance.now() - startedAt).toBeLessThan(500);
     expect(commands.result).toHaveBeenCalledOnce();
-    vi.unstubAllEnvs();
-  });
-
-  it("rejects grouped turns while their surface flag is disabled", async () => {
-    vi.stubEnv("SCRY_AUTHORING_TURN_ENABLED", "false");
-    const service = new AuthoringRuntimeCommandService({} as never, {} as never);
-    await expect(
-      service.advance(principal, crypto.randomUUID(), turnCommand()),
-    ).rejects.toMatchObject({
-      response: { code: "AUTHORING_TURN_DISABLED" },
-    });
-    vi.unstubAllEnvs();
   });
 });
 

@@ -1,0 +1,249 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "schemaFingerprint": "19652555d3b56ee9b733eccd1c0abcd44b0c2a62974eeef5add2110d65f9d1b0",
+  "runtimeVersion": "m1-local",
+  "runtimeConfigurationDigest": "7b160a3c8560ce88fb0b7f0bf666fd5c19293880504c773dda9d15d4142c43d2",
+  "milestone": "M1",
+  "target": "orangehrm",
+  "repetition": 1,
+  "missionId": "b484d690-b829-4b30-8477-21d5fc6c0aa9",
+  "objectiveIds": [
+    "8a496792-14d0-45c1-bc8d-7849a4ad249a"
+  ],
+  "flowIds": [
+    "f78d90eb-b09b-48a9-be48-1113172160b5"
+  ],
+  "runIds": [],
+  "correlationId": "8480d926-e8bc-4817-809e-39dd7a0ab137",
+  "boundaryUnderTest": "Mission-owned native authentication with protected references and zero Praxis calls",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "adaptive-session-cleanup",
+      "description": "The campaign cancels its Adaptive Session and releases browser ownership",
+      "status": "passed"
+    },
+    {
+      "id": "native-only-standard-controls",
+      "description": "Every standard authentication control resolves natively with zero Praxis calls",
+      "status": "passed"
+    },
+    {
+      "id": "redaction",
+      "description": "Protected values are absent from MCP responses and retrieved artifacts",
+      "status": "passed"
+    },
+    {
+      "id": "artifact-round-trip",
+      "description": "Every artifact emitted by the deployed journey finalizes and round-trips",
+      "status": "passed"
+    },
+    {
+      "id": "deployed-journey",
+      "description": "The deployed MCP authoring journey reaches an objective-completed boundary",
+      "status": "passed"
+    },
+    {
+      "id": "authoring-turn-surface",
+      "description": "M1 executes one grouped advance_flow_authoring call",
+      "status": "passed"
+    },
+    {
+      "id": "mission-owned",
+      "description": "Campaign creates exactly one Mission, Objective, and owned Flow draft",
+      "status": "passed"
+    }
+  ],
+  "observationalFindings": [],
+  "cleanup": {
+    "required": true,
+    "state": "completed",
+    "refs": []
+  },
+  "calls": {
+    "mcp": 2,
+    "api": 1,
+    "repeatedStateReads": 0
+  },
+  "resolution": {
+    "nativeResolved": 4,
+    "praxisFallbacks": 0
+  },
+  "reductions": {
+    "decisionBoundary": 0.8888888888888888,
+    "mcpCalls": 0.8888888888888888,
+    "agentBytes": 0.6
+  },
+  "timings": {
+    "api": {
+      "count": 1,
+      "p50Ms": 8.341208000000023,
+      "p95Ms": 8.341208000000023,
+      "maxMs": 8.341208000000023,
+      "slowestOperationIds": [
+        "api"
+      ]
+    },
+    "artifact_retrieval": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "browser_startup": {
+      "count": 1,
+      "p50Ms": 3171.53,
+      "p95Ms": 3171.53,
+      "maxMs": 3171.53,
+      "slowestOperationIds": [
+        "orangehrm-navigate"
+      ]
+    },
+    "database": {
+      "count": 1,
+      "p50Ms": 4.481791000000015,
+      "p95Ms": 4.481791000000015,
+      "maxMs": 4.481791000000015,
+      "slowestOperationIds": [
+        "database"
+      ]
+    },
+    "document_observation": {
+      "count": 1,
+      "p50Ms": 3171.53,
+      "p95Ms": 3171.53,
+      "maxMs": 3171.53,
+      "slowestOperationIds": [
+        "orangehrm-navigate"
+      ]
+    },
+    "evidence_finalization": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "expected_effect_verification": {
+      "count": 5,
+      "p50Ms": 0.006000000001222361,
+      "p95Ms": 0.2779999999984284,
+      "maxMs": 0.2779999999984284,
+      "slowestOperationIds": [
+        "orangehrm-navigate",
+        "orangehrm-password",
+        "orangehrm-username"
+      ]
+    },
+    "interaction_execution": {
+      "count": 5,
+      "p50Ms": 43,
+      "p95Ms": 1438,
+      "maxMs": 1438,
+      "slowestOperationIds": [
+        "orangehrm-success",
+        "orangehrm-navigate",
+        "orangehrm-username",
+        "orangehrm-login",
+        "orangehrm-password"
+      ]
+    },
+    "mcp_round_trip": {
+      "count": 1,
+      "p50Ms": 6063.619834,
+      "p95Ms": 6063.619834,
+      "maxMs": 6063.619834,
+      "slowestOperationIds": [
+        "mcp-8480d926-e8bc-4817-809e-39dd7a0ab137-2"
+      ]
+    },
+    "mcp_session_start_round_trip": {
+      "count": 1,
+      "p50Ms": 48.881416,
+      "p95Ms": 48.881416,
+      "maxMs": 48.881416,
+      "slowestOperationIds": [
+        "mcp-8480d926-e8bc-4817-809e-39dd7a0ab137-1"
+      ]
+    },
+    "native_resolution": {
+      "count": 4,
+      "p50Ms": 31.99616700000115,
+      "p95Ms": 1432.361667000001,
+      "maxMs": 1432.361667000001,
+      "slowestOperationIds": [
+        "orangehrm-success",
+        "orangehrm-username",
+        "orangehrm-login",
+        "orangehrm-password"
+      ]
+    },
+    "praxis_grounding": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "queue_wait": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "redis": {
+      "count": 1,
+      "p50Ms": 3.0232920000000263,
+      "p95Ms": 3.0232920000000263,
+      "maxMs": 3.0232920000000263,
+      "slowestOperationIds": [
+        "redis"
+      ]
+    },
+    "worker": {
+      "count": 1,
+      "p50Ms": 5.3327919999999835,
+      "p95Ms": 5.3327919999999835,
+      "maxMs": 5.3327919999999835,
+      "slowestOperationIds": [
+        "worker"
+      ]
+    }
+  },
+  "privacyScan": {
+    "checkedByteCount": 3478,
+    "leakedCanaryCount": 0
+  },
+  "evidenceRefs": [
+    "/Users/habib/Documents/monorepo/scry/docs/runbooks/evidence/adaptive-campaigns/m1-production_shaped-75151c92-9a13-4377-a742-332031041ccb.json"
+  ],
+  "verdict": "pass"
+}

@@ -469,7 +469,10 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               gate: privacyGate,
               redactor,
               store: options.protectedTransactionStore,
-              capsuleFactory: new PlaywrightProtectedCapsuleFactory(),
+              capsuleFactory: new PlaywrightProtectedCapsuleFactory(
+                options.openBrowser ?? ((contextOptions) =>
+                  openCompatibilityBrowser(options.browserChannel, contextOptions)),
+              ),
               allowedOrigins: options.plan.allowedOrigins,
               persistSecret: options.atomicSecretCapture,
               persistPublicValue: options.publicValueCapture,
@@ -986,6 +989,25 @@ class UnsafeProtectedCaptureError extends Error {
 
 class ContinueUnrecordedProtectedError extends Error {
   override name = "ContinueUnrecordedProtectedError";
+}
+
+async function openCompatibilityBrowser(
+  browserChannel: string | undefined,
+  contextOptions?: import("playwright").BrowserContextOptions,
+) {
+  const launchChannel = playwrightBrowserChannel(browserChannel);
+  const browser = await chromium.launch({
+    headless: true,
+    ...(launchChannel ? { channel: launchChannel } : {}),
+  });
+  try {
+    const context = await browser.newContext({ ...contextOptions, acceptDownloads: false });
+    const page = await context.newPage();
+    return { browser, context, page };
+  } catch (error) {
+    await browser.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 export { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";

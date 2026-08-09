@@ -14,6 +14,19 @@ export const executionPolicySchema = z
       )
       .min(1)
       .max(20),
+    trustedScriptOrigins: z
+      .array(
+        z.string().url().transform((value, context) => {
+          const url = new URL(value);
+          if (!["http:", "https:"].includes(url.protocol) || value !== url.origin) {
+            context.addIssue({ code: "custom", message: "trusted script origins must be canonical HTTP(S) origins" });
+            return z.NEVER;
+          }
+          return value;
+        }),
+      )
+      .max(20)
+      .optional(),
     allowPrivateNetwork: z.boolean().default(false),
     allowDownloads: z.literal(false).default(false),
     allowPopups: z.literal(false).default(false),

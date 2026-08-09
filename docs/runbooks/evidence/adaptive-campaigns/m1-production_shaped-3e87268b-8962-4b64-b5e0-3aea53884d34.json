@@ -1,0 +1,551 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "3e87268b-8962-4b64-b5e0-3aea53884d34",
+  "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+  "milestone": "M1",
+  "target": "production_shaped",
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "schemaFingerprint": "19652555d3b56ee9b733eccd1c0abcd44b0c2a62974eeef5add2110d65f9d1b0",
+  "runtimeVersion": "m1-local",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "startedAt": "2026-08-09T11:37:04.252Z",
+  "completedAt": "2026-08-09T11:37:22.110Z",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "adaptive-session-cleanup",
+      "description": "The campaign cancels its Adaptive Session and releases browser ownership",
+      "status": "passed"
+    },
+    {
+      "id": "native-only-standard-controls",
+      "description": "Every standard authentication control resolves natively with zero Praxis calls",
+      "status": "failed",
+      "reasonCode": "M1_NATIVE_ONLY_CONTROL_INVARIANT_FAILED",
+      "safeDetail": {
+        "praxisCalls": 1,
+        "nativeResolved": 3
+      }
+    },
+    {
+      "id": "redaction",
+      "description": "Protected values are absent from MCP responses and retrieved artifacts",
+      "status": "passed"
+    },
+    {
+      "id": "artifact-round-trip",
+      "description": "Every artifact emitted by the deployed journey finalizes and round-trips",
+      "status": "passed"
+    },
+    {
+      "id": "deployed-journey",
+      "description": "The deployed MCP authoring journey reaches an objective-completed boundary",
+      "status": "passed"
+    },
+    {
+      "id": "authoring-turn-surface",
+      "description": "M1 executes one grouped advance_flow_authoring call",
+      "status": "passed"
+    },
+    {
+      "id": "mission-owned",
+      "description": "Campaign creates exactly one Mission, Objective, and owned Flow draft",
+      "status": "passed"
+    },
+    {
+      "id": "measurement-integrity",
+      "description": "All required counts, phases, and deployed-component traversals are backed by observed events",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [],
+  "metrics": {
+    "totalWallClockMs": 17854.409167,
+    "agentDecisionBoundaries": 1,
+    "mcpRequests": 1,
+    "apiRequests": 1,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 4131,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "api": {
+        "count": 1,
+        "p50Ms": 8.005959000000018,
+        "p95Ms": 8.005959000000018,
+        "maxMs": 8.005959000000018
+      },
+      "artifact_retrieval": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "browser_startup": {
+        "count": 1,
+        "p50Ms": 3439.025,
+        "p95Ms": 3439.025,
+        "maxMs": 3439.025
+      },
+      "database": {
+        "count": 1,
+        "p50Ms": 7.549666000000002,
+        "p95Ms": 7.549666000000002,
+        "maxMs": 7.549666000000002
+      },
+      "document_observation": {
+        "count": 1,
+        "p50Ms": 3439.025,
+        "p95Ms": 3439.025,
+        "maxMs": 3439.025
+      },
+      "evidence_finalization": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "expected_effect_verification": {
+        "count": 6,
+        "p50Ms": 0.006332999997539446,
+        "p95Ms": 0.04533300000184681,
+        "maxMs": 0.04533300000184681
+      },
+      "interaction_execution": {
+        "count": 6,
+        "p50Ms": 37,
+        "p95Ms": 10832,
+        "maxMs": 10832
+      },
+      "mcp_round_trip": {
+        "count": 1,
+        "p50Ms": 17575.26175,
+        "p95Ms": 17575.26175,
+        "maxMs": 17575.26175
+      },
+      "mcp_session_start_round_trip": {
+        "count": 1,
+        "p50Ms": 38.99950000000001,
+        "p95Ms": 38.99950000000001,
+        "maxMs": 38.99950000000001
+      },
+      "native_resolution": {
+        "count": 4,
+        "p50Ms": 16.554457999998704,
+        "p95Ms": 10100.939378999996,
+        "maxMs": 10100.939378999996
+      },
+      "praxis_grounding": {
+        "count": 1,
+        "p50Ms": 41.109167000002344,
+        "p95Ms": 41.109167000002344,
+        "maxMs": 41.109167000002344
+      },
+      "queue_wait": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "redis": {
+        "count": 1,
+        "p50Ms": 3.6566250000000196,
+        "p95Ms": 3.6566250000000196,
+        "maxMs": 3.6566250000000196
+      },
+      "worker": {
+        "count": 1,
+        "p50Ms": 9.013333999999986,
+        "p95Ms": 9.013333999999986,
+        "maxMs": 9.013333999999986
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "mcp-23f851d7-27f0-4b1b-9668-f091125d5379-2",
+        "phase": "mcp_round_trip",
+        "durationMs": 17575.26175
+      },
+      {
+        "operationId": "the_internet-login",
+        "phase": "interaction_execution",
+        "durationMs": 10832
+      },
+      {
+        "operationId": "the_internet-login",
+        "phase": "native_resolution",
+        "durationMs": 10100.939378999996
+      },
+      {
+        "operationId": "the_internet-navigate",
+        "phase": "browser_startup",
+        "durationMs": 3439.025
+      },
+      {
+        "operationId": "the_internet-navigate",
+        "phase": "document_observation",
+        "durationMs": 3439.025
+      },
+      {
+        "operationId": "the_internet-navigate",
+        "phase": "interaction_execution",
+        "durationMs": 1778
+      },
+      {
+        "operationId": "the_internet-login",
+        "phase": "interaction_execution",
+        "durationMs": 644.354084000006
+      },
+      {
+        "operationId": "the_internet-login",
+        "phase": "praxis_grounding",
+        "durationMs": 41.109167000002344
+      },
+      {
+        "operationId": "mcp-23f851d7-27f0-4b1b-9668-f091125d5379-1",
+        "phase": "mcp_session_start_round_trip",
+        "durationMs": 38.99950000000001
+      },
+      {
+        "operationId": "the_internet-username",
+        "phase": "interaction_execution",
+        "durationMs": 37
+      },
+      {
+        "operationId": "the_internet-username",
+        "phase": "native_resolution",
+        "durationMs": 31.162041000003228
+      },
+      {
+        "operationId": "the_internet-success",
+        "phase": "interaction_execution",
+        "durationMs": 20
+      },
+      {
+        "operationId": "the_internet-success",
+        "phase": "native_resolution",
+        "durationMs": 16.554457999998704
+      },
+      {
+        "operationId": "the_internet-password",
+        "phase": "interaction_execution",
+        "durationMs": 13
+      },
+      {
+        "operationId": "the_internet-password",
+        "phase": "native_resolution",
+        "durationMs": 9.27745899999718
+      },
+      {
+        "operationId": "worker",
+        "phase": "worker",
+        "durationMs": 9.013333999999986
+      },
+      {
+        "operationId": "api",
+        "phase": "api",
+        "durationMs": 8.005959000000018
+      },
+      {
+        "operationId": "database",
+        "phase": "database",
+        "durationMs": 7.549666000000002
+      },
+      {
+        "operationId": "redis",
+        "phase": "redis",
+        "durationMs": 3.6566250000000196
+      },
+      {
+        "operationId": "the_internet-login",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.04533300000184681
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:database",
+        "operationId": "database",
+        "source": "campaign_client",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "database-3e87268b-8962-4b64-b5e0-3aea53884d34",
+        "value": 7.549666000000002
+      },
+      {
+        "metric": "phase:redis",
+        "operationId": "redis",
+        "source": "campaign_client",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "redis-3e87268b-8962-4b64-b5e0-3aea53884d34",
+        "value": 3.6566250000000196
+      },
+      {
+        "metric": "apiRequests",
+        "operationId": "capabilities-3e87268b-8962-4b64-b5e0-3aea53884d34",
+        "source": "api_http",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "capabilities-3e87268b-8962-4b64-b5e0-3aea53884d34",
+        "value": 1
+      },
+      {
+        "metric": "phase:api",
+        "operationId": "api",
+        "source": "api_http",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "api-3e87268b-8962-4b64-b5e0-3aea53884d34",
+        "value": 8.005959000000018
+      },
+      {
+        "metric": "phase:worker",
+        "operationId": "worker",
+        "source": "control_plane_query",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "worker-3e87268b-8962-4b64-b5e0-3aea53884d34",
+        "value": 9.013333999999986
+      },
+      {
+        "metric": "phase:mcp_session_start_round_trip",
+        "operationId": "mcp-23f851d7-27f0-4b1b-9668-f091125d5379-1",
+        "source": "mcp_http",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "mcp-23f851d7-27f0-4b1b-9668-f091125d5379-1-duration",
+        "value": 38.99950000000001
+      },
+      {
+        "metric": "mcpRequests",
+        "operationId": "mcp-23f851d7-27f0-4b1b-9668-f091125d5379-2",
+        "source": "mcp_http",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "mcp-23f851d7-27f0-4b1b-9668-f091125d5379-2",
+        "value": 1
+      },
+      {
+        "metric": "phase:mcp_round_trip",
+        "operationId": "mcp-23f851d7-27f0-4b1b-9668-f091125d5379-2",
+        "source": "mcp_http",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "mcp-23f851d7-27f0-4b1b-9668-f091125d5379-2-duration",
+        "value": 17575.26175
+      },
+      {
+        "metric": "bytesReturnedToAgent",
+        "operationId": "mcp-23f851d7-27f0-4b1b-9668-f091125d5379-2-bytes",
+        "source": "mcp_http",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "mcp-23f851d7-27f0-4b1b-9668-f091125d5379-2-bytes",
+        "value": 4131
+      },
+      {
+        "metric": "agentDecisionBoundaries",
+        "operationId": "mcp-23f851d7-27f0-4b1b-9668-f091125d5379-2-boundary",
+        "source": "mcp_http",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "mcp-23f851d7-27f0-4b1b-9668-f091125d5379-2-boundary",
+        "value": 1
+      },
+      {
+        "metric": "phase:queue_wait",
+        "operationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "source": "queue_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "queue-not-applicable-23f851d7-27f0-4b1b-9668-f091125d5379",
+        "value": 0
+      },
+      {
+        "metric": "phase:browser_startup",
+        "operationId": "the_internet-navigate",
+        "source": "browser_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "browser-23f851d7-27f0-4b1b-9668-f091125d5379",
+        "value": 3439.025
+      },
+      {
+        "metric": "phase:document_observation",
+        "operationId": "the_internet-navigate",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "observation-23f851d7-27f0-4b1b-9668-f091125d5379",
+        "value": 3439.025
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "the_internet-navigate",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "operation-5fff14b6-8398-42c4-a1ca-239f1b913e95-the_internet-navigate",
+        "value": 1778
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "the_internet-username",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "operation-5fff14b6-8398-42c4-a1ca-239f1b913e95-the_internet-username",
+        "value": 37
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "the_internet-password",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "operation-5fff14b6-8398-42c4-a1ca-239f1b913e95-the_internet-password",
+        "value": 13
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "the_internet-login",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "operation-5fff14b6-8398-42c4-a1ca-239f1b913e95-the_internet-login",
+        "value": 10832
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "the_internet-success",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "operation-5fff14b6-8398-42c4-a1ca-239f1b913e95-the_internet-success",
+        "value": 20
+      },
+      {
+        "metric": "phase:praxis_grounding",
+        "operationId": "the_internet-login",
+        "source": "praxis_result",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "praxis-the_internet-login-2-praxis_grounding",
+        "value": 41.109167000002344
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "the_internet-login",
+        "source": "praxis_result",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "praxis-the_internet-login-2-interaction_execution",
+        "value": 644.354084000006
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "the_internet-login",
+        "source": "praxis_result",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "praxis-the_internet-login-2-expected_effect_verification",
+        "value": 0.04533300000184681
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "the_internet-username",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "native-the_internet-username-1",
+        "value": 31.162041000003228
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "the_internet-password",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "native-the_internet-password-1",
+        "value": 9.27745899999718
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "the_internet-login",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "native-the_internet-login-1",
+        "value": 10100.939378999996
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "the_internet-success",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "native-the_internet-success-1",
+        "value": 16.554457999998704
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "the_internet-navigate",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "effect-the_internet-navigate-1",
+        "value": 0.030624999999417923
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "the_internet-username",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "effect-the_internet-username-2",
+        "value": 0.006416999996872619
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "the_internet-password",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "effect-the_internet-password-2",
+        "value": 0.003457999999227468
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "the_internet-login",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "effect-the_internet-login-3",
+        "value": 0.0033750000002328306
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "the_internet-success",
+        "source": "worker_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "effect-the_internet-success-2",
+        "value": 0.006332999997539446
+      },
+      {
+        "metric": "phase:evidence_finalization",
+        "operationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "source": "artifact_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "evidence-not-requested-23f851d7-27f0-4b1b-9668-f091125d5379",
+        "value": 0
+      },
+      {
+        "metric": "phase:artifact_retrieval",
+        "operationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "source": "artifact_event",
+        "correlationId": "23f851d7-27f0-4b1b-9668-f091125d5379",
+        "eventId": "artifact-not-requested-23f851d7-27f0-4b1b-9668-f091125d5379",
+        "value": 0
+      }
+    ]
+  },
+  "artifactRefs": [],
+  "verdict": "fail"
+}

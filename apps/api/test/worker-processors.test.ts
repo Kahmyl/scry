@@ -85,7 +85,6 @@ describe("worker processor boundaries", () => {
   });
 
   it("fences a logical Run mutation across a worker retry after possible dispatch", async () => {
-    vi.stubEnv("SCRY_EXECUTION_KERNEL_ENABLED", "true");
     const runId = "11111111-1111-4111-8111-111111111111";
     const attempts = [
       { id: "22222222-2222-4222-8222-222222222221", attemptNumber: 1 },

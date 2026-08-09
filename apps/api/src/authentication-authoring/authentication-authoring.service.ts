@@ -11,7 +11,6 @@ import {
 } from "@scry/contracts";
 
 import { AuthenticationAttemptRepository } from "./repositories/authentication-attempt.repository.js";
-import { adaptiveAuthoringFlags } from "../authoring/adaptive-authoring-flags.js";
 
 type AuthField = "username" | "password";
 type PraxisCandidate = {
@@ -58,7 +57,6 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
   ) {}
 
   async discoverUsernameField(context: AuthContext): Promise<AuthFieldResolution> {
-    this.requireEnabled();
     return this.resolveField("username", context.usernameInspection?.candidates ?? [], [
       "autocomplete_username",
       "autocomplete_email",
@@ -72,7 +70,6 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
   }
 
   async discoverPasswordField(context: AuthContext): Promise<AuthFieldResolution> {
-    this.requireEnabled();
     return this.resolveField("password", context.passwordInspection?.candidates ?? [], [
       "type_password",
       "autocomplete_current_password",
@@ -84,7 +81,6 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
   }
 
   async discoverSubmissionPath(context: AuthContext): Promise<AuthSubmissionResolution> {
-    this.requireEnabled();
     const order = [
       "native_submit",
       "form_button",
@@ -136,7 +132,6 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
   }
 
   async submitCredentialsOnce(context: AuthContext): Promise<AuthSubmissionResult> {
-    this.requireEnabled();
     return this.authorizeCredentialSubmission(context);
   }
 
@@ -207,7 +202,6 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
   }
 
   async detectAuthenticatedState(context: AuthContext): Promise<AuthStateResult> {
-    this.requireEnabled();
     const signals = [...new Set(context.stateInspection?.signals ?? [])];
     const requiredSignals: AuthStateResult["requiredSignals"] = signals.filter((signal) =>
       (["login_response_success", "url_not_login", "login_form_absent"] as const).includes(
@@ -232,7 +226,6 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
   }
 
   async createAuthenticationContractCandidate(transcript: AuthenticationTranscript) {
-    this.requireEnabled();
     if (
       transcript.username.status !== "resolved" ||
       transcript.password.status !== "resolved" ||
@@ -277,12 +270,6 @@ export class AuthenticationAuthoringService implements AuthenticationAuthoringKe
 
     rejectUnsafe(candidate);
     return authenticationContractCandidateSchema.parse(candidate);
-  }
-
-  private requireEnabled() {
-    if (!adaptiveAuthoringFlags().authenticationKernel) {
-      throw new BadRequestException({ code: "AUTHENTICATION_KERNEL_DISABLED" });
-    }
   }
 
   private resolveField(

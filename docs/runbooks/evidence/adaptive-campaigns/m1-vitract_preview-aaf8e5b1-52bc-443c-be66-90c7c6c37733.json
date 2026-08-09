@@ -1,0 +1,436 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "aaf8e5b1-52bc-443c-be66-90c7c6c37733",
+  "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+  "milestone": "M1",
+  "target": "vitract_preview",
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "schemaFingerprint": "19652555d3b56ee9b733eccd1c0abcd44b0c2a62974eeef5add2110d65f9d1b0",
+  "runtimeVersion": "m1-local",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "startedAt": "2026-08-09T11:53:54.794Z",
+  "completedAt": "2026-08-09T11:54:07.347Z",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "adaptive-session-cleanup",
+      "description": "The campaign cancels its Adaptive Session and releases browser ownership",
+      "status": "passed"
+    },
+    {
+      "id": "native-only-standard-controls",
+      "description": "Every standard authentication control resolves natively with zero Praxis calls",
+      "status": "failed",
+      "reasonCode": "M1_NATIVE_ONLY_CONTROL_INVARIANT_FAILED",
+      "safeDetail": {
+        "praxisCalls": 1,
+        "nativeResolved": 0
+      }
+    },
+    {
+      "id": "redaction",
+      "description": "Protected values are absent from MCP responses and retrieved artifacts",
+      "status": "passed"
+    },
+    {
+      "id": "artifact-round-trip",
+      "description": "Every artifact emitted by the deployed journey finalizes and round-trips",
+      "status": "passed"
+    },
+    {
+      "id": "deployed-journey",
+      "description": "The deployed MCP authoring journey reaches an objective-completed boundary",
+      "status": "failed",
+      "reasonCode": "CAMPAIGN_TERMINAL_BOUNDARY_MISSING"
+    },
+    {
+      "id": "authoring-turn-surface",
+      "description": "M1 executes one grouped advance_flow_authoring call",
+      "status": "passed"
+    },
+    {
+      "id": "mission-owned",
+      "description": "Campaign creates exactly one Mission, Objective, and owned Flow draft",
+      "status": "passed"
+    },
+    {
+      "id": "measurement-integrity",
+      "description": "All required counts, phases, and deployed-component traversals are backed by observed events",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [],
+  "metrics": {
+    "totalWallClockMs": 12550.920166,
+    "agentDecisionBoundaries": 1,
+    "mcpRequests": 1,
+    "apiRequests": 1,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 2028,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "api": {
+        "count": 1,
+        "p50Ms": 6.641666999999984,
+        "p95Ms": 6.641666999999984,
+        "maxMs": 6.641666999999984
+      },
+      "artifact_retrieval": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "browser_startup": {
+        "count": 1,
+        "p50Ms": 1227.13,
+        "p95Ms": 1227.13,
+        "maxMs": 1227.13
+      },
+      "database": {
+        "count": 1,
+        "p50Ms": 6.371708000000012,
+        "p95Ms": 6.371708000000012,
+        "maxMs": 6.371708000000012
+      },
+      "document_observation": {
+        "count": 1,
+        "p50Ms": 1227.13,
+        "p95Ms": 1227.13,
+        "maxMs": 1227.13
+      },
+      "evidence_finalization": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "expected_effect_verification": {
+        "count": 1,
+        "p50Ms": 0.047541000007186085,
+        "p95Ms": 0.047541000007186085,
+        "maxMs": 0.047541000007186085
+      },
+      "interaction_execution": {
+        "count": 2,
+        "p50Ms": 517,
+        "p95Ms": 10578,
+        "maxMs": 10578
+      },
+      "mcp_round_trip": {
+        "count": 1,
+        "p50Ms": 12368.992124999999,
+        "p95Ms": 12368.992124999999,
+        "maxMs": 12368.992124999999
+      },
+      "mcp_session_start_round_trip": {
+        "count": 1,
+        "p50Ms": 53.606334000000004,
+        "p95Ms": 53.606334000000004,
+        "maxMs": 53.606334000000004
+      },
+      "native_resolution": {
+        "count": 1,
+        "p50Ms": 10050.401379000003,
+        "p95Ms": 10050.401379000003,
+        "maxMs": 10050.401379000003
+      },
+      "praxis_grounding": {
+        "count": 1,
+        "p50Ms": 513.8537499999948,
+        "p95Ms": 513.8537499999948,
+        "maxMs": 513.8537499999948
+      },
+      "queue_wait": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "redis": {
+        "count": 1,
+        "p50Ms": 3.060292000000004,
+        "p95Ms": 3.060292000000004,
+        "maxMs": 3.060292000000004
+      },
+      "worker": {
+        "count": 1,
+        "p50Ms": 7.562417000000039,
+        "p95Ms": 7.562417000000039,
+        "maxMs": 7.562417000000039
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-2",
+        "phase": "mcp_round_trip",
+        "durationMs": 12368.992124999999
+      },
+      {
+        "operationId": "vitract-email",
+        "phase": "interaction_execution",
+        "durationMs": 10578
+      },
+      {
+        "operationId": "vitract-email",
+        "phase": "native_resolution",
+        "durationMs": 10050.401379000003
+      },
+      {
+        "operationId": "vitract-navigate",
+        "phase": "browser_startup",
+        "durationMs": 1227.13
+      },
+      {
+        "operationId": "vitract-navigate",
+        "phase": "document_observation",
+        "durationMs": 1227.13
+      },
+      {
+        "operationId": "vitract-navigate",
+        "phase": "interaction_execution",
+        "durationMs": 517
+      },
+      {
+        "operationId": "vitract-email",
+        "phase": "praxis_grounding",
+        "durationMs": 513.8537499999948
+      },
+      {
+        "operationId": "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-1",
+        "phase": "mcp_session_start_round_trip",
+        "durationMs": 53.606334000000004
+      },
+      {
+        "operationId": "worker",
+        "phase": "worker",
+        "durationMs": 7.562417000000039
+      },
+      {
+        "operationId": "api",
+        "phase": "api",
+        "durationMs": 6.641666999999984
+      },
+      {
+        "operationId": "database",
+        "phase": "database",
+        "durationMs": 6.371708000000012
+      },
+      {
+        "operationId": "redis",
+        "phase": "redis",
+        "durationMs": 3.060292000000004
+      },
+      {
+        "operationId": "vitract-navigate",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.047541000007186085
+      },
+      {
+        "operationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "phase": "queue_wait",
+        "durationMs": 0
+      },
+      {
+        "operationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "phase": "evidence_finalization",
+        "durationMs": 0
+      },
+      {
+        "operationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "phase": "artifact_retrieval",
+        "durationMs": 0
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:database",
+        "operationId": "database",
+        "source": "campaign_client",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "database-aaf8e5b1-52bc-443c-be66-90c7c6c37733",
+        "value": 6.371708000000012
+      },
+      {
+        "metric": "phase:redis",
+        "operationId": "redis",
+        "source": "campaign_client",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "redis-aaf8e5b1-52bc-443c-be66-90c7c6c37733",
+        "value": 3.060292000000004
+      },
+      {
+        "metric": "apiRequests",
+        "operationId": "capabilities-aaf8e5b1-52bc-443c-be66-90c7c6c37733",
+        "source": "api_http",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "capabilities-aaf8e5b1-52bc-443c-be66-90c7c6c37733",
+        "value": 1
+      },
+      {
+        "metric": "phase:api",
+        "operationId": "api",
+        "source": "api_http",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "api-aaf8e5b1-52bc-443c-be66-90c7c6c37733",
+        "value": 6.641666999999984
+      },
+      {
+        "metric": "phase:worker",
+        "operationId": "worker",
+        "source": "control_plane_query",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "worker-aaf8e5b1-52bc-443c-be66-90c7c6c37733",
+        "value": 7.562417000000039
+      },
+      {
+        "metric": "phase:mcp_session_start_round_trip",
+        "operationId": "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-1",
+        "source": "mcp_http",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-1-duration",
+        "value": 53.606334000000004
+      },
+      {
+        "metric": "mcpRequests",
+        "operationId": "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-2",
+        "source": "mcp_http",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-2",
+        "value": 1
+      },
+      {
+        "metric": "phase:mcp_round_trip",
+        "operationId": "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-2",
+        "source": "mcp_http",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-2-duration",
+        "value": 12368.992124999999
+      },
+      {
+        "metric": "bytesReturnedToAgent",
+        "operationId": "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-2-bytes",
+        "source": "mcp_http",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-2-bytes",
+        "value": 2028
+      },
+      {
+        "metric": "agentDecisionBoundaries",
+        "operationId": "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-2-boundary",
+        "source": "mcp_http",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-2-boundary",
+        "value": 1
+      },
+      {
+        "metric": "phase:queue_wait",
+        "operationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "source": "queue_event",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "queue-not-applicable-d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "value": 0
+      },
+      {
+        "metric": "phase:browser_startup",
+        "operationId": "vitract-navigate",
+        "source": "browser_event",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "browser-d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "value": 1227.13
+      },
+      {
+        "metric": "phase:document_observation",
+        "operationId": "vitract-navigate",
+        "source": "worker_event",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "observation-d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "value": 1227.13
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "vitract-navigate",
+        "source": "worker_event",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "operation-e3bbb06f-e10a-4ed5-b7c7-5bc2a4c13876-vitract-navigate",
+        "value": 517
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "vitract-email",
+        "source": "worker_event",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "operation-e3bbb06f-e10a-4ed5-b7c7-5bc2a4c13876-vitract-email",
+        "value": 10578
+      },
+      {
+        "metric": "phase:praxis_grounding",
+        "operationId": "vitract-email",
+        "source": "praxis_result",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "praxis-vitract-email-2-praxis_grounding",
+        "value": 513.8537499999948
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "vitract-email",
+        "source": "worker_event",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "native-vitract-email-1",
+        "value": 10050.401379000003
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "vitract-navigate",
+        "source": "worker_event",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "effect-vitract-navigate-1",
+        "value": 0.047541000007186085
+      },
+      {
+        "metric": "phase:evidence_finalization",
+        "operationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "source": "artifact_event",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "evidence-not-requested-d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "value": 0
+      },
+      {
+        "metric": "phase:artifact_retrieval",
+        "operationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "source": "artifact_event",
+        "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "eventId": "artifact-not-requested-d9d9a80d-50cf-421b-a19a-464662faacbd",
+        "value": 0
+      }
+    ]
+  },
+  "artifactRefs": [],
+  "verdict": "fail"
+}

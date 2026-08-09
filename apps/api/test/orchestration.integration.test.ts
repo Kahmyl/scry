@@ -158,7 +158,9 @@ describe.skipIf(!enabled)("orchestration transactional guarantees", () => {
               name,
               latest_revision_id,
               visibility,
-              purpose
+              purpose,
+              owner_mission_id,
+              owner_objective_id
             )
             VALUES(
               $1,
@@ -166,9 +168,11 @@ describe.skipIf(!enabled)("orchestration transactional guarantees", () => {
               $3,
               $4,
               'mission_local',
-              'primary'
+              'primary',
+              $5,
+              $6
             )`,
-          [flow, project, `flow-${index}`, revisions[index]],
+          [flow, project, `flow-${index}`, revisions[index], mission, objectives[index]],
         );
 
         await client.query(

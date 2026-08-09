@@ -369,6 +369,11 @@ function calibrationExecutor() {
       ...input.options,
       plan: input.plan,
       policy: input.policy,
+      executeNativeNavigation: async (page, url, _allowedOrigins, timeoutMs) => {
+        const timeout = timeoutMs === undefined ? {} : { timeout: timeoutMs };
+        await page.goto(url, { waitUntil: "domcontentloaded", ...timeout });
+        await page.locator("body").waitFor({ state: "visible", ...timeout });
+      },
       protectedTransactionStore: {
         claim: async ({ operationId }) => ({
           state: states.get(operationId) ?? "planned",

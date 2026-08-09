@@ -74,7 +74,7 @@ describe.each([
       completeCheckpoint: vi.fn(),
       recordContextProvenance: vi.fn(),
     };
-    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never);
+    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never, { openBrowser: vi.fn() } as never);
     const correlationId = randomUUID();
     const capabilities = factory.createSession({
       sessionId: "session",

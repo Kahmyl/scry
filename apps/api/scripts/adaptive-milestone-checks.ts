@@ -124,7 +124,6 @@ export function milestoneCommands(milestone: AdaptiveMilestone): MilestoneComman
           "certification",
           ["verify:adaptive-authoring-release"],
           ["SCRY_AUTHORING_TEST_DATABASE_URL", "SCRY_VITRACT_PREVIEW_E2E"],
-          { SCRY_RELEASE_CORPUS_GATE_ENABLED: "true" },
         ),
         releaseCommand(
           "m5-praxis-release",

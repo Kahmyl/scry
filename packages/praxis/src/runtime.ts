@@ -634,6 +634,9 @@ async function verifyPraxisEffect(
       throw new ExpectedEffectError("EXPECTED_EFFECT_NOT_OBSERVED");
     }
   }
+  if (effect.type === "new_page") {
+    throw new ExpectedEffectError("EXPECTED_NEW_PAGE_NOT_OBSERVED");
+  }
   const deadline = performance.now() + budgetMs;
   while (performance.now() < deadline && !signal.aborted) {
     try {

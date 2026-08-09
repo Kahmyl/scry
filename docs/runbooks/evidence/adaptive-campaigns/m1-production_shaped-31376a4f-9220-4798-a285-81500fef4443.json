@@ -1,0 +1,551 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "31376a4f-9220-4798-a285-81500fef4443",
+  "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+  "milestone": "M1",
+  "target": "production_shaped",
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "schemaFingerprint": "19652555d3b56ee9b733eccd1c0abcd44b0c2a62974eeef5add2110d65f9d1b0",
+  "runtimeVersion": "m1-local",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "startedAt": "2026-08-09T11:58:42.447Z",
+  "completedAt": "2026-08-09T11:58:54.790Z",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "adaptive-session-cleanup",
+      "description": "The campaign cancels its Adaptive Session and releases browser ownership",
+      "status": "passed"
+    },
+    {
+      "id": "native-only-standard-controls",
+      "description": "Every standard authentication control resolves natively with zero Praxis calls",
+      "status": "failed",
+      "reasonCode": "M1_NATIVE_ONLY_CONTROL_INVARIANT_FAILED",
+      "safeDetail": {
+        "praxisCalls": 1,
+        "nativeResolved": 3
+      }
+    },
+    {
+      "id": "redaction",
+      "description": "Protected values are absent from MCP responses and retrieved artifacts",
+      "status": "passed"
+    },
+    {
+      "id": "artifact-round-trip",
+      "description": "Every artifact emitted by the deployed journey finalizes and round-trips",
+      "status": "passed"
+    },
+    {
+      "id": "deployed-journey",
+      "description": "The deployed MCP authoring journey reaches an objective-completed boundary",
+      "status": "passed"
+    },
+    {
+      "id": "authoring-turn-surface",
+      "description": "M1 executes one grouped advance_flow_authoring call",
+      "status": "passed"
+    },
+    {
+      "id": "mission-owned",
+      "description": "Campaign creates exactly one Mission, Objective, and owned Flow draft",
+      "status": "passed"
+    },
+    {
+      "id": "measurement-integrity",
+      "description": "All required counts, phases, and deployed-component traversals are backed by observed events",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [],
+  "metrics": {
+    "totalWallClockMs": 12340.593541,
+    "agentDecisionBoundaries": 1,
+    "mcpRequests": 1,
+    "apiRequests": 1,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 4109,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "api": {
+        "count": 1,
+        "p50Ms": 6.621708000000012,
+        "p95Ms": 6.621708000000012,
+        "maxMs": 6.621708000000012
+      },
+      "artifact_retrieval": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "browser_startup": {
+        "count": 1,
+        "p50Ms": 3424.61,
+        "p95Ms": 3424.61,
+        "maxMs": 3424.61
+      },
+      "database": {
+        "count": 1,
+        "p50Ms": 7.560249999999996,
+        "p95Ms": 7.560249999999996,
+        "maxMs": 7.560249999999996
+      },
+      "document_observation": {
+        "count": 1,
+        "p50Ms": 3424.61,
+        "p95Ms": 3424.61,
+        "maxMs": 3424.61
+      },
+      "evidence_finalization": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "expected_effect_verification": {
+        "count": 6,
+        "p50Ms": 0.009124999982304871,
+        "p95Ms": 0.04749999998603016,
+        "maxMs": 0.04749999998603016
+      },
+      "interaction_execution": {
+        "count": 6,
+        "p50Ms": 44,
+        "p95Ms": 5136,
+        "maxMs": 5136
+      },
+      "mcp_round_trip": {
+        "count": 1,
+        "p50Ms": 12112.950417,
+        "p95Ms": 12112.950417,
+        "maxMs": 12112.950417
+      },
+      "mcp_session_start_round_trip": {
+        "count": 1,
+        "p50Ms": 45.258583999999985,
+        "p95Ms": 45.258583999999985,
+        "maxMs": 45.258583999999985
+      },
+      "native_resolution": {
+        "count": 4,
+        "p50Ms": 39.98758299998008,
+        "p95Ms": 5090.010919000022,
+        "maxMs": 5090.010919000022
+      },
+      "praxis_grounding": {
+        "count": 1,
+        "p50Ms": 17.955665999965277,
+        "p95Ms": 17.955665999965277,
+        "maxMs": 17.955665999965277
+      },
+      "queue_wait": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "redis": {
+        "count": 1,
+        "p50Ms": 3.3379170000000045,
+        "p95Ms": 3.3379170000000045,
+        "maxMs": 3.3379170000000045
+      },
+      "worker": {
+        "count": 1,
+        "p50Ms": 7.788125000000008,
+        "p95Ms": 7.788125000000008,
+        "maxMs": 7.788125000000008
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "mcp-175a06d5-f57d-4f3d-86eb-3f8362e87b25-2",
+        "phase": "mcp_round_trip",
+        "durationMs": 12112.950417
+      },
+      {
+        "operationId": "orangehrm-success",
+        "phase": "interaction_execution",
+        "durationMs": 5136
+      },
+      {
+        "operationId": "orangehrm-success",
+        "phase": "native_resolution",
+        "durationMs": 5090.010919000022
+      },
+      {
+        "operationId": "orangehrm-navigate",
+        "phase": "browser_startup",
+        "durationMs": 3424.61
+      },
+      {
+        "operationId": "orangehrm-navigate",
+        "phase": "document_observation",
+        "durationMs": 3424.61
+      },
+      {
+        "operationId": "orangehrm-navigate",
+        "phase": "interaction_execution",
+        "durationMs": 1949
+      },
+      {
+        "operationId": "orangehrm-username",
+        "phase": "interaction_execution",
+        "durationMs": 1131
+      },
+      {
+        "operationId": "orangehrm-username",
+        "phase": "native_resolution",
+        "durationMs": 1126.0823340000352
+      },
+      {
+        "operationId": "mcp-175a06d5-f57d-4f3d-86eb-3f8362e87b25-1",
+        "phase": "mcp_session_start_round_trip",
+        "durationMs": 45.258583999999985
+      },
+      {
+        "operationId": "orangehrm-login",
+        "phase": "interaction_execution",
+        "durationMs": 44
+      },
+      {
+        "operationId": "orangehrm-login",
+        "phase": "native_resolution",
+        "durationMs": 39.98758299998008
+      },
+      {
+        "operationId": "orangehrm-success",
+        "phase": "praxis_grounding",
+        "durationMs": 17.955665999965277
+      },
+      {
+        "operationId": "orangehrm-password",
+        "phase": "interaction_execution",
+        "durationMs": 13
+      },
+      {
+        "operationId": "orangehrm-password",
+        "phase": "native_resolution",
+        "durationMs": 10.15958400000818
+      },
+      {
+        "operationId": "worker",
+        "phase": "worker",
+        "durationMs": 7.788125000000008
+      },
+      {
+        "operationId": "database",
+        "phase": "database",
+        "durationMs": 7.560249999999996
+      },
+      {
+        "operationId": "api",
+        "phase": "api",
+        "durationMs": 6.621708000000012
+      },
+      {
+        "operationId": "orangehrm-success",
+        "phase": "interaction_execution",
+        "durationMs": 4.9069580000359565
+      },
+      {
+        "operationId": "redis",
+        "phase": "redis",
+        "durationMs": 3.3379170000000045
+      },
+      {
+        "operationId": "orangehrm-navigate",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.04749999998603016
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:database",
+        "operationId": "database",
+        "source": "campaign_client",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "database-31376a4f-9220-4798-a285-81500fef4443",
+        "value": 7.560249999999996
+      },
+      {
+        "metric": "phase:redis",
+        "operationId": "redis",
+        "source": "campaign_client",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "redis-31376a4f-9220-4798-a285-81500fef4443",
+        "value": 3.3379170000000045
+      },
+      {
+        "metric": "apiRequests",
+        "operationId": "capabilities-31376a4f-9220-4798-a285-81500fef4443",
+        "source": "api_http",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "capabilities-31376a4f-9220-4798-a285-81500fef4443",
+        "value": 1
+      },
+      {
+        "metric": "phase:api",
+        "operationId": "api",
+        "source": "api_http",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "api-31376a4f-9220-4798-a285-81500fef4443",
+        "value": 6.621708000000012
+      },
+      {
+        "metric": "phase:worker",
+        "operationId": "worker",
+        "source": "control_plane_query",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "worker-31376a4f-9220-4798-a285-81500fef4443",
+        "value": 7.788125000000008
+      },
+      {
+        "metric": "phase:mcp_session_start_round_trip",
+        "operationId": "mcp-175a06d5-f57d-4f3d-86eb-3f8362e87b25-1",
+        "source": "mcp_http",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "mcp-175a06d5-f57d-4f3d-86eb-3f8362e87b25-1-duration",
+        "value": 45.258583999999985
+      },
+      {
+        "metric": "mcpRequests",
+        "operationId": "mcp-175a06d5-f57d-4f3d-86eb-3f8362e87b25-2",
+        "source": "mcp_http",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "mcp-175a06d5-f57d-4f3d-86eb-3f8362e87b25-2",
+        "value": 1
+      },
+      {
+        "metric": "phase:mcp_round_trip",
+        "operationId": "mcp-175a06d5-f57d-4f3d-86eb-3f8362e87b25-2",
+        "source": "mcp_http",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "mcp-175a06d5-f57d-4f3d-86eb-3f8362e87b25-2-duration",
+        "value": 12112.950417
+      },
+      {
+        "metric": "bytesReturnedToAgent",
+        "operationId": "mcp-175a06d5-f57d-4f3d-86eb-3f8362e87b25-2-bytes",
+        "source": "mcp_http",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "mcp-175a06d5-f57d-4f3d-86eb-3f8362e87b25-2-bytes",
+        "value": 4109
+      },
+      {
+        "metric": "agentDecisionBoundaries",
+        "operationId": "mcp-175a06d5-f57d-4f3d-86eb-3f8362e87b25-2-boundary",
+        "source": "mcp_http",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "mcp-175a06d5-f57d-4f3d-86eb-3f8362e87b25-2-boundary",
+        "value": 1
+      },
+      {
+        "metric": "phase:queue_wait",
+        "operationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "source": "queue_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "queue-not-applicable-175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "value": 0
+      },
+      {
+        "metric": "phase:browser_startup",
+        "operationId": "orangehrm-navigate",
+        "source": "browser_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "browser-175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "value": 3424.61
+      },
+      {
+        "metric": "phase:document_observation",
+        "operationId": "orangehrm-navigate",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "observation-175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "value": 3424.61
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-navigate",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "operation-0b95e251-9cea-446b-8547-6d0ade586b60-orangehrm-navigate",
+        "value": 1949
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-username",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "operation-0b95e251-9cea-446b-8547-6d0ade586b60-orangehrm-username",
+        "value": 1131
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-password",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "operation-0b95e251-9cea-446b-8547-6d0ade586b60-orangehrm-password",
+        "value": 13
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-login",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "operation-0b95e251-9cea-446b-8547-6d0ade586b60-orangehrm-login",
+        "value": 44
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-success",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "operation-0b95e251-9cea-446b-8547-6d0ade586b60-orangehrm-success",
+        "value": 5136
+      },
+      {
+        "metric": "phase:praxis_grounding",
+        "operationId": "orangehrm-success",
+        "source": "praxis_result",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "praxis-orangehrm-success-2-praxis_grounding",
+        "value": 17.955665999965277
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-success",
+        "source": "praxis_result",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "praxis-orangehrm-success-2-interaction_execution",
+        "value": 4.9069580000359565
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-success",
+        "source": "praxis_result",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "praxis-orangehrm-success-2-expected_effect_verification",
+        "value": 0.036084000021219254
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "orangehrm-username",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "native-orangehrm-username-1",
+        "value": 1126.0823340000352
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "orangehrm-password",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "native-orangehrm-password-1",
+        "value": 10.15958400000818
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "orangehrm-login",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "native-orangehrm-login-1",
+        "value": 39.98758299998008
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "orangehrm-success",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "native-orangehrm-success-1",
+        "value": 5090.010919000022
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-navigate",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "effect-orangehrm-navigate-1",
+        "value": 0.04749999998603016
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-username",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "effect-orangehrm-username-2",
+        "value": 0.006333000026643276
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-password",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "effect-orangehrm-password-2",
+        "value": 0.003916999965440482
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-login",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "effect-orangehrm-login-2",
+        "value": 0.011415999964810908
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-success",
+        "source": "worker_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "effect-orangehrm-success-3",
+        "value": 0.009124999982304871
+      },
+      {
+        "metric": "phase:evidence_finalization",
+        "operationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "source": "artifact_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "evidence-not-requested-175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "value": 0
+      },
+      {
+        "metric": "phase:artifact_retrieval",
+        "operationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "source": "artifact_event",
+        "correlationId": "175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "eventId": "artifact-not-requested-175a06d5-f57d-4f3d-86eb-3f8362e87b25",
+        "value": 0
+      }
+    ]
+  },
+  "artifactRefs": [],
+  "verdict": "fail"
+}

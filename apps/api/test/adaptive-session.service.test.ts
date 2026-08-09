@@ -2,7 +2,7 @@ import { ConflictException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
-import { AdaptiveSessionService } from "../src/adaptive-sessions/adaptive-session.service.js";
+import { MissionFlowAuthoringService } from "../src/adaptive-sessions/mission-flow-authoring.service.js";
 
 const principal = {
   kind: "user" as const,
@@ -13,7 +13,7 @@ const principal = {
   role: "owner" as const,
 };
 
-describe("AdaptiveSessionService", () => {
+describe("MissionFlowAuthoringService", () => {
   it("settles a durable operation with the kernel runner result", async () => {
     const outcome = {
       operationId: "inspect",
@@ -40,7 +40,7 @@ describe("AdaptiveSessionService", () => {
         },
       }),
     };
-    const service = new AdaptiveSessionService(
+    const service = new MissionFlowAuthoringService(
       repository as never,
       runner as never,
       { assertAcceptingWork: vi.fn() } as never,
@@ -66,7 +66,7 @@ describe("AdaptiveSessionService", () => {
         .mockRejectedValue(new ConflictException({ code: "ADAPTIVE_SESSION_RUNTIME_NOT_BOUND" })),
       close: vi.fn(),
     };
-    const service = new AdaptiveSessionService(
+    const service = new MissionFlowAuthoringService(
       repository as never,
       runner as never,
       { assertAcceptingWork: vi.fn() } as never,
@@ -74,7 +74,7 @@ describe("AdaptiveSessionService", () => {
     await expect(service.advance(principal, randomUUID(), operation())).rejects.toMatchObject({
       response: {
         code: "ADAPTIVE_SESSION_RUNTIME_NOT_BOUND",
-        safeActions: ["get_adaptive_session", "advance_adaptive_session"],
+        safeActions: ["get_flow_authoring", "advance_flow_authoring"],
       },
     });
     expect(repository.markOperationFailed).toHaveBeenCalledWith(
@@ -98,7 +98,7 @@ describe("AdaptiveSessionService", () => {
       ),
       close: vi.fn(),
     };
-    const service = new AdaptiveSessionService(
+    const service = new MissionFlowAuthoringService(
       repository as never,
       runner as never,
       { assertAcceptingWork: vi.fn() } as never,
@@ -107,7 +107,7 @@ describe("AdaptiveSessionService", () => {
     await expect(service.advance(principal, randomUUID(), operation())).rejects.toMatchObject({
       response: {
         code: "EXECUTION_MODE_POLICY_DENIED",
-        safeActions: ["get_adaptive_session", "advance_adaptive_session"],
+        safeActions: ["get_flow_authoring", "advance_flow_authoring"],
       },
     });
     expect(repository.markOperationFailed).toHaveBeenCalledWith(
@@ -124,7 +124,7 @@ describe("AdaptiveSessionService", () => {
       markRunningOperationRecoveryRequired: vi.fn(),
     };
     const runner = { execute: vi.fn() };
-    const service = new AdaptiveSessionService(
+    const service = new MissionFlowAuthoringService(
       repository as never,
       runner as never,
       { assertAcceptingWork: vi.fn() } as never,
@@ -147,7 +147,7 @@ describe("AdaptiveSessionService", () => {
       markRunningOperationRecoveryRequired: vi.fn(),
     };
     const runner = { execute: vi.fn() };
-    const service = new AdaptiveSessionService(
+    const service = new MissionFlowAuthoringService(
       repository as never,
       runner as never,
       { assertAcceptingWork: vi.fn() } as never,
@@ -190,7 +190,7 @@ describe("AdaptiveSessionService", () => {
       }),
       close: vi.fn(),
     };
-    const service = new AdaptiveSessionService(
+    const service = new MissionFlowAuthoringService(
       repository as never,
       runner as never,
       { assertAcceptingWork: vi.fn() } as never,
@@ -239,7 +239,7 @@ describe("AdaptiveSessionService", () => {
       })),
     };
     const admission = { assertAcceptingWork: vi.fn() };
-    const service = new AdaptiveSessionService(
+    const service = new MissionFlowAuthoringService(
       repository as never,
       runner as never,
       admission as never,

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createAuthoringBrowserSession } from "../src/index.js";
 
 import { inspectPraxisCandidates } from "@scry/praxis";
-import { kernelInteractionExecutor } from "./kernel-harness.js";
+import { kernelInteractionExecutor, openTestBrowser } from "./kernel-harness.js";
 
 describe("authoring browser Praxis grounding", () => {
   it("grounds against the owned authoring browser page", async () => {
@@ -22,6 +22,7 @@ describe("authoring browser Praxis grounding", () => {
       veilAdmissionKey: "test-key",
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
       policy,
+      openBrowser: openTestBrowser,
       executeInteraction: kernelInteractionExecutor({
         sessionId: "test-session",
         environmentId: "test-environment",

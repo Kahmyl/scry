@@ -1,0 +1,530 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "2d216780-833f-43db-a134-1c95cf72dc1f",
+  "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+  "milestone": "M1",
+  "target": "production_shaped",
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "schemaFingerprint": "19652555d3b56ee9b733eccd1c0abcd44b0c2a62974eeef5add2110d65f9d1b0",
+  "runtimeVersion": "m1-local",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "startedAt": "2026-08-09T11:40:49.351Z",
+  "completedAt": "2026-08-09T11:40:57.065Z",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "adaptive-session-cleanup",
+      "description": "The campaign cancels its Adaptive Session and releases browser ownership",
+      "status": "passed"
+    },
+    {
+      "id": "native-only-standard-controls",
+      "description": "Every standard authentication control resolves natively with zero Praxis calls",
+      "status": "passed"
+    },
+    {
+      "id": "redaction",
+      "description": "Protected values are absent from MCP responses and retrieved artifacts",
+      "status": "passed"
+    },
+    {
+      "id": "artifact-round-trip",
+      "description": "Every artifact emitted by the deployed journey finalizes and round-trips",
+      "status": "passed"
+    },
+    {
+      "id": "deployed-journey",
+      "description": "The deployed MCP authoring journey reaches an objective-completed boundary",
+      "status": "passed"
+    },
+    {
+      "id": "authoring-turn-surface",
+      "description": "M1 executes one grouped advance_flow_authoring call",
+      "status": "passed"
+    },
+    {
+      "id": "mission-owned",
+      "description": "Campaign creates exactly one Mission, Objective, and owned Flow draft",
+      "status": "passed"
+    },
+    {
+      "id": "measurement-integrity",
+      "description": "All required counts, phases, and deployed-component traversals are backed by observed events",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [],
+  "metrics": {
+    "totalWallClockMs": 7712.9650409999995,
+    "agentDecisionBoundaries": 1,
+    "mcpRequests": 1,
+    "apiRequests": 1,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 3506,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "api": {
+        "count": 1,
+        "p50Ms": 5.584541999999999,
+        "p95Ms": 5.584541999999999,
+        "maxMs": 5.584541999999999
+      },
+      "artifact_retrieval": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "browser_startup": {
+        "count": 1,
+        "p50Ms": 3294.061,
+        "p95Ms": 3294.061,
+        "maxMs": 3294.061
+      },
+      "database": {
+        "count": 1,
+        "p50Ms": 5.60258300000001,
+        "p95Ms": 5.60258300000001,
+        "maxMs": 5.60258300000001
+      },
+      "document_observation": {
+        "count": 1,
+        "p50Ms": 3294.061,
+        "p95Ms": 3294.061,
+        "maxMs": 3294.061
+      },
+      "evidence_finalization": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "expected_effect_verification": {
+        "count": 5,
+        "p50Ms": 0.009625000006053597,
+        "p95Ms": 0.048165999993216246,
+        "maxMs": 0.048165999993216246
+      },
+      "interaction_execution": {
+        "count": 5,
+        "p50Ms": 65,
+        "p95Ms": 2192,
+        "maxMs": 2192
+      },
+      "mcp_round_trip": {
+        "count": 1,
+        "p50Ms": 7580.632041999999,
+        "p95Ms": 7580.632041999999,
+        "maxMs": 7580.632041999999
+      },
+      "mcp_session_start_round_trip": {
+        "count": 1,
+        "p50Ms": 21.58662499999997,
+        "p95Ms": 21.58662499999997,
+        "maxMs": 21.58662499999997
+      },
+      "native_resolution": {
+        "count": 4,
+        "p50Ms": 17.582208000007086,
+        "p95Ms": 535.1320419999538,
+        "maxMs": 535.1320419999538
+      },
+      "praxis_grounding": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "queue_wait": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "redis": {
+        "count": 1,
+        "p50Ms": 3.9590829999999926,
+        "p95Ms": 3.9590829999999926,
+        "maxMs": 3.9590829999999926
+      },
+      "worker": {
+        "count": 1,
+        "p50Ms": 5.502166000000017,
+        "p95Ms": 5.502166000000017,
+        "maxMs": 5.502166000000017
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "mcp-38169181-2fdf-45e8-8790-64656cff90f9-2",
+        "phase": "mcp_round_trip",
+        "durationMs": 7580.632041999999
+      },
+      {
+        "operationId": "the_internet-navigate",
+        "phase": "browser_startup",
+        "durationMs": 3294.061
+      },
+      {
+        "operationId": "the_internet-navigate",
+        "phase": "document_observation",
+        "durationMs": 3294.061
+      },
+      {
+        "operationId": "the_internet-navigate",
+        "phase": "interaction_execution",
+        "durationMs": 2192
+      },
+      {
+        "operationId": "the_internet-login",
+        "phase": "interaction_execution",
+        "durationMs": 549
+      },
+      {
+        "operationId": "the_internet-login",
+        "phase": "native_resolution",
+        "durationMs": 535.1320419999538
+      },
+      {
+        "operationId": "the_internet-username",
+        "phase": "interaction_execution",
+        "durationMs": 65
+      },
+      {
+        "operationId": "the_internet-username",
+        "phase": "native_resolution",
+        "durationMs": 59.74737499997718
+      },
+      {
+        "operationId": "mcp-38169181-2fdf-45e8-8790-64656cff90f9-1",
+        "phase": "mcp_session_start_round_trip",
+        "durationMs": 21.58662499999997
+      },
+      {
+        "operationId": "the_internet-success",
+        "phase": "interaction_execution",
+        "durationMs": 20
+      },
+      {
+        "operationId": "the_internet-success",
+        "phase": "native_resolution",
+        "durationMs": 17.582208000007086
+      },
+      {
+        "operationId": "the_internet-password",
+        "phase": "interaction_execution",
+        "durationMs": 12
+      },
+      {
+        "operationId": "the_internet-password",
+        "phase": "native_resolution",
+        "durationMs": 8.050249999971129
+      },
+      {
+        "operationId": "database",
+        "phase": "database",
+        "durationMs": 5.60258300000001
+      },
+      {
+        "operationId": "api",
+        "phase": "api",
+        "durationMs": 5.584541999999999
+      },
+      {
+        "operationId": "worker",
+        "phase": "worker",
+        "durationMs": 5.502166000000017
+      },
+      {
+        "operationId": "redis",
+        "phase": "redis",
+        "durationMs": 3.9590829999999926
+      },
+      {
+        "operationId": "the_internet-navigate",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.048165999993216246
+      },
+      {
+        "operationId": "the_internet-login",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.017749999999068677
+      },
+      {
+        "operationId": "the_internet-success",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.009625000006053597
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:database",
+        "operationId": "database",
+        "source": "campaign_client",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "database-2d216780-833f-43db-a134-1c95cf72dc1f",
+        "value": 5.60258300000001
+      },
+      {
+        "metric": "phase:redis",
+        "operationId": "redis",
+        "source": "campaign_client",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "redis-2d216780-833f-43db-a134-1c95cf72dc1f",
+        "value": 3.9590829999999926
+      },
+      {
+        "metric": "apiRequests",
+        "operationId": "capabilities-2d216780-833f-43db-a134-1c95cf72dc1f",
+        "source": "api_http",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "capabilities-2d216780-833f-43db-a134-1c95cf72dc1f",
+        "value": 1
+      },
+      {
+        "metric": "phase:api",
+        "operationId": "api",
+        "source": "api_http",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "api-2d216780-833f-43db-a134-1c95cf72dc1f",
+        "value": 5.584541999999999
+      },
+      {
+        "metric": "phase:worker",
+        "operationId": "worker",
+        "source": "control_plane_query",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "worker-2d216780-833f-43db-a134-1c95cf72dc1f",
+        "value": 5.502166000000017
+      },
+      {
+        "metric": "phase:mcp_session_start_round_trip",
+        "operationId": "mcp-38169181-2fdf-45e8-8790-64656cff90f9-1",
+        "source": "mcp_http",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "mcp-38169181-2fdf-45e8-8790-64656cff90f9-1-duration",
+        "value": 21.58662499999997
+      },
+      {
+        "metric": "mcpRequests",
+        "operationId": "mcp-38169181-2fdf-45e8-8790-64656cff90f9-2",
+        "source": "mcp_http",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "mcp-38169181-2fdf-45e8-8790-64656cff90f9-2",
+        "value": 1
+      },
+      {
+        "metric": "phase:mcp_round_trip",
+        "operationId": "mcp-38169181-2fdf-45e8-8790-64656cff90f9-2",
+        "source": "mcp_http",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "mcp-38169181-2fdf-45e8-8790-64656cff90f9-2-duration",
+        "value": 7580.632041999999
+      },
+      {
+        "metric": "bytesReturnedToAgent",
+        "operationId": "mcp-38169181-2fdf-45e8-8790-64656cff90f9-2-bytes",
+        "source": "mcp_http",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "mcp-38169181-2fdf-45e8-8790-64656cff90f9-2-bytes",
+        "value": 3506
+      },
+      {
+        "metric": "agentDecisionBoundaries",
+        "operationId": "mcp-38169181-2fdf-45e8-8790-64656cff90f9-2-boundary",
+        "source": "mcp_http",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "mcp-38169181-2fdf-45e8-8790-64656cff90f9-2-boundary",
+        "value": 1
+      },
+      {
+        "metric": "phase:queue_wait",
+        "operationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "source": "queue_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "queue-not-applicable-38169181-2fdf-45e8-8790-64656cff90f9",
+        "value": 0
+      },
+      {
+        "metric": "phase:browser_startup",
+        "operationId": "the_internet-navigate",
+        "source": "browser_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "browser-38169181-2fdf-45e8-8790-64656cff90f9",
+        "value": 3294.061
+      },
+      {
+        "metric": "phase:document_observation",
+        "operationId": "the_internet-navigate",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "observation-38169181-2fdf-45e8-8790-64656cff90f9",
+        "value": 3294.061
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "the_internet-navigate",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "operation-9d040152-32e2-4b3d-acde-58604d2910f6-the_internet-navigate",
+        "value": 2192
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "the_internet-username",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "operation-9d040152-32e2-4b3d-acde-58604d2910f6-the_internet-username",
+        "value": 65
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "the_internet-password",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "operation-9d040152-32e2-4b3d-acde-58604d2910f6-the_internet-password",
+        "value": 12
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "the_internet-login",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "operation-9d040152-32e2-4b3d-acde-58604d2910f6-the_internet-login",
+        "value": 549
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "the_internet-success",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "operation-9d040152-32e2-4b3d-acde-58604d2910f6-the_internet-success",
+        "value": 20
+      },
+      {
+        "metric": "phase:praxis_grounding",
+        "operationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "source": "praxis_result",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "praxis-not-emitted-38169181-2fdf-45e8-8790-64656cff90f9",
+        "value": 0
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "the_internet-username",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "native-the_internet-username-1",
+        "value": 59.74737499997718
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "the_internet-password",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "native-the_internet-password-1",
+        "value": 8.050249999971129
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "the_internet-login",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "native-the_internet-login-1",
+        "value": 535.1320419999538
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "the_internet-success",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "native-the_internet-success-1",
+        "value": 17.582208000007086
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "the_internet-navigate",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "effect-the_internet-navigate-1",
+        "value": 0.048165999993216246
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "the_internet-username",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "effect-the_internet-username-2",
+        "value": 0.00620800000615418
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "the_internet-password",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "effect-the_internet-password-2",
+        "value": 0.005249999987427145
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "the_internet-login",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "effect-the_internet-login-2",
+        "value": 0.017749999999068677
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "the_internet-success",
+        "source": "worker_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "effect-the_internet-success-2",
+        "value": 0.009625000006053597
+      },
+      {
+        "metric": "phase:evidence_finalization",
+        "operationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "source": "artifact_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "evidence-not-requested-38169181-2fdf-45e8-8790-64656cff90f9",
+        "value": 0
+      },
+      {
+        "metric": "phase:artifact_retrieval",
+        "operationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "source": "artifact_event",
+        "correlationId": "38169181-2fdf-45e8-8790-64656cff90f9",
+        "eventId": "artifact-not-requested-38169181-2fdf-45e8-8790-64656cff90f9",
+        "value": 0
+      }
+    ]
+  },
+  "artifactRefs": [],
+  "verdict": "pass"
+}

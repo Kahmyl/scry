@@ -31,7 +31,6 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
   constructor(@Inject(Database) private readonly db: Database) {}
 
   async onModuleInit() {
-    if (process.env.SCRY_ORCHESTRATION_ENABLED !== "true") return;
     await this.tick().catch(() => undefined);
     this.timer = setInterval(
       () => void this.tick().catch(() => undefined),

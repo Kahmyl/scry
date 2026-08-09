@@ -203,16 +203,24 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
         readiness: [],
         diagnostics: [],
         pageFingerprint: "a".repeat(64),
+        learnedContracts: [successfulLearnedRecord("publish")],
       },
     });
 
-    const compilation = await service.compile(principal, draftId, {
+    const certified = await service.compileAndCertify(principal, draftId, {
       ...context,
       environmentId: environment,
       draftVersion: 2,
       probeSessionId: probe,
       idempotencyKey: `compile-success-${randomUUID()}`,
+      viewport: { width: 1280, height: 720 },
+      seed: 1,
     });
+    const compilation = certified.compilation;
+    if (!("certificationRunId" in certified.certification)) {
+      throw new Error("expected a certification Run");
+    }
+    await completeCertification(database, certified.certification);
 
     expect(compilation).toMatchObject({
       status: "execution_ready",
@@ -231,6 +239,19 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
 
     expect(publication.revision).toBe(1);
     expect(publication.compiledContractId).toBe(compilation.id);
+
+    // Regression characterization: before M1, publication inserted a Flow with
+    // owner_mission_id=NULL and violated the mandatory aggregate-root contract.
+    await expect(
+      database.query(
+        `SELECT owner_mission_id AS "ownerMissionId",
+                owner_objective_id AS "ownerObjectiveId"
+         FROM flows WHERE id=$1`,
+        [publication.flowId],
+      ),
+    ).resolves.toMatchObject({
+      rows: [{ ownerMissionId: mission, ownerObjectiveId: objective }],
+    });
 
     expect(
       Number(
@@ -307,12 +328,11 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
         readiness: [],
         diagnostics: [],
         pageFingerprint: "a".repeat(64),
+        learnedContracts: [successfulLearnedRecord("certify")],
       },
     });
 
-    const previousCompilerFlag = process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED;
     const previousWaitTimeout = process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS;
-    process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED = "false";
     process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS = "0";
     try {
       const compileInput = {
@@ -326,7 +346,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       } as const;
       const result = await service.compileAndCertify(principal, created.id!, compileInput);
 
-      expect(result.compilation.contractVersion).toBe("v1-existing");
+      expect(result.compilation.contractVersion).toBe("v2-learned-interactions");
       expect(result.compiledContractId).toBe(result.compilation.id);
       expect(result.certification).toMatchObject({ status: "certification_pending" });
       expect(result.certification).toMatchObject({
@@ -420,8 +440,6 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       });
       expect(publication.compiledContractId).toBe(result.compiledContractId);
     } finally {
-      if (previousCompilerFlag === undefined) delete process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED;
-      else process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED = previousCompilerFlag;
       if (previousWaitTimeout === undefined) delete process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS;
       else process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS = previousWaitTimeout;
     }
@@ -504,6 +522,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
         readiness: [],
         diagnostics: [diagnostic],
         pageFingerprint: "a".repeat(64),
+        learnedContracts: [successfulLearnedRecord("quality")],
       },
     });
 
@@ -798,16 +817,24 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
         readiness: [],
         diagnostics: [],
         pageFingerprint: "b".repeat(64),
+        learnedContracts: [successfulLearnedRecord("redundant")],
       },
     });
 
-    const compilation = await service.compile(principal, draftId, {
+    const certified = await service.compileAndCertify(principal, draftId, {
       ...context,
       environmentId: environment,
       draftVersion: 1,
       probeSessionId: probe,
       idempotencyKey: `compile-redundant-${randomUUID()}`,
+      viewport: { width: 1280, height: 720 },
+      seed: 1,
     });
+    const compilation = certified.compilation;
+    if (!("certificationRunId" in certified.certification)) {
+      throw new Error("expected a certification Run");
+    }
+    await completeCertification(database, certified.certification);
 
     expect(compilation).toMatchObject({
       status: "execution_ready",
@@ -1135,8 +1162,6 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       idempotencyKey: `auth-contract-vitract-${randomUUID()}`,
     });
 
-    const previousCompilerFlag = process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED;
-    process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED = "true";
     const certifiedCompilation = await service.compileAndCertify(principal, created.id!, {
       ...context,
       environmentId: vitractEnvironment,
@@ -1147,8 +1172,6 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       viewport: { width: 1280, height: 720 },
       seed: 1,
     });
-    if (previousCompilerFlag === undefined) delete process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED;
-    else process.env.SCRY_TRANSCRIPT_COMPILER_ENABLED = previousCompilerFlag;
     const compilation = certifiedCompilation.compilation;
 
     expect(certifiedCompilation.compiledContractId).toBe(compilation.id);
@@ -1385,6 +1408,25 @@ async function insertCompletedProbe(
   );
 }
 
+function successfulLearnedRecord(suffix: string) {
+  return {
+    interactionId: `learned-${suffix}`,
+    stepId: `step-${suffix}`,
+    intent: { concept: suffix },
+    operation: { type: "activate" },
+    functionalResult: "passed",
+    mutationOutcome: "applied",
+    successfulEvidenceFamilies: ["accessibility", "effect"],
+    scope: { kind: "page" },
+    relationships: [],
+    capabilityProfile: { canActivate: true },
+    expectedEffect: { type: "navigation" },
+    sanitizedFingerprint: { digest: "a".repeat(64) },
+    qualityFindings: [],
+    veilEvidenceClosed: true,
+  };
+}
+
 type InteractionRole = InteractionTargetIntent["preferredEvidence"]["roles"][number];
 
 function target(concept: string, role: InteractionRole, name: string): InteractionTargetIntent {
@@ -1422,6 +1464,32 @@ function authTarget(concept: string, suffix: string) {
     scopeKind: "document",
     capabilityDigest: `${Number(suffix) + 4}`.repeat(64).slice(0, 64),
   };
+}
+
+async function completeCertification(
+  database: Database,
+  certification: { certificationRunId?: string },
+) {
+  if (!certification.certificationRunId) {
+    throw new Error("Certification Run was not queued");
+  }
+  const attempts = new RunAttemptRepository(database);
+  const claimToken = randomUUID();
+  const attempt = await attempts.claimAttempt(
+    certification.certificationRunId,
+    "m1-authoring-certification-worker",
+    claimToken,
+  );
+  if (!attempt) throw new Error("Certification attempt was not claimable");
+  await attempts.markRunning(certification.certificationRunId, attempt.id, claimToken);
+  await attempts.markFinalizing(certification.certificationRunId, attempt.id, claimToken);
+  await attempts.completeAttempt(
+    certification.certificationRunId,
+    attempt.id,
+    claimToken,
+    "passed",
+    "passed",
+  );
 }
 
 async function insertPassedRun(

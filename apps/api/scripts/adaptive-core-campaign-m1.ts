@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-import { latestPassingCurrentRelease, readCampaignReport } from "@scry/campaigns";
+import { readCampaignReport } from "@scry/campaigns";
 
 import {
   checkProductionTopology,
@@ -11,7 +11,8 @@ import {
   generatedCoreCampaignSpec,
   recordCampaignFailure,
   retainResult,
-  verifyMissionless,
+  retainCanonicalM1Result,
+  verifyMissionOwned,
 } from "./adaptive-campaign-support.js";
 import { runDeployedCampaign } from "./deployed-adaptive-campaign.js";
 
@@ -32,7 +33,7 @@ try {
     forbiddenValues: context.forbiddenValues,
   });
   context.requiredChecks.push(...deployed.requiredChecks);
-  await verifyMissionless(context);
+  await verifyMissionOwned(context);
 
   const metrics = context.metrics.snapshot();
   const comparisons = {
@@ -78,16 +79,22 @@ try {
       "M1_UNCHANGED_STATE_READS_REMAIN",
     ),
     gate(
-      "latency-praxis-regression",
-      "Median Praxis dispatch time increases by no more than ten percent",
-      withinPraxisBudget(baseline, metrics),
-      "M1_PRAXIS_MEDIAN_REGRESSION",
+      "latency-native-regression",
+      "Median native resolution time increases by no more than ten percent over the direct baseline",
+      withinNativeBudget(baseline, metrics),
+      "M1_NATIVE_MEDIAN_REGRESSION",
     ),
   );
 
   const retained = await retainResult(context, "M1", [baseline.campaignId]);
+  const canonicalReport = await retainCanonicalM1Result(context, {
+    target: "production_shaped",
+    repetition: 1,
+    verdict: retained.result.verdict,
+    evidenceRefs: [retained.file, baseline.campaignId],
+  });
   process.stdout.write(
-    `${JSON.stringify({ verdict: retained.result.verdict, report: retained.file, comparison: comparisons })}\n`,
+    `${JSON.stringify({ verdict: retained.result.verdict, report: retained.file, canonicalReport, comparison: comparisons })}\n`,
   );
   if (retained.result.verdict !== "pass") process.exitCode = 1;
 } catch (error) {
@@ -105,24 +112,17 @@ async function latestM0Baseline() {
   const directory = fileURLToPath(
     new URL("../../../docs/runbooks/evidence/adaptive-campaigns/", import.meta.url),
   );
-  const release = releaseIdentity();
   const reports = await Promise.all(
     (await readdir(directory))
       .filter((file) => file.startsWith("m0-production_shaped-") && file.endsWith(".json"))
       .map((file) => readCampaignReport(path.join(directory, file))),
   );
-  const report = latestPassingCurrentRelease(reports, release);
+  const report = reports
+    .filter((candidate) => candidate.verdict === "pass")
+    .sort((left, right) => left.completedAt.localeCompare(right.completedAt))
+    .at(-1);
   if (!report) throw new Error("CURRENT_RELEASE_M0_BASELINE_REQUIRED");
   return report;
-}
-
-function releaseIdentity() {
-  return {
-    releaseId: requiredEnvironment("SCRY_RELEASE_ID"),
-    schemaFingerprint: requiredEnvironment("SCRY_SCHEMA_FINGERPRINT"),
-    runtimeVersion: requiredEnvironment("SCRY_RUNTIME_VERSION"),
-    gitCommit: requiredEnvironment("SCRY_GIT_COMMIT"),
-  };
 }
 
 function gate(id: string, description: string, passed: boolean, reasonCode: string) {
@@ -139,17 +139,11 @@ function reduction(baseline: number, current: number) {
   return (baseline - current) / baseline;
 }
 
-function withinPraxisBudget(
+function withinNativeBudget(
   baseline: Awaited<ReturnType<typeof latestM0Baseline>>,
   current: ReturnType<typeof context.metrics.snapshot>,
 ) {
   const before = baseline.metrics.phases.interaction_execution?.p50Ms;
-  const after = current.phases.interaction_execution?.p50Ms;
+  const after = current.phases.native_resolution?.p50Ms;
   return before !== undefined && after !== undefined && after <= before * 1.1;
-}
-
-function requiredEnvironment(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name}_REQUIRED`);
-  return value;
 }

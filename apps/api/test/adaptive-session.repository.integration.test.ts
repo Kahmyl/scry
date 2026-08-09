@@ -13,6 +13,10 @@ integration("adaptive session repository integration", () => {
   const workspaceId = randomUUID();
   const projectId = randomUUID();
   const environmentId = randomUUID();
+  const missionId = randomUUID();
+  const objectiveId = randomUUID();
+  const agentSessionId = randomUUID();
+  const flowDraftId = randomUUID();
   const sessionIds: string[] = [];
 
   beforeAll(async () => {
@@ -46,13 +50,37 @@ integration("adaptive session repository integration", () => {
         }),
       ],
     );
+    await database.query(
+      `INSERT INTO missions(id,project_id,title,original_instruction)
+       VALUES($1,$2,'Adaptive Mission','Exercise Mission-owned authoring')`,
+      [missionId,projectId],
+    );
+    await database.query(
+      `INSERT INTO mission_objectives(
+         id,mission_id,title,completion_criteria,objective_order
+       ) VALUES($1,$2,'Inspect account details','{}'::jsonb,0)`,
+      [objectiveId,missionId],
+    );
+    await database.query(
+      `INSERT INTO agent_sessions(
+         id,mission_id,provider,instruction_snapshot,idempotency_key
+       ) VALUES($1,$2,'scry_agent','Integration test','adaptive-owner-session')`,
+      [agentSessionId,missionId],
+    );
+    await database.query(
+      `INSERT INTO flow_drafts(
+         id,project_id,mission_id,objective_id,environment_id,name,content,plan,
+         created_by_agent_session_id
+       ) VALUES($1,$2,$3,$4,$5,'Inspect account details','{}'::jsonb,'{}'::jsonb,$6)`,
+      [flowDraftId,projectId,missionId,objectiveId,environmentId,agentSessionId],
+    );
   });
 
   afterAll(async () => {
     await database?.onModuleDestroy();
   });
 
-  it("creates no mission, objective, flow, or probe records", async () => {
+  it("creates no additional Mission, Objective, Flow draft, or probe records", async () => {
     const before = await controlPlaneCounts();
     const created = await repository.create(workspaceId, startInput("missionless-start"));
     sessionIds.push(created.id);
@@ -65,6 +93,117 @@ integration("adaptive session repository integration", () => {
       "provisioning_started",
       "session_activated",
     ]);
+  });
+
+  it("rejects a Flow draft outside the supplied Mission and Objective chain", async () => {
+    await expect(
+      repository.create(workspaceId, {
+        ...startInput("invalid-owner-chain"),
+        objectiveId: randomUUID(),
+      }),
+    ).rejects.toMatchObject({
+      response: { code: "MISSION_FLOW_AUTHORING_OWNERSHIP_INVALID" },
+    });
+  });
+
+  it("stores a functionally successful unknown mutation as reconciliation-required", async () => {
+    const created = await repository.create(workspaceId, startInput("unknown-mutation-start"));
+    sessionIds.push(created.id);
+    const intent = {
+      intentId: "unknown-activate",
+      objectiveId,
+      flowDraftId,
+      action: {
+        kind: "activate" as const,
+        target: {
+          concept: "submit",
+          role: "button" as const,
+          name: "Submit",
+          exact: true,
+        },
+      },
+      expectedEffect: { kind: "none" as const },
+      constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "ordinary" as const },
+      protectedInputReferences: [],
+    };
+    await repository.beginMissionOperation({
+      workspaceId,
+      sessionId: created.id,
+      operationId: "unknown-activate",
+      idempotencyKey: "unknown-activate-operation",
+      intent,
+      action: {
+        type: "click",
+        target: {
+          concept: "submit",
+          requiredCapabilities: ["focusable", "pointer_activatable"],
+          preferredEvidence: {
+            roles: ["button"],
+            names: ["Submit"],
+            labels: [],
+            descriptions: [],
+            placeholders: [],
+            inputTypes: [],
+            testIds: [],
+          },
+          scope: { kind: "page" },
+          relations: [],
+          prohibited: ["hidden", "disabled"],
+          risk: "ordinary",
+          confidence: { requiredFamilies: [] },
+          matching: "exact",
+        },
+        expectedEffect: { type: "none" },
+        timeoutMs: 1_000,
+      },
+      expectedEffect: { type: "none" },
+      mode: "rehearse",
+    });
+    const boundary = {
+      type: "mutation_reconciliation_required" as const,
+      reasonCode: "MUTATION_OUTCOME_UNKNOWN",
+      safeActions: ["get_flow_authoring"],
+    };
+    const settled = await repository.settleMissionOperation({
+      sessionId: created.id,
+      operationId: "unknown-activate",
+      intent,
+      action: {
+        type: "click",
+        target: {
+          concept: "submit",
+          requiredCapabilities: ["focusable", "pointer_activatable"],
+          preferredEvidence: {
+            roles: ["button"], names: ["Submit"], labels: [], descriptions: [],
+            placeholders: [], inputTypes: [], testIds: [],
+          },
+          scope: { kind: "page" }, relations: [], prohibited: ["hidden", "disabled"],
+          risk: "ordinary", confidence: { requiredFamilies: [] }, matching: "exact",
+        },
+        expectedEffect: { type: "none" },
+        timeoutMs: 1_000,
+      },
+      outcome: {
+        operationId: "unknown-activate",
+        functionalResult: "succeeded",
+        mutationOutcome: "unknown",
+        privacyResult: "unverified",
+        evidenceResult: [],
+        qualityFindings: [],
+        durationMs: 1,
+      },
+      capabilityManifestDigest: "c".repeat(64),
+      decisionBoundary: boundary,
+    });
+    expect(settled.state).toBe("failed");
+    const session = await repository.get(workspaceId, created.id);
+    expect(session).toMatchObject({ state: "recovery_required" });
+    expect(session.operations[0]).toMatchObject({
+      state: "failed",
+      outcome: { functionalResult: "succeeded", mutationOutcome: "unknown" },
+      decisionBoundary: boundary,
+    });
   });
 
   it("enforces ordered append-only journal and transition versions", async () => {
@@ -387,6 +526,9 @@ integration("adaptive session repository integration", () => {
   function startInput(idempotencyKey: string) {
     return {
       projectId,
+      missionId,
+      objectiveId,
+      flowDraftId,
       environmentId,
       objective: "Inspect account details",
       allowedOrigins: ["https://example.test"],
@@ -431,10 +573,12 @@ integration("adaptive session repository integration", () => {
       flows: string;
       probes: string;
     }>(
-      `SELECT (SELECT count(*) FROM missions)::text AS missions,
-              (SELECT count(*) FROM mission_objectives)::text AS objectives,
-              (SELECT count(*) FROM flows)::text AS flows,
-              (SELECT count(*) FROM probe_sessions)::text AS probes`,
+      `SELECT (SELECT count(*) FROM missions WHERE project_id=$1)::text AS missions,
+              (SELECT count(*) FROM mission_objectives WHERE mission_id=$2)::text AS objectives,
+              (SELECT count(*) FROM flows WHERE project_id=$1)::text AS flows,
+              (SELECT count(*) FROM probe_sessions p JOIN flow_drafts d ON d.id=p.draft_id
+                WHERE d.project_id=$1)::text AS probes`,
+      [projectId, missionId],
     );
     return result.rows[0];
   }

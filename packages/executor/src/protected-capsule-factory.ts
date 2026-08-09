@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import { playwrightBrowserChannel } from "@scry/praxis";
 import { VeilClipboardCollector } from "@scry/veil";
-import { chromium, type BrowserContextOptions } from "playwright";
+import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 
 import {
   BrowserSessionProvenance,
@@ -21,6 +20,14 @@ export type CapsuleFactory = {
 };
 
 export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
+  constructor(
+    private readonly openBrowser: (options?: BrowserContextOptions) => Promise<{
+      browser: Browser;
+      context: BrowserContext;
+      page: Page;
+    }>,
+  ) {}
+
   async create(input: {
     storageState: Awaited<ReturnType<SafeBrowserSession["context"]["storageState"]>>;
     sessionStorage?: { origin: string; entries: Array<[string, string]> };
@@ -28,26 +35,19 @@ export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
     browserChannel?: string;
     prepare: (session: ProtectedBrowserSession) => Promise<void>;
   }) {
-    const configuredChannel = input.browserChannel ?? process.env.SCRY_BROWSER_CHANNEL ?? "chrome";
-    const launchChannel = playwrightBrowserChannel(configuredChannel);
-    const browser = await chromium.launch({
-      headless: true,
-      ...(launchChannel ? { channel: launchChannel } : {}),
-    });
     const options: BrowserContextOptions = {
       storageState: input.storageState,
       serviceWorkers: "block",
       acceptDownloads: false,
       ...(input.viewport ? { viewport: input.viewport } : {}),
     };
-    const context = await browser.newContext(options);
+    const { browser, context, page } = await this.openBrowser(options);
     if (input.sessionStorage) {
       await context.addInitScript(({ origin, entries }) => {
         if (window.location.origin !== origin) return;
         for (const [key, value] of entries) window.sessionStorage.setItem(key, value);
       }, input.sessionStorage);
     }
-    const page = await context.newPage();
     const provenance = new BrowserSessionProvenance(randomUUID(), "protected");
     const clipboardCollector = new VeilClipboardCollector(page);
     let destroyed = false;

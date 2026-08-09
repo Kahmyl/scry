@@ -8,7 +8,7 @@ import type {
   OutcomeClassification,
 } from "@scry/contracts";
 import type { RuntimePolicyViolationCode } from "@scry/policy";
-import type { BrowserContext, Page } from "playwright";
+import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 import type { CalibrationStructure } from "./calibration.js";
 
 import type { RecordingCoordinator } from "./recording-coordinator.js";
@@ -43,6 +43,63 @@ export type ExecuteOptions = {
   headless?: boolean;
   viewport?: { width: number; height: number };
   browserStorageState?: BrowserStorageState;
+  /** Native browser authority supplied by the deployed runtime composition root. */
+  openBrowser?: (options?: BrowserContextOptions) => Promise<{
+    browser: Browser;
+    context: BrowserContext;
+    page: Page;
+  }>;
+  executeNativeControl?: (
+    page: Page,
+    target: import("@scry/contracts").InteractionTargetIntent,
+    operation:
+      | { type: "click"; timeoutMs?: number }
+      | { type: "fill"; value: string; timeoutMs?: number; protected: boolean }
+      | { type: "select"; value: string; timeoutMs?: number }
+      | { type: "check"; checked: boolean; timeoutMs?: number }
+      | { type: "press"; key: string }
+      | { type: "scroll"; deltaY: number }
+      | { type: "waitFor"; state: "visible" | "hidden" | "attached" | "detached"; timeoutMs?: number },
+    beforeDispatch?: () => Promise<void>,
+  ) => Promise<void>;
+  executeNativeNavigation?: (
+    page: Page,
+    url: string,
+    allowedOrigins: string[],
+    timeoutMs?: number,
+    trustedScriptOrigins?: string[],
+  ) => Promise<void>;
+  /** Typed same-origin request authority. The deployed driver owns cookies and any bearer bridge. */
+  executeSameOriginRequest?: (
+    page: Page,
+    request: {
+      method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+      path: string;
+      body?: Record<string, string | number | boolean | null>;
+      expectedStatus: { min: number; max: number };
+      timeoutMs?: number;
+    },
+    allowedOrigins: string[],
+    beforeDispatch?: () => Promise<void>,
+  ) => Promise<{ status: number; classification: "expected" | "unexpected" }>;
+  /** Per-request composition policy. M2 grouped authoring never permits Praxis fallback. */
+  nativeResolutionPolicy?: "native_then_praxis" | "native_only";
+  verifyNativeExpectedEffect?: (
+    page: Page,
+    effect: import("@scry/contracts").ExpectedEffect,
+    beforeUrl: string,
+    timeoutMs: number,
+  ) => Promise<void>;
+  onNativeResolution?: (input: {
+    status: "resolved" | "fallback";
+    reasonCode?: string;
+    durationMs: number;
+  }) => void | Promise<void>;
+  onExpectedEffectVerification?: (input: {
+    status: "succeeded" | "failed";
+    reasonCode?: string;
+    durationMs: number;
+  }) => void | Promise<void>;
   /** Internal authoring boundary: execute against the already-owned safe session. */
   existingSafeSession?: import("./browser-session.js").SafeBrowserSession;
   captureBrowserState?: (state: BrowserStorageState) => void | Promise<void>;

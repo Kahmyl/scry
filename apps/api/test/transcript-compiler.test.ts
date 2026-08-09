@@ -68,7 +68,6 @@ describe("authoring transcript compiler", () => {
   });
 
   it("compiles only successful deterministic learned interactions", () => {
-    vi.stubEnv("SCRY_TRANSCRIPT_COMPILER_ENABLED", "true");
 
     expect(
       compileSuccessfulInteractions({
@@ -81,8 +80,15 @@ describe("authoring transcript compiler", () => {
     });
   });
 
+  it("blocks a new compilation without a successful learned trajectory", () => {
+    expect(compileSuccessfulInteractions({ learnedContracts: [] })).toMatchObject({
+      contractVersion: "v2-learned-interactions",
+      learnedRecords: [],
+      blockers: [{ code: "SUCCESSFUL_AUTHORING_TRAJECTORY_REQUIRED" }],
+    });
+  });
+
   it("rejects selector-hint-only and unresolved mutation records", () => {
-    vi.stubEnv("SCRY_TRANSCRIPT_COMPILER_ENABLED", "true");
 
     expect(
       compileSuccessfulInteractions({
@@ -91,11 +97,14 @@ describe("authoring transcript compiler", () => {
           { ...passedRecord, interactionId: "mutation", mutationOutcome: "unknown" },
         ],
       }).blockers.map((blocker) => blocker.code),
-    ).toEqual(["SELECTOR_HINT_ONLY_CONTRACT_REJECTED", "MUTATION_STATE_UNRESOLVED"]);
+    ).toEqual([
+      "SELECTOR_HINT_ONLY_CONTRACT_REJECTED",
+      "MUTATION_STATE_UNRESOLVED",
+      "SUCCESSFUL_AUTHORING_TRAJECTORY_REQUIRED",
+    ]);
   });
 
   it("rejects unsafe evidence before sanitization can make it appear compilable", () => {
-    vi.stubEnv("SCRY_TRANSCRIPT_COMPILER_ENABLED", "true");
 
     const encodedSecret = Buffer.from("password=never-persist-this").toString("base64");
     const result = compileSuccessfulInteractions({
@@ -111,11 +120,11 @@ describe("authoring transcript compiler", () => {
       "FORBIDDEN_LEARNED_EVIDENCE",
       "FORBIDDEN_LEARNED_EVIDENCE",
       "ENCODED_PROTECTED_VALUE_REJECTED",
+      "SUCCESSFUL_AUTHORING_TRAJECTORY_REQUIRED",
     ]);
   });
 
   it("rejects expired handles, missing effects, and unclosed Veil evidence", () => {
-    vi.stubEnv("SCRY_TRANSCRIPT_COMPILER_ENABLED", "true");
 
     const result = compileSuccessfulInteractions({
       learnedContracts: [
@@ -134,6 +143,7 @@ describe("authoring transcript compiler", () => {
       "EPHEMERAL_HANDLE_EXPIRED",
       "EXPECTED_EFFECT_REQUIRED",
       "VEIL_EVIDENCE_NOT_CLOSED",
+      "SUCCESSFUL_AUTHORING_TRAJECTORY_REQUIRED",
     ]);
   });
 
@@ -156,7 +166,6 @@ describe("authoring transcript compiler", () => {
   });
 
   it("binds sanitized protected acquisition proof to transcript compilation output", () => {
-    vi.stubEnv("SCRY_TRANSCRIPT_COMPILER_ENABLED", "true");
     const proof = {
       reference: "clientSecret",
       adapter: "keyboard_copy",

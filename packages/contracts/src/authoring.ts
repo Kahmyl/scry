@@ -3,6 +3,7 @@ import { z } from "zod";
 import { flowRevisionContentSchema } from "./api.js";
 import { currentPlanSchema } from "./current.js";
 import { objectiveContextSchema } from "./mission.js";
+import { semanticRoleSchema } from "./grounding.js";
 
 const uuid = z.string().uuid();
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -14,6 +15,16 @@ export const flowDraftStateSchema = z.enum([
   "publishable",
   "published",
   "abandoned",
+]);
+
+/** Mutable M2 authoring intent; published-flow metadata remains a separate compatibility concern. */
+export const flowDraftPurposeSchema = z.enum([
+  "setup",
+  "primary",
+  "acceptance",
+  "diagnostic",
+  "reconciliation",
+  "cleanup",
 ]);
 
 export const probeLevelSchema = z.enum(["inspection", "reversible", "calibration_transaction"]);
@@ -71,6 +82,252 @@ export const executionOutcomeClassSchema = z.enum([
 
 const codeSchema = z.string().regex(/^[A-Z][A-Z0-9_]*$/);
 const safeRecordSchema = z.record(z.string(), z.unknown());
+const semanticText = z.string().trim().min(1).max(500);
+
+export const missionAuthoringSemanticTargetSchema = z
+  .object({
+    concept: semanticText,
+    role: semanticRoleSchema.optional(),
+    name: semanticText.optional(),
+    label: semanticText.optional(),
+    placeholder: semanticText.optional(),
+    text: semanticText.optional(),
+    testId: semanticText.optional(),
+    scope: z
+      .object({
+        kind: z.enum(["page", "dialog", "form", "section", "row", "region", "live_region"]),
+        name: semanticText.optional(),
+      })
+      .strict()
+      .superRefine((scope, context) => {
+        if (scope.kind === "section" && !scope.name)
+          context.addIssue({ code: "custom", path: ["name"], message: "section scope requires a visible anchor name" });
+      })
+      .optional(),
+    exact: z.boolean().default(true),
+  })
+  .strict()
+  .superRefine((target, context) => {
+    if (!target.role && !target.name && !target.label && !target.placeholder && !target.text && !target.testId)
+      context.addIssue({
+        code: "custom",
+        message: "semantic target requires an observable locator fact besides concept",
+      });
+  });
+
+const safePressKeySchema = z.enum([
+  "Enter",
+  "Escape",
+  "Tab",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+]);
+const publicJsonBodySchema = z.record(
+  z.string().trim().min(1).max(100),
+  z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]),
+).superRefine((body, context) => {
+  if (Object.keys(body).length > 100)
+    context.addIssue({ code: "custom", message: "same-origin request body has too many fields" });
+  for (const key of Object.keys(body)) {
+    if (/(secret|protected|credential|token|password|authorization)/i.test(key))
+      context.addIssue({
+        code: "custom",
+        path: [key],
+        message: "same-origin request bodies may contain public values only",
+      });
+  }
+});
+
+export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("navigate"), url: z.string().url() }).strict(),
+  z.object({ kind: z.literal("activate"), target: missionAuthoringSemanticTargetSchema }).strict(),
+  z
+    .object({
+      kind: z.literal("fill"),
+      target: missionAuthoringSemanticTargetSchema,
+      publicValue: z.string().max(20_000).optional(),
+      protectedReferenceId: uuid.optional(),
+    })
+    .strict()
+    .superRefine((action, context) => {
+      if ([action.publicValue, action.protectedReferenceId].filter((value) => value !== undefined).length !== 1)
+        context.addIssue({
+          code: "custom",
+          message: "fill requires exactly one public or protected value source",
+        });
+    }),
+  z
+    .object({
+      kind: z.literal("select"),
+      target: missionAuthoringSemanticTargetSchema,
+      value: z.string().trim().min(1).max(2_000),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("set_checked"),
+      target: missionAuthoringSemanticTargetSchema,
+      checked: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("press"),
+      target: missionAuthoringSemanticTargetSchema.optional(),
+      key: safePressKeySchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("wait_for"),
+      target: missionAuthoringSemanticTargetSchema,
+      state: z.enum(["visible", "hidden", "attached", "detached"]),
+    })
+    .strict(),
+  z.object({ kind: z.literal("inspect"), target: missionAuthoringSemanticTargetSchema }).strict(),
+  z
+    .object({
+      kind: z.literal("same_origin_request"),
+      method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+      authentication: z.literal("current_browser_session"),
+      path: z
+        .string()
+        .startsWith("/")
+        .max(1_000)
+        .refine((value) => !value.startsWith("//") && !value.includes("://") && !value.includes("\\"), {
+          message: "same-origin request path may not include a scheme or host",
+        }),
+      body: publicJsonBodySchema.optional(),
+      expectedStatus: z
+        .object({ min: z.number().int().min(100).max(599), max: z.number().int().min(100).max(599) })
+        .strict()
+        .superRefine((status, context) => {
+          if (status.min > status.max)
+            context.addIssue({ code: "custom", message: "expected status minimum exceeds maximum" });
+        }),
+    })
+    .strict(),
+]);
+
+export const missionAuthoringSemanticEffectSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("none") }).strict(),
+  z
+    .object({
+      kind: z.literal("navigation"),
+      url: z.string().url().optional(),
+      match: z.enum(["exact", "path", "contains"]).default("path"),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("target_visibility"),
+      target: missionAuthoringSemanticTargetSchema,
+      visible: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("target_value"),
+      target: missionAuthoringSemanticTargetSchema,
+      expected: z.string().max(20_000).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("target_state"),
+      target: missionAuthoringSemanticTargetSchema,
+      checked: z.boolean().optional(),
+      enabled: z.boolean().optional(),
+    })
+    .strict()
+    .superRefine((effect, context) => {
+      if (effect.checked === undefined && effect.enabled === undefined)
+        context.addIssue({ code: "custom", message: "target state requires a checked or enabled value" });
+    }),
+  z.object({ kind: z.literal("new_page"), origin: z.string().url().optional() }).strict(),
+]);
+
+export const missionAuthoringIntentSchema = z
+  .object({
+    intentId: z.string().trim().min(1).max(200),
+    objectiveId: uuid,
+    flowDraftId: uuid,
+    action: missionAuthoringSemanticActionSchema,
+    expectedEffect: missionAuthoringSemanticEffectSchema,
+    constraints: z
+      .object({
+        timeoutMs: z.number().int().min(100).max(60_000),
+        allowNewPage: z.boolean(),
+        allowNonExact: z.boolean(),
+      })
+      .strict(),
+    authorization: z
+      .object({
+        kind: z.enum(["ordinary", "authentication", "reversible", "live_read", "live_mutation"]),
+        authorizationId: uuid.optional(),
+      })
+      .strict(),
+    protectedInputReferences: z.array(uuid).max(20).default([]),
+  })
+  .strict()
+  .superRefine((intent, context) => {
+    const protectedReferences =
+      intent.action.kind === "fill" && intent.action.protectedReferenceId
+        ? [intent.action.protectedReferenceId]
+        : [];
+    if (
+      new Set(intent.protectedInputReferences).size !== intent.protectedInputReferences.length ||
+      intent.protectedInputReferences.length !== protectedReferences.length ||
+      protectedReferences.some((reference) => !intent.protectedInputReferences.includes(reference))
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["protectedInputReferences"],
+        message: "protected references must exactly match protected fill references",
+      });
+    if (
+      (intent.authorization.kind === "live_mutation" && !intent.authorization.authorizationId) ||
+      (intent.action.kind === "same_origin_request" &&
+        intent.action.method !== "GET" &&
+        (!intent.authorization.authorizationId || intent.authorization.kind !== "live_mutation"))
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["authorization", "authorizationId"],
+        message: "live mutation requires explicit authorization",
+      });
+    if (
+      intent.action.kind === "fill" &&
+      intent.action.protectedReferenceId &&
+      !["authentication", "live_mutation"].includes(intent.authorization.kind)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["authorization", "kind"],
+        message: "protected fills require authentication or live-mutation authorization",
+      });
+    if (!intent.constraints.allowNonExact && hasNonExactTarget(intent.action, intent.expectedEffect))
+      context.addIssue({
+        code: "custom",
+        path: ["constraints", "allowNonExact"],
+        message: "non-exact matching requires explicit admission",
+      });
+    if (intent.expectedEffect.kind === "new_page" && !intent.constraints.allowNewPage)
+      context.addIssue({ code: "custom", path: ["constraints", "allowNewPage"], message: "new-page effects require explicit admission" });
+  });
+
+function hasNonExactTarget(
+  action: z.infer<typeof missionAuthoringSemanticActionSchema>,
+  effect: z.infer<typeof missionAuthoringSemanticEffectSchema>,
+) {
+  const targets = [
+    "target" in action ? action.target : undefined,
+    "target" in effect ? effect.target : undefined,
+  ];
+  return targets.some((target) => target?.exact === false);
+}
 
 export const learnedInteractionRecordSchema = z
   .object({
@@ -188,6 +445,7 @@ export const createFlowDraftSchema = objectiveContextSchema
     flowId: uuid.optional(),
     name: z.string().trim().min(1).max(200),
     description: z.string().trim().max(2_000).default(""),
+    purpose: flowDraftPurposeSchema.default("primary"),
     content: flowRevisionContentSchema,
     plan: currentPlanSchema,
     idempotencyKey: z.string().trim().min(8).max(200),
@@ -343,7 +601,9 @@ export const createAuthenticationContractSchema = objectiveContextSchema
   })
   .strict();
 
-export type CreateFlowDraftInput = z.infer<typeof createFlowDraftSchema>;
+export type CreateFlowDraftInput = z.input<typeof createFlowDraftSchema>;
+export type MissionAuthoringSemanticTarget = z.infer<typeof missionAuthoringSemanticTargetSchema>;
+export type MissionAuthoringIntent = z.infer<typeof missionAuthoringIntentSchema>;
 export type UpdateFlowDraftInput = z.infer<typeof updateFlowDraftSchema>;
 export type StartProbeSessionInput = z.infer<typeof startProbeSessionSchema>;
 export type CompileFlowDraftInput = z.infer<typeof compileFlowDraftSchema>;
@@ -354,3 +614,5 @@ export type ProbeAuthoringStatus = z.infer<typeof probeAuthoringStatusSchema>;
 export type AuthoringBrowserLeaseState = z.infer<typeof authoringBrowserLeaseStateSchema>;
 export type LearnedInteractionRecord = z.infer<typeof learnedInteractionRecordSchema>;
 export type CompilationContractVersion = z.infer<typeof compilationContractVersionSchema>;
+export type MissionAuthoringSemanticAction = z.infer<typeof missionAuthoringSemanticActionSchema>;
+export type MissionAuthoringSemanticEffect = z.infer<typeof missionAuthoringSemanticEffectSchema>;

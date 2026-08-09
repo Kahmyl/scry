@@ -21,7 +21,7 @@ export {
 } from "./services/run-queue.service.js";
 
 export { RuntimeModule } from "./runtime.module.js";
-export { adaptiveExecutionFlags, type AdaptiveExecutionFlags } from "./adaptive-execution-flags.js";
+export * from "./native-browser-driver/index.js";
 export { ExecutionKernelRepository } from "./repositories/execution-kernel.repository.js";
 export {
   ExecutionCapabilityFactory,

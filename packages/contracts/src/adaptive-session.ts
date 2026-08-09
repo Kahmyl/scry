@@ -3,6 +3,7 @@ import { z } from "zod";
 import { agentDecisionBoundarySchema, operationOutcomeSchema } from "./execution-kernel.js";
 import { currentActionSchema } from "./current.js";
 import { expectedEffectSchema } from "./grounding.js";
+import { missionAuthoringIntentSchema } from "./authoring.js";
 
 const uuid = z.string().uuid();
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -32,27 +33,40 @@ export const adaptiveSessionEventTypeSchema = z.enum([
   "operation_completed",
   "operation_failed",
   "decision_boundary_reached",
+  "turn_started",
+  "turn_completed",
+  "flow_handoff_started",
+  "flow_handoff_completed",
+  "session_closed",
 ]);
+
+export const missionAuthoringTurnBudgetsSchema = z
+  .object({
+    maxOperations: z.number().int().min(1).max(20),
+    maxDurationMs: z.number().int().min(1_000).max(60_000),
+  })
+  .strict();
 
 export const startAdaptiveSessionSchema = z
   .object({
     projectId: uuid,
+    missionId: uuid,
+    objectiveId: uuid,
+    flowDraftId: uuid,
     environmentId: uuid,
     objective: z.string().trim().min(1).max(4_000),
     allowedOrigins: z.array(z.string().url()).min(1).max(20),
     idempotencyKey: z.string().trim().min(8).max(200),
     correlationId: uuid.optional(),
-    controlPlaneLink: z
-      .object({
-        missionId: uuid.optional(),
-        objectiveId: uuid.optional(),
-        flowDraftId: uuid.optional(),
-      })
-      .strict()
-      .optional(),
+    turnBudgets: missionAuthoringTurnBudgetsSchema.default({
+      maxOperations: 20,
+      maxDurationMs: 60_000,
+    }),
+    initialProtectedReferenceIds: z.array(uuid).max(20).default([]),
   })
   .strict();
 
+/** @deprecated Internal compatibility schema. External callers must use MissionAuthoringIntent. */
 export const adaptiveSessionOperationInputSchema = z
   .object({
     operationId: z.string().trim().min(1).max(200),
@@ -89,7 +103,8 @@ export const adaptiveSessionOperationInputSchema = z
     }
   });
 
-export const advanceAdaptiveSessionTurnSchema = z
+/** @deprecated Internal compatibility schema retained until Packet C removes legacy runtime entrypoints. */
+export const internalAdaptiveSessionTurnSchema = z
   .object({
     idempotencyKey: z.string().trim().min(8).max(200),
     operations: z.array(adaptiveSessionOperationInputSchema).min(1).max(20),
@@ -120,15 +135,143 @@ export const advanceAdaptiveSessionTurnSchema = z
     }
   });
 
-export const advanceAdaptiveSessionSchema = z.union([
-  adaptiveSessionOperationInputSchema,
-  advanceAdaptiveSessionTurnSchema,
+export const advanceAdaptiveSessionIntentsSchema = z
+  .object({
+    kind: z.literal("intents"),
+    idempotencyKey: z.string().trim().min(8).max(200),
+    intents: z.array(missionAuthoringIntentSchema).min(1).max(20),
+    budgets: missionAuthoringTurnBudgetsSchema,
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.intents.length > input.budgets.maxOperations)
+      context.addIssue({
+        code: "custom",
+        path: ["intents"],
+        message: "intent count exceeds the turn budget",
+      });
+    if (new Set(input.intents.map((intent) => intent.intentId)).size !== input.intents.length)
+      context.addIssue({
+        code: "custom",
+        path: ["intents"],
+        message: "intent IDs must be unique within a turn",
+      });
+  });
+
+export const continueAdaptiveSessionTurnSchema = z
+  .object({
+    kind: z.literal("continue"),
+    idempotencyKey: z.string().trim().min(8).max(200),
+    turnId: uuid,
+    budgets: missionAuthoringTurnBudgetsSchema,
+  })
+  .strict();
+
+export const advanceAdaptiveSessionSchema = z.discriminatedUnion("kind", [
+  advanceAdaptiveSessionIntentsSchema,
+  continueAdaptiveSessionTurnSchema,
 ]);
+
+export const missionAuthoringSemanticDeltaSchema = z
+  .object({
+    intentId: z.string().trim().min(1).max(200),
+    state: z.enum(["completed", "failed", "skipped"]),
+    effectVerified: z.boolean(),
+    reasonCode: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),
+    functionalResult: z.enum(["succeeded", "failed", "inconclusive"]),
+    mutationOutcome: z.enum(["not_applied", "applied", "unknown"]),
+    /** Whether this semantic action entered a Veil-protected interval. */
+    privacyApplicable: z.boolean(),
+    privacyResult: z.enum(["verified", "unverified", "degraded", "sealed"]),
+    evidence: z
+      .object({
+        state: z.enum(["available", "suppressed", "quarantined", "failed"]),
+        count: z.number().int().nonnegative(),
+        reasonCodes: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/)).max(8),
+      })
+      .strict(),
+    quality: z
+      .object({
+        findingCount: z.number().int().nonnegative(),
+        reasonCodes: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/)).max(8),
+      })
+      .strict(),
+  })
+  .strict();
+
+const missionAuthoringChannelOutcomeSchema = z
+  .object({
+    state: z.enum(["passed", "failed", "unavailable", "not_applicable", "pending"]),
+    reasonCode: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),
+  })
+  .strict();
+
+export const missionAuthoringTurnResultSchema = z
+  .object({
+    turnId: uuid,
+    state: z.enum(["completed", "decision_required", "pending"]),
+    completed: z.array(missionAuthoringSemanticDeltaSchema).max(20),
+    stateDelta: z
+      .object({
+        activeObjectiveId: uuid.optional(),
+        activeFlowDraftId: uuid.optional(),
+        url: z.string().url().optional(),
+        documentEpoch: z.number().int().nonnegative().optional(),
+      })
+      .strict(),
+    channels: z
+      .object({
+        functional: missionAuthoringChannelOutcomeSchema,
+        mutation: missionAuthoringChannelOutcomeSchema,
+        privacy: missionAuthoringChannelOutcomeSchema,
+        evidence: missionAuthoringChannelOutcomeSchema,
+        quality: missionAuthoringChannelOutcomeSchema,
+      })
+      .strict(),
+    timings: z
+      .object({
+        resolveMs: z.number().int().nonnegative(),
+        executeMs: z.number().int().nonnegative(),
+        verifyMs: z.number().int().nonnegative(),
+        journalMs: z.number().int().nonnegative(),
+        totalMs: z.number().int().nonnegative(),
+      })
+      .strict(),
+    decisionBoundary: agentDecisionBoundarySchema.nullable(),
+    continuation: z
+      .object({ turnId: uuid, phase: z.string().trim().min(1).max(100) })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (result.state === "pending" && !result.continuation)
+      context.addIssue({
+        code: "custom",
+        path: ["continuation"],
+        message: "pending turns require a stable continuation",
+      });
+    if (result.state !== "pending" && result.continuation)
+      context.addIssue({
+        code: "custom",
+        path: ["continuation"],
+        message: "only pending turns may include a continuation",
+      });
+  });
+
+/** @deprecated Legacy alias retained for internal callers until Packet C. */
+export const advanceAdaptiveSessionTurnSchema = internalAdaptiveSessionTurnSchema;
 
 export const adaptiveSessionTransitionSchema = z
   .object({
     expectedVersion: z.number().int().positive(),
     reason: z.string().trim().min(1).max(2_000),
+    idempotencyKey: z.string().trim().min(8).max(200),
+  })
+  .strict();
+
+export const closeAdaptiveSessionSchema = z
+  .object({
     idempotencyKey: z.string().trim().min(8).max(200),
   })
   .strict();
@@ -156,6 +299,11 @@ export const adaptiveSessionSchema = z
   .object({
     id: uuid,
     projectId: uuid,
+    missionId: uuid,
+    objectiveId: uuid,
+    flowDraftId: uuid,
+    activeObjectiveId: uuid.optional(),
+    activeFlowDraftId: uuid.optional(),
     environmentId: uuid,
     correlationId: uuid,
     state: adaptiveSessionStateSchema,
@@ -176,13 +324,22 @@ export const adaptiveSessionSchema = z
         })
         .strict(),
     ),
+    linkedFlows: z.array(z.object({ objectiveId: uuid, flowDraftId: uuid, purpose: z.enum(["setup", "primary", "acceptance", "diagnostic", "reconciliation", "cleanup"]), sequence: z.number().int().positive() }).strict()).default([]),
+    latestTurn: missionAuthoringTurnResultSchema.nullable().default(null),
   })
   .strict();
 
 export type AdaptiveSessionState = z.infer<typeof adaptiveSessionStateSchema>;
 export type AdaptiveSessionEventType = z.infer<typeof adaptiveSessionEventTypeSchema>;
-export type StartAdaptiveSessionInput = z.infer<typeof startAdaptiveSessionSchema>;
+export type StartAdaptiveSessionInput = z.input<typeof startAdaptiveSessionSchema>;
+export type MissionAuthoringAdvanceInput = z.infer<typeof advanceAdaptiveSessionSchema>;
+export type MissionAuthoringTurnResult = z.infer<typeof missionAuthoringTurnResultSchema>;
+/** @deprecated Internal compatibility type retained until Packet C. */
 export type AdaptiveSessionOperationInput = z.infer<typeof adaptiveSessionOperationInputSchema>;
-export type AdvanceAdaptiveSessionInput = z.infer<typeof advanceAdaptiveSessionSchema>;
+/** @deprecated Internal compatibility type retained until Packet C. */
+export type AdvanceAdaptiveSessionInput =
+  | AdaptiveSessionOperationInput
+  | z.infer<typeof internalAdaptiveSessionTurnSchema>;
 export type AdaptiveSessionTransitionInput = z.infer<typeof adaptiveSessionTransitionSchema>;
+export type CloseAdaptiveSessionInput = z.infer<typeof closeAdaptiveSessionSchema>;
 export type AdaptiveSession = z.infer<typeof adaptiveSessionSchema>;

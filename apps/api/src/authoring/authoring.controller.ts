@@ -1,23 +1,13 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common";
 import {
-  advanceAuthoringTurnCommandSchema,
-  compileFlowDraftSchema,
   compileAndCertifyFlowSchema,
   createAuthenticationContractSchema,
-  createAuthoringRuntimeCommandSchema,
   createFlowDraftSchema,
   publishFlowDraftSchema,
-  startProbeSessionSchema,
-  updateFlowDraftSchema,
-  type CompileFlowDraftInput,
   type CompileAndCertifyFlowInput,
-  type AdvanceAuthoringTurnCommand,
   type CreateAuthenticationContractInput,
-  type CreateAuthoringRuntimeCommandInput,
   type CreateFlowDraftInput,
   type PublishFlowDraftInput,
-  type StartProbeSessionInput,
-  type UpdateFlowDraftInput,
 } from "@scry/contracts";
 import { z } from "zod";
 
@@ -25,12 +15,7 @@ import type { Principal } from "../auth/index.js";
 import { CurrentPrincipal } from "../auth/index.js";
 import { ZodValidationPipe } from "../common/validation.pipe.js";
 import { RunQueueService } from "../runtime/index.js";
-import { AuthoringRuntimeCommandService } from "./authoring-runtime-command.service.js";
 import { AuthoringService } from "./authoring.service.js";
-
-const cancelSchema = z
-  .object({ missionId: z.string().uuid(), agentSessionId: z.string().uuid() })
-  .strict();
 
 const abandonSchema = z
   .object({
@@ -46,8 +31,6 @@ const abandonSchema = z
 export class AuthoringController {
   constructor(
     @Inject(AuthoringService) private readonly authoring: AuthoringService,
-    @Inject(AuthoringRuntimeCommandService)
-    private readonly commands: AuthoringRuntimeCommandService,
     @Inject(RunQueueService) private readonly queue: RunQueueService,
   ) {}
 
@@ -57,15 +40,6 @@ export class AuthoringController {
     @Body(new ZodValidationPipe(createFlowDraftSchema)) input: CreateFlowDraftInput,
   ) {
     return this.authoring.createDraft(p, input);
-  }
-
-  @Patch("flow-drafts/:draftId")
-  update(
-    @Param("draftId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(updateFlowDraftSchema)) input: UpdateFlowDraftInput,
-  ) {
-    return this.authoring.updateDraft(p, id, input);
   }
 
   @Get("flow-drafts/:draftId")
@@ -85,64 +59,6 @@ export class AuthoringController {
     @Body(new ZodValidationPipe(abandonSchema)) input: z.infer<typeof abandonSchema>,
   ) {
     return this.authoring.abandonDraft(p, id, input);
-  }
-
-  @Post("flow-drafts/:draftId/probes")
-  async probe(
-    @Param("draftId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(startProbeSessionSchema)) input: StartProbeSessionInput,
-  ) {
-    const result = await this.authoring.startProbe(p, id, input);
-
-    if (input.mode === "queued") {
-      await this.queue.dispatchPending();
-    }
-
-    return result;
-  }
-
-  @Post("probe-sessions/:probeId/commands")
-  command(
-    @Param("probeId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(createAuthoringRuntimeCommandSchema))
-    input: CreateAuthoringRuntimeCommandInput,
-  ) {
-    return this.commands.enqueue(p, id, input);
-  }
-
-  @Post("probe-sessions/:probeId/advance")
-  advance(
-    @Param("probeId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(advanceAuthoringTurnCommandSchema))
-    input: AdvanceAuthoringTurnCommand,
-  ) {
-    return this.commands.advance(p, id, input);
-  }
-
-  @Post("probe-sessions/:probeId/cancel")
-  cancel(
-    @Param("probeId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(cancelSchema)) input: z.infer<typeof cancelSchema>,
-  ) {
-    return this.authoring.cancelProbe(p, id, input.missionId, input.agentSessionId);
-  }
-
-  @Get("probe-sessions/:probeId")
-  getProbe(@Param("probeId") id: string, @CurrentPrincipal() p: Principal) {
-    return this.authoring.getProbe(p, id);
-  }
-
-  @Post("flow-drafts/:draftId/compile")
-  compile(
-    @Param("draftId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(compileFlowDraftSchema)) input: CompileFlowDraftInput,
-  ) {
-    return this.authoring.compile(p, id, input);
   }
 
   @Post("flow-drafts/:draftId/compile-and-certify")

@@ -24,7 +24,7 @@ describe("execution capability factory", () => {
       completeCheckpoint: vi.fn(),
       recordContextProvenance: vi.fn(),
     };
-    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never);
+    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never, { openBrowser: vi.fn() } as never);
     const capabilities = factory.createSession({
       sessionId: "probe-session",
       operationId: "probe-operation",
@@ -76,7 +76,7 @@ describe("execution capability factory", () => {
       completeCheckpoint: vi.fn(),
       recordContextProvenance: vi.fn(),
     };
-    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never);
+    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never, { openBrowser: vi.fn() } as never);
     const capabilities = factory.createSession({
       sessionId: "compatibility-session",
       operationId: "compatibility-operation",
@@ -119,7 +119,7 @@ describe("execution capability factory", () => {
       completeCheckpoint: vi.fn(),
       recordContextProvenance: vi.fn(),
     };
-    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never);
+    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never, { openBrowser: vi.fn() } as never);
     const capabilities = factory.createSession({
       sessionId: "probe-session",
       operationId: "probe-parent-operation",
@@ -157,7 +157,7 @@ describe("execution capability factory", () => {
       completeCheckpoint: vi.fn(),
       recordContextProvenance: vi.fn(),
     };
-    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never);
+    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never, { openBrowser: vi.fn() } as never);
     const capabilities = factory.createSession({
       sessionId: "session",
       operationId: "operation",
@@ -187,7 +187,7 @@ describe("execution capability factory", () => {
       completeCheckpoint: vi.fn(),
       recordContextProvenance: vi.fn(),
     };
-    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never);
+    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never, { openBrowser: vi.fn() } as never);
     const capabilities = factory.createSession({
       sessionId: "session",
       operationId: "operation",
@@ -225,7 +225,7 @@ describe("execution capability factory", () => {
       completeCheckpoint: vi.fn(),
       recordContextProvenance: vi.fn(),
     };
-    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never);
+    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never, { openBrowser: vi.fn() } as never);
     const correlationId = randomUUID();
     const capabilities = factory.createSession({
       sessionId: "certification-session",

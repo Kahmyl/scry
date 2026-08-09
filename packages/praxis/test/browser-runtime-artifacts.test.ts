@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { chromium } from "playwright";
 
 import {
   inspectBrowserRuntimeArtifacts,
@@ -28,7 +29,14 @@ describe("browser observation runtime artifacts", () => {
   });
 
   it("executes observer and privacy artifacts in the production browser boundary", async () => {
-    await expect(verifyBrowserObservationRuntime("chrome")).resolves.toMatchObject({
+    await expect(
+      verifyBrowserObservationRuntime("chrome", async () => {
+        const browser = await chromium.launch({ headless: true, channel: "chrome" });
+        const context = await browser.newContext();
+        const page = await context.newPage();
+        return { browser, context, page };
+      }),
+    ).resolves.toMatchObject({
       healthy: true,
       diagnostics: [],
     });

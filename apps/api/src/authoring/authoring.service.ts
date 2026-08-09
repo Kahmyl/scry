@@ -27,7 +27,6 @@ import type { Principal } from "../auth/index.js";
 import { Database } from "../infrastructure/index.js";
 import { ReleaseAdmissionService } from "../runtime/index.js";
 import { snapshotVeilPolicy } from "../veil/index.js";
-import { adaptiveAuthoringFlags } from "./adaptive-authoring-flags.js";
 
 type Query = <T extends QueryResultRow = QueryResultRow>(
   text: string,
@@ -92,6 +91,7 @@ export class AuthoringService {
           flow_id,
           name,
           description,
+          purpose,
           content,
           state,
           version,
@@ -99,8 +99,8 @@ export class AuthoringService {
           created_by_agent_session_id
         )
         VALUES(
-          $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,
-          'editing',1,$10::jsonb,$11
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,
+          'editing',1,$11::jsonb,$12
         )`,
         [
           id,
@@ -111,6 +111,7 @@ export class AuthoringService {
           input.flowId ?? null,
           input.name,
           input.description,
+          input.purpose ?? "primary",
           JSON.stringify(input.content),
           JSON.stringify(input.plan),
           input.agentSessionId,
@@ -296,6 +297,7 @@ export class AuthoringService {
            flow_id AS "flowId",
            name,
            description,
+           purpose,
            state,
            version,
            published_revision_id AS "publishedRevisionId",
@@ -467,13 +469,6 @@ export class AuthoringService {
   async startProbe(principal: Principal, draftId: string, input: StartProbeSessionInput) {
     await this.admission.assertAcceptingWork();
     this.requireWrite(principal);
-    if (input.mode === "interactive" && !adaptiveAuthoringFlags().interactiveProbeSessions) {
-      throw new ConflictException({
-        code: "INTERACTIVE_PROBE_SESSIONS_DISABLED",
-        safeActions: ["start_queued_probe_session"],
-      });
-    }
-
     return this.db.transaction(async (client) => {
       const q = bind(client);
       const d = await this.requireDraft(q, principal, draftId, true);
@@ -1490,10 +1485,12 @@ export class AuthoringService {
             purpose,
             origin_mission_id,
             origin_objective_id,
+            owner_mission_id,
+            owner_objective_id,
             created_by_agent_session_id
           )
           VALUES(
-            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10
+            $1,$2,$3,$4,$5,$6,$7,$8,$9,$8,$9,$10
           )`,
           [
             flowId,
@@ -1763,8 +1760,9 @@ export class AuthoringService {
         await q(
           `INSERT INTO flows(
              id,project_id,name,description,latest_revision_id,visibility,purpose,
-             origin_mission_id,origin_objective_id,created_by_agent_session_id,publication_state
-           ) VALUES($1,$2,$3,$4,$5,'internal','verification',$6,$7,$8,'candidate')`,
+             origin_mission_id,origin_objective_id,owner_mission_id,owner_objective_id,
+             created_by_agent_session_id,publication_state
+           ) VALUES($1,$2,$3,$4,$5,'internal','verification',$6,$7,$6,$7,$8,'candidate')`,
           [
             flowId,
             d.projectId,
@@ -2227,6 +2225,7 @@ export class AuthoringService {
       flowId: string | null;
       name: string;
       description: string;
+      purpose: string;
       content: unknown;
       plan: CurrentPlan;
       state: string;
@@ -2241,6 +2240,7 @@ export class AuthoringService {
          d.flow_id AS "flowId",
          d.name,
          d.description,
+         d.purpose,
          d.content,
          d.plan,
          d.state,
@@ -2457,16 +2457,9 @@ export function compileSuccessfulInteractions(
       learnedRecords: [],
       blockers,
       warnings,
-      contractVersion: "v1-existing",
+      contractVersion: "v2-learned-interactions",
       protectedAcquisitionEvidence,
     };
-  }
-
-  if (!rawRecords.length) {
-    blockers.push({
-      code: "SUCCESSFUL_AUTHORING_TRAJECTORY_REQUIRED",
-      message: "Compilation requires at least one successful learned interaction record.",
-    });
   }
 
   for (const [index, raw] of rawRecords.entries()) {
@@ -2504,11 +2497,18 @@ export function compileSuccessfulInteractions(
     learnedRecords.push(record);
   }
 
+  if (learnedRecords.length === 0) {
+    blockers.push({
+      code: "SUCCESSFUL_AUTHORING_TRAJECTORY_REQUIRED",
+      message: "New publication requires at least one successful learned interaction.",
+    });
+  }
+
   return {
     learnedRecords,
     blockers,
     warnings,
-    contractVersion: learnedRecords.length ? "v2-learned-interactions" : "v1-existing",
+    contractVersion: "v2-learned-interactions",
     protectedAcquisitionEvidence,
   };
 }
@@ -2637,11 +2637,11 @@ function decodesToSensitiveText(value: string) {
 }
 
 function transcriptCompilerEnabled() {
-  return adaptiveAuthoringFlags().transcriptCompiler;
+  return true;
 }
 
 function certificationPublicationGateEnabled() {
-  return adaptiveAuthoringFlags().certificationPublicationGate;
+  return true;
 }
 
 function publicationGateFor(status: string, contractVersion: string) {

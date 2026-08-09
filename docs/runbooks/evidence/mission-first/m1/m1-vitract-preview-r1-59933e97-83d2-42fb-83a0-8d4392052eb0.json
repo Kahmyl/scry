@@ -1,0 +1,250 @@
+{
+  "schemaVersion": 2,
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "schemaFingerprint": "19652555d3b56ee9b733eccd1c0abcd44b0c2a62974eeef5add2110d65f9d1b0",
+  "runtimeVersion": "m1-local",
+  "runtimeConfigurationDigest": "7b160a3c8560ce88fb0b7f0bf666fd5c19293880504c773dda9d15d4142c43d2",
+  "milestone": "M1",
+  "target": "vitract_preview",
+  "repetition": 1,
+  "missionId": "98fa61ff-4308-4432-b0d7-80586e28f539",
+  "objectiveIds": [
+    "e8d5f955-dc2f-4a13-a9b1-b1a3af32b1be"
+  ],
+  "flowIds": [
+    "2fcc34c6-aecc-4983-ad24-2c8a1b1d0114"
+  ],
+  "runIds": [],
+  "correlationId": "59933e97-83d2-42fb-83a0-8d4392052eb0",
+  "boundaryUnderTest": "Mission-owned native authentication with protected references and zero Praxis calls",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "adaptive-session-cleanup",
+      "description": "The campaign cancels its Adaptive Session and releases browser ownership",
+      "status": "passed"
+    },
+    {
+      "id": "native-only-standard-controls",
+      "description": "Every standard authentication control resolves natively with zero Praxis calls",
+      "status": "passed"
+    },
+    {
+      "id": "redaction",
+      "description": "Protected values are absent from MCP responses and retrieved artifacts",
+      "status": "passed"
+    },
+    {
+      "id": "artifact-round-trip",
+      "description": "Every artifact emitted by the deployed journey finalizes and round-trips",
+      "status": "passed"
+    },
+    {
+      "id": "deployed-journey",
+      "description": "The deployed MCP authoring journey reaches an objective-completed boundary",
+      "status": "passed"
+    },
+    {
+      "id": "authoring-turn-surface",
+      "description": "M1 executes one grouped advance_flow_authoring call",
+      "status": "passed"
+    },
+    {
+      "id": "mission-owned",
+      "description": "Campaign creates exactly one Mission, Objective, and owned Flow draft",
+      "status": "passed"
+    }
+  ],
+  "observationalFindings": [],
+  "cleanup": {
+    "required": true,
+    "state": "completed",
+    "refs": []
+  },
+  "calls": {
+    "mcp": 2,
+    "api": 1,
+    "repeatedStateReads": 0
+  },
+  "resolution": {
+    "nativeResolved": 3,
+    "praxisFallbacks": 0
+  },
+  "reductions": {
+    "decisionBoundary": 0.8888888888888888,
+    "mcpCalls": 0.8888888888888888,
+    "agentBytes": 0.6
+  },
+  "timings": {
+    "api": {
+      "count": 1,
+      "p50Ms": 9.459125000000029,
+      "p95Ms": 9.459125000000029,
+      "maxMs": 9.459125000000029,
+      "slowestOperationIds": [
+        "api"
+      ]
+    },
+    "artifact_retrieval": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "browser_startup": {
+      "count": 1,
+      "p50Ms": 1322.872,
+      "p95Ms": 1322.872,
+      "maxMs": 1322.872,
+      "slowestOperationIds": [
+        "vitract-navigate"
+      ]
+    },
+    "database": {
+      "count": 1,
+      "p50Ms": 8.375040999999982,
+      "p95Ms": 8.375040999999982,
+      "maxMs": 8.375040999999982,
+      "slowestOperationIds": [
+        "database"
+      ]
+    },
+    "document_observation": {
+      "count": 1,
+      "p50Ms": 1322.872,
+      "p95Ms": 1322.872,
+      "maxMs": 1322.872,
+      "slowestOperationIds": [
+        "vitract-navigate"
+      ]
+    },
+    "evidence_finalization": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "expected_effect_verification": {
+      "count": 4,
+      "p50Ms": 0.005417000007582828,
+      "p95Ms": 2991.2562089999847,
+      "maxMs": 2991.2562089999847,
+      "slowestOperationIds": [
+        "vitract-sign-in",
+        "vitract-navigate",
+        "vitract-email",
+        "vitract-password"
+      ]
+    },
+    "interaction_execution": {
+      "count": 4,
+      "p50Ms": 543,
+      "p95Ms": 3034,
+      "maxMs": 3034,
+      "slowestOperationIds": [
+        "vitract-sign-in",
+        "vitract-email",
+        "vitract-navigate",
+        "vitract-password"
+      ]
+    },
+    "mcp_round_trip": {
+      "count": 1,
+      "p50Ms": 7841.322999999999,
+      "p95Ms": 7841.322999999999,
+      "maxMs": 7841.322999999999,
+      "slowestOperationIds": [
+        "mcp-59933e97-83d2-42fb-83a0-8d4392052eb0-2"
+      ]
+    },
+    "mcp_session_start_round_trip": {
+      "count": 1,
+      "p50Ms": 58.79783299999997,
+      "p95Ms": 58.79783299999997,
+      "maxMs": 58.79783299999997,
+      "slowestOperationIds": [
+        "mcp-59933e97-83d2-42fb-83a0-8d4392052eb0-1"
+      ]
+    },
+    "native_resolution": {
+      "count": 3,
+      "p50Ms": 39.171875,
+      "p95Ms": 2855.5984180000087,
+      "maxMs": 2855.5984180000087,
+      "slowestOperationIds": [
+        "vitract-email",
+        "vitract-sign-in",
+        "vitract-password"
+      ]
+    },
+    "praxis_grounding": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "queue_wait": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": [
+        "59933e97-83d2-42fb-83a0-8d4392052eb0"
+      ]
+    },
+    "redis": {
+      "count": 1,
+      "p50Ms": 3.441665999999998,
+      "p95Ms": 3.441665999999998,
+      "maxMs": 3.441665999999998,
+      "slowestOperationIds": [
+        "redis"
+      ]
+    },
+    "worker": {
+      "count": 1,
+      "p50Ms": 7.6402499999999804,
+      "p95Ms": 7.6402499999999804,
+      "maxMs": 7.6402499999999804,
+      "slowestOperationIds": [
+        "worker"
+      ]
+    }
+  },
+  "privacyScan": {
+    "checkedByteCount": 2904,
+    "leakedCanaryCount": 0
+  },
+  "evidenceRefs": [
+    "/Users/habib/Documents/monorepo/scry/docs/runbooks/evidence/adaptive-campaigns/m1-vitract_preview-89b8bc28-10d2-4153-8e76-a259b30394d0.json"
+  ],
+  "verdict": "pass"
+}

@@ -123,6 +123,39 @@ describe("execution kernel admission", () => {
     ).toMatchObject({ operationId: "observe-wait", mode: "observe" });
   });
 
+  it("uses the native expected-effect verifier without invoking Praxis for M2 native-only authoring", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "rehearse", correlationId });
+    const nativeEffect = vi.fn(async () => undefined);
+    const nativeControl = vi.fn(async () => undefined);
+    const outcome = await new ExecutionKernel().interact({
+      request: {
+        sessionId: "session", operationId: "native-effect", correlationId, mode: "rehearse",
+        policy, mutationIdentity: "native-effect-mutation",
+      },
+      capabilities: {
+        manifest,
+        journal: { begin: vi.fn(), complete: vi.fn(), fail: vi.fn(), settle: vi.fn() },
+        mutationFence: {
+          claim: vi.fn(async () => ({ state: "planned", fencingToken: 1 })),
+          transition: vi.fn(async () => true),
+        },
+        options: {
+          outputDirectory: "/tmp/native-effect", nativeResolutionPolicy: "native_only",
+          executeNativeControl: nativeControl,
+          verifyNativeExpectedEffect: nativeEffect,
+        },
+      },
+      page: { url: () => "https://example.test" } as never,
+      action: { type: "click", target: target("Save", "button", ["focusable", "pointer_activatable"]), expectedEffect: { type: "none" } },
+      expectedEffect: { type: "visibility_change", target: target("Saved", "region", ["readable_value"]), visible: true },
+      ordinal: 1,
+    });
+    expect(outcome.functionalResult).toBe("succeeded");
+    expect(nativeControl).toHaveBeenCalledOnce();
+    expect(nativeEffect).toHaveBeenCalledOnce();
+  });
+
   it("crosses the mutation fence immediately before a direct browser dispatch", async () => {
     const calls: string[] = [];
     const outcome = await executeInteractionCompatibility({
@@ -312,6 +345,68 @@ describe("execution kernel admission", () => {
       mutationOutcome: "not_applied",
       reasonCode: "ACQUISITION_NOT_READY",
     });
+  });
+
+  it.each([
+    "TARGET_NOT_FOUND",
+    "TARGET_AMBIGUOUS",
+    "NO_CAPABILITY_COMPATIBLE_CONTROL",
+    "STALE_OBSERVATION",
+    "CAPABILITY_ADMISSION_DENIED",
+    "POLICY_DENIED",
+  ])("classifies admitted %s failures as proven not-applied", async (reasonCode) => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "run", correlationId });
+    const settle = vi.fn();
+    const transition = vi.fn(async () => true);
+    const kernel = new ExecutionKernel(
+      vi.fn(async () => {
+        throw new Error(reasonCode);
+      }) as never,
+    );
+
+    await expect(
+      kernel.execute({
+        request: {
+          sessionId: "mission-authoring-session",
+          operationId: `pre-dispatch-${reasonCode}`,
+          correlationId,
+          mode: "run",
+          plan: plan({
+            type: "click",
+            target: target("Submit", "button", ["pointer_activatable"]),
+          }),
+          policy,
+          capabilityManifestDigest: manifest.digest,
+          idempotencyKey: `pre-dispatch-${reasonCode}`,
+          mutationIdentity: `pre-dispatch-${reasonCode}`,
+        },
+        capabilities: {
+          manifest,
+          journal: {
+            begin: vi.fn(async () => undefined),
+            complete: vi.fn(async () => undefined),
+            fail: vi.fn(async () => undefined),
+            settle,
+          },
+          mutationFence: {
+            claim: vi.fn(async () => ({ state: "planned", fencingToken: 1 })),
+            transition,
+          },
+          options: { outputDirectory: "/tmp/unused" },
+        },
+      }),
+    ).rejects.toThrow(reasonCode);
+
+    expect(transition).toHaveBeenCalledWith(
+      expect.objectContaining({ expected: "planned", next: "dispatching" }),
+    );
+    expect(settle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reasonCode,
+        outcome: expect.objectContaining({ mutationOutcome: "not_applied" }),
+      }),
+    );
   });
 
   it("binds manifest mode and correlation identity before journal admission", async () => {

@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 2,
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "schemaFingerprint": "19652555d3b56ee9b733eccd1c0abcd44b0c2a62974eeef5add2110d65f9d1b0",
+  "runtimeVersion": "m1-local",
+  "runtimeConfigurationDigest": "7b160a3c8560ce88fb0b7f0bf666fd5c19293880504c773dda9d15d4142c43d2",
+  "milestone": "M1",
+  "target": "expand_testing",
+  "repetition": 1,
+  "missionId": "62df8c54-5436-4457-8a50-8b7012714e87",
+  "objectiveIds": [
+    "7a74a404-d40d-487e-b7f9-ec541468b2c0"
+  ],
+  "flowIds": [
+    "f53f5165-dd5e-4c82-8075-e9652662de09"
+  ],
+  "runIds": [],
+  "correlationId": "684d1852-1e51-4903-915d-bcf43e515317",
+  "boundaryUnderTest": "Mission-owned native authentication with protected references and zero Praxis calls",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "m1-expand_testing",
+      "description": "Campaign execution reaches a terminal classified outcome",
+      "status": "failed",
+      "reasonCode": "ADAPTIVE_SESSION_EXECUTION_FAILED"
+    }
+  ],
+  "observationalFindings": [],
+  "cleanup": {
+    "required": true,
+    "state": "failed",
+    "refs": []
+  },
+  "calls": {
+    "mcp": 2,
+    "api": 1,
+    "repeatedStateReads": 0
+  },
+  "resolution": {
+    "nativeResolved": 0,
+    "praxisFallbacks": 0
+  },
+  "reductions": {
+    "decisionBoundary": 1,
+    "mcpCalls": 0.8888888888888888,
+    "agentBytes": 1
+  },
+  "timings": {
+    "api": {
+      "count": 1,
+      "p50Ms": 6.0989999999999895,
+      "p95Ms": 6.0989999999999895,
+      "maxMs": 6.0989999999999895,
+      "slowestOperationIds": [
+        "api"
+      ]
+    },
+    "database": {
+      "count": 1,
+      "p50Ms": 6.941542000000027,
+      "p95Ms": 6.941542000000027,
+      "maxMs": 6.941542000000027,
+      "slowestOperationIds": [
+        "database"
+      ]
+    },
+    "mcp_round_trip": {
+      "count": 1,
+      "p50Ms": 30155.522583,
+      "p95Ms": 30155.522583,
+      "maxMs": 30155.522583,
+      "slowestOperationIds": [
+        "mcp-684d1852-1e51-4903-915d-bcf43e515317-2"
+      ]
+    },
+    "mcp_session_start_round_trip": {
+      "count": 1,
+      "p50Ms": 32.99770799999999,
+      "p95Ms": 32.99770799999999,
+      "maxMs": 32.99770799999999,
+      "slowestOperationIds": [
+        "mcp-684d1852-1e51-4903-915d-bcf43e515317-1"
+      ]
+    },
+    "redis": {
+      "count": 1,
+      "p50Ms": 3.005416000000025,
+      "p95Ms": 3.005416000000025,
+      "maxMs": 3.005416000000025,
+      "slowestOperationIds": [
+        "redis"
+      ]
+    },
+    "worker": {
+      "count": 1,
+      "p50Ms": 7.073874999999987,
+      "p95Ms": 7.073874999999987,
+      "maxMs": 7.073874999999987,
+      "slowestOperationIds": [
+        "worker"
+      ]
+    }
+  },
+  "privacyScan": {
+    "checkedByteCount": 0,
+    "leakedCanaryCount": 0
+  },
+  "evidenceRefs": [
+    "/Users/habib/Documents/monorepo/scry/docs/runbooks/evidence/adaptive-campaigns/m1-expand_testing-bbcb613a-f7c8-49d2-b02b-a78a612aea9d.json"
+  ],
+  "verdict": "blocked"
+}

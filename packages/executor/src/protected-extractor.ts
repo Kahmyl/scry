@@ -259,8 +259,7 @@ async function acquireByMethod(
         })
         .then(capture);
     case "keyboard_copy":
-    case "clipboard_event":
-    case "focused_keyboard_selection": {
+    case "clipboard_event": {
       await target.focus();
       await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
       const copied = copyEventObserved(page, () =>
@@ -270,6 +269,19 @@ async function acquireByMethod(
       if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
       await page.keyboard.press("Escape").catch(() => undefined);
       return { kind: "copy_experience_verified", adapter: canonicalMethod(method) };
+    }
+    case "focused_keyboard_selection": {
+      await target.focus();
+      await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+      const copied = copyEventObserved(page, () =>
+        page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C"),
+      );
+      const lifecycleOwned = markVeilProtectedClipboardTouched(page);
+      if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
+      const value = await page.evaluate(() => navigator.clipboard.readText());
+      if (!lifecycleOwned) await page.evaluate(() => navigator.clipboard.writeText(""));
+      await page.keyboard.press("Escape").catch(() => undefined);
+      return capture(value);
     }
     case "download_content": {
       const [download] = await Promise.all([page.waitForEvent("download"), target.click()]);
@@ -316,9 +328,6 @@ async function copyEventObserved(page: Page, perform: () => Promise<unknown>) {
 
 function assertObjectiveMethods(acquisition: AcquisitionIntent) {
   if (!acquisition.objective) return;
-  if (process.env.SCRY_PROTECTED_ACQUISITION_ADAPTERS_ENABLED !== "true") {
-    throw new AcquisitionError("PROTECTED_ACQUISITION_ADAPTERS_DISABLED");
-  }
   const registry = protectedAcquisitionAdapterRegistry();
   const incompatible = acquisition.permittedMethods.filter((method) => {
     const adapter = registry[canonicalMethod(method) as keyof typeof registry];

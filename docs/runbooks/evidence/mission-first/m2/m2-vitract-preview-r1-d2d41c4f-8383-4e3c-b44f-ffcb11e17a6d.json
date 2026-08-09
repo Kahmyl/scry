@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 2,
+  "releaseId": "local-20260806-compiled-plan",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "schemaFingerprint": "deb3dc8d272b192a9e834f07afbf33aa37b8f3dfd8001f288657e0c940c210a8",
+  "runtimeVersion": "development",
+  "runtimeConfigurationDigest": "4d783097d53eea3565622cdd976bc702b7d63ee7d5e3fa1bb65ef2673631f3b3",
+  "milestone": "M2",
+  "target": "vitract_preview",
+  "repetition": 1,
+  "missionId": "af85d3b7-7506-42cc-8209-5df4f0745dff",
+  "objectiveIds": [
+    "dca00fae-d074-4dab-a74f-abb844f96c43",
+    "b80523dd-0028-4607-9129-874ce4a6d54b",
+    "a0b13a68-2876-4ae2-86b2-078fb57808df",
+    "d995b75b-cfcb-4d5f-beef-1f5acea3a2a9"
+  ],
+  "flowIds": [
+    "8b71c538-e63e-4f78-a6b5-b32cc45d1745",
+    "69561fea-6e82-4a39-81c1-f8c4889636f8",
+    "aed08956-2a7a-49cc-a658-3f3ed111979f",
+    "12379a56-fa82-4f64-add1-0fcc2373c5fc"
+  ],
+  "runIds": [],
+  "correlationId": "d2d41c4f-8383-4e3c-b44f-ffcb11e17a6d",
+  "boundaryUnderTest": "Server-owned semantic turns and explicit multi-Flow Mission handoffs",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "m2-vitract-preview",
+      "description": "Campaign execution reaches a terminal classified outcome",
+      "status": "failed",
+      "reasonCode": "M2_TURN_NOT_COMPLETED"
+    }
+  ],
+  "observationalFindings": [],
+  "cleanup": {
+    "required": false,
+    "state": "not_required",
+    "refs": []
+  },
+  "calls": {
+    "mcp": 2,
+    "api": 1,
+    "repeatedStateReads": 0
+  },
+  "resolution": {
+    "nativeResolved": 8,
+    "praxisFallbacks": 0
+  },
+  "reductions": {
+    "decisionBoundary": 0.9722222222222222,
+    "mcpCalls": 0.9444444444444444,
+    "agentBytes": 0.6970790378006873
+  },
+  "timings": {
+    "api": {
+      "count": 1,
+      "p50Ms": 7.631208000000015,
+      "p95Ms": 7.631208000000015,
+      "maxMs": 7.631208000000015,
+      "slowestOperationIds": []
+    },
+    "browser_startup": {
+      "count": 1,
+      "p50Ms": 2183.908,
+      "p95Ms": 2183.908,
+      "maxMs": 2183.908,
+      "slowestOperationIds": [
+        "m2-4b5d131e9c04e7b113a8f700c0a8f11f65975d4e"
+      ]
+    },
+    "database": {
+      "count": 1,
+      "p50Ms": 6.91779200000002,
+      "p95Ms": 6.91779200000002,
+      "maxMs": 6.91779200000002,
+      "slowestOperationIds": []
+    },
+    "document_observation": {
+      "count": 1,
+      "p50Ms": 2183.908,
+      "p95Ms": 2183.908,
+      "maxMs": 2183.908,
+      "slowestOperationIds": [
+        "m2-4b5d131e9c04e7b113a8f700c0a8f11f65975d4e"
+      ]
+    },
+    "expected_effect_verification": {
+      "count": 9,
+      "p50Ms": 0.00858299998799339,
+      "p95Ms": 1126.7243749999907,
+      "maxMs": 1126.7243749999907,
+      "slowestOperationIds": [
+        "m2-e4c460a13352f2ac2de350cae2dd750884b27d7c"
+      ]
+    },
+    "interaction_execution": {
+      "count": 10,
+      "p50Ms": 339,
+      "p95Ms": 60074,
+      "maxMs": 60074,
+      "slowestOperationIds": [
+        "m2-7ff3ec0e1312724186622a4bfce559a656015556",
+        "m2-6a5a72964f3be9faa1d5ea2659f0f93fd40ff5c6",
+        "m2-e4c460a13352f2ac2de350cae2dd750884b27d7c",
+        "m2-edd04535af1ad0b17cfc78c4f070d9b9d87ef626",
+        "m2-4b5d131e9c04e7b113a8f700c0a8f11f65975d4e",
+        "m2-73e19a726e10df82bc6dc830066cffc6d035b40d",
+        "m2-15681654698b2ddfb6ab370c0c3306bd22da81d1",
+        "m2-abb47937035adf88bdf3c8ff59e21ca5998e641f",
+        "m2-a81b88137ee62534d221aeefd8eeec421336047b"
+      ]
+    },
+    "mcp_round_trip": {
+      "count": 1,
+      "p50Ms": 67436.33504199999,
+      "p95Ms": 67436.33504199999,
+      "maxMs": 67436.33504199999,
+      "slowestOperationIds": [
+        "mcp-d2d41c4f-8383-4e3c-b44f-ffcb11e17a6d-2"
+      ]
+    },
+    "mcp_session_start_round_trip": {
+      "count": 1,
+      "p50Ms": 54.922708,
+      "p95Ms": 54.922708,
+      "maxMs": 54.922708,
+      "slowestOperationIds": [
+        "mcp-d2d41c4f-8383-4e3c-b44f-ffcb11e17a6d-1"
+      ]
+    },
+    "native_resolution": {
+      "count": 9,
+      "p50Ms": 87.9213340000133,
+      "p95Ms": 60069.14469300001,
+      "maxMs": 60069.14469300001,
+      "slowestOperationIds": [
+        "m2-7ff3ec0e1312724186622a4bfce559a656015556",
+        "m2-6a5a72964f3be9faa1d5ea2659f0f93fd40ff5c6",
+        "m2-edd04535af1ad0b17cfc78c4f070d9b9d87ef626",
+        "m2-73e19a726e10df82bc6dc830066cffc6d035b40d",
+        "m2-abb47937035adf88bdf3c8ff59e21ca5998e641f",
+        "m2-e4c460a13352f2ac2de350cae2dd750884b27d7c"
+      ]
+    },
+    "praxis_grounding": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "queue_wait": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "redis": {
+      "count": 1,
+      "p50Ms": 4.180499999999995,
+      "p95Ms": 4.180499999999995,
+      "maxMs": 4.180499999999995,
+      "slowestOperationIds": []
+    },
+    "worker": {
+      "count": 1,
+      "p50Ms": 6.988207999999986,
+      "p95Ms": 6.988207999999986,
+      "maxMs": 6.988207999999986,
+      "slowestOperationIds": []
+    }
+  },
+  "privacyScan": {
+    "checkedByteCount": 10578,
+    "leakedCanaryCount": 0
+  },
+  "evidenceRefs": [
+    "/Users/habib/Documents/monorepo/scry/docs/runbooks/evidence/mission-first/m1/m1-production-shaped-r1-b9627724-d4b5-4c7e-b16b-9ffbf272a4d2.json"
+  ],
+  "verdict": "fail"
+}

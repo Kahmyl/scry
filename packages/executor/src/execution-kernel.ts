@@ -255,6 +255,9 @@ export class ExecutionKernel {
         ...(input.capabilities.options.captureBrowserState
           ? { captureBrowserState: input.capabilities.options.captureBrowserState }
           : {}),
+        ...(input.capabilities.options.openBrowser
+          ? { openBrowser: input.capabilities.options.openBrowser }
+          : {}),
         execute: async (options) =>
           (
             await this.execute({
@@ -295,6 +298,9 @@ export class ExecutionKernel {
           : {}),
         ...(input.capabilities.options.captureBrowserState
           ? { captureBrowserState: input.capabilities.options.captureBrowserState }
+          : {}),
+        ...(input.capabilities.options.openBrowser
+          ? { openBrowser: input.capabilities.options.openBrowser }
           : {}),
       });
       const outcome = operationOutcomeSchema.parse({
@@ -344,6 +350,7 @@ export class ExecutionKernel {
     expectedEffect?: import("@scry/contracts").ExpectedEffect;
     resolveEffectPage?: () => Promise<Page | undefined>;
     ordinal: number;
+    privacyGate?: import("@scry/veil").VeilRuntimeCoordinator;
   }): Promise<OperationOutcome> {
     const syntheticRequest = executionRequestSchema.parse({
       ...input.request,
@@ -385,11 +392,10 @@ export class ExecutionKernel {
       fence = await this.beginMutationFence(request, input.capabilities);
       const beforeUrl = input.page.url();
       const expectedEffect = input.expectedEffect ?? { type: "none" };
-      const armedEffect = armExpectedEffect(
-        input.page,
-        expectedEffect,
-        "timeoutMs" in input.action ? input.action.timeoutMs : undefined,
-      );
+      const nativeOnly = input.capabilities.options.nativeResolutionPolicy === "native_only";
+      const armedEffect = nativeOnly
+        ? undefined
+        : armExpectedEffect(input.page, expectedEffect, "timeoutMs" in input.action ? input.action.timeoutMs : undefined);
       let outcome = await executeInteractionCompatibility({
         sessionId: request.sessionId,
         operationId: request.operationId,
@@ -398,18 +404,35 @@ export class ExecutionKernel {
         ordinal: input.ordinal,
         policy: request.policy,
         options: input.capabilities.options,
+        ...(input.privacyGate ? { privacyGate: input.privacyGate } : {}),
       });
       if (outcome.functionalResult === "succeeded") {
+        const effectStartedAt = performance.now();
         try {
-          const effectPage = (await input.resolveEffectPage?.()) ?? input.page;
-          await verifyExpectedEffect(
-            effectPage,
-            expectedEffect,
-            beforeUrl,
-            ("timeoutMs" in input.action ? input.action.timeoutMs : undefined) ?? 10_000,
-            effectPage === input.page ? armedEffect : undefined,
-          );
+          const resolvedEffectPage = await input.resolveEffectPage?.();
+          if (expectedEffect.type === "new_page" && (!resolvedEffectPage || resolvedEffectPage === input.page)) {
+            throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED");
+          }
+          const effectPage = resolvedEffectPage ?? input.page;
+          const timeoutMs = ("timeoutMs" in input.action ? input.action.timeoutMs : undefined) ?? 10_000;
+          if (expectedEffect.type === "new_page") {
+            verifyAdoptedPopup(effectPage, beforeUrl, expectedEffect.origin);
+          } else if (nativeOnly && ["visibility_change", "value_change", "state_change", "new_region"].includes(expectedEffect.type)) {
+            if (!input.capabilities.options.verifyNativeExpectedEffect) throw new Error("NATIVE_EXPECTED_EFFECT_VERIFIER_REQUIRED");
+            await input.capabilities.options.verifyNativeExpectedEffect(effectPage, expectedEffect, beforeUrl, timeoutMs);
+          } else {
+            await verifyExpectedEffect(effectPage, expectedEffect, beforeUrl, timeoutMs, effectPage === input.page ? armedEffect : undefined);
+          }
+          await input.capabilities.options.onExpectedEffectVerification?.({
+            status: "succeeded",
+            durationMs: performance.now() - effectStartedAt,
+          });
         } catch (error) {
+          await input.capabilities.options.onExpectedEffectVerification?.({
+            status: "failed",
+            reasonCode: safeCode(error),
+            durationMs: performance.now() - effectStartedAt,
+          });
           outcome = operationOutcomeSchema.parse({
             ...outcome,
             functionalResult: "failed",
@@ -556,6 +579,7 @@ export async function executeInteractionCompatibility(input: {
   ordinal: number;
   policy: ExecutionRequest["policy"];
   options: Omit<ExecuteOptions, "plan" | "policy">;
+  privacyGate?: import("@scry/veil").VeilRuntimeCoordinator;
 }): Promise<OperationOutcome> {
   const startedAt = performance.now();
   const praxisResults: import("@scry/contracts").PraxisResult[] = [];
@@ -572,7 +596,7 @@ export async function executeInteractionCompatibility(input: {
       new SecretRedactor(),
       new Map(),
       new Map(),
-      undefined,
+      input.privacyGate,
       undefined,
       {
         runId: input.sessionId,
@@ -599,8 +623,9 @@ export async function executeInteractionCompatibility(input: {
           ? "applied"
           : praxisMutationOutcome(praxisResults),
       privacyResult:
-        input.action.type === "fill" &&
-        Boolean(input.action.secretRef || input.action.capturedSecretRef)
+        (input.action.type === "fill" &&
+          Boolean(input.action.secretRef || input.action.capturedSecretRef)) ||
+        input.action.type === "sameOriginRequest"
           ? "verified"
           : "unverified",
       evidenceResult: [],
@@ -621,7 +646,7 @@ export async function executeInteractionCompatibility(input: {
         !isProvenPreDispatchFailure(reasonCode)
           ? "unknown"
           : observedMutation,
-      privacyResult: privacyOutcomeFromError(reasonCode),
+      privacyResult: input.action.type === "sameOriginRequest" ? "sealed" : privacyOutcomeFromError(reasonCode),
       evidenceResult: evidenceOutcomeFromError(reasonCode),
       qualityFindings: praxisResults.flatMap((result) => result.qualityFindings),
       ...resolvedTargetOutcome(praxisResults),
@@ -657,10 +682,17 @@ function modeDenied(mode: ExecutionMode, actions: CurrentAction[]): boolean {
   return actions.some((action) => action.type === "protectedTransaction");
 }
 
+function verifyAdoptedPopup(page: Page, beforeUrl: string, expectedOrigin?: string) {
+  const actual = new URL(page.url());
+  if (actual.href === beforeUrl || (expectedOrigin && actual.origin !== new URL(expectedOrigin).origin)) {
+    throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED");
+  }
+}
+
 function isMutatingAction(action: CurrentAction): boolean {
   return ["click", "fill", "select", "check", "press", "protectedTransaction"].includes(
     action.type,
-  );
+  ) || (action.type === "sameOriginRequest" && action.method !== "GET");
 }
 
 function singleActionPlan(
@@ -955,6 +987,14 @@ function isProvenPreDispatchFailure(reasonCode: string) {
   return [
     "PRAXIS_TARGET_CHANGED_BEFORE_ACTION",
     "PRAXIS_TARGET_NOT_FOUND",
+    "TARGET_NOT_FOUND",
+    "NATIVE_TARGET_NOT_FOUND",
+    "TARGET_AMBIGUOUS",
+    "NATIVE_TARGET_AMBIGUOUS",
+    "NO_CAPABILITY_COMPATIBLE_CONTROL",
+    "STALE_OBSERVATION",
+    "CAPABILITY_ADMISSION_DENIED",
+    "POLICY_DENIED",
     "PRAXIS_INSUFFICIENT_EVIDENCE",
     "PROTECTED_INPUT_REFERENCE_UNAVAILABLE",
     "PROTECTED_INPUT_RESOLVER_UNAVAILABLE",
@@ -1031,11 +1071,24 @@ function evidenceChannel(
 }
 
 function requiredCapabilities(request: ExecutionRequest): Set<ExecutionCapabilityName> {
-  const required = new Set<ExecutionCapabilityName>(["browser", "praxis", "veil", "journal"]);
+  const required = new Set<ExecutionCapabilityName>(["browser", "journal"]);
+  if (
+    request.plan.steps.some((step) => {
+      const target = "target" in step.action ? step.action.target : undefined;
+      return Boolean(
+        target &&
+          (target.requiredCapabilities.includes("coordinate_action") ||
+            target.preferredEvidence.visual?.sources.some((source) => source === "canvas")),
+      );
+    })
+  ) {
+    required.add("praxis");
+  }
   if (
     request.plan.steps.some((step) => step.evidence.length > 0 || step.action.type === "screenshot")
   ) {
     required.add("evidence");
+    required.add("veil");
   }
   if (
     request.plan.steps.some(
@@ -1046,6 +1099,7 @@ function requiredCapabilities(request: ExecutionRequest): Set<ExecutionCapabilit
     )
   ) {
     required.add("protected_operations");
+    required.add("veil");
     if (request.plan.steps.some((step) => step.action.type === "protectedTransaction")) {
       required.add("checkpoint");
     }

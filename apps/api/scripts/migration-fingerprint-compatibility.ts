@@ -32,6 +32,8 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "adaptive-authoring-pr9-pr12.sql",
   "adaptive-execution-foundation-m0-m1.sql",
   "adaptive-sessions-m3.sql",
+  "mission-first-live-convergence-m1.sql",
+  "mission-authoring-grouped-turns-m2.sql",
 ] as const;
 
 export type OptionalBaselineMigration = (typeof OPTIONAL_BASELINE_MIGRATIONS)[number];
@@ -92,6 +94,8 @@ export function compatibilityBaseline(source: string): string {
     "adaptive-authoring-pr9-pr12.sql",
     "adaptive-execution-foundation-m0-m1.sql",
     "adaptive-sessions-m3.sql",
+    "mission-first-live-convergence-m1.sql",
+    "mission-authoring-grouped-turns-m2.sql",
   ].reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}\\r?\\n`, "g"), ""),

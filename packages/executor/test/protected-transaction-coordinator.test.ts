@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { chromium, type Page } from "playwright";
+import { chromium, type BrowserContextOptions, type Page } from "playwright";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Assertion, InteractionTargetIntent, ProtectedTransaction } from "@scry/contracts";
 import { SecretRedactor } from "@scry/policy";
@@ -18,6 +18,12 @@ import {
 } from "../src/protected-transaction-coordinator.js";
 
 const servers: Array<ReturnType<typeof createServer>> = [];
+const openTestBrowser = async (options?: BrowserContextOptions) => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext(options);
+  const page = await context.newPage();
+  return { browser, context, page };
+};
 const intent = (
   concept: string,
   role: "button" | "textbox" | "text" | "value" = "text",
@@ -262,7 +268,7 @@ describe("protected transaction capsule", () => {
         gate,
         redactor: new SecretRedactor(),
         store: memoryStore().store,
-        capsuleFactory: new PlaywrightProtectedCapsuleFactory(),
+        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser),
         allowedOrigins: [origin],
         prepareCapsule: async (session) => {
           capsulePage = session.page;
@@ -412,7 +418,7 @@ describe("protected transaction capsule", () => {
         gate: new VeilRuntimeCoordinator([collector]),
         redactor: new SecretRedactor(),
         store: memory.store,
-        capsuleFactory: new PlaywrightProtectedCapsuleFactory(),
+        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser),
         allowedOrigins: [origin],
         prepareCapsule: async (session) => {
           registerPraxisVeilAuthority(session.page, {
@@ -493,7 +499,7 @@ describe("protected transaction capsule", () => {
         gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]),
         redactor: new SecretRedactor(),
         store: memory.store,
-        capsuleFactory: new PlaywrightProtectedCapsuleFactory(),
+        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser),
         allowedOrigins: ["https://example.test"],
         prepareCapsule: async () => undefined,
         resolveKnownSecret: async () => "",
@@ -531,7 +537,7 @@ describe("protected transaction capsule", () => {
         gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]),
         redactor: new SecretRedactor(),
         store: memoryStore("dispatching").store,
-        capsuleFactory: new PlaywrightProtectedCapsuleFactory(),
+        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser),
         allowedOrigins: ["https://example.test"],
         prepareCapsule: async () => undefined,
         resolveKnownSecret: async () => "",

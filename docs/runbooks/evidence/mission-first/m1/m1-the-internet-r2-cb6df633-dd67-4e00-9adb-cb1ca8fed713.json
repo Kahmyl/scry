@@ -1,0 +1,249 @@
+{
+  "schemaVersion": 2,
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "schemaFingerprint": "19652555d3b56ee9b733eccd1c0abcd44b0c2a62974eeef5add2110d65f9d1b0",
+  "runtimeVersion": "m1-local",
+  "runtimeConfigurationDigest": "7b160a3c8560ce88fb0b7f0bf666fd5c19293880504c773dda9d15d4142c43d2",
+  "milestone": "M1",
+  "target": "the_internet",
+  "repetition": 2,
+  "missionId": "ec24ce39-a594-44e4-9fe5-6fda67a832a6",
+  "objectiveIds": [
+    "45605ffe-3a06-46ec-a3b1-6e5b4aaf28b8"
+  ],
+  "flowIds": [
+    "c2d20965-32f9-4c76-bc35-731f84b6ce20"
+  ],
+  "runIds": [],
+  "correlationId": "cb6df633-dd67-4e00-9adb-cb1ca8fed713",
+  "boundaryUnderTest": "Mission-owned native authentication with protected references and zero Praxis calls",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "adaptive-session-cleanup",
+      "description": "The campaign cancels its Adaptive Session and releases browser ownership",
+      "status": "passed"
+    },
+    {
+      "id": "native-only-standard-controls",
+      "description": "Every standard authentication control resolves natively with zero Praxis calls",
+      "status": "passed"
+    },
+    {
+      "id": "redaction",
+      "description": "Protected values are absent from MCP responses and retrieved artifacts",
+      "status": "passed"
+    },
+    {
+      "id": "artifact-round-trip",
+      "description": "Every artifact emitted by the deployed journey finalizes and round-trips",
+      "status": "passed"
+    },
+    {
+      "id": "deployed-journey",
+      "description": "The deployed MCP authoring journey reaches an objective-completed boundary",
+      "status": "passed"
+    },
+    {
+      "id": "authoring-turn-surface",
+      "description": "M1 executes one grouped advance_flow_authoring call",
+      "status": "passed"
+    },
+    {
+      "id": "mission-owned",
+      "description": "Campaign creates exactly one Mission, Objective, and owned Flow draft",
+      "status": "passed"
+    }
+  ],
+  "observationalFindings": [],
+  "cleanup": {
+    "required": true,
+    "state": "completed",
+    "refs": []
+  },
+  "calls": {
+    "mcp": 2,
+    "api": 1,
+    "repeatedStateReads": 0
+  },
+  "resolution": {
+    "nativeResolved": 4,
+    "praxisFallbacks": 0
+  },
+  "reductions": {
+    "decisionBoundary": 0.8888888888888888,
+    "mcpCalls": 0.8888888888888888,
+    "agentBytes": 0.6
+  },
+  "timings": {
+    "api": {
+      "count": 1,
+      "p50Ms": 7.166124999999994,
+      "p95Ms": 7.166124999999994,
+      "maxMs": 7.166124999999994,
+      "slowestOperationIds": [
+        "api"
+      ]
+    },
+    "artifact_retrieval": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "browser_startup": {
+      "count": 1,
+      "p50Ms": 3323.474,
+      "p95Ms": 3323.474,
+      "maxMs": 3323.474,
+      "slowestOperationIds": [
+        "the_internet-navigate"
+      ]
+    },
+    "database": {
+      "count": 1,
+      "p50Ms": 7.88262499999999,
+      "p95Ms": 7.88262499999999,
+      "maxMs": 7.88262499999999,
+      "slowestOperationIds": [
+        "database"
+      ]
+    },
+    "document_observation": {
+      "count": 1,
+      "p50Ms": 3323.474,
+      "p95Ms": 3323.474,
+      "maxMs": 3323.474,
+      "slowestOperationIds": [
+        "the_internet-navigate"
+      ]
+    },
+    "evidence_finalization": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "expected_effect_verification": {
+      "count": 5,
+      "p50Ms": 0.005583000020124018,
+      "p95Ms": 0.05129199998918921,
+      "maxMs": 0.05129199998918921,
+      "slowestOperationIds": [
+        "the_internet-navigate",
+        "the_internet-success",
+        "the_internet-username"
+      ]
+    },
+    "interaction_execution": {
+      "count": 5,
+      "p50Ms": 37,
+      "p95Ms": 1713,
+      "maxMs": 1713,
+      "slowestOperationIds": [
+        "the_internet-navigate",
+        "the_internet-login",
+        "the_internet-username",
+        "the_internet-success",
+        "the_internet-password"
+      ]
+    },
+    "mcp_round_trip": {
+      "count": 1,
+      "p50Ms": 6707.165667,
+      "p95Ms": 6707.165667,
+      "maxMs": 6707.165667,
+      "slowestOperationIds": [
+        "mcp-cb6df633-dd67-4e00-9adb-cb1ca8fed713-2"
+      ]
+    },
+    "mcp_session_start_round_trip": {
+      "count": 1,
+      "p50Ms": 38.698166000000015,
+      "p95Ms": 38.698166000000015,
+      "maxMs": 38.698166000000015,
+      "slowestOperationIds": [
+        "mcp-cb6df633-dd67-4e00-9adb-cb1ca8fed713-1"
+      ]
+    },
+    "native_resolution": {
+      "count": 4,
+      "p50Ms": 16.166374999971595,
+      "p95Ms": 560.5312920000288,
+      "maxMs": 560.5312920000288,
+      "slowestOperationIds": [
+        "the_internet-login",
+        "the_internet-username",
+        "the_internet-success",
+        "the_internet-password"
+      ]
+    },
+    "praxis_grounding": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "queue_wait": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "redis": {
+      "count": 1,
+      "p50Ms": 3.491000000000014,
+      "p95Ms": 3.491000000000014,
+      "maxMs": 3.491000000000014,
+      "slowestOperationIds": [
+        "redis"
+      ]
+    },
+    "worker": {
+      "count": 1,
+      "p50Ms": 9.745417000000032,
+      "p95Ms": 9.745417000000032,
+      "maxMs": 9.745417000000032,
+      "slowestOperationIds": [
+        "worker"
+      ]
+    }
+  },
+  "privacyScan": {
+    "checkedByteCount": 3508,
+    "leakedCanaryCount": 0
+  },
+  "evidenceRefs": [
+    "/Users/habib/Documents/monorepo/scry/docs/runbooks/evidence/adaptive-campaigns/m1-production_shaped-1c5d85a1-4e7f-45d0-99ef-a4b3879cb113.json"
+  ],
+  "verdict": "pass"
+}

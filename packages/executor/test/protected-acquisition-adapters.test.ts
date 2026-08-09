@@ -62,7 +62,6 @@ describe("protected acquisition adapter registry", () => {
   });
 
   it("refuses static extraction for a copy-experience objective", async () => {
-    vi.stubEnv("SCRY_PROTECTED_ACQUISITION_ADAPTERS_ENABLED", "true");
     const acquisition = acquisitionIntentSchema.parse({
       target,
       classification: "unknown_secret",
@@ -80,7 +79,6 @@ describe("protected acquisition adapter registry", () => {
   });
 
   it("routes protected network acquisition only through a registered runtime adapter", async () => {
-    vi.stubEnv("SCRY_PROTECTED_ACQUISITION_ADAPTERS_ENABLED", "true");
     const browser = await chromium.launch({
       headless: true,
       channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
@@ -116,7 +114,6 @@ describe("protected acquisition adapter registry", () => {
   it.each(["keyboard_copy", "clipboard_event"] as const)(
     "verifies %s without returning copied plaintext",
     async (method) => {
-      vi.stubEnv("SCRY_PROTECTED_ACQUISITION_ADAPTERS_ENABLED", "true");
       const browser = await chromium.launch({
         headless: true,
         channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
@@ -152,7 +149,6 @@ describe("protected acquisition adapter registry", () => {
   );
 
   it("verifies a copy control without reading clipboard plaintext", async () => {
-    vi.stubEnv("SCRY_PROTECTED_ACQUISITION_ADAPTERS_ENABLED", "true");
     const browser = await chromium.launch({
       headless: true,
       channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
@@ -197,7 +193,6 @@ describe("protected acquisition adapter registry", () => {
   }, 15_000);
 
   it("rejects a copy control that produces no observable copy event", async () => {
-    vi.stubEnv("SCRY_PROTECTED_ACQUISITION_ADAPTERS_ENABLED", "true");
     const browser = await chromium.launch({
       headless: true,
       channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
@@ -228,7 +223,6 @@ describe("protected acquisition adapter registry", () => {
   }, 15_000);
 
   it("never persists plaintext for a verified copy experience", async () => {
-    vi.stubEnv("SCRY_PROTECTED_ACQUISITION_ADAPTERS_ENABLED", "true");
     const browser = await chromium.launch({
       headless: true,
       channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",

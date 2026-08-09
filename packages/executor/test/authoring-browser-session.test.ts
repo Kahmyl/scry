@@ -4,7 +4,7 @@ import { executionPolicySchema, type InteractionTargetIntent } from "@scry/contr
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createAuthoringBrowserSession } from "../src/authoring-browser-session.js";
-import { kernelInteractionExecutor } from "./kernel-harness.js";
+import { kernelInteractionExecutor, openTestBrowser } from "./kernel-harness.js";
 
 let server: Server;
 let origin: string;
@@ -18,17 +18,20 @@ beforeAll(async () => {
         : request.url === "/docs"
           ? "API Documentation"
           : "First page";
-    response.end(`
+    const body = `
       <main>
         <h1>${heading}</h1>
         <a href="/second">Continue</a>
         <a href="/docs" target="_blank">API documentation</a>
+        <a href="/slow-docs" target="_blank">Slow API documentation</a>
         <label>
           Name
           <input aria-label="Name" />
         </label>
       </main>
-    `);
+    `;
+    if (request.url === "/slow-docs") setTimeout(() => response.end(body), 750);
+    else response.end(body);
   });
 
   await new Promise<void>((resolve) => {
@@ -60,6 +63,7 @@ describe("persistent authoring browser session", () => {
       veilAdmissionKey: "authoring-test-only-veil-admission-key-32-bytes",
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
       policy,
+      openBrowser: openTestBrowser,
       executeInteraction: kernelInteractionExecutor({
         sessionId: "11111111-1111-4111-8111-111111111111",
         environmentId: "authoring-test-environment",
@@ -117,21 +121,15 @@ describe("persistent authoring browser session", () => {
           type: "click",
           target: target("api documentation", "link", "API documentation"),
           expectedEffect: {
-            type: "new_region",
-            target: {
-              ...target("documentation heading", "heading", "API Documentation"),
-              requiredCapabilities: ["readable_value"],
-            },
+            type: "new_page",
+            origin,
           },
         },
         {
           operationId: "open-documentation-popup",
           expectedEffect: {
-            type: "new_region",
-            target: {
-              ...target("documentation heading", "heading", "API Documentation"),
-              requiredCapabilities: ["readable_value"],
-            },
+            type: "new_page",
+            origin,
           },
         },
       );
@@ -149,6 +147,32 @@ describe("persistent authoring browser session", () => {
       expect(session.page.url()).toBe(`${origin}/docs`);
       expect(await session.page.getByRole("heading").textContent()).toBe("API Documentation");
       expect(session.documentEpoch()).toBe(3);
+
+      const slowDocumentation = await session.interact(
+        {
+          type: "click",
+          target: target("slow api documentation", "link", "Slow API documentation"),
+          expectedEffect: { type: "new_page", origin },
+          timeoutMs: 2_000,
+        },
+        { operationId: "open-slow-documentation-popup", expectedEffect: { type: "new_page", origin } },
+      );
+      expect(slowDocumentation.outcome.functionalResult).toBe("succeeded");
+      expect(session.page.url()).toBe(`${origin}/slow-docs`);
+      expect(session.documentEpoch()).toBe(4);
+
+      const sameTab = await session.interact(
+        {
+          type: "click",
+          target: target("continue", "link", "Continue"),
+          expectedEffect: { type: "new_page", origin },
+        },
+        { operationId: "same-tab-is-not-popup", expectedEffect: { type: "new_page", origin } },
+      );
+      expect(sameTab.outcome).toMatchObject({
+        functionalResult: "failed",
+        reasonCode: "EXPECTED_NEW_PAGE_NOT_OBSERVED",
+      });
 
       const missingEffect = await session.interact(
         { type: "fill", target: target("name", "textbox", "Name"), value: "Other", timeoutMs: 200 },
@@ -182,7 +206,7 @@ describe("persistent authoring browser session", () => {
     expect(session.state()).toBe("released");
   }, 20_000);
 
-  it("rejects protected or indirect-value authoring interactions", async () => {
+  it("fills protected references through a Veil-owned interval without returning plaintext", async () => {
     const policy = executionPolicySchema.parse({
       allowedOrigins: [origin],
       allowPrivateNetwork: true,
@@ -193,26 +217,29 @@ describe("persistent authoring browser session", () => {
       veilAdmissionKey: "authoring-test-only-veil-admission-key-32-bytes",
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
       policy,
+      openBrowser: openTestBrowser,
       executeInteraction: kernelInteractionExecutor({
         sessionId: "22222222-2222-4222-8222-222222222222",
         environmentId: "authoring-test-environment",
         policy,
+        secretResolver: async () => "protected-test-value",
       }),
     });
 
     try {
       await session.page.goto(origin, { waitUntil: "domcontentloaded" });
 
-      const unavailableProtectedInput = await session.interact({
+      const protectedInput = await session.interact({
         type: "fill",
         target: target("name", "textbox", "Name"),
         secretRef: "33333333-3333-4333-8333-333333333333",
       });
-      expect(unavailableProtectedInput.outcome).toMatchObject({
-        functionalResult: "failed",
-        mutationOutcome: "not_applied",
-        reasonCode: "PROTECTED_INPUT_RESOLVER_UNAVAILABLE",
+      expect(protectedInput.outcome).toMatchObject({
+        functionalResult: "succeeded",
+        mutationOutcome: "applied",
+        privacyResult: "verified",
       });
+      expect(JSON.stringify(protectedInput)).not.toContain("protected-test-value");
     } finally {
       await session.close();
     }

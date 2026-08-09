@@ -6,8 +6,8 @@ import {
   type OperationOutcome,
 } from "@scry/contracts";
 import { playwrightBrowserChannel, registerPraxisVeilAuthority } from "@scry/praxis";
-import { VeilAuthority } from "@scry/veil";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { VeilAuthority, VeilRuntimeCoordinator } from "@scry/veil";
+import type { Browser, BrowserContext, Page } from "playwright";
 
 import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
 import { BrowserSessionProvenance } from "./browser-session.js";
@@ -52,6 +52,7 @@ export async function createAuthoringBrowserSession(input: {
   veilAdmissionKey: string;
   browserChannel: string;
   policy: ExecutionPolicy;
+  openBrowser(): Promise<{ browser: Browser; context: BrowserContext; page: Page }>;
   executeInteraction(input: {
     browser: Browser;
     context: BrowserContext;
@@ -66,6 +67,7 @@ export async function createAuthoringBrowserSession(input: {
     resolveEffectPage?: () => Promise<Page | undefined>;
     objectiveDelta?: string;
     signal?: AbortSignal;
+    privacyGate: VeilRuntimeCoordinator;
   }): Promise<OperationOutcome>;
 }): Promise<AuthoringBrowserSession> {
   if (!input.sessionId) {
@@ -80,26 +82,28 @@ export async function createAuthoringBrowserSession(input: {
     throw new Error("VEIL_ADMISSION_KEY_REQUIRED");
   }
 
-  const browserChannel = playwrightBrowserChannel(input.browserChannel);
-  const browser = await chromium.launch({
-    headless: true,
-    ...(browserChannel ? { channel: browserChannel } : {}),
-  });
-
-  let context: BrowserContext | undefined;
-  let page: Page | undefined;
+  playwrightBrowserChannel(input.browserChannel);
+  const opened = await input.openBrowser();
+  const browser = opened.browser;
+  let context: BrowserContext | undefined = opened.context;
+  let page: Page | undefined = opened.page;
 
   try {
-    context = await browser.newContext();
-    page = await context.newPage();
-
+    const veilPolicy = resolveVeilPolicyForExecution(input.policy);
     const veilRegistration = {
-      authority: new VeilAuthority(resolveVeilPolicyForExecution(input.policy)),
+      authority: new VeilAuthority(veilPolicy),
       userId: "probe-authoring",
       environmentId: input.environmentId,
       browserContextId: `probe-authoring-${input.sessionId}`,
     };
     const unregisterVeil = [registerPraxisVeilAuthority(page, veilRegistration)];
+    const privacyGate = new VeilRuntimeCoordinator(
+      [],
+      async () => undefined,
+      5_000,
+      veilPolicy.digest,
+      `authoring:${input.sessionId}`,
+    );
 
     let lifecycle: AuthoringBrowserSessionState = "active";
     let epoch = 0;
@@ -174,8 +178,8 @@ export async function createAuthoringBrowserSession(input: {
         const expectedEffect = interactionContext.expectedEffect ?? { type: "none" };
         const popupCandidate =
           (action.type === "click" || action.type === "press") &&
-          (expectedEffect.type === "navigation" || expectedEffect.type === "new_region")
-            ? waitForPopup(context!)
+          expectedEffect.type === "new_page"
+            ? waitForPopup(context!, ("timeoutMs" in action ? action.timeoutMs : undefined) ?? 10_000)
             : undefined;
 
         const outcome = await input
@@ -187,6 +191,7 @@ export async function createAuthoringBrowserSession(input: {
             action,
             ordinal: interactionOrdinal,
             operationId,
+            privacyGate,
             ...(interactionContext.correlationId
               ? { correlationId: interactionContext.correlationId }
               : {}),
@@ -199,10 +204,17 @@ export async function createAuthoringBrowserSession(input: {
                   resolveEffectPage: async () => {
                     const popup = await popupCandidate.resolve();
                     if (!popup) return undefined;
+                    const popupTimeoutMs = ("timeoutMs" in action ? action.timeoutMs : undefined) ?? 10_000;
+                    await popup.waitForURL((url) => url.href !== "about:blank", { timeout: popupTimeoutMs })
+                      .catch(() => { throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED"); });
+                    await popup.waitForLoadState("domcontentloaded", { timeout: popupTimeoutMs })
+                      .catch(() => { throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED"); });
+                    if (popup === page) throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED");
                     const popupOrigin = new URL(popup.url()).origin;
-                    if (!input.policy.allowedOrigins.includes(popupOrigin)) {
+                    if (!input.policy.allowedOrigins.includes(popupOrigin) ||
+                      (expectedEffect.type === "new_page" && expectedEffect.origin && popupOrigin !== new URL(expectedEffect.origin).origin)) {
                       await popup.close().catch(() => undefined);
-                      throw new Error("AUTHORING_POPUP_ORIGIN_NOT_ALLOWED");
+                      throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED");
                     }
                     page = popup;
                     unregisterVeil.push(registerPraxisVeilAuthority(popup, veilRegistration));
@@ -242,6 +254,7 @@ export async function createAuthoringBrowserSession(input: {
         lifecycle = "crashed";
         try {
           unregisterVeil.forEach((unregister) => unregister());
+          await privacyGate.seal({ code: "AUTHORING_OPERATION_CANCELLED" }).catch(() => undefined);
           await context!.close();
         } finally {
           await browser.close().catch(() => undefined);
@@ -256,6 +269,7 @@ export async function createAuthoringBrowserSession(input: {
         closed = true;
         lifecycle = "releasing";
         unregisterVeil.forEach((unregister) => unregister());
+        await privacyGate.finalize().catch(() => undefined);
 
         try {
           await context!.close();
@@ -272,7 +286,7 @@ export async function createAuthoringBrowserSession(input: {
   }
 }
 
-function waitForPopup(context: BrowserContext) {
+function waitForPopup(context: BrowserContext, timeoutMs: number) {
   let settled = false;
   let resolve!: (page: Page | undefined) => void;
   const result = new Promise<Page | undefined>((done) => {
@@ -281,7 +295,8 @@ function waitForPopup(context: BrowserContext) {
   const onPage = async (candidate: Page) => {
     if (settled) return;
     settled = true;
-    await candidate.waitForLoadState("domcontentloaded").catch(() => undefined);
+    // The event establishes distinct ownership immediately. Readiness is bounded by
+    // the operation timeout in resolveEffectPage, never by this listener's race.
     resolve(candidate);
   };
   context.on("page", onPage);
@@ -289,7 +304,7 @@ function waitForPopup(context: BrowserContext) {
     resolve: () =>
       Promise.race([
         result,
-        new Promise<undefined>((done) => setTimeout(() => done(undefined), 500)),
+        new Promise<undefined>((done) => setTimeout(() => done(undefined), timeoutMs)),
       ]),
     dispose() {
       settled = true;

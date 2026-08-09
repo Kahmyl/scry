@@ -579,6 +579,25 @@ export const currentActionSchema = z.union([
     .strict(),
   z
     .object({
+      type: z.literal("sameOriginRequest"),
+      method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+      path: z.string().startsWith("/").max(1_000).refine((path) => !path.startsWith("//") && !path.includes("://") && !path.includes("\\"), "same-origin path must be relative"),
+      body: z.record(z.string().min(1).max(100), z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]))
+        .superRefine((body, context) => {
+          for (const key of Object.keys(body)) {
+            if (/(secret|protected|credential|token|password|authorization)/i.test(key)) {
+              context.addIssue({ code: "custom", path: [key], message: "same-origin body must contain public values only" });
+            }
+          }
+        })
+        .optional(),
+      expectedStatus: z.object({ min: z.number().int().min(100).max(599), max: z.number().int().min(100).max(599) }).strict().refine((status) => status.min <= status.max),
+      authentication: z.literal("current_browser_session"),
+      timeoutMs: timeout,
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("click"),
       target: interactionTargetIntentSchema,
       expectedEffect: expectedEffectSchema.default({ type: "none" }),

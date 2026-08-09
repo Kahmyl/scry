@@ -39,6 +39,7 @@ export function registerCreateFlowDraftTool(server: McpServer, client: ScryApiCl
         flowId: uuid.optional(),
         name: z.string().trim().min(1).max(200),
         description: z.string().trim().max(2000).default(""),
+        purpose: flowPurposeSchema.default("primary"),
         content: flowRevisionContentSchema,
         plan: currentPlanSchema,
         idempotencyKey: z.string().min(8).max(200).optional(),

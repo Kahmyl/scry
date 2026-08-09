@@ -277,7 +277,7 @@ async function main() {
     await client.query("BEGIN");
     await client.query("SET CONSTRAINTS ALL DEFERRED");
     await client.query(
-      `INSERT INTO flows(id,project_id,name,description,latest_revision_id,visibility,purpose,origin_mission_id,origin_objective_id,created_by_agent_session_id) VALUES($1,$2,$3,$4,$5,'mission_local','verification',$6,$7,$8)`,
+      `INSERT INTO flows(id,project_id,name,description,latest_revision_id,visibility,purpose,origin_mission_id,origin_objective_id,owner_mission_id,owner_objective_id,created_by_agent_session_id) VALUES($1,$2,$3,$4,$5,'mission_local','verification',$6,$7,$6,$7,$8)`,
       [
         flowId,
         ctx.project_id,

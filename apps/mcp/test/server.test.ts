@@ -15,8 +15,8 @@ const context = {
   agentSessionId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
 };
 const admittedCapabilities = {
-  releaseId: "development",
-  schemaFingerprint: "development-baseline",
+  releaseId: process.env.SCRY_RELEASE_ID ?? "development",
+  schemaFingerprint: process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline",
   supportedActions: [],
   evidenceChannels: [],
   artifactCapabilities: [],
@@ -42,16 +42,10 @@ describe("current Scry MCP surface", () => {
     expect((await client.listTools()).tools.map(({ name }) => name)).toEqual([
       "get_capabilities",
       "list_projects",
-      "start_direct_session",
-      "execute_direct_turn",
-      "observe_direct_session",
-      "close_direct_session",
-      "start_adaptive_session",
-      "advance_adaptive_session",
-      "get_adaptive_session",
-      "suspend_adaptive_session",
-      "resume_adaptive_session",
-      "cancel_adaptive_session",
+      "start_flow_authoring",
+      "advance_flow_authoring",
+      "get_flow_authoring",
+      "close_flow_authoring",
       "start_mission",
       "resume_mission",
       "attach_to_mission",
@@ -86,24 +80,15 @@ describe("current Scry MCP surface", () => {
       "retry_calibration",
       "cancel_calibration",
       "bind_calibration",
-      "advance_authoring_turn",
-      "validate_test_plan",
       "create_flow_draft",
-      "update_flow_draft",
       "get_flow_draft",
       "list_mission_flow_drafts",
       "abandon_flow_draft",
-      "start_probe_session",
-      "get_probe_session",
-      "cancel_probe_session",
-      "compile_flow_draft",
       "compile_and_certify_flow",
       "publish_flow_draft",
       "list_authentication_contracts",
       "list_authenticated_session_leases",
       "revoke_authenticated_session_lease",
-      "bind_credential_fill_step",
-      "bind_protected_transaction_step",
       "start_run",
       "get_run",
       "get_veil_findings",
@@ -122,34 +107,6 @@ describe("current Scry MCP surface", () => {
     await server.close();
   });
 
-  it("exposes the bounded direct browser lifecycle without plaintext credentials", async () => {
-    const sessionId = "11111111-1111-4111-8111-111111111111";
-    const credentialId = "22222222-2222-4222-8222-222222222222";
-    const requests: Array<{ method: string; path: string; body?: Record<string, unknown> }> = [];
-    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
-      const path = new URL(String(input)).pathname;
-      requests.push({ method: init?.method ?? "GET", path, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
-      return Promise.resolve(new Response(JSON.stringify({ sessionId, state: path.endsWith(sessionId) && init?.method === "DELETE" ? "closed" : "active" }), { status: 200 }));
-    }));
-    const { client, server } = await connected();
-    for (const request of [
-      { name: "start_direct_session", arguments: { projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" } },
-      { name: "execute_direct_turn", arguments: { sessionId, actions: [{ type: "fillCredential", target: { strategy: "label", value: "Password" }, credentialId }] } },
-      { name: "observe_direct_session", arguments: { sessionId } },
-      { name: "close_direct_session", arguments: { sessionId } },
-    ]) expect((await client.callTool(request)).isError, request.name).not.toBe(true);
-    expect(requests.map(({ method, path }) => ({ method, path }))).toEqual([
-      { method: "POST", path: "/api/direct-sessions" },
-      { method: "POST", path: `/api/direct-sessions/${sessionId}/turns` },
-      { method: "GET", path: `/api/direct-sessions/${sessionId}` },
-      { method: "DELETE", path: `/api/direct-sessions/${sessionId}` },
-    ]);
-    expect(JSON.stringify(requests)).not.toContain("plaintext");
-    expect(requests[1]?.body).toMatchObject({ actions: [{ type: "fillCredential", credentialId }] });
-    await client.close();
-    await server.close();
-  });
-
   it("advances one grouped authoring turn with a single API request", async () => {
     const requests: Array<{ method: string; path: string; body?: Record<string, unknown> }> = [];
     vi.stubGlobal(
@@ -163,7 +120,7 @@ describe("current Scry MCP surface", () => {
         });
         return Promise.resolve(
           new Response(
-            JSON.stringify({
+            JSON.stringify(url.pathname.endsWith("/capabilities") ? admittedCapabilities : {
               correlationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
               operationsCompleted: [],
               safeState: { documentEpoch: 1, url: "https://example.test/" },
@@ -181,43 +138,47 @@ describe("current Scry MCP surface", () => {
       }),
     );
     const { client, server } = await connected();
+    await client.callTool({ name: "get_capabilities", arguments: {} });
+    requests.length = 0;
     const response = await client.callTool({
-      name: "advance_authoring_turn",
+      name: "advance_flow_authoring",
       arguments: {
-        ...context,
-        probeSessionId: "11111111-1111-4111-8111-111111111111",
-        objectiveDelta: "Open the read-only details page",
-        operations: [
+        sessionId: "11111111-1111-4111-8111-111111111111",
+        kind: "intents",
+        intents: [
           {
-            operationId: "open-details",
-            action: { type: "navigate", url: "https://example.test/details" },
-            expectedEffect: { type: "navigation", url: "/details", match: "path" },
+            intentId: "open-details",
+            objectiveId: context.objectiveId,
+            flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            action: { kind: "navigate", url: "https://example.test/details" },
+            expectedEffect: {
+              kind: "navigation",
+              url: "https://example.test/details",
+              match: "path",
+            },
+            constraints: { timeoutMs: 5_000, allowNewPage: false, allowNonExact: false },
+            authorization: { kind: "ordinary" },
+            protectedInputReferences: [],
           },
         ],
-        authorization: { mutationAllowed: false, protectedOperationAllowed: false },
-        budgets: { maxOperations: 1, maxDurationMs: 5_000, maxPreDispatchRetries: 1 },
-        protectedInputReferences: [],
+        budgets: { maxOperations: 1, maxDurationMs: 5_000 },
       },
     });
     expect(response.isError).not.toBe(true);
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({
       method: "POST",
-      path: "/api/probe-sessions/11111111-1111-4111-8111-111111111111/advance",
+      path: "/api/mission-flow-authoring/11111111-1111-4111-8111-111111111111/advance",
       body: {
-        missionId: context.missionId,
-        agentSessionId: context.agentSessionId,
-        payload: {
-          objectiveDelta: "Open the read-only details page",
-          operations: [expect.objectContaining({ operationId: "open-details" })],
-        },
+        kind: "intents",
+        intents: [expect.objectContaining({ intentId: "open-details" })],
       },
     });
     await client.close();
     await server.close();
   });
 
-  it("exposes the complete mission-independent Adaptive Session lifecycle", async () => {
+  it("exposes the complete Mission-owned authoring lifecycle", async () => {
     const sessionId = "11111111-1111-4111-8111-111111111111";
     const requests: Array<{ method: string; path: string; body?: Record<string, unknown> }> = [];
     vi.stubGlobal(
@@ -243,52 +204,51 @@ describe("current Scry MCP surface", () => {
     const { client, server } = await connected();
     const projectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const environmentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const flowDraftId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     for (const request of [
       {
-        name: "start_adaptive_session",
+        name: "start_flow_authoring",
         arguments: {
           projectId,
+          missionId: context.missionId,
+          objectiveId: context.objectiveId,
+          flowDraftId,
           environmentId,
           objective: "Inspect the read-only account details",
           allowedOrigins: ["https://example.test"],
         },
       },
       {
-        name: "advance_adaptive_session",
+        name: "advance_flow_authoring",
         arguments: {
           sessionId,
-          operations: [
+          kind: "intents",
+          intents: [
             {
-              operationId: "inspect-details",
+              intentId: "inspect-details",
+              objectiveId: context.objectiveId,
+              flowDraftId,
               action: {
-                type: "navigate",
+                kind: "navigate",
                 url: "https://example.test/details",
-                timeoutMs: 10_000,
               },
               expectedEffect: {
-                type: "navigation",
+                kind: "navigation",
                 url: "https://example.test/details",
                 match: "exact",
               },
-              mode: "rehearse",
+              constraints: { timeoutMs: 10_000, allowNewPage: false, allowNonExact: false },
+              authorization: { kind: "ordinary" },
               protectedInputReferences: [],
             },
           ],
           budgets: { maxOperations: 1, maxDurationMs: 30_000 },
         },
       },
-      { name: "get_adaptive_session", arguments: { sessionId } },
+      { name: "get_flow_authoring", arguments: { sessionId } },
       {
-        name: "suspend_adaptive_session",
-        arguments: { sessionId, expectedVersion: 2, reason: "Pause for review" },
-      },
-      {
-        name: "resume_adaptive_session",
-        arguments: { sessionId, expectedVersion: 3, reason: "Review completed" },
-      },
-      {
-        name: "cancel_adaptive_session",
-        arguments: { sessionId, expectedVersion: 4, reason: "Campaign completed" },
+        name: "close_flow_authoring",
+        arguments: { sessionId },
       },
     ]) {
       const response = await client.callTool(request);
@@ -297,27 +257,29 @@ describe("current Scry MCP surface", () => {
 
     expect(requests.map(({ method, path }) => ({ method, path }))).toEqual([
       { method: "GET", path: "/api/capabilities" },
-      { method: "POST", path: "/api/adaptive-sessions" },
-      { method: "POST", path: `/api/adaptive-sessions/${sessionId}/advance` },
-      { method: "GET", path: `/api/adaptive-sessions/${sessionId}` },
-      { method: "POST", path: `/api/adaptive-sessions/${sessionId}/suspend` },
-      { method: "POST", path: `/api/adaptive-sessions/${sessionId}/resume` },
-      { method: "POST", path: `/api/adaptive-sessions/${sessionId}/cancel` },
+      { method: "POST", path: "/api/mission-flow-authoring" },
+      { method: "POST", path: `/api/mission-flow-authoring/${sessionId}/advance` },
+      { method: "GET", path: `/api/mission-flow-authoring/${sessionId}` },
+      { method: "POST", path: `/api/mission-flow-authoring/${sessionId}/close` },
     ]);
     for (const request of requests.filter(({ method }) => method === "POST")) {
-      expect(request.body?.idempotencyKey).toMatch(/^mcp-adaptive-session-/);
+      expect(request.body?.idempotencyKey).toMatch(/^mcp-flow-authoring-/);
     }
     expect(requests[1]?.body).toMatchObject({
       projectId,
+      missionId: context.missionId,
+      objectiveId: context.objectiveId,
+      flowDraftId,
       environmentId,
       objective: "Inspect the read-only account details",
       allowedOrigins: ["https://example.test"],
     });
     expect(requests[2]?.body).toMatchObject({
-      operations: [
+      kind: "intents",
+      intents: [
         expect.objectContaining({
-          operationId: "inspect-details",
-          mode: "rehearse",
+          intentId: "inspect-details",
+          authorization: { kind: "ordinary" },
         }),
       ],
       budgets: { maxOperations: 1, maxDurationMs: 30_000 },
@@ -344,9 +306,12 @@ describe("current Scry MCP surface", () => {
 
     const { client, server } = await connected();
     const response = await client.callTool({
-      name: "start_adaptive_session",
+      name: "start_flow_authoring",
       arguments: {
         projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        missionId: context.missionId,
+        objectiveId: context.objectiveId,
+        flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         objective: "Inspect account details",
         allowedOrigins: ["https://example.test"],
@@ -683,52 +648,6 @@ describe("current Scry MCP surface", () => {
     await server.close();
   });
 
-  it("delegates plan validation to the authoritative API", async () => {
-    const fetchMock = vi.fn().mockImplementation((input: string | URL | Request) => {
-      const url = new URL(String(input));
-      const body = url.pathname.endsWith("/capabilities")
-        ? admittedCapabilities
-        : { valid: true, errors: [], warnings: [] };
-      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const { client, server } = await connected();
-    const plan = {
-      name: "Smoke",
-      objective: "Open the app",
-      preconditions: [],
-      allowedOrigins: ["https://example.com"],
-      budgets: { maxActions: 1, maxDurationMs: 10_000, maxNavigations: 1 },
-      steps: [
-        {
-          id: "open",
-          title: "Open",
-          action: { type: "navigate", url: "/" },
-          after: {
-            mode: "all",
-            timeoutMs: 1_000,
-            conditions: [{ type: "delay", durationMs: 100 }],
-          },
-          assertions: [],
-          onFailure: "stop",
-          evidence: [],
-          captureIntent: "final",
-        },
-      ],
-    };
-    const response = await client.callTool({
-      name: "validate_test_plan",
-      arguments: {
-        projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        plan,
-      },
-    });
-    expect(response.structuredContent).toMatchObject({ valid: true, errors: [], warnings: [] });
-    await client.close();
-    await server.close();
-  });
-
   it("returns the canonical observation instead of a metadata-only run projection", async () => {
     const observation = {
       run: { id: "11111111-1111-4111-8111-111111111111", state: "failed" },
@@ -857,61 +776,6 @@ describe("current Scry MCP surface", () => {
       path: "/api/projects/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/calibration-sessions",
     });
     expect(JSON.stringify(requests[0]?.body)).not.toContain("structure");
-    await client.close();
-    await server.close();
-  });
-
-  it("starts an interactive Probe Session without changing the queued default", async () => {
-    const requests: Array<{ path: string; body?: Record<string, unknown> }> = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
-        const url = new URL(String(input));
-        requests.push({
-          path: url.pathname,
-          ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}),
-        });
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-              state: "queued",
-              authoring: { status: "starting" },
-            }),
-            { status: 200 },
-          ),
-        );
-      }),
-    );
-
-    const { client, server } = await connected();
-    const response = await client.callTool({
-      name: "start_probe_session",
-      arguments: {
-        ...context,
-        draftId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        draftVersion: 1,
-        mode: "interactive",
-        level: "inspection",
-      },
-    });
-
-    expect(response.isError).not.toBe(true);
-    expect(requests).toHaveLength(1);
-    expect(requests[0]).toMatchObject({
-      path: "/api/flow-drafts/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/probes",
-      body: {
-        ...context,
-        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        draftVersion: 1,
-        mode: "interactive",
-        level: "inspection",
-        disposableDataConfirmed: false,
-      },
-    });
-    expect(JSON.stringify(response.content)).toContain("Interactive Probe Session starting.");
-
     await client.close();
     await server.close();
   });

@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "8fac8a61-36c0-4c28-a05a-ccd211fa9cd0",
+  "correlationId": "8ba231c1-bf38-4e09-bd9d-dd444cc751ec",
+  "milestone": "M1",
+  "target": "vitract_preview",
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "schemaFingerprint": "9128a39f0b5320c3e9062863ea7f0103c28af038619c023934a685769941d524",
+  "runtimeVersion": "m1-local",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "startedAt": "2026-08-09T10:30:21.823Z",
+  "completedAt": "2026-08-09T10:30:21.859Z",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "campaign-execution",
+      "description": "Campaign execution reaches a terminal classified outcome",
+      "status": "failed",
+      "reasonCode": "VITRACT_CAMPAIGN_PROTECTED_CREDENTIALS_UNAVAILABLE"
+    },
+    {
+      "id": "measurement-integrity",
+      "description": "All required counts, phases, and deployed-component traversals are backed by observed events",
+      "status": "failed",
+      "reasonCode": "MEASUREMENT_UNAVAILABLE",
+      "safeDetail": {
+        "failures": [
+          "MISSING_PHASE:queue_wait",
+          "MISSING_PHASE:browser_startup",
+          "MISSING_PHASE:document_observation",
+          "MISSING_PHASE:native_resolution",
+          "MISSING_PHASE:interaction_execution",
+          "MISSING_PHASE:expected_effect_verification",
+          "MISSING_PHASE:evidence_finalization",
+          "MISSING_PHASE:artifact_retrieval"
+        ]
+      }
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [],
+  "metrics": {
+    "totalWallClockMs": 32.68154199999998,
+    "agentDecisionBoundaries": 0,
+    "mcpRequests": 0,
+    "apiRequests": 1,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 0,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "api": {
+        "count": 1,
+        "p50Ms": 6.831624999999974,
+        "p95Ms": 6.831624999999974,
+        "maxMs": 6.831624999999974
+      },
+      "database": {
+        "count": 1,
+        "p50Ms": 7.511792000000014,
+        "p95Ms": 7.511792000000014,
+        "maxMs": 7.511792000000014
+      },
+      "redis": {
+        "count": 1,
+        "p50Ms": 2.9276669999999854,
+        "p95Ms": 2.9276669999999854,
+        "maxMs": 2.9276669999999854
+      },
+      "worker": {
+        "count": 1,
+        "p50Ms": 8.83604200000002,
+        "p95Ms": 8.83604200000002,
+        "maxMs": 8.83604200000002
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "worker",
+        "phase": "worker",
+        "durationMs": 8.83604200000002
+      },
+      {
+        "operationId": "database",
+        "phase": "database",
+        "durationMs": 7.511792000000014
+      },
+      {
+        "operationId": "api",
+        "phase": "api",
+        "durationMs": 6.831624999999974
+      },
+      {
+        "operationId": "redis",
+        "phase": "redis",
+        "durationMs": 2.9276669999999854
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:database",
+        "operationId": "database",
+        "source": "campaign_client",
+        "correlationId": "8ba231c1-bf38-4e09-bd9d-dd444cc751ec",
+        "eventId": "database-8fac8a61-36c0-4c28-a05a-ccd211fa9cd0",
+        "value": 7.511792000000014
+      },
+      {
+        "metric": "phase:redis",
+        "operationId": "redis",
+        "source": "campaign_client",
+        "correlationId": "8ba231c1-bf38-4e09-bd9d-dd444cc751ec",
+        "eventId": "redis-8fac8a61-36c0-4c28-a05a-ccd211fa9cd0",
+        "value": 2.9276669999999854
+      },
+      {
+        "metric": "apiRequests",
+        "operationId": "capabilities-8fac8a61-36c0-4c28-a05a-ccd211fa9cd0",
+        "source": "api_http",
+        "correlationId": "8ba231c1-bf38-4e09-bd9d-dd444cc751ec",
+        "eventId": "capabilities-8fac8a61-36c0-4c28-a05a-ccd211fa9cd0",
+        "value": 1
+      },
+      {
+        "metric": "phase:api",
+        "operationId": "api",
+        "source": "api_http",
+        "correlationId": "8ba231c1-bf38-4e09-bd9d-dd444cc751ec",
+        "eventId": "api-8fac8a61-36c0-4c28-a05a-ccd211fa9cd0",
+        "value": 6.831624999999974
+      },
+      {
+        "metric": "phase:worker",
+        "operationId": "worker",
+        "source": "control_plane_query",
+        "correlationId": "8ba231c1-bf38-4e09-bd9d-dd444cc751ec",
+        "eventId": "worker-8fac8a61-36c0-4c28-a05a-ccd211fa9cd0",
+        "value": 8.83604200000002
+      }
+    ]
+  },
+  "artifactRefs": [],
+  "verdict": "fail"
+}

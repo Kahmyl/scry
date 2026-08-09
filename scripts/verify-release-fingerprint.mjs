@@ -56,6 +56,14 @@ const adaptiveExecutionFoundation = await readFile(
   "utf8",
 );
 const adaptiveSessions = await readFile(new URL("adaptive-sessions-m3.sql", migrations), "utf8");
+const missionFirstM1 = await readFile(
+  new URL("mission-first-live-convergence-m1.sql", migrations),
+  "utf8",
+);
+const missionAuthoringGroupedTurnsM2 = await readFile(
+  new URL("mission-authoring-grouped-turns-m2.sql", migrations),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", migrations), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -72,6 +80,8 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", migration
   ["adaptive-authoring-pr9-pr12.sql", adaptiveAuthoring],
   ["adaptive-execution-foundation-m0-m1.sql", adaptiveExecutionFoundation],
   ["adaptive-sessions-m3.sql", adaptiveSessions],
+  ["mission-first-live-convergence-m1.sql", missionFirstM1],
+  ["mission-authoring-grouped-turns-m2.sql", missionAuthoringGroupedTurnsM2],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

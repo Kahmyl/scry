@@ -11,6 +11,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { probeFlowPlan } from "../src/probe.js";
+import { openTestBrowser } from "./kernel-harness.js";
 
 let server: Server;
 let origin: string;
@@ -176,6 +177,7 @@ async function probeInput(level: "inspection" | "reversible") {
       allowPrivateNetwork: true,
     }),
     browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    openBrowser: openTestBrowser,
     outputDirectory,
     privacy: {
       environmentId: "probe-test-environment",

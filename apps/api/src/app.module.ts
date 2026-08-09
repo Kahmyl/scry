@@ -7,7 +7,6 @@ import { AuthModule } from "./auth/index.js";
 import { AuthoringModule } from "./authoring/index.js";
 import { AuthenticationAuthoringModule } from "./authentication-authoring/index.js";
 import { CalibrationModule } from "./calibration/index.js";
-import { DirectSessionsModule } from "./direct-sessions/index.js";
 import { FlowsModule } from "./flows/index.js";
 import { InfrastructureModule } from "./infrastructure/index.js";
 import { MissionsModule } from "./missions/index.js";
@@ -29,7 +28,6 @@ import { VeilModule } from "./veil/index.js";
     AuthoringModule,
     AuthenticationAuthoringModule,
     CalibrationModule,
-    DirectSessionsModule,
     FlowsModule,
     MissionsModule,
     OrchestrationModule,

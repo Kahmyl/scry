@@ -5,7 +5,7 @@ import { createExecutionCapabilityManifest } from "@scry/executor";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AdaptiveSessionKernelRunner } from "../src/adaptive-sessions/adaptive-session-kernel.runner.js";
-import { ExecutionKernelService } from "../src/runtime/index.js";
+import { ExecutionKernelService, NativeBrowserDriver } from "../src/runtime/index.js";
 
 describe("adaptive session production runtime restart", () => {
   let server: Server;
@@ -14,7 +14,7 @@ describe("adaptive session production runtime restart", () => {
   beforeAll(async () => {
     server = createServer((request, response) => {
       response.writeHead(200, { "content-type": "text/html" });
-      response.end(`<html><body data-path="${request.url}">${request.url}</body></html>`);
+      response.end(`<html><body data-path="${request.url}"><main><h1>${request.url}</h1></main></body></html>`);
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -61,6 +61,7 @@ describe("adaptive session production runtime restart", () => {
       new ExecutionKernelService(),
       capabilities as never,
       repository as never,
+      new NativeBrowserDriver(),
     );
     await first.execute(sessionId, operation("first", `${origin}/details`));
     await first.onModuleDestroy();
@@ -69,6 +70,7 @@ describe("adaptive session production runtime restart", () => {
       new ExecutionKernelService(),
       capabilities as never,
       repository as never,
+      new NativeBrowserDriver(),
     );
     await second.execute(sessionId, operation("second", `${origin}/final`));
     await second.onModuleDestroy();
@@ -103,7 +105,18 @@ function capabilityFactory() {
       });
       return {
         manifest,
-        options: input.options,
+        options: {
+          ...input.options,
+          executeNativeNavigation: (
+            page: import("playwright").Page,
+            url: string,
+            allowedOrigins: string[],
+            timeoutMs?: number,
+            trustedScriptOrigins?: string[],
+          ) => new NativeBrowserDriver().navigateAndWait(
+            page, url, allowedOrigins, timeoutMs, trustedScriptOrigins,
+          ),
+        },
         journal: {
           begin: vi.fn(),
           complete: vi.fn(),

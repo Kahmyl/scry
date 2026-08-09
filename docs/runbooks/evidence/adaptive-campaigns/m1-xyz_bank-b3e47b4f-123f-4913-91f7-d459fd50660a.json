@@ -1,0 +1,214 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "b3e47b4f-123f-4913-91f7-d459fd50660a",
+  "correlationId": "0c92bbff-a9dc-4000-b9ed-5feefc050907",
+  "milestone": "M1",
+  "target": "xyz_bank",
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "schemaFingerprint": "19652555d3b56ee9b733eccd1c0abcd44b0c2a62974eeef5add2110d65f9d1b0",
+  "runtimeVersion": "m1-local",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "startedAt": "2026-08-09T11:41:08.331Z",
+  "completedAt": "2026-08-09T11:41:39.973Z",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "m1-xyz_bank",
+      "description": "Campaign execution reaches a terminal classified outcome",
+      "status": "failed",
+      "reasonCode": "NATIVE_DOCUMENT_SURFACE_NOT_READY"
+    },
+    {
+      "id": "measurement-integrity",
+      "description": "All required counts, phases, and deployed-component traversals are backed by observed events",
+      "status": "failed",
+      "reasonCode": "MEASUREMENT_UNAVAILABLE",
+      "safeDetail": {
+        "failures": [
+          "MISSING_PHASE:queue_wait",
+          "MISSING_PHASE:browser_startup",
+          "MISSING_PHASE:document_observation",
+          "MISSING_PHASE:native_resolution",
+          "MISSING_PHASE:interaction_execution",
+          "MISSING_PHASE:expected_effect_verification",
+          "MISSING_PHASE:evidence_finalization",
+          "MISSING_PHASE:artifact_retrieval"
+        ]
+      }
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [],
+  "metrics": {
+    "totalWallClockMs": 31641.030958,
+    "agentDecisionBoundaries": 0,
+    "mcpRequests": 1,
+    "apiRequests": 1,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 0,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "api": {
+        "count": 1,
+        "p50Ms": 5.512208000000015,
+        "p95Ms": 5.512208000000015,
+        "maxMs": 5.512208000000015
+      },
+      "database": {
+        "count": 1,
+        "p50Ms": 4.321667000000019,
+        "p95Ms": 4.321667000000019,
+        "maxMs": 4.321667000000019
+      },
+      "mcp_round_trip": {
+        "count": 1,
+        "p50Ms": 31552.078834,
+        "p95Ms": 31552.078834,
+        "maxMs": 31552.078834
+      },
+      "mcp_session_start_round_trip": {
+        "count": 1,
+        "p50Ms": 19.836000000000013,
+        "p95Ms": 19.836000000000013,
+        "maxMs": 19.836000000000013
+      },
+      "redis": {
+        "count": 1,
+        "p50Ms": 3.4066660000000013,
+        "p95Ms": 3.4066660000000013,
+        "maxMs": 3.4066660000000013
+      },
+      "worker": {
+        "count": 1,
+        "p50Ms": 5.567666000000003,
+        "p95Ms": 5.567666000000003,
+        "maxMs": 5.567666000000003
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "mcp-0c92bbff-a9dc-4000-b9ed-5feefc050907-2",
+        "phase": "mcp_round_trip",
+        "durationMs": 31552.078834
+      },
+      {
+        "operationId": "mcp-0c92bbff-a9dc-4000-b9ed-5feefc050907-1",
+        "phase": "mcp_session_start_round_trip",
+        "durationMs": 19.836000000000013
+      },
+      {
+        "operationId": "worker",
+        "phase": "worker",
+        "durationMs": 5.567666000000003
+      },
+      {
+        "operationId": "api",
+        "phase": "api",
+        "durationMs": 5.512208000000015
+      },
+      {
+        "operationId": "database",
+        "phase": "database",
+        "durationMs": 4.321667000000019
+      },
+      {
+        "operationId": "redis",
+        "phase": "redis",
+        "durationMs": 3.4066660000000013
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:database",
+        "operationId": "database",
+        "source": "campaign_client",
+        "correlationId": "0c92bbff-a9dc-4000-b9ed-5feefc050907",
+        "eventId": "database-b3e47b4f-123f-4913-91f7-d459fd50660a",
+        "value": 4.321667000000019
+      },
+      {
+        "metric": "phase:redis",
+        "operationId": "redis",
+        "source": "campaign_client",
+        "correlationId": "0c92bbff-a9dc-4000-b9ed-5feefc050907",
+        "eventId": "redis-b3e47b4f-123f-4913-91f7-d459fd50660a",
+        "value": 3.4066660000000013
+      },
+      {
+        "metric": "apiRequests",
+        "operationId": "capabilities-b3e47b4f-123f-4913-91f7-d459fd50660a",
+        "source": "api_http",
+        "correlationId": "0c92bbff-a9dc-4000-b9ed-5feefc050907",
+        "eventId": "capabilities-b3e47b4f-123f-4913-91f7-d459fd50660a",
+        "value": 1
+      },
+      {
+        "metric": "phase:api",
+        "operationId": "api",
+        "source": "api_http",
+        "correlationId": "0c92bbff-a9dc-4000-b9ed-5feefc050907",
+        "eventId": "api-b3e47b4f-123f-4913-91f7-d459fd50660a",
+        "value": 5.512208000000015
+      },
+      {
+        "metric": "phase:worker",
+        "operationId": "worker",
+        "source": "control_plane_query",
+        "correlationId": "0c92bbff-a9dc-4000-b9ed-5feefc050907",
+        "eventId": "worker-b3e47b4f-123f-4913-91f7-d459fd50660a",
+        "value": 5.567666000000003
+      },
+      {
+        "metric": "phase:mcp_session_start_round_trip",
+        "operationId": "mcp-0c92bbff-a9dc-4000-b9ed-5feefc050907-1",
+        "source": "mcp_http",
+        "correlationId": "0c92bbff-a9dc-4000-b9ed-5feefc050907",
+        "eventId": "mcp-0c92bbff-a9dc-4000-b9ed-5feefc050907-1-duration",
+        "value": 19.836000000000013
+      },
+      {
+        "metric": "mcpRequests",
+        "operationId": "mcp-0c92bbff-a9dc-4000-b9ed-5feefc050907-2",
+        "source": "mcp_http",
+        "correlationId": "0c92bbff-a9dc-4000-b9ed-5feefc050907",
+        "eventId": "mcp-0c92bbff-a9dc-4000-b9ed-5feefc050907-2",
+        "value": 1
+      },
+      {
+        "metric": "phase:mcp_round_trip",
+        "operationId": "mcp-0c92bbff-a9dc-4000-b9ed-5feefc050907-2",
+        "source": "mcp_http",
+        "correlationId": "0c92bbff-a9dc-4000-b9ed-5feefc050907",
+        "eventId": "mcp-0c92bbff-a9dc-4000-b9ed-5feefc050907-2-duration",
+        "value": 31552.078834
+      }
+    ]
+  },
+  "artifactRefs": [],
+  "verdict": "fail"
+}

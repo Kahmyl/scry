@@ -466,7 +466,12 @@ async function inspectRealProtectedTransaction() {
         },
         record: async () => undefined,
       },
-      capsuleFactory: new PlaywrightProtectedCapsuleFactory(),
+      capsuleFactory: new PlaywrightProtectedCapsuleFactory(async (options) => {
+        const capsuleBrowser = await chromium.launch({ headless: true });
+        const capsuleContext = await capsuleBrowser.newContext(options);
+        const capsulePage = await capsuleContext.newPage();
+        return { browser: capsuleBrowser, context: capsuleContext, page: capsulePage };
+      }),
       allowedOrigins: [origin],
       prepareCapsule: async (session) => {
         await session.context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });

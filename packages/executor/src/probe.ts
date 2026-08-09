@@ -8,7 +8,7 @@ import {
   registerPraxisVeilAuthority,
 } from "@scry/praxis";
 import { VeilAuthority } from "@scry/veil";
-import { chromium } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 
 import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
 import { executePlan } from "./executor.js";
@@ -39,6 +39,7 @@ export async function probeFlowPlan(input: {
   };
   secretResolver?: (reference: string) => Promise<string>;
   captureBrowserState?: (state: BrowserStorageState) => void | Promise<void>;
+  openBrowser?: () => Promise<{ browser: Browser; context: BrowserContext; page: Page }>;
   execute?: (options: ExecuteOptions) => Promise<ExecutionReport>;
 }): Promise<ProbeExecutionResult> {
   if (!input.privacy.environmentId) {
@@ -150,22 +151,13 @@ export async function probeFlowPlan(input: {
     };
   }
 
-  const browserChannel = playwrightBrowserChannel(input.browserChannel);
-
-  const browser = await chromium.launch({
-    headless: true,
-    ...(browserChannel
-      ? {
-          channel: browserChannel,
-        }
-      : {}),
-  });
+  playwrightBrowserChannel(input.browserChannel);
+  if (!input.openBrowser) throw new Error("NATIVE_BROWSER_DRIVER_REQUIRED");
+  const { browser, page } = await input.openBrowser();
 
   const targets: Array<Record<string, unknown>> = [];
   const readiness: Array<Record<string, unknown>> = [];
   const diagnostics: Array<Record<string, unknown>> = [];
-
-  const page = await browser.newPage();
 
   const unregisterPraxisVeil = registerPraxisVeilAuthority(page, {
     authority: new VeilAuthority(resolveVeilPolicyForExecution(input.policy)),

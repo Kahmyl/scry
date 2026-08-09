@@ -15,6 +15,8 @@ describe("schema migration manifest", () => {
     const interactiveCommands = baseline.indexOf("\\ir interactive-runtime-commands.sql");
     const interactiveLifecycle = baseline.indexOf("\\ir interactive-runtime-lifecycle.sql");
     const authenticationAuthoring = baseline.indexOf("\\ir authentication-authoring.sql");
+    const missionFirstM1 = baseline.indexOf("\\ir mission-first-live-convergence-m1.sql");
+    const missionAuthoringM2 = baseline.indexOf("\\ir mission-authoring-grouped-turns-m2.sql");
 
     expect(preferences).toBeGreaterThan(-1);
     expect(retention).toBeGreaterThan(preferences);
@@ -23,6 +25,8 @@ describe("schema migration manifest", () => {
     expect(interactiveCommands).toBeGreaterThan(statefulProbe);
     expect(interactiveLifecycle).toBeGreaterThan(interactiveCommands);
     expect(authenticationAuthoring).toBeGreaterThan(interactiveLifecycle);
+    expect(missionFirstM1).toBeGreaterThan(authenticationAuthoring);
+    expect(missionAuthoringM2).toBeGreaterThan(missionFirstM1);
   });
 
   it("recognizes the compiled-plan schema and applies the guarded interactive command cutover", async () => {
@@ -56,7 +60,25 @@ describe("schema migration manifest", () => {
       expect(source).toContain("adaptive-authoring-pr9-pr12.sql");
       expect(source).toContain("adaptive-execution-foundation-m0-m1.sql");
       expect(source).toContain("adaptive-sessions-m3.sql");
+      expect(source).toContain("mission-first-live-convergence-m1.sql");
+      expect(source).toContain("mission-authoring-grouped-turns-m2.sql");
     }
+  });
+
+  it("defines the complete Mission-first M1 ownership cutover", async () => {
+    const migration = await readFile(
+      new URL("migrations/mission-first-live-convergence-m1.sql", root),
+      "utf8",
+    );
+    expect(migration).toContain("owner_mission_id uuid");
+    expect(migration).toContain("owner_objective_id uuid");
+    expect(migration).toContain("Legacy imported flows - ");
+    expect(migration).toContain("flows_published_owner_immutable");
+    expect(migration).toContain("adaptive_sessions_flow_draft_owner_fk");
+    expect(migration).toContain("REFERENCES flow_drafts(id,mission_id,objective_id)");
+    expect(migration.indexOf("UPDATE flows f")).toBeLessThan(
+      migration.indexOf("ALTER COLUMN owner_mission_id SET NOT NULL"),
+    );
   });
 
   it("adds an authentication attempt ledger without secret-bearing columns", async () => {

@@ -1,0 +1,530 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "5ff3f60b-eca0-4a82-adba-fd8ee5ab9805",
+  "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+  "milestone": "M1",
+  "target": "production_shaped",
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "schemaFingerprint": "19652555d3b56ee9b733eccd1c0abcd44b0c2a62974eeef5add2110d65f9d1b0",
+  "runtimeVersion": "m1-local",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "startedAt": "2026-08-09T11:57:18.001Z",
+  "completedAt": "2026-08-09T11:57:23.320Z",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "adaptive-session-cleanup",
+      "description": "The campaign cancels its Adaptive Session and releases browser ownership",
+      "status": "passed"
+    },
+    {
+      "id": "native-only-standard-controls",
+      "description": "Every standard authentication control resolves natively with zero Praxis calls",
+      "status": "passed"
+    },
+    {
+      "id": "redaction",
+      "description": "Protected values are absent from MCP responses and retrieved artifacts",
+      "status": "passed"
+    },
+    {
+      "id": "artifact-round-trip",
+      "description": "Every artifact emitted by the deployed journey finalizes and round-trips",
+      "status": "passed"
+    },
+    {
+      "id": "deployed-journey",
+      "description": "The deployed MCP authoring journey reaches an objective-completed boundary",
+      "status": "passed"
+    },
+    {
+      "id": "authoring-turn-surface",
+      "description": "M1 executes one grouped advance_flow_authoring call",
+      "status": "passed"
+    },
+    {
+      "id": "mission-owned",
+      "description": "Campaign creates exactly one Mission, Objective, and owned Flow draft",
+      "status": "passed"
+    },
+    {
+      "id": "measurement-integrity",
+      "description": "All required counts, phases, and deployed-component traversals are backed by observed events",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [],
+  "metrics": {
+    "totalWallClockMs": 5315.873833000001,
+    "agentDecisionBoundaries": 1,
+    "mcpRequests": 1,
+    "apiRequests": 1,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 3478,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "api": {
+        "count": 1,
+        "p50Ms": 12.290999999999997,
+        "p95Ms": 12.290999999999997,
+        "maxMs": 12.290999999999997
+      },
+      "artifact_retrieval": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "browser_startup": {
+        "count": 1,
+        "p50Ms": 2235.483,
+        "p95Ms": 2235.483,
+        "maxMs": 2235.483
+      },
+      "database": {
+        "count": 1,
+        "p50Ms": 4.759750000000054,
+        "p95Ms": 4.759750000000054,
+        "maxMs": 4.759750000000054
+      },
+      "document_observation": {
+        "count": 1,
+        "p50Ms": 2235.483,
+        "p95Ms": 2235.483,
+        "maxMs": 2235.483
+      },
+      "evidence_finalization": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "expected_effect_verification": {
+        "count": 5,
+        "p50Ms": 0.003708000003825873,
+        "p95Ms": 0.0232079999987036,
+        "maxMs": 0.0232079999987036
+      },
+      "interaction_execution": {
+        "count": 5,
+        "p50Ms": 352,
+        "p95Ms": 1595,
+        "maxMs": 1595
+      },
+      "mcp_round_trip": {
+        "count": 1,
+        "p50Ms": 5183.008416,
+        "p95Ms": 5183.008416,
+        "maxMs": 5183.008416
+      },
+      "mcp_session_start_round_trip": {
+        "count": 1,
+        "p50Ms": 17.39866699999999,
+        "p95Ms": 17.39866699999999,
+        "maxMs": 17.39866699999999
+      },
+      "native_resolution": {
+        "count": 4,
+        "p50Ms": 123.87712499999907,
+        "p95Ms": 1593.7770010000095,
+        "maxMs": 1593.7770010000095
+      },
+      "praxis_grounding": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "queue_wait": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "redis": {
+        "count": 1,
+        "p50Ms": 2.992500000000007,
+        "p95Ms": 2.992500000000007,
+        "maxMs": 2.992500000000007
+      },
+      "worker": {
+        "count": 1,
+        "p50Ms": 5.467542000000037,
+        "p95Ms": 5.467542000000037,
+        "maxMs": 5.467542000000037
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "mcp-cd187269-82dd-4bc0-bea0-083b1a293cd1-2",
+        "phase": "mcp_round_trip",
+        "durationMs": 5183.008416
+      },
+      {
+        "operationId": "orangehrm-navigate",
+        "phase": "browser_startup",
+        "durationMs": 2235.483
+      },
+      {
+        "operationId": "orangehrm-navigate",
+        "phase": "document_observation",
+        "durationMs": 2235.483
+      },
+      {
+        "operationId": "orangehrm-success",
+        "phase": "interaction_execution",
+        "durationMs": 1595
+      },
+      {
+        "operationId": "orangehrm-success",
+        "phase": "native_resolution",
+        "durationMs": 1593.7770010000095
+      },
+      {
+        "operationId": "orangehrm-navigate",
+        "phase": "interaction_execution",
+        "durationMs": 612
+      },
+      {
+        "operationId": "orangehrm-username",
+        "phase": "interaction_execution",
+        "durationMs": 352
+      },
+      {
+        "operationId": "orangehrm-username",
+        "phase": "native_resolution",
+        "durationMs": 342.0188330000383
+      },
+      {
+        "operationId": "orangehrm-login",
+        "phase": "interaction_execution",
+        "durationMs": 126
+      },
+      {
+        "operationId": "orangehrm-login",
+        "phase": "native_resolution",
+        "durationMs": 123.87712499999907
+      },
+      {
+        "operationId": "mcp-cd187269-82dd-4bc0-bea0-083b1a293cd1-1",
+        "phase": "mcp_session_start_round_trip",
+        "durationMs": 17.39866699999999
+      },
+      {
+        "operationId": "api",
+        "phase": "api",
+        "durationMs": 12.290999999999997
+      },
+      {
+        "operationId": "orangehrm-password",
+        "phase": "interaction_execution",
+        "durationMs": 10
+      },
+      {
+        "operationId": "orangehrm-password",
+        "phase": "native_resolution",
+        "durationMs": 7.545209000003524
+      },
+      {
+        "operationId": "worker",
+        "phase": "worker",
+        "durationMs": 5.467542000000037
+      },
+      {
+        "operationId": "database",
+        "phase": "database",
+        "durationMs": 4.759750000000054
+      },
+      {
+        "operationId": "redis",
+        "phase": "redis",
+        "durationMs": 2.992500000000007
+      },
+      {
+        "operationId": "orangehrm-navigate",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.0232079999987036
+      },
+      {
+        "operationId": "orangehrm-success",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.006083999993279576
+      },
+      {
+        "operationId": "orangehrm-username",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.003708000003825873
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:database",
+        "operationId": "database",
+        "source": "campaign_client",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "database-5ff3f60b-eca0-4a82-adba-fd8ee5ab9805",
+        "value": 4.759750000000054
+      },
+      {
+        "metric": "phase:redis",
+        "operationId": "redis",
+        "source": "campaign_client",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "redis-5ff3f60b-eca0-4a82-adba-fd8ee5ab9805",
+        "value": 2.992500000000007
+      },
+      {
+        "metric": "apiRequests",
+        "operationId": "capabilities-5ff3f60b-eca0-4a82-adba-fd8ee5ab9805",
+        "source": "api_http",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "capabilities-5ff3f60b-eca0-4a82-adba-fd8ee5ab9805",
+        "value": 1
+      },
+      {
+        "metric": "phase:api",
+        "operationId": "api",
+        "source": "api_http",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "api-5ff3f60b-eca0-4a82-adba-fd8ee5ab9805",
+        "value": 12.290999999999997
+      },
+      {
+        "metric": "phase:worker",
+        "operationId": "worker",
+        "source": "control_plane_query",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "worker-5ff3f60b-eca0-4a82-adba-fd8ee5ab9805",
+        "value": 5.467542000000037
+      },
+      {
+        "metric": "phase:mcp_session_start_round_trip",
+        "operationId": "mcp-cd187269-82dd-4bc0-bea0-083b1a293cd1-1",
+        "source": "mcp_http",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "mcp-cd187269-82dd-4bc0-bea0-083b1a293cd1-1-duration",
+        "value": 17.39866699999999
+      },
+      {
+        "metric": "mcpRequests",
+        "operationId": "mcp-cd187269-82dd-4bc0-bea0-083b1a293cd1-2",
+        "source": "mcp_http",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "mcp-cd187269-82dd-4bc0-bea0-083b1a293cd1-2",
+        "value": 1
+      },
+      {
+        "metric": "phase:mcp_round_trip",
+        "operationId": "mcp-cd187269-82dd-4bc0-bea0-083b1a293cd1-2",
+        "source": "mcp_http",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "mcp-cd187269-82dd-4bc0-bea0-083b1a293cd1-2-duration",
+        "value": 5183.008416
+      },
+      {
+        "metric": "bytesReturnedToAgent",
+        "operationId": "mcp-cd187269-82dd-4bc0-bea0-083b1a293cd1-2-bytes",
+        "source": "mcp_http",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "mcp-cd187269-82dd-4bc0-bea0-083b1a293cd1-2-bytes",
+        "value": 3478
+      },
+      {
+        "metric": "agentDecisionBoundaries",
+        "operationId": "mcp-cd187269-82dd-4bc0-bea0-083b1a293cd1-2-boundary",
+        "source": "mcp_http",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "mcp-cd187269-82dd-4bc0-bea0-083b1a293cd1-2-boundary",
+        "value": 1
+      },
+      {
+        "metric": "phase:queue_wait",
+        "operationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "source": "queue_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "queue-not-applicable-cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "value": 0
+      },
+      {
+        "metric": "phase:browser_startup",
+        "operationId": "orangehrm-navigate",
+        "source": "browser_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "browser-cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "value": 2235.483
+      },
+      {
+        "metric": "phase:document_observation",
+        "operationId": "orangehrm-navigate",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "observation-cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "value": 2235.483
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-navigate",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "operation-499d0893-8cb4-4a29-b322-6cc508731f6b-orangehrm-navigate",
+        "value": 612
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-username",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "operation-499d0893-8cb4-4a29-b322-6cc508731f6b-orangehrm-username",
+        "value": 352
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-password",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "operation-499d0893-8cb4-4a29-b322-6cc508731f6b-orangehrm-password",
+        "value": 10
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-login",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "operation-499d0893-8cb4-4a29-b322-6cc508731f6b-orangehrm-login",
+        "value": 126
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "orangehrm-success",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "operation-499d0893-8cb4-4a29-b322-6cc508731f6b-orangehrm-success",
+        "value": 1595
+      },
+      {
+        "metric": "phase:praxis_grounding",
+        "operationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "source": "praxis_result",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "praxis-not-emitted-cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "value": 0
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "orangehrm-username",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "native-orangehrm-username-1",
+        "value": 342.0188330000383
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "orangehrm-password",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "native-orangehrm-password-1",
+        "value": 7.545209000003524
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "orangehrm-login",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "native-orangehrm-login-1",
+        "value": 123.87712499999907
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "orangehrm-success",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "native-orangehrm-success-1",
+        "value": 1593.7770010000095
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-navigate",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "effect-orangehrm-navigate-1",
+        "value": 0.0232079999987036
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-username",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "effect-orangehrm-username-2",
+        "value": 0.003708000003825873
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-password",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "effect-orangehrm-password-2",
+        "value": 0.0034589999704621732
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-login",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "effect-orangehrm-login-2",
+        "value": 0.0035829999833367765
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "orangehrm-success",
+        "source": "worker_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "effect-orangehrm-success-2",
+        "value": 0.006083999993279576
+      },
+      {
+        "metric": "phase:evidence_finalization",
+        "operationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "source": "artifact_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "evidence-not-requested-cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "value": 0
+      },
+      {
+        "metric": "phase:artifact_retrieval",
+        "operationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "source": "artifact_event",
+        "correlationId": "cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "eventId": "artifact-not-requested-cd187269-82dd-4bc0-bea0-083b1a293cd1",
+        "value": 0
+      }
+    ]
+  },
+  "artifactRefs": [],
+  "verdict": "pass"
+}

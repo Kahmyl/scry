@@ -3,14 +3,26 @@ import os from "node:os";
 import path from "node:path";
 
 import type { CurrentAction, ExecutionPolicy, ExpectedEffect } from "@scry/contracts";
-import type { Page } from "playwright";
+import { chromium, type Page } from "playwright";
 
 import { createExecutionCapabilityManifest, ExecutionKernel } from "../src/execution-kernel.js";
+
+export async function openTestBrowser() {
+  const channel = process.env.SCRY_BROWSER_CHANNEL ?? "chrome";
+  const browser = await chromium.launch({
+    headless: true,
+    ...(channel === "chromium" ? {} : { channel }),
+  });
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  return { browser, context, page };
+}
 
 export function kernelInteractionExecutor(input: {
   sessionId: string;
   environmentId: string;
   policy: ExecutionPolicy;
+  secretResolver?: (reference: string) => Promise<string>;
 }) {
   const kernel = new ExecutionKernel();
   const mutationStates = new Map<string, string>();
@@ -23,6 +35,7 @@ export function kernelInteractionExecutor(input: {
     resolveEffectPage?: () => Promise<Page | undefined>;
     objectiveDelta?: string;
     signal?: AbortSignal;
+    privacyGate?: import("@scry/veil").VeilRuntimeCoordinator;
   }) => {
     const correlationId = randomUUID();
     const operationId = operation.operationId ?? `test-${operation.ordinal}`;
@@ -63,10 +76,12 @@ export function kernelInteractionExecutor(input: {
           outputDirectory: path.join(os.tmpdir(), "scry-kernel-test"),
           environmentId: input.environmentId,
           veilAdmissionKey: "test-kernel-admission-key",
+          ...(input.secretResolver ? { secretResolver: input.secretResolver } : {}),
           ...(operation.signal ? { signal: operation.signal } : {}),
         },
       },
       ...operation,
+      ...(operation.privacyGate ? { privacyGate: operation.privacyGate } : {}),
     });
   };
 }

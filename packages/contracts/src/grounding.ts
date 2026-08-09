@@ -23,7 +23,8 @@ export const evidenceFamilySchema = z.enum([
   "runtime",
   "effect",
 ]);
-const semanticRoleSchema = z.enum([
+/** Shared, closed vocabulary for semantic browser roles. */
+export const semanticRoleSchema = z.enum([
   "button",
   "checkbox",
   "combobox",
@@ -48,10 +49,12 @@ const semanticScopeKindSchema = z.enum([
   "page",
   "dialog",
   "form",
+  "section",
   "field_group",
   "table",
   "row",
   "region",
+  "live_region",
   "recently_changed",
 ]);
 export type SemanticScopeInput = {
@@ -150,6 +153,7 @@ export const interactionTargetIntentSchema = z
         labels: z.array(semanticText).max(10).default([]),
         descriptions: z.array(semanticText).max(10).default([]),
         placeholders: z.array(semanticText).max(10).default([]),
+        testIds: z.array(semanticText).max(10).optional(),
         inputTypes: z.array(semanticText).max(10).default([]),
         expectedText: semanticText.optional(),
         visual: visualEvidenceSchema.optional(),
@@ -171,6 +175,8 @@ export const interactionTargetIntentSchema = z
       })
       .strict()
       .default({ requiredFamilies: [] }),
+    /** Server admission records whether matching may be broadened beyond exact identity. */
+    matching: z.enum(["exact", "non_exact"]).optional(),
   })
   .strict()
   .superRefine((intent, context) => {
@@ -303,6 +309,13 @@ export const expectedEffectSchema = z.discriminatedUnion("type", [
       type: z.literal("navigation"),
       url: z.string().min(1).max(2_048).optional(),
       match: z.enum(["exact", "path", "contains"]).default("path"),
+    })
+    .strict(),
+  z
+    .object({
+      /** Internal browser-session ownership proof. M2 authoring cannot satisfy this with same-tab navigation. */
+      type: z.literal("new_page"),
+      origin: z.string().url().optional(),
     })
     .strict(),
   z

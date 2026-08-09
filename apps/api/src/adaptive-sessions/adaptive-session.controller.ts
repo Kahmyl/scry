@@ -1,20 +1,20 @@
 import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common";
 import {
-  adaptiveSessionTransitionSchema,
   advanceAdaptiveSessionSchema,
+  closeAdaptiveSessionSchema,
   startAdaptiveSessionSchema,
-  type AdaptiveSessionTransitionInput,
-  type AdvanceAdaptiveSessionInput,
+  type CloseAdaptiveSessionInput,
+  type MissionAuthoringAdvanceInput,
   type StartAdaptiveSessionInput,
 } from "@scry/contracts";
 
 import { CurrentPrincipal, type Principal } from "../auth/index.js";
 import { ZodValidationPipe } from "../common/validation.pipe.js";
-import { AdaptiveSessionService } from "./adaptive-session.service.js";
+import { MissionFlowAuthoringService } from "./mission-flow-authoring.service.js";
 
-@Controller("api/adaptive-sessions")
+@Controller("api/mission-flow-authoring")
 export class AdaptiveSessionController {
-  constructor(@Inject(AdaptiveSessionService) private readonly sessions: AdaptiveSessionService) {}
+  constructor(@Inject(MissionFlowAuthoringService) private readonly sessions: MissionFlowAuthoringService) {}
 
   @Post()
   start(
@@ -33,38 +33,17 @@ export class AdaptiveSessionController {
   advance(
     @CurrentPrincipal() principal: Principal,
     @Param("sessionId") sessionId: string,
-    @Body(new ZodValidationPipe(advanceAdaptiveSessionSchema)) input: AdvanceAdaptiveSessionInput,
+    @Body(new ZodValidationPipe(advanceAdaptiveSessionSchema)) input: MissionAuthoringAdvanceInput,
   ) {
     return this.sessions.advance(principal, sessionId, input);
   }
 
-  @Post(":sessionId/suspend")
-  suspend(
+  @Post(":sessionId/close")
+  close(
     @CurrentPrincipal() principal: Principal,
     @Param("sessionId") sessionId: string,
-    @Body(new ZodValidationPipe(adaptiveSessionTransitionSchema))
-    input: AdaptiveSessionTransitionInput,
+    @Body(new ZodValidationPipe(closeAdaptiveSessionSchema)) input: CloseAdaptiveSessionInput,
   ) {
-    return this.sessions.suspend(principal, sessionId, input);
-  }
-
-  @Post(":sessionId/resume")
-  resume(
-    @CurrentPrincipal() principal: Principal,
-    @Param("sessionId") sessionId: string,
-    @Body(new ZodValidationPipe(adaptiveSessionTransitionSchema))
-    input: AdaptiveSessionTransitionInput,
-  ) {
-    return this.sessions.resume(principal, sessionId, input);
-  }
-
-  @Post(":sessionId/cancel")
-  cancel(
-    @CurrentPrincipal() principal: Principal,
-    @Param("sessionId") sessionId: string,
-    @Body(new ZodValidationPipe(adaptiveSessionTransitionSchema))
-    input: AdaptiveSessionTransitionInput,
-  ) {
-    return this.sessions.cancel(principal, sessionId, input);
+    return this.sessions.close(principal, sessionId, input.idempotencyKey);
   }
 }

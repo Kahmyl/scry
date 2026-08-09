@@ -56,7 +56,10 @@ function fixturePage(): string {
     const dropdown = document.querySelector('#dropdown');
     const options = document.querySelector('#options');
     const proceed = document.querySelector('#continue');
-    login.addEventListener('click', () => document.body.dataset.authenticated = 'true');
+    login.addEventListener('click', () => {
+      document.body.dataset.authenticated = 'true';
+      document.querySelector('main').insertAdjacentHTML('beforeend', '<h2>Partner Portal</h2>');
+    });
     malformed.addEventListener('click', () => document.body.dataset.controls = 'open');
     dropdown.addEventListener('click', () => { options.hidden = false; dropdown.setAttribute('aria-expanded', 'true'); });
     options.addEventListener('click', () => {

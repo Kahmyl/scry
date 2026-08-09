@@ -14,13 +14,19 @@ import type {
 import type { AuthoringBrowserSession } from "@scry/executor";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 
-import { ExecutionCapabilityFactory, ExecutionKernelService } from "../runtime/index.js";
+import {
+  ExecutionCapabilityFactory,
+  ExecutionKernelService,
+  NativeBrowserDriver,
+} from "../runtime/index.js";
 import { AdaptiveSessionRepository } from "./adaptive-session.repository.js";
 
 export type AdaptiveKernelExecutionResult = {
   outcome: OperationOutcome;
   capabilityManifestDigest: string;
   decisionBoundary: AgentDecisionBoundary;
+  timings: { resolveMs: number; executeMs: number; verifyMs: number };
+  safeState: { url: string; documentEpoch: number };
 };
 
 type TestRuntimeBinding = (
@@ -34,12 +40,18 @@ type OwnedRuntime = {
   tail: Promise<void>;
 };
 
+type OperationTimingCollector = {
+  onNativeResolution: (result: { status: "resolved" | "fallback"; reasonCode?: string; durationMs: number }) => void;
+  onExpectedEffectVerification: (result: { status: "succeeded" | "failed"; reasonCode?: string; durationMs: number }) => void;
+};
+
 @Injectable()
 export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
   private readonly testBindings = new Map<string, TestRuntimeBinding>();
   private readonly runtimes = new Map<string, OwnedRuntime>();
   private readonly provisioning = new Map<string, Promise<OwnedRuntime>>();
   private readonly operationModes = new Map<string, ExecutionMode>();
+  private readonly operationTimingCollectors = new Map<string, OperationTimingCollector>();
   private readonly ownerId = randomUUID();
   private readonly leaseDurationMs = Number(
     process.env.ADAPTIVE_SESSION_RUNTIME_LEASE_MS ?? 30_000,
@@ -52,6 +64,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     @Inject(ExecutionKernelService) private readonly kernel: ExecutionKernelService,
     @Inject(ExecutionCapabilityFactory) private readonly capabilities: ExecutionCapabilityFactory,
     @Inject(AdaptiveSessionRepository) private readonly sessions: AdaptiveSessionRepository,
+    @Inject(NativeBrowserDriver) private readonly nativeBrowser: NativeBrowserDriver,
   ) {}
 
   /** Test seam only. Production execution always provisions from durable session state. */
@@ -70,7 +83,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     const testBinding = this.testBindings.get(sessionId);
     if (testBinding) return testBinding(this.kernel, { sessionId, operation });
 
-    const owned = await this.runtime(sessionId, operation.operationId);
+    const owned = await this.runtime(sessionId, operation);
     await this.sessions.heartbeatRuntimeLease({
       sessionId,
       ownerId: this.ownerId,
@@ -80,6 +93,8 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
 
     return this.exclusive(owned, async () => {
       const context = await this.sessions.runtimeContextFor(sessionId);
+      let resolveMs = 0;
+      let verifyMs = 0;
       const capability = this.createCapabilities({
         sessionId,
         environmentId: context.environmentId,
@@ -87,10 +102,17 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         operationId: operation.operationId,
         mode: operation.mode,
         policy: context.policy,
+        onNativeResolution: (result) => { resolveMs += result.durationMs; },
+        onExpectedEffectVerification: (result) => { verifyMs += result.durationMs; },
       });
       const modeKey = `${sessionId}:${operation.operationId}`;
       this.operationModes.set(modeKey, operation.mode);
+      this.operationTimingCollectors.set(modeKey, {
+        onNativeResolution: (result) => { resolveMs += result.durationMs; },
+        onExpectedEffectVerification: (result) => { verifyMs += result.durationMs; },
+      });
       try {
+        const executeStartedAt = performance.now();
         const result = await owned.session.interact(operation.action, {
           operationId: operation.operationId,
           correlationId: context.correlationId,
@@ -107,9 +129,12 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           outcome: result.outcome,
           capabilityManifestDigest: capability.manifest.digest,
           decisionBoundary: decisionBoundary(result.outcome),
+          timings: { resolveMs, executeMs: performance.now() - executeStartedAt, verifyMs },
+          safeState: { url: result.url, documentEpoch: result.documentEpoch },
         };
       } finally {
         this.operationModes.delete(modeKey);
+        this.operationTimingCollectors.delete(modeKey);
       }
     });
   }
@@ -131,19 +156,19 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     await Promise.all([...this.runtimes.keys()].map((sessionId) => this.close(sessionId)));
   }
 
-  private runtime(sessionId: string, journalOperationId: string) {
+  private runtime(sessionId: string, operation: AdaptiveSessionOperationInput) {
     const current = this.runtimes.get(sessionId);
     if (current) return Promise.resolve(current);
     const pending = this.provisioning.get(sessionId);
     if (pending) return pending;
-    const provisioning = this.provision(sessionId, journalOperationId).finally(() =>
+    const provisioning = this.provision(sessionId, operation).finally(() =>
       this.provisioning.delete(sessionId),
     );
     this.provisioning.set(sessionId, provisioning);
     return provisioning;
   }
 
-  private async provision(sessionId: string, journalOperationId: string): Promise<OwnedRuntime> {
+  private async provision(sessionId: string, operation: AdaptiveSessionOperationInput): Promise<OwnedRuntime> {
     if (!this.veilAdmissionKey) throw new Error("VEIL_ADMISSION_KEY_REQUIRED");
     const context = await this.sessions.runtimeContextFor(sessionId);
     const lease = await this.sessions.claimRuntimeLease({
@@ -181,6 +206,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           veilAdmissionKey: this.veilAdmissionKey,
           browserChannel: this.browserChannel,
           policy: context.policy,
+          openBrowser: () => this.nativeBrowser.openBrowser(),
           executeInteraction: (input) =>
             this.executeInteraction({
               sessionId,
@@ -196,13 +222,20 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         context.lastObservation?.url,
         context.policy.allowedOrigins,
       );
-      await browser.page.goto(continuationUrl ?? context.baseOrigin, {
-        waitUntil: "domcontentloaded",
-      });
+      const admittedFirstNavigation = operation.action.type === "navigate"
+        ? safeContinuationUrl(operation.action.url, context.policy.allowedOrigins)
+        : undefined;
+      await this.nativeBrowser.navigateAndWait(
+        browser.page,
+        continuationUrl ?? admittedFirstNavigation ?? context.baseOrigin,
+        context.policy.allowedOrigins,
+        30_000,
+        context.policy.trustedScriptOrigins ?? [],
+      );
       const observation = await browser.observeDocument();
       await this.sessions.recordVerifiedObservation({
         sessionId,
-        operationId: journalOperationId,
+        operationId: operation.operationId,
         documentEpoch: observation.documentEpoch,
         url: observation.url,
       });
@@ -241,8 +274,10 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     resolveEffectPage?: () => Promise<import("playwright").Page | undefined>;
     objectiveDelta?: string;
     signal?: AbortSignal;
+    privacyGate: import("@scry/veil").VeilRuntimeCoordinator;
   }) {
     const correlationId = input.correlationId ?? randomUUID();
+    const collector = this.operationTimingCollectors.get(`${input.sessionId}:${input.operationId}`);
     const capability = this.createCapabilities({
       sessionId: input.sessionId,
       environmentId: input.environmentId,
@@ -258,6 +293,10 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           fencingToken: input.fencingToken,
         }),
       ...(input.signal ? { signal: input.signal } : {}),
+      ...(collector ? {
+        onNativeResolution: collector.onNativeResolution,
+        onExpectedEffectVerification: collector.onExpectedEffectVerification,
+      } : {}),
     });
     return this.kernel.interact({
       request: {
@@ -281,6 +320,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       ...(input.expectedEffect ? { expectedEffect: input.expectedEffect } : {}),
       ...(input.resolveEffectPage ? { resolveEffectPage: input.resolveEffectPage } : {}),
       ordinal: input.ordinal,
+      privacyGate: input.privacyGate,
     });
   }
 
@@ -293,6 +333,8 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     policy: ExecutionPolicy;
     onMutationDispatch?: () => Promise<void>;
     signal?: AbortSignal;
+    onNativeResolution?: (result: { status: "resolved" | "fallback"; reasonCode?: string; durationMs: number }) => void;
+    onExpectedEffectVerification?: (result: { status: "succeeded" | "failed"; reasonCode?: string; durationMs: number }) => void;
   }) {
     return this.capabilities.createSession({
       sessionId: input.sessionId,
@@ -305,9 +347,12 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         environmentId: input.environmentId,
         veilAdmissionKey: this.veilAdmissionKey!,
         veilPolicySnapshot: compileDefaultVeilPolicy(input.policy),
+        nativeResolutionPolicy: "native_only",
         secretResolver: (reference) => this.sessions.resolveCredential(input.sessionId, reference),
         ...(input.onMutationDispatch ? { onMutationDispatch: input.onMutationDispatch } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
+        ...(input.onNativeResolution ? { onNativeResolution: input.onNativeResolution } : {}),
+        ...(input.onExpectedEffectVerification ? { onExpectedEffectVerification: input.onExpectedEffectVerification } : {}),
       },
     });
   }
@@ -333,7 +378,7 @@ function decisionBoundary(outcome: OperationOutcome): AgentDecisionBoundary {
     return {
       type: "mutation_reconciliation_required",
       reasonCode: "MUTATION_OUTCOME_UNKNOWN",
-      safeActions: ["get_adaptive_session", "cancel_adaptive_session"],
+      safeActions: ["get_flow_authoring"],
     };
   }
   return outcome.functionalResult === "succeeded"
@@ -341,7 +386,7 @@ function decisionBoundary(outcome: OperationOutcome): AgentDecisionBoundary {
     : {
         type: "environment_unavailable",
         reasonCode: outcome.reasonCode ?? "ADAPTIVE_OPERATION_FAILED",
-        safeActions: ["get_adaptive_session", "advance_adaptive_session"],
+        safeActions: ["get_flow_authoring", "advance_flow_authoring"],
       };
 }
 

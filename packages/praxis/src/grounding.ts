@@ -10,7 +10,7 @@ import type {
   SemanticFingerprint,
   SemanticRelation,
 } from "@scry/contracts";
-import { chromium, type Frame, type Locator, type Page } from "playwright";
+import type { Browser, BrowserContext, Frame, Locator, Page } from "playwright";
 import { resolveVisualAnchors } from "./visual-grounding.js";
 import {
   inspectBrowserRuntimeArtifacts,
@@ -403,6 +403,9 @@ export async function verifyExpectedEffect(
       throw new ExpectedEffectError("EXPECTED_EFFECT_NOT_OBSERVED");
     }
   }
+  if (effect.type === "new_page") {
+    throw new ExpectedEffectError("EXPECTED_NEW_PAGE_NOT_OBSERVED");
+  }
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -473,20 +476,21 @@ export function browserObservationRuntimeHealth() {
   };
 }
 
-export async function verifyBrowserObservationRuntime(browserChannel?: string) {
+export async function verifyBrowserObservationRuntime(
+  browserChannel: string | undefined,
+  openBrowser: () => Promise<{ browser: Browser; context: BrowserContext; page: Page }>,
+) {
   const staticHealth = browserObservationRuntimeHealth();
   if (!staticHealth.healthy) return staticHealth;
   const diagnostics = [...staticHealth.diagnostics];
   let browser;
   try {
-    const launchChannel = playwrightBrowserChannel(browserChannel);
-    browser = await chromium.launch({
-      headless: true,
-      ...(launchChannel ? { channel: launchChannel } : {}),
-    });
-    const context = await browser.newContext();
+    playwrightBrowserChannel(browserChannel);
+    const opened = await openBrowser();
+    browser = opened.browser;
+    const context = opened.context;
     await context.addInitScript({ content: visualRedactionInitScript });
-    const page = await context.newPage();
+    const page = opened.page;
     const pageErrors: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
     await page.goto(

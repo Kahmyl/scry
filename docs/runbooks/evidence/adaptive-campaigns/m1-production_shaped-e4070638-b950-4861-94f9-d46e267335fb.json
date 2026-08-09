@@ -1,0 +1,562 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "e4070638-b950-4861-94f9-d46e267335fb",
+  "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+  "milestone": "M1",
+  "target": "production_shaped",
+  "releaseId": "m1-local-2b9e22e42cf3",
+  "schemaFingerprint": "9128a39f0b5320c3e9062863ea7f0103c28af038619c023934a685769941d524",
+  "runtimeVersion": "m1-local",
+  "gitCommit": "2b9e22e42cf3e476cb3e007d9361ea217150042a",
+  "startedAt": "2026-08-09T10:19:28.356Z",
+  "completedAt": "2026-08-09T10:19:29.013Z",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "adaptive-session-cleanup",
+      "description": "The campaign cancels its Adaptive Session and releases browser ownership",
+      "status": "passed"
+    },
+    {
+      "id": "native-only-standard-controls",
+      "description": "Every standard authentication control resolves natively with zero Praxis calls",
+      "status": "passed"
+    },
+    {
+      "id": "redaction",
+      "description": "Protected values are absent from MCP responses and retrieved artifacts",
+      "status": "passed"
+    },
+    {
+      "id": "artifact-round-trip",
+      "description": "Every artifact emitted by the deployed journey finalizes and round-trips",
+      "status": "passed"
+    },
+    {
+      "id": "deployed-journey",
+      "description": "The deployed MCP authoring journey reaches an objective-completed boundary",
+      "status": "passed"
+    },
+    {
+      "id": "authoring-turn-surface",
+      "description": "M1 executes one grouped advance_flow_authoring call",
+      "status": "passed"
+    },
+    {
+      "id": "mission-owned",
+      "description": "Campaign creates exactly one Mission, Objective, and owned Flow draft",
+      "status": "passed"
+    },
+    {
+      "id": "latency-boundaries",
+      "description": "Agent decision boundaries fall by at least 70 percent and five raw calls",
+      "status": "passed"
+    },
+    {
+      "id": "latency-mcp",
+      "description": "MCP authoring calls fall by at least 70 percent and five raw calls",
+      "status": "passed"
+    },
+    {
+      "id": "latency-bytes",
+      "description": "Unchanged agent-facing bytes are reduced by at least 60 percent",
+      "status": "passed"
+    },
+    {
+      "id": "latency-absolute",
+      "description": "The grouped journey uses at most four decision boundaries and one MCP call",
+      "status": "passed"
+    },
+    {
+      "id": "latency-no-plan-rewrites",
+      "description": "The grouped journey performs no unchanged-state reads or plan rewrites",
+      "status": "passed"
+    },
+    {
+      "id": "latency-native-regression",
+      "description": "Median native resolution time increases by no more than ten percent over the direct baseline",
+      "status": "passed"
+    },
+    {
+      "id": "measurement-integrity",
+      "description": "All required counts, phases, and deployed-component traversals are backed by observed events",
+      "status": "passed"
+    }
+  ],
+  "observationalChecks": [],
+  "futureScope": [],
+  "metrics": {
+    "totalWallClockMs": 653.139542,
+    "agentDecisionBoundaries": 1,
+    "mcpRequests": 1,
+    "apiRequests": 1,
+    "modelClientIdleMs": 0,
+    "bytesReturnedToAgent": 3492,
+    "unchangedStateReads": 0,
+    "retriesByReason": {},
+    "phases": {
+      "api": {
+        "count": 1,
+        "p50Ms": 6.5163330000000315,
+        "p95Ms": 6.5163330000000315,
+        "maxMs": 6.5163330000000315
+      },
+      "artifact_retrieval": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "browser_startup": {
+        "count": 1,
+        "p50Ms": 195.872,
+        "p95Ms": 195.872,
+        "maxMs": 195.872
+      },
+      "database": {
+        "count": 1,
+        "p50Ms": 5.0914169999999785,
+        "p95Ms": 5.0914169999999785,
+        "maxMs": 5.0914169999999785
+      },
+      "document_observation": {
+        "count": 1,
+        "p50Ms": 195.872,
+        "p95Ms": 195.872,
+        "maxMs": 195.872
+      },
+      "evidence_finalization": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "expected_effect_verification": {
+        "count": 5,
+        "p50Ms": 0.005332999979145825,
+        "p95Ms": 0.04195900002378039,
+        "maxMs": 0.04195900002378039
+      },
+      "interaction_execution": {
+        "count": 5,
+        "p50Ms": 13,
+        "p95Ms": 69,
+        "maxMs": 69
+      },
+      "mcp_round_trip": {
+        "count": 1,
+        "p50Ms": 413.484417,
+        "p95Ms": 413.484417,
+        "maxMs": 413.484417
+      },
+      "mcp_session_start_round_trip": {
+        "count": 1,
+        "p50Ms": 54.59325000000001,
+        "p95Ms": 54.59325000000001,
+        "maxMs": 54.59325000000001
+      },
+      "native_resolution": {
+        "count": 4,
+        "p50Ms": 2.969041999982437,
+        "p95Ms": 25.65191699998104,
+        "maxMs": 25.65191699998104
+      },
+      "praxis_grounding": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "queue_wait": {
+        "count": 1,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "maxMs": 0
+      },
+      "redis": {
+        "count": 1,
+        "p50Ms": 7.30612499999998,
+        "p95Ms": 7.30612499999998,
+        "maxMs": 7.30612499999998
+      },
+      "worker": {
+        "count": 1,
+        "p50Ms": 6.108124999999973,
+        "p95Ms": 6.108124999999973,
+        "maxMs": 6.108124999999973
+      }
+    },
+    "slowestOperations": [
+      {
+        "operationId": "mcp-643ca427-94a7-4979-a2ee-b0143ec9f72b-2",
+        "phase": "mcp_round_trip",
+        "durationMs": 413.484417
+      },
+      {
+        "operationId": "fixture-1-navigate",
+        "phase": "browser_startup",
+        "durationMs": 195.872
+      },
+      {
+        "operationId": "fixture-1-navigate",
+        "phase": "document_observation",
+        "durationMs": 195.872
+      },
+      {
+        "operationId": "fixture-2-email",
+        "phase": "interaction_execution",
+        "durationMs": 69
+      },
+      {
+        "operationId": "mcp-643ca427-94a7-4979-a2ee-b0143ec9f72b-1",
+        "phase": "mcp_session_start_round_trip",
+        "durationMs": 54.59325000000001
+      },
+      {
+        "operationId": "fixture-4-sign-in",
+        "phase": "interaction_execution",
+        "durationMs": 40
+      },
+      {
+        "operationId": "fixture-2-email",
+        "phase": "native_resolution",
+        "durationMs": 25.65191699998104
+      },
+      {
+        "operationId": "fixture-1-navigate",
+        "phase": "interaction_execution",
+        "durationMs": 13
+      },
+      {
+        "operationId": "fixture-3-password",
+        "phase": "interaction_execution",
+        "durationMs": 13
+      },
+      {
+        "operationId": "fixture-5-partner-portal",
+        "phase": "interaction_execution",
+        "durationMs": 8
+      },
+      {
+        "operationId": "redis",
+        "phase": "redis",
+        "durationMs": 7.30612499999998
+      },
+      {
+        "operationId": "api",
+        "phase": "api",
+        "durationMs": 6.5163330000000315
+      },
+      {
+        "operationId": "worker",
+        "phase": "worker",
+        "durationMs": 6.108124999999973
+      },
+      {
+        "operationId": "database",
+        "phase": "database",
+        "durationMs": 5.0914169999999785
+      },
+      {
+        "operationId": "fixture-3-password",
+        "phase": "native_resolution",
+        "durationMs": 3.11304199998267
+      },
+      {
+        "operationId": "fixture-5-partner-portal",
+        "phase": "native_resolution",
+        "durationMs": 2.969041999982437
+      },
+      {
+        "operationId": "fixture-4-sign-in",
+        "phase": "native_resolution",
+        "durationMs": 2.1637920000066515
+      },
+      {
+        "operationId": "fixture-1-navigate",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.04195900002378039
+      },
+      {
+        "operationId": "fixture-5-partner-portal",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.005333000008249655
+      },
+      {
+        "operationId": "fixture-4-sign-in",
+        "phase": "expected_effect_verification",
+        "durationMs": 0.005332999979145825
+      }
+    ],
+    "measurements": [
+      {
+        "metric": "phase:database",
+        "operationId": "database",
+        "source": "campaign_client",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "database-e4070638-b950-4861-94f9-d46e267335fb",
+        "value": 5.0914169999999785
+      },
+      {
+        "metric": "phase:redis",
+        "operationId": "redis",
+        "source": "campaign_client",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "redis-e4070638-b950-4861-94f9-d46e267335fb",
+        "value": 7.30612499999998
+      },
+      {
+        "metric": "apiRequests",
+        "operationId": "capabilities-e4070638-b950-4861-94f9-d46e267335fb",
+        "source": "api_http",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "capabilities-e4070638-b950-4861-94f9-d46e267335fb",
+        "value": 1
+      },
+      {
+        "metric": "phase:api",
+        "operationId": "api",
+        "source": "api_http",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "api-e4070638-b950-4861-94f9-d46e267335fb",
+        "value": 6.5163330000000315
+      },
+      {
+        "metric": "phase:worker",
+        "operationId": "worker",
+        "source": "control_plane_query",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "worker-e4070638-b950-4861-94f9-d46e267335fb",
+        "value": 6.108124999999973
+      },
+      {
+        "metric": "phase:mcp_session_start_round_trip",
+        "operationId": "mcp-643ca427-94a7-4979-a2ee-b0143ec9f72b-1",
+        "source": "mcp_http",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "mcp-643ca427-94a7-4979-a2ee-b0143ec9f72b-1-duration",
+        "value": 54.59325000000001
+      },
+      {
+        "metric": "mcpRequests",
+        "operationId": "mcp-643ca427-94a7-4979-a2ee-b0143ec9f72b-2",
+        "source": "mcp_http",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "mcp-643ca427-94a7-4979-a2ee-b0143ec9f72b-2",
+        "value": 1
+      },
+      {
+        "metric": "phase:mcp_round_trip",
+        "operationId": "mcp-643ca427-94a7-4979-a2ee-b0143ec9f72b-2",
+        "source": "mcp_http",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "mcp-643ca427-94a7-4979-a2ee-b0143ec9f72b-2-duration",
+        "value": 413.484417
+      },
+      {
+        "metric": "bytesReturnedToAgent",
+        "operationId": "mcp-643ca427-94a7-4979-a2ee-b0143ec9f72b-2-bytes",
+        "source": "mcp_http",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "mcp-643ca427-94a7-4979-a2ee-b0143ec9f72b-2-bytes",
+        "value": 3492
+      },
+      {
+        "metric": "agentDecisionBoundaries",
+        "operationId": "mcp-643ca427-94a7-4979-a2ee-b0143ec9f72b-2-boundary",
+        "source": "mcp_http",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "mcp-643ca427-94a7-4979-a2ee-b0143ec9f72b-2-boundary",
+        "value": 1
+      },
+      {
+        "metric": "phase:queue_wait",
+        "operationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "source": "queue_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "queue-not-applicable-643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "value": 0
+      },
+      {
+        "metric": "phase:browser_startup",
+        "operationId": "fixture-1-navigate",
+        "source": "browser_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "browser-643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "value": 195.872
+      },
+      {
+        "metric": "phase:document_observation",
+        "operationId": "fixture-1-navigate",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "observation-643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "value": 195.872
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "fixture-1-navigate",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "operation-ed7412ff-d5d3-42a1-a1f1-c92cd1aabf0d-fixture-1-navigate",
+        "value": 13
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "fixture-2-email",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "operation-ed7412ff-d5d3-42a1-a1f1-c92cd1aabf0d-fixture-2-email",
+        "value": 69
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "fixture-3-password",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "operation-ed7412ff-d5d3-42a1-a1f1-c92cd1aabf0d-fixture-3-password",
+        "value": 13
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "fixture-4-sign-in",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "operation-ed7412ff-d5d3-42a1-a1f1-c92cd1aabf0d-fixture-4-sign-in",
+        "value": 40
+      },
+      {
+        "metric": "phase:interaction_execution",
+        "operationId": "fixture-5-partner-portal",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "operation-ed7412ff-d5d3-42a1-a1f1-c92cd1aabf0d-fixture-5-partner-portal",
+        "value": 8
+      },
+      {
+        "metric": "phase:praxis_grounding",
+        "operationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "source": "praxis_result",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "praxis-not-emitted-643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "value": 0
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "fixture-2-email",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "native-fixture-2-email-1",
+        "value": 25.65191699998104
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "fixture-3-password",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "native-fixture-3-password-1",
+        "value": 3.11304199998267
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "fixture-4-sign-in",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "native-fixture-4-sign-in-1",
+        "value": 2.1637920000066515
+      },
+      {
+        "metric": "phase:native_resolution",
+        "operationId": "fixture-5-partner-portal",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "native-fixture-5-partner-portal-1",
+        "value": 2.969041999982437
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "fixture-1-navigate",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "effect-fixture-1-navigate-1",
+        "value": 0.04195900002378039
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "fixture-2-email",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "effect-fixture-2-email-2",
+        "value": 0.005124999996041879
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "fixture-3-password",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "effect-fixture-3-password-2",
+        "value": 0.003708000003825873
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "fixture-4-sign-in",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "effect-fixture-4-sign-in-2",
+        "value": 0.005332999979145825
+      },
+      {
+        "metric": "phase:expected_effect_verification",
+        "operationId": "fixture-5-partner-portal",
+        "source": "worker_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "effect-fixture-5-partner-portal-2",
+        "value": 0.005333000008249655
+      },
+      {
+        "metric": "phase:evidence_finalization",
+        "operationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "source": "artifact_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "evidence-not-requested-643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "value": 0
+      },
+      {
+        "metric": "phase:artifact_retrieval",
+        "operationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "source": "artifact_event",
+        "correlationId": "643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "eventId": "artifact-not-requested-643ca427-94a7-4979-a2ee-b0143ec9f72b",
+        "value": 0
+      }
+    ]
+  },
+  "artifactRefs": [
+    "72bd5a7d-666e-486e-a9d9-0a1cd48a1e5b"
+  ],
+  "verdict": "pass"
+}

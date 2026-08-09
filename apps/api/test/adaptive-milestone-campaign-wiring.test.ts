@@ -22,10 +22,9 @@ describe("adaptive milestone campaign wiring", () => {
     ).toMatchObject({ requiredEnvironment: ["SCRY_AUTHORING_TEST_DATABASE_URL"] });
   });
 
-  it("enables the strict corpus gate for M5 instead of accepting its lightweight mode", () => {
+  it("keeps the strict corpus gate unconditional for M5", () => {
     expect(milestoneCommands("M5").find((command) => command.id === "m5-authoring-release"))
       .toMatchObject({
-        environment: { SCRY_RELEASE_CORPUS_GATE_ENABLED: "true" },
         requiredEnvironment: ["SCRY_AUTHORING_TEST_DATABASE_URL", "SCRY_VITRACT_PREVIEW_E2E"],
       });
   });

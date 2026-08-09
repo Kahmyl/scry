@@ -11,3 +11,4 @@ export * from "./calibration.js";
 export * from "./probe.js";
 export * from "./types.js";
 export * from "./execution-kernel.js";
+export * from "./native-browser-navigation.js";

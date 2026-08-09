@@ -401,3 +401,5 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir adaptive-authoring-pr9-pr12.sql
 \ir adaptive-execution-foundation-m0-m1.sql
 \ir adaptive-sessions-m3.sql
+\ir mission-first-live-convergence-m1.sql
+\ir mission-authoring-grouped-turns-m2.sql

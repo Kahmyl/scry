@@ -178,7 +178,9 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
     let verification: PraxisVerification = {
       local: "unknown",
       effect: "unknown",
-      effectType: request.expectedEffect.type,
+      // M2's popup ownership proof is native-only; Praxis records it as navigation
+      // if a legacy caller reaches this compatibility transaction path.
+      effectType: request.expectedEffect.type === "new_page" ? "navigation" : request.expectedEffect.type,
     };
     let providerTimings: PraxisTiming["providerTimings"] = [];
     let escalationLevel: number | null = null;
