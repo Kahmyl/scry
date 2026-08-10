@@ -3,6 +3,8 @@ import { Module } from "@nestjs/common";
 import { InfrastructureModule } from "../infrastructure/index.js";
 import { ExecutionRepository } from "./repositories/execution.repository.js";
 import { ExecutionKernelRepository } from "./repositories/execution-kernel.repository.js";
+import { ProtectedOperationRepository } from "./repositories/protected-operation.repository.js";
+import { ProtectedOutputPersistenceRepository } from "./repositories/protected-output-persistence.repository.js";
 import {
   ExecutionCapabilityFactory,
   ExecutionKernelService,
@@ -16,6 +18,8 @@ import { NativeBrowserDriver } from "./native-browser-driver/index.js";
   providers: [
     ExecutionRepository,
     ExecutionKernelRepository,
+    ProtectedOperationRepository,
+    ProtectedOutputPersistenceRepository,
     ExecutionCapabilityFactory,
     ExecutionKernelService,
     RunQueueService,
@@ -25,6 +29,8 @@ import { NativeBrowserDriver } from "./native-browser-driver/index.js";
   exports: [
     ExecutionRepository,
     ExecutionKernelRepository,
+    ProtectedOperationRepository,
+    ProtectedOutputPersistenceRepository,
     ExecutionCapabilityFactory,
     ExecutionKernelService,
     RunQueueService,

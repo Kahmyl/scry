@@ -90,11 +90,11 @@ describe("executor protected assertion persistence identity", () => {
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
       veilAdmissionKey: "protected-assertion-test-admission-key-32-bytes",
       protectedTransactionStore: {
-        claim: async () => ({ state: ledger, fencingToken: 1 }),
+        claim: async () => ({ id: "protected-operation", state: ledger, version: 1, fencingToken: 1 }),
         transition: async ({ expected, next }) => {
-          if (ledger !== expected) return false;
+          if (ledger !== expected) throw new Error("PROTECTED_OPERATION_TRANSITION_FENCED");
           ledger = next;
-          return true;
+          return { id: "protected-operation", state: ledger, version: 2, fencingToken: 1 };
         },
         record: async () => undefined,
       },
@@ -105,6 +105,21 @@ describe("executor protected assertion persistence identity", () => {
       publicValueCapture: async ({ value }) => {
         expect(value).toBe(publicValue);
         return { valueId: randomUUID() };
+      },
+      atomicOutputCapture: async ({ claim, outputs }) => {
+        const references: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "run" | "project" }> = {};
+        for (const output of outputs) {
+          if (output.classification === "protected") {
+            expect(output.value).toBe(protectedValue);
+            references[output.reference] = { classification: "protected", credentialId: randomUUID(), scope: output.scope };
+          } else {
+            expect(output.value).toBe(publicValue);
+            references[output.reference] = { classification: "public", valueId: randomUUID(), scope: output.scope };
+          }
+          output.value = "";
+        }
+        ledger = "persisted";
+        return { claim: { ...claim, state: "persisted", version: claim.version + 1 }, references };
       },
       onPraxisResult: (result) => {
         results.push(result);

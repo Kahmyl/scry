@@ -39,7 +39,24 @@ export async function extractAndPersistProtectedOutputs(
   transaction: ProtectedTransaction,
   dependencies: ProtectedTransactionDependencies,
   facts: ProtectedTransactionFacts,
+  claim: import("./protected-transaction-coordinator.js").ProtectedOperationClaim,
 ) {
+  const acquired = await acquireProtectedOutputs(page, transaction, dependencies, facts);
+  return persistAcquiredProtectedOutputs(transaction, dependencies, facts, acquired, claim);
+}
+
+export type AcquiredProtectedOutputSet = Array<{
+  output: ProtectedTransaction["extraction"]["outputs"][number];
+  value: string;
+  adapter: import("@scry/contracts").ProtectedAcquisitionEvidence["adapter"];
+}>;
+
+export async function acquireProtectedOutputs(
+  page: Page,
+  transaction: ProtectedTransaction,
+  dependencies: ProtectedTransactionDependencies,
+  facts: ProtectedTransactionFacts,
+): Promise<AcquiredProtectedOutputSet> {
   const deadline = Date.now() + transaction.extraction.timeoutMs;
   const extracted = await Promise.all(
     transaction.extraction.outputs.map(async (output) => ({
@@ -51,6 +68,7 @@ export async function extractAndPersistProtectedOutputs(
       ),
     })),
   );
+  const acquired: AcquiredProtectedOutputSet = [];
   for (const { output, extraction } of extracted) {
     facts.diagnostics.push(...extraction.diagnostics);
     if (extraction.result?.kind === "copy_experience_verified") {
@@ -67,59 +85,80 @@ export async function extractAndPersistProtectedOutputs(
     if (!extraction.result || extraction.result.kind !== "captured_value") {
       if (output.classification === "protected") facts.protectedExtraction = "not_found";
       else facts.publicExtraction = "not_found";
-      facts.reasonCode =
-        output.classification === "protected"
+      const networkFailure = extraction.diagnostics
+        .find((diagnostic) => diagnostic.method === "protected_network_value")
+        ?.lastFailureCode;
+      facts.reasonCode = networkFailure?.startsWith("PROTECTED_RESPONSE_")
+        ? networkFailure
+        : output.classification === "protected"
           ? "PROTECTED_VALUE_UNAVAILABLE"
           : "PUBLIC_VALUE_UNAVAILABLE";
       facts.failurePhase = "extraction";
       facts.retryClass = "manual_review";
-      continue;
+      throw new PhaseError(facts.reasonCode, "acquisition", "manual_review");
     }
-    if (output.classification === "protected") {
-      dependencies.redactor.add(extraction.result.value);
-      facts.protectedExtraction = "captured";
-      try {
-        const stored = await dependencies.persistSecret({
-          operationId: transaction.operationId,
+    if (output.classification === "protected") dependencies.redactor.add(extraction.result.value);
+    acquired.push({ output, value: extraction.result.value, adapter: extraction.result.adapter });
+  }
+  facts.protectedExtraction = acquired.some(({ output }) => output.classification === "protected") ? "captured" : "not_attempted";
+  facts.publicExtraction = acquired.some(({ output }) => output.classification === "public") ? "captured" : "not_attempted";
+  return acquired;
+}
+
+export async function persistAcquiredProtectedOutputs(
+  transaction: ProtectedTransaction,
+  dependencies: ProtectedTransactionDependencies,
+  facts: ProtectedTransactionFacts,
+  acquired: AcquiredProtectedOutputSet,
+  claim: import("./protected-transaction-coordinator.js").ProtectedOperationClaim,
+) {
+  if (acquired.length) {
+    if (!dependencies.persistOutputsAtomically)
+      throw new PhaseError("ATOMIC_OUTPUT_PERSISTENCE_AUTHORITY_REQUIRED", "persistence", "do_not_retry");
+    try {
+      const persisted = await dependencies.persistOutputsAtomically({
+        operationId: transaction.operationId,
+        claim,
+        outputs: acquired.map(({ output, value }) => ({
           reference: output.reference,
-          name: output.storage.credentialName,
-          value: extraction.result.value,
+          classification: output.classification,
+          name: output.classification === "protected" ? output.storage.credentialName : output.storage.name,
+          value,
           scope: output.storage.scope,
-        });
-        facts.credentialReferences[output.reference] = stored.credentialId;
+        })),
+      });
+      const references = persisted.references;
+      for (const { output, adapter } of acquired) {
+        const stored = references[output.reference];
+        if (!stored || stored.classification !== output.classification)
+          throw new Error("ATOMIC_OUTPUT_REFERENCE_MISSING");
+        if (output.classification === "protected" && stored.credentialId) {
+          facts.credentialReferences[output.reference] = stored.credentialId;
+          facts.protectedAcquisitionEvidence.push({
+            reference: output.reference, adapter, objective: "capture_value",
+            outcome: "value_persisted", capsule: "destroyed", evidenceClosure: "sealed",
+          });
+        } else if (output.classification === "public" && stored.valueId) {
+          facts.publicValueReferences[output.reference] = stored.valueId;
+        } else throw new Error("ATOMIC_OUTPUT_REFERENCE_INVALID");
+      }
+      if (acquired.some(({ output }) => output.classification === "protected")) {
         facts.protectedPersistence = "confirmed";
         facts.credentialSecurity = "active";
-        facts.protectedAcquisitionEvidence.push({
-          reference: output.reference,
-          adapter: extraction.result.adapter,
-          objective: "capture_value",
-          outcome: "value_persisted",
-          capsule: "destroyed",
-          evidenceClosure: "sealed",
-        });
-      } catch {
-        facts.protectedPersistence = "uncertain";
-        facts.credentialSecurity = "compromised";
-        facts.reasonCode = "SECRET_PERSISTENCE_UNCERTAIN";
       }
-    } else {
-      facts.publicExtraction = "captured";
-      try {
-        const stored = await dependencies.persistPublicValue({
-          operationId: transaction.operationId,
-          reference: output.reference,
-          name: output.storage.name,
-          value: extraction.result.value,
-          scope: output.storage.scope,
-        });
-        facts.publicValueReferences[output.reference] = stored.valueId;
+      if (acquired.some(({ output }) => output.classification === "public"))
         facts.publicPersistence = "confirmed";
-      } catch {
-        facts.publicPersistence = "uncertain";
-        facts.reasonCode = "PUBLIC_VALUE_PERSISTENCE_UNCERTAIN";
-      }
+      return persisted.claim;
+    } catch {
+      facts.protectedPersistence = acquired.some(({ output }) => output.classification === "protected") ? "uncertain" : "not_attempted";
+      facts.publicPersistence = acquired.some(({ output }) => output.classification === "public") ? "uncertain" : "not_attempted";
+      facts.credentialSecurity = acquired.some(({ output }) => output.classification === "protected") ? "compromised" : facts.credentialSecurity;
+      throw new PhaseError("ATOMIC_OUTPUT_PERSISTENCE_FAILED", "persistence", "manual_review");
+    } finally {
+      for (const item of acquired) item.value = "";
     }
   }
+  return claim;
 }
 
 export function protectedOutputsPersisted(
@@ -145,18 +184,18 @@ export async function recoverProtectedAcquisition(
   transaction: ProtectedTransaction,
   dependencies: ProtectedTransactionDependencies,
   facts: ProtectedTransactionFacts,
-  fencingToken: number,
+  claim: import("./protected-transaction-coordinator.js").ProtectedOperationClaim,
 ) {
   const expiresAt = Date.now() + transaction.acquisitionReadiness.recoveryWindowMs;
   await dependencies.store.record({
     operationId: transaction.operationId,
-    fencingToken,
+    fencingToken: claim.fencingToken,
     phase: "acquisition_unresolved",
     facts: { reasonCode: "ACQUISITION_UNRESOLVED" },
   });
   await dependencies.store.record({
     operationId: transaction.operationId,
-    fencingToken,
+    fencingToken: claim.fencingToken,
     phase: "recovery_window",
     facts: { recoveryExpiresAt: new Date(expiresAt).toISOString() },
   });
@@ -172,7 +211,7 @@ export async function recoverProtectedAcquisition(
         decision.action === "revoke" ? "CREDENTIAL_REVOKED" : "CREDENTIAL_ABANDONED";
       await dependencies.store.record({
         operationId: transaction.operationId,
-        fencingToken,
+        fencingToken: claim.fencingToken,
         phase: decision.action === "revoke" ? "credential_revoked" : "credential_abandoned",
         facts: { credentialSecurity: facts.credentialSecurity, reasonCode: facts.reasonCode },
       });
@@ -197,12 +236,12 @@ export async function recoverProtectedAcquisition(
     if (decision.action === "request_secure_assistance") {
       await dependencies.store.record({
         operationId: transaction.operationId,
-        fencingToken,
+        fencingToken: claim.fencingToken,
         phase: "secure_assistance",
         facts: {},
       });
     }
-    await extractAndPersistProtectedOutputs(page, recoveryTransaction, dependencies, facts);
+    claim = await extractAndPersistProtectedOutputs(page, recoveryTransaction, dependencies, facts, claim);
     if (!protectedOutputsPersisted(transaction, facts)) {
       await new Promise((resolve) => setTimeout(resolve, Math.min(250, expiresAt - Date.now())));
     }
@@ -212,7 +251,7 @@ export async function recoverProtectedAcquisition(
     facts.retryClass = "do_not_retry";
     await dependencies.store.record({
       operationId: transaction.operationId,
-      fencingToken,
+      fencingToken: claim.fencingToken,
       phase: "recovery_expired",
       facts: { reasonCode: facts.reasonCode },
     });

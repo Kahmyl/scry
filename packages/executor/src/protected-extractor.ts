@@ -16,6 +16,8 @@ import { acquireProtectedVisualText } from "@scry/praxis";
 import { requirePraxisSuccess } from "@scry/praxis";
 import { markVeilProtectedClipboardTouched } from "@scry/veil";
 
+import { acquireProtectedResponseValue } from "./protected-response-envelope.js";
+
 type CandidateState = ExtractionDiagnostic & {
   method?: AcquisitionIntent["permittedMethods"][number];
 };
@@ -116,10 +118,26 @@ export async function executeProtectedReveal(
   );
 }
 
+export async function verifyProtectedRevealTarget(
+  page: Page,
+  operation: ProtectedTransaction,
+) {
+  const action = operation.mutation.action;
+  if (action.type === "click") {
+    await resolveTarget(page, action.target);
+  } else if (action.target) {
+    await resolveTarget(page, action.target);
+  }
+}
+
 export async function acquireValue(page: Page, acquisition: AcquisitionIntent, timeoutMs: number) {
   assertObjectiveMethods(acquisition);
   const deadline = Date.now() + timeoutMs;
-  const diagnostics: CandidateState[] = acquisition.permittedMethods.map((method, candidate) => ({
+  const targetVariants = acquisitionTargetVariants(acquisition.target);
+  const methods = acquisition.permittedMethods.includes("protected_network_value")
+    ? ["protected_network_value" as const, ...acquisition.permittedMethods.filter((method) => method !== "protected_network_value")]
+    : [...acquisition.permittedMethods];
+  const diagnostics: CandidateState[] = methods.map((method, candidate) => ({
     candidate,
     method,
     attempts: 0,
@@ -130,33 +148,94 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
     accessibility: "unknown",
   }));
   while (Date.now() < deadline) {
-    for (const [index, method] of acquisition.permittedMethods.entries()) {
+    for (const [index, method] of methods.entries()) {
       if (Date.now() >= deadline) break;
       const diagnostic = diagnostics[index]!;
       const started = Date.now();
       diagnostic.attempts += 1;
       diagnostic.firstAttemptedAt ??= new Date(started).toISOString();
       try {
-        const result = await resolveTarget(page, acquisition.target);
-        diagnostic.containerResolved = true;
-        diagnostic.matchCount = "one";
-        diagnostic.visibility = "visible";
-        diagnostic.accessibility = "available";
-        const acquired = await acquireByMethod(page, result.locator, method, acquisition);
-        if (acquired.kind === "copy_experience_verified") {
-          return { result: acquired, value: undefined, diagnostics };
+        if (method === "protected_network_value") {
+          diagnostic.containerResolved = true;
+          diagnostic.matchCount = "one";
+          diagnostic.visibility = "unknown";
+          diagnostic.accessibility = "unknown";
+          const acquired = await acquireByMethod(
+            page,
+            page.locator("body"),
+            method,
+            acquisition,
+          );
+          if (acquired.kind === "copy_experience_verified") {
+            return { result: acquired, value: undefined, diagnostics };
+          }
+          const normalized = acquired.value.trim();
+          if (valid(normalized, acquisition.validation) &&
+            !isSemanticIdentityEcho(normalized, acquisition.target)) {
+            return {
+              result: { ...acquired, value: normalized },
+              value: normalized,
+              diagnostics,
+            };
+          }
+          diagnostic.lastFailureCode = normalized
+            ? isSemanticIdentityEcho(normalized, acquisition.target)
+              ? "VALUE_MATCHES_SEMANTIC_IDENTITY"
+              : "VALUE_VALIDATION_FAILED"
+            : "VALUE_EMPTY";
+          continue;
         }
-        const normalized = acquired.value.trim();
-        if (valid(normalized, acquisition.validation)) {
-          return {
-            result: { ...acquired, value: normalized },
-            value: normalized,
-            diagnostics,
-          };
+        let targetResolved = false;
+        let lastGroundingError: unknown;
+        let lastAcquisitionError: unknown;
+        for (const target of targetVariants) {
+          try {
+            const result = await resolveTarget(page, target);
+            targetResolved = true;
+            diagnostic.containerResolved = true;
+            diagnostic.matchCount = "one";
+            diagnostic.visibility = "visible";
+            diagnostic.accessibility = "available";
+            const acquired = await acquireByMethod(page, result.locator, method, acquisition);
+            if (acquired.kind === "copy_experience_verified") {
+              return { result: acquired, value: undefined, diagnostics };
+            }
+            const normalized = acquired.value.trim();
+            if (valid(normalized, acquisition.validation) && !isSemanticIdentityEcho(normalized, acquisition.target)) {
+              return {
+                result: { ...acquired, value: normalized },
+                value: normalized,
+                diagnostics,
+              };
+            }
+            diagnostic.lastFailureCode = normalized
+              ? isSemanticIdentityEcho(normalized, acquisition.target)
+                ? "VALUE_MATCHES_SEMANTIC_IDENTITY"
+                : "VALUE_VALIDATION_FAILED"
+              : "VALUE_EMPTY";
+          } catch (error) {
+            if (error instanceof GroundingError) {
+              if (!(lastGroundingError instanceof GroundingError) || error.code === "TARGET_AMBIGUOUS")
+                lastGroundingError = error;
+            } else {
+              lastAcquisitionError = error;
+            }
+          }
         }
-        diagnostic.lastFailureCode = normalized ? "VALUE_VALIDATION_FAILED" : "VALUE_EMPTY";
+        if (!targetResolved && lastGroundingError) throw lastGroundingError;
+        if (targetResolved && lastAcquisitionError)
+          diagnostic.lastFailureCode = safeCode(lastAcquisitionError);
       } catch (error) {
         diagnostic.lastFailureCode = error instanceof GroundingError ? error.code : safeCode(error);
+        if (
+          method === "protected_network_value" &&
+          [
+            "PROTECTED_RESPONSE_HTTP_REJECTED",
+            "PROTECTED_RESPONSE_NON_JSON",
+            "PROTECTED_RESPONSE_OVERSIZED",
+            "PROTECTED_RESPONSE_PARSE_FAILED",
+          ].includes(diagnostic.lastFailureCode)
+        ) return { result: undefined, value: undefined, diagnostics };
         if (error instanceof GroundingError) {
           diagnostic.matchCount = error.code === "TARGET_AMBIGUOUS" ? "many" : "none";
           diagnostic.containerResolved = error.code !== "TARGET_NOT_FOUND";
@@ -170,6 +249,55 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
     );
   }
   return { result: undefined, value: undefined, diagnostics };
+}
+
+function acquisitionTargetVariants(target: AcquisitionIntent["target"]): AcquisitionIntent["target"][] {
+  const variants = [target];
+  const identity = target.preferredEvidence.names[0] ??
+    target.preferredEvidence.labels[0] ??
+    target.preferredEvidence.expectedText;
+  const neutral = {
+    ...target,
+    preferredEvidence: { ...target.preferredEvidence, roles: [] },
+    confidence: {
+      ...target.confidence,
+      minimum: target.confidence.minimum ?? 0.3,
+      minimumMargin: target.confidence.minimumMargin ?? 0,
+      minimumFamilyCount: target.confidence.minimumFamilyCount ?? 1,
+    },
+  };
+  if (target.preferredEvidence.roles.length) variants.push(neutral);
+  const pageScoped = target.scope.kind === "page"
+    ? neutral
+    : { ...neutral, scope: { kind: "page" as const } };
+  if (target.scope.kind !== "page") variants.push(pageScoped);
+  if (identity) {
+    variants.push({
+      ...pageScoped,
+      preferredEvidence: { ...pageScoped.preferredEvidence, roles: ["value"] },
+      relations: [...pageScoped.relations, { kind: "following", name: identity }],
+    });
+  }
+  const seen = new Set<string>();
+  return variants.filter((variant) => {
+    const key = JSON.stringify(variant);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function isSemanticIdentityEcho(value: string, target: AcquisitionIntent["target"]) {
+  const normalized = normalizeSemanticValue(value);
+  return [
+    ...target.preferredEvidence.names,
+    ...target.preferredEvidence.labels,
+    ...(target.preferredEvidence.expectedText ? [target.preferredEvidence.expectedText] : []),
+  ].some((identity) => normalizeSemanticValue(identity) === normalized);
+}
+
+function normalizeSemanticValue(value: string) {
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, " ").trim();
 }
 
 export function protectedAcquisitionAdapterRegistry() {
@@ -292,6 +420,7 @@ async function acquireByMethod(
     case "protected_network_value":
     case "approved_network_field": {
       const adapterId = acquisition.adapter?.id;
+      if (!adapterId) return acquireProtectedResponseValue(page, acquisition).then(capture);
       const adapter = adapterId ? registeredProtectedAdapters.get(adapterId) : undefined;
       if (!adapter) throw new AcquisitionError("NETWORK_ADAPTER_REQUIRED");
       return adapter({ page, target, acquisition }).then(capture);
@@ -377,7 +506,9 @@ function valid(value: string, validation: AcquisitionIntent["validation"]) {
   return true;
 }
 function safeCode(error: unknown) {
-  return error instanceof AcquisitionError ? error.code : "ACQUISITION_METHOD_FAILED";
+  if (error instanceof AcquisitionError) return error.code;
+  const code = error instanceof Error ? error.message : undefined;
+  return code && /^[A-Z][A-Z0-9_]*$/.test(code) ? code : "ACQUISITION_METHOD_FAILED";
 }
 export class AcquisitionError extends Error {
   constructor(readonly code: string) {

@@ -75,7 +75,7 @@ export async function runCalibrationAttestation(
           await onPhase?.("executing_protected_transaction");
           if (mutationCount > 1 || !((await markMutation?.("started")) ?? true)) return false;
         }
-        if (next === "acknowledged" && !((await markMutation?.("completed")) ?? true)) return false;
+        if (next === "completed" && !((await markMutation?.("completed")) ?? true)) return false;
         return true;
       },
       options: {

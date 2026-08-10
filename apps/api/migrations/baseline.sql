@@ -403,3 +403,8 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir adaptive-sessions-m3.sql
 \ir mission-first-live-convergence-m1.sql
 \ir mission-authoring-grouped-turns-m2.sql
+\ir protected-operation-state-machine.sql
+\ir protected-operation-completion.sql
+\ir protected-operation-authoritative-projection.sql
+\ir protected-response-output-staging.sql
+\ir protected-read-only-dispatch.sql

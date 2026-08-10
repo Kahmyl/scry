@@ -20,6 +20,7 @@ export const executionCapabilityNameSchema = z.enum([
   "veil",
   "evidence",
   "journal",
+  "protected_input",
   "protected_operations",
   "checkpoint",
   "calibration",
@@ -79,6 +80,7 @@ export const agentDecisionBoundarySchema = z
       "authorization_required",
       "protected_input_required",
       "mutation_reconciliation_required",
+      "effect_observation_required",
       "policy_refused",
       "environment_unavailable",
       "objective_completed",
@@ -112,6 +114,17 @@ export const operationOutcomeSchema = z
     reasonCode: z.string().trim().min(1).max(120).optional(),
     resolvedTarget: semanticFingerprintSchema.optional(),
     nextDecisionBoundary: agentDecisionBoundarySchema.optional(),
+    generatedReferences: z.array(z.object({
+      reference: z.string().trim().min(1).max(100).regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
+      classification: z.enum(["public", "protected"]),
+      credentialId: z.string().uuid().optional(),
+      valueId: z.string().uuid().optional(),
+      scope: z.literal("project"),
+    }).strict().superRefine((value, context) => {
+      if ((value.classification === "protected") !== Boolean(value.credentialId) ||
+          (value.classification === "public") !== Boolean(value.valueId))
+        context.addIssue({ code: "custom", message: "generated reference ID does not match classification" });
+    })).max(8).optional(),
   })
   .strict();
 

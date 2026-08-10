@@ -456,7 +456,8 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             !privacyGate ||
             !options.protectedTransactionStore ||
             !options.atomicSecretCapture ||
-            !options.publicValueCapture
+            !options.publicValueCapture ||
+            !options.atomicOutputCapture
           ) {
             throw new InfrastructureDependencyError(
               "Protected transaction dependencies are unavailable",
@@ -476,7 +477,19 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               allowedOrigins: options.plan.allowedOrigins,
               persistSecret: options.atomicSecretCapture,
               persistPublicValue: options.publicValueCapture,
+              ...(options.atomicOutputCapture
+                ? { persistOutputsAtomically: options.atomicOutputCapture }
+                : {}),
+              ...(options.stageProtectedResponseOutputs
+                ? { stageResponseOutputsAtomically: options.stageProtectedResponseOutputs }
+                : {}),
+              ...(options.recoverStagedProtectedResponseOutputs
+                ? { recoverStagedResponseOutputs: options.recoverStagedProtectedResponseOutputs }
+                : {}),
               resolveKnownSecret: options.secretResolver ?? missingSecretResolver,
+              ...(options.executeNativeControl
+                ? { executeNativeControl: options.executeNativeControl }
+                : {}),
               prepareCapsule: async (capsule) => {
                 registerPraxisVeilAuthority(capsule.page, {
                   authority: veilAuthority,
@@ -585,6 +598,8 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               },
               emit,
               signal: timeoutController.signal,
+              ...(options.onMutationDispatch ? { onMutationDispatch: options.onMutationDispatch } : {}),
+              ...(options.markCredentialCompromised ? { markCredentialCompromised: options.markCredentialCompromised } : {}),
             }).execute(step.action);
           browser = transaction.safeSession.browser;
           context = transaction.safeSession.context;

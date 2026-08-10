@@ -1,5 +1,4 @@
 import type {
-  ExpectedEffect,
   PraxisAcquisitionOutput,
   PraxisMutationOutcome,
   PraxisOperation,
@@ -10,9 +9,9 @@ import type {
 import type { ElementHandle, Locator, Page } from "playwright";
 import {
   armExpectedEffect,
-  ExpectedEffectError,
   GroundingError,
   resolveTarget,
+  verifyExpectedEffect as verifyObservedEffect,
   validateCandidateResume,
   type GroundingResult,
 } from "./grounding.js";
@@ -78,6 +77,9 @@ export class PraxisGroundedTarget {
   actionPoint() {
     return this.#grounded.actionPoint;
   }
+  observationLocators() {
+    return this.#grounded.observationLocators ?? [this.#grounded.locator];
+  }
   arm(value: Promise<void> | undefined) {
     this.#armed = value;
   }
@@ -123,6 +125,9 @@ export class PraxisGroundingEngine {
       try {
         grounded = await resolveTarget(this.page, request.intent, {
           allowedOrigins: request.policy.allowedOrigins,
+          ...(request.operation.type === "wait_for_state" && isSetObservedState(request.operation.state)
+            ? { cardinality: { kind: "state_observation" as const, state: request.operation.state } }
+            : {}),
         });
         break;
       } catch (error) {
@@ -277,6 +282,17 @@ export class PraxisDispatcher {
     let output: PraxisAcquisitionOutput | undefined;
     try {
       const preparedInput = await prepareInput(request, this.resolveInput);
+      if (request.operation.type === "wait_for_state") {
+        output = await dispatchOperation(
+          this.page,
+          target.observationLocators()[0]!,
+          target,
+          request,
+          preparedInput,
+          signal,
+        );
+        return { mutationOutcome: "not_applied", ...(output ? { output } : {}) };
+      }
       await target.handle.reconcile(async (locator) => {
         checkAbort(signal);
         await target.revalidate();
@@ -358,6 +374,10 @@ export class PraxisVerifier {
     target: PraxisGroundedTarget,
     request: PraxisRequest,
   ): Promise<PraxisVerification["local"]> {
+    if (request.operation.type === "wait_for_state")
+      return (await observationSetMatches(target.observationLocators(), request.operation.state))
+        ? "passed"
+        : "failed";
     if (["inspect", "read_value", "scroll"].includes(request.operation.type)) {
       try {
         await target.handle.readAfterDispatch(async () => target.revalidate());
@@ -393,10 +413,6 @@ export class PraxisVerifier {
         return (await stateObserver.checked(locator)) === request.operation.checked
           ? "passed"
           : "failed";
-      if (request.operation.type === "wait_for_state")
-        return (await stateObserver.matches(locator, request.operation.state))
-          ? "passed"
-          : "failed";
       return "not_required";
     });
   }
@@ -407,14 +423,13 @@ export class PraxisVerifier {
     budgetMs: number,
   ): Promise<PraxisVerification["effect"]> {
     if (request.expectedEffect.type === "none") return "not_required";
-    await verifyPraxisEffect(
+    await verifyObservedEffect(
       this.page,
       request.expectedEffect,
       target.beforeUrl,
       budgetMs,
-      signal,
       target.armed(),
-      request.policy.allowedOrigins,
+      { signal, allowedOrigins: request.policy.allowedOrigins },
     );
     return "passed";
   }
@@ -478,8 +493,8 @@ async function dispatchOperation(
       break;
     case "wait_for_state":
       if (
-        !(await stateObserver.wait(
-          locator,
+        !(await waitForObservationSet(
+          target.observationLocators(),
           request.operation.state,
           request.policy.actionTimeoutMs,
           signal,
@@ -523,6 +538,40 @@ async function dispatchOperation(
       break;
   }
   return undefined;
+}
+
+async function observationSetMatches(
+  locators: readonly Locator[],
+  state: "visible" | "hidden" | "attached" | "detached" | "enabled" | "disabled",
+) {
+  const attached = await Promise.all(locators.map(async (locator) => (await locator.count()) > 0));
+  if (state === "attached") return attached.some(Boolean);
+  if (state === "detached") return !attached.some(Boolean);
+  const visible = await Promise.all(locators.map((locator) => locator.isVisible()));
+  if (state === "visible") return visible.some(Boolean);
+  if (state === "hidden") return !visible.some(Boolean);
+  const enabled = await Promise.all(locators.map((locator) => locator.isEnabled()));
+  return state === "enabled" ? enabled.some(Boolean) : !enabled.some(Boolean);
+}
+
+async function waitForObservationSet(
+  locators: readonly Locator[],
+  state: "visible" | "hidden" | "attached" | "detached" | "enabled" | "disabled",
+  timeoutMs: number,
+  signal: AbortSignal,
+) {
+  const deadline = performance.now() + timeoutMs;
+  do {
+    checkAbort(signal);
+    if (await observationSetMatches(locators, state)) return true;
+    await abortableDelay(Math.min(25, Math.max(1, deadline - performance.now())), signal);
+  } while (performance.now() < deadline);
+  return observationSetMatches(locators, state);
+}
+function isSetObservedState(
+  state: "visible" | "hidden" | "attached" | "detached" | "enabled" | "disabled",
+): state is "visible" | "attached" {
+  return state === "visible" || state === "attached";
 }
 async function assertActivationReady(locator: Locator, timeoutMs: number) {
   await locator.waitFor({ state: "visible", timeout: timeoutMs });
@@ -612,90 +661,6 @@ function abortPromise(signal: AbortSignal) {
   });
 }
 class PraxisDispatchCancellation extends Error {}
-async function verifyPraxisEffect(
-  page: Page,
-  effect: ExpectedEffect,
-  beforeUrl: string,
-  budgetMs: number,
-  signal: AbortSignal,
-  armed?: Promise<void>,
-  allowedOrigins?: readonly string[],
-) {
-  if (effect.type === "none") return;
-  if (effect.type === "network_outcome") {
-    try {
-      await Promise.race([
-        armed ?? Promise.reject(),
-        abortPromise(signal),
-        timeoutPromise(budgetMs),
-      ]);
-      return;
-    } catch {
-      throw new ExpectedEffectError("EXPECTED_EFFECT_NOT_OBSERVED");
-    }
-  }
-  if (effect.type === "new_page") {
-    throw new ExpectedEffectError("EXPECTED_NEW_PAGE_NOT_OBSERVED");
-  }
-  const deadline = performance.now() + budgetMs;
-  while (performance.now() < deadline && !signal.aborted) {
-    try {
-      if (effect.type === "navigation") {
-        const current = page.url();
-        if (!effect.url && current !== beforeUrl) return;
-        if (effect.url) {
-          const expected = new URL(effect.url, beforeUrl);
-          const actual = new URL(current);
-          if (
-            (effect.match === "exact" && actual.href === expected.href) ||
-            (effect.match === "path" &&
-              actual.pathname + actual.search === expected.pathname + expected.search) ||
-            (effect.match === "contains" && actual.href.includes(effect.url))
-          )
-            return;
-        }
-      } else {
-        if (
-          effect.type === "value_change" &&
-          effect.expected !== undefined &&
-          (await stateObserver.hasUniquePublicValue(page, effect.expected))
-        )
-          return;
-        const grounded = await resolveTarget(
-          page,
-          effect.target,
-          allowedOrigins ? { allowedOrigins } : {},
-        );
-        const locator = grounded.locator;
-        if (effect.type === "visibility_change" && (await locator.isVisible()) === effect.visible)
-          return;
-        if (effect.type === "value_change") {
-          const value = await stateObserver.readValue(locator);
-          if (effect.expected === undefined ? value.length > 0 : value === effect.expected) return;
-        }
-        if (
-          effect.type === "state_change" &&
-          (effect.checked === undefined ||
-            (await stateObserver.checked(locator)) === effect.checked) &&
-          (effect.enabled === undefined ||
-            (await stateObserver.matches(locator, effect.enabled ? "enabled" : "disabled")))
-        )
-          return;
-        if (effect.type === "new_region" && (await locator.isVisible())) return;
-      }
-    } catch {
-      /* Dynamic effects may not be observable until the next bounded sample. */
-    }
-    await abortableDelay(Math.min(40, deadline - performance.now()), signal).catch(() => undefined);
-  }
-  throw new ExpectedEffectError("EXPECTED_EFFECT_NOT_OBSERVED");
-}
-
-function timeoutPromise(ms: number) {
-  return new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new ExpectedEffectError("EXPECTED_EFFECT_NOT_OBSERVED")), ms),
-  );
-}
 async function abortableDelay(ms: number, signal: AbortSignal) {
   if (ms <= 0) return;
   await Promise.race([

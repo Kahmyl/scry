@@ -375,17 +375,25 @@ function calibrationExecutor() {
         await page.locator("body").waitFor({ state: "visible", ...timeout });
       },
       protectedTransactionStore: {
-        claim: async ({ operationId }) => ({
-          state: states.get(operationId) ?? "planned",
-          fencingToken: 1,
-        }),
+        claim: async ({ operationId }) => ({ id: operationId, state: states.get(operationId) ?? "planned", version: 1, fencingToken: 1 }),
         transition: async ({ operationId, expected, next }) => {
-          if ((states.get(operationId) ?? "planned") !== expected) return false;
-          if (!(await input.beforeMutationTransition({ expected, next }))) return false;
+          if ((states.get(operationId) ?? "planned") !== expected) throw new Error("PROTECTED_OPERATION_TRANSITION_FENCED");
+          if (!(await input.beforeMutationTransition({ expected, next }))) throw new Error("PROTECTED_OPERATION_TRANSITION_FENCED");
           states.set(operationId, next);
-          return true;
+          return { id: operationId, state: next, version: 2, fencingToken: 1 };
         },
         record: async () => undefined,
+      },
+      atomicOutputCapture: async ({ claim, outputs }) => {
+        const references: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "run" | "project" }> = {};
+        for (const output of outputs) {
+          references[output.reference] = output.classification === "protected"
+            ? { classification: "protected", ...(await input.options.atomicSecretCapture!({ operationId: claim.id, reference: output.reference, name: output.name, value: output.value, scope: output.scope })), scope: output.scope }
+            : { classification: "public", ...(await input.options.publicValueCapture!({ operationId: claim.id, reference: output.reference, name: output.name, value: output.value, scope: output.scope })), scope: output.scope };
+          output.value = "";
+        }
+        states.set(claim.id, "persisted");
+        return { claim: { ...claim, state: "persisted", version: claim.version + 1 }, references };
       },
     });
 }

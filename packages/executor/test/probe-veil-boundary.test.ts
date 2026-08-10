@@ -58,6 +58,26 @@ afterAll(async () => {
 });
 
 describe("probe Veil composition boundary", () => {
+  it("retains a bounded report-level infrastructure cause when the active step is unevaluated", async () => {
+    const base = await probeInput("reversible");
+    const result = await probeFlowPlan({
+      ...base,
+      plan: planWithNavigationOnly(),
+      execute: async () => ({
+        state: "infrastructure_error",
+        outcomeClassification: "infrastructure_error",
+        error: "BROWSER_RUNTIME_DISCONNECTED: unsafe raw detail omitted",
+        steps: [{ id: "navigate", action: { status: "unevaluated" }, assertions: [], evidence: [] }],
+        artifacts: [],
+      } as never),
+    });
+    expect(result.runtimeHealthy).toBe(false);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "BROWSER_RUNTIME_DISCONNECTED", phase: "execution", mutationOutcome: "not_started",
+    }));
+    expect(JSON.stringify(result.diagnostics)).not.toContain("unsafe raw detail");
+  });
+
   it("authorizes a real inspection page before Praxis schedules observation", async () => {
     const result = await probeFlowPlan({
       ...(await probeInput("inspection")),

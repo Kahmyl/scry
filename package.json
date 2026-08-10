@@ -38,6 +38,8 @@
     "verify:mission-first:m1": "pnpm verify:mission-first:m1:ownership && pnpm verify:execution-kernel-boundary && pnpm --filter @scry/api exec tsx scripts/verify-mission-first-milestone.ts M1",
     "verify:mission-first:m2:boundary": "node scripts/verify-m2-authoring-boundary.mjs",
     "campaign:mission-first:m2:core": "pnpm --filter @scry/api exec tsx scripts/mission-live-m2-core.ts",
+    "campaign:mission-first:protected-qualification": "pnpm --filter @scry/api exec tsx scripts/mission-protected-qualification.ts",
+    "campaign:mission-first:protected-fixture": "pnpm --filter @scry/api exec tsx scripts/mission-protected-qualification-host.ts",
     "campaign:mission-first:m2:vitract": "pnpm --filter @scry/api exec tsx scripts/mission-live-m2-vitract.ts",
     "campaign:mission-first:m2:external": "pnpm --filter @scry/api exec tsx scripts/mission-live-m2-external.ts",
     "verify:mission-first:m2": "pnpm verify:mission-first:m2:boundary && pnpm verify:execution-kernel-boundary && pnpm --filter @scry/api exec tsx scripts/verify-mission-first-m2.ts",

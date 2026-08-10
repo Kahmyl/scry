@@ -180,6 +180,37 @@ describe("current plan contract", () => {
         .success,
     ).toBe(false);
   });
+  it("accepts a test id as deterministic identity evidence", () => {
+    const baseIntent = intent("Create Order client ID", "textbox");
+    expect(
+      interactionTargetIntentSchema.safeParse({
+        ...baseIntent,
+        preferredEvidence: {
+          roles: ["textbox"],
+          names: [],
+          labels: [],
+          descriptions: [],
+          placeholders: [],
+          inputTypes: [],
+          testIds: ["createPartnerOrder-client-id"],
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      interactionTargetIntentSchema.safeParse({
+        ...baseIntent,
+        preferredEvidence: {
+          roles: ["textbox"],
+          names: [],
+          labels: [],
+          descriptions: [],
+          placeholders: [],
+          inputTypes: [],
+          testIds: [],
+        },
+      }).success,
+    ).toBe(false);
+  });
   it("has no feature-generation discriminator", () => {
     const parsed = currentPlanSchema.parse({
       ...base,
@@ -351,6 +382,31 @@ describe("current plan contract", () => {
       currentPlanSchema.safeParse({ ...base, steps: [{ id: "issue", title: "Issue", action }] })
         .success,
     ).toBe(true);
+  });
+
+  it("requires checked preparation to use a public boolean and toggleable same-control assertion", () => {
+    const checkbox = {
+      ...intent("Active", "text"),
+      requiredCapabilities: ["focusable", "toggleable"],
+      preferredEvidence: { ...intent("Active", "text").preferredEvidence, roles: ["checkbox"] },
+    };
+    const action = transactionAction({
+      inputs: { active: { classification: "public", value: true } },
+      preparation: {
+        actions: [{ type: "checkPublicInput", input: "active", target: checkbox, effect: "replayable_setup" }],
+        assertions: [
+          { type: "checkedMatchesInput", target: checkbox, input: "active" },
+          { type: "enabled", target: intent("Issue", "button") },
+        ],
+      },
+    });
+    expect(currentPlanSchema.safeParse({ ...base, steps: [{ id: "issue", title: "Issue", action }] }).success).toBe(true);
+    const invalid = structuredClone(action) as any;
+    invalid.inputs.active.value = "true";
+    expect(currentPlanSchema.safeParse({ ...base, steps: [{ id: "issue", title: "Issue", action: invalid }] }).success).toBe(false);
+    const wrongCapability = structuredClone(action) as any;
+    wrongCapability.preparation.assertions[0].target.requiredCapabilities = ["readable_value"];
+    expect(currentPlanSchema.safeParse({ ...base, steps: [{ id: "issue", title: "Issue", action: wrongCapability }] }).success).toBe(false);
   });
 
   it("accepts one deterministic checkpoint and rejects reuse of skipped output", () => {

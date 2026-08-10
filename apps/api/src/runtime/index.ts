@@ -23,6 +23,8 @@ export {
 export { RuntimeModule } from "./runtime.module.js";
 export * from "./native-browser-driver/index.js";
 export { ExecutionKernelRepository } from "./repositories/execution-kernel.repository.js";
+export { ProtectedOperationRepository } from "./repositories/protected-operation.repository.js";
+export { ProtectedOutputPersistenceRepository } from "./repositories/protected-output-persistence.repository.js";
 export {
   ExecutionCapabilityFactory,
   ExecutionKernelService,

@@ -17,7 +17,11 @@ import {
   verifyM2Ownership,
   type M2Ownership,
 } from "./mission-live-m2-support.js";
-import { vitractM2Flows, vitractM2Intents } from "./mission-live-m2-target-registry.js";
+import {
+  vitractM2Flows,
+  vitractM2Intents,
+  vitractRecoveryApplicationName,
+} from "./mission-live-m2-target-registry.js";
 
 const [, repetitionArgument] = missionLiveArguments(process.argv.slice(2));
 const repetition = Number(repetitionArgument);
@@ -30,7 +34,7 @@ try {
   const credentials = await loadVitractCredentialValues();
   const provisioned = await provisionM2Campaign(context, {
     target: "vitract_preview",
-    mission: "M2 Vitract multi-flow Developer inspection",
+    mission: "M2 Vitract Test application credential-boundary recovery",
     origin: "https://preview.vitract.com",
     allowedOrigins: ["https://preview.vitract.com", "https://preview-api.vitract.com"],
     flows: vitractM2Flows(),
@@ -40,6 +44,7 @@ try {
     trustedScriptOrigins: ["https://js.stripe.com", "https://maps.googleapis.com"],
   });
   ownership = provisioned.ownership;
+  const applicationName = vitractRecoveryApplicationName(ownership);
   const turns = vitractM2Intents({
     ownership,
     emailCredentialId: provisioned.credentialIds.email!,
@@ -54,15 +59,15 @@ try {
       context,
       ownership,
       firstFlow: "authenticate",
-      objective: "Inspect Vitract Developer Test Mode, credential boundary, and documentation safely",
+      objective: `Create Test application ${applicationName} and open its Add credential dialog without generating a credential`,
       allowedOrigins: ["https://preview.vitract.com", "https://preview-api.vitract.com"],
       turns,
     }),
     forbiddenValues: context.forbiddenValues,
   });
   context.requiredChecks.push(...deployed.requiredChecks, {
-    id: "m2-vitract-no-resource-creation",
-    description: "The Vitract journey contains no application, credential, order, notification, or charge creation intent",
+    id: "m2-vitract-resource-scope",
+    description: "The Vitract journey creates one uniquely named Test application and contains no credential, order, notification, or charge creation intent",
     status: "passed",
   });
   await verifyM2Ownership(context, ownership);

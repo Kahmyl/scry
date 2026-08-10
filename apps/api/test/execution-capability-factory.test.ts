@@ -6,7 +6,86 @@ import { describe, expect, it, vi } from "vitest";
 import { ExecutionCapabilityFactory, ExecutionKernelService } from "../src/runtime/index.js";
 
 describe("execution capability factory", () => {
-  it("supplies the complete protected and recovery infrastructure to rehearse", () => {
+  it("claims the authoring reservation without creating it lazily", async () => {
+    const kernelRepository = { appendEvent: vi.fn(), establishCheckpoint: vi.fn(), claimCheckpoint: vi.fn(), completeCheckpoint: vi.fn(), recordContextProvenance: vi.fn() };
+    const protectedOperations = {
+      create: vi.fn(async () => undefined),
+      claim: vi.fn(async () => ({ id: randomUUID(), state: "planned", version: 2, fencingToken: 1, persistedReferences: {} })),
+      transition: vi.fn(), record: vi.fn(), heartbeat: vi.fn(),
+    };
+    const protectedOutputs = { persistOutputsAtomically: vi.fn(), markCommittedCredentialsCompromised: vi.fn() };
+    const factory = new ExecutionCapabilityFactory({} as never, kernelRepository as never, { openBrowser: vi.fn() } as never, protectedOperations as never, protectedOutputs as never);
+    const capabilities = factory.createMissionAuthoringSession({
+      sessionId: randomUUID(), operationId: "authoring-parent", correlationId: randomUUID(), mode: "transact",
+      projectId: randomUUID(), environmentId: randomUUID(), missionId: randomUUID(), objectiveId: randomUUID(),
+      agentSessionId: randomUUID(), flowDraftId: randomUUID(), authorizationId: randomUUID(), leaseOwner: "authoring-owner",
+      options: { outputDirectory: "/tmp/authoring", browserChannel: "chrome", environmentId: "environment", veilAdmissionKey: "test-key", veilPolicySnapshot: {} as never, secretResolver: vi.fn() },
+    });
+    expect(capabilities.options.protectedTransactionStore).toBeDefined();
+    expect(capabilities.options.atomicOutputCapture).toBeDefined();
+    expect(capabilities.manifest.capabilities.protected_operations.state).toBe("available");
+    expect(capabilities.manifest.capabilities.protected_input.state).toBe("available");
+    await capabilities.options.protectedTransactionStore!.claim({ operationId: "generate", mutationKind: "one_time", mutationIdentity: "generate-once", programDigest: "a".repeat(64), inputSchemaDigest: "b".repeat(64), inputDigest: "c".repeat(64), safeOutputManifest: [{ reference: "secret", classification: "protected", storageName: "Secret" }] });
+    expect(protectedOperations.create).not.toHaveBeenCalled();
+    expect(protectedOperations.claim).toHaveBeenCalledOnce();
+    expect(protectedOperations.claim).toHaveBeenCalledWith(expect.objectContaining({
+      binding: expect.objectContaining({
+        mutationIdentity: "generate-once",
+        programDigest: "a".repeat(64),
+        safeOutputManifest: [{ reference: "secret", classification: "protected", storageName: "Secret" }],
+      }),
+    }));
+    await capabilities.options.protectedTransactionStore!.record({
+      operationId: "generate",
+      fencingToken: 1,
+      phase: "preparation_rejected",
+      facts: {
+        preparationEffects: [{
+          method: "POST",
+          origin: "https://telemetry.example.test",
+          path: "/events",
+          disposition: "blocked",
+        }],
+      },
+    });
+    expect(protectedOperations.record).toHaveBeenCalledWith(expect.objectContaining({
+      safeDiagnostics: {
+        preparationEffects: [{
+          method: "POST",
+          origin: "https://telemetry.example.test",
+          path: "/events",
+          disposition: "blocked",
+        }],
+      },
+    }));
+  });
+
+  it("preserves lazy reservation for synchronous run-owned protected execution", async () => {
+    const executions = { resolveCredential: vi.fn(), captureCredential: vi.fn(), persistCapturedSecret: vi.fn(), persistGeneratedPublicValue: vi.fn(), resolveGeneratedPublicValue: vi.fn(), establishCheckpoint: vi.fn(), claimCheckpoint: vi.fn(), completeCheckpoint: vi.fn(), verifyCalibrationAttestation: vi.fn() };
+    const kernelRepository = { appendEvent: vi.fn(), establishCheckpoint: vi.fn(), claimCheckpoint: vi.fn(), completeCheckpoint: vi.fn(), recordContextProvenance: vi.fn() };
+    const protectedOperations = {
+      create: vi.fn(async () => undefined),
+      claim: vi.fn(async () => ({ id: randomUUID(), state: "planned", version: 2, fencingToken: 1, persistedReferences: {} })),
+      transition: vi.fn(), record: vi.fn(), heartbeat: vi.fn(),
+    };
+    const protectedOutputs = { persistOutputsAtomically: vi.fn(), markCommittedCredentialsCompromised: vi.fn() };
+    const factory = new ExecutionCapabilityFactory(executions as never, kernelRepository as never, { openBrowser: vi.fn() } as never, protectedOperations as never, protectedOutputs as never);
+    const capabilities = factory.createRun({
+      sessionId: randomUUID(), operationId: "run-parent", correlationId: randomUUID(), mode: "transact",
+      runId: randomUUID(), attemptId: randomUUID(), claimToken: "run-owner", flowRevisionId: randomUUID(),
+      environmentId: randomUUID(), projectId: randomUUID(), missionId: randomUUID(), objectiveId: randomUUID(), agentSessionId: randomUUID(),
+      options: { outputDirectory: "/tmp/run", browserChannel: "chrome", environmentId: "environment", veilAdmissionKey: "test-key", veilPolicySnapshot: {} as never },
+    });
+    await capabilities.options.protectedTransactionStore!.claim({
+      operationId: "run-generate", mutationKind: "one_time", mutationIdentity: "run-generate-once",
+      programDigest: "a".repeat(64), inputSchemaDigest: "b".repeat(64), inputDigest: "c".repeat(64),
+      safeOutputManifest: [{ reference: "secret", classification: "protected", storageName: "Secret" }],
+    });
+    expect(protectedOperations.create).toHaveBeenCalledOnce();
+    expect(protectedOperations.claim).toHaveBeenCalledOnce();
+  });
+
+  it("keeps project protected-output authority out of generic sessions", () => {
     const kernelRepository = {
       begin: vi.fn(),
       complete: vi.fn(),
@@ -39,23 +118,40 @@ describe("execution capability factory", () => {
         secretResolver: vi.fn(),
       },
     });
-    expect(capabilities.options.protectedTransactionStore).toBeDefined();
+    expect(capabilities.options.protectedTransactionStore).toBeUndefined();
     expect(capabilities.options.checkpointStore).toBeDefined();
     expect(capabilities.options.atomicSecretCapture).toBeDefined();
     expect(capabilities.options.publicValueCapture).toBeDefined();
-    expect(capabilities.compatibilityOptions?.protectedTransactionStore).toBeDefined();
+    expect(capabilities.compatibilityOptions?.protectedTransactionStore).toBeUndefined();
     for (const name of [
       "browser",
       "praxis",
       "veil",
       "evidence",
       "journal",
-      "protected_operations",
       "checkpoint",
     ] as const) {
       expect(capabilities.manifest.capabilities[name].state).toBe("available");
     }
+    expect(capabilities.manifest.capabilities.protected_operations.state).toBe("unavailable");
+    expect(capabilities.manifest.capabilities.protected_input.state).toBe("available");
     expect(capabilities.manifest.capabilities.calibration.state).toBe("unavailable");
+  });
+
+  it("keeps protected input unavailable without a secret resolver", () => {
+    const factory = new ExecutionCapabilityFactory({} as never, {
+      appendEvent: vi.fn(), establishCheckpoint: vi.fn(), claimCheckpoint: vi.fn(), completeCheckpoint: vi.fn(),
+      persistSecret: vi.fn(), persistPublicValue: vi.fn(), resolvePublicValue: vi.fn(), claimMutation: vi.fn(),
+      transitionMutation: vi.fn(), recordMutation: vi.fn(), recordContextProvenance: vi.fn(),
+    } as never, { openBrowser: vi.fn() } as never);
+    const capabilities = factory.createSession({ sessionId: "no-secret", operationId: "operation",
+      correlationId: randomUUID(), mode: "run", options: { outputDirectory: "/tmp/no-secret", browserChannel: "chrome",
+        environmentId: "environment", veilAdmissionKey: "test-key", veilPolicySnapshot: {} as never } });
+    expect(capabilities.manifest.capabilities.protected_input.state).toBe("unavailable");
+    const withoutVeil = factory.createSession({ sessionId: "no-veil", operationId: "operation",
+      correlationId: randomUUID(), mode: "run", options: { outputDirectory: "/tmp/no-veil", browserChannel: "chrome",
+        environmentId: "environment", secretResolver: vi.fn() } });
+    expect(withoutVeil.manifest.capabilities.protected_input.state).toBe("unavailable");
   });
 
   it("keeps compatibility events outside the kernel journal wrapper", async () => {
@@ -102,7 +198,7 @@ describe("execution capability factory", () => {
     expect(kernelRepository.appendEvent).toHaveBeenCalledOnce();
   });
 
-  it("journals protected child phases under the admitted parent operation", async () => {
+  it("does not expose the legacy child mutation ledger from a generic session", async () => {
     const kernelRepository = {
       begin: vi.fn(),
       complete: vi.fn(),
@@ -127,17 +223,8 @@ describe("execution capability factory", () => {
       mode: "transact",
       options: { outputDirectory: "/tmp/probe" },
     });
-    await capabilities.options.protectedTransactionStore?.record({
-      operationId: "protected-child-operation",
-      fencingToken: 1,
-      phase: "mutation_dispatching",
-      facts: { safe: true },
-    });
-    expect(kernelRepository.recordMutation).toHaveBeenCalledWith(
-      "probe-session",
-      "probe-parent-operation",
-      expect.objectContaining({ operationId: "protected-child-operation" }),
-    );
+    expect(capabilities.options.protectedTransactionStore).toBeUndefined();
+    expect(kernelRepository.recordMutation).not.toHaveBeenCalled();
   });
 
   it("fails closed when a generated public value is missing", async () => {

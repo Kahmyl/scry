@@ -111,6 +111,94 @@ describe("protected acquisition adapter registry", () => {
     }
   }, 15_000);
 
+  it("runs a protected network adapter without requiring a DOM target", async () => {
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
+    const unregister = registerProtectedAcquisitionAdapter(
+      "system.network-only",
+      async () => "network-only-protected-value",
+    );
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<main>No generated value is rendered</main>`);
+      const acquisition = acquisitionIntentSchema.parse({
+        target,
+        classification: "unknown_secret",
+        objective: { kind: "capture_value", expectedValueType: "unknown_secret" },
+        permittedMethods: ["protected_network_value"],
+        adapter: { id: "system.network-only", configuration: {} },
+        validation: { minimumLength: 1, maximumLength: 100 },
+      });
+
+      await expect(acquireValue(page, acquisition, 2_000)).resolves.toMatchObject({
+        value: "network-only-protected-value",
+        result: { adapter: "protected_network_value" },
+      });
+    } finally {
+      unregister();
+      await browser.close();
+    }
+  }, 15_000);
+
+  it("prefers an approved response value over a masked DOM fallback", async () => {
+    const browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" });
+    const unregister = registerProtectedAcquisitionAdapter(
+      "system.response-first",
+      async () => "authoritative-response-value",
+    );
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<label>Generated value<input value="masked"></label>`);
+      const acquisition = acquisitionIntentSchema.parse({
+        target,
+        classification: "unknown_secret",
+        objective: { kind: "capture_value", expectedValueType: "unknown_secret" },
+        permittedMethods: ["semantic_field_value", "input_value", "text_content", "protected_network_value"],
+        adapter: { id: "system.response-first", configuration: {} },
+        validation: { minimumLength: 1, maximumLength: 100 },
+      });
+      const started = performance.now();
+      await expect(acquireValue(page, acquisition, 2_000)).resolves.toMatchObject({
+        value: "authoritative-response-value",
+        result: { adapter: "protected_network_value" },
+      });
+      expect(performance.now() - started).toBeLessThan(1_000);
+    } finally {
+      unregister();
+      await browser.close();
+    }
+  }, 15_000);
+
+  it("falls back from an incorrect authored container while retaining semantic identity", async () => {
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<section aria-label="Actual result"><label>Generated value<input value="container-independent-value"></label></section>`);
+      const acquisition = acquisitionIntentSchema.parse({
+        target: {
+          ...target,
+          preferredEvidence: { ...target.preferredEvidence, roles: ["value"] },
+          scope: { kind: "dialog", name: "Incorrect guessed dialog" },
+        },
+        classification: "unknown_secret",
+        objective: { kind: "capture_value", expectedValueType: "unknown_secret" },
+        permittedMethods: ["semantic_field_value", "input_value", "text_content"],
+        validation: { minimumLength: 1, maximumLength: 100 },
+      });
+
+      await expect(acquireValue(page, acquisition, 2_000)).resolves.toMatchObject({
+        value: "container-independent-value",
+      });
+    } finally {
+      await browser.close();
+    }
+  }, 15_000);
+
   it.each(["keyboard_copy", "clipboard_event"] as const)(
     "verifies %s without returning copied plaintext",
     async (method) => {
@@ -278,6 +366,7 @@ describe("protected acquisition adapter registry", () => {
           persistPublicValue,
         } as unknown as ProtectedTransactionDependencies,
         facts,
+        { id: "protected-operation", state: "persisting", version: 1, fencingToken: 1 },
       );
 
       expect(persistSecret).not.toHaveBeenCalled();

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const semanticText = z.string().trim().min(1).max(500);
 const capabilitySchema = z.enum([
+  "observable",
   "focusable",
   "pointer_activatable",
   "keyboard_activatable",
@@ -182,7 +183,13 @@ export const interactionTargetIntentSchema = z
   .superRefine((intent, context) => {
     const identity = intent.preferredEvidence;
     if (
-      ![identity.names, identity.labels, identity.placeholders, identity.inputTypes].some(
+      ![
+        identity.names,
+        identity.labels,
+        identity.placeholders,
+        identity.inputTypes,
+        identity.testIds ?? [],
+      ].some(
         (items) => items.length,
       ) &&
       !identity.expectedText &&

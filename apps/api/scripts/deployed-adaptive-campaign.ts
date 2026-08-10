@@ -303,13 +303,18 @@ function validateSpec(
     if (/protectedTransaction|capturePublicValue/i.test(bytes)) {
       throw new Error("VITRACT_CAMPAIGN_MUTATION_FORBIDDEN");
     }
-    if (/create.{0,40}(application|credential|order)|generate.{0,40}credential/i.test(bytes)) {
+    const recoveryApplicationCreates = bytes.match(/"intentId":"vitract-save-application"/g)?.length ?? 0;
+    const admittedRecoveryApplication = input.milestone === "M2" && recoveryApplicationCreates === 1;
+    if (
+      /create.{0,40}(credential|order)|generate.{0,40}credential/i.test(bytes) ||
+      /create.{0,40}application/i.test(bytes) && !admittedRecoveryApplication
+    ) {
       throw new Error("VITRACT_CAMPAIGN_SCOPE_FORBIDDEN");
     }
   }
 }
 
-async function initializeMcp() {
+export async function initializeMcp() {
   const endpoint = process.env.SCRY_MCP_URL ?? "http://127.0.0.1:4100/mcp";
   const headers = new Headers({
     accept: "application/json, text/event-stream",
@@ -670,7 +675,7 @@ export function parseMcpResponse(body: string) {
   return JSON.parse(payload);
 }
 
-function rejectToolError(value: unknown) {
+export function rejectToolError(value: unknown) {
   const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   if (record.error || (record.result as Record<string, unknown> | undefined)?.isError === true) {
     const safeCode = JSON.stringify(value).match(/\b[A-Z][A-Z0-9_]{5,}\b/)?.[0];
@@ -702,7 +707,7 @@ export function findDecisionBoundary(value: unknown): string | undefined {
   return visit(value);
 }
 
-function findTurnState(value: unknown): string | undefined {
+export function findTurnState(value: unknown): string | undefined {
   return findNested(value, (record) => {
     if (record.turn && typeof record.turn === "object") {
       const state = (record.turn as Record<string, unknown>).state;
@@ -747,7 +752,7 @@ function findNested(
   return undefined;
 }
 
-function findAdaptiveSessionId(value: unknown): string | undefined {
+export function findAdaptiveSessionId(value: unknown): string | undefined {
   const visit = (candidate: unknown): string | undefined => {
     if (Array.isArray(candidate)) {
       for (const entry of candidate) {

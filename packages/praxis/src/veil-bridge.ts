@@ -30,7 +30,8 @@ type Authorization = {
   binding?: string;
 };
 
-const registrations = new WeakMap<Page, Registration>();
+type RegistrationEntry = { registration: Registration; released: boolean };
+const registrations = new WeakMap<Page, RegistrationEntry[]>();
 // Capability ownership is bound to the exact authorized request object. Transaction
 // identifiers are audit correlation values and are not capability handles.
 const authorizations = new WeakMap<PraxisRequest, Authorization>();
@@ -51,14 +52,20 @@ export class PraxisVeilAuthorizationError extends Error {
 }
 
 export function registerPraxisVeilAuthority(page: Page, registration: Registration): () => void {
-  registrations.set(page, registration);
+  const entry: RegistrationEntry = { registration, released: false };
+  const entries = registrations.get(page) ?? [];
+  entries.push(entry);
+  registrations.set(page, entries);
   return () => {
-    if (registrations.get(page) === registration) registrations.delete(page);
+    if (entry.released) return;
+    entry.released = true;
+    while (entries.at(-1)?.released) entries.pop();
+    if (entries.length === 0) registrations.delete(page);
   };
 }
 
 export function authorizePraxisRequest(page: Page, request: PraxisRequest): PraxisRequest {
-  const registration = registrations.get(page);
+  const registration = registrations.get(page)?.at(-1)?.registration;
   if (!registration)
     throw new PraxisVeilAuthorizationError("schedule", new Error("VEIL_PRAXIS_AUTHORITY_REQUIRED"));
   const allowed: string[] = [];

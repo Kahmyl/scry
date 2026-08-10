@@ -187,6 +187,19 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
     })
     .strict(),
   z.object({ kind: z.literal("inspect"), target: missionAuthoringSemanticTargetSchema }).strict(),
+  z.object({
+    kind: z.literal("acquire_protected_outputs"),
+    preparationIntentIds: z.array(z.string().trim().min(1).max(200)).min(1).max(50)
+      .refine((values) => new Set(values).size === values.length, "preparation intent IDs must be unique"),
+    mutation: z.object({ kind: z.enum(["one_time", "read_only"]), target: missionAuthoringSemanticTargetSchema }).strict(),
+    outputs: z.array(z.object({
+      reference: z.string().trim().min(1).max(100).regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
+      classification: z.enum(["public", "protected"]),
+      target: missionAuthoringSemanticTargetSchema,
+      storageName: z.string().trim().min(1).max(200),
+    }).strict()).min(1).max(8)
+      .refine((outputs) => new Set(outputs.map((output) => output.reference)).size === outputs.length, "output references must be unique"),
+  }).strict(),
   z
     .object({
       kind: z.literal("same_origin_request"),
@@ -265,7 +278,7 @@ export const missionAuthoringIntentSchema = z
       .strict(),
     authorization: z
       .object({
-        kind: z.enum(["ordinary", "authentication", "reversible", "live_read", "live_mutation"]),
+        kind: z.enum(["ordinary", "authentication", "reversible", "live_read", "live_mutation", "protected_mutation"]),
         authorizationId: uuid.optional(),
       })
       .strict(),
@@ -288,7 +301,7 @@ export const missionAuthoringIntentSchema = z
         message: "protected references must exactly match protected fill references",
       });
     if (
-      (intent.authorization.kind === "live_mutation" && !intent.authorization.authorizationId) ||
+      (["live_mutation", "protected_mutation"].includes(intent.authorization.kind) && !intent.authorization.authorizationId) ||
       (intent.action.kind === "same_origin_request" &&
         intent.action.method !== "GET" &&
         (!intent.authorization.authorizationId || intent.authorization.kind !== "live_mutation"))
@@ -298,6 +311,11 @@ export const missionAuthoringIntentSchema = z
         path: ["authorization", "authorizationId"],
         message: "live mutation requires explicit authorization",
       });
+    if (intent.action.kind === "acquire_protected_outputs" &&
+        (intent.authorization.kind !== "protected_mutation" || !intent.authorization.authorizationId))
+      context.addIssue({ code: "custom", path: ["authorization"], message: "protected output acquisition requires explicit protected-mutation authorization" });
+    if (intent.action.kind === "acquire_protected_outputs" && intent.expectedEffect.kind !== "none")
+      context.addIssue({ code: "custom", path: ["expectedEffect"], message: "protected acquisition owns its effect lifecycle" });
     if (
       intent.action.kind === "fill" &&
       intent.action.protectedReferenceId &&
@@ -324,6 +342,8 @@ function hasNonExactTarget(
 ) {
   const targets = [
     "target" in action ? action.target : undefined,
+    action.kind === "acquire_protected_outputs" ? action.mutation.target : undefined,
+    ...(action.kind === "acquire_protected_outputs" ? action.outputs.map((output) => output.target) : []),
     "target" in effect ? effect.target : undefined,
   ];
   return targets.some((target) => target?.exact === false);

@@ -17,6 +17,11 @@ describe("schema migration manifest", () => {
     const authenticationAuthoring = baseline.indexOf("\\ir authentication-authoring.sql");
     const missionFirstM1 = baseline.indexOf("\\ir mission-first-live-convergence-m1.sql");
     const missionAuthoringM2 = baseline.indexOf("\\ir mission-authoring-grouped-turns-m2.sql");
+    const protectedStateMachine = baseline.indexOf("\\ir protected-operation-state-machine.sql");
+    const protectedCompletion = baseline.indexOf("\\ir protected-operation-completion.sql");
+    const protectedProjection = baseline.indexOf("\\ir protected-operation-authoritative-projection.sql");
+    const protectedResponseStaging = baseline.indexOf("\\ir protected-response-output-staging.sql");
+    const protectedReadOnlyDispatch = baseline.indexOf("\\ir protected-read-only-dispatch.sql");
 
     expect(preferences).toBeGreaterThan(-1);
     expect(retention).toBeGreaterThan(preferences);
@@ -27,6 +32,11 @@ describe("schema migration manifest", () => {
     expect(authenticationAuthoring).toBeGreaterThan(interactiveLifecycle);
     expect(missionFirstM1).toBeGreaterThan(authenticationAuthoring);
     expect(missionAuthoringM2).toBeGreaterThan(missionFirstM1);
+    expect(protectedStateMachine).toBeGreaterThan(missionAuthoringM2);
+    expect(protectedCompletion).toBeGreaterThan(protectedStateMachine);
+    expect(protectedProjection).toBeGreaterThan(protectedCompletion);
+    expect(protectedResponseStaging).toBeGreaterThan(protectedProjection);
+    expect(protectedReadOnlyDispatch).toBeGreaterThan(protectedResponseStaging);
   });
 
   it("recognizes the compiled-plan schema and applies the guarded interactive command cutover", async () => {
@@ -62,7 +72,25 @@ describe("schema migration manifest", () => {
       expect(source).toContain("adaptive-sessions-m3.sql");
       expect(source).toContain("mission-first-live-convergence-m1.sql");
       expect(source).toContain("mission-authoring-grouped-turns-m2.sql");
+      expect(source).toContain("protected-operation-state-machine.sql");
+      expect(source).toContain("protected-operation-completion.sql");
+      expect(source).toContain("protected-operation-authoritative-projection.sql");
+      expect(source).toContain("protected-response-output-staging.sql");
+      expect(source).toContain("protected-read-only-dispatch.sql");
     }
+  });
+
+  it("keeps terminal immutability while admitting only canonical durable protected projection", async () => {
+    const migration = await readFile(
+      new URL("migrations/protected-operation-authoritative-projection.sql", root),
+      "utf8",
+    );
+    expect(migration).toContain("Adaptive operations cannot be deleted");
+    expect(migration).toContain("Terminal adaptive operations are immutable");
+    expect(migration).toContain("owner_kind='authoring_session'");
+    expect(migration).toContain("durable_count<>1");
+    expect(migration).toContain("Completed adaptive protected projection disagrees with durable operation");
+    expect(migration).not.toContain("current_setting");
   });
 
   it("defines the complete Mission-first M1 ownership cutover", async () => {

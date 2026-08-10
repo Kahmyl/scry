@@ -225,7 +225,8 @@ export class ExecutionRepository {
 
   async loadExecution(runId: string) {
     const result = await this.database.query(
-      `SELECT id, flow_revision_id AS "flowRevisionId", environment_id AS "environmentId", plan_snapshot AS "planSnapshot", policy_snapshot AS "policySnapshot", veil_policy_snapshot AS "veilPolicySnapshot",
+      `SELECT id,project_id AS "projectId",mission_id AS "missionId",objective_id AS "objectiveId",
+              agent_session_id AS "agentSessionId",flow_revision_id AS "flowRevisionId", environment_id AS "environmentId", plan_snapshot AS "planSnapshot", policy_snapshot AS "policySnapshot", veil_policy_snapshot AS "veilPolicySnapshot",
               environment_snapshot AS "environmentSnapshot",
               execution_snapshot AS "executionSnapshot"
        FROM runs WHERE id = $1`,

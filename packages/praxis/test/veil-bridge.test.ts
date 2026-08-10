@@ -71,6 +71,69 @@ function setup(now: () => number = Date.now) {
 }
 
 describe("Praxis Veil capability boundaries", () => {
+  it("restores the outer authority after a nested registration is released", () => {
+    const page = {} as Page;
+    const outer = new VeilAuthority(
+      compileVeilPolicy({
+        profile: "balanced",
+        allowedOrigins: ["https://example.test"],
+        leaseTtlMs: 100,
+      }),
+    );
+    const inner = new VeilAuthority(
+      compileVeilPolicy({
+        profile: "balanced",
+        allowedOrigins: ["https://example.test"],
+        leaseTtlMs: 100,
+      }),
+    );
+    const outerIssue = vi.spyOn(outer, "issueLease");
+    const innerIssue = vi.spyOn(inner, "issueLease");
+    const unregisterOuter = registerPraxisVeilAuthority(page, {
+      authority: outer,
+      userId: "outer-user",
+      environmentId: "test",
+      browserContextId: "outer-context",
+    });
+    const unregisterInner = registerPraxisVeilAuthority(page, {
+      authority: inner,
+      userId: "inner-user",
+      environmentId: "test",
+      browserContextId: "inner-context",
+    });
+
+    releasePraxisVeilGrants(authorizePraxisRequest(page, request()));
+    expect(innerIssue).toHaveBeenCalled();
+    expect(outerIssue).not.toHaveBeenCalled();
+
+    unregisterInner();
+    releasePraxisVeilGrants(authorizePraxisRequest(page, request()));
+    expect(outerIssue).toHaveBeenCalled();
+
+    unregisterOuter();
+    expect(() => authorizePraxisRequest(page, request())).toThrowError(
+      expect.objectContaining({ code: "PRAXIS_VEIL_SCHEDULE_REFUSED" }),
+    );
+  });
+
+  it("does not let out-of-order cleanup remove the active nested authority", () => {
+    const page = {} as Page;
+    const outer = setupAuthority();
+    const inner = setupAuthority();
+    const unregisterOuter = registerPraxisVeilAuthority(page, registration(outer, "outer"));
+    const unregisterInner = registerPraxisVeilAuthority(page, registration(inner, "inner"));
+
+    unregisterOuter();
+    const authorized = authorizePraxisRequest(page, request());
+    expect(() => validatePraxisVeilBoundary(authorized, "schedule")).not.toThrow();
+    releasePraxisVeilGrants(authorized);
+
+    unregisterInner();
+    expect(() => authorizePraxisRequest(page, request())).toThrowError(
+      expect.objectContaining({ code: "PRAXIS_VEIL_SCHEDULE_REFUSED" }),
+    );
+  });
+
   it("binds scheduling, observation, interaction, protected transaction, evidence, and admission leases exactly", () => {
     const { page, authority } = setup();
     const issued: VeilLeaseRequest[] = [];
@@ -143,3 +206,22 @@ describe("Praxis Veil capability boundaries", () => {
     releasePraxisVeilGrants(authorized);
   });
 });
+
+function setupAuthority() {
+  return new VeilAuthority(
+    compileVeilPolicy({
+      profile: "balanced",
+      allowedOrigins: ["https://example.test"],
+      leaseTtlMs: 100,
+    }),
+  );
+}
+
+function registration(authority: VeilAuthority, suffix: string) {
+  return {
+    authority,
+    userId: `${suffix}-user`,
+    environmentId: "test",
+    browserContextId: `${suffix}-context`,
+  };
+}

@@ -52,22 +52,30 @@ export type CampaignContext = {
 export async function createCampaignContext(): Promise<CampaignContext> {
   const campaignId = randomUUID();
   const correlationId = randomUUID();
+  const secretValue = `campaign-canary-${randomUUID()}`;
   let fixture: Awaited<ReturnType<typeof startAdaptiveFixture>>;
   let fixtureFailure: unknown;
   try {
     fixture = await startAdaptiveFixture(
       0,
       process.env.SCRY_CAMPAIGN_FIXTURE_HOST ?? "host.docker.internal",
+      { protectedValue: secretValue },
     );
   } catch (error) {
     fixtureFailure = error;
     fixture = {
       origin: "http://127.0.0.1:1",
+      snapshot: () => ({
+        protectedDispatches: {
+          readonlyInput: 0,
+          textOutput: 0,
+          interruptedAcquisition: 0,
+        },
+      }),
       close: async () => undefined,
     };
   }
   const beforeCounts = await controlPlaneCounts().catch(() => undefined);
-  const secretValue = `campaign-canary-${randomUUID()}`;
   return {
     campaignId,
     correlationId,

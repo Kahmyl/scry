@@ -20,15 +20,7 @@ export async function reconcileProtectedMutation(
       (reference) =>
         reference in facts.credentialReferences || reference in facts.publicValueReferences,
     );
-    if (persisted) {
-      await dependencies.store.transition({
-        operationId: transaction.operationId,
-        fencingToken,
-        expected: "acknowledged",
-        next: "reconciled_succeeded",
-      });
-      return "succeeded";
-    }
+    if (persisted) return "succeeded";
     return "unknown";
   }
   try {
@@ -41,31 +33,9 @@ export async function reconcileProtectedMutation(
         dependencies,
         "mutation_reconciliation",
       );
-      await dependencies.store.transition({
-        operationId: transaction.operationId,
-        fencingToken,
-        expected: "acknowledged",
-        next: "reconciled_succeeded",
-      });
       return "succeeded";
     }
     const outcome = (await dependencies.reconcile?.(session, transaction)) ?? "unknown";
-    if (outcome === "succeeded") {
-      await dependencies.store.transition({
-        operationId: transaction.operationId,
-        fencingToken,
-        expected: "acknowledged",
-        next: "reconciled_succeeded",
-      });
-    }
-    if (outcome === "not_applied") {
-      await dependencies.store.transition({
-        operationId: transaction.operationId,
-        fencingToken,
-        expected: "acknowledged",
-        next: "reconciled_not_applied",
-      });
-    }
     return outcome;
   } catch {
     return "failed";

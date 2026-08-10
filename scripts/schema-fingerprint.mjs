@@ -59,6 +59,26 @@ const missionAuthoringGroupedTurnsM2 = await readFile(
   new URL("mission-authoring-grouped-turns-m2.sql", root),
   "utf8",
 );
+const protectedOperationStateMachine = await readFile(
+  new URL("protected-operation-state-machine.sql", root),
+  "utf8",
+);
+const protectedOperationCompletion = await readFile(
+  new URL("protected-operation-completion.sql", root),
+  "utf8",
+);
+const protectedOperationAuthoritativeProjection = await readFile(
+  new URL("protected-operation-authoritative-projection.sql", root),
+  "utf8",
+);
+const protectedResponseOutputStaging = await readFile(
+  new URL("protected-response-output-staging.sql", root),
+  "utf8",
+);
+const protectedReadOnlyDispatch = await readFile(
+  new URL("protected-read-only-dispatch.sql", root),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -77,6 +97,11 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "u
   ["adaptive-sessions-m3.sql", adaptiveSessions],
   ["mission-first-live-convergence-m1.sql", missionFirstM1],
   ["mission-authoring-grouped-turns-m2.sql", missionAuthoringGroupedTurnsM2],
+  ["protected-operation-state-machine.sql", protectedOperationStateMachine],
+  ["protected-operation-completion.sql", protectedOperationCompletion],
+  ["protected-operation-authoritative-projection.sql", protectedOperationAuthoritativeProjection],
+  ["protected-response-output-staging.sql", protectedResponseOutputStaging],
+  ["protected-read-only-dispatch.sql", protectedReadOnlyDispatch],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

@@ -105,6 +105,14 @@ export async function probeFlowPlan(input: {
           ]
         : [],
     );
+    if (report.state === "infrastructure_error") {
+      diagnostics.push({
+        code: boundedReasonCode(report.error, "PROBE_INFRASTRUCTURE_FAILURE"),
+        phase: "execution",
+        mutationOutcome: "not_started",
+        retry: "environment_recovery_required",
+      });
+    }
     if (omitted[0]) {
       diagnostics.push({
         code: "PROBE_REQUIRES_CALIBRATION_TRANSACTION",
@@ -277,6 +285,12 @@ export async function probeFlowPlan(input: {
     unregisterPraxisVeil();
     await browser.close();
   }
+}
+
+function boundedReasonCode(value: unknown, fallback: string) {
+  const text = typeof value === "string" ? value : value instanceof Error ? value.message : "";
+  const candidate = text.match(/\b[A-Z][A-Z0-9_]{2,119}\b/)?.[0];
+  return candidate ?? fallback;
 }
 
 async function inspectTarget(

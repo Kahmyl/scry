@@ -33,6 +33,38 @@ const admittedCapabilities = {
 };
 
 describe("current Scry MCP surface", () => {
+  it("returns the shared safe Mission projection unchanged for get and resume", async () => {
+    const safeMission = {
+      id: context.missionId,
+      status: "running",
+      resumePointer: { objectiveId: context.objectiveId, recommendedAction: "review_failure", explanation: "Review safe reason" },
+      objectives: [{ id: context.objectiveId, title: "Safe objective", status: "running" }],
+      authoring: [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", state: "editing",
+        probes: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", state: "completed" }],
+        compilations: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", status: "failed" }] }],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const body = url.pathname.endsWith("/capabilities")
+        ? admittedCapabilities
+        : init?.method === "POST"
+          ? { missionId: context.missionId, agentSessionId: context.agentSessionId, status: "active" }
+          : safeMission;
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    }));
+    const { client, server } = await connected();
+    await client.callTool({ name: "get_capabilities", arguments: {} });
+    const get = await client.callTool({ name: "get_mission", arguments: { missionId: context.missionId } });
+    const resume = await client.callTool({ name: "resume_mission", arguments: {
+      missionId: context.missionId, instructionSnapshot: "Resume safely", provider: "codex",
+      idempotencyKey: "mission-safe-resume",
+    } });
+    expect(get.structuredContent).toMatchObject({ mission: safeMission });
+    expect(resume.structuredContent).toMatchObject({ mission: safeMission });
+    await client.close();
+    await server.close();
+  });
+
   it("exposes only current Flow, run, and artifact tools", async () => {
     vi.stubGlobal(
       "fetch",

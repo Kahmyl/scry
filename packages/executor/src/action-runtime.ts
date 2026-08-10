@@ -12,6 +12,7 @@ import type { Page } from "playwright";
 import { capturePublicGeneratedValue } from "./public-value-capture.js";
 import type { ExecuteOptions } from "./types.js";
 import { navigateAndWaitNative } from "./native-browser-navigation.js";
+import { isNativeControlResolutionError } from "./interaction-lifecycle.js";
 
 export async function executeAction(
   page: Page,
@@ -72,6 +73,7 @@ export async function executeAction(
           videoMaskEstablished: false,
         });
         await privacyGate.beginProtected();
+        await options.onPrivacyBoundary?.("entered");
         await options.executeSameOriginRequest(
           page,
           {
@@ -92,14 +94,17 @@ export async function executeAction(
           kind: "known_safe_navigation",
           urlPattern: exactUrlPattern(page.url()),
         });
+        await options.onPrivacyBoundary?.("verified");
       } catch (error) {
-        await privacyGate.seal({ code: "SAME_ORIGIN_REQUEST_PRIVACY_FAILED" }).catch(() => undefined);
+        await privacyGate.seal({ code: "SAME_ORIGIN_REQUEST_PRIVACY_FAILED" })
+          .then(() => options.onPrivacyBoundary?.("sealed"))
+          .catch(() => undefined);
         throw error;
       }
       return;
     }
     case "click":
-      if (await executeNative(page, action.target, { type: "click", ...nativeTimeout(action.timeoutMs) }, options)) return;
+      if (await executeNative(page, action.target, { type: "click", ...nativeActionTimeouts(action.timeoutMs) }, options)) return;
       requirePraxisFallback(options);
       await requirePraxisSuccess({
         page,
@@ -107,7 +112,10 @@ export async function executeAction(
         operation: { type: "activate" },
         // Popup ownership is verified by the authoring session/kernel after it adopts
         // a distinct page; Praxis cannot establish that browser-session invariant.
-        expectedEffect: action.expectedEffect.type === "new_page" ? { type: "none" } : action.expectedEffect,
+        expectedEffect:
+          options.expectedEffectVerificationOwner === "kernel" || action.expectedEffect.type === "new_page"
+            ? { type: "none" }
+            : action.expectedEffect,
         context: requirePraxisContext(praxisContext),
         signal,
       });
@@ -152,17 +160,29 @@ export async function executeAction(
       if (protectedFill) redactor.add(value);
       if (protectedFill && privacyGate) {
         const operationId = `known-secret-fill-${randomUUID()}`;
+        let privacyEntered = false;
+        let privacyTransition: Promise<void> | undefined;
+        const beginProtectedDispatch = async () => {
+          if (!privacyTransition) {
+            privacyTransition = (async () => {
+              await privacyGate.prepare(operationId, {
+                mode: "protected_recording_gap",
+                videoMaskEstablished: false,
+              });
+              await privacyGate.beginProtected();
+              privacyEntered = true;
+              await options.onPrivacyBoundary?.("entered");
+              await options.onMutationDispatch?.();
+            })();
+          }
+          await privacyTransition;
+        };
         try {
-          await privacyGate.prepare(operationId, {
-            mode: "protected_recording_gap",
-            videoMaskEstablished: false,
-          });
-          await privacyGate.beginProtected();
           const native = await executeNative(
             page,
             action.target,
-            { type: "fill", value, protected: true, ...nativeTimeout(action.timeoutMs) },
-            options,
+            { type: "fill", value, protected: true, ...nativeActionTimeouts(action.timeoutMs) },
+            { ...options, onMutationDispatch: beginProtectedDispatch },
           );
           if (!native) {
             requirePraxisFallback(options);
@@ -173,10 +193,16 @@ export async function executeAction(
                 type: "enter_text",
                 input: { reference: "resolved-input", classification: "known_secret" },
               },
-              context: requirePraxisContext(praxisContext),
+              context: {
+                ...requirePraxisContext(praxisContext),
+                beforeMutation: beginProtectedDispatch,
+              },
               signal,
               resolveInput: async () => value!,
             });
+          }
+          if (!privacyEntered) {
+            throw new Error("PROTECTED_FILL_DISPATCH_BOUNDARY_NOT_ENTERED");
           }
           await privacyGate.markCaptured();
           await privacyGate.beginSafeBoundary();
@@ -184,15 +210,23 @@ export async function executeAction(
             kind: "known_secret_registered",
             referenceType: action.secretRef ? "vault" : "captured",
           });
+          await options.onPrivacyBoundary?.("verified");
         } catch (error) {
-          await privacyGate.seal({ code: "KNOWN_SECRET_FILL_FAILED" }).catch(() => undefined);
+          const gateState = (privacyGate as VeilRuntimeCoordinator & {
+            state?: () => unknown;
+          }).state?.();
+          if (privacyEntered || (gateState !== undefined && gateState !== "normal")) {
+            await privacyGate.seal({ code: "KNOWN_SECRET_FILL_FAILED" })
+              .then(() => options.onPrivacyBoundary?.("sealed"))
+              .catch(() => undefined);
+          }
           throw error;
         }
       } else {
         if (await executeNative(
           page,
           action.target,
-          { type: "fill", value, protected: false, ...nativeTimeout(action.timeoutMs) },
+          { type: "fill", value, protected: false, ...nativeActionTimeouts(action.timeoutMs) },
           options,
         )) return;
         requirePraxisFallback(options);
@@ -214,7 +248,7 @@ export async function executeAction(
       return;
     }
     case "select":
-      if (await executeNative(page, action.target, { type: "select", value: action.value, ...nativeTimeout(action.timeoutMs) }, options)) return;
+      if (await executeNative(page, action.target, { type: "select", value: action.value, ...nativeActionTimeouts(action.timeoutMs) }, options)) return;
       requirePraxisFallback(options);
       await requirePraxisSuccess({
         page,
@@ -229,7 +263,7 @@ export async function executeAction(
       });
       return;
     case "check":
-      if (await executeNative(page, action.target, { type: "check", checked: action.checked, ...nativeTimeout(action.timeoutMs) }, options)) return;
+      if (await executeNative(page, action.target, { type: "check", checked: action.checked, ...nativeActionTimeouts(action.timeoutMs) }, options)) return;
       requirePraxisFallback(options);
       await requirePraxisSuccess({
         page,
@@ -241,7 +275,7 @@ export async function executeAction(
       return;
     case "press":
       if (action.target && approvedKey(action.key)) {
-        if (await executeNative(page, action.target, { type: "press", key: action.key }, options)) return;
+        if (await executeNative(page, action.target, { type: "press", key: action.key, ...nativeActionTimeouts(action.timeoutMs) }, options)) return;
         requirePraxisFallback(options);
         await requirePraxisSuccess({
           page,
@@ -312,7 +346,8 @@ async function executeNative(
     return true;
   } catch (error) {
     const code = error instanceof Error ? error.message : String(error);
-    if (["NATIVE_TARGET_NOT_FOUND", "NATIVE_TARGET_AMBIGUOUS", "NATIVE_SCOPE_UNSAFE"].includes(code)) {
+    if (isNativeControlResolutionError(error) ||
+        ["NATIVE_TARGET_NOT_FOUND", "NATIVE_TARGET_AMBIGUOUS", "NATIVE_SCOPE_UNSAFE"].includes(code)) {
       await options.onNativeResolution?.({
         status: "fallback", reasonCode: code, durationMs: performance.now() - startedAt,
       });
@@ -325,6 +360,18 @@ async function executeNative(
 
 function nativeTimeout(timeoutMs: number | undefined): { timeoutMs?: number } {
   return timeoutMs === undefined ? {} : { timeoutMs };
+}
+
+const NATIVE_RESOLUTION_TIMEOUT_MS = 5_000;
+
+function nativeActionTimeouts(timeoutMs: number | undefined): {
+  timeoutMs?: number;
+  resolutionTimeoutMs: number;
+} {
+  return {
+    ...nativeTimeout(timeoutMs),
+    resolutionTimeoutMs: Math.min(timeoutMs ?? NATIVE_RESOLUTION_TIMEOUT_MS, NATIVE_RESOLUTION_TIMEOUT_MS),
+  };
 }
 
 export async function missingSecretResolver(reference: string): Promise<string> {

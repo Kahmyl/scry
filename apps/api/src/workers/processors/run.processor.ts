@@ -100,6 +100,10 @@ export function createRunProcessor(options: RunProcessorOptions) {
         claimToken,
         flowRevisionId: String(snapshot.flowRevisionId),
         environmentId: String(snapshot.environmentId),
+        projectId: String(snapshot.projectId),
+        missionId: String(snapshot.missionId),
+        objectiveId: String(snapshot.objectiveId),
+        agentSessionId: String(snapshot.agentSessionId),
         options: {
           veilPolicySnapshot,
           outputDirectory,

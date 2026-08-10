@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Page } from "playwright";
-import type { Assertion, ProtectedTransaction, ProtectedTransactionResult } from "@scry/contracts";
+import type { Assertion, ProtectedOperationState, ProtectedTransaction, ProtectedTransactionResult } from "@scry/contracts";
 import type { SecretRedactor } from "@scry/policy";
 import type { ProtectedBrowserSession, SafeBrowserSession } from "./browser-session.js";
-import { executeProtectedReveal } from "./protected-extractor.js";
+import { executeProtectedReveal, verifyProtectedRevealTarget } from "./protected-extractor.js";
 import {
   CalibrationRequiredError,
   protectedTransactionDigest,
@@ -12,6 +12,7 @@ import {
 } from "./calibration.js";
 import type { VeilRuntimeCoordinator } from "@scry/veil";
 import type { CapsuleFactory } from "./protected-capsule-factory.js";
+import type { ExecuteOptions } from "./types.js";
 export { PlaywrightProtectedCapsuleFactory } from "./protected-capsule-factory.js";
 export type { CapsuleFactory } from "./protected-capsule-factory.js";
 import { ProtectedTransactionPhaseError as PhaseError } from "./protected-transaction-errors.js";
@@ -20,7 +21,8 @@ import {
   verifyProtectedTransactionAssertions,
 } from "./protected-transaction-preparation.js";
 import {
-  extractAndPersistProtectedOutputs,
+  acquireProtectedOutputs,
+  persistAcquiredProtectedOutputs,
   protectedOutputsPersisted,
   recoverProtectedAcquisition,
   verifyProtectedAcquisitionReadiness,
@@ -29,36 +31,48 @@ import {
   continueAfterProtectedMutation,
   reconcileProtectedMutation,
 } from "./protected-transaction-post-dispatch.js";
+import { classifyPassivePreparationRequest } from "./protected-preparation-effects.js";
+import { beginProtectedResponseEnvelope } from "./protected-response-envelope.js";
 
-export type MutationLedgerState =
-  | "planned"
-  | "dispatch_authorized"
-  | "dispatching"
-  | "dispatched"
-  | "acknowledged"
-  | "reconciled_succeeded"
-  | "reconciled_not_applied"
-  | "outcome_unknown";
+/** @deprecated Historical rows only. New operations use ProtectedOperationState. */
+export type MutationLedgerState = ProtectedOperationState;
+export type ProtectedOperationClaim = {
+  id: string;
+  state: ProtectedOperationState;
+  version: number;
+  fencingToken: number;
+  persistedReferences?: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "run" | "project" }>;
+};
 export type ProtectedTransactionStore = {
   claim(input: {
     operationId: string;
     mutationKind: "one_time" | "repeatable";
+    dispatchSemantics?: "mutation" | "read_only";
     programDigest: string;
     inputSchemaDigest: string;
     inputDigest: string;
-  }): Promise<{ state: MutationLedgerState; fencingToken: number }>;
+    mutationIdentity: string;
+    safeOutputManifest: Array<{ reference: string; classification: "public" | "protected"; storageName: string }>;
+  }): Promise<ProtectedOperationClaim>;
   transition(input: {
+    id: string;
     operationId: string;
+    version: number;
     fencingToken: number;
     expected: MutationLedgerState;
     next: MutationLedgerState;
-  }): Promise<boolean>;
+    phase: string;
+    reasonCode?: string;
+    facts?: Record<string, unknown>;
+  }): Promise<ProtectedOperationClaim>;
   record(input: {
     operationId: string;
     fencingToken: number;
     phase: string;
     facts?: Record<string, unknown>;
   }): Promise<void>;
+  heartbeat?(claim: ProtectedOperationClaim): Promise<void>;
+  heartbeatIntervalMs?: number;
 };
 
 export type ProtectedTransactionDependencies = {
@@ -82,7 +96,43 @@ export type ProtectedTransactionDependencies = {
     value: string;
     scope: "run" | "project";
   }): Promise<{ valueId: string }>;
+  persistOutputsAtomically?(input: {
+    operationId: string;
+    claim: ProtectedOperationClaim;
+    outputs: Array<{
+      reference: string;
+      classification: "public" | "protected";
+      name: string;
+      value: string;
+      scope: "run" | "project";
+    }>;
+  }): Promise<{
+    claim: ProtectedOperationClaim;
+    references: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "run" | "project" }>;
+  }>;
+  stageResponseOutputsAtomically?(input: {
+    operationId: string;
+    claim: ProtectedOperationClaim;
+    outputs: Array<{
+      reference: string;
+      classification: "public" | "protected";
+      name: string;
+      value: string;
+      scope: "run" | "project";
+    }>;
+  }): Promise<void>;
+  recoverStagedResponseOutputs?(input: {
+    operationId: string;
+    claim: ProtectedOperationClaim;
+  }): Promise<Array<{
+    reference: string;
+    classification: "public" | "protected";
+    name: string;
+    value: string;
+    scope: "run" | "project";
+  }> | undefined>;
   resolveKnownSecret(reference: string): Promise<string>;
+  executeNativeControl?: ExecuteOptions["executeNativeControl"];
   verifyAssertions(page: Page, assertions: Assertion[]): Promise<void>;
   prepareCapsule(session: ProtectedBrowserSession): Promise<void>;
   verifyCalibration?(
@@ -119,6 +169,8 @@ export type ProtectedTransactionDependencies = {
     correctedScope?: import("@scry/contracts").SemanticScope;
   }>;
   signal?: AbortSignal;
+  onMutationDispatch?(): void | Promise<void>;
+  markCredentialCompromised?(credentialId: string, code: string, operationId: string): Promise<void>;
 };
 
 export type ProtectedTransactionExecution = {
@@ -133,14 +185,47 @@ export class ProtectedTransactionKernel {
   async execute(transaction: ProtectedTransaction): Promise<ProtectedTransactionExecution> {
     const d = this.dependencies;
     const identity = digests(transaction, d.allowedOrigins);
-    const claim = await d.store.claim({
+    let claim = await d.store.claim({
       operationId: transaction.operationId,
       mutationKind: transaction.mutation.kind,
+      dispatchSemantics: transaction.mutation.dispatchSemantics ?? "mutation",
+      mutationIdentity: transaction.operationId,
+      safeOutputManifest: transaction.extraction.outputs.map((output) => ({
+        reference: output.reference,
+        classification: output.classification,
+        storageName: output.classification === "protected" ? output.storage.credentialName : output.storage.name,
+      })),
       ...identity,
     });
-    if (claim.state !== "planned") return this.outcomeUnknown(transaction, claim.fencingToken);
+    if (["dispatching", "dispatched", "acquiring", "persisting", "persisted", "reconciling", "recovery_required", "compromised"].includes(claim.state))
+      return this.recoverDurable(transaction, claim);
+    if (["completed", "failed_not_applied", "revoked", "abandoned"].includes(claim.state))
+      return this.storedTerminal(transaction, claim);
+    if (claim.state === "planned") {
+      claim = await d.store.transition({
+        id: claim.id, operationId: transaction.operationId, version: claim.version,
+        fencingToken: claim.fencingToken, expected: "planned", next: "preparing", phase: "preparation",
+      });
+    }
+    let heartbeatFailure: unknown;
+    const leaseController = new AbortController();
+    let heartbeatWork = Promise.resolve();
+    const heartbeat = () => {
+      heartbeatWork = heartbeatWork.then(() => d.store.heartbeat?.(claim)).catch((error) => {
+        heartbeatFailure ??= error;
+        leaseController.abort(error);
+      });
+      return heartbeatWork;
+    };
+    const heartbeatTimer = d.store.heartbeat
+      ? setInterval(() => { void heartbeat(); }, Math.max(250, d.store.heartbeatIntervalMs ?? 10_000))
+      : undefined;
+    const assertOwned = () => {
+      if (heartbeatFailure) throw new PhaseError("PROTECTED_OPERATION_LEASE_LOST", facts.mutation.dispatch === "not_started" ? "preparation" : "mutation_dispatch", facts.mutation.dispatch === "not_started" ? "safe_to_retry" : "retry_requires_reconciliation");
+    };
     const facts = initialFacts();
     let capsule: ProtectedBrowserSession | undefined;
+    let responseEnvelope: Awaited<ReturnType<typeof beginProtectedResponseEnvelope>> | undefined;
     let capsulePrivacyFailed = false;
     let safeSession = d.safeSession;
     try {
@@ -254,12 +339,23 @@ export class ProtectedTransactionKernel {
               rule.methods.includes(method as "POST" | "PUT" | "PATCH" | "DELETE") &&
               url.pathname.startsWith(rule.pathPrefix),
           );
+          const passiveCategory = ignored
+            ? undefined
+            : classifyPassivePreparationRequest({
+                method,
+                url,
+                allowedOrigins: d.allowedOrigins,
+              });
           observedEffects.push({
             method,
             origin: url.origin,
             path: url.pathname,
-            disposition: ignored ? "ignored" : "blocked",
-            ...(ignored ? { category: ignored.category } : {}),
+            disposition: ignored || passiveCategory ? "ignored" : "blocked",
+            ...(ignored
+              ? { category: ignored.category }
+              : passiveCategory
+                ? { category: passiveCategory }
+                : {}),
           });
         } catch {
           observedEffects.push({
@@ -320,6 +416,7 @@ export class ProtectedTransactionKernel {
         phase: "acquisition_readiness_validating",
       });
       await verifyProtectedAcquisitionReadiness(capsule.page, transaction);
+      await verifyProtectedRevealTarget(capsule.page, transaction);
       await d.store.record({
         operationId: transaction.operationId,
         fencingToken: claim.fencingToken,
@@ -329,30 +426,43 @@ export class ProtectedTransactionKernel {
         },
       });
 
-      if (
-        !(await d.store.transition({
-          operationId: transaction.operationId,
-          fencingToken: claim.fencingToken,
-          expected: "planned",
-          next: "dispatch_authorized",
-        }))
-      )
-        throw new PhaseError("MUTATION_LEDGER_CONFLICT", "mutation_dispatch", "manual_review");
+      await heartbeat();
+      assertOwned();
+
+      if (claim.state === "preparing") {
+        claim = await d.store.transition({
+          id: claim.id, operationId: transaction.operationId, version: claim.version,
+          fencingToken: claim.fencingToken, expected: "preparing", next: "ready_to_dispatch",
+          phase: "ready_to_dispatch",
+        });
+      }
       facts.mutation.dispatch = "authorized";
       await d.store.record({
         operationId: transaction.operationId,
         fencingToken: claim.fencingToken,
         phase: "dispatch_authorized",
       });
-      if (
-        !(await d.store.transition({
-          operationId: transaction.operationId,
-          fencingToken: claim.fencingToken,
-          expected: "dispatch_authorized",
-          next: "dispatching",
-        }))
-      )
-        throw new PhaseError("MUTATION_LEDGER_CONFLICT", "mutation_dispatch", "manual_review");
+      claim = await d.store.transition({
+        id: claim.id, operationId: transaction.operationId, version: claim.version,
+        fencingToken: claim.fencingToken, expected: "ready_to_dispatch", next: "dispatching",
+        phase: "mutation_dispatching",
+      });
+      responseEnvelope = beginProtectedResponseEnvelope(
+        capsule.page,
+        d.allowedOrigins,
+        d.redactor,
+        d.stageResponseOutputsAtomically
+          ? {
+              outputs: transaction.extraction.outputs,
+              stage: (outputs) => d.stageResponseOutputsAtomically!({
+                operationId: transaction.operationId,
+                claim,
+                outputs,
+              }),
+            }
+          : undefined,
+      );
+      await d.onMutationDispatch?.();
       facts.mutation.dispatch = "started";
       capsule.provenance.transition("tainted");
       await d.onContextProvenance?.({
@@ -366,23 +476,20 @@ export class ProtectedTransactionKernel {
         phase: "mutation_dispatching",
       });
       await abortable(
-        executeProtectedReveal(capsule.page, transaction, d.allowedOrigins, d.signal),
-        d.signal,
+        executeProtectedReveal(capsule.page, transaction, d.allowedOrigins, composeAbortSignals(d.signal, leaseController.signal)),
+        composeAbortSignals(d.signal, leaseController.signal),
       );
-      if (
-        !(await d.store.transition({
-          operationId: transaction.operationId,
-          fencingToken: claim.fencingToken,
-          expected: "dispatching",
-          next: "dispatched",
-        }))
-      )
-        throw new PhaseError("MUTATION_LEDGER_CONFLICT", "mutation_dispatch", "manual_review");
-      await d.store.transition({
-        operationId: transaction.operationId,
-        fencingToken: claim.fencingToken,
-        expected: "dispatched",
-        next: "acknowledged",
+      await responseEnvelope.settle();
+      assertOwned();
+      claim = await d.store.transition({
+        id: claim.id, operationId: transaction.operationId, version: claim.version,
+        fencingToken: claim.fencingToken, expected: "dispatching", next: "dispatched",
+        phase: "mutation_dispatched",
+      });
+      claim = await d.store.transition({
+        id: claim.id, operationId: transaction.operationId, version: claim.version,
+        fencingToken: claim.fencingToken, expected: "dispatched", next: "acquiring",
+        phase: "acquisition_running",
       });
       facts.mutation.dispatch = "acknowledged";
       facts.mutation.outcome = "unknown";
@@ -392,9 +499,16 @@ export class ProtectedTransactionKernel {
         fencingToken: claim.fencingToken,
         phase: "acquisition_running",
       });
-      await extractAndPersistProtectedOutputs(capsule.page, transaction, d, facts);
+      const acquired = await acquireProtectedOutputs(capsule.page, transaction, d, facts);
+      assertOwned();
+      claim = await d.store.transition({
+        id: claim.id, operationId: transaction.operationId, version: claim.version,
+        fencingToken: claim.fencingToken, expected: "acquiring", next: "persisting",
+        phase: "persistence_running",
+      });
+      claim = await persistAcquiredProtectedOutputs(transaction, d, facts, acquired, claim);
       if (!protectedOutputsPersisted(transaction, facts))
-        await recoverProtectedAcquisition(capsule.page, transaction, d, facts, claim.fencingToken);
+        await recoverProtectedAcquisition(capsule.page, transaction, d, facts, claim);
       if (protectedOutputsPersisted(transaction, facts))
         facts.mutation.outcome = "confirmed_succeeded";
     } catch (error) {
@@ -406,18 +520,31 @@ export class ProtectedTransactionKernel {
         facts.bootstrap = { status: "failed", code: failure.code };
       if (facts.preparation.status === "running")
         facts.preparation = { status: "failed", code: failure.code };
-      if (facts.mutation.dispatch === "started") {
-        facts.mutation.outcome = "unknown";
-        await d.store
-          .transition({
-            operationId: transaction.operationId,
-            fencingToken: claim.fencingToken,
-            expected: "dispatching",
-            next: "outcome_unknown",
-          })
-          .catch(() => false);
+      if (facts.mutation.dispatch !== "not_started") {
+        const readOnly = transaction.mutation.dispatchSemantics === "read_only";
+        facts.mutation.outcome = readOnly ? "confirmed_not_applied" : "unknown";
+        if (readOnly) {
+          facts.retryClass = "safe_to_retry";
+          if (["dispatching", "dispatched", "acquiring", "persisting", "persisted", "reconciling"].includes(claim.state)) {
+            claim = await d.store.transition({
+              id: claim.id, operationId: transaction.operationId, version: claim.version,
+              fencingToken: claim.fencingToken, expected: claim.state, next: "failed_not_applied",
+              phase: "failed_not_applied", reasonCode: failure.code,
+            }).catch(() => claim);
+          }
+        }
+        if (!readOnly && ["dispatching", "dispatched", "acquiring", "persisting", "persisted", "reconciling"].includes(claim.state)) {
+          claim = await d.store.transition({
+            id: claim.id, operationId: transaction.operationId, version: claim.version,
+            fencingToken: claim.fencingToken, expected: claim.state, next: "recovery_required",
+            phase: "recovery_required", reasonCode: failure.code,
+          }).catch(() => claim);
+        }
       }
     } finally {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      await heartbeatWork;
+      await responseEnvelope?.close().catch(() => undefined);
       if (capsule) {
         try {
           await capsule.clipboardCollector.finalize();
@@ -453,6 +580,14 @@ export class ProtectedTransactionKernel {
         : [];
 
     if (facts.mutation.dispatch === "not_started" && facts.reasonCode) {
+      if (["planned", "preparing", "ready_to_dispatch"].includes(claim.state)) {
+        claim = await d.store.transition({
+          id: claim.id, operationId: transaction.operationId, version: claim.version,
+          fencingToken: claim.fencingToken, expected: claim.state, next: "failed_not_applied",
+          phase: "failed_not_applied", reasonCode: facts.reasonCode,
+          facts: { preparationEffects: facts.preparationEffects },
+        });
+      }
       await d.gate.seal({ code: facts.reasonCode });
       await this.persistFinal(transaction, claim.fencingToken, "aborted", facts);
       return {
@@ -478,14 +613,19 @@ export class ProtectedTransactionKernel {
           : facts.publicPersistence === "confirmed",
     );
     if (capsulePrivacyFailed || facts.capsule === "destruction_failed" || !persistenceComplete) {
-      facts.reconciliation = await reconcileProtectedMutation(
-        safeSession,
-        transaction,
-        claim.fencingToken,
-        facts,
-        d,
-      );
+      if (facts.capsule === "destruction_failed" || capsulePrivacyFailed) {
+        await Promise.all(Object.values(facts.credentialReferences).map((credentialId) =>
+          d.markCredentialCompromised?.(credentialId, facts.reasonCode ?? "CAPSULE_DESTRUCTION_FAILED", transaction.operationId),
+        ));
+        if (Object.keys(facts.credentialReferences).length) facts.credentialSecurity = "compromised";
+      }
+      facts.reconciliation = transaction.mutation.dispatchSemantics === "read_only"
+        ? "not_applied"
+        : await reconcileProtectedMutation(safeSession, transaction, claim.fencingToken, facts, d);
       await d.gate.seal({ code: facts.reasonCode ?? "PROTECTED_TRANSACTION_FAILED" });
+      if (["persisted", "reconciling"].includes(claim.state)) {
+        claim = await d.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: claim.state, next: "recovery_required", phase: "recovery_required", reasonCode: facts.reasonCode ?? "PROTECTED_TRANSACTION_FAILED" });
+      }
       const status = facts.mutation.outcome === "unknown" ? "outcome_unknown" : "aborted";
       await this.persistFinal(transaction, claim.fencingToken, status, facts);
       return {
@@ -494,12 +634,19 @@ export class ProtectedTransactionKernel {
         result: result(
           facts,
           status,
-          facts.mutation.outcome === "unknown" ? ["manual_reconciliation", "abort"] : ["abort"],
+          facts.mutation.outcome === "unknown" ? ["manual_reconciliation", "abort"] : ["retry_transaction", "abort"],
         ),
       };
     }
 
     await d.gate.markCaptured();
+    if (claim.state === "persisted") {
+      claim = await d.store.transition({
+        id: claim.id, operationId: transaction.operationId, version: claim.version,
+        fencingToken: claim.fencingToken, expected: "persisted", next: "reconciling",
+        phase: "reconciliation",
+      });
+    }
     facts.reconciliation = await reconcileProtectedMutation(
       safeSession,
       transaction,
@@ -509,6 +656,7 @@ export class ProtectedTransactionKernel {
     );
     if (facts.reconciliation === "not_applied" || facts.reconciliation === "failed") {
       await d.gate.seal({ code: "MUTATION_RECONCILIATION_FAILED" });
+      if (claim.state === "reconciling") claim = await d.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: "reconciling", next: "recovery_required", phase: "recovery_required", reasonCode: "MUTATION_RECONCILIATION_FAILED" });
       await this.persistFinal(transaction, claim.fencingToken, "aborted", facts);
       return {
         safeSession,
@@ -522,6 +670,7 @@ export class ProtectedTransactionKernel {
     facts.continuation = continuation.status;
     if (continuation.status === "terminal") {
       await d.gate.seal({ code: "TERMINAL_PROTECTED_TRANSACTION" });
+      if (claim.state === "reconciling") claim = await d.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: "reconciling", next: "completed", phase: "completed" });
       await this.persistFinal(transaction, claim.fencingToken, "terminal", facts);
       return { safeSession, terminal: true, result: result(facts, "terminal", []) };
     }
@@ -533,6 +682,7 @@ export class ProtectedTransactionKernel {
       }));
       await d.gate.seal({ code: "CONTINUING_UNRECORDED" });
       await d.gate.terminate("continuing_unrecorded");
+      if (claim.state === "reconciling") claim = await d.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: "reconciling", next: "completed", phase: "completed" });
       await this.persistFinal(transaction, claim.fencingToken, "continuing_unrecorded", facts);
       return {
         safeSession,
@@ -542,6 +692,7 @@ export class ProtectedTransactionKernel {
     }
     if (continuation.status === "failed" || !continuation.continuedAtStepId) {
       await d.gate.seal({ code: "CONTINUATION_FAILED" });
+      if (claim.state === "reconciling") claim = await d.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: "reconciling", next: "recovery_required", phase: "recovery_required", reasonCode: "CONTINUATION_FAILED" });
       await this.persistFinal(transaction, claim.fencingToken, "aborted", facts);
       return {
         safeSession,
@@ -570,6 +721,13 @@ export class ProtectedTransactionKernel {
       operationId: transaction.operationId,
       continuedAtStepId: continuation.continuedAtStepId,
     });
+    if (claim.state === "reconciling") {
+      claim = await d.store.transition({
+        id: claim.id, operationId: transaction.operationId, version: claim.version,
+        fencingToken: claim.fencingToken, expected: "reconciling", next: "completed",
+        phase: "completed",
+      });
+    }
     await this.persistFinal(transaction, claim.fencingToken, "completed", facts);
     return {
       safeSession,
@@ -593,6 +751,116 @@ export class ProtectedTransactionKernel {
       terminal: true,
       result: result(facts, "outcome_unknown", ["manual_reconciliation", "abort"]),
     };
+  }
+
+  private async storedTerminal(
+    transaction: ProtectedTransaction,
+    claim: ProtectedOperationClaim,
+  ): Promise<ProtectedTransactionExecution> {
+    const facts = initialFacts();
+    const references = claim.persistedReferences ?? {};
+    for (const [reference, stored] of Object.entries(references)) {
+      if (stored.classification === "protected" && stored.credentialId)
+        facts.credentialReferences[reference] = stored.credentialId;
+      if (stored.classification === "public" && stored.valueId)
+        facts.publicValueReferences[reference] = stored.valueId;
+    }
+    if (claim.state === "completed") {
+      facts.mutation.dispatch = "acknowledged";
+      facts.mutation.outcome = "confirmed_succeeded";
+      facts.protectedPersistence = Object.values(references).some((value) => value.classification === "protected") ? "confirmed" : "not_attempted";
+      facts.publicPersistence = Object.values(references).some((value) => value.classification === "public") ? "confirmed" : "not_attempted";
+      facts.capsule = "destroyed";
+      return { safeSession: this.dependencies.safeSession, terminal: false, result: result(facts, "completed", []) };
+    }
+    facts.reasonCode = claim.state === "failed_not_applied" ? "PROTECTED_OPERATION_NOT_APPLIED" : "PROTECTED_OPERATION_TERMINAL";
+    facts.mutation.outcome = claim.state === "failed_not_applied" ? "not_attempted" : "unknown";
+    return { safeSession: this.dependencies.safeSession, terminal: true, result: result(facts, claim.state === "failed_not_applied" ? "aborted" : "outcome_unknown", []) };
+  }
+
+  private async recoverDurable(
+    transaction: ProtectedTransaction,
+    claim: ProtectedOperationClaim,
+  ): Promise<ProtectedTransactionExecution> {
+    const facts = initialFacts();
+    facts.mutation.dispatch = "acknowledged";
+    facts.mutation.outcome = "unknown";
+    facts.capsule = "force_terminated";
+    const references = claim.persistedReferences ?? {};
+    for (const [reference, stored] of Object.entries(references)) {
+      if (stored.classification === "protected" && stored.credentialId) facts.credentialReferences[reference] = stored.credentialId;
+      if (stored.classification === "public" && stored.valueId) facts.publicValueReferences[reference] = stored.valueId;
+    }
+    let completeSet = transaction.extraction.outputs.every((output) => output.reference in references);
+    if (!completeSet && claim.state === "recovery_required" && this.dependencies.recoverStagedResponseOutputs) {
+      const staged = await this.dependencies.recoverStagedResponseOutputs({
+        operationId: transaction.operationId,
+        claim,
+      });
+      if (staged?.length) {
+        claim = await this.dependencies.store.transition({
+          id: claim.id,
+          operationId: transaction.operationId,
+          version: claim.version,
+          fencingToken: claim.fencingToken,
+          expected: "recovery_required",
+          next: "acquiring",
+          phase: "staged_response_recovery",
+        });
+        claim = await this.dependencies.store.transition({
+          id: claim.id,
+          operationId: transaction.operationId,
+          version: claim.version,
+          fencingToken: claim.fencingToken,
+          expected: "acquiring",
+          next: "persisting",
+          phase: "persistence_running",
+        });
+        const acquired = staged.map((output) => ({
+          output: transaction.extraction.outputs.find((candidate) => candidate.reference === output.reference)!,
+          value: output.value,
+          adapter: "protected_network_value" as const,
+        }));
+        if (acquired.length === transaction.extraction.outputs.length && acquired.every((item) => item.output)) {
+          claim = await persistAcquiredProtectedOutputs(transaction, this.dependencies, facts, acquired, claim);
+          completeSet = transaction.extraction.outputs.every((output) => output.reference in (claim.persistedReferences ?? {}));
+          for (const [reference, stored] of Object.entries(claim.persistedReferences ?? {})) {
+            if (stored.classification === "protected" && stored.credentialId) facts.credentialReferences[reference] = stored.credentialId;
+            if (stored.classification === "public" && stored.valueId) facts.publicValueReferences[reference] = stored.valueId;
+          }
+        }
+      }
+    }
+    if (!completeSet || claim.state === "compromised") {
+      for (const credentialId of Object.values(facts.credentialReferences))
+        await this.dependencies.markCredentialCompromised?.(credentialId, "PROTECTED_ACQUISITION_INTERRUPTED", transaction.operationId);
+      if (!["recovery_required", "compromised"].includes(claim.state)) {
+        claim = await this.dependencies.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: claim.state, next: "recovery_required", phase: "recovery_required", reasonCode: "PROTECTED_ACQUISITION_INTERRUPTED" });
+      }
+      if (claim.state === "recovery_required") {
+        claim = await this.dependencies.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: "recovery_required", next: "compromised", phase: "compromised", reasonCode: "PROTECTED_ACQUISITION_INTERRUPTED" });
+      }
+      facts.credentialSecurity = Object.keys(facts.credentialReferences).length ? "compromised" : "none";
+      facts.reasonCode = "PROTECTED_ACQUISITION_INTERRUPTED";
+      facts.retryClass = "do_not_retry";
+      return { safeSession: this.dependencies.safeSession, terminal: true, result: result(facts, "outcome_unknown", ["manual_reconciliation", "abort"]) };
+    }
+    if (claim.state === "persisted" || claim.state === "recovery_required") {
+      claim = await this.dependencies.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: claim.state, next: "reconciling", phase: "reconciliation" });
+    }
+    if (claim.state !== "reconciling") return this.outcomeUnknown(transaction, claim.fencingToken);
+    facts.protectedPersistence = Object.values(references).some((stored) => stored.classification === "protected") ? "confirmed" : "not_attempted";
+    facts.publicPersistence = Object.values(references).some((stored) => stored.classification === "public") ? "confirmed" : "not_attempted";
+    facts.reconciliation = await reconcileProtectedMutation(this.dependencies.safeSession, transaction, claim.fencingToken, facts, this.dependencies);
+    if (facts.reconciliation !== "succeeded") {
+      claim = await this.dependencies.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: "reconciling", next: "recovery_required", phase: "recovery_required", reasonCode: "MUTATION_RECONCILIATION_REQUIRED" });
+      facts.reasonCode = "MUTATION_RECONCILIATION_REQUIRED";
+      return { safeSession: this.dependencies.safeSession, terminal: true, result: result(facts, "outcome_unknown", ["manual_reconciliation", "abort"]) };
+    }
+    claim = await this.dependencies.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: "reconciling", next: "completed", phase: "completed" });
+    facts.mutation.outcome = "confirmed_succeeded";
+    facts.credentialSecurity = Object.keys(facts.credentialReferences).length ? "active" : "none";
+    return { safeSession: this.dependencies.safeSession, terminal: false, result: result(facts, "completed", []) };
   }
 
   private async persistFinal(
@@ -680,6 +948,10 @@ function digests(transaction: ProtectedTransaction, allowedOrigins: string[]) {
     inputSchemaDigest: transactionInputSchemaDigest(transaction),
     inputDigest: transactionInputDigest(transaction),
   };
+}
+
+function composeAbortSignals(first: AbortSignal | undefined, second: AbortSignal) {
+  return first ? AbortSignal.any([first, second]) : second;
 }
 function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise;

@@ -1,0 +1,206 @@
+{
+  "schemaVersion": 2,
+  "releaseId": "local-20260806-compiled-plan",
+  "gitCommit": "8ba18f9ae00d3559a87a415750ba56f594897308",
+  "schemaFingerprint": "deb3dc8d272b192a9e834f07afbf33aa37b8f3dfd8001f288657e0c940c210a8",
+  "runtimeVersion": "development",
+  "runtimeConfigurationDigest": "a4010ea9bc57c84a2a868bb34a60cbd5825f0af8aeb116402913468efad7b2bb",
+  "milestone": "M2",
+  "target": "vitract_preview",
+  "repetition": 1,
+  "missionId": "79714b50-92a0-4611-8def-a312dd8b5897",
+  "objectiveIds": [
+    "798564cb-3334-4402-9093-c4dd0213281f",
+    "ec4026c2-e2e6-479b-9103-d456fa7cf4f2",
+    "3e781cc8-ac4a-4a42-a283-afb3a4e27785"
+  ],
+  "flowIds": [
+    "792154ec-32bd-4cb5-a40f-93c3618cf5a4",
+    "aeb0540e-4d86-4969-8bc1-26f0da4c4ce0",
+    "e65d4c7e-7385-4b9f-a0ea-b46ab959e743"
+  ],
+  "runIds": [],
+  "correlationId": "7d274bf6-077d-440c-b371-34a7e2476b86",
+  "boundaryUnderTest": "Server-owned semantic turns and explicit multi-Flow Mission handoffs",
+  "requiredChecks": [
+    {
+      "id": "fixture",
+      "description": "The deterministic adaptive fixture starts successfully",
+      "status": "passed"
+    },
+    {
+      "id": "database",
+      "description": "Postgres accepts campaign queries",
+      "status": "passed"
+    },
+    {
+      "id": "redis",
+      "description": "Redis accepts campaign queue connectivity",
+      "status": "passed"
+    },
+    {
+      "id": "api",
+      "description": "API reports a current capability manifest",
+      "status": "passed"
+    },
+    {
+      "id": "worker",
+      "description": "A current worker heartbeat is present",
+      "status": "passed"
+    },
+    {
+      "id": "m2-vitract-preview",
+      "description": "Campaign execution reaches a terminal classified outcome",
+      "status": "failed",
+      "reasonCode": "M2_TURN_NOT_COMPLETED"
+    }
+  ],
+  "observationalFindings": [],
+  "cleanup": {
+    "required": false,
+    "state": "not_required",
+    "refs": []
+  },
+  "calls": {
+    "mcp": 2,
+    "api": 1,
+    "repeatedStateReads": 0
+  },
+  "resolution": {
+    "nativeResolved": 11,
+    "praxisFallbacks": 0
+  },
+  "reductions": {
+    "decisionBoundary": 0.9629629629629629,
+    "mcpCalls": 0.9259259259259259,
+    "agentBytes": 0.5323405880106911
+  },
+  "timings": {
+    "api": {
+      "count": 1,
+      "p50Ms": 8.90587499999998,
+      "p95Ms": 8.90587499999998,
+      "maxMs": 8.90587499999998,
+      "slowestOperationIds": []
+    },
+    "browser_startup": {
+      "count": 1,
+      "p50Ms": 2180.693,
+      "p95Ms": 2180.693,
+      "maxMs": 2180.693,
+      "slowestOperationIds": [
+        "m2-bce81f66d4a551bdb5f051c8d50c19ade8f11bf1"
+      ]
+    },
+    "database": {
+      "count": 1,
+      "p50Ms": 3.81737499999997,
+      "p95Ms": 3.81737499999997,
+      "maxMs": 3.81737499999997,
+      "slowestOperationIds": []
+    },
+    "document_observation": {
+      "count": 1,
+      "p50Ms": 2180.693,
+      "p95Ms": 2180.693,
+      "maxMs": 2180.693,
+      "slowestOperationIds": [
+        "m2-bce81f66d4a551bdb5f051c8d50c19ade8f11bf1"
+      ]
+    },
+    "expected_effect_verification": {
+      "count": 12,
+      "p50Ms": 0.006958000361919403,
+      "p95Ms": 60023.579235999845,
+      "maxMs": 60023.579235999845,
+      "slowestOperationIds": [
+        "m2-e4d1930119d2abc8e3be02dc62068f1b9e8bf126",
+        "m2-25cd0011cebb6d172cd021d92afabcb19ac66b63"
+      ]
+    },
+    "interaction_execution": {
+      "count": 12,
+      "p50Ms": 58,
+      "p95Ms": 60088,
+      "maxMs": 60088,
+      "slowestOperationIds": [
+        "m2-e4d1930119d2abc8e3be02dc62068f1b9e8bf126",
+        "m2-25cd0011cebb6d172cd021d92afabcb19ac66b63",
+        "m2-d247e0a7ca0e1e0f61095a49faf9ddbd0a04a0a1",
+        "m2-bce81f66d4a551bdb5f051c8d50c19ade8f11bf1",
+        "m2-6683ee5cbd6b91977baa264c20334f48178a4185",
+        "m2-30b768ade085c21d5980e3b193533b2d4ab8ee07",
+        "m2-74198daba225975804b11c047dfbd42220e54a6e",
+        "m2-62a771e645beb91f36e2366910c2134fa78dc8c7"
+      ]
+    },
+    "mcp_round_trip": {
+      "count": 1,
+      "p50Ms": 69907.841875,
+      "p95Ms": 69907.841875,
+      "maxMs": 69907.841875,
+      "slowestOperationIds": [
+        "mcp-7d274bf6-077d-440c-b371-34a7e2476b86-2"
+      ]
+    },
+    "mcp_session_start_round_trip": {
+      "count": 1,
+      "p50Ms": 56.62895900000001,
+      "p95Ms": 56.62895900000001,
+      "maxMs": 56.62895900000001,
+      "slowestOperationIds": [
+        "mcp-7d274bf6-077d-440c-b371-34a7e2476b86-1"
+      ]
+    },
+    "native_resolution": {
+      "count": 11,
+      "p50Ms": 51.46670799981803,
+      "p95Ms": 2438.2407100005075,
+      "maxMs": 2438.2407100005075,
+      "slowestOperationIds": [
+        "m2-d247e0a7ca0e1e0f61095a49faf9ddbd0a04a0a1",
+        "m2-6683ee5cbd6b91977baa264c20334f48178a4185",
+        "m2-30b768ade085c21d5980e3b193533b2d4ab8ee07",
+        "m2-74198daba225975804b11c047dfbd42220e54a6e",
+        "m2-e4d1930119d2abc8e3be02dc62068f1b9e8bf126",
+        "m2-62a771e645beb91f36e2366910c2134fa78dc8c7"
+      ]
+    },
+    "praxis_grounding": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "queue_wait": {
+      "count": 1,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0,
+      "slowestOperationIds": []
+    },
+    "redis": {
+      "count": 1,
+      "p50Ms": 3.9269160000000056,
+      "p95Ms": 3.9269160000000056,
+      "maxMs": 3.9269160000000056,
+      "slowestOperationIds": []
+    },
+    "worker": {
+      "count": 1,
+      "p50Ms": 5.7819580000000315,
+      "p95Ms": 5.7819580000000315,
+      "maxMs": 5.7819580000000315,
+      "slowestOperationIds": []
+    }
+  },
+  "privacyScan": {
+    "checkedByteCount": 12248,
+    "leakedCanaryCount": 0
+  },
+  "evidenceRefs": [
+    "/Users/habib/Documents/monorepo/scry/docs/runbooks/evidence/mission-first/m1/m1-production-shaped-r1-b9627724-d4b5-4c7e-b16b-9ffbf272a4d2.json"
+  ],
+  "verdict": "fail"
+}

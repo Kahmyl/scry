@@ -236,6 +236,22 @@ const transactionAssertionSchema = z.union([
       timeoutMs: timeout,
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("selectedValueMatchesInput"),
+      target: interactionTargetIntentSchema,
+      input: identifier,
+      timeoutMs: timeout,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("checkedMatchesInput"),
+      target: interactionTargetIntentSchema,
+      input: identifier,
+      timeoutMs: timeout,
+    })
+    .strict(),
 ]);
 
 const transactionOutputSchema = z.discriminatedUnion("classification", [
@@ -310,6 +326,7 @@ export const protectedTransactionSchema = z
       .object({
         action: mutationActionSchema,
         kind: z.enum(["one_time", "repeatable"]),
+        dispatchSemantics: z.enum(["mutation", "read_only"]).optional(),
         reconciliation: z.discriminatedUnion("strategy", [
           z.object({ strategy: z.literal("none"), acceptUnknownOutcome: z.boolean() }).strict(),
           z
@@ -438,10 +455,22 @@ export const protectedTransactionSchema = z
           message: "clickPublicInput requires a public input",
           path: ["preparation", "actions", index, "input"],
         });
+      if (
+        action.type === "checkPublicInput" &&
+        (input?.classification !== "public" || typeof input.value !== "boolean")
+      )
+        context.addIssue({
+          code: "custom",
+          message: "checkPublicInput requires a public boolean input",
+          path: ["preparation", "actions", index, "input"],
+        });
     }
     const verifiedInputs = new Set(
       transaction.preparation.assertions.flatMap((assertion) =>
-        assertion.type === "fieldValueMatchesInput" || assertion.type === "textMatchesInput"
+        assertion.type === "fieldValueMatchesInput" ||
+        assertion.type === "textMatchesInput" ||
+        assertion.type === "selectedValueMatchesInput" ||
+        assertion.type === "checkedMatchesInput"
           ? [assertion.input]
           : [],
       ),
@@ -485,7 +514,12 @@ export const protectedTransactionSchema = z
       ),
     ];
     for (const assertion of transactionAssertions) {
-      if (assertion.type !== "fieldValueMatchesInput" && assertion.type !== "textMatchesInput")
+      if (
+        assertion.type !== "fieldValueMatchesInput" &&
+        assertion.type !== "textMatchesInput" &&
+        assertion.type !== "selectedValueMatchesInput" &&
+        assertion.type !== "checkedMatchesInput"
+      )
         continue;
       const input = transaction.inputs[assertion.input];
       if (!input)
@@ -498,6 +532,15 @@ export const protectedTransactionSchema = z
         context.addIssue({
           code: "custom",
           message: "textMatchesInput may only expose public transaction inputs",
+          path: ["preparation", "assertions"],
+        });
+      if (
+        assertion.type === "checkedMatchesInput" &&
+        (input?.classification !== "public" || typeof input.value !== "boolean")
+      )
+        context.addIssue({
+          code: "custom",
+          message: "checkedMatchesInput requires a public boolean input",
           path: ["preparation", "assertions"],
         });
     }
@@ -543,6 +586,16 @@ export const protectedTransactionSchema = z
         code: "custom",
         message: "one-time mutation requires reconciliation or explicit unknown-outcome acceptance",
         path: ["mutation", "reconciliation"],
+      });
+    }
+    if (
+      transaction.mutation.dispatchSemantics === "read_only" &&
+      transaction.mutation.kind !== "repeatable"
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "read-only protected dispatch must be repeatable",
+        path: ["mutation", "kind"],
       });
     }
   });
@@ -928,9 +981,9 @@ function validateCapabilityRequirements(
     requireAll(["focusable", "accepts_text", "editable"]);
   if (["select", "selectPublicInput"].includes(String(item.type))) requireAll(["selects_option"]);
   if (["check", "checkPublicInput"].includes(String(item.type))) requireAll(["toggleable"]);
-  if (["fieldValueMatchesInput", "value"].includes(String(item.type)))
+  if (["fieldValueMatchesInput", "selectedValueMatchesInput", "value"].includes(String(item.type)))
     requireAll(["readable_value"]);
-  if (String(item.type) === "checked") requireAll(["toggleable"]);
+  if (["checked", "checkedMatchesInput"].includes(String(item.type))) requireAll(["toggleable"]);
   if (
     ["click", "clickNavigation"].includes(String(item.type)) &&
     target &&

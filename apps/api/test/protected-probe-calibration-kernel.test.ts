@@ -87,6 +87,13 @@ describe.each([
         environmentId: "protected-kernel-composition",
         veilAdmissionKey: "a".repeat(32),
         veilPolicySnapshot: compileDefaultVeilPolicy(policy),
+        protectedTransactionStore: {
+          claim: async () => ({ id: "protected-child-operation", state: "planned", version: 1, fencingToken: 1 }),
+          transition: async ({ id, next, version, fencingToken }) => ({ id, state: next, version: version + 1, fencingToken }),
+          record: async (record) => {
+            await kernelRepository.recordMutation("session", parent, record);
+          },
+        },
         ...(mode === "certify"
           ? { calibrationVerifier: vi.fn(async () => true) }
           : {}),

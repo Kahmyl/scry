@@ -44,6 +44,7 @@ describe("adaptive session contracts", () => {
     const parsed = startAdaptiveSessionSchema.parse({
       projectId: ids.projectId,
       environmentId: ids.environmentId,
+      agentSessionId: ids.turnId,
       missionId: ids.missionId,
       objectiveId: ids.objectiveId,
       flowDraftId: ids.flowDraftId,
@@ -94,6 +95,30 @@ describe("adaptive session contracts", () => {
         intent({ authorization: { kind: "live_mutation", authorizationId: ids.authorizationId } }),
       ),
     ).toMatchObject({ authorization: { kind: "live_mutation" } });
+  });
+
+  it("accepts only semantic protected-output acquisition with explicit authorization", () => {
+    const acquisition = intent({
+      intentId: "generate-credential",
+      action: {
+        kind: "acquire_protected_outputs",
+        preparationIntentIds: ["open-dialog", "fill-name"],
+        mutation: { kind: "one_time", target: { concept: "generate credential", role: "button", name: "Generate", exact: true } },
+        outputs: [
+          { reference: "clientId", classification: "public", target: { concept: "client ID", role: "textbox", name: "Client ID", exact: true }, storageName: "Client ID" },
+          { reference: "clientSecret", classification: "protected", target: { concept: "client secret", role: "textbox", name: "Client secret", exact: true }, storageName: "Client secret" },
+        ],
+      },
+      authorization: { kind: "protected_mutation", authorizationId: ids.authorizationId },
+    });
+    expect(missionAuthoringIntentSchema.parse(acquisition).action).toMatchObject({
+      kind: "acquire_protected_outputs", outputs: [{ reference: "clientId" }, { reference: "clientSecret" }],
+    });
+    expect(() => missionAuthoringIntentSchema.parse({ ...acquisition, authorization: { kind: "protected_mutation" } })).toThrow();
+    expect(() => missionAuthoringIntentSchema.parse({ ...acquisition, action: { ...acquisition.action, adapterId: "clipboard" } })).toThrow();
+    expect(() => missionAuthoringIntentSchema.parse({ ...acquisition, action: { ...acquisition.action, selector: "#generate" } })).toThrow();
+    const acquisitionAction = acquisition.action as unknown as Record<string, unknown> & { outputs: Array<Record<string, unknown>> };
+    expect(() => missionAuthoringIntentSchema.parse({ ...acquisition, action: { ...acquisitionAction, outputs: [...acquisitionAction.outputs, { ...acquisitionAction.outputs[0], reference: "clientId" }] } })).toThrow();
   });
 
   it("accepts only bounded same-origin requests and authorizes every mutation", () => {

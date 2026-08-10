@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AdaptiveSessionRepository } from "../src/adaptive-sessions/adaptive-session.repository.js";
+import { compileMissionAuthoringProtectedTransaction } from "../src/adaptive-sessions/mission-authoring-protected-transaction.js";
 import { Database } from "../src/infrastructure/index.js";
 
 const configuredDatabaseUrl = process.env.SCRY_AUTHORING_TEST_DATABASE_URL;
@@ -103,6 +104,79 @@ integration("adaptive session repository integration", () => {
       }),
     ).rejects.toMatchObject({
       response: { code: "MISSION_FLOW_AUTHORING_OWNERSHIP_INVALID" },
+    });
+  });
+
+  it("loads an authorized protected execution context from PostgreSQL", async () => {
+    const created = await repository.create(workspaceId, startInput("protected-context-start"));
+    sessionIds.push(created.id);
+    const authorizationId = randomUUID();
+    await database.query(
+      `INSERT INTO mission_authorizations(
+         id,mission_id,objective_id,environment_id,kind,reason,status,granted_by_agent_session_id
+       ) VALUES($1,$2,$3,$4,'protected_mutation','Integration qualification','approved',$5)`,
+      [authorizationId, missionId, objectiveId, environmentId, agentSessionId],
+    );
+    const intent = {
+      intentId: "generate-protected-context",
+      objectiveId,
+      flowDraftId,
+      action: {
+        kind: "acquire_protected_outputs" as const,
+        preparationIntentIds: ["visit-credentials"],
+        mutation: {
+          kind: "one_time" as const,
+          target: { concept: "generate", role: "button" as const, name: "Generate", exact: true },
+        },
+        outputs: [{
+          reference: "clientSecret",
+          classification: "protected" as const,
+          target: { concept: "client secret", role: "textbox" as const, name: "Client secret", exact: true },
+          storageName: "Client secret",
+        }],
+      },
+      expectedEffect: { kind: "none" as const },
+      constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "protected_mutation" as const, authorizationId },
+      protectedInputReferences: [],
+    };
+    const action = compileMissionAuthoringProtectedTransaction({
+      operationId: "protected-context-operation",
+      entryUrl: "https://example.test",
+      action: intent.action,
+      preparation: [{
+        intentId: "visit-credentials",
+        objectiveId,
+        flowDraftId,
+        action: { kind: "navigate", url: "https://example.test" },
+        expectedEffect: { kind: "navigation", url: "https://example.test", match: "exact" },
+        constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+        authorization: { kind: "ordinary" },
+        protectedInputReferences: [],
+      }],
+      timeoutMs: 1_000,
+    });
+    await repository.beginMissionOperation({
+      workspaceId,
+      sessionId: created.id,
+      operationId: "protected-context-operation",
+      idempotencyKey: "protected-context-operation-key",
+      intent,
+      action,
+      expectedEffect: { type: "none" },
+      mode: "transact",
+    });
+
+    await expect(
+      repository.protectedExecutionContext(created.id, "protected-context-operation"),
+    ).resolves.toEqual({
+      projectId,
+      environmentId,
+      missionId,
+      objectiveId,
+      agentSessionId,
+      flowDraftId,
+      authorizationId,
     });
   });
 
@@ -528,6 +602,7 @@ integration("adaptive session repository integration", () => {
       projectId,
       missionId,
       objectiveId,
+      agentSessionId,
       flowDraftId,
       environmentId,
       objective: "Inspect account details",

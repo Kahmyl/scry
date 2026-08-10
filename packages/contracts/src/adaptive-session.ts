@@ -54,6 +54,7 @@ export const startAdaptiveSessionSchema = z
     objectiveId: uuid,
     flowDraftId: uuid,
     environmentId: uuid,
+    agentSessionId: uuid,
     objective: z.string().trim().min(1).max(4_000),
     allowedOrigins: z.array(z.string().url()).min(1).max(20),
     idempotencyKey: z.string().trim().min(8).max(200),
@@ -196,6 +197,7 @@ export const missionAuthoringSemanticDeltaSchema = z
         reasonCodes: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/)).max(8),
       })
       .strict(),
+    generatedReferences: operationOutcomeSchema.shape.generatedReferences,
   })
   .strict();
 

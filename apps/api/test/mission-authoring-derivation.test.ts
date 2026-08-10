@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { currentActionSchema, expectedEffectSchema, missionAuthoringIntentSchema } from "@scry/contracts";
 
 import { deriveMissionAuthoringOperation } from "../src/adaptive-sessions/mission-authoring-derivation.js";
+import { compileMissionAuthoringProtectedTransaction } from "../src/adaptive-sessions/mission-authoring-protected-transaction.js";
 
 const ids = { objectiveId: randomUUID(), flowDraftId: randomUUID(), turnId: randomUUID() };
 const target = { concept: "control", role: "button" as const, name: "Control", testId: "control-id" };
@@ -9,6 +11,14 @@ const target = { concept: "control", role: "button" as const, name: "Control", t
 function derive(action: Record<string, unknown>) {
   return deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: {
     intentId: `intent-${String(action.kind)}`, ...ids, action, expectedEffect: { kind: "none" },
+    constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+    authorization: { kind: "ordinary" }, protectedInputReferences: [],
+  } as never });
+}
+
+function deriveWithEffect(action: Record<string, unknown>, expectedEffect: Record<string, unknown>) {
+  return deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: {
+    intentId: `intent-${String(action.kind)}-${String(expectedEffect.kind)}`, ...ids, action, expectedEffect,
     constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
     authorization: { kind: "ordinary" }, protectedInputReferences: [],
   } as never });
@@ -36,5 +46,196 @@ describe("Mission authoring semantic derivation", () => {
       authorization: { kind: "ordinary" }, protectedInputReferences: [],
     } as never });
     expect(derived.expectedEffect).toEqual({ type: "new_page", origin: "https://example.test" });
+  });
+
+  it("observes positive visibility without requiring value extraction", () => {
+    const credentials = { concept: "navigation", role: "link", name: "Credentials" };
+    const addCredential = { concept: "dialog trigger", role: "button", name: "Add credential" };
+
+    expect(deriveWithEffect(
+      { kind: "activate", target },
+      { kind: "target_visibility", target: credentials, visible: true },
+    ).expectedEffect).toMatchObject({
+      type: "visibility_change", visible: true,
+      target: { requiredCapabilities: ["observable"] },
+    });
+    expect(deriveWithEffect(
+      { kind: "activate", target },
+      { kind: "target_visibility", target: addCredential, visible: true },
+    ).expectedEffect).toMatchObject({ target: { requiredCapabilities: ["observable"] } });
+  });
+
+  it("observes positive wait states without requiring value extraction", () => {
+    for (const state of ["visible", "attached"] as const) {
+      expect((derive({ kind: "wait_for", target, state }).action as any).target.requiredCapabilities)
+        .toEqual(["observable"]);
+    }
+  });
+
+  it("produces positive observation targets accepted by the runtime contracts", () => {
+    const operation = deriveWithEffect(
+      { kind: "activate", target },
+      { kind: "target_visibility", target: { concept: "navigation", role: "link", name: "Credentials" }, visible: true },
+    );
+    expect(() => currentActionSchema.parse(operation.action)).not.toThrow();
+    expect(() => expectedEffectSchema.parse(operation.expectedEffect)).not.toThrow();
+  });
+
+  it("preserves conservative negative observation and value-reading capabilities", () => {
+    expect(deriveWithEffect(
+      { kind: "activate", target },
+      { kind: "target_visibility", target, visible: false },
+    ).expectedEffect).toMatchObject({ target: { requiredCapabilities: ["observable"] } });
+    for (const state of ["hidden", "detached"] as const) {
+      expect((derive({ kind: "wait_for", target, state }).action as any).target.requiredCapabilities)
+        .toEqual(["observable"]);
+    }
+    expect(deriveWithEffect(
+      { kind: "activate", target },
+      { kind: "target_value", target, expected: "ready" },
+    ).expectedEffect).toMatchObject({ target: { requiredCapabilities: ["readable_value"] } });
+    expect((derive({ kind: "activate", target }).action as any).target.requiredCapabilities)
+      .toEqual(["focusable", "pointer_activatable"]);
+  });
+
+  it("compiles only server-owned adapters and replayable same-session preparation", () => {
+    const preparation = missionAuthoringIntentSchema.parse({
+      intentId: "fill-name", objectiveId: ids.objectiveId, flowDraftId: ids.flowDraftId,
+      action: { kind: "fill", target: { concept: "credential name", role: "textbox", name: "Name", exact: true }, publicValue: "Qualification" },
+      expectedEffect: { kind: "none" }, constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "ordinary" }, protectedInputReferences: [],
+    });
+    const acquisition = missionAuthoringIntentSchema.parse({
+      intentId: "generate", objectiveId: ids.objectiveId, flowDraftId: ids.flowDraftId,
+      action: { kind: "acquire_protected_outputs", preparationIntentIds: ["fill-name"], mutation: { kind: "one_time", target: { concept: "generate", role: "button", name: "Generate", exact: true } }, outputs: [
+        { reference: "clientId", classification: "public", target: { concept: "client id", role: "textbox", name: "Client ID", exact: true }, storageName: "Client ID" },
+        { reference: "clientSecret", classification: "protected", target: { concept: "client secret", role: "textbox", name: "Client secret", exact: true }, storageName: "Client secret" },
+      ] },
+      expectedEffect: { kind: "none" }, constraints: { timeoutMs: 2_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "protected_mutation", authorizationId: randomUUID() }, protectedInputReferences: [],
+    });
+    if (acquisition.action.kind !== "acquire_protected_outputs") throw new Error("test action mismatch");
+    const transaction = compileMissionAuthoringProtectedTransaction({ operationId: "authoring-generate", entryUrl: "https://example.test/credentials", action: acquisition.action, preparation: [preparation], timeoutMs: 2_000 });
+    expect(transaction.preparation.actions).toHaveLength(1);
+    expect(transaction.preparation.actions[0]).toMatchObject({
+      target: { confidence: { minimum: 0.35, minimumMargin: 0.05, minimumFamilyCount: 1 } },
+    });
+    expect(transaction.mutation.kind).toBe("one_time");
+    expect(transaction.mutation.dispatchSemantics).toBe("mutation");
+    if (!transaction.mutation.action.target) throw new Error("mutation target missing");
+    expect(transaction.mutation.action.target.confidence.minimumFamilyCount).toBeUndefined();
+    expect(transaction.extraction.outputs).toHaveLength(2);
+    expect(transaction.extraction.outputs.every((output) => output.storage.scope === "project")).toBe(true);
+    expect(transaction.extraction.outputs.every((output) =>
+      JSON.stringify(output.acquisition.permittedMethods) ===
+        JSON.stringify(["semantic_field_value", "input_value", "text_content", "copy_control", "protected_network_value"])
+    )).toBe(true);
+    expect(JSON.stringify(transaction)).not.toMatch(/selector|javascript|coordinates|adapterId|plaintext/i);
+  });
+
+  it("compiles read-only protected output acquisition without mutation semantics", () => {
+    const acquisition = missionAuthoringIntentSchema.parse({
+      intentId: "list-orders", objectiveId: ids.objectiveId, flowDraftId: ids.flowDraftId,
+      action: {
+        kind: "acquire_protected_outputs",
+        preparationIntentIds: ["prepare-list"],
+        mutation: { kind: "read_only", target: { concept: "run list", role: "button", name: "Run", exact: true } },
+        outputs: [{
+          reference: "orderId", classification: "protected",
+          target: { concept: "order id", role: "value", name: "id", exact: true },
+          storageName: "Order ID",
+        }],
+      },
+      expectedEffect: { kind: "none" },
+      constraints: { timeoutMs: 2_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "protected_mutation", authorizationId: randomUUID() },
+      protectedInputReferences: [],
+    });
+    if (acquisition.action.kind !== "acquire_protected_outputs") throw new Error("test action mismatch");
+    const preparation = missionAuthoringIntentSchema.parse({
+      intentId: "prepare-list", objectiveId: ids.objectiveId, flowDraftId: ids.flowDraftId,
+      action: { kind: "wait_for", target: { concept: "run list", role: "button", name: "Run", exact: true }, state: "visible" },
+      expectedEffect: { kind: "none" }, constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "ordinary" }, protectedInputReferences: [],
+    });
+    const transaction = compileMissionAuthoringProtectedTransaction({
+      operationId: "authoring-list-orders", entryUrl: "https://example.test/docs",
+      action: acquisition.action, preparation: [preparation], timeoutMs: 2_000,
+    });
+
+    expect(transaction.mutation).toMatchObject({
+      kind: "repeatable",
+      dispatchSemantics: "read_only",
+    });
+  });
+
+  it("compiles a navigation-only checkpoint as a safe entry replay", () => {
+    const acquisition = missionAuthoringIntentSchema.parse({
+      intentId: "generate", objectiveId: ids.objectiveId, flowDraftId: ids.flowDraftId,
+      action: { kind: "acquire_protected_outputs", preparationIntentIds: ["visit-fixture"], mutation: { kind: "one_time", target: { concept: "generate", role: "button", name: "Generate", exact: true } }, outputs: [
+        { reference: "secret", classification: "protected", target: { concept: "secret", role: "textbox", name: "Secret", exact: true }, storageName: "Secret" },
+      ] }, expectedEffect: { kind: "none" }, constraints: { timeoutMs: 600, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "protected_mutation", authorizationId: randomUUID() }, protectedInputReferences: [],
+    });
+    if (acquisition.action.kind !== "acquire_protected_outputs") throw new Error("test action mismatch");
+
+    const transaction = compileMissionAuthoringProtectedTransaction({
+      operationId: "navigation-only-operation",
+      entryUrl: "https://example.test/protected/interrupted-acquisition",
+      action: acquisition.action,
+      preparation: [],
+      timeoutMs: 600,
+    });
+
+    expect(transaction.preparation.actions).toEqual([{
+      type: "navigate",
+      url: "https://example.test/protected/interrupted-acquisition",
+      effect: "read_only",
+      timeoutMs: 600,
+    }]);
+    expect(transaction.mutation.kind).toBe("one_time");
+  });
+
+  it("compiles same-control fill, select, and checked lifecycle profiles", () => {
+    const preparation = [
+      { intentId: "fill-name", action: { kind: "fill", target: { concept: "name", role: "textbox", name: "Name", exact: true }, publicValue: "Qualification" } },
+      { intentId: "select-kind", action: { kind: "select", target: { concept: "kind", role: "combobox", name: "Kind", exact: true }, value: "Test" } },
+      { intentId: "check-active", action: { kind: "set_checked", target: { concept: "active", role: "checkbox", name: "Active", exact: true }, checked: true } },
+    ].map(({ intentId, action }) => missionAuthoringIntentSchema.parse({
+      intentId, objectiveId: ids.objectiveId, flowDraftId: ids.flowDraftId, action,
+      expectedEffect: { kind: "none" }, constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "ordinary" }, protectedInputReferences: [],
+    }));
+    const acquisition = missionAuthoringIntentSchema.parse({
+      intentId: "generate", objectiveId: ids.objectiveId, flowDraftId: ids.flowDraftId,
+      action: { kind: "acquire_protected_outputs", preparationIntentIds: preparation.map((item) => item.intentId), mutation: { kind: "one_time", target: { concept: "generate", role: "button", name: "Generate", exact: true } }, outputs: [
+        { reference: "secret", classification: "protected", target: { concept: "secret", role: "textbox", name: "Secret", exact: true }, storageName: "Secret" },
+      ] }, expectedEffect: { kind: "none" }, constraints: { timeoutMs: 2_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "protected_mutation", authorizationId: randomUUID() }, protectedInputReferences: [],
+    });
+    if (acquisition.action.kind !== "acquire_protected_outputs") throw new Error("test action mismatch");
+    const transaction = compileMissionAuthoringProtectedTransaction({
+      operationId: "profile-operation", entryUrl: "https://example.test/credentials",
+      action: acquisition.action, preparation, timeoutMs: 2_000,
+    });
+    const [fill, select, checked] = transaction.preparation.actions;
+    expect(fill).toMatchObject({ type: "fillPublicInput", target: { requiredCapabilities: ["focusable", "accepts_text", "editable", "readable_value"] } });
+    expect(select).toMatchObject({ type: "selectPublicInput", target: { requiredCapabilities: ["focusable", "selects_option", "readable_value"] } });
+    expect(checked).toMatchObject({ type: "checkPublicInput", target: { requiredCapabilities: ["focusable", "toggleable"] } });
+    expect(transaction.preparation.assertions.map((assertion) => assertion.type)).toEqual([
+      "fieldValueMatchesInput", "selectedValueMatchesInput", "checkedMatchesInput", "enabled",
+    ]);
+    expect(transaction.preparation.assertions[0]).toMatchObject({ target: fill && "target" in fill ? fill.target : undefined });
+    expect(transaction.preparation.assertions[1]).toMatchObject({ target: select && "target" in select ? select.target : undefined });
+    expect(transaction.preparation.assertions[2]).toMatchObject({ target: checked && "target" in checked ? checked.target : undefined });
+  });
+
+  it("derives checked and mixed target-state capability unions", () => {
+    expect(deriveWithEffect({ kind: "activate", target }, {
+      kind: "target_state", target: { concept: "active", role: "checkbox", name: "Active" }, checked: true,
+    }).expectedEffect).toMatchObject({ target: { requiredCapabilities: ["toggleable"] } });
+    expect(deriveWithEffect({ kind: "activate", target }, {
+      kind: "target_state", target: { concept: "active", role: "checkbox", name: "Active" }, checked: true, enabled: true,
+    }).expectedEffect).toMatchObject({ target: { requiredCapabilities: ["toggleable", "observable"] } });
   });
 });

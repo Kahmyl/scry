@@ -12,7 +12,7 @@ import type {
   MissionAuthoringIntent,
   MissionAuthoringTurnResult,
 } from "@scry/contracts";
-import { executionPolicySchema, missionAuthoringTurnResultSchema } from "@scry/contracts";
+import { executionPolicySchema, missionAuthoringTurnResultSchema, operationOutcomeSchema } from "@scry/contracts";
 
 import { decryptCredential } from "../access/index.js";
 import { Database } from "../infrastructure/index.js";
@@ -53,8 +53,8 @@ export class AdaptiveSessionRepository {
         `INSERT INTO adaptive_sessions(
            id,project_id,environment_id,correlation_id,state,objective,allowed_origins,
            mission_id,objective_id,flow_draft_id,active_objective_id,active_flow_draft_id,
-           idempotency_key,authoring_turn_budgets,protected_reference_allowlist
-         ) VALUES($1,$2,$3,$4,'created',$5,$6::jsonb,$7,$8,$9,$8,$9,$10,$11::jsonb,$12::jsonb)`,
+           agent_session_id,idempotency_key,authoring_turn_budgets,protected_reference_allowlist
+         ) VALUES($1,$2,$3,$4,'created',$5,$6::jsonb,$7,$8,$9,$8,$9,$10,$11,$12::jsonb,$13::jsonb)`,
         [
           id,
           input.projectId,
@@ -65,6 +65,7 @@ export class AdaptiveSessionRepository {
           input.missionId,
           input.objectiveId,
           input.flowDraftId,
+          input.agentSessionId,
           input.idempotencyKey,
           JSON.stringify(input.turnBudgets ?? { maxOperations: 20, maxDurationMs: 60_000 }),
           JSON.stringify(input.initialProtectedReferenceIds ?? []),
@@ -256,6 +257,16 @@ export class AdaptiveSessionRepository {
     );
     if (!session.rowCount) throw new NotFoundException("Adaptive session not found");
     const current = session.rows[0]!;
+    if (isAuthoringMutation(input.intent)) {
+      const unresolved = await this.database.query(
+        `SELECT 1 FROM protected_operations WHERE owner_kind='authoring_session'
+           AND authoring_session_id=$1 AND state IN ('dispatching','dispatched','acquiring','persisting','persisted','reconciling','recovery_required','compromised')
+           AND operation_id<>(SELECT COALESCE((SELECT operation_id FROM adaptive_operations WHERE session_id=$1 AND authoring_intent->>'intentId'=$2 LIMIT 1),'') )
+         LIMIT 1`,
+        [input.sessionId,input.intent.intentId],
+      );
+      if (unresolved.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_OPERATION_UNRESOLVED" });
+    }
     if (input.intent.protectedInputReferences.some((reference) => !current.protectedAllowlist.includes(reference))) {
       throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED" });
     }
@@ -274,6 +285,209 @@ export class AdaptiveSessionRepository {
       );
       if (!authorized.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_AUTHORIZATION_INVALID" });
     }
+  }
+
+  async protectedPreparationFor(input: {
+    sessionId: string;
+    objectiveId: string;
+    flowDraftId: string;
+    intentIds: string[];
+    entryUrl: string;
+  }) {
+    const result = await this.database.query<{
+      sequence: number;
+      intentId: string;
+      intent: MissionAuthoringIntent;
+      observedUrl: string;
+    }>(
+      `SELECT operation.sequence,operation.authoring_intent->>'intentId' AS "intentId",
+              operation.authoring_intent AS intent,observation.safe_summary->>'url' AS "observedUrl"
+       FROM adaptive_operations operation
+       JOIN adaptive_sessions session ON session.id=operation.session_id
+       JOIN environments environment ON environment.id=session.environment_id
+       JOIN LATERAL (
+         SELECT safe_summary FROM adaptive_observations
+         WHERE session_id=operation.session_id AND operation_id=operation.operation_id
+         ORDER BY id DESC LIMIT 1
+       ) observation ON true
+       WHERE operation.session_id=$1 AND operation.mission_id=session.mission_id
+         AND operation.objective_id=$2 AND operation.flow_draft_id=$3
+         AND operation.state='completed' AND operation.functional_result='succeeded'
+         AND operation.mutation_outcome IN ('not_applied','applied')
+         AND operation.authoring_intent->'authorization'->>'kind' IN ('ordinary','authentication','live_read')
+         AND NOT EXISTS (
+           SELECT 1 FROM jsonb_array_elements_text(
+             COALESCE(operation.authoring_intent->'protectedInputReferences','[]'::jsonb)
+           ) AS protected_reference(value)
+           WHERE NOT (environment.secret_refs ? protected_reference.value)
+         )
+       ORDER BY operation.sequence`,
+      [input.sessionId, input.objectiveId, input.flowDraftId],
+    );
+    return selectProtectedReplayPreparation(result.rows, input.intentIds, input.entryUrl);
+  }
+
+  async protectedExecutionContext(sessionId: string, operationId: string) {
+    const result = await this.database.query<{
+      projectId: string; environmentId: string; missionId: string; objectiveId: string;
+      agentSessionId: string; flowDraftId: string; authorizationId: string;
+    }>(
+      `SELECT session.project_id AS "projectId",session.environment_id AS "environmentId",
+              operation.mission_id AS "missionId",operation.objective_id AS "objectiveId",
+              session.agent_session_id AS "agentSessionId",operation.flow_draft_id AS "flowDraftId",
+              operation.authoring_intent->'authorization'->>'authorizationId' AS "authorizationId"
+       FROM adaptive_operations operation
+       JOIN adaptive_sessions session ON session.id=operation.session_id
+       JOIN mission_authorizations mission_authorization
+         ON mission_authorization.id=(operation.authoring_intent->'authorization'->>'authorizationId')::uuid
+        AND mission_authorization.mission_id=operation.mission_id
+        AND mission_authorization.objective_id=operation.objective_id
+        AND mission_authorization.environment_id=session.environment_id
+        AND mission_authorization.kind='protected_mutation'
+        AND mission_authorization.status='approved'
+        AND (mission_authorization.expires_at IS NULL OR mission_authorization.expires_at>now())
+       WHERE operation.session_id=$1 AND operation.operation_id=$2
+         AND operation.semantic_intent->>'type'='protectedTransaction'`,
+      [sessionId, operationId],
+    );
+    if (!result.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID" });
+    return result.rows[0]!;
+  }
+
+  projectProtectedOperationForAuthoring(input: {
+    sessionId: string;
+    operationId: string;
+    missingFailureCode?: string;
+  }) {
+    return this.database.transaction(async (client) => {
+      const q = bind(client);
+      const adaptive = await q<{
+        state: string;
+        flowDraftId: string;
+        missionId: string;
+        objectiveId: string;
+        environmentId: string;
+        authorizationId: string | null;
+        intent: MissionAuthoringIntent;
+        action: AdaptiveSessionOperationInput["action"];
+        outcome: OperationOutcome | null;
+        decisionBoundary: AgentDecisionBoundary | null;
+        dispatchBoundary: string;
+      }>(
+        `SELECT operation.state,operation.flow_draft_id AS "flowDraftId",
+                operation.mission_id AS "missionId",operation.objective_id AS "objectiveId",
+                session.environment_id AS "environmentId",
+                operation.authoring_intent->'authorization'->>'authorizationId' AS "authorizationId",
+                operation.authoring_intent AS intent,operation.semantic_intent AS action,
+                operation.safe_outcome AS outcome,operation.decision_boundary AS "decisionBoundary",
+                operation.dispatch_boundary AS "dispatchBoundary"
+           FROM adaptive_operations operation
+           JOIN adaptive_sessions session ON session.id=operation.session_id
+          WHERE operation.session_id=$1 AND operation.operation_id=$2
+            AND operation.semantic_intent->>'type'='protectedTransaction'
+          FOR UPDATE OF operation,session`,
+        [input.sessionId, input.operationId],
+      );
+      if (!adaptive.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_OPERATION_MISSING" });
+      const owner = adaptive.rows[0]!;
+      const protectedResult = await q<{
+        id: string;
+        state: import("@scry/contracts").ProtectedOperationState;
+        leaseActive: boolean;
+        dispatchState: "not_started" | "authorized" | "started" | "acknowledged";
+        mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
+        persistenceState: "not_started" | "running" | "committed" | "failed" | "uncertain";
+        failureCode: string | null;
+        persistedReferences: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "project" }>;
+      }>(
+        `SELECT protected.id,protected.state,COALESCE(protected.lease_expires_at>now(),false) AS "leaseActive",
+                protected.dispatch_state AS "dispatchState",protected.mutation_outcome AS "mutationOutcome",
+                protected.persistence_state AS "persistenceState",protected.failure_code AS "failureCode",
+                protected.persisted_references AS "persistedReferences"
+           FROM protected_operations protected
+          WHERE protected.owner_kind='authoring_session' AND protected.authoring_session_id=$1
+            AND protected.operation_id=$2 AND protected.mission_id=$3 AND protected.objective_id=$4
+            AND protected.flow_draft_id=$5 AND protected.environment_id=$6
+            AND protected.authorization_id=$7::uuid
+          FOR UPDATE`,
+        [input.sessionId, input.operationId, owner.missionId, owner.objectiveId,
+          owner.flowDraftId, owner.environmentId, owner.authorizationId],
+      );
+      if (!protectedResult.rowCount) {
+        throw new ConflictException({
+          code: "MISSION_AUTHORING_PROTECTED_RESERVATION_MISSING",
+          safeActions: ["get_flow_authoring"],
+        });
+      }
+      const durable = protectedResult.rows[0]!;
+      const activeStates = new Set([
+        "planned", "preparing", "ready_to_dispatch", "dispatching", "dispatched",
+        "acquiring", "persisting", "persisted", "reconciling",
+      ]);
+      if (activeStates.has(durable.state)) {
+        return { status: "pending" as const, state: durable.state, leaseActive: durable.leaseActive };
+      }
+      const generatedReferences = Object.entries(durable.persistedReferences).map(([reference, stored]) => ({
+        reference,
+        ...stored,
+      }));
+      let outcome: OperationOutcome;
+      let decisionBoundary: AgentDecisionBoundary;
+      if (durable.state === "completed") {
+        outcome = operationOutcomeSchema.parse({
+          operationId: input.operationId,
+          functionalResult: "succeeded",
+          mutationOutcome: "applied",
+          privacyResult: "sealed",
+          evidenceResult: [],
+          qualityFindings: [],
+          durationMs: 0,
+          generatedReferences,
+        });
+        decisionBoundary = {
+          type: "objective_completed",
+          reasonCode: "PROTECTED_OPERATION_COMPLETED",
+          safeActions: [],
+        };
+      } else if (durable.state === "failed_not_applied") {
+        const reasonCode = safeReasonCode(durable.failureCode, "PROTECTED_OPERATION_FAILED_NOT_APPLIED");
+        outcome = operationOutcomeSchema.parse({
+          operationId: input.operationId,
+          functionalResult: "failed",
+          mutationOutcome: "not_applied",
+          privacyResult: "sealed",
+          evidenceResult: [],
+          qualityFindings: [],
+          durationMs: 0,
+          reasonCode,
+        });
+        decisionBoundary = {
+          type: "environment_unavailable",
+          reasonCode,
+          safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+        };
+      } else {
+        const reasonCode = safeReasonCode(durable.failureCode, "PROTECTED_OPERATION_RECOVERY_REQUIRED");
+        outcome = operationOutcomeSchema.parse({
+          operationId: input.operationId,
+          functionalResult: "inconclusive",
+          mutationOutcome: "unknown",
+          privacyResult: "sealed",
+          evidenceResult: [],
+          qualityFindings: [],
+          durationMs: 0,
+          reasonCode,
+        });
+        decisionBoundary = {
+          type: "mutation_reconciliation_required",
+          reasonCode,
+          safeActions: ["get_flow_authoring"],
+        };
+      }
+      const adaptiveState = durable.state === "completed" ? "completed" : "failed";
+      await this.writeProtectedProjection(q, input, owner, outcome, decisionBoundary, adaptiveState);
+      return { status: "settled" as const, state: durable.state, outcome, decisionBoundary };
+    });
   }
 
   handoff(input: {
@@ -346,6 +560,16 @@ export class AdaptiveSessionRepository {
     action: AdaptiveSessionOperationInput["action"];
     expectedEffect: AdaptiveSessionOperationInput["expectedEffect"];
     mode: AdaptiveSessionOperationInput["mode"];
+    protectedReservation?: {
+      mutationIdentity: string;
+      dispatchSemantics?: "mutation" | "read_only";
+      programDigest: string;
+      safeOutputManifest: Array<{
+        reference: string;
+        classification: "public" | "protected";
+        storageName: string;
+      }>;
+    };
   }) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
@@ -355,6 +579,7 @@ export class AdaptiveSessionRepository {
          WHERE session_id=$1 AND idempotency_key=$2`, [input.sessionId, input.idempotencyKey],
       );
       if (existing.rowCount) return { ...existing.rows[0]!, replayed: true };
+      const runtime = await this.runtimeContext(q, input.sessionId);
       const sequence = await this.nextOperationSequence(q, input.sessionId);
       await q(
         `INSERT INTO adaptive_operations(
@@ -362,13 +587,175 @@ export class AdaptiveSessionRepository {
            observation_epoch,idempotency_key,mission_id,objective_id,flow_draft_id,authoring_intent,derived_action
          ) VALUES($1,$2,$3,$4,'running',$5::jsonb,$6::jsonb,$7,NULL,$8,$9,$10,$11,$12::jsonb,$13::jsonb)`,
         [input.sessionId, input.operationId, sequence, input.mode, JSON.stringify(input.action), JSON.stringify(input.expectedEffect),
-          policyDigest((await this.runtimeContext(q, input.sessionId)).policy), input.idempotencyKey,
+          policyDigest(runtime.policy), input.idempotencyKey,
           session.missionId, input.intent.objectiveId, input.intent.flowDraftId,
           JSON.stringify(input.intent), JSON.stringify({ action: input.action, expectedEffect: input.expectedEffect, mode: input.mode })],
       );
+      if (input.protectedReservation) {
+        if (
+          input.action.type !== "protectedTransaction" ||
+          input.intent.authorization.kind !== "protected_mutation" ||
+          input.protectedReservation.mutationIdentity !== input.operationId
+        ) {
+          throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_RESERVATION_INVALID" });
+        }
+        const reserved = await q<{ id: string }>(
+          `INSERT INTO protected_operations(
+             operation_id,mutation_identity,owner_kind,authoring_session_id,project_id,
+             environment_id,mission_id,objective_id,agent_session_id,flow_draft_id,
+             authorization_id,program_digest,dispatch_semantics,state,phase,safe_output_manifest
+           ) VALUES($1,$2,'authoring_session',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'planned','planned',$13::jsonb)
+           RETURNING id`,
+          [
+            input.operationId,
+            input.protectedReservation.mutationIdentity,
+            input.sessionId,
+            runtime.projectId,
+            runtime.environmentId,
+            session.missionId,
+            input.intent.objectiveId,
+            runtime.agentSessionId,
+            input.intent.flowDraftId,
+            input.intent.authorization.authorizationId,
+            input.protectedReservation.programDigest,
+            input.protectedReservation.dispatchSemantics ?? "mutation",
+            JSON.stringify(input.protectedReservation.safeOutputManifest),
+          ],
+        );
+        await q(
+          `INSERT INTO protected_operation_transitions(
+             protected_operation_id,sequence,from_state,to_state,phase,fencing_token,safe_diagnostics
+           ) VALUES($1,1,NULL,'planned','planned',0,'{}'::jsonb)`,
+          [reserved.rows[0]!.id],
+        );
+      }
       await this.appendEvent(q, input.sessionId, "operation_started", { operationId: input.operationId, objectiveId: input.intent.objectiveId, flowDraftId: input.intent.flowDraftId });
       return { operationId: input.operationId, state: "running" as const, replayed: false };
     });
+  }
+
+  private async writeProtectedProjection(
+    q: Query,
+    input: { sessionId: string; operationId: string },
+    owner: {
+      state: string;
+      flowDraftId: string;
+      missionId: string;
+      objectiveId: string;
+      intent: MissionAuthoringIntent;
+      action: AdaptiveSessionOperationInput["action"];
+      outcome: OperationOutcome | null;
+      decisionBoundary?: AgentDecisionBoundary | null;
+      dispatchBoundary?: string;
+    },
+    outcome: OperationOutcome,
+    decisionBoundary: AgentDecisionBoundary,
+    adaptiveState: "completed" | "failed",
+  ) {
+    const capabilityManifestDigest = createHash("sha256").update("durable-protected-operation").digest("hex");
+    const projected = await q(
+      `UPDATE adaptive_operations SET state=$3,
+         capability_manifest_digest=COALESCE(capability_manifest_digest,$4),
+         dispatch_boundary=CASE
+           WHEN $5='applied' THEN 'acknowledged'
+           WHEN $5='unknown' AND dispatch_boundary='not_dispatched' THEN 'dispatching'
+           ELSE dispatch_boundary
+         END,
+         mutation_outcome=$5,functional_result=$6,privacy_result=$7,
+         evidence_result=$8::jsonb,quality_findings=$9::jsonb,safe_outcome=$10::jsonb,
+         decision_boundary=$11::jsonb,completed_at=COALESCE(completed_at,now())
+       WHERE session_id=$1 AND operation_id=$2
+         AND (state IS DISTINCT FROM $3
+           OR capability_manifest_digest IS DISTINCT FROM COALESCE(capability_manifest_digest,$4)
+           OR dispatch_boundary IS DISTINCT FROM CASE
+             WHEN $5='applied' THEN 'acknowledged'
+             WHEN $5='unknown' AND dispatch_boundary='not_dispatched' THEN 'dispatching'
+             ELSE dispatch_boundary
+           END
+           OR mutation_outcome IS DISTINCT FROM $5
+           OR functional_result IS DISTINCT FROM $6
+           OR privacy_result IS DISTINCT FROM $7
+           OR evidence_result IS DISTINCT FROM $8::jsonb
+           OR quality_findings IS DISTINCT FROM $9::jsonb
+           OR safe_outcome IS DISTINCT FROM $10::jsonb
+           OR decision_boundary IS DISTINCT FROM $11::jsonb)
+       RETURNING operation_id`,
+      [input.sessionId, input.operationId, adaptiveState,
+        capabilityManifestDigest,
+        outcome.mutationOutcome, outcome.functionalResult, outcome.privacyResult,
+        JSON.stringify(outcome.evidenceResult), JSON.stringify(outcome.qualityFindings),
+        JSON.stringify(outcome), JSON.stringify(decisionBoundary)],
+    );
+    const projectionChanged = (projected.rowCount ?? 0) > 0;
+    let stepAppended = false;
+    if (adaptiveState === "completed") {
+      const draft = await q<{ version: number; createdByAgentSessionId: string; stepExists: boolean }>(
+        `SELECT version,created_by_agent_session_id AS "createdByAgentSessionId",
+                COALESCE(plan->'steps','[]'::jsonb) @> $4::jsonb AS "stepExists"
+           FROM flow_drafts WHERE id=$1 AND mission_id=$2 AND objective_id=$3 FOR UPDATE`,
+        [owner.flowDraftId, owner.missionId, owner.objectiveId,
+          JSON.stringify([{ id: input.operationId }])],
+      );
+      if (!draft.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_FLOW_DRAFT_MISSING" });
+      if (!draft.rows[0]!.stepExists) {
+        const nextVersion = draft.rows[0]!.version + 1;
+        const step = {
+          id: input.operationId,
+          title: `Authoring ${owner.intent.action.kind}: ${safeIntentTitle(owner.intent)}`,
+          action: owner.action,
+          assertions: [], onFailure: "stop", evidence: [], captureIntent: "final",
+        };
+        await q(
+          `UPDATE flow_drafts SET plan=jsonb_set(plan,'{steps}',COALESCE(plan->'steps','[]'::jsonb) || $2::jsonb,true),
+             version=$3,state='editing',updated_at=now() WHERE id=$1`,
+          [owner.flowDraftId, JSON.stringify(step), nextVersion],
+        );
+        await q(
+          `UPDATE flow_compilations SET status='stale',invalidated_at=now() WHERE draft_id=$1
+             AND status IN ('pending','execution_ready','calibration_required')`,
+          [owner.flowDraftId],
+        );
+        await q(
+          `INSERT INTO flow_draft_events(draft_id,version,type,agent_session_id,summary,safe_metadata)
+           VALUES($1,$2,'authoring_step_appended',$3,'Durable protected operation projected',$4::jsonb)`,
+          [owner.flowDraftId, nextVersion, draft.rows[0]!.createdByAgentSessionId,
+            JSON.stringify({ operationId: input.operationId, intentId: owner.intent.intentId, outcome: "completed" })],
+        );
+        stepAppended = true;
+      }
+    }
+    await q(
+      `UPDATE adaptive_sessions SET
+         state=CASE
+           WHEN $3='unknown' THEN 'recovery_required'
+           WHEN $3='applied' AND state='recovery_required' THEN 'active'
+           ELSE state
+         END,
+         decision_boundary=$2::jsonb,updated_at=now(),version=version+1
+       WHERE id=$1
+         AND (state IS DISTINCT FROM CASE
+           WHEN $3='unknown' THEN 'recovery_required'
+           WHEN $3='applied' AND state='recovery_required' THEN 'active'
+           ELSE state
+         END OR decision_boundary IS DISTINCT FROM $2::jsonb)`,
+      [input.sessionId, JSON.stringify(decisionBoundary), outcome.mutationOutcome],
+    );
+    if (projectionChanged) {
+      await this.appendEvent(q, input.sessionId,
+        adaptiveState === "completed" ? "operation_completed" : "operation_failed", {
+          operationId: input.operationId,
+          functionalResult: outcome.functionalResult,
+          mutationOutcome: outcome.mutationOutcome,
+          authority: "protected_operations",
+        });
+      await q(
+        `INSERT INTO mission_activities(mission_id,objective_id,type,summary,safe_metadata,technical)
+         VALUES($1,$2,'authoring','Durable protected operation projected',$3::jsonb,true)`,
+        [owner.missionId, owner.objectiveId,
+          JSON.stringify({ flowDraftId: owner.flowDraftId, operationId: input.operationId,
+            outcome: adaptiveState, stepAppended })],
+      );
+    }
   }
 
   settleMissionOperation(input: {
@@ -1012,6 +1399,11 @@ export class AdaptiveSessionRepository {
   private async runtimeContext(q: Query, sessionId: string) {
     const result = await q<{
       sessionId: string;
+      projectId: string;
+      missionId: string;
+      objectiveId: string;
+      flowDraftId: string;
+      agentSessionId: string;
       environmentId: string;
       correlationId: string;
       allowedOrigins: string[];
@@ -1021,7 +1413,10 @@ export class AdaptiveSessionRepository {
       lastDocumentEpoch: number | null;
       lastUrl: string | null;
     }>(
-      `SELECT session.id AS "sessionId",session.environment_id AS "environmentId",
+      `SELECT session.id AS "sessionId",session.project_id AS "projectId",
+              session.mission_id AS "missionId",session.active_objective_id AS "objectiveId",
+              session.active_flow_draft_id AS "flowDraftId",session.agent_session_id AS "agentSessionId",
+              session.environment_id AS "environmentId",
               session.correlation_id AS "correlationId",session.allowed_origins AS "allowedOrigins",
               environment.base_origin AS "baseOrigin",environment.policy,
               observation.operation_id AS "lastOperationId",
@@ -1048,6 +1443,11 @@ export class AdaptiveSessionRepository {
     const policy = executionPolicySchema.parse({ ...environmentPolicy, allowedOrigins });
     return {
       sessionId: row.sessionId,
+      projectId: row.projectId,
+      missionId: row.missionId,
+      objectiveId: row.objectiveId,
+      flowDraftId: row.flowDraftId,
+      agentSessionId: row.agentSessionId,
       environmentId: row.environmentId,
       correlationId: row.correlationId,
       baseOrigin: row.baseOrigin,
@@ -1096,12 +1496,65 @@ export class AdaptiveSessionRepository {
   }
 }
 
+function isAuthoringMutation(intent: MissionAuthoringIntent) {
+  return ["activate", "fill", "select", "set_checked", "press", "acquire_protected_outputs"].includes(intent.action.kind) ||
+    (intent.action.kind === "same_origin_request" && intent.action.method !== "GET");
+}
+
+function safeReasonCode(value: string | null | undefined, fallback: string) {
+  return typeof value === "string" && /^[A-Z][A-Z0-9_]*$/.test(value) ? value : fallback;
+}
+
 function policyDigest(policy: ExecutionPolicy) {
   return createHash("sha256").update(JSON.stringify(policy)).digest("hex");
 }
 
 function stableDigest(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function canonicalReplayUrl(value: string) {
+  try {
+    return new URL(value).href;
+  } catch {
+    throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REPLAY_CHECKPOINT_UNAVAILABLE" });
+  }
+}
+
+export function selectProtectedReplayPreparation(
+  rows: Array<{
+    sequence: number;
+    intentId: string;
+    intent: MissionAuthoringIntent;
+    observedUrl: string;
+  }>,
+  intentIds: string[],
+  rawEntryUrl: string,
+) {
+  if (new Set(intentIds).size !== intentIds.length) {
+    throw new ConflictException({ code: "MISSION_AUTHORING_PREPARATION_INVALID" });
+  }
+  const selected = new Set(intentIds);
+  for (const intentId of selected) {
+    if (rows.filter((row) => row.intentId === intentId).length !== 1) {
+      throw new ConflictException({ code: "MISSION_AUTHORING_PREPARATION_INVALID" });
+    }
+  }
+  const entryUrl = canonicalReplayUrl(rawEntryUrl);
+  let checkpointIndex = rows.length - 1;
+  if (checkpointIndex < 0 || canonicalReplayUrl(rows[checkpointIndex]!.observedUrl) !== entryUrl) {
+    throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REPLAY_CHECKPOINT_UNAVAILABLE" });
+  }
+  while (
+    checkpointIndex > 0 &&
+    canonicalReplayUrl(rows[checkpointIndex - 1]!.observedUrl) === entryUrl
+  ) {
+    checkpointIndex -= 1;
+  }
+  const checkpointSequence = rows[checkpointIndex]!.sequence;
+  return rows
+    .filter((row) => row.sequence > checkpointSequence && selected.has(row.intentId))
+    .map((row) => row.intent);
 }
 
 function bind(client: PoolClient): Query {

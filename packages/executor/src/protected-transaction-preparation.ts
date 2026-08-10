@@ -1,5 +1,5 @@
 import type { ProtectedTransaction } from "@scry/contracts";
-import { requirePraxisSuccess, resolveTargetLocator } from "@scry/praxis";
+import { PraxisConsumerError, requirePraxisSuccess, resolveTargetLocator } from "@scry/praxis";
 import type { Page } from "playwright";
 
 import type { ProtectedTransactionDependencies } from "./protected-transaction-coordinator.js";
@@ -20,6 +20,10 @@ export async function executeProtectedPreparation(
         continue;
       }
       if (action.type === "clickNavigation") {
+        if (await executeNative(page, action.target, {
+          type: "click",
+          ...nativeTimeouts(action.timeoutMs),
+        }, dependencies)) continue;
         await requirePraxisSuccess({
           page,
           intent: action.target,
@@ -38,6 +42,11 @@ export async function executeProtectedPreparation(
         continue;
       }
       if (action.type === "waitFor") {
+        if (await executeNative(page, action.target, {
+          type: "waitFor",
+          state: action.state,
+          ...(action.timeoutMs === undefined ? {} : { timeoutMs: action.timeoutMs }),
+        }, dependencies)) continue;
         await requirePraxisSuccess({
           page,
           intent: action.target,
@@ -64,6 +73,12 @@ export async function executeProtectedPreparation(
         }
         const secret = await dependencies.resolveKnownSecret(input.credentialRef);
         dependencies.redactor.add(secret);
+        if (await executeNative(page, action.target, {
+          type: "fill",
+          value: secret,
+          protected: true,
+          ...nativeTimeouts(action.timeoutMs),
+        }, dependencies)) continue;
         await requirePraxisSuccess({
           page,
           intent: action.target,
@@ -84,6 +99,12 @@ export async function executeProtectedPreparation(
           );
         }
         if (action.type === "fillPublicInput") {
+          if (await executeNative(page, action.target, {
+            type: "fill",
+            value: String(input.value),
+            protected: false,
+            ...nativeTimeouts(action.timeoutMs),
+          }, dependencies)) continue;
           await requirePraxisSuccess({
             page,
             intent: action.target,
@@ -97,6 +118,11 @@ export async function executeProtectedPreparation(
           });
         }
         if (action.type === "selectPublicInput") {
+          if (await executeNative(page, action.target, {
+            type: "select",
+            value: String(input.value),
+            ...nativeTimeouts(action.timeoutMs),
+          }, dependencies)) continue;
           await requirePraxisSuccess({
             page,
             intent: action.target,
@@ -113,6 +139,11 @@ export async function executeProtectedPreparation(
           if (typeof input.value !== "boolean") {
             throw new PhaseError("TRANSACTION_INPUT_TYPE_MISMATCH", "preparation", "do_not_retry");
           }
+          if (await executeNative(page, action.target, {
+            type: "check",
+            checked: input.value,
+            ...nativeTimeouts(action.timeoutMs),
+          }, dependencies)) continue;
           await requirePraxisSuccess({
             page,
             intent: action.target,
@@ -124,6 +155,17 @@ export async function executeProtectedPreparation(
       }
     } catch (error) {
       if (error instanceof PhaseError) throw error;
+      if (error instanceof PraxisConsumerError) {
+        throw new PhaseError(
+          `PREPARATION_${error.result.code}`,
+          "preparation",
+          error.result.mutationOutcome === "unknown"
+            ? "retry_requires_reconciliation"
+            : error.result.retry === "unsafe"
+              ? "do_not_retry"
+              : "safe_to_retry",
+        );
+      }
       throw new PhaseError(
         `PREPARATION_${action.type.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase()}_FAILED`,
         "preparation",
@@ -141,7 +183,12 @@ export async function verifyProtectedTransactionAssertions(
   phase: PhaseError["phase"] = "preparation",
 ) {
   for (const assertion of assertions) {
-    if (assertion.type !== "fieldValueMatchesInput" && assertion.type !== "textMatchesInput") {
+    if (
+      assertion.type !== "fieldValueMatchesInput" &&
+      assertion.type !== "textMatchesInput" &&
+      assertion.type !== "selectedValueMatchesInput" &&
+      assertion.type !== "checkedMatchesInput"
+    ) {
       try {
         await dependencies.verifyAssertions(page, [assertion]);
       } catch {
@@ -164,23 +211,29 @@ export async function verifyProtectedTransactionAssertions(
         );
       }
       const locator = await resolveTargetLocator(page, assertion.target);
-      const expected =
-        input.classification === "known_secret"
-          ? await dependencies.resolveKnownSecret(input.credentialRef)
-          : String(input.value);
-      if (input.classification === "known_secret") dependencies.redactor.add(expected);
+      if (assertion.type === "checkedMatchesInput") {
+        if (input.classification !== "public" || typeof input.value !== "boolean")
+          throw new PhaseError("TRANSACTION_INPUT_TYPE_MISMATCH", phase, "do_not_retry");
+      }
+      const expected = input.classification === "known_secret"
+        ? await dependencies.resolveKnownSecret(input.credentialRef)
+        : input.value;
+      if (input.classification === "known_secret") dependencies.redactor.add(String(expected));
       const deadline = Date.now() + (assertion.timeoutMs ?? 10_000);
       let matches = false;
       do {
-        const actual =
-          assertion.type === "fieldValueMatchesInput"
-            ? await locator.inputValue({ timeout: Math.max(100, deadline - Date.now()) })
-            : ((await locator.textContent({ timeout: Math.max(100, deadline - Date.now()) })) ??
-              "");
-        matches =
-          assertion.type === "textMatchesInput" && !assertion.exact
-            ? actual.includes(expected)
-            : actual.trim() === expected;
+        const remaining = Math.max(100, deadline - Date.now());
+        if (assertion.type === "checkedMatchesInput") {
+          matches = (await locator.isChecked({ timeout: remaining })) === expected;
+        } else {
+          const actual = assertion.type === "fieldValueMatchesInput" || assertion.type === "selectedValueMatchesInput"
+            ? await locator.inputValue({ timeout: remaining })
+            : ((await locator.textContent({ timeout: remaining })) ?? "");
+          const expectedText = String(expected);
+          matches = assertion.type === "textMatchesInput" && !assertion.exact
+            ? actual.includes(expectedText)
+            : actual.trim() === expectedText;
+        }
         if (!matches && Date.now() < deadline)
           await new Promise((resolve) => setTimeout(resolve, 100));
       } while (!matches && Date.now() < deadline);
@@ -223,4 +276,29 @@ function protectedContext(
 
 function timeout(timeoutMs?: number) {
   return timeoutMs === undefined ? {} : { timeout: timeoutMs };
+}
+
+async function executeNative(
+  page: Page,
+  target: Parameters<NonNullable<ProtectedTransactionDependencies["executeNativeControl"]>>[1],
+  operation: Parameters<NonNullable<ProtectedTransactionDependencies["executeNativeControl"]>>[2],
+  dependencies: ProtectedTransactionDependencies,
+) {
+  if (!dependencies.executeNativeControl) return false;
+  try {
+    await dependencies.executeNativeControl(page, target, operation);
+    return true;
+  } catch (error) {
+    const code = error instanceof Error ? error.message : String(error);
+    if (["NATIVE_TARGET_NOT_FOUND", "NATIVE_TARGET_AMBIGUOUS", "NATIVE_SCOPE_UNSAFE"].includes(code))
+      return false;
+    throw error;
+  }
+}
+
+function nativeTimeouts(timeoutMs?: number) {
+  return {
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    resolutionTimeoutMs: Math.min(timeoutMs ?? 5_000, 5_000),
+  };
 }

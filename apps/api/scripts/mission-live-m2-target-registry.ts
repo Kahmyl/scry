@@ -112,9 +112,12 @@ export function vitractM2Flows(): M2FlowDefinition[] {
   return [
     flow("authenticate", "Authenticate", "Sign in to Partner Portal", "setup"),
     flow("developer", "Inspect Test developer controls", "Open Developer and select Test Mode", "primary"),
-    flow("credential", "Inspect credential boundary", "Open and close Add credential without generation", "acceptance"),
-    flow("documentation", "Inspect documentation navigation", "Open and verify Developer documentation", "diagnostic"),
+    flow("credential", "Reach credential boundary", "Create a Test application and open Add credential without generation", "acceptance", true),
   ];
+}
+
+export function vitractRecoveryApplicationName(ownership: M2Ownership) {
+  return `Scry Recovery ${ownership.missionId.slice(0, 8)}`;
 }
 
 export function vitractM2Intents(input: {
@@ -125,9 +128,8 @@ export function vitractM2Intents(input: {
   const auth = owner(input.ownership, "authenticate");
   const developer = owner(input.ownership, "developer");
   const credential = owner(input.ownership, "credential");
-  const documentation = owner(input.ownership, "documentation");
-  return [
-    [
+  const applicationName = vitractRecoveryApplicationName(input.ownership);
+  return [[
       intent(auth, "vitract-open-login", { kind: "navigate", url: "https://preview.vitract.com/login" },
         navigation("https://preview.vitract.com/login", "exact")),
       protectedFill(auth, "vitract-email", target("login email", { role: "textbox", placeholder: "Enter your email" }), input.emailCredentialId),
@@ -141,30 +143,28 @@ export function vitractM2Intents(input: {
       intent(credential, "vitract-applications", { kind: "activate", target: target("applications", { role: "link", name: "Applications" }) },
         navigation("https://preview.vitract.com/partner/developer/applications", "path")),
       inspect(credential, "vitract-applications-heading", target("applications heading", { role: "heading", name: "Applications" })),
-      intent(credential, "vitract-existing-application", {
+      intent(credential, "vitract-new-application", {
         kind: "activate",
-        target: target("existing Vitract Test application", { role: "link", name: "Vitract Test", exact: false }),
-      }, visible(target("add credential", { role: "button", name: "Add credential", exact: false })), "ordinary", true),
-      intent(credential, "vitract-add-credential", { kind: "activate", target: target("add credential", { role: "button", name: "Add credential", exact: false }) },
-        visible(target("add credential dialog", { role: "dialog", name: "Add credential", exact: false })), "ordinary", true),
-      intent(credential, "vitract-close-credential", { kind: "press", key: "Escape" },
-        hidden(target("add credential dialog", { role: "dialog", name: "Add credential", exact: false })), "ordinary", true),
-    ],
-    [
-      intent(documentation, "vitract-return-developer", {
-        kind: "navigate",
-        url: "https://preview.vitract.com/partner/developer",
-      }, navigation("https://preview.vitract.com/partner/developer", "path")),
-      intent(documentation, "vitract-documentation", {
+        target: target("new application", { role: "link", name: "New application" }),
+      }, navigation("https://preview.vitract.com/partner/developer/applications/new", "path")),
+      publicFill(credential, "vitract-application-name", target("application name", { role: "textbox", label: "Name" }), applicationName),
+      mutation(credential, "vitract-save-application", {
         kind: "activate",
-        target: target("developer documentation", { role: "link", name: "Developer documentation" }),
-      }, { kind: "new_page", origin: "https://preview-api.vitract.com" }, "ordinary", false, true),
-      intent(documentation, "vitract-documentation-proof", {
-        kind: "inspect",
-        target: target("partner api documentation", { role: "heading", name: "Partner API", exact: false }),
-      }, { kind: "none" }, "ordinary", true),
-    ],
-  ];
+        target: target("save application", { role: "button", name: "Save" }),
+      }, navigation("https://preview.vitract.com/partner/developer/applications", "path")),
+      intent(credential, "vitract-created-application", {
+        kind: "activate",
+        target: target("created application", { role: "link", name: applicationName }),
+      }, visible(target("application credentials", { role: "link", name: "Credentials" }))),
+      intent(credential, "vitract-credentials", {
+        kind: "activate",
+        target: target("application credentials", { role: "link", name: "Credentials" }),
+      }, visible(target("add credential", { role: "button", name: "Add credential" }))),
+      intent(credential, "vitract-add-credential", {
+        kind: "activate",
+        target: target("add credential", { role: "button", name: "Add credential" }),
+      }, visible(target("add credential dialog", { role: "dialog", name: "Add credential" }))),
+    ]];
 }
 
 export function externalM2Intents(input: {

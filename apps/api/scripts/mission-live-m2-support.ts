@@ -17,6 +17,7 @@ export type M2FlowDefinition = {
   flow: string;
   purpose: "setup" | "primary" | "acceptance" | "diagnostic" | "reconciliation" | "cleanup";
   authorizeMutation?: boolean;
+  authorizationKind?: "live_mutation" | "protected_mutation";
 };
 
 export type M2Ownership = {
@@ -83,6 +84,7 @@ export async function provisionM2Campaign(
     target: string;
     mission: string;
     origin: string;
+    workspaceId?: string;
     allowedOrigins?: string[];
     flows: M2FlowDefinition[];
     credentials?: Record<string, M2Credential>;
@@ -110,8 +112,9 @@ export async function provisionM2Campaign(
     await pool.query("BEGIN");
     await pool.query(
       `INSERT INTO projects(id,workspace_id,name,description)
-       VALUES($1,'00000000-0000-4000-8000-000000000001',$2,$3)`,
-      [projectId, `M2 ${input.target} ${context.campaignId}`, "Isolated canonical M2 campaign"],
+       VALUES($1,$2,$3,$4)`,
+      [projectId, input.workspaceId ?? "00000000-0000-4000-8000-000000000001",
+        `M2 ${input.target} ${context.campaignId}`, "Isolated canonical M2 campaign"],
     );
     await pool.query(
       `INSERT INTO environments(id,project_id,name,base_origin,policy,secret_refs)
@@ -164,8 +167,9 @@ export async function provisionM2Campaign(
         await pool.query(
           `INSERT INTO mission_authorizations(
              id,mission_id,objective_id,environment_id,kind,reason,status,granted_by_agent_session_id
-           ) VALUES($1,$2,$3,$4,'live_mutation','Disposable M2 campaign mutation','approved',$5)`,
-          [owner.authorizationId, missionId, owner.objectiveId, environmentId, agentSessionId],
+          ) VALUES($1,$2,$3,$4,$5,'Disposable M2 campaign mutation','approved',$6)`,
+          [owner.authorizationId, missionId, owner.objectiveId, environmentId,
+            flow.authorizationKind ?? "live_mutation", agentSessionId],
         );
       }
     }

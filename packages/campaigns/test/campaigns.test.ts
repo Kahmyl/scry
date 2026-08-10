@@ -14,9 +14,32 @@ import {
   matchesCampaignRelease,
   retainCampaignReport,
   serializeSanitizedCampaign,
+  startAdaptiveFixture,
 } from "../src/index.js";
 
 describe("adaptive campaign authority", () => {
+  it("provides deterministic protected acquisition fixtures with independent dispatch counts", async () => {
+    const fixture = await startAdaptiveFixture(0, "127.0.0.1", {
+      protectedValue: "controlled-protected-canary",
+      interruptedRevealDelayMs: 250,
+    });
+    try {
+      for (const path of ["readonly-input", "text-output", "interrupted-acquisition"]) {
+        const page = await fetch(`${fixture.origin}/protected/${path}`).then((response) => response.text());
+        expect(page).toContain("Generate credential");
+        expect(page).toContain("Client secret");
+        await fetch(`${fixture.origin}/protected/dispatch?campaign=${path}`, { method: "POST" });
+      }
+      expect(fixture.snapshot().protectedDispatches).toEqual({
+        readonlyInput: 1,
+        textOutput: 1,
+        interruptedAcquisition: 1,
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("does not allow observational or future-scope failures to change the verdict", () => {
     const metrics = validMetrics();
     const result = finalizeCampaignResult({

@@ -30,6 +30,20 @@ export type PublicValueCapture = (input: {
   value: string;
   scope: "run" | "project";
 }) => Promise<{ valueId: string }>;
+export type AtomicOutputCapture = (input: {
+  operationId: string;
+  claim: import("./protected-transaction-coordinator.js").ProtectedOperationClaim;
+  outputs: Array<{
+    reference: string;
+    classification: "public" | "protected";
+    name: string;
+    value: string;
+    scope: "run" | "project";
+  }>;
+}) => Promise<{
+  claim: import("./protected-transaction-coordinator.js").ProtectedOperationClaim;
+  references: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "run" | "project" }>;
+}>;
 export type PublicValueResolver = (reference: string) => Promise<string>;
 export type BrowserStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 
@@ -37,6 +51,8 @@ export type ExecuteOptions = {
   plan: CurrentPlan;
   policy: ExecutionPolicy;
   outputDirectory: string;
+  /** Internal ownership of external expected-effect verification. */
+  expectedEffectVerificationOwner?: "kernel" | "praxis";
   runId?: string;
   attemptId?: string;
   browserChannel?: string;
@@ -53,11 +69,11 @@ export type ExecuteOptions = {
     page: Page,
     target: import("@scry/contracts").InteractionTargetIntent,
     operation:
-      | { type: "click"; timeoutMs?: number }
-      | { type: "fill"; value: string; timeoutMs?: number; protected: boolean }
-      | { type: "select"; value: string; timeoutMs?: number }
-      | { type: "check"; checked: boolean; timeoutMs?: number }
-      | { type: "press"; key: string }
+      | { type: "click"; timeoutMs?: number; resolutionTimeoutMs?: number }
+      | { type: "fill"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number; protected: boolean }
+      | { type: "select"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number }
+      | { type: "check"; checked: boolean; timeoutMs?: number; resolutionTimeoutMs?: number }
+      | { type: "press"; key: string; timeoutMs?: number; resolutionTimeoutMs?: number }
       | { type: "scroll"; deltaY: number }
       | { type: "waitFor"; state: "visible" | "hidden" | "attached" | "detached"; timeoutMs?: number },
     beforeDispatch?: () => Promise<void>,
@@ -107,6 +123,13 @@ export type ExecuteOptions = {
   secretCapture?: SecretCapture;
   atomicSecretCapture?: AtomicSecretCapture;
   publicValueCapture?: PublicValueCapture;
+  atomicOutputCapture?: AtomicOutputCapture;
+  stageProtectedResponseOutputs?: NonNullable<
+    import("./protected-transaction-coordinator.js").ProtectedTransactionDependencies["stageResponseOutputsAtomically"]
+  >;
+  recoverStagedProtectedResponseOutputs?: NonNullable<
+    import("./protected-transaction-coordinator.js").ProtectedTransactionDependencies["recoverStagedResponseOutputs"]
+  >;
   publicValueResolver?: PublicValueResolver;
   protectedTransactionStore?: import("./protected-transaction-coordinator.js").ProtectedTransactionStore;
   checkpointStore?: import("./checkpoint-coordinator.js").CheckpointStore;
@@ -165,6 +188,8 @@ export type ExecuteOptions = {
   onPraxisResult?: (result: import("@scry/contracts").PraxisResult) => void | Promise<void>;
   /** Durable fence hook invoked after target resolution, immediately before browser dispatch. */
   onMutationDispatch?: () => void | Promise<void>;
+  /** Internal phase signal used to derive privacy settlement from lifecycle facts. */
+  onPrivacyBoundary?: (phase: "entered" | "verified" | "sealed") => void | Promise<void>;
   readinessTimeoutMultiplier?: number;
   veilAdmissionKey?: string;
   /** Immutable, run-bound Veil authority snapshot. Production workers must provide it. */

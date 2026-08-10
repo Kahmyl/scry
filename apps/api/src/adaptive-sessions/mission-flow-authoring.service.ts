@@ -13,11 +13,16 @@ import type { Principal } from "../auth/index.js";
 import { ReleaseAdmissionService } from "../runtime/index.js";
 import { AdaptiveSessionKernelRunner } from "./adaptive-session-kernel.runner.js";
 import { AdaptiveSessionRepository } from "./adaptive-session.repository.js";
-import { deriveMissionAuthoringOperation } from "./mission-authoring-derivation.js";
+import { deriveMissionAuthoringOperation, missionAuthoringOperationIdentity } from "./mission-authoring-derivation.js";
+import {
+  compileMissionAuthoringProtectedTransaction,
+  missionAuthoringProtectedOperationReservation,
+} from "./mission-authoring-protected-transaction.js";
 
 @Injectable()
 export class MissionFlowAuthoringService {
   private readonly inFlightTurns = new Map<string, Promise<MissionAuthoringTurnResult>>();
+  private readonly inFlightProtectedOperations = new Map<string, Promise<void>>();
 
   constructor(
     @Inject(AdaptiveSessionRepository) private readonly sessions: AdaptiveSessionRepository,
@@ -186,26 +191,129 @@ export class MissionFlowAuthoringService {
         });
       }
       const resolveStartedAt = performance.now();
-      await this.sessions.validateIntentAdmission({ sessionId, intent });
-      const handoff = await this.sessions.handoff({
-        workspaceId: workspaceId(principal), sessionId, objectiveId: intent.objectiveId,
-        flowDraftId: intent.flowDraftId, idempotencyKey: `handoff:${turnId}:${intent.intentId}`,
-        reason: "Intent Flow ownership changed",
-      });
-      handoffChanged ||= handoff.handedOff;
-      if (handoff.handedOff) active = { objectiveId: intent.objectiveId, flowDraftId: intent.flowDraftId };
-      const derived = deriveMissionAuthoringOperation({ turnId, intent });
-      const operation: AdaptiveSessionOperationInput = {
-        operationId: derived.operationId, idempotencyKey: derived.idempotencyKey,
-        action: derived.action, expectedEffect: derived.expectedEffect, mode: derived.mode,
-        protectedInputReferences: intent.protectedInputReferences,
-      };
+      let operation: AdaptiveSessionOperationInput;
+      let protectedReservation:
+        | ReturnType<typeof missionAuthoringProtectedOperationReservation>
+        | undefined;
+      try {
+        await this.sessions.validateIntentAdmission({ sessionId, intent });
+        const handoff = await this.sessions.handoff({
+          workspaceId: workspaceId(principal), sessionId, objectiveId: intent.objectiveId,
+          flowDraftId: intent.flowDraftId, idempotencyKey: `handoff:${turnId}:${intent.intentId}`,
+          reason: "Intent Flow ownership changed",
+        });
+        handoffChanged ||= handoff.handedOff;
+        if (handoff.handedOff) active = { objectiveId: intent.objectiveId, flowDraftId: intent.flowDraftId };
+        let protectedTransaction;
+        if (intent.action.kind === "acquire_protected_outputs") {
+          const identity = missionAuthoringOperationIdentity(turnId, intent.intentId);
+          const runtime = await this.sessions.runtimeContextFor(sessionId);
+          const entryUrl = runtime.lastObservation?.url;
+          if (!entryUrl) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_ENTRY_UNAVAILABLE" });
+          const preparation = await this.sessions.protectedPreparationFor({
+            sessionId,
+            objectiveId: intent.objectiveId,
+            flowDraftId: intent.flowDraftId,
+            intentIds: intent.action.preparationIntentIds,
+            entryUrl,
+          });
+          protectedTransaction = compileMissionAuthoringProtectedTransaction({
+            operationId: identity.operationId,
+            entryUrl,
+            action: intent.action,
+            preparation,
+            timeoutMs: intent.constraints.timeoutMs,
+          });
+          protectedReservation = missionAuthoringProtectedOperationReservation(
+            protectedTransaction,
+            runtime.policy.allowedOrigins,
+          );
+        }
+        const derived = deriveMissionAuthoringOperation({ turnId, intent, ...(protectedTransaction ? { protectedTransaction } : {}) });
+        operation = {
+          operationId: derived.operationId, idempotencyKey: derived.idempotencyKey,
+          action: derived.action, expectedEffect: derived.expectedEffect, mode: derived.mode,
+          protectedInputReferences: intent.protectedInputReferences,
+        };
+      } catch (error) {
+        timings.resolveMs += performance.now() - resolveStartedAt;
+        const decision = turnResult({
+          turnId, state: "decision_required", completed, handoffChanged,
+          ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
+          startedAt, elapsedBaseMs: priorTotalMs, timings,
+          decisionBoundary: admissionDecisionBoundary(error),
+        });
+        return this.settleTurn(sessionId, turnId, decision, timings, startedAt);
+      }
       const claim = await this.sessions.beginMissionOperation({
-        workspaceId: workspaceId(principal), sessionId, intent, ...derived,
+        workspaceId: workspaceId(principal), sessionId, intent,
+        operationId: operation.operationId, idempotencyKey: operation.idempotencyKey,
+        action: operation.action, expectedEffect: operation.expectedEffect, mode: operation.mode,
+        ...(protectedReservation ? { protectedReservation } : {}),
       });
       timings.resolveMs += performance.now() - resolveStartedAt;
+      if (operation.action.type === "protectedTransaction") {
+        if (!claim.replayed) {
+          operationsThisAttempt += 1;
+          const pending = turnResult({
+            turnId, state: "pending", completed, handoffChanged,
+            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
+            startedAt, elapsedBaseMs: priorTotalMs, phase: "protected_operation", timings,
+          });
+          const persisted = await this.sessions.persistPending({
+            sessionId, turnId, result: pending, phase: "protected_operation", nextIntentIndex: intentIndex,
+          });
+          this.launchProtectedExecution(sessionId, operation);
+          return persisted;
+        }
+        const projection = await this.sessions.projectProtectedOperationForAuthoring({
+          sessionId,
+          operationId: operation.operationId,
+        });
+        if (projection.status === "pending") {
+          if (projection.state === "planned" && !projection.leaseActive) {
+            this.launchProtectedExecution(sessionId, operation);
+          }
+          const pending = turnResult({
+            turnId, state: "pending", completed, handoffChanged,
+            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
+            startedAt, elapsedBaseMs: priorTotalMs, phase: "protected_operation", timings,
+          });
+          return this.sessions.persistPending({
+            sessionId, turnId, result: pending, phase: "protected_operation", nextIntentIndex: intentIndex,
+          });
+        }
+        completed.push(compactSemanticDelta(intent.intentId, projection.outcome, true));
+        if (
+          projection.outcome.functionalResult !== "succeeded" ||
+          projection.outcome.mutationOutcome === "unknown" ||
+          projection.decisionBoundary.type !== "objective_completed"
+        ) {
+          const decision = turnResult({
+            turnId, state: "decision_required", completed, handoffChanged,
+            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
+            startedAt, elapsedBaseMs: priorTotalMs,
+            decisionBoundary: projection.decisionBoundary, timings,
+          });
+          return this.settleTurn(sessionId, turnId, decision, timings, startedAt);
+        }
+        continue;
+      }
       if (claim.replayed && "outcome" in claim && claim.state !== "running" && claim.outcome) {
         completed.push(compactSemanticDelta(intent.intentId, claim.outcome, requiresProtectedInterval(intent)));
+        if (claim.outcome.functionalResult !== "succeeded" || claim.outcome.mutationOutcome === "unknown") {
+          const decisionBoundary = claim.outcome.nextDecisionBoundary ?? {
+            type: "environment_unavailable" as const,
+            reasonCode: claim.outcome.reasonCode ?? "ADAPTIVE_SESSION_EXECUTION_FAILED",
+            safeActions: ["get_flow_authoring"],
+          };
+          const decision = turnResult({
+            turnId, state: "decision_required", completed, handoffChanged,
+            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
+            startedAt, elapsedBaseMs: priorTotalMs, decisionBoundary, timings,
+          });
+          return this.settleTurn(sessionId, turnId, decision, timings, startedAt);
+        }
         continue;
       }
       operationsThisAttempt += 1;
@@ -252,6 +360,35 @@ export class MissionFlowAuthoringService {
     }
   }
 
+  private launchProtectedExecution(
+    sessionId: string,
+    operation: AdaptiveSessionOperationInput,
+  ) {
+    const key = `${sessionId}:${operation.operationId}`;
+    if (this.inFlightProtectedOperations.has(key)) return;
+    const work = (async () => {
+      try {
+        await this.executeWithOnePreDispatchRetry(sessionId, operation);
+        await this.sessions.projectProtectedOperationForAuthoring({
+          sessionId,
+          operationId: operation.operationId,
+        });
+      } catch (error) {
+        await this.sessions.projectProtectedOperationForAuthoring({
+          sessionId,
+          operationId: operation.operationId,
+          missingFailureCode: errorCode(error, "ADAPTIVE_SESSION_EXECUTION_FAILED"),
+        });
+      }
+    })();
+    this.inFlightProtectedOperations.set(key, work);
+    const release = () => {
+      if (this.inFlightProtectedOperations.get(key) === work)
+        this.inFlightProtectedOperations.delete(key);
+    };
+    void work.then(release, release);
+  }
+
   async close(principal: Principal, sessionId: string, idempotencyKey: string) {
     this.requireWrite(principal);
     const result = await this.sessions.closeAtSafeBoundary({ workspaceId: workspaceId(principal), sessionId, idempotencyKey });
@@ -271,18 +408,35 @@ function workspaceId(principal: Principal) {
 }
 
 function errorCode(error: unknown, fallback: string) {
+  const valid = (value: unknown): value is string =>
+    typeof value === "string" && /^[A-Z][A-Z0-9_]*$/.test(value);
   if (typeof error === "object" && error && "code" in error) {
     const code = (error as { code?: unknown }).code;
-    if (typeof code === "string" && /^[A-Z0-9_]+$/.test(code)) return code;
+    if (valid(code)) return code;
   }
   if (typeof error === "object" && error && "response" in error) {
     const response = (error as { response?: unknown }).response;
     if (typeof response === "object" && response && "code" in response) {
       const code = (response as { code?: unknown }).code;
-      if (typeof code === "string") return code;
+      if (valid(code)) return code;
     }
   }
-  return error instanceof Error && /^[A-Z0-9_]+$/.test(error.message) ? error.message : fallback;
+  return error instanceof Error && valid(error.message) ? error.message : fallback;
+}
+
+function admissionDecisionBoundary(error: unknown): NonNullable<MissionAuthoringTurnResult["decisionBoundary"]> {
+  const code = errorCode(error, "MISSION_AUTHORING_ADMISSION_FAILED");
+  if (code === "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED") {
+    return {
+      type: "authorization_required",
+      reasonCode: code,
+      safeActions: ["authorize_environment_credentials", "advance_flow_authoring"],
+    };
+  }
+  if (code.includes("ORIGIN_NOT_ALLOWED") || code.includes("AUTHORIZATION")) {
+    return { type: "policy_refused", reasonCode: code, safeActions: [] };
+  }
+  return { type: "environment_unavailable", reasonCode: code, safeActions: ["advance_flow_authoring"] };
 }
 
 function compactSemanticDelta(
@@ -312,6 +466,7 @@ function compactSemanticDelta(
         .flatMap((finding) => typeof finding.code === "string" && /^[A-Z][A-Z0-9_]*$/.test(finding.code) ? [finding.code] : [])
         .slice(0, 8),
     },
+    ...(outcome.generatedReferences ? { generatedReferences: outcome.generatedReferences } : {}),
   };
 }
 
@@ -355,7 +510,6 @@ function turnResult(input: {
 function privacyChannel(completed: MissionAuthoringTurnResult["completed"]): MissionAuthoringTurnResult["channels"]["privacy"] {
   const privacy = completed.filter((delta) => delta.privacyApplicable).map((delta) => delta.privacyResult);
   if (!privacy.length) return { state: "not_applicable" };
-  if (privacy.includes("sealed")) return { state: "failed", reasonCode: "PRIVACY_SEALED" };
   if (privacy.includes("degraded")) return { state: "failed", reasonCode: "PRIVACY_DEGRADED" };
   if (privacy.includes("unverified")) return { state: "failed", reasonCode: "PRIVACY_UNVERIFIED" };
   return { state: "passed" };

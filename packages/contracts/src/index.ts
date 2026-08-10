@@ -22,6 +22,7 @@ export {
   type ReadinessCondition,
 } from "./plan.js";
 export * from "./policy.js";
+export * from "./protected-operation.js";
 export * from "./praxis/index.js";
 export * from "./run.js";
 export * from "./validation.js";

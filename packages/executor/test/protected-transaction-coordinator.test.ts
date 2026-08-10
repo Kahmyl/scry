@@ -15,7 +15,9 @@ import {
   PlaywrightProtectedCapsuleFactory,
   ProtectedTransactionKernel,
   type MutationLedgerState,
+  type ProtectedTransactionStore,
 } from "../src/protected-transaction-coordinator.js";
+import { verifyProtectedTransactionAssertions } from "../src/protected-transaction-preparation.js";
 
 const servers: Array<ReturnType<typeof createServer>> = [];
 const openTestBrowser = async (options?: BrowserContextOptions) => {
@@ -62,6 +64,44 @@ afterEach(async () =>
       .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
   ),
 );
+
+it("verifies checked preparation through checked-state semantics", async () => {
+  const opened = await openTestBrowser();
+  const unregister = registerPraxisVeilAuthority(opened.page, {
+    authority: new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: ["https://example.test"] })),
+    userId: "checked-verification-test",
+    environmentId: "test",
+    browserContextId: "checked-verification-context",
+  });
+  try {
+    await opened.page.setContent('<label><input type="checkbox" checked> Active</label>');
+    const operation = transaction("https://example.test");
+    const checkbox: InteractionTargetIntent = {
+      concept: "active", requiredCapabilities: ["focusable", "toggleable"],
+      preferredEvidence: { roles: ["checkbox"], names: ["Active"], labels: ["Active"], descriptions: [], placeholders: [], inputTypes: ["checkbox"] },
+      scope: { kind: "page" }, relations: [], prohibited: ["hidden", "disabled"], risk: "ordinary",
+      confidence: { requiredFamilies: [], minimum: 0.45, minimumMargin: 0, minimumFamilyCount: 1 },
+    };
+    operation.inputs = { active: { classification: "public", value: true } };
+    await expect(verifyProtectedTransactionAssertions(
+      opened.page,
+      [{ type: "checkedMatchesInput", target: checkbox, input: "active", timeoutMs: 500 }],
+      operation,
+      { redactor: new SecretRedactor(), resolveKnownSecret: async () => "", verifyAssertions: async () => undefined } as never,
+    )).resolves.toBeUndefined();
+    await opened.page.getByRole("checkbox", { name: "Active" }).uncheck();
+    await expect(verifyProtectedTransactionAssertions(
+      opened.page,
+      [{ type: "checkedMatchesInput", target: checkbox, input: "active", timeoutMs: 200 }],
+      operation,
+      { redactor: new SecretRedactor(), resolveKnownSecret: async () => "", verifyAssertions: async () => undefined } as never,
+    )).rejects.toThrow("PREPARATION_ACTIVE_VERIFICATION_FAILED");
+  } finally {
+    unregister();
+    await opened.context.close();
+    await opened.browser.close();
+  }
+}, 20_000);
 
 const transaction = (origin: string): ProtectedTransaction => ({
   type: "protectedTransaction",
@@ -165,12 +205,13 @@ const transaction = (origin: string): ProtectedTransaction => ({
   },
 });
 
-function memoryStore(initial: MutationLedgerState = "planned") {
+function memoryStore(initial: MutationLedgerState = "planned", persistedReferences?: import("../src/protected-transaction-coordinator.js").ProtectedOperationClaim["persistedReferences"]) {
   let state = initial;
+  let version = 1;
   return {
     state: () => state,
     store: {
-      claim: async () => ({ state, fencingToken: 1 }),
+      claim: async () => ({ id: "protected-operation", state, version, fencingToken: 1, ...(persistedReferences ? { persistedReferences } : {}) }),
       transition: async ({
         expected,
         next,
@@ -178,12 +219,29 @@ function memoryStore(initial: MutationLedgerState = "planned") {
         expected: MutationLedgerState;
         next: MutationLedgerState;
       }) => {
-        if (state !== expected) return false;
+        if (state !== expected) throw new Error("PROTECTED_OPERATION_TRANSITION_FENCED");
         state = next;
-        return true;
+        version += 1;
+        return { id: "protected-operation", state, version, fencingToken: 1, ...(persistedReferences ? { persistedReferences } : {}) };
       },
       record: async () => undefined,
     },
+  };
+}
+
+function atomicProjectCapture(
+  store: ProtectedTransactionStore,
+  persistSecret: (value: string) => Promise<{ credentialId: string }>,
+  persistPublic: (value: string) => Promise<{ valueId: string }>,
+) {
+  return async (input: Parameters<NonNullable<import("../src/types.js").AtomicOutputCapture>>[0]) => {
+    const references: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "project" }> = {};
+    for (const output of input.outputs) {
+      if (output.classification === "protected") references[output.reference] = { classification: "protected", ...(await persistSecret(output.value)), scope: "project" };
+      else references[output.reference] = { classification: "public", ...(await persistPublic(output.value)), scope: "project" };
+    }
+    const claim = await store.transition({ id: input.claim.id, operationId: input.operationId, version: input.claim.version, fencingToken: input.claim.fencingToken, expected: "persisting", next: "persisted", phase: "persistence_committed" });
+    return { claim, references };
   };
 }
 async function verify(page: Page, assertions: Assertion[]) {
@@ -257,6 +315,23 @@ describe("protected transaction capsule", () => {
     );
     let capsulePage: Page | undefined;
     let cleanupCalls = 0;
+    const storeMemory = memoryStore();
+    const persistSecret = async () => {
+      await capsulePage!.evaluate((persistent) => {
+        const original = navigator.clipboard.writeText.bind(navigator.clipboard);
+        let calls = 0;
+        Object.defineProperty(navigator.clipboard, "writeText", {
+          configurable: true,
+          value: async (value: string) => {
+            calls += 1;
+            (globalThis as typeof globalThis & { __cleanupCalls?: number }).__cleanupCalls = calls;
+            if (persistent || calls === 1) throw new Error("synthetic clear failure");
+            return original(value);
+          },
+        });
+      }, mode === "persistent");
+      return { credentialId: randomUUID() };
+    };
     try {
       const result = await new ProtectedTransactionKernel({
         safeSession: {
@@ -267,7 +342,7 @@ describe("protected transaction capsule", () => {
         },
         gate,
         redactor: new SecretRedactor(),
-        store: memoryStore().store,
+        store: storeMemory.store,
         capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser),
         allowedOrigins: [origin],
         prepareCapsule: async (session) => {
@@ -281,24 +356,9 @@ describe("protected transaction capsule", () => {
           });
         },
         resolveKnownSecret: async () => "",
-        persistSecret: async () => {
-          await capsulePage!.evaluate((persistent) => {
-            const original = navigator.clipboard.writeText.bind(navigator.clipboard);
-            let calls = 0;
-            Object.defineProperty(navigator.clipboard, "writeText", {
-              configurable: true,
-              value: async (value: string) => {
-                calls += 1;
-                (globalThis as typeof globalThis & { __cleanupCalls?: number }).__cleanupCalls =
-                  calls;
-                if (persistent || calls === 1) throw new Error("synthetic clear failure");
-                return original(value);
-              },
-            });
-          }, mode === "persistent");
-          return { credentialId: randomUUID() };
-        },
+        persistSecret,
         persistPublicValue: async () => ({ valueId: randomUUID() }),
+        persistOutputsAtomically: atomicProjectCapture(storeMemory.store, persistSecret, async () => ({ valueId: randomUUID() })),
         verifyAssertions: verify,
       }).execute(operation);
       cleanupCalls = await page.evaluate(() => 0); // keeps the safe page live for post-capsule verification
@@ -437,6 +497,11 @@ describe("protected transaction capsule", () => {
           publics.push(value);
           return { valueId: "22222222-2222-4222-8222-222222222222" };
         },
+        persistOutputsAtomically: atomicProjectCapture(
+          memory.store,
+          async (value) => { secrets.push(value); return { credentialId: "11111111-1111-4111-8111-111111111111" }; },
+          async (value) => { publics.push(value); return { valueId: "22222222-2222-4222-8222-222222222222" }; },
+        ),
         verifyAssertions: verify,
         verifyCalibration: async (session) => {
           expect(await session.page.getByLabel("Name").inputValue()).toBe("Capsule app");
@@ -513,11 +578,84 @@ describe("protected transaction capsule", () => {
       }).execute(operation);
       expect(result.result.mutation).toEqual({ dispatch: "not_started", outcome: "not_attempted" });
       expect(result.result.retryClass).toBe("safe_to_retry");
-      expect(memory.state()).toBe("planned");
+      expect(memory.state()).toBe("failed_not_applied");
     } finally {
       await browser.close();
     }
   });
+
+  it("settles a dispatched read-only acquisition failure as retry-safe and not applied", async () => {
+    const server = createServer((request, response) => {
+      if (request.url === "/orders") {
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ status: "ok" }));
+        return;
+      }
+      response.setHeader("content-type", "text/html");
+      response.end(`<label>Name<input></label><label>Description<textarea></textarea></label><button aria-label="Save">Save</button><script>document.querySelector('[aria-label=Save]').onclick=()=>fetch('/orders')</script>`);
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("server unavailable");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" });
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.goto(origin);
+      const memory = memoryStore();
+      const operation = transaction(origin);
+      operation.entry.url = origin;
+      operation.entry.assertions = [{ type: "visible", target: intent("Save", "button") }];
+      operation.preparation.actions = [];
+      operation.preparation.assertions = [];
+      operation.mutation.kind = "repeatable";
+      operation.mutation.dispatchSemantics = "read_only";
+      operation.mutation.action.expectedEffect = { type: "none" };
+      operation.extraction.timeoutMs = 250;
+      operation.extraction.outputs = [{
+        classification: "public",
+        reference: "orderId",
+        acquisition: {
+          target: intent("id", "value"), classification: "public",
+          permittedMethods: ["protected_network_value"],
+          validation: { minimumLength: 1, maximumLength: 200 },
+        },
+        storage: { name: "Order ID", scope: "project" },
+      }];
+      operation.acquisitionReadiness.valueIntent = intent("id", "value");
+      operation.acquisitionReadiness.approvedMethods = ["protected_network_value"];
+      operation.mutation.reconciliation = { strategy: "persisted_outputs", requiredReferences: ["orderId"] };
+      const authority = new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] }));
+      const result = await new ProtectedTransactionKernel({
+        safeSession: { browser, context, page, provenance: new BrowserSessionProvenance(randomUUID(), "safe") },
+        gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]),
+        redactor: new SecretRedactor(), store: memory.store,
+        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser), allowedOrigins: [origin],
+        prepareCapsule: async (session) => {
+          registerPraxisVeilAuthority(session.page, {
+            authority, userId: "read-only-test", environmentId: "test",
+            browserContextId: session.provenance.contextId,
+          });
+        }, resolveKnownSecret: async () => "",
+        persistSecret: async () => { throw new Error("must not persist"); },
+        persistPublicValue: async () => { throw new Error("must not persist"); },
+        verifyAssertions: verify,
+      }).execute(operation);
+
+      expect(result.result).toMatchObject({
+        status: "aborted",
+        reasonCode: "PROTECTED_RESPONSE_VALUE_UNAVAILABLE",
+        mutation: { dispatch: "acknowledged", outcome: "confirmed_not_applied" },
+        retryClass: "safe_to_retry",
+        safeActions: ["retry_transaction", "abort"],
+      });
+      expect(memory.state()).toBe("failed_not_applied");
+    } finally {
+      await browser.close();
+    }
+  }, 15_000);
 
   it("never replays after dispatch authorization began", async () => {
     const browser = await chromium.launch({
@@ -527,6 +665,7 @@ describe("protected transaction capsule", () => {
     try {
       const context = await browser.newContext();
       const page = await context.newPage();
+      const memory = memoryStore("dispatching");
       const result = await new ProtectedTransactionKernel({
         safeSession: {
           browser,
@@ -536,7 +675,7 @@ describe("protected transaction capsule", () => {
         },
         gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]),
         redactor: new SecretRedactor(),
-        store: memoryStore("dispatching").store,
+        store: memory.store,
         capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser),
         allowedOrigins: ["https://example.test"],
         prepareCapsule: async () => undefined,
@@ -550,8 +689,34 @@ describe("protected transaction capsule", () => {
         verifyAssertions: async () => undefined,
       }).execute(transaction("https://example.test"));
       expect(result.result.status).toBe("outcome_unknown");
+      expect(memory.state()).toBe("compromised");
     } finally {
       await browser.close();
     }
+  });
+
+  it("reconciles committed opaque references after process death without redispatch", async () => {
+    const browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" });
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      const operation = transaction("https://example.test");
+      const memory = memoryStore("recovery_required", {
+        clientId: { classification: "public", valueId: "22222222-2222-4222-8222-222222222222", scope: "project" },
+        clientSecret: { classification: "protected", credentialId: "11111111-1111-4111-8111-111111111111", scope: "project" },
+      });
+      const result = await new ProtectedTransactionKernel({
+        safeSession: { browser, context, page, provenance: new BrowserSessionProvenance(randomUUID(), "safe") },
+        gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]),
+        redactor: new SecretRedactor(), store: memory.store,
+        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser), allowedOrigins: ["https://example.test"],
+        prepareCapsule: async () => undefined, resolveKnownSecret: async () => "",
+        persistSecret: async () => { throw new Error("must not persist"); },
+        persistPublicValue: async () => { throw new Error("must not persist"); },
+        verifyAssertions: async () => undefined,
+      }).execute(operation);
+      expect(result.result).toMatchObject({ status: "completed", mutation: { outcome: "confirmed_succeeded" } });
+      expect(memory.state()).toBe("completed");
+    } finally { await browser.close(); }
   });
 });

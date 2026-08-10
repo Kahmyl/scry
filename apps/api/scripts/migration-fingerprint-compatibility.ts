@@ -34,6 +34,11 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "adaptive-sessions-m3.sql",
   "mission-first-live-convergence-m1.sql",
   "mission-authoring-grouped-turns-m2.sql",
+  "protected-operation-state-machine.sql",
+  "protected-operation-completion.sql",
+  "protected-operation-authoritative-projection.sql",
+  "protected-response-output-staging.sql",
+  "protected-read-only-dispatch.sql",
 ] as const;
 
 export type OptionalBaselineMigration = (typeof OPTIONAL_BASELINE_MIGRATIONS)[number];
@@ -96,6 +101,10 @@ export function compatibilityBaseline(source: string): string {
     "adaptive-sessions-m3.sql",
     "mission-first-live-convergence-m1.sql",
     "mission-authoring-grouped-turns-m2.sql",
+    "protected-operation-state-machine.sql",
+    "protected-operation-completion.sql",
+    "protected-operation-authoritative-projection.sql",
+    "protected-response-output-staging.sql",
   ].reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}\\r?\\n`, "g"), ""),

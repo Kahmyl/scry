@@ -11,6 +11,11 @@ let authenticatedRequestHeader: string | undefined;
 
 beforeAll(async () => {
   server = createServer((request, response) => {
+    if (request.url === "/next") {
+      response.setHeader("content-type", "text/html");
+      response.end("<main><div role='region' aria-label='Destination'>Arrived</div></main>");
+      return;
+    }
     if (request.url === "/users/me") {
       authenticatedRequestHeader = request.headers.authorization;
       response.statusCode = 204;
@@ -122,6 +127,60 @@ describe("NativeBrowserDriver shared primitives", () => {
     } finally { await driver.closeBrowser(opened.browser, opened.context); }
   }, 20_000);
 
+  it("prefers a unique section heading over a same-named navigation link", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser();
+    try {
+      await opened.page.setContent(`
+        <nav><a href="#createPartnerOrder">Create Order</a></nav>
+        <section id="createPartnerOrder">
+          <h1>Create Order</h1>
+          <label>Client ID<input></label>
+        </section>
+        <section><h1>List Orders</h1><label>Client ID<input></label></section>
+      `);
+      const scoped: InteractionTargetIntent = {
+        ...emailIntent,
+        concept: "create order client ID",
+        preferredEvidence: {
+          ...emailIntent.preferredEvidence,
+          labels: ["Client ID"], names: [], placeholders: [],
+        },
+        scope: { kind: "section", name: "Create Order" },
+      };
+      await driver.executeSemanticControl(opened.page, scoped, {
+        type: "fill", value: "opaque-protected-value", protected: true,
+      });
+      expect(await opened.page.locator("#createPartnerOrder input").inputValue())
+        .toBe("opaque-protected-value");
+      expect(await opened.page.locator("section").nth(1).locator("input").inputValue()).toBe("");
+    } finally {
+      await driver.closeBrowser(opened.browser, opened.context);
+    }
+  }, 20_000);
+
+  it("rejects genuinely duplicated section headings before dispatch", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser();
+    const beforeDispatch = vi.fn();
+    try {
+      await opened.page.setContent(`
+        <section><h1>Create Order</h1><label>Client ID<input></label></section>
+        <section><h1>Create Order</h1><label>Client ID<input></label></section>
+      `);
+      await expect(driver.executeSemanticControl(opened.page, {
+        ...emailIntent,
+        concept: "create order client ID",
+        preferredEvidence: { ...emailIntent.preferredEvidence, labels: ["Client ID"], names: [], placeholders: [] },
+        scope: { kind: "section", name: "Create Order" },
+      }, { type: "fill", value: "opaque", protected: true }, beforeDispatch))
+        .rejects.toThrow("NATIVE_SECTION_SCOPE_AMBIGUOUS");
+      expect(beforeDispatch).not.toHaveBeenCalled();
+    } finally {
+      await driver.closeBrowser(opened.browser, opened.context);
+    }
+  }, 20_000);
+
   it("requires complete native capabilities before an interactive target is admitted", async () => {
     const driver = new NativeBrowserDriver();
     const opened = await driver.openBrowser();
@@ -181,7 +240,8 @@ describe("NativeBrowserDriver shared primitives", () => {
     const driver = new NativeBrowserDriver();
     const opened = await driver.openBrowser();
     try {
-      await opened.page.setContent("<main></main><script>setTimeout(()=>document.querySelector('main').innerHTML='<h1>Dashboard</h1>',150)</script>");
+      await opened.page.setContent("<main></main><script>setTimeout(()=>document.querySelector('main').innerHTML='<h1>Dashboard</h1>',1200)</script>");
+      const startedAt = performance.now();
       await expect(driver.executeSemanticControl(opened.page, {
         ...emailIntent,
         concept: "dashboard",
@@ -189,6 +249,172 @@ describe("NativeBrowserDriver shared primitives", () => {
         preferredEvidence: { roles: ["heading"], names: ["Dashboard"], labels: [], descriptions: [], placeholders: [], inputTypes: [] },
         risk: "ordinary",
       }, { type: "waitFor", state: "visible", timeoutMs: 2_000 })).resolves.toBeUndefined();
+      expect(performance.now() - startedAt).toBeGreaterThanOrEqual(1_000);
+    } finally {
+      await driver.closeBrowser(opened.browser, opened.context);
+    }
+  }, 20_000);
+
+  it("bounds ordinary target resolution independently from the action timeout", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser();
+    try {
+      await opened.page.setContent("<main>No matching control</main>");
+      const startedAt = performance.now();
+      await expect(driver.executeSemanticControl(opened.page, {
+        ...emailIntent,
+        concept: "login email",
+        preferredEvidence: {
+          ...emailIntent.preferredEvidence,
+          names: [], labels: [], placeholders: ["Enter your email"], inputTypes: ["email"],
+        },
+      }, {
+        type: "click",
+        timeoutMs: 60_000,
+        resolutionTimeoutMs: 250,
+      })).rejects.toThrow("NATIVE_TARGET_NOT_FOUND");
+      expect(performance.now() - startedAt).toBeLessThan(2_000);
+    } finally {
+      await driver.closeBrowser(opened.browser, opened.context);
+    }
+  }, 20_000);
+
+  it("resolves an ordinary textbox that hydrates within the bounded action-resolution window", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser();
+    const beforeDispatch = vi.fn(async () => undefined);
+    try {
+      await opened.page.setContent(`<main></main><script>
+        setTimeout(() => {
+          document.querySelector('main').innerHTML =
+            '<input type="email" placeholder="Enter your email" aria-label="Email">';
+        }, 3000);
+      </script>`);
+      const startedAt = performance.now();
+      await expect(driver.executeSemanticControl(opened.page, emailIntent, {
+        type: "fill",
+        value: "safe-public-characterization-value",
+        timeoutMs: 60_000,
+        resolutionTimeoutMs: 5_000,
+        protected: false,
+      }, beforeDispatch)).resolves.toBeUndefined();
+      expect(performance.now() - startedAt).toBeGreaterThanOrEqual(2_500);
+      expect(performance.now() - startedAt).toBeLessThan(5_000);
+      expect(beforeDispatch).toHaveBeenCalledOnce();
+      await expect(opened.page.getByPlaceholder("Enter your email").inputValue())
+        .resolves.toBe("safe-public-characterization-value");
+    } finally {
+      await driver.closeBrowser(opened.browser, opened.context);
+    }
+  }, 20_000);
+
+  it("observes the complete semantic match set while mutations remain strictly unique", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser();
+    const beforeDispatch = vi.fn(async () => undefined);
+    const dialogIntent: InteractionTargetIntent = {
+      ...emailIntent,
+      concept: "add credential dialog",
+      requiredCapabilities: ["readable_value"],
+      preferredEvidence: {
+        roles: ["dialog"], names: ["Add credential"], labels: [], descriptions: [],
+        placeholders: [], inputTypes: [],
+      },
+      risk: "read_only",
+    };
+    try {
+      await opened.page.setContent(`
+        <div role="dialog" aria-label="Add credential">First</div>
+        <div role="dialog" aria-label="Add credential">Second</div>`);
+      await expect(driver.executeSemanticControl(opened.page, dialogIntent,
+        { type: "waitFor", state: "visible", timeoutMs: 500 }, beforeDispatch)).resolves.toBeUndefined();
+      await expect(driver.executeSemanticControl(opened.page, dialogIntent,
+        { type: "waitFor", state: "attached", timeoutMs: 500 }, beforeDispatch)).resolves.toBeUndefined();
+      expect(beforeDispatch).not.toHaveBeenCalled();
+
+      await expect(driver.executeSemanticControl(opened.page, {
+        ...dialogIntent, requiredCapabilities: ["observable"], risk: "ordinary",
+      }, { type: "click", timeoutMs: 500 }, beforeDispatch)).rejects.toThrow("NATIVE_TARGET_AMBIGUOUS");
+      expect(beforeDispatch).not.toHaveBeenCalled();
+
+      await opened.page.evaluate(() => {
+        const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')];
+        setTimeout(() => { dialogs[0]!.hidden = true; }, 50);
+        setTimeout(() => { dialogs[1]!.hidden = true; }, 100);
+      });
+      await expect(driver.executeSemanticControl(opened.page, dialogIntent,
+        { type: "waitFor", state: "hidden", timeoutMs: 1_000 }, beforeDispatch)).resolves.toBeUndefined();
+
+      await opened.page.evaluate(() => {
+        const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')];
+        dialogs.forEach((dialog) => { dialog.hidden = false; });
+        setTimeout(() => { dialogs[0]!.remove(); }, 50);
+        setTimeout(() => { dialogs[1]!.remove(); }, 100);
+      });
+      await expect(driver.executeSemanticControl(opened.page, dialogIntent,
+        { type: "waitFor", state: "detached", timeoutMs: 1_000 }, beforeDispatch)).resolves.toBeUndefined();
+
+      await opened.page.setContent(`<div role="dialog" aria-label="Add credential">Remaining</div>`);
+      await expect(driver.executeSemanticControl(opened.page, dialogIntent,
+        { type: "waitFor", state: "hidden", timeoutMs: 150 }, beforeDispatch)).rejects.toThrow("NATIVE_TARGET_NOT_FOUND");
+      await expect(driver.executeSemanticControl(opened.page, dialogIntent,
+        { type: "waitFor", state: "detached", timeoutMs: 150 }, beforeDispatch)).rejects.toThrow("NATIVE_TARGET_NOT_FOUND");
+    } finally {
+      await driver.closeBrowser(opened.browser, opened.context);
+    }
+  }, 20_000);
+
+  it("verifies a native mutation's positive effect with observation cardinality", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser();
+    const beforeDispatch = vi.fn(async () => undefined);
+    try {
+      await opened.page.setContent(`<button onclick="document.body.insertAdjacentHTML('beforeend',
+        '<div role=&quot;dialog&quot; aria-label=&quot;Done&quot;>One</div><div role=&quot;dialog&quot; aria-label=&quot;Done&quot;>Two</div>')">Launch</button>`);
+      await driver.executeSemanticControl(opened.page, {
+        ...emailIntent, concept: "launch", requiredCapabilities: ["pointer_activatable"],
+        preferredEvidence: { roles: ["button"], names: ["Launch"], labels: [], descriptions: [], placeholders: [], inputTypes: [] },
+        risk: "ordinary",
+      }, { type: "click" }, beforeDispatch);
+      await expect(driver.verifyExpectedEffect(opened.page, {
+        type: "visibility_change", visible: true,
+        target: {
+          ...emailIntent, concept: "done dialog", requiredCapabilities: ["readable_value"],
+          preferredEvidence: { roles: ["dialog"], names: ["Done"], labels: [], descriptions: [], placeholders: [], inputTypes: [] },
+          risk: "read_only",
+        },
+      }, opened.page.url(), 1_000)).resolves.toBeUndefined();
+      expect(beforeDispatch).toHaveBeenCalledOnce();
+      expect(await opened.page.getByRole("dialog", { name: "Done" }).count()).toBe(2);
+    } finally {
+      await driver.closeBrowser(opened.browser, opened.context);
+    }
+  }, 20_000);
+
+  it("observes navigation and a target in the current post-navigation document", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser();
+    try {
+      await driver.navigateAndWait(opened.page, origin, [origin]);
+      await opened.page.setContent("<button onclick=\"location.href='/next'\">Continue</button>");
+      const beforeUrl = opened.page.url();
+      await driver.executeSemanticControl(opened.page, {
+        ...emailIntent, concept: "continue", requiredCapabilities: ["pointer_activatable"],
+        preferredEvidence: { roles: ["button"], names: ["Continue"], labels: [], descriptions: [], placeholders: [], inputTypes: [] },
+        risk: "ordinary",
+      }, { type: "click" });
+      await expect(driver.verifyExpectedEffect(opened.page, {
+        type: "navigation", url: `${origin}/next`, match: "exact",
+      }, beforeUrl, 2_000)).resolves.toBeUndefined();
+      await expect(driver.verifyExpectedEffect(opened.page, {
+        type: "new_region",
+        target: {
+          ...emailIntent, concept: "destination", requiredCapabilities: ["readable_value"],
+          preferredEvidence: { roles: ["region"], names: ["Destination"], labels: [], descriptions: [], placeholders: [], inputTypes: [] },
+          risk: "read_only",
+        },
+      }, beforeUrl, 2_000)).resolves.toBeUndefined();
+      expect(opened.page.url()).toBe(`${origin}/next`);
     } finally {
       await driver.closeBrowser(opened.browser, opened.context);
     }

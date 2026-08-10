@@ -1,6 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import type { ExpectedEffect, InteractionTargetIntent, SemanticScope } from "@scry/contracts";
-import { navigateAndWaitNative, waitForDocumentSurface } from "@scry/executor";
+import {
+  NativeControlResolutionError,
+  navigateAndWaitNative,
+  waitForDocumentSurface,
+} from "@scry/executor";
 import {
   chromium,
   type Browser,
@@ -94,7 +98,14 @@ export class NativeBrowserDriver {
       }
       return;
     }
-    if (effect.type === "new_region") throw new NativeError("NATIVE_EFFECT_UNSUPPORTED");
+    if (effect.type === "new_region") {
+      await this.waitForSemanticState(page, effect.target, "visible", timeoutMs);
+      return;
+    }
+    if (effect.type === "visibility_change" && effect.visible) {
+      await this.waitForSemanticState(page, effect.target, "visible", timeoutMs);
+      return;
+    }
     const target = await this.resolveSemanticTarget(page, effect.target, timeoutMs);
     if (effect.type === "visibility_change") {
       if ((await target.isVisible()) !== effect.visible) throw new NativeError("NATIVE_EXPECTED_EFFECT_NOT_OBSERVED");
@@ -115,66 +126,43 @@ export class NativeBrowserDriver {
   }
 
   async resolveSemanticTarget(page: Page, intent: InteractionTargetIntent, waitTimeoutMs = 0) {
-    const root = await semanticScopeRoot(page, intent.scope);
-    const candidates: Locator[] = [];
-    const exact = intent.matching !== "non_exact";
-    for (const role of intent.preferredEvidence.roles) {
-      for (const name of intent.preferredEvidence.names) {
-        if (role === "text") candidates.push(root.getByText(name, { exact }));
-        else if (role === "field") candidates.push(root.getByRole("textbox", { name, exact }));
-        else if (role === "value")
-          candidates.push(root.locator("output,dd,input,textarea").filter({ hasText: name }));
-        else candidates.push(root.getByRole(role, { name, exact }));
-      }
-    }
-    for (const label of intent.preferredEvidence.labels)
-      candidates.push(root.getByLabel(label, { exact }));
-    for (const placeholder of intent.preferredEvidence.placeholders)
-      candidates.push(root.getByPlaceholder(placeholder, { exact }));
-    for (const testId of intent.preferredEvidence.testIds ?? [])
-      candidates.push(root.getByTestId(testId));
-    if (intent.preferredEvidence.expectedText)
-      candidates.push(root.getByText(intent.preferredEvidence.expectedText, { exact }));
+    const candidates = await semanticCandidateLocators(page, intent, false);
     const deadline = Date.now() + waitTimeoutMs;
     do {
-      const eligible = new Map<string, Locator>();
-      for (const candidate of candidates) {
-        const count = await candidate.count();
-        for (let index = 0; index < count; index += 1) {
-          const element = candidate.nth(index);
-          if (intent.prohibited.includes("hidden") && !(await element.isVisible())) continue;
-          if (intent.prohibited.includes("disabled") && !(await element.isEnabled())) continue;
-          if (intent.prohibited.includes("readonly") && (await element.getAttribute("readonly")) !== null)
-            continue;
-          if (!(await supportsRequiredCapabilities(element, intent))) continue;
-          eligible.set(await nativeElementIdentity(element), element);
-        }
-      }
+      const eligible = await eligibleSemanticMatches(candidates, intent, false);
       if (eligible.size === 1) return eligible.values().next().value!;
-      if (eligible.size > 1) throw new NativeError("NATIVE_TARGET_AMBIGUOUS");
+      if (eligible.size > 1) throw new NativeControlResolutionError("NATIVE_TARGET_AMBIGUOUS");
       if (Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
     } while (Date.now() < deadline);
-    throw new NativeError("NATIVE_TARGET_NOT_FOUND");
+    throw new NativeControlResolutionError("NATIVE_TARGET_NOT_FOUND");
   }
 
   async executeSemanticControl(
     page: Page,
     intent: InteractionTargetIntent,
     operation:
-      | { type: "click"; timeoutMs?: number }
-      | { type: "fill"; value: string; timeoutMs?: number; protected: boolean }
-      | { type: "select"; value: string; timeoutMs?: number }
-      | { type: "check"; checked: boolean; timeoutMs?: number }
-      | { type: "press"; key: string }
+      | { type: "click"; timeoutMs?: number; resolutionTimeoutMs?: number }
+      | { type: "fill"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number; protected: boolean }
+      | { type: "select"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number }
+      | { type: "check"; checked: boolean; timeoutMs?: number; resolutionTimeoutMs?: number }
+      | { type: "press"; key: string; timeoutMs?: number; resolutionTimeoutMs?: number }
       | { type: "scroll"; deltaY: number }
       | { type: "waitFor"; state: "visible" | "hidden" | "attached" | "detached"; timeoutMs?: number },
     beforeDispatch?: () => Promise<void>,
   ) {
+    if (operation.type === "waitFor") {
+      await this.waitForSemanticState(page, intent, operation.state, operation.timeoutMs ?? 10_000);
+      return;
+    }
     const target = await this.resolveSemanticTarget(
-      page, intent, "timeoutMs" in operation ? operation.timeoutMs ?? 10_000 : 10_000,
+      page,
+      intent,
+      "resolutionTimeoutMs" in operation
+        ? operation.resolutionTimeoutMs ?? operation.timeoutMs ?? 10_000
+        : 10_000,
     );
     const timeout = "timeoutMs" in operation && operation.timeoutMs ? { timeout: operation.timeoutMs } : {};
-    if (operation.type !== "waitFor") await beforeDispatch?.();
+    await beforeDispatch?.();
     switch (operation.type) {
       case "click": await target.click(timeout); return;
       case "fill":
@@ -183,11 +171,80 @@ export class NativeBrowserDriver {
         return;
       case "select": await target.selectOption(operation.value, timeout); return;
       case "check": await target.setChecked(operation.checked, timeout); return;
-      case "press": await target.press(operation.key); return;
+      case "press": await target.press(operation.key, timeout); return;
       case "scroll": await target.evaluate((element, deltaY) => element.scrollBy(0, deltaY), operation.deltaY); return;
-      case "waitFor": await target.waitFor({ state: operation.state, ...timeout }); return;
     }
   }
+
+  private async waitForSemanticState(
+    page: Page,
+    intent: InteractionTargetIntent,
+    state: "visible" | "hidden" | "attached" | "detached",
+    timeoutMs: number,
+  ) {
+    const candidates = await semanticCandidateLocators(page, intent, true);
+    const deadline = Date.now() + timeoutMs;
+    do {
+      const matches = [...(await eligibleSemanticMatches(candidates, intent, true)).values()];
+      const satisfied = state === "visible"
+        ? (await Promise.all(matches.map((match) => match.isVisible()))).some(Boolean)
+        : state === "attached"
+          ? matches.length > 0
+          : state === "hidden"
+            ? !(await Promise.all(matches.map((match) => match.isVisible()))).some(Boolean)
+            : matches.length === 0;
+      if (satisfied) return;
+      if (Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+    } while (Date.now() < deadline);
+    throw new NativeControlResolutionError("NATIVE_TARGET_NOT_FOUND");
+  }
+}
+
+async function semanticCandidateLocators(
+  page: Page,
+  intent: InteractionTargetIntent,
+  stateObservation: boolean,
+) {
+  const root = await semanticScopeRoot(page, intent.scope);
+  const candidates: Locator[] = [];
+  const exact = intent.matching !== "non_exact";
+  for (const role of intent.preferredEvidence.roles) {
+    for (const name of intent.preferredEvidence.names) {
+      if (role === "text") candidates.push(root.getByText(name, { exact }));
+      else if (role === "field")
+        candidates.push(root.getByRole("textbox", { name, exact, includeHidden: stateObservation }));
+      else if (role === "value")
+        candidates.push(root.locator("output,dd,input,textarea").filter({ hasText: name }));
+      else candidates.push(root.getByRole(role, { name, exact, includeHidden: stateObservation }));
+    }
+  }
+  for (const label of intent.preferredEvidence.labels) candidates.push(root.getByLabel(label, { exact }));
+  for (const placeholder of intent.preferredEvidence.placeholders)
+    candidates.push(root.getByPlaceholder(placeholder, { exact }));
+  for (const testId of intent.preferredEvidence.testIds ?? []) candidates.push(root.getByTestId(testId));
+  if (intent.preferredEvidence.expectedText)
+    candidates.push(root.getByText(intent.preferredEvidence.expectedText, { exact }));
+  return candidates;
+}
+
+async function eligibleSemanticMatches(
+  candidates: readonly Locator[],
+  intent: InteractionTargetIntent,
+  stateObservation: boolean,
+) {
+  const eligible = new Map<string, Locator>();
+  for (const candidate of candidates) {
+    const count = await candidate.count();
+    for (let index = 0; index < count; index += 1) {
+      const element = candidate.nth(index);
+      if (!stateObservation && intent.prohibited.includes("hidden") && !(await element.isVisible())) continue;
+      if (intent.prohibited.includes("disabled") && !(await element.isEnabled())) continue;
+      if (intent.prohibited.includes("readonly") && (await element.getAttribute("readonly")) !== null) continue;
+      if (!(await supportsRequiredCapabilities(element, intent))) continue;
+      eligible.set(await nativeElementIdentity(element), element);
+    }
+  }
+  return eligible;
 }
 
 async function nativeElementIdentity(locator: Locator) {
@@ -234,7 +291,9 @@ async function supportsRequiredCapabilities(locator: Locator, intent: Interactio
     (facts.tag === "input" && facts.type === "submit");
   const readable = pointer || text || facts.tag === "select" || ["output", "dd", "meter", "progress", "p", "span", "div", "h1", "h2", "h3", "h4", "h5", "h6"].includes(facts.tag) ||
     ["status", "alert", "region", "textbox", "heading", "text"].includes(facts.role ?? "");
-  return (!capabilities.has("accepts_text") && !capabilities.has("editable") || text) &&
+  const observable = facts.tag.length > 0;
+  return (!capabilities.has("observable") || observable) &&
+    (!capabilities.has("accepts_text") && !capabilities.has("editable") || text) &&
     (!capabilities.has("focusable") || focusable) &&
     (!capabilities.has("pointer_activatable") || pointer) &&
     (!capabilities.has("keyboard_activatable") || keyboard) &&
@@ -265,23 +324,29 @@ async function semanticScopeRoot(page: Page, scope: SemanticScope): Promise<Page
         ? parent.locator('[aria-live], [role="status"], [role="alert"]').filter({ hasText: scope.name })
         : parent.locator('[aria-live], [role="status"], [role="alert"]');
     case "field_group": return scope.name ? parent.getByRole("group", { name: scope.name, exact: true }) : parent.getByRole("group");
-    case "recently_changed": throw new NativeError("NATIVE_SCOPE_UNSAFE");
+    case "recently_changed": throw new NativeControlResolutionError("NATIVE_SCOPE_UNSAFE");
   }
 }
 
 async function structuralSectionRoot(parent: Page | Locator, name: string): Promise<Locator> {
-  const candidates = [
-    parent.getByRole("heading", { name, exact: true }),
-    parent.getByText(name, { exact: true }),
-  ];
-  const visible = new Map<string, Locator>();
-  for (const candidate of candidates) {
+  // A visible heading is the authoritative section anchor. Generic exact text
+  // is only a fallback for markup without a heading; combining both sets makes
+  // a navigation link and its corresponding section heading falsely ambiguous.
+  const visibleMatches = async (candidate: Locator) => {
+    const visible = new Map<string, Locator>();
     for (let index = 0; index < await candidate.count(); index += 1) {
       const anchor = candidate.nth(index);
       if (await anchor.isVisible()) visible.set(await nativeElementIdentity(anchor), anchor);
     }
+    return visible;
+  };
+  const headings = await visibleMatches(parent.getByRole("heading", { name, exact: true }));
+  const visible = headings.size > 0
+    ? headings
+    : await visibleMatches(parent.getByText(name, { exact: true }));
+  if (visible.size !== 1) {
+    throw new NativeControlResolutionError("NATIVE_SECTION_SCOPE_AMBIGUOUS");
   }
-  if (visible.size !== 1) throw new NativeError("NATIVE_SECTION_SCOPE_AMBIGUOUS");
   return visible.values().next().value!.locator(
     "xpath=ancestor-or-self::*[self::section or self::article or self::li or @role='row' or contains(concat(' ', normalize-space(@class), ' '), ' card ')][1]",
   );

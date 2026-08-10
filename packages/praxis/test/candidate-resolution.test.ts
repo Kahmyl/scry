@@ -4,6 +4,45 @@ import { describe, expect, it } from "vitest";
 import { inspectPraxisCandidates } from "../src/consumer.js";
 
 describe("Praxis candidate resolution", () => {
+  it("uses a named semantic section to disambiguate repeated documentation controls", async () => {
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`
+        <section><h1>Create Client</h1><label>Client ID <input /></label></section>
+        <section><h1>Create Order</h1><label>Client ID <input /></label></section>
+        <section><h1>List Orders</h1><label>Client ID <input /></label></section>
+      `);
+
+      const result = await inspectPraxisCandidates({
+        page,
+        intent: {
+          concept: "Create Order client ID",
+          requiredCapabilities: ["focusable", "accepts_text", "editable"],
+          preferredEvidence: {
+            roles: ["textbox"], names: [], labels: ["Client ID"], descriptions: [],
+            placeholders: [], inputTypes: [],
+          },
+          scope: { kind: "section", name: "Create Order" },
+          relations: [], prohibited: ["hidden", "disabled"], risk: "authentication",
+          confidence: { requiredFamilies: [] },
+        },
+        context: {
+          channel: "probe", ordinal: 0, timeoutMs: 10_000,
+          allowedOrigins: ["https://example.com"],
+        },
+      });
+
+      expect(result.resolution).toBe("resolved");
+      expect(result.candidates).toHaveLength(1);
+    } finally {
+      await browser.close();
+    }
+  }, 15_000);
+
   it("resolves a pointer-activatable link row from exact expected text", async () => {
     const browser = await chromium.launch({
       headless: true,

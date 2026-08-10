@@ -17,6 +17,7 @@ import type { Page } from "playwright";
 import type { SafeBrowserSession } from "./browser-session.js";
 
 import { executeAction } from "./action-runtime.js";
+import { InteractionLifecycleTracker } from "./interaction-lifecycle.js";
 import { executePlan } from "./executor.js";
 import { probeFlowPlan, type ProbeExecutionLevel, type ProbeExecutionResult } from "./probe.js";
 import type { ExecuteOptions, ExecutionReport } from "./types.js";
@@ -27,6 +28,7 @@ const CAPABILITIES: ExecutionCapabilityName[] = [
   "veil",
   "evidence",
   "journal",
+  "protected_input",
   "protected_operations",
   "checkpoint",
   "calibration",
@@ -177,9 +179,12 @@ export class ExecutionKernel {
     });
     const startedAt = performance.now();
     const praxisResults: import("@scry/contracts").PraxisResult[] = [];
-    const protectedResults: ProtectedKernelResult[] = [];
+    const lifecycle = new InteractionLifecycleTracker();
+    let protectedTelemetryReason: string | undefined;
     const originalPraxisResult = input.capabilities.options.onPraxisResult;
     const originalEvent = input.capabilities.options.onEvent;
+    const originalMutationDispatch = input.capabilities.options.onMutationDispatch;
+    const originalPrivacyBoundary = input.capabilities.options.onPrivacyBoundary;
     let fence: ActiveMutationFence | undefined;
     try {
       fence = await this.beginMutationFence(request, input.capabilities);
@@ -191,9 +196,13 @@ export class ExecutionKernel {
           praxisResults.push(result);
           await originalPraxisResult?.(result);
         },
+        onMutationDispatch: async () => lifecycle.beforeDispatch(originalMutationDispatch),
+        onPrivacyBoundary: async (phase) => {
+          lifecycle.recordPrivacy(phase);
+          await originalPrivacyBoundary?.(phase);
+        },
         onEvent: async (event) => {
-          const protectedResult = protectedKernelResult(event);
-          if (protectedResult) protectedResults.push(protectedResult);
+          protectedTelemetryReason = protectedTelemetryReasonCode(event) ?? protectedTelemetryReason;
           await originalEvent?.(event);
         },
       });
@@ -201,8 +210,9 @@ export class ExecutionKernel {
         request,
         report,
         praxisResults,
-        protectedResults,
+        protectedTelemetryReason,
         startedAt,
+        lifecycle,
       );
       await settleOperation(input.capabilities.journal, {
         request,
@@ -219,6 +229,7 @@ export class ExecutionKernel {
         startedAt,
         error,
         request.plan.steps.some((step) => isMutatingAction(step.action)),
+        lifecycle,
       );
       await settleOperation(input.capabilities.journal, {
         request,
@@ -387,15 +398,18 @@ export class ExecutionKernel {
       startedAt: new Date().toISOString(),
     });
     const startedAt = performance.now();
+    const lifecycle = new InteractionLifecycleTracker();
     let fence: ActiveMutationFence | undefined;
     try {
       fence = await this.beginMutationFence(request, input.capabilities);
       const beforeUrl = input.page.url();
       const expectedEffect = input.expectedEffect ?? { type: "none" };
       const nativeOnly = input.capabilities.options.nativeResolutionPolicy === "native_only";
-      const armedEffect = nativeOnly
-        ? undefined
-        : armExpectedEffect(input.page, expectedEffect, "timeoutMs" in input.action ? input.action.timeoutMs : undefined);
+      const armedEffect = armExpectedEffect(
+        input.page,
+        expectedEffect,
+        "timeoutMs" in input.action ? input.action.timeoutMs : undefined,
+      );
       let outcome = await executeInteractionCompatibility({
         sessionId: request.sessionId,
         operationId: request.operationId,
@@ -403,7 +417,11 @@ export class ExecutionKernel {
         action: input.action,
         ordinal: input.ordinal,
         policy: request.policy,
-        options: input.capabilities.options,
+        lifecycle,
+        options: {
+          ...input.capabilities.options,
+          expectedEffectVerificationOwner: "kernel",
+        },
         ...(input.privacyGate ? { privacyGate: input.privacyGate } : {}),
       });
       if (outcome.functionalResult === "succeeded") {
@@ -436,10 +454,18 @@ export class ExecutionKernel {
           outcome = operationOutcomeSchema.parse({
             ...outcome,
             functionalResult: "failed",
-            reasonCode:
-              safeCode(error) === "EXECUTION_KERNEL_FAILED"
-                ? "EXPECTED_EFFECT_NOT_OBSERVED"
-                : safeCode(error),
+            reasonCode: safeCode(error) === "EXECUTION_KERNEL_FAILED"
+              ? "EXPECTED_EFFECT_NOT_OBSERVED"
+              : safeCode(error),
+            ...(outcome.mutationOutcome === "applied" ? {
+              nextDecisionBoundary: {
+                type: "effect_observation_required",
+                reasonCode: safeCode(error) === "EXECUTION_KERNEL_FAILED"
+                  ? "EXPECTED_EFFECT_NOT_OBSERVED"
+                  : safeCode(error),
+                safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+              },
+            } : {}),
           });
         }
       }
@@ -452,7 +478,14 @@ export class ExecutionKernel {
       });
       return outcome;
     } catch (error) {
-      const outcome = failureOutcome(request, [], startedAt, error, isMutatingAction(input.action));
+      const outcome = failureOutcome(
+        request,
+        [],
+        startedAt,
+        error,
+        isMutatingAction(input.action),
+        lifecycle,
+      );
       await settleOperation(input.capabilities.journal, {
         request,
         outcome,
@@ -534,6 +567,9 @@ export class ExecutionKernel {
     request: ExecutionRequest,
     capabilities: RuntimeExecutionCapabilities,
   ) {
+    if (request.plan.steps.some((step) => step.action.type === "protectedTransaction")) {
+      return undefined;
+    }
     if (
       !request.mutationIdentity ||
       !request.plan.steps.some((step) => isMutatingAction(step.action))
@@ -580,15 +616,28 @@ export async function executeInteractionCompatibility(input: {
   policy: ExecutionRequest["policy"];
   options: Omit<ExecuteOptions, "plan" | "policy">;
   privacyGate?: import("@scry/veil").VeilRuntimeCoordinator;
+  lifecycle?: InteractionLifecycleTracker;
 }): Promise<OperationOutcome> {
   const startedAt = performance.now();
+  const lifecycle = input.lifecycle ?? new InteractionLifecycleTracker();
   const praxisResults: import("@scry/contracts").PraxisResult[] = [];
+  let rejectedCandidateDistinctions:
+    | Array<{ label: string; distinction: string }>
+    | undefined;
   try {
+    const beforeDispatch = async () => {
+      await lifecycle.beforeDispatch(input.options.onMutationDispatch);
+    };
     await executeAction(
       input.page,
       input.action,
       {
         ...input.options,
+        onMutationDispatch: beforeDispatch,
+        onPrivacyBoundary: async (phase) => {
+          lifecycle.recordPrivacy(phase);
+          await input.options.onPrivacyBoundary?.(phase);
+        },
         plan: singleActionPlan(input.action, input.policy),
         policy: input.policy,
       },
@@ -606,9 +655,18 @@ export async function executeInteractionCompatibility(input: {
         allowedOrigins: input.policy.allowedOrigins,
         timeoutMs:
           "timeoutMs" in input.action && input.action.timeoutMs ? input.action.timeoutMs : 30_000,
-        ...(input.options.onMutationDispatch
-          ? { beforeMutation: input.options.onMutationDispatch }
-          : {}),
+        onGroundingDiagnostic: async (diagnostic) => {
+          await input.options.onGroundingDiagnostic?.(diagnostic);
+          if (
+            diagnostic.outcome === "rejected" &&
+            (diagnostic.code === "TARGET_AMBIGUOUS" ||
+              diagnostic.code === "INSUFFICIENT_EVIDENCE") &&
+            diagnostic.candidateDistinctions?.length
+          ) {
+            rejectedCandidateDistinctions = diagnostic.candidateDistinctions;
+          }
+        },
+        beforeMutation: beforeDispatch,
         record: async (result) => {
           praxisResults.push(result);
           await input.options.onPraxisResult?.(result);
@@ -639,19 +697,25 @@ export async function executeInteractionCompatibility(input: {
     return operationOutcomeSchema.parse({
       operationId: input.operationId,
       functionalResult: "failed",
-      mutationOutcome:
-        observedMutation === "not_applied" &&
-        isMutatingAction(input.action) &&
-        praxisResults.length === 0 &&
-        !isProvenPreDispatchFailure(reasonCode)
-          ? "unknown"
-          : observedMutation,
-      privacyResult: input.action.type === "sameOriginRequest" ? "sealed" : privacyOutcomeFromError(reasonCode),
+      mutationOutcome: lifecycle.mutationFailure(isMutatingAction(input.action), observedMutation),
+      privacyResult: lifecycle.privacyFailure(privacyOutcomeFromError(reasonCode)),
       evidenceResult: evidenceOutcomeFromError(reasonCode),
       qualityFindings: praxisResults.flatMap((result) => result.qualityFindings),
       ...resolvedTargetOutcome(praxisResults),
       durationMs: performance.now() - startedAt,
       reasonCode,
+      ...(rejectedCandidateDistinctions &&
+      (reasonCode === "PRAXIS_TARGET_AMBIGUOUS" ||
+        reasonCode === "PRAXIS_INSUFFICIENT_EVIDENCE")
+        ? {
+            nextDecisionBoundary: {
+              type: "ambiguous_candidate",
+              reasonCode,
+              safeActions: ["advance_flow_authoring"],
+              candidateDistinctions: rejectedCandidateDistinctions,
+            },
+          }
+        : {}),
     });
   }
 }
@@ -763,24 +827,18 @@ function outcomeFromReport(
   request: ExecutionRequest,
   report: ExecutionReport,
   praxisResults: import("@scry/contracts").PraxisResult[],
-  protectedResults: ProtectedKernelResult[],
+  protectedTelemetryReason: string | undefined,
   startedAt: number,
+  lifecycle?: InteractionLifecycleTracker,
 ): OperationOutcome {
-  const observedMutation = combinedMutationOutcome(
-    praxisResults,
-    protectedResults.map((result) => result.mutationOutcome),
-  );
-  const protectedReasonCode = [...protectedResults]
-    .reverse()
-    .find((result) => result.reasonCode)?.reasonCode;
-  const mutationOutcome =
-    report.state !== "passed" &&
-    observedMutation === "not_applied" &&
-    praxisResults.length === 0 &&
-    protectedResults.length === 0 &&
-    request.plan.steps.some((step) => isMutatingAction(step.action))
-      ? "unknown"
-      : observedMutation;
+  const observedMutation = praxisMutationOutcome(praxisResults);
+  const mutating = request.plan.steps.some((step) => isMutatingAction(step.action));
+  const mutationOutcome = report.state === "passed"
+    ? observedMutation
+    : lifecycle?.mutationFailure(mutating, observedMutation) ??
+      (observedMutation === "not_applied" && mutating && praxisResults.length === 0
+        ? "unknown"
+        : observedMutation);
   return operationOutcomeSchema.parse({
     operationId: request.operationId,
     functionalResult:
@@ -797,20 +855,20 @@ function outcomeFromReport(
     durationMs: performance.now() - startedAt,
     ...(report.error
       ? { reasonCode: safeCode(report.error) }
-      : protectedReasonCode
-        ? { reasonCode: protectedReasonCode }
+      : protectedTelemetryReason
+        ? { reasonCode: protectedTelemetryReason }
         : {}),
   });
 }
 
-function combinedMutationOutcome(
-  praxisResults: import("@scry/contracts").PraxisResult[],
-  protectedOutcomes: Array<"not_applied" | "applied" | "unknown">,
-): "not_applied" | "applied" | "unknown" {
-  const outcomes = [praxisMutationOutcome(praxisResults), ...protectedOutcomes];
-  if (outcomes.includes("unknown")) return "unknown";
-  if (outcomes.includes("applied")) return "applied";
-  return "not_applied";
+function protectedTelemetryReasonCode(event: import("@scry/contracts").RunEvent) {
+  if (event.type !== "privacy.operation_completed") return undefined;
+  const result = event.payload.result;
+  if (!result || typeof result !== "object") return undefined;
+  const reasonCode = (result as Record<string, unknown>).reasonCode;
+  return typeof reasonCode === "string" && /^[A-Z][A-Z0-9_]*$/.test(reasonCode)
+    ? reasonCode
+    : undefined;
 }
 
 function resolvedTargetOutcome(results: import("@scry/contracts").PraxisResult[]) {
@@ -829,32 +887,6 @@ function resolvedTargetOutcome(results: import("@scry/contracts").PraxisResult[]
   };
 }
 
-type ProtectedKernelResult = {
-  mutationOutcome: "not_applied" | "applied" | "unknown";
-  reasonCode?: string;
-};
-
-function protectedKernelResult(
-  event: import("@scry/contracts").RunEvent,
-): ProtectedKernelResult | undefined {
-  if (event.type !== "privacy.operation_completed") return undefined;
-  const result = event.payload.result;
-  if (!result || typeof result !== "object") return undefined;
-  const mutation = (result as Record<string, unknown>).mutation;
-  if (!mutation || typeof mutation !== "object") return undefined;
-  const outcome = (mutation as Record<string, unknown>).outcome;
-  const reasonCode = (result as Record<string, unknown>).reasonCode;
-  const safeReason =
-    typeof reasonCode === "string" && /^[A-Z][A-Z0-9_]*$/.test(reasonCode) ? reasonCode : undefined;
-  const withReason = (mutationOutcome: ProtectedKernelResult["mutationOutcome"]) => ({
-    mutationOutcome,
-    ...(safeReason ? { reasonCode: safeReason } : {}),
-  });
-  if (outcome === "unknown") return withReason("unknown");
-  if (outcome === "confirmed_succeeded") return withReason("applied");
-  if (outcome === "not_attempted") return withReason("not_applied");
-  return undefined;
-}
 
 function failureOutcome(
   request: ExecutionRequest,
@@ -862,18 +894,20 @@ function failureOutcome(
   startedAt: number,
   error: unknown,
   mutating: boolean,
+  lifecycle?: InteractionLifecycleTracker,
 ): OperationOutcome {
   const observedMutation = praxisMutationOutcome(praxisResults);
   const reasonCode = safeCode(error);
-  const mutationOutcome =
-    observedMutation === "not_applied" && mutating && !isProvenPreDispatchFailure(reasonCode)
+  const mutationOutcome = lifecycle?.mutationFailure(mutating, observedMutation) ??
+    (observedMutation === "not_applied" && mutating && !isProvenPreDispatchFailure(reasonCode)
       ? "unknown"
-      : observedMutation;
+      : observedMutation);
   return operationOutcomeSchema.parse({
     operationId: request.operationId,
     functionalResult: "inconclusive",
     mutationOutcome,
-    privacyResult: privacyOutcomeFromError(reasonCode),
+    privacyResult: lifecycle?.privacyFailure(privacyOutcomeFromError(reasonCode)) ??
+      privacyOutcomeFromError(reasonCode),
     evidenceResult: evidenceOutcomeFromError(reasonCode),
     qualityFindings: praxisResults.flatMap((result) => result.qualityFindings),
     ...resolvedTargetOutcome(praxisResults),
@@ -983,7 +1017,7 @@ function privacyOutcomeFromError(reasonCode: string): OperationOutcome["privacyR
   return "unverified";
 }
 
-function isProvenPreDispatchFailure(reasonCode: string) {
+export function isProvenPreDispatchFailure(reasonCode: string) {
   return [
     "PRAXIS_TARGET_CHANGED_BEFORE_ACTION",
     "PRAXIS_TARGET_NOT_FOUND",
@@ -996,6 +1030,7 @@ function isProvenPreDispatchFailure(reasonCode: string) {
     "CAPABILITY_ADMISSION_DENIED",
     "POLICY_DENIED",
     "PRAXIS_INSUFFICIENT_EVIDENCE",
+    "PRAXIS_VEIL_SCHEDULE_REFUSED",
     "PROTECTED_INPUT_REFERENCE_UNAVAILABLE",
     "PROTECTED_INPUT_RESOLVER_UNAVAILABLE",
     "EXECUTION_MODE_POLICY_DENIED",
@@ -1090,19 +1125,15 @@ function requiredCapabilities(request: ExecutionRequest): Set<ExecutionCapabilit
     required.add("evidence");
     required.add("veil");
   }
-  if (
-    request.plan.steps.some(
-      (step) =>
-        step.action.type === "protectedTransaction" ||
-        (step.action.type === "fill" &&
-          Boolean(step.action.secretRef || step.action.capturedSecretRef)),
-    )
-  ) {
+  if (request.plan.steps.some((step) => step.action.type === "fill" &&
+    Boolean(step.action.secretRef || step.action.capturedSecretRef))) {
+    required.add("protected_input");
+    required.add("veil");
+  }
+  if (request.plan.steps.some((step) => step.action.type === "protectedTransaction")) {
     required.add("protected_operations");
     required.add("veil");
-    if (request.plan.steps.some((step) => step.action.type === "protectedTransaction")) {
-      required.add("checkpoint");
-    }
+    required.add("checkpoint");
   }
   if (request.plan.checkpoints.length) required.add("checkpoint");
   if (request.mode === "certify") required.add("calibration");
@@ -1131,6 +1162,11 @@ function praxisMutationOutcome(
 }
 
 function safeCode(error: unknown): string {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String(error.code)
+      : undefined;
+  if (code && /^[A-Z][A-Z0-9_]*$/.test(code)) return code;
   const value = error instanceof Error ? error.message : String(error);
   return /^[A-Z][A-Z0-9_]*$/.test(value) ? value : "EXECUTION_KERNEL_FAILED";
 }

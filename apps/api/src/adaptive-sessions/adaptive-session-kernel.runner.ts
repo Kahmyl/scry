@@ -45,6 +45,13 @@ type OperationTimingCollector = {
   onExpectedEffectVerification: (result: { status: "succeeded" | "failed"; reasonCode?: string; durationMs: number }) => void;
 };
 
+type OperationLeaseGuard = {
+  signal: AbortSignal;
+  heartbeat(): Promise<void>;
+  stop(): Promise<void>;
+  assertOwned(): void;
+};
+
 @Injectable()
 export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
   private readonly testBindings = new Map<string, TestRuntimeBinding>();
@@ -52,6 +59,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
   private readonly provisioning = new Map<string, Promise<OwnedRuntime>>();
   private readonly operationModes = new Map<string, ExecutionMode>();
   private readonly operationTimingCollectors = new Map<string, OperationTimingCollector>();
+  private readonly operationLeaseGuards = new Map<string, OperationLeaseGuard>();
   private readonly ownerId = randomUUID();
   private readonly leaseDurationMs = Number(
     process.env.ADAPTIVE_SESSION_RUNTIME_LEASE_MS ?? 30_000,
@@ -84,15 +92,12 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     if (testBinding) return testBinding(this.kernel, { sessionId, operation });
 
     const owned = await this.runtime(sessionId, operation);
-    await this.sessions.heartbeatRuntimeLease({
-      sessionId,
-      ownerId: this.ownerId,
-      fencingToken: owned.fencingToken,
-      leaseDurationMs: this.leaseDurationMs,
-    });
-
     return this.exclusive(owned, async () => {
+      const leaseGuard = await this.startOperationLeaseGuard(sessionId, owned);
       const context = await this.sessions.runtimeContextFor(sessionId);
+      const protectedContext = operation.action.type === "protectedTransaction"
+        ? await this.sessions.protectedExecutionContext(sessionId, operation.operationId)
+        : undefined;
       let resolveMs = 0;
       let verifyMs = 0;
       const capability = this.createCapabilities({
@@ -102,6 +107,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         operationId: operation.operationId,
         mode: operation.mode,
         policy: context.policy,
+        ...(protectedContext ? { protectedContext, leaseOwner: `${this.ownerId}:${owned.fencingToken}` } : {}),
         onNativeResolution: (result) => { resolveMs += result.durationMs; },
         onExpectedEffectVerification: (result) => { verifyMs += result.durationMs; },
       });
@@ -111,6 +117,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         onNativeResolution: (result) => { resolveMs += result.durationMs; },
         onExpectedEffectVerification: (result) => { verifyMs += result.durationMs; },
       });
+      this.operationLeaseGuards.set(modeKey, leaseGuard);
       try {
         const executeStartedAt = performance.now();
         const result = await owned.session.interact(operation.action, {
@@ -119,6 +126,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           mutationIdentity: `adaptive-${sessionId}-${operation.idempotencyKey}`,
           expectedEffect: operation.expectedEffect,
         });
+        if (result.outcome.mutationOutcome !== "unknown") leaseGuard.assertOwned();
         await this.sessions.recordVerifiedObservation({
           sessionId,
           operationId: operation.operationId,
@@ -133,8 +141,10 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           safeState: { url: result.url, documentEpoch: result.documentEpoch },
         };
       } finally {
+        this.operationLeaseGuards.delete(modeKey);
         this.operationModes.delete(modeKey);
         this.operationTimingCollectors.delete(modeKey);
+        await leaseGuard.stop();
       }
     });
   }
@@ -253,7 +263,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     }
   }
 
-  private executeInteraction(input: {
+  private async executeInteraction(input: {
     sessionId: string;
     environmentId: string;
     policy: ExecutionPolicy;
@@ -274,10 +284,21 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     resolveEffectPage?: () => Promise<import("playwright").Page | undefined>;
     objectiveDelta?: string;
     signal?: AbortSignal;
+    protectedContext?: {
+      projectId: string; environmentId: string; missionId: string; objectiveId: string;
+      agentSessionId: string; flowDraftId: string; authorizationId: string;
+    };
+    leaseOwner?: string;
     privacyGate: import("@scry/veil").VeilRuntimeCoordinator;
   }) {
     const correlationId = input.correlationId ?? randomUUID();
-    const collector = this.operationTimingCollectors.get(`${input.sessionId}:${input.operationId}`);
+    const operationKey = `${input.sessionId}:${input.operationId}`;
+    const collector = this.operationTimingCollectors.get(operationKey);
+    const leaseGuard = this.operationLeaseGuards.get(operationKey);
+    const signal = composeSignals(input.signal, leaseGuard?.signal);
+    const protectedContext = input.action.type === "protectedTransaction"
+      ? await this.sessions.protectedExecutionContext(input.sessionId, input.operationId)
+      : undefined;
     const capability = this.createCapabilities({
       sessionId: input.sessionId,
       environmentId: input.environmentId,
@@ -285,14 +306,20 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       operationId: input.operationId,
       mode: input.mode,
       policy: input.policy,
-      onMutationDispatch: () =>
-        this.sessions.markOperationDispatching({
+      ...(protectedContext ? {
+        protectedContext,
+        leaseOwner: `${this.ownerId}:${input.fencingToken}`,
+      } : {}),
+      onMutationDispatch: async () => {
+        await leaseGuard?.heartbeat();
+        await this.sessions.markOperationDispatching({
           sessionId: input.sessionId,
           operationId: input.operationId,
           ownerId: this.ownerId,
           fencingToken: input.fencingToken,
-        }),
-      ...(input.signal ? { signal: input.signal } : {}),
+        });
+      },
+      ...(signal ? { signal } : {}),
       ...(collector ? {
         onNativeResolution: collector.onNativeResolution,
         onExpectedEffectVerification: collector.onExpectedEffectVerification,
@@ -333,10 +360,18 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     policy: ExecutionPolicy;
     onMutationDispatch?: () => Promise<void>;
     signal?: AbortSignal;
+    protectedContext?: {
+      projectId: string; environmentId: string; missionId: string; objectiveId: string;
+      agentSessionId: string; flowDraftId: string; authorizationId: string;
+    };
+    leaseOwner?: string;
     onNativeResolution?: (result: { status: "resolved" | "fallback"; reasonCode?: string; durationMs: number }) => void;
     onExpectedEffectVerification?: (result: { status: "succeeded" | "failed"; reasonCode?: string; durationMs: number }) => void;
   }) {
-    return this.capabilities.createSession({
+    const create = input.protectedContext
+      ? this.capabilities.createMissionAuthoringSession.bind(this.capabilities)
+      : this.capabilities.createSession.bind(this.capabilities);
+    return create({
       sessionId: input.sessionId,
       operationId: input.operationId,
       correlationId: input.correlationId,
@@ -347,13 +382,13 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         environmentId: input.environmentId,
         veilAdmissionKey: this.veilAdmissionKey!,
         veilPolicySnapshot: compileDefaultVeilPolicy(input.policy),
-        nativeResolutionPolicy: "native_only",
         secretResolver: (reference) => this.sessions.resolveCredential(input.sessionId, reference),
         ...(input.onMutationDispatch ? { onMutationDispatch: input.onMutationDispatch } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
         ...(input.onNativeResolution ? { onNativeResolution: input.onNativeResolution } : {}),
         ...(input.onExpectedEffectVerification ? { onExpectedEffectVerification: input.onExpectedEffectVerification } : {}),
       },
+      ...(input.protectedContext ? { ...input.protectedContext, leaseOwner: input.leaseOwner! } : {}),
     });
   }
 
@@ -370,6 +405,57 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       release();
     }
   }
+
+  private async startOperationLeaseGuard(
+    sessionId: string,
+    runtime: OwnedRuntime,
+  ): Promise<OperationLeaseGuard> {
+    const controller = new AbortController();
+    let stopped = false;
+    let firstFailure: unknown;
+    let renewalTail = Promise.resolve();
+    const renew = (propagate: boolean) => {
+      const renewal = renewalTail.then(async () => {
+        if (firstFailure) throw firstFailure;
+        await this.sessions.heartbeatRuntimeLease({
+          sessionId,
+          ownerId: this.ownerId,
+          fencingToken: runtime.fencingToken,
+          leaseDurationMs: this.leaseDurationMs,
+        });
+      });
+      renewalTail = renewal.catch((error) => {
+        if (!firstFailure) {
+          firstFailure = error;
+          controller.abort(error);
+        }
+      });
+      return propagate ? renewal : renewalTail;
+    };
+    await renew(true);
+    const timer = setInterval(
+      () => { if (!stopped) void renew(false); },
+      Math.max(250, Math.floor(this.leaseDurationMs / 3)),
+    );
+    return {
+      signal: controller.signal,
+      heartbeat: () => renew(true),
+      assertOwned() {
+        if (firstFailure) throw firstFailure;
+      },
+      async stop() {
+        stopped = true;
+        clearInterval(timer);
+        await renewalTail;
+      },
+    };
+  }
+}
+
+function composeSignals(...signals: Array<AbortSignal | undefined>) {
+  const present = signals.filter((signal): signal is AbortSignal => Boolean(signal));
+  if (present.length === 0) return undefined;
+  return present.length === 1 ? present[0] : AbortSignal.any(present);
 }
 
 function decisionBoundary(outcome: OperationOutcome): AgentDecisionBoundary {
@@ -379,6 +465,13 @@ function decisionBoundary(outcome: OperationOutcome): AgentDecisionBoundary {
       type: "mutation_reconciliation_required",
       reasonCode: "MUTATION_OUTCOME_UNKNOWN",
       safeActions: ["get_flow_authoring"],
+    };
+  }
+  if (outcome.mutationOutcome === "applied" && outcome.functionalResult !== "succeeded") {
+    return {
+      type: "effect_observation_required",
+      reasonCode: outcome.reasonCode ?? "EXPECTED_EFFECT_NOT_OBSERVED",
+      safeActions: ["get_flow_authoring", "advance_flow_authoring"],
     };
   }
   return outcome.functionalResult === "succeeded"
