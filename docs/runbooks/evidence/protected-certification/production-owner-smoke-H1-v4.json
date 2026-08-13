@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 2,
+  "runId": "2a00608c-c46e-48a2-9d4d-c7ab79c0b487",
+  "generatedAt": "2026-08-11T09:38:55.941Z",
+  "totals": {
+    "cells_total": 1,
+    "cells_executed": 1,
+    "cells_certified": 0,
+    "cells_evidence_unavailable": 0,
+    "iterations_required": 1,
+    "iterations_executed": 1,
+    "passed": 0,
+    "expected_fail_closed": 0,
+    "unsupported": 0,
+    "new_defects": 1,
+    "evidence_unavailable": 0,
+    "harness_errors": 0,
+    "watchdog_timeouts": 0,
+    "unexplained_hangs": 0
+  },
+  "invariants": {
+    "unexplained_hangs": 0,
+    "one_time_dispatch_count_lte_one": true,
+    "post_dispatch_redispatch_count_zero": true,
+    "terminal_or_recovery_state_eventually": true,
+    "plaintext_leaks": 0,
+    "partial_reference_commits": 0,
+    "stale_fence_advancement": 0,
+    "active_lease_after_terminal": 0,
+    "active_browser_owner_after_session_close": 0,
+    "safe_evidence_resume_without_confirmed_boundary": 0,
+    "late_result_state_advancement": 0
+  },
+  "results": [
+    {
+      "runId": "2a00608c-c46e-48a2-9d4d-c7ab79c0b487",
+      "cellId": "H1",
+      "family": "H",
+      "repetition": 1,
+      "iteration": 1,
+      "seed": 1,
+      "semantics": "one_time",
+      "expectedClassification": "PASS",
+      "actualClassification": "NEW_DEFECT",
+      "resultStatus": "NEW_DEFECT",
+      "adapterExecuted": true,
+      "dispatchCount": 0,
+      "redispatchCount": 0,
+      "finalProtectedState": "failed_not_applied",
+      "mutationOutcome": "not_applied",
+      "acquisitionState": "interrupted",
+      "persistenceState": "not_started",
+      "referenceCount": 0,
+      "activeLease": false,
+      "activeProtectedLease": false,
+      "activeRuntimeLease": false,
+      "browserOwnerCount": 0,
+      "activeBrowserOwner": false,
+      "safeBoundaryState": "sealed",
+      "partialCommit": false,
+      "plaintextLeak": false,
+      "staleFenceAdvancement": false,
+      "lateStateAdvancement": false,
+      "durationMs": 8634,
+      "reasonCode": "PROTECTED_CAPSULE_CREATION_FAILED",
+      "passed": false
+    }
+  ],
+  "support": {
+    "input_value": "EVIDENCE_UNAVAILABLE",
+    "text_content": "EVIDENCE_UNAVAILABLE",
+    "protected_network_value": "EVIDENCE_UNAVAILABLE",
+    "verified_copy_experience": "EVIDENCE_UNAVAILABLE",
+    "fetch": "EVIDENCE_UNAVAILABLE",
+    "xhr": "EVIDENCE_UNAVAILABLE",
+    "download_content": "EVIDENCE_UNAVAILABLE",
+    "visual_ocr": "EVIDENCE_UNAVAILABLE",
+    "eventsource": "EVIDENCE_UNAVAILABLE",
+    "websocket": "EVIDENCE_UNAVAILABLE"
+  },
+  "timing": {
+    "p50Ms": 0,
+    "p95Ms": 0,
+    "maxMs": 0
+  },
+  "timingByFamily": {
+    "H": {
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "maxMs": 0
+    }
+  },
+  "failures": [
+    {
+      "cellId": "H1",
+      "iteration": 1,
+      "seed": 1,
+      "resultStatus": "NEW_DEFECT",
+      "reasonCode": "PROTECTED_CAPSULE_CREATION_FAILED"
+    }
+  ],
+  "passed": false
+}
