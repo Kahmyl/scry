@@ -2,8 +2,46 @@ import { chromium } from "playwright";
 import { describe, expect, it } from "vitest";
 
 import { inspectPraxisCandidates } from "../src/consumer.js";
+import { resolveTarget } from "../src/grounding.js";
 
 describe("Praxis candidate resolution", () => {
+  it("distinguishes a not-yet-rendered scope from an ambiguous scope", async () => {
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
+    try {
+      const page = await browser.newPage();
+      const intent = {
+        concept: "List Orders client ID",
+        requiredCapabilities: ["focusable" as const, "accepts_text" as const, "editable" as const],
+        preferredEvidence: {
+          roles: ["textbox" as const], names: [], labels: ["Client ID"], descriptions: [],
+          placeholders: ["<CLIENT_ID>"], inputTypes: ["text"],
+        },
+        scope: { kind: "section" as const, name: "List Orders" },
+        relations: [], prohibited: ["hidden" as const, "disabled" as const],
+        risk: "authentication" as const, confidence: { requiredFamilies: [] },
+      };
+
+      await page.setContent("<main></main>");
+      await expect(resolveTarget(page, intent)).rejects.toMatchObject({
+        code: "TARGET_SCOPE_NOT_FOUND",
+        diagnostic: { candidateCount: 0, safeActions: ["retry_after_render", "revise_intent"] },
+      });
+
+      await page.setContent(`
+        <section><h2>List Orders</h2><label>Client ID<input placeholder="&lt;CLIENT_ID&gt;"></label></section>
+        <section><h2>List Orders</h2><label>Client ID<input placeholder="&lt;CLIENT_ID&gt;"></label></section>
+      `);
+      await expect(resolveTarget(page, intent)).rejects.toMatchObject({
+        code: "TARGET_SCOPE_INVALID",
+      });
+    } finally {
+      await browser.close();
+    }
+  }, 15_000);
+
   it("uses a named semantic section to disambiguate repeated documentation controls", async () => {
     const browser = await chromium.launch({
       headless: true,

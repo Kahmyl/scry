@@ -30,6 +30,11 @@ const praxisTarget = {
   scope: { kind: "page" as const }, relations: [], prohibited: ["hidden" as const, "disabled" as const],
   risk: "ordinary" as const, confidence: { requiredFamilies: [] },
 };
+const scopedPraxisTarget = {
+  ...praxisTarget,
+  concept: "List Orders activate",
+  scope: { kind: "section" as const, name: "List Orders" },
+};
 
 async function closureCase(input: {
   name: string;
@@ -122,4 +127,57 @@ describe("authoritative action deadline closure", () => {
     expect(afterDeadline.elapsedMs).toBeGreaterThanOrEqual(2_900);
     expect(afterDeadline.elapsedMs).toBeLessThan(3_500);
   }, 35_000);
+
+  it("retries a missing semantic scope but keeps duplicate scopes terminal", async () => {
+    const run = async (name: string, html: string, insertAtMs: number) => {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.setContent("<main></main>");
+      if (insertAtMs === 0) await page.locator("main").evaluate((root, value) => root.innerHTML = value, html);
+      else await page.evaluate(({ delay, value }) => setTimeout(() => {
+        document.querySelector("main")!.innerHTML = value;
+      }, delay), { delay: insertAtMs, value: html });
+      const unregister = registerPraxisVeilAuthority(page, {
+        authority: new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: ["https://example.test"] })),
+        userId: "closure-test", environmentId: "local", browserContextId: name,
+      });
+      const praxisResults: string[] = [];
+      const dispatches: number[] = [];
+      try {
+        const outcome = await executeInteractionCompatibility({
+          sessionId: name, operationId: "action", ordinal: 1, page,
+          action: { type: "click", timeoutMs: 3_000, target: scopedPraxisTarget, expectedEffect: { type: "none" } },
+          policy: { allowedOrigins: ["https://example.test"], allowPrivateNetwork: false,
+            allowDownloads: false, allowPopups: false, maxActions: 1, maxDurationMs: 15_000,
+            maxNavigations: 1 },
+          options: {
+            outputDirectory: "/tmp/action-deadline-closure-test",
+            executeNativeControl: driver.executeSemanticControl.bind(driver),
+            onPraxisResult: async (result) => {
+              praxisResults.push(result.status === "succeeded" ? "succeeded" : result.code);
+            },
+            onMutationDispatch: async () => { dispatches.push(performance.now()); },
+          },
+        });
+        return { outcome, praxisResults, dispatches };
+      } finally {
+        unregister();
+        await context.close();
+      }
+    };
+
+    const late = await run("late-scope", "<section><h2>List Orders</h2><button>Activate</button></section>", 900);
+    expect(late.outcome.functionalResult).toBe("succeeded");
+    expect(late.praxisResults).toContain("PRAXIS_TARGET_SCOPE_NOT_FOUND");
+    expect(late.praxisResults.at(-1)).toBe("succeeded");
+    expect(late.dispatches).toHaveLength(1);
+
+    const ambiguous = await run("ambiguous-scope", `
+      <section><h2>List Orders</h2><button>Activate</button></section>
+      <section><h2>List Orders</h2><button>Activate</button></section>
+    `, 0);
+    expect(ambiguous.outcome.reasonCode).toBe("PRAXIS_TARGET_SCOPE_INVALID");
+    expect(ambiguous.praxisResults).toEqual(["PRAXIS_TARGET_SCOPE_INVALID"]);
+    expect(ambiguous.dispatches).toEqual([]);
+  }, 15_000);
 });

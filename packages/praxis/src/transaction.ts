@@ -667,7 +667,9 @@ function classify(
           ? ("infrastructure" as const)
           : ("praxis" as const),
       retry:
-        error.code === "TARGET_CHANGED_BEFORE_ACTION"
+        error.code === "TARGET_SCOPE_NOT_FOUND"
+          ? ("safe" as const)
+          : error.code === "TARGET_CHANGED_BEFORE_ACTION"
           ? ("requires_reobservation" as const)
           : ("requires_revision" as const),
       mutationOutcome,

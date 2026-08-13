@@ -1021,6 +1021,7 @@ export function isProvenPreDispatchFailure(reasonCode: string) {
   return [
     "PRAXIS_TARGET_CHANGED_BEFORE_ACTION",
     "PRAXIS_TARGET_NOT_FOUND",
+    "PRAXIS_TARGET_SCOPE_NOT_FOUND",
     "TARGET_NOT_FOUND",
     "NATIVE_TARGET_NOT_FOUND",
     "TARGET_AMBIGUOUS",

@@ -158,6 +158,7 @@ export async function resolveTarget(
   let visualDegraded = false;
   const documents = authorizedDocuments(page, boundary.allowedOrigins);
   let scopedDocuments = 0;
+  let ambiguousScopes = 0;
   for (
     let frameIndex = 0;
     frameIndex < documents.length && count < PraxisGroundingPolicyV1.candidateLimit;
@@ -169,7 +170,11 @@ export async function resolveTarget(
       scope = await resolveScope(frame, intent.scope);
       scopedDocuments += 1;
     } catch (error) {
-      if (error instanceof GroundingError && error.code === "TARGET_SCOPE_INVALID") continue;
+      if (error instanceof GroundingError && error.code === "TARGET_SCOPE_NOT_FOUND") continue;
+      if (error instanceof GroundingError && error.code === "TARGET_SCOPE_INVALID") {
+        ambiguousScopes += 1;
+        continue;
+      }
       if (error instanceof GroundingError) throw error;
       return throwObservation(page, intentDigest, intent, count, "execution", error);
     }
@@ -242,8 +247,10 @@ export async function resolveTarget(
       });
     }
   }
-  if (scopedDocuments === 0)
-    throw new GroundingError("TARGET_SCOPE_INVALID", emptyDiagnostic(intent.scope, 0));
+  if (scopedDocuments === 0) {
+    const code = ambiguousScopes > 0 ? "TARGET_SCOPE_INVALID" : "TARGET_SCOPE_NOT_FOUND";
+    throw new GroundingError(code, scopeDiagnostic(intent.scope, 0, code));
+  }
   const authoritative = applySemanticDominance(intent, candidates);
   const semanticCompetition = strongestExactIdentityTier(intent, authoritative);
   semanticCompetition.sort(
@@ -624,7 +631,8 @@ async function resolveScope(
   if (scope.kind === "page") return parent;
   const { options, matches } = await matchingScopeOptions(parent, scope);
   if (matches.length === 1) return options.nth(matches[0]!);
-  throw new GroundingError("TARGET_SCOPE_INVALID", emptyDiagnostic(scope, matches.length));
+  const code = matches.length === 0 ? "TARGET_SCOPE_NOT_FOUND" : "TARGET_SCOPE_INVALID";
+  throw new GroundingError(code, scopeDiagnostic(scope, matches.length, code));
 }
 
 async function matchingScopeOptions(
@@ -1528,6 +1536,16 @@ function emptyDiagnostic(
     escalationLevel: 1,
     observation: { status: "succeeded" },
   };
+}
+function scopeDiagnostic(
+  scope: InteractionTargetIntent["scope"],
+  count: number,
+  code: "TARGET_SCOPE_NOT_FOUND" | "TARGET_SCOPE_INVALID",
+): GroundingDiagnostic {
+  const diagnostic = emptyDiagnostic(scope, count);
+  return code === "TARGET_SCOPE_NOT_FOUND"
+    ? { ...diagnostic, safeActions: ["retry_after_render", "revise_intent"] }
+    : diagnostic;
 }
 function observationError(
   intentDigest: string,

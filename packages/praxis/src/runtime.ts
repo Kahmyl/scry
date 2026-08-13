@@ -137,7 +137,7 @@ export class PraxisGroundingEngine {
         const renderPending =
           error instanceof GroundingError &&
           (["CONTROL_INVENTORY_EMPTY", "TARGET_NOT_ACTIONABLE"].includes(error.code) ||
-            (error.code === "NO_CAPABILITY_COMPATIBLE_CONTROL" &&
+            (["NO_CAPABILITY_COMPATIBLE_CONTROL", "TARGET_SCOPE_NOT_FOUND"].includes(error.code) &&
               performance.now() < Math.min(observationDeadline, started + 500)));
         const waitEvidencePending =
           request.operation.type === "wait_for_state" &&

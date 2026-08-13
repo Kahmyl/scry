@@ -398,7 +398,10 @@ async function requirePraxisWithNoCapabilityRetry(input: PraxisConsumerInput) {
     const result = await executePraxisConsumer(input);
     if (result.status === "succeeded") return result;
     if (
-      result.code !== "PRAXIS_NO_CAPABILITY_COMPATIBLE_CONTROL" ||
+      ![
+        "PRAXIS_NO_CAPABILITY_COMPATIBLE_CONTROL",
+        "PRAXIS_TARGET_SCOPE_NOT_FOUND",
+      ].includes(result.code) ||
       deadline === undefined ||
       performance.now() >= deadline
     )

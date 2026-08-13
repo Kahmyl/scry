@@ -146,7 +146,8 @@ describe("external provider record identity binding characterization", () => {
   it("J: a forbidden secret-only distinction cannot select a public record", async () => {
     await page.setContent(row({ publicRecordId: "record-a", publicLabel: "Alpha", status: "active" }));
     await expect(resolveTarget(page, revokeIntent("secret-only-discriminator"))).rejects.toMatchObject({
-      code: "TARGET_SCOPE_INVALID",
+      code: "TARGET_SCOPE_NOT_FOUND",
+      diagnostic: { safeActions: ["retry_after_render", "revise_intent"] },
     });
   });
 });
