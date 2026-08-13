@@ -64,6 +64,14 @@ export class FlowController {
     return this.core.listFlows(principal, projectId, visibility ?? "reusable");
   }
 
+  @Get("flows/:flowId")
+  getFlow(
+    @Param("flowId") flowId: string,
+    @CurrentPrincipal() principal: Principal,
+  ) {
+    return this.core.getFlow(principal, flowId);
+  }
+
   @Post("flows/:flowId/revisions")
   reviseFlow(
     @Param("flowId") flowId: string,

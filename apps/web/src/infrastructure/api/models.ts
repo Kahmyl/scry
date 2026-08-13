@@ -124,6 +124,11 @@ export type McpAccessToken = {
 
 export type Flow = {
   id: string;
+  projectId?: string;
+  recordKind: "draft" | "published";
+  lifecycleState: string;
+  stepCount?: number;
+  navigationCount?: number;
   name: string;
   description: string;
   visibility?: "reusable" | "mission_local" | "internal";
@@ -187,6 +192,37 @@ export type Flow = {
     }>;
     allowedOrigins?: string[];
   };
+};
+
+export type FlowDetail = {
+  id: string;
+  projectId: string;
+  recordKind?: "draft" | "published";
+  lifecycleState?: string;
+  state?: string;
+  name: string;
+  description: string;
+  purpose?: string;
+  missionId?: string;
+  objectiveId?: string;
+  environmentId?: string;
+  originMissionId?: string;
+  originObjectiveId?: string;
+  version: number;
+  content: { objective?: string; expectedOutcomes?: string[]; preconditions?: string[]; prohibitedSideEffects?: string[] };
+  plan: {
+    name?: string;
+    objective?: string;
+    steps: NonNullable<Flow["latestPlan"]>["steps"];
+    allowedOrigins?: string[];
+  };
+  missionLinks?: Flow["missionLinks"];
+  events?: Array<{ version: number; type: string; summary: string; occurredAt: string }>;
+  probes?: Array<{ id: string; level: string; state: string; draftVersion: number }>;
+  compilations?: Array<{ id: string; status: string; draftVersion: number; createdAt: string }>;
+  latestRevisionId?: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type Run = {

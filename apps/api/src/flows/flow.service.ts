@@ -246,6 +246,10 @@ export class FlowService {
     );
   }
 
+  async getFlow(principal: Principal, flowId: string) {
+    return (this.reads ?? new FlowReadRepository(this.database)).getPublished(principal, flowId);
+  }
+
   async reviseFlow(principal: Principal, flowId: string, input: CreateFlowRevisionInput) {
     void principal;
     void flowId;

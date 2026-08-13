@@ -48,10 +48,12 @@ export function Flows({
   projectId,
   scopedMissionId,
   onBack,
+  onOpenFlow,
 }: {
   projectId: string;
   scopedMissionId: string;
   onBack: () => void;
+  onOpenFlow: (kind: "draft" | "published", id: string) => void;
 }) {
   const [specs, setSpecs] = useState<Flow[]>([]);
   const [error, setError] = useState("");
@@ -138,13 +140,13 @@ export function Flows({
       )}
       <div className="spec-grid">
         {pagedSpecs.map((spec) => (
-          <article className="spec-card" key={spec.id}>
+          <button className="spec-card" key={spec.id} onClick={() => onOpenFlow(spec.recordKind, spec.id)}>
             <div className="spec-top">
               <div className="spec-icon">
                 <Code2 size={19} />
               </div>
-              <span className={spec.latestRevisionId ? "ready-tag" : "draft-tag"}>
-                {spec.latestRevisionId ? "Executable" : "Draft"}
+              <span className={spec.recordKind === "published" ? "ready-tag" : "draft-tag"}>
+                {spec.recordKind === "published" ? "Published" : spec.lifecycleState.replaceAll("_", " ")}
               </span>
             </div>
             <h3>{spec.name}</h3>
@@ -166,11 +168,11 @@ export function Flows({
                 <FileCode2 size={14} /> v{spec.latestVersion ?? "—"}
               </span>
               <span>
-                <Activity size={14} /> {spec.latestPlan?.steps.length ?? 0} actions
+                <Activity size={14} /> {spec.stepCount ?? spec.latestPlan?.steps.length ?? 0} actions
               </span>
               <span>
                 <Network size={14} />{" "}
-                {spec.latestPlan?.steps.filter((item) => item.action?.type === "navigate").length ??
+                {spec.navigationCount ?? spec.latestPlan?.steps.filter((item) => item.action?.type === "navigate").length ??
                   0}{" "}
                 destinations
               </span>
@@ -179,7 +181,7 @@ export function Flows({
               <span>{spec.latestContent?.expectedOutcomes?.length ?? 0} proof checks</span>
               <span className="ready-tag">Observation only</span>
             </div>
-          </article>
+          </button>
         ))}
         {!visibleSpecs.length && (
           <div className="panel empty-large">

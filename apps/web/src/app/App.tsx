@@ -98,7 +98,7 @@ import {
   Settings,
   WorkspaceSettings,
 } from "../features/settings/index.js";
-import { Flows, Overview, Runs } from "../features/operations/index.js";
+import { FlowDetailView, Flows, Overview, Runs } from "../features/operations/index.js";
 import { formatDuration } from "../shared/format/index.js";
 import {
   AuthenticatedArtifact,
@@ -125,6 +125,9 @@ export function App({
   const reportId = reportMatch?.params.reportId;
   const runMatch = matchPath("/dashboard/runs/:runId", location.pathname);
   const runId = runMatch?.params.runId;
+  const flowDetailMatch = matchPath("/dashboard/flows/:kind/:flowId", location.pathname);
+  const flowDetailId = flowDetailMatch?.params.flowId;
+  const flowDetailKind = flowDetailMatch?.params.kind;
   const missionFlowsMatch = matchPath("/dashboard/missions/:missionId/flows", location.pathname);
   const missionMatch =
     missionFlowsMatch ?? matchPath("/dashboard/missions/:missionId", location.pathname);
@@ -201,6 +204,12 @@ export function App({
             <EmptyWorkspace onCreate={() => setCreateProjectOpen(true)} />
           ) : reportId ? (
             <MissionReportView reportId={reportId} onBack={() => navigate(viewPaths.reports)} />
+          ) : flowDetailId && (flowDetailKind === "drafts" || flowDetailKind === "published") ? (
+            <FlowDetailView
+              flowId={flowDetailId}
+              kind={flowDetailKind === "drafts" ? "draft" : "published"}
+              onBack={(flowMissionId) => navigate(flowMissionId ? `/dashboard/missions/${flowMissionId}/flows` : viewPaths.missions)}
+            />
           ) : runId ? (
             <ReportView
               runId={runId}
@@ -212,6 +221,7 @@ export function App({
               projectId={projectId}
               scopedMissionId={missionId}
               onBack={() => navigate(`/dashboard/missions/${missionId}`)}
+              onOpenFlow={(kind, id) => navigate(`/dashboard/flows/${kind === "draft" ? "drafts" : "published"}/${id}`)}
             />
           ) : missionId ? (
             <MissionDetailPage

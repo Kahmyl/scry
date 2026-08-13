@@ -83,7 +83,7 @@ export function MissionDetailPage({
         </div>
         <div className="page-title-actions">
           <button className="secondary-button" onClick={onOpenFlows}>
-            <FileCode2 size={15} /> Flows ({data.flows.length})
+            <FileCode2 size={15} /> Flows ({data.authoring.filter((draft) => !["published", "abandoned"].includes(draft.state)).length} drafts · {data.flows.length} published)
           </button>
           {data.resumePointer?.runId && (
             <button

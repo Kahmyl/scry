@@ -1464,11 +1464,40 @@ select:focus-visible {
   padding: 17px;
   display: flex;
   flex-direction: column;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 .spec-card:hover {
   border-color: #343c43;
   transform: translateY(-1px);
 }
+.flow-detail-summary,
+.flow-detail-authoring {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.flow-detail-summary > div,
+.flow-detail-authoring > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.flow-detail-summary span { color: var(--muted); font-size: 12px; }
+.flow-detail-plan { margin-bottom: 16px; }
+.flow-step-list { display: grid; gap: 10px; margin-top: 16px; }
+.flow-step { display: grid; grid-template-columns: 34px 1fr; gap: 12px; padding: 14px; border: 1px solid var(--line-soft); border-radius: 10px; }
+.flow-step-index { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; background: var(--surface-3); color: var(--cyan); font-weight: 700; }
+.flow-step-title { display: flex; justify-content: space-between; gap: 12px; }
+.flow-step-title span,.flow-target-pills span { color: var(--muted); font-size: 12px; }
+.flow-action-summary p { margin: 8px 0; }
+.flow-target-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.flow-target-pills span { padding: 3px 7px; border-radius: 999px; background: var(--surface-3); }
+.protected-reference,.flow-step-effects { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.flow-detail-authoring { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.flow-detail-authoring > div { flex-direction: row; align-items: center; }
 .spec-top {
   display: flex;
   justify-content: space-between;
