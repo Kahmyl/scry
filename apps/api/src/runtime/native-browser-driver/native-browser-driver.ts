@@ -127,13 +127,13 @@ export class NativeBrowserDriver {
 
   async resolveSemanticTarget(page: Page, intent: InteractionTargetIntent, waitTimeoutMs = 0) {
     const candidates = await semanticCandidateLocators(page, intent, false);
-    const deadline = Date.now() + waitTimeoutMs;
+    const deadline = performance.now() + waitTimeoutMs;
     do {
       const eligible = await eligibleSemanticMatches(candidates, intent, false);
       if (eligible.size === 1) return eligible.values().next().value!;
       if (eligible.size > 1) throw new NativeControlResolutionError("NATIVE_TARGET_AMBIGUOUS");
-      if (Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
-    } while (Date.now() < deadline);
+      if (performance.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+    } while (performance.now() < deadline);
     throw new NativeControlResolutionError("NATIVE_TARGET_NOT_FOUND");
   }
 
@@ -141,28 +141,40 @@ export class NativeBrowserDriver {
     page: Page,
     intent: InteractionTargetIntent,
     operation:
-      | { type: "click"; timeoutMs?: number; resolutionTimeoutMs?: number }
-      | { type: "fill"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number; protected: boolean }
-      | { type: "select"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number }
-      | { type: "check"; checked: boolean; timeoutMs?: number; resolutionTimeoutMs?: number }
-      | { type: "press"; key: string; timeoutMs?: number; resolutionTimeoutMs?: number }
-      | { type: "scroll"; deltaY: number }
-      | { type: "waitFor"; state: "visible" | "hidden" | "attached" | "detached"; timeoutMs?: number },
+      | { type: "click"; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number }
+      | { type: "fill"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number; protected: boolean }
+      | { type: "select"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number }
+      | { type: "check"; checked: boolean; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number }
+      | { type: "press"; key: string; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number }
+      | { type: "scroll"; deltaY: number; preDispatchDeadlineAt?: number }
+      | { type: "waitFor"; state: "visible" | "hidden" | "attached" | "detached"; timeoutMs?: number; preDispatchDeadlineAt?: number },
     beforeDispatch?: () => Promise<void>,
   ) {
     if (operation.type === "waitFor") {
-      await this.waitForSemanticState(page, intent, operation.state, operation.timeoutMs ?? 10_000);
+      await this.waitForSemanticState(
+        page,
+        intent,
+        operation.state,
+        remainingActionTime(operation, operation.timeoutMs ?? 10_000),
+      );
       return;
     }
     const target = await this.resolveSemanticTarget(
       page,
       intent,
       "resolutionTimeoutMs" in operation
-        ? operation.resolutionTimeoutMs ?? operation.timeoutMs ?? 10_000
+        ? remainingActionTime(
+            operation,
+            operation.resolutionTimeoutMs ?? operation.timeoutMs ?? 10_000,
+          )
         : 10_000,
     );
-    const timeout = "timeoutMs" in operation && operation.timeoutMs ? { timeout: operation.timeoutMs } : {};
+    if ("preDispatchDeadlineAt" in operation) assertPreDispatchDeadline(operation);
     await beforeDispatch?.();
+    if ("preDispatchDeadlineAt" in operation) assertPreDispatchDeadline(operation);
+    const timeout = "timeoutMs" in operation
+      ? { timeout: remainingActionTime(operation, operation.timeoutMs ?? 10_000) }
+      : {};
     switch (operation.type) {
       case "click": await target.click(timeout); return;
       case "fill":
@@ -183,7 +195,7 @@ export class NativeBrowserDriver {
     timeoutMs: number,
   ) {
     const candidates = await semanticCandidateLocators(page, intent, true);
-    const deadline = Date.now() + timeoutMs;
+    const deadline = performance.now() + timeoutMs;
     do {
       const matches = [...(await eligibleSemanticMatches(candidates, intent, true)).values()];
       const satisfied = state === "visible"
@@ -194,8 +206,8 @@ export class NativeBrowserDriver {
             ? !(await Promise.all(matches.map((match) => match.isVisible()))).some(Boolean)
             : matches.length === 0;
       if (satisfied) return;
-      if (Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
-    } while (Date.now() < deadline);
+      if (performance.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+    } while (performance.now() < deadline);
     throw new NativeControlResolutionError("NATIVE_TARGET_NOT_FOUND");
   }
 }
@@ -357,4 +369,18 @@ async function maskProtectedTarget(target: Locator) {
     element.setAttribute("data-scry-redacted", "true");
     (element as HTMLElement).style.setProperty("-webkit-text-security", "disc");
   });
+}
+
+function remainingActionTime(
+  operation: { preDispatchDeadlineAt?: number },
+  maximum: number,
+) {
+  if (operation.preDispatchDeadlineAt === undefined) return maximum;
+  const remaining = operation.preDispatchDeadlineAt - performance.now();
+  if (remaining <= 0) throw new NativeError("NATIVE_ACTION_DEADLINE_EXCEEDED");
+  return Math.max(1, Math.min(maximum, remaining));
+}
+
+function assertPreDispatchDeadline(operation: { preDispatchDeadlineAt?: number }) {
+  remainingActionTime(operation, Number.MAX_SAFE_INTEGER);
 }

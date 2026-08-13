@@ -16,6 +16,7 @@ import {
 import { VeilAuthority } from "@scry/veil";
 import { compileVeilPolicy } from "@scry/veil";
 import type { Page } from "playwright";
+import { PraxisPreDispatchDeadline } from "../src/execution-envelope.js";
 
 const veilPage = {} as Page;
 registerPraxisVeilAuthority(veilPage, {
@@ -311,6 +312,7 @@ describe("Praxis transaction coordinator", () => {
         confidenceMargin: 0,
         scope: { kind: "page" },
         rejectedConstraints: [],
+        rejectedCapabilitySignatures: [],
         drift: "unchanged",
         safeActions: ["narrow_scope"],
         resolutionSource: "unified",
@@ -358,5 +360,37 @@ describe("Praxis transaction coordinator", () => {
     await boundary.beginMutation();
     expect(boundary.mutationStarted()).toBe(true);
     await expect(boundary.beginMutation()).rejects.toThrow(/BOUNDARY_REPEATED/);
+  });
+
+  it("blocks dispatch when the shared pre-dispatch deadline expires during grounding", async () => {
+    const subject = adapter();
+    subject.ground = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return { target: {}, resolution };
+    };
+    const result = await new PraxisTransactionCoordinator(
+      subject,
+      undefined,
+      undefined,
+      new PraxisPreDispatchDeadline(performance.now() + 20),
+    ).execute(request(), new AbortController().signal);
+    expect(result).toMatchObject({ status: "failed", mutationOutcome: "not_started" });
+    expect(subject.dispatches).toBe(0);
+  });
+
+  it("does not let pre-dispatch expiry redefine settlement after mutation starts", async () => {
+    const subject = adapter();
+    subject.dispatch = async (_target, _request, _signal, boundary) => {
+      await boundary.beginMutation();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return { mutationOutcome: "applied" };
+    };
+    const result = await new PraxisTransactionCoordinator(
+      subject,
+      undefined,
+      undefined,
+      new PraxisPreDispatchDeadline(performance.now() + 20),
+    ).execute(request(), new AbortController().signal);
+    expect(result).toMatchObject({ status: "succeeded", mutationOutcome: "applied" });
   });
 });

@@ -25,7 +25,10 @@ import {
   type PraxisProviderTiming,
 } from "./observation.js";
 import { PraxisAdapterError, type PraxisDispatchBoundary } from "./transaction.js";
-import { PraxisExecutionEnvelope } from "./execution-envelope.js";
+import {
+  PraxisExecutionEnvelope,
+  type PraxisPreDispatchDeadline,
+} from "./execution-envelope.js";
 import { PraxisStateObserver } from "./state-observer.js";
 import { validatePraxisVeilGrants } from "./veil-bridge.js";
 
@@ -133,11 +136,9 @@ export class PraxisGroundingEngine {
       } catch (error) {
         const renderPending =
           error instanceof GroundingError &&
-          [
-            "CONTROL_INVENTORY_EMPTY",
-            "NO_CAPABILITY_COMPATIBLE_CONTROL",
-            "TARGET_NOT_ACTIONABLE",
-          ].includes(error.code);
+          (["CONTROL_INVENTORY_EMPTY", "TARGET_NOT_ACTIONABLE"].includes(error.code) ||
+            (error.code === "NO_CAPABILITY_COMPATIBLE_CONTROL" &&
+              performance.now() < Math.min(observationDeadline, started + 500)));
         const waitEvidencePending =
           request.operation.type === "wait_for_state" &&
           error instanceof GroundingError &&
@@ -270,6 +271,7 @@ export class PraxisDispatcher {
       reference: string,
       classification: "public" | "known_secret" | "captured_secret" | "captured_public",
     ) => Promise<string>,
+    private readonly deadline?: PraxisPreDispatchDeadline,
   ) {}
   async dispatch(
     target: PraxisGroundedTarget,
@@ -282,6 +284,7 @@ export class PraxisDispatcher {
     let output: PraxisAcquisitionOutput | undefined;
     try {
       const preparedInput = await prepareInput(request, this.resolveInput);
+      this.assertBeforeDispatch();
       if (request.operation.type === "wait_for_state") {
         output = await dispatchOperation(
           this.page,
@@ -290,6 +293,8 @@ export class PraxisDispatcher {
           request,
           preparedInput,
           signal,
+          undefined,
+          this.timeout(request.policy.actionTimeoutMs),
         );
         return { mutationOutcome: "not_applied", ...(output ? { output } : {}) };
       }
@@ -298,10 +303,11 @@ export class PraxisDispatcher {
         await target.revalidate();
         let activationTarget: ElementHandle<HTMLElement | SVGElement> | undefined;
         if (request.operation.type === "activate") {
-          await assertActivationReady(locator, request.policy.actionTimeoutMs);
+          await assertActivationReady(locator, this.timeout(request.policy.actionTimeoutMs));
           await target.revalidate();
           activationTarget =
-            (await locator.elementHandle({ timeout: request.policy.actionTimeoutMs })) ?? undefined;
+            (await locator.elementHandle({ timeout: this.timeout(request.policy.actionTimeoutMs) })) ??
+            undefined;
           if (!activationTarget)
             throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
               provenance: "application",
@@ -311,6 +317,7 @@ export class PraxisDispatcher {
             });
         }
         checkAbort(signal);
+        this.assertBeforeDispatch();
         if (mutating) await boundary.beginMutation();
         output = await dispatchOperation(
           this.page,
@@ -320,6 +327,7 @@ export class PraxisDispatcher {
           preparedInput,
           signal,
           activationTarget,
+          this.timeout(request.policy.actionTimeoutMs),
         );
       });
       return {
@@ -354,6 +362,19 @@ export class PraxisDispatcher {
       if (error instanceof PraxisAdapterError) throw error;
       throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
     }
+  }
+
+  private timeout(maximum: number) {
+    return this.deadline?.timeout(maximum) ?? maximum;
+  }
+
+  private assertBeforeDispatch() {
+    if (this.deadline?.expired())
+      throw new PraxisAdapterError("PRAXIS_PRE_DISPATCH_TIMED_OUT", {
+        provenance: "policy",
+        retry: "requires_revision",
+        mutationOutcome: "not_started",
+      });
   }
 }
 
@@ -451,8 +472,9 @@ async function dispatchOperation(
   preparedInput: string | undefined,
   signal: AbortSignal,
   activationTarget?: ElementHandle<HTMLElement | SVGElement>,
+  timeoutMs = request.policy.actionTimeoutMs,
 ): Promise<PraxisAcquisitionOutput | undefined> {
-  const options = { timeout: request.policy.actionTimeoutMs };
+  const options = { timeout: timeoutMs };
   switch (request.operation.type) {
     case "activate": {
       const point = target.actionPoint();
@@ -496,7 +518,7 @@ async function dispatchOperation(
         !(await waitForObservationSet(
           target.observationLocators(),
           request.operation.state,
-          request.policy.actionTimeoutMs,
+          timeoutMs,
           signal,
         ))
       )

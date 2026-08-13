@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { currentPlanSchema, executionPolicySchema } from "@scry/contracts";
+import { resolveTargetLocator } from "@scry/praxis";
 
 import { executePlan } from "../src/executor.js";
 
@@ -58,5 +59,89 @@ describe("DOM-stable readiness", () => {
     });
     expect(report.state).toBe("passed");
     expect(report.steps[0]?.readiness).toMatchObject({ status: "passed" });
+  }, 15_000);
+
+  it("keeps post-action readiness independent after the pre-dispatch deadline expires", async () => {
+    const actionTimeoutMs = 200;
+    const readinessDelayMs = 600;
+    const readinessTimeoutMs = 1_500;
+    let dispatchCount = 0;
+    let dispatchAt = 0;
+    let actionStartedAt = 0;
+    const server = createServer((_request, response) => {
+      response.setHeader("content-type", "text/html");
+      response.end(`<main>
+        <button>Start</button><section aria-label="Result">Waiting</section>
+        <script>
+          document.querySelector('button').addEventListener('click', () => {
+            setTimeout(() => {
+              document.querySelector('section').textContent = 'Ready after action deadline';
+            }, ${readinessDelayMs});
+          });
+        </script>
+      </main>`);
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("server unavailable");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const button = {
+      concept: "start",
+      requiredCapabilities: ["pointer_activatable"],
+      preferredEvidence: { roles: ["button"], names: ["Start"], labels: [], descriptions: [], placeholders: [], inputTypes: [] },
+      scope: { kind: "page" }, relations: [], prohibited: ["hidden", "disabled"],
+      risk: "ordinary", confidence: { requiredFamilies: [] },
+    };
+    const resultRegion = {
+      concept: "result",
+      requiredCapabilities: ["readable_value"],
+      preferredEvidence: { roles: ["region"], names: ["Result"], labels: [], descriptions: [], placeholders: [], inputTypes: [] },
+      scope: { kind: "page" }, relations: [], prohibited: ["hidden"],
+      risk: "ordinary", confidence: { requiredFamilies: [] },
+    };
+    const plan = currentPlanSchema.parse({
+      name: "Independent post-action readiness",
+      objective: "Prove readiness budget independence",
+      allowedOrigins: [origin],
+      budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
+      checkpoints: [],
+      steps: [
+        { id: "open", title: "Open", action: { type: "navigate", url: origin },
+          assertions: [], evidence: [], onFailure: "stop", captureIntent: "transient" },
+        { id: "start", title: "Start", action: { type: "click", target: button,
+          expectedEffect: { type: "none" }, timeoutMs: actionTimeoutMs },
+          after: { mode: "all", timeoutMs: readinessTimeoutMs,
+            conditions: [{ type: "content", target: resultRegion, requiredText: "Ready after action deadline" }] },
+          assertions: [], evidence: [], onFailure: "stop", captureIntent: "transient" },
+      ],
+    });
+    const report = await executePlan({
+      plan,
+      policy: executionPolicySchema.parse({ allowedOrigins: [origin], allowPrivateNetwork: true }),
+      outputDirectory: await mkdtemp(path.join(tmpdir(), "scry-readiness-independence-")),
+      browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+      executeNativeControl: async (page, target, operation, beforeDispatch) => {
+        if (operation.type !== "click") throw new Error("EXPECTED_CLICK");
+        const locator = await resolveTargetLocator(page, target);
+        await beforeDispatch?.();
+        await locator.click(operation.timeoutMs === undefined ? {} : { timeout: operation.timeoutMs });
+      },
+      onMutationDispatch: async () => {
+        dispatchCount += 1;
+        dispatchAt = performance.now() - actionStartedAt;
+      },
+      onEvent: async (event) => {
+        if (event.type === "step.started" && event.payload.stepId === "start")
+          actionStartedAt = performance.now();
+      },
+    });
+    const readiness = report.steps[1]?.readiness;
+    expect(report.state).toBe("passed");
+    expect(dispatchCount).toBe(1);
+    expect(dispatchAt).toBeLessThan(actionTimeoutMs);
+    expect(readiness).toMatchObject({ status: "passed", matchedConditions: ["content"] });
+    expect(readiness!.durationMs).toBeGreaterThan(actionTimeoutMs);
+    expect(readiness!.durationMs).toBeLessThan(readinessTimeoutMs);
   }, 15_000);
 });

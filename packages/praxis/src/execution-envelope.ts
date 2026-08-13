@@ -44,13 +44,29 @@ export class PraxisExecutionEnvelope {
   }
 
   static groundingWindow(request: PraxisRequest) {
-    return Math.min(500, Math.max(100, Math.floor(request.policy.totalTimeoutMs * 0.35)));
+    return Math.max(1, request.policy.totalTimeoutMs);
   }
   static remaining(deadline: number) {
     return Math.max(0, deadline - performance.now());
   }
   static verificationBudget(deadline: number, actionTimeoutMs: number) {
     return Math.max(1, Math.min(actionTimeoutMs, PraxisExecutionEnvelope.remaining(deadline) - 25));
+  }
+}
+
+export class PraxisPreDispatchDeadline {
+  constructor(readonly at: number) {}
+
+  remaining() {
+    return Math.max(0, this.at - performance.now());
+  }
+
+  timeout(maximum: number, minimum = 1) {
+    return Math.max(minimum, Math.min(maximum, this.remaining()));
+  }
+
+  expired() {
+    return this.remaining() <= 0;
   }
 }
 

@@ -69,13 +69,13 @@ export type ExecuteOptions = {
     page: Page,
     target: import("@scry/contracts").InteractionTargetIntent,
     operation:
-      | { type: "click"; timeoutMs?: number; resolutionTimeoutMs?: number }
-      | { type: "fill"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number; protected: boolean }
-      | { type: "select"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number }
-      | { type: "check"; checked: boolean; timeoutMs?: number; resolutionTimeoutMs?: number }
-      | { type: "press"; key: string; timeoutMs?: number; resolutionTimeoutMs?: number }
-      | { type: "scroll"; deltaY: number }
-      | { type: "waitFor"; state: "visible" | "hidden" | "attached" | "detached"; timeoutMs?: number },
+      | { type: "click"; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number }
+      | { type: "fill"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number; protected: boolean }
+      | { type: "select"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number }
+      | { type: "check"; checked: boolean; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number }
+      | { type: "press"; key: string; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number }
+      | { type: "scroll"; deltaY: number; preDispatchDeadlineAt?: number }
+      | { type: "waitFor"; state: "visible" | "hidden" | "attached" | "detached"; timeoutMs?: number; preDispatchDeadlineAt?: number },
     beforeDispatch?: () => Promise<void>,
   ) => Promise<void>;
   executeNativeNavigation?: (

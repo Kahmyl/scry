@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 
 import type { CurrentAction, InteractionTargetIntent, RunEvent } from "@scry/contracts";
 import {
-  requirePraxisSuccess,
+  executePraxisConsumer,
+  PraxisConsumerError,
+  type PraxisConsumerInput,
   type PraxisConsumerContext,
 } from "@scry/praxis";
 import type { SecretRedactor } from "@scry/policy";
@@ -27,6 +29,7 @@ export async function executeAction(
   praxisContext?: PraxisConsumerContext,
 ) {
   throwIfAborted(signal);
+  const preDispatchDeadlineAt = actionDeadline(action, praxisContext);
   switch (action.type) {
     case "protectedTransaction":
       throw new InfrastructureDependencyError(
@@ -104,9 +107,9 @@ export async function executeAction(
       return;
     }
     case "click":
-      if (await executeNative(page, action.target, { type: "click", ...nativeActionTimeouts(action.timeoutMs) }, options)) return;
+      if (await executeNative(page, action.target, { type: "click", ...nativeActionTimeouts(action.timeoutMs, preDispatchDeadlineAt) }, options)) return;
       requirePraxisFallback(options);
-      await requirePraxisSuccess({
+      await requirePraxisWithNoCapabilityRetry({
         page,
         intent: action.target,
         operation: { type: "activate" },
@@ -116,7 +119,7 @@ export async function executeAction(
           options.expectedEffectVerificationOwner === "kernel" || action.expectedEffect.type === "new_page"
             ? { type: "none" }
             : action.expectedEffect,
-        context: requirePraxisContext(praxisContext),
+        context: praxisContextAt(praxisContext, preDispatchDeadlineAt),
         signal,
       });
       return;
@@ -181,12 +184,12 @@ export async function executeAction(
           const native = await executeNative(
             page,
             action.target,
-            { type: "fill", value, protected: true, ...nativeActionTimeouts(action.timeoutMs) },
+            { type: "fill", value, protected: true, ...nativeActionTimeouts(action.timeoutMs, preDispatchDeadlineAt) },
             { ...options, onMutationDispatch: beginProtectedDispatch },
           );
           if (!native) {
             requirePraxisFallback(options);
-            await requirePraxisSuccess({
+            await requirePraxisWithNoCapabilityRetry({
               page,
               intent: action.target,
               operation: {
@@ -194,7 +197,7 @@ export async function executeAction(
                 input: { reference: "resolved-input", classification: "known_secret" },
               },
               context: {
-                ...requirePraxisContext(praxisContext),
+                ...praxisContextAt(praxisContext, preDispatchDeadlineAt),
                 beforeMutation: beginProtectedDispatch,
               },
               signal,
@@ -226,11 +229,11 @@ export async function executeAction(
         if (await executeNative(
           page,
           action.target,
-          { type: "fill", value, protected: false, ...nativeActionTimeouts(action.timeoutMs) },
+          { type: "fill", value, protected: false, ...nativeActionTimeouts(action.timeoutMs, preDispatchDeadlineAt) },
           options,
         )) return;
         requirePraxisFallback(options);
-        await requirePraxisSuccess({
+        await requirePraxisWithNoCapabilityRetry({
           page,
           intent: action.target,
           operation: {
@@ -240,7 +243,7 @@ export async function executeAction(
               classification: action.capturedValueRef ? "captured_public" : "public",
             },
           },
-          context: requirePraxisContext(praxisContext),
+          context: praxisContextAt(praxisContext, preDispatchDeadlineAt),
           signal,
           resolveInput: async () => value!,
         });
@@ -248,71 +251,73 @@ export async function executeAction(
       return;
     }
     case "select":
-      if (await executeNative(page, action.target, { type: "select", value: action.value, ...nativeActionTimeouts(action.timeoutMs) }, options)) return;
+      if (await executeNative(page, action.target, { type: "select", value: action.value, ...nativeActionTimeouts(action.timeoutMs, preDispatchDeadlineAt) }, options)) return;
       requirePraxisFallback(options);
-      await requirePraxisSuccess({
+      await requirePraxisWithNoCapabilityRetry({
         page,
         intent: action.target,
         operation: {
           type: "select_option",
           input: { reference: "selected-option", classification: "public" },
         },
-        context: requirePraxisContext(praxisContext),
+        context: praxisContextAt(praxisContext, preDispatchDeadlineAt),
         signal,
         resolveInput: async () => action.value,
       });
       return;
     case "check":
-      if (await executeNative(page, action.target, { type: "check", checked: action.checked, ...nativeActionTimeouts(action.timeoutMs) }, options)) return;
+      if (await executeNative(page, action.target, { type: "check", checked: action.checked, ...nativeActionTimeouts(action.timeoutMs, preDispatchDeadlineAt) }, options)) return;
       requirePraxisFallback(options);
-      await requirePraxisSuccess({
+      await requirePraxisWithNoCapabilityRetry({
         page,
         intent: action.target,
         operation: { type: "set_checked", checked: action.checked },
-        context: requirePraxisContext(praxisContext),
+        context: praxisContextAt(praxisContext, preDispatchDeadlineAt),
         signal,
       });
       return;
     case "press":
       if (action.target && approvedKey(action.key)) {
-        if (await executeNative(page, action.target, { type: "press", key: action.key, ...nativeActionTimeouts(action.timeoutMs) }, options)) return;
+        if (await executeNative(page, action.target, { type: "press", key: action.key, ...nativeActionTimeouts(action.timeoutMs, preDispatchDeadlineAt) }, options)) return;
         requirePraxisFallback(options);
-        await requirePraxisSuccess({
+        await requirePraxisWithNoCapabilityRetry({
           page,
           intent: action.target,
           operation: { type: "press_key", key: action.key },
-          context: requirePraxisContext(praxisContext),
+          context: praxisContextAt(praxisContext, preDispatchDeadlineAt),
           signal,
         });
       } else if (action.target) {
         throw new Error("PRAXIS_UNSUPPORTED_TARGET_KEY");
       } else {
+        assertActionDeadline(preDispatchDeadlineAt);
         await options.onMutationDispatch?.();
         await page.keyboard.press(action.key);
       }
       return;
     case "scroll":
       if (action.target) {
-        if (await executeNative(page, action.target, { type: "scroll", deltaY: action.deltaY }, options)) return;
-        await requirePraxisSuccess({
+        if (await executeNative(page, action.target, { type: "scroll", deltaY: action.deltaY, preDispatchDeadlineAt }, options)) return;
+        await requirePraxisWithNoCapabilityRetry({
           page,
           intent: action.target,
           operation: { type: "scroll", direction: action.deltaY >= 0 ? "down" : "up" },
-          context: requirePraxisContext(praxisContext),
+          context: praxisContextAt(praxisContext, preDispatchDeadlineAt),
           signal,
         });
       } else {
+        assertActionDeadline(preDispatchDeadlineAt);
         await page.mouse.wheel(0, action.deltaY);
       }
       return;
     case "waitFor":
-      if (await executeNative(page, action.target, { type: "waitFor", state: action.state, ...nativeTimeout(action.timeoutMs) }, options)) return;
+      if (await executeNative(page, action.target, { type: "waitFor", state: action.state, ...nativeTimeout(action.timeoutMs), preDispatchDeadlineAt }, options)) return;
       requirePraxisFallback(options);
-      await requirePraxisSuccess({
+      await requirePraxisWithNoCapabilityRetry({
         page,
         intent: action.target,
         operation: { type: "wait_for_state", state: action.state },
-        context: requirePraxisContext(praxisContext),
+        context: praxisContextAt(praxisContext, preDispatchDeadlineAt),
         signal,
       });
       return;
@@ -362,16 +367,59 @@ function nativeTimeout(timeoutMs: number | undefined): { timeoutMs?: number } {
   return timeoutMs === undefined ? {} : { timeoutMs };
 }
 
-const NATIVE_RESOLUTION_TIMEOUT_MS = 5_000;
+const NATIVE_FAST_PATH_PROBE_MS = 100;
+const DEFAULT_ACTION_TIMEOUT_MS = 5_000;
 
-function nativeActionTimeouts(timeoutMs: number | undefined): {
+function nativeActionTimeouts(timeoutMs: number | undefined, deadline: number): {
   timeoutMs?: number;
   resolutionTimeoutMs: number;
+  preDispatchDeadlineAt: number;
 } {
+  const remaining = deadline - performance.now();
+  if (remaining <= 0) throw new ActionPreDispatchTimeoutError();
   return {
     ...nativeTimeout(timeoutMs),
-    resolutionTimeoutMs: Math.min(timeoutMs ?? NATIVE_RESOLUTION_TIMEOUT_MS, NATIVE_RESOLUTION_TIMEOUT_MS),
+    preDispatchDeadlineAt: deadline,
+    resolutionTimeoutMs: Math.max(
+      1,
+      Math.min(timeoutMs ?? NATIVE_FAST_PATH_PROBE_MS, NATIVE_FAST_PATH_PROBE_MS, remaining),
+    ),
   };
+}
+
+function actionDeadline(action: CurrentAction, context?: PraxisConsumerContext) {
+  const authored = "timeoutMs" in action ? action.timeoutMs : undefined;
+  return performance.now() + (authored ?? context?.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS);
+}
+
+async function requirePraxisWithNoCapabilityRetry(input: PraxisConsumerInput) {
+  const deadline = input.context.preDispatchDeadlineAt;
+  for (;;) {
+    const result = await executePraxisConsumer(input);
+    if (result.status === "succeeded") return result;
+    if (
+      result.code !== "PRAXIS_NO_CAPABILITY_COMPATIBLE_CONTROL" ||
+      deadline === undefined ||
+      performance.now() >= deadline
+    )
+      throw new PraxisConsumerError(result);
+  }
+}
+
+function praxisContextAt(context: PraxisConsumerContext | undefined, deadline: number) {
+  assertActionDeadline(deadline);
+  return { ...requirePraxisContext(context), preDispatchDeadlineAt: deadline };
+}
+
+function assertActionDeadline(deadline: number) {
+  if (deadline - performance.now() <= 0) throw new ActionPreDispatchTimeoutError();
+}
+
+export class ActionPreDispatchTimeoutError extends Error {
+  override name = "ActionPreDispatchTimeoutError";
+  constructor() {
+    super("ACTION_PRE_DISPATCH_TIMED_OUT");
+  }
 }
 
 export async function missingSecretResolver(reference: string): Promise<string> {

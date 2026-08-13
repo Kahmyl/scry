@@ -18,7 +18,10 @@ import type {
   PraxisVerification,
 } from "@scry/contracts";
 import { ExpectedEffectError, GroundingError } from "./grounding.js";
-import { PraxisExecutionEnvelope } from "./execution-envelope.js";
+import {
+  PraxisExecutionEnvelope,
+  type PraxisPreDispatchDeadline,
+} from "./execution-envelope.js";
 import {
   PraxisVeilAuthorizationError,
   releasePraxisVeilGrants,
@@ -71,6 +74,8 @@ export class PraxisDispatchBoundary {
   constructor(
     private readonly mutating: boolean,
     private readonly beforeMutation?: () => void | Promise<void>,
+    private readonly deadline?: PraxisPreDispatchDeadline,
+    private readonly onMutationStarting?: () => void,
   ) {}
   enterDispatch() {
     if (this.#dispatchEntered) throw new Error("PRAXIS_DISPATCH_BOUNDARY_REENTERED");
@@ -80,7 +85,20 @@ export class PraxisDispatchBoundary {
     if (!this.#dispatchEntered) throw new Error("PRAXIS_MUTATION_BEFORE_DISPATCH");
     if (!this.mutating) throw new Error("PRAXIS_READ_ONLY_MUTATION_REJECTED");
     if (this.#mutationStarted) throw new Error("PRAXIS_MUTATION_BOUNDARY_REPEATED");
+    if (this.deadline?.expired())
+      throw new PraxisAdapterError("PRAXIS_PRE_DISPATCH_TIMED_OUT", {
+        provenance: "policy",
+        retry: "requires_revision",
+        mutationOutcome: "not_started",
+      });
     await this.beforeMutation?.();
+    if (this.deadline?.expired())
+      throw new PraxisAdapterError("PRAXIS_PRE_DISPATCH_TIMED_OUT", {
+        provenance: "policy",
+        retry: "requires_revision",
+        mutationOutcome: "not_started",
+      });
+    this.onMutationStarting?.();
     this.#mutationStarted = true;
   }
   dispatchEntered() {
@@ -158,6 +176,7 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
     private readonly adapter: PraxisTransactionAdapter<TTarget>,
     private readonly emit?: (event: PraxisLifecycleEvent) => void | Promise<void>,
     private readonly beforeMutation?: () => void | Promise<void>,
+    private readonly preDispatchDeadline?: PraxisPreDispatchDeadline,
   ) {}
 
   async execute(request: PraxisRequest, signal: AbortSignal): Promise<PraxisResult> {
@@ -165,15 +184,23 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
     const started = performance.now();
     const deadline = started + request.policy.totalTimeoutMs;
     const timeoutController = new AbortController();
-    const timeout = setTimeout(
+    let timeout: ReturnType<typeof setTimeout> | undefined = setTimeout(
       () => timeoutController.abort("PRAXIS_TRANSACTION_TIMED_OUT"),
-      request.policy.totalTimeoutMs,
+      this.preDispatchDeadline?.remaining() ?? request.policy.totalTimeoutMs,
     );
     const operationSignal = AbortSignal.any([signal, timeoutController.signal]);
     const durations = new Map<PraxisPhase, number>();
     let target: TTarget | undefined;
     let resolution: PraxisResolution | undefined;
-    const dispatchBoundary = new PraxisDispatchBoundary(mutates(request), this.beforeMutation);
+    const dispatchBoundary = new PraxisDispatchBoundary(
+      mutates(request),
+      this.beforeMutation,
+      this.preDispatchDeadline,
+      () => {
+        if (timeout) clearTimeout(timeout);
+        timeout = undefined;
+      },
+    );
     let mutationOutcome: PraxisMutationOutcome = "not_started";
     let verification: PraxisVerification = {
       local: "unknown",
@@ -221,6 +248,12 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
         await this.adapter.armEffect?.(target!, request, operationSignal);
       });
       checkAbort(operationSignal);
+      if (this.preDispatchDeadline?.expired())
+        throw new PraxisAdapterError("PRAXIS_PRE_DISPATCH_TIMED_OUT", {
+          provenance: "policy",
+          retry: "requires_revision",
+          mutationOutcome: "not_started",
+        });
       validatePraxisVeilBoundary(request, "interact");
       if (["authentication", "credential", "protected"].includes(request.risk))
         validatePraxisVeilBoundary(request, "protected_transaction");
@@ -267,7 +300,9 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
             target!,
             request,
             operationSignal,
-            PraxisExecutionEnvelope.verificationBudget(deadline, request.policy.actionTimeoutMs),
+            dispatchBoundary.mutationStarted()
+              ? request.policy.actionTimeoutMs
+              : PraxisExecutionEnvelope.verificationBudget(deadline, request.policy.actionTimeoutMs),
           ),
       );
       if (verification.effect === "failed" || verification.effect === "unknown") {
@@ -390,7 +425,7 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
     } finally {
       release();
       releasePraxisVeilGrants(request);
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
     }
   }
 

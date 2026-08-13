@@ -15,7 +15,11 @@ import {
   type PraxisDispatchBoundary,
   type PraxisTransactionAdapter,
 } from "./transaction.js";
-import { PraxisAdmissionError, PraxisExecutionEnvelope } from "./execution-envelope.js";
+import {
+  PraxisAdmissionError,
+  PraxisExecutionEnvelope,
+  type PraxisPreDispatchDeadline,
+} from "./execution-envelope.js";
 
 export type PraxisInputResolver = (
   reference: string,
@@ -37,9 +41,10 @@ export class PraxisAdapter implements PraxisTransactionAdapter<PraxisGroundedTar
         mutationOutcome: "not_started",
       });
     },
+    deadline?: PraxisPreDispatchDeadline,
   ) {
     this.grounding = new PraxisGroundingEngine(page);
-    this.dispatcher = new PraxisDispatcher(page, resolveInput);
+    this.dispatcher = new PraxisDispatcher(page, resolveInput, deadline);
     this.verifier = new PraxisVerifier(page, resolveInput);
   }
 

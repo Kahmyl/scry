@@ -99,7 +99,7 @@ describe("native-first action runtime", () => {
       expect(operation).toMatchObject({
         type: "click",
         timeoutMs: 60_000,
-        resolutionTimeoutMs: 5_000,
+        resolutionTimeoutMs: 100,
       });
       await beforeDispatch?.();
       if (operation.type === "click") await click();
@@ -361,7 +361,9 @@ describe("native-first action runtime", () => {
         type: "waitFor", target: dialogTarget, state: "hidden", timeoutMs: 1_000,
       });
       expect(hidden).toMatchObject({ functionalResult: "failed", mutationOutcome: "not_applied" });
-      expect(hidden.reasonCode).toMatch(/^PRAXIS_(TARGET_AMBIGUOUS|INSUFFICIENT_EVIDENCE)$/);
+      expect(hidden.reasonCode).toMatch(
+        /^PRAXIS_(TARGET_AMBIGUOUS|INSUFFICIENT_EVIDENCE|TRANSACTION_TIMED_OUT)$/,
+      );
       expect(onMutationDispatch).not.toHaveBeenCalled();
 
       await opened.page.setContent("<main>No matching dialog</main>");
@@ -580,7 +582,8 @@ describe("native-first action runtime", () => {
         });
         const durationMs = performance.now() - startedAt;
         expect(outcome.functionalResult).toBe("succeeded");
-        expect(praxis).not.toHaveBeenCalled();
+        expect(praxis).toHaveBeenCalled();
+        expect(praxis.mock.calls.at(-1)?.[0]).toMatchObject({ status: "succeeded" });
         expect(mutationDispatch).toHaveBeenCalledOnce();
         expect(await opened.page.getByPlaceholder("Enter your email").inputValue())
           .toBe("safe-public-characterization-value");

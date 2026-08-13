@@ -13,6 +13,7 @@ import { PraxisDocumentEpoch } from "./observation.js";
 import { PraxisTransactionCoordinator } from "./transaction.js";
 import { authorizePraxisRequest, releasePraxisVeilGrants } from "./veil-bridge.js";
 import { registerGroundingObserver, resolveTargetCandidates } from "./grounding.js";
+import { PraxisPreDispatchDeadline } from "./execution-envelope.js";
 
 export type PraxisConsumerContext = {
   runId?: string;
@@ -30,6 +31,7 @@ export type PraxisConsumerContext = {
   ordinal: number;
   allowedOrigins: string[];
   timeoutMs: number;
+  preDispatchDeadlineAt?: number;
   privacy?: PraxisRequest["privacy"];
   emit?: (event: PraxisLifecycleEvent) => void | Promise<void>;
   beforeMutation?: () => void | Promise<void>;
@@ -58,12 +60,16 @@ export async function executePraxisConsumer(input: PraxisConsumerInput): Promise
     registerGroundingObserver(input.page, input.context.onGroundingDiagnostic);
   }
 
-  const request = authorizePraxisRequest(input.page, await buildPraxisRequest(input));
+  const deadline = input.context.preDispatchDeadlineAt
+    ? new PraxisPreDispatchDeadline(input.context.preDispatchDeadlineAt)
+    : undefined;
+  const request = authorizePraxisRequest(input.page, await buildPraxisRequest(input, deadline));
   try {
     const result = await new PraxisTransactionCoordinator(
-      new PraxisAdapter(input.page, input.resolveInput),
+      new PraxisAdapter(input.page, input.resolveInput, deadline),
       input.context.emit,
       input.context.beforeMutation,
+      deadline,
     ).execute(request, input.signal);
     await input.context.record?.(result);
     return result;
@@ -93,7 +99,10 @@ export class PraxisConsumerError extends Error {
   }
 }
 
-async function buildPraxisRequest(input: PraxisConsumerInput): Promise<PraxisRequest> {
+async function buildPraxisRequest(
+  input: PraxisConsumerInput,
+  deadline?: PraxisPreDispatchDeadline,
+): Promise<PraxisRequest> {
   const epoch = await PraxisDocumentEpoch.current(input.page);
   const seed = [
     input.context.runId ?? "standalone",
@@ -118,7 +127,7 @@ async function buildPraxisRequest(input: PraxisConsumerInput): Promise<PraxisReq
     policy: {
       allowedOrigins: input.context.allowedOrigins,
       actionTimeoutMs: bounded(input.context.timeoutMs, 100, 60_000),
-      totalTimeoutMs: bounded(input.context.timeoutMs, 100, 120_000),
+      totalTimeoutMs: bounded(deadline?.remaining() ?? input.context.timeoutMs, 1, 120_000),
     },
     privacy: input.context.privacy ?? {
       state: "normal",

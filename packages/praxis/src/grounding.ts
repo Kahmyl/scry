@@ -34,6 +34,17 @@ export type GroundingScore = {
   familyCount: number;
   total: number;
 };
+export type RejectedCapabilitySignature = {
+  count: number;
+  nativeKindClass: "input" | "textarea" | "other";
+  computedRoleClass: "textbox" | "other";
+  visible: "yes" | "no" | "unknown";
+  enabled: "yes" | "no" | "unknown";
+  readonly: "yes" | "no" | "unknown";
+  acceptsText: "yes" | "no" | "unknown";
+  focusable: "yes" | "no" | "unknown";
+  editable: "yes" | "no" | "unknown";
+};
 export type GroundingDiagnostic = {
   candidateDistinctions?: Array<{ label: string; distinction: string }>;
   candidateCount: number;
@@ -44,6 +55,7 @@ export type GroundingDiagnostic = {
   selectedFingerprint?: SemanticFingerprint;
   score?: GroundingScore;
   rejectedConstraints: string[];
+  rejectedCapabilitySignatures: RejectedCapabilitySignature[];
   drift: DriftClassification;
   safeActions: SafeAction[];
   resolutionSource: "unified";
@@ -142,6 +154,7 @@ export async function resolveTarget(
   let visualCandidateCount = 0;
   const candidates: Candidate[] = [];
   const rejected = new Set<string>();
+  const rejectedCapabilitySignatures = new Map<string, RejectedCapabilitySignature>();
   let visualDegraded = false;
   const documents = authorizedDocuments(page, boundary.allowedOrigins);
   let scopedDocuments = 0;
@@ -195,6 +208,7 @@ export async function resolveTarget(
       const violations = capabilityViolations(intent, meta, boundary.cardinality?.kind === "state_observation");
       if (violations.length) {
         violations.forEach((item) => rejected.add(item));
+        recordRejectedCapabilitySignature(rejectedCapabilitySignatures, meta.capabilities);
         continue;
       }
       const evidence = collectPraxisEvidence(intent, meta, anchors);
@@ -231,11 +245,12 @@ export async function resolveTarget(
   if (scopedDocuments === 0)
     throw new GroundingError("TARGET_SCOPE_INVALID", emptyDiagnostic(intent.scope, 0));
   const authoritative = applySemanticDominance(intent, candidates);
-  authoritative.sort(
+  const semanticCompetition = strongestExactIdentityTier(intent, authoritative);
+  semanticCompetition.sort(
     (a, b) =>
       b.score.total - a.score.total || a.fingerprint.digest.localeCompare(b.fingerprint.digest),
   );
-  const ranked = collapseEquivalentActions(intent, authoritative);
+  const ranked = collapseEquivalentActions(intent, semanticCompetition);
   const policy = interactionRiskPolicy(intent);
   const best = ranked[0];
   const confidence = best?.score.total ?? 0;
@@ -257,6 +272,7 @@ export async function resolveTarget(
     confidenceMargin: margin,
     scope: intent.scope,
     rejectedConstraints: [...rejected],
+    rejectedCapabilitySignatures: [...rejectedCapabilitySignatures.values()].sort(compareRejectedCapabilitySignatures),
     drift,
     safeActions: [],
     resolutionSource: "unified",
@@ -760,6 +776,39 @@ function applySemanticDominance(intent: InteractionTargetIntent, candidates: Can
       ),
   );
 }
+function strongestExactIdentityTier(
+  intent: InteractionTargetIntent,
+  candidates: Candidate[],
+): Candidate[] {
+  if (!hasExplicitSemanticIdentity(intent)) return candidates;
+  const exact = candidates.filter((candidate) => candidateHasExactIdentity(intent, candidate.meta));
+  return exact.length ? exact : candidates;
+}
+function hasExplicitSemanticIdentity(intent: InteractionTargetIntent) {
+  const evidence = intent.preferredEvidence;
+  return Boolean(
+    evidence.names.length ||
+      evidence.labels.length ||
+      evidence.descriptions.length ||
+      evidence.placeholders.length ||
+      evidence.expectedText,
+  );
+}
+function candidateHasExactIdentity(intent: InteractionTargetIntent, meta: ObservedControl) {
+  if (meta.sensitive) return false;
+  const evidence = intent.preferredEvidence;
+  return (
+    hasExactValue(evidence.names, [meta.accessibilityName, meta.name]) ||
+    hasExactValue(evidence.labels, meta.labels) ||
+    hasExactValue(evidence.descriptions, [meta.description]) ||
+    hasExactValue(evidence.placeholders, [meta.placeholder]) ||
+    Boolean(evidence.expectedText && normalize(evidence.expectedText) === normalize(meta.text))
+  );
+}
+function hasExactValue(expected: readonly string[], observed: readonly string[]) {
+  const requested = new Set(expected.map(normalize).filter(Boolean));
+  return requested.size > 0 && observed.some((value) => requested.has(normalize(value)));
+}
 function collapseEquivalentActions(intent: InteractionTargetIntent, candidates: Candidate[]) {
   if (["authentication", "credential", "protected", "destructive", "live"].includes(intent.risk))
     return candidates;
@@ -1161,6 +1210,39 @@ function capabilityViolations(
     failures.push("display_only_text");
   return failures;
 }
+const categoricalBoolean = (value: boolean): "yes" | "no" => value ? "yes" : "no";
+export function rejectedCapabilitySignature(capabilities: ControlCapabilities): RejectedCapabilitySignature {
+  return {
+    count: 1,
+    nativeKindClass: capabilities.nativeKind === "input" || capabilities.nativeKind === "textarea" ? capabilities.nativeKind : "other",
+    computedRoleClass: capabilities.computedRole === "textbox" ? "textbox" : "other",
+    visible: categoricalBoolean(capabilities.visible),
+    enabled: categoricalBoolean(capabilities.enabled),
+    readonly: categoricalBoolean(capabilities.readonly),
+    acceptsText: categoricalBoolean(capabilities.canAcceptText),
+    focusable: categoricalBoolean(capabilities.canFocus),
+    editable: categoricalBoolean(capabilities.editable),
+  };
+}
+function rejectedCapabilitySignatureKey(signature: RejectedCapabilitySignature): string {
+  return [signature.nativeKindClass, signature.computedRoleClass, signature.visible, signature.enabled,
+    signature.readonly, signature.acceptsText, signature.focusable, signature.editable].join("|");
+}
+function compareRejectedCapabilitySignatures(left: RejectedCapabilitySignature, right: RejectedCapabilitySignature): number {
+  return rejectedCapabilitySignatureKey(left).localeCompare(rejectedCapabilitySignatureKey(right));
+}
+function recordRejectedCapabilitySignature(target: Map<string, RejectedCapabilitySignature>, capabilities: ControlCapabilities) {
+  const signature = rejectedCapabilitySignature(capabilities);
+  const key = rejectedCapabilitySignatureKey(signature);
+  const existing = target.get(key);
+  if (existing) existing.count += 1;
+  else target.set(key, signature);
+}
+export function aggregateRejectedCapabilitySignatures(capabilities: readonly ControlCapabilities[]): RejectedCapabilitySignature[] {
+  const target = new Map<string, RejectedCapabilitySignature>();
+  for (const item of capabilities) recordRejectedCapabilitySignature(target, item);
+  return [...target.values()].sort(compareRejectedCapabilitySignatures);
+}
 function parseAriaSnapshot(snapshot: string) {
   const line =
     snapshot
@@ -1409,6 +1491,7 @@ function emptyDiagnostic(
     confidenceMargin: 0,
     scope,
     rejectedConstraints: ["scope"],
+    rejectedCapabilitySignatures: [],
     drift: "unchanged",
     safeActions: ["narrow_scope", "revise_intent"],
     resolutionSource: "unified",
