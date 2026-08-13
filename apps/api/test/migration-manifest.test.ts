@@ -22,6 +22,7 @@ describe("schema migration manifest", () => {
     const protectedProjection = baseline.indexOf("\\ir protected-operation-authoritative-projection.sql");
     const protectedResponseStaging = baseline.indexOf("\\ir protected-response-output-staging.sql");
     const protectedReadOnlyDispatch = baseline.indexOf("\\ir protected-read-only-dispatch.sql");
+    const externalResourceBindings = baseline.indexOf("\\ir external-resource-bindings.sql");
 
     expect(preferences).toBeGreaterThan(-1);
     expect(retention).toBeGreaterThan(preferences);
@@ -37,6 +38,7 @@ describe("schema migration manifest", () => {
     expect(protectedProjection).toBeGreaterThan(protectedCompletion);
     expect(protectedResponseStaging).toBeGreaterThan(protectedProjection);
     expect(protectedReadOnlyDispatch).toBeGreaterThan(protectedResponseStaging);
+    expect(externalResourceBindings).toBeGreaterThan(protectedReadOnlyDispatch);
   });
 
   it("recognizes the compiled-plan schema and applies the guarded interactive command cutover", async () => {
@@ -77,6 +79,7 @@ describe("schema migration manifest", () => {
       expect(source).toContain("protected-operation-authoritative-projection.sql");
       expect(source).toContain("protected-response-output-staging.sql");
       expect(source).toContain("protected-read-only-dispatch.sql");
+      expect(source).toContain("external-resource-bindings.sql");
     }
   });
 

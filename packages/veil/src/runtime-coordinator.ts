@@ -278,11 +278,11 @@ export class VeilRuntimeCoordinator {
 
   private async setState(state: PrivacyState, extra: Partial<PrivacyEvent> = {}) {
     this.currentState = state;
-    await this.emit({
+    await boundedEmitter(this.emit({
       state,
       ...(this.operationId ? { operationId: this.operationId } : {}),
       ...extra,
-    });
+    }), this.acknowledgementTimeoutMs);
   }
 
   private expect(expected: PrivacyState) {
@@ -299,6 +299,25 @@ export class VeilRuntimeCoordinator {
       () => undefined,
     );
     return next;
+  }
+}
+
+async function boundedEmitter(work: Promise<void>, timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  work.then(() => undefined, () => undefined);
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new PrivacyTransitionError("VEIL_EMITTER_TIMEOUT")),
+          Math.max(0, timeoutMs),
+        );
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

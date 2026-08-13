@@ -147,86 +147,41 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
     visibility: "unknown",
     accessibility: "unknown",
   }));
+  const exhaustedMethods = new Set<AcquisitionIntent["permittedMethods"][number]>();
   while (Date.now() < deadline) {
+    let retryPriorityMethod = false;
     for (const [index, method] of methods.entries()) {
       if (Date.now() >= deadline) break;
+      if (exhaustedMethods.has(method)) continue;
       const diagnostic = diagnostics[index]!;
       const started = Date.now();
       diagnostic.attempts += 1;
       diagnostic.firstAttemptedAt ??= new Date(started).toISOString();
       try {
-        if (method === "protected_network_value") {
-          diagnostic.containerResolved = true;
-          diagnostic.matchCount = "one";
-          diagnostic.visibility = "unknown";
-          diagnostic.accessibility = "unknown";
-          const acquired = await acquireByMethod(
-            page,
-            page.locator("body"),
-            method,
-            acquisition,
-          );
-          if (acquired.kind === "copy_experience_verified") {
-            return { result: acquired, value: undefined, diagnostics };
-          }
-          const normalized = acquired.value.trim();
-          if (valid(normalized, acquisition.validation) &&
-            !isSemanticIdentityEcho(normalized, acquisition.target)) {
-            return {
-              result: { ...acquired, value: normalized },
-              value: normalized,
-              diagnostics,
-            };
-          }
-          diagnostic.lastFailureCode = normalized
-            ? isSemanticIdentityEcho(normalized, acquisition.target)
-              ? "VALUE_MATCHES_SEMANTIC_IDENTITY"
-              : "VALUE_VALIDATION_FAILED"
-            : "VALUE_EMPTY";
-          continue;
-        }
-        let targetResolved = false;
-        let lastGroundingError: unknown;
-        let lastAcquisitionError: unknown;
-        for (const target of targetVariants) {
-          try {
-            const result = await resolveTarget(page, target);
-            targetResolved = true;
-            diagnostic.containerResolved = true;
-            diagnostic.matchCount = "one";
-            diagnostic.visibility = "visible";
-            diagnostic.accessibility = "available";
-            const acquired = await acquireByMethod(page, result.locator, method, acquisition);
-            if (acquired.kind === "copy_experience_verified") {
-              return { result: acquired, value: undefined, diagnostics };
-            }
-            const normalized = acquired.value.trim();
-            if (valid(normalized, acquisition.validation) && !isSemanticIdentityEcho(normalized, acquisition.target)) {
-              return {
-                result: { ...acquired, value: normalized },
-                value: normalized,
-                diagnostics,
-              };
-            }
-            diagnostic.lastFailureCode = normalized
-              ? isSemanticIdentityEcho(normalized, acquisition.target)
-                ? "VALUE_MATCHES_SEMANTIC_IDENTITY"
-                : "VALUE_VALIDATION_FAILED"
-              : "VALUE_EMPTY";
-          } catch (error) {
-            if (error instanceof GroundingError) {
-              if (!(lastGroundingError instanceof GroundingError) || error.code === "TARGET_AMBIGUOUS")
-                lastGroundingError = error;
-            } else {
-              lastAcquisitionError = error;
-            }
-          }
-        }
-        if (!targetResolved && lastGroundingError) throw lastGroundingError;
-        if (targetResolved && lastAcquisitionError)
-          diagnostic.lastFailureCode = safeCode(lastAcquisitionError);
+        const remainingMs = Math.max(1, deadline - Date.now());
+        const ownershipMs = acquisitionAttemptOwnershipMs(
+          remainingMs,
+          method !== "protected_network_value" && !exhaustedMethods.has("protected_network_value"),
+        );
+        const acquired = await ownAcquisitionAttempt(
+          () => attemptAcquisitionMethod(page, acquisition, targetVariants, method, diagnostic),
+          ownershipMs,
+          method,
+        );
+        if (acquired?.result) return { ...acquired, diagnostics };
       } catch (error) {
         diagnostic.lastFailureCode = error instanceof GroundingError ? error.code : safeCode(error);
+        if (error instanceof AcquisitionAttemptTimeoutError) retryPriorityMethod = true;
+        if (
+          method === "protected_network_value" &&
+          diagnostic.lastFailureCode !== "PROTECTED_RESPONSE_NOT_OBSERVED"
+        ) {
+          // The response envelope is immutable after settlement. Retrying the
+          // same extraction after an eligible response was classified cannot
+          // discover a new value and only steals budget from fallback methods.
+          // A not-yet-observed response remains retryable until the owner deadline.
+          exhaustedMethods.add(method);
+        }
         if (
           method === "protected_network_value" &&
           [
@@ -243,12 +198,170 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
       } finally {
         diagnostic.durationMs += Date.now() - started;
       }
+      if (retryPriorityMethod) break;
     }
+    if (exhaustedMethods.size === methods.length) break;
     await new Promise((resolve) =>
       setTimeout(resolve, Math.min(50, Math.max(0, deadline - Date.now()))),
     );
   }
   return { result: undefined, value: undefined, diagnostics };
+}
+
+async function attemptAcquisitionMethod(
+  page: Page,
+  acquisition: AcquisitionIntent,
+  targetVariants: AcquisitionIntent["target"][],
+  method: AcquisitionIntent["permittedMethods"][number],
+  diagnostic: CandidateState,
+): Promise<{ result: ProtectedAcquisitionResult; value: string | undefined } | undefined> {
+  if (method === "protected_network_value") {
+    diagnostic.containerResolved = true;
+    diagnostic.matchCount = "one";
+    diagnostic.visibility = "unknown";
+    diagnostic.accessibility = "unknown";
+    return validateAcquired(
+      await acquireByMethod(page, page.locator("body"), method, acquisition),
+      acquisition,
+      diagnostic,
+    );
+  }
+  let targetResolved = false;
+  let lastGroundingError: unknown;
+  let lastAcquisitionError: unknown;
+  for (const target of targetVariants) {
+    try {
+      const result = await resolveTarget(page, target);
+      targetResolved = true;
+      diagnostic.containerResolved = true;
+      diagnostic.matchCount = "one";
+      diagnostic.visibility = "visible";
+      diagnostic.accessibility = "available";
+      if (await matchesProhibitedSource(
+        page,
+        result.locator,
+        acquisition.prohibitedSourceTargets ?? [],
+      )) {
+        diagnostic.lastFailureCode = "ACQUISITION_SOURCE_PROHIBITED";
+        continue;
+      }
+      const acquired = validateAcquired(
+        await acquireByMethod(page, result.locator, method, acquisition),
+        acquisition,
+        diagnostic,
+      );
+      if (acquired) return acquired;
+    } catch (error) {
+      if (error instanceof GroundingError) {
+        if (!(lastGroundingError instanceof GroundingError) || error.code === "TARGET_AMBIGUOUS")
+          lastGroundingError = error;
+      } else {
+        lastAcquisitionError = error;
+      }
+    }
+  }
+  if (!targetResolved && lastGroundingError) throw lastGroundingError;
+  if (targetResolved && lastAcquisitionError)
+    diagnostic.lastFailureCode = safeCode(lastAcquisitionError);
+  return undefined;
+}
+
+function validateAcquired(
+  acquired: ProtectedAcquisitionResult,
+  acquisition: AcquisitionIntent,
+  diagnostic: CandidateState,
+) {
+  if (acquired.kind === "copy_experience_verified") {
+    return { result: acquired, value: undefined };
+  }
+  const normalized = acquired.value.trim();
+  if (valid(normalized, acquisition.validation) &&
+    !isSemanticIdentityEcho(normalized, acquisition.target)) {
+    acquired.value = normalized;
+    return { result: acquired, value: normalized };
+  }
+  diagnostic.lastFailureCode = normalized
+    ? isSemanticIdentityEcho(normalized, acquisition.target)
+      ? "VALUE_MATCHES_SEMANTIC_IDENTITY"
+      : "VALUE_VALIDATION_FAILED"
+    : "VALUE_EMPTY";
+  acquired.value = "";
+  return undefined;
+}
+
+function acquisitionAttemptOwnershipMs(remainingMs: number, reservePriorityRetry: boolean) {
+  // acquireValue already receives a dependency deadline shortened beneath its
+  // outer protected stage. Only reserve an additional share when a fallback
+  // must yield to a still-retryable priority network source.
+  return reservePriorityRetry
+    ? Math.max(1, Math.floor(Math.max(1, remainingMs - 1) / 2))
+    : remainingMs;
+}
+
+async function ownAcquisitionAttempt<T extends { result: ProtectedAcquisitionResult; value: string | undefined } | undefined>(
+  work: () => Promise<T>,
+  timeoutMs: number,
+  method: AcquisitionIntent["permittedMethods"][number],
+) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  const attempt = Promise.resolve().then(work);
+  attempt.then((late) => {
+    if (timedOut && late?.result.kind === "captured_value") {
+      late.result.value = "";
+      late.value = undefined;
+    }
+  }, () => undefined);
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(new AcquisitionAttemptTimeoutError(method));
+    }, Math.max(1, timeoutMs));
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([attempt, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+class AcquisitionAttemptTimeoutError extends Error {
+  constructor(readonly method: AcquisitionIntent["permittedMethods"][number]) {
+    super("ACQUISITION_METHOD_TIMEOUT");
+  }
+}
+
+async function matchesProhibitedSource(
+  page: Page,
+  candidate: Locator,
+  prohibitedTargets: AcquisitionIntent["target"][],
+) {
+  if (!prohibitedTargets.length) return false;
+  const candidateElement = await candidate.elementHandle();
+  if (!candidateElement) return false;
+  try {
+    for (const prohibitedTarget of prohibitedTargets) {
+      try {
+        const prohibited = await resolveTarget(page, prohibitedTarget);
+        const prohibitedElement = await prohibited.locator.elementHandle();
+        if (!prohibitedElement) continue;
+        try {
+          if (await candidateElement.evaluate(
+            (element, other) => element === other,
+            prohibitedElement,
+          )) return true;
+        } finally {
+          await prohibitedElement.dispose();
+        }
+      } catch {
+        // A source that is no longer present cannot supply the candidate.
+      }
+    }
+    return false;
+  } finally {
+    await candidateElement.dispose();
+  }
 }
 
 function acquisitionTargetVariants(target: AcquisitionIntent["target"]): AcquisitionIntent["target"][] {

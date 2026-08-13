@@ -40,6 +40,7 @@ export type AtomicOutputCapture = (input: {
     value: string;
     scope: "run" | "project";
   }>;
+  externalResourceBindings: import("@scry/contracts").ProtectedTransaction["extraction"]["externalResourceBindings"];
 }) => Promise<{
   claim: import("./protected-transaction-coordinator.js").ProtectedOperationClaim;
   references: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "run" | "project" }>;

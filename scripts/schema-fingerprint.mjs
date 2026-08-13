@@ -79,6 +79,10 @@ const protectedReadOnlyDispatch = await readFile(
   new URL("protected-read-only-dispatch.sql", root),
   "utf8",
 );
+const externalResourceBindings = await readFile(
+  new URL("external-resource-bindings.sql", root),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -102,6 +106,7 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "u
   ["protected-operation-authoritative-projection.sql", protectedOperationAuthoritativeProjection],
   ["protected-response-output-staging.sql", protectedResponseOutputStaging],
   ["protected-read-only-dispatch.sql", protectedReadOnlyDispatch],
+  ["external-resource-bindings.sql", externalResourceBindings],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

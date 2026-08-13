@@ -280,6 +280,27 @@ const transactionOutputSchema = z.discriminatedUnion("classification", [
     .strict(),
 ]);
 
+const externalResourceBindingSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("active"),
+    identityReference: identifier,
+    provider: identifier,
+    resourceKind: identifier,
+    resourceScope: z.string().trim().min(1).max(500),
+    identityContractVersion: z.number().int().min(1).max(1_000),
+    identitySource: z.literal("response"),
+    requiredForDestructiveLifecycle: z.boolean().default(true),
+  }).strict(),
+  z.object({
+    status: z.literal("unavailable"),
+    provider: identifier,
+    resourceKind: identifier,
+    resourceScope: z.string().trim().min(1).max(500),
+    identityContractVersion: z.number().int().min(1).max(1_000),
+    requiredForDestructiveLifecycle: z.boolean().default(true),
+  }).strict(),
+]);
+
 export const protectedTransactionSchema = z
   .object({
     type: z.literal("protectedTransaction"),
@@ -361,6 +382,7 @@ export const protectedTransactionSchema = z
     extraction: z
       .object({
         outputs: z.array(transactionOutputSchema).min(1).max(8),
+        externalResourceBindings: z.array(externalResourceBindingSchema).max(8).optional(),
         timeoutMs: z.number().int().min(100).max(60_000),
         scheduling: z.literal("fair_shared_timeout"),
       })
@@ -563,6 +585,24 @@ export const protectedTransactionSchema = z
           message: "output and acquisition classifications must match",
           path: ["extraction", "outputs", outputIndex, "acquisition", "classification"],
         });
+    }
+    const bindingKeys = new Set<string>();
+    for (const [bindingIndex, binding] of (transaction.extraction.externalResourceBindings ?? []).entries()) {
+      const key = `${binding.provider}\u0000${binding.resourceKind}\u0000${binding.resourceScope}`;
+      if (bindingKeys.has(key)) context.addIssue({
+        code: "custom",
+        message: "duplicate external resource binding declaration",
+        path: ["extraction", "externalResourceBindings", bindingIndex],
+      });
+      bindingKeys.add(key);
+      if (binding.status === "active") {
+        const output = transaction.extraction.outputs.find((candidate) => candidate.reference === binding.identityReference);
+        if (!output || output.classification !== "public" || output.storage.scope !== "project") context.addIssue({
+          code: "custom",
+          message: "external resource identity must reference a project-scoped public output",
+          path: ["extraction", "externalResourceBindings", bindingIndex, "identityReference"],
+        });
+      }
     }
     if (transaction.mutation.reconciliation.strategy === "persisted_outputs") {
       for (const [

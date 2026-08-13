@@ -622,6 +622,15 @@ async function resolveScope(
 ): Promise<Locator> {
   const parent = scope.within ? await resolveScope(frame, scope.within) : frame.locator("body");
   if (scope.kind === "page") return parent;
+  const { options, matches } = await matchingScopeOptions(parent, scope);
+  if (matches.length === 1) return options.nth(matches[0]!);
+  throw new GroundingError("TARGET_SCOPE_INVALID", emptyDiagnostic(scope, matches.length));
+}
+
+async function matchingScopeOptions(
+  parent: Locator,
+  scope: Exclude<InteractionTargetIntent["scope"], { kind: "page" }>,
+) {
   const selector: { [key: string]: string } = {
     dialog: "dialog,[role=dialog]",
     form: "form,[role=form]",
@@ -634,8 +643,7 @@ async function resolveScope(
   };
   const options = parent.locator(selector[scope.kind] ?? "*");
   if (!scope.name) {
-    if ((await options.count()) === 1) return options;
-    throw new GroundingError("TARGET_SCOPE_INVALID", emptyDiagnostic(scope, await options.count()));
+    return { options, matches: Array.from({ length: await options.count() }, (_, index) => index) };
   }
   const matches: number[] = [];
   for (let index = 0, count = Math.min(await options.count(), 500); index < count; index += 1) {
@@ -649,8 +657,29 @@ async function resolveScope(
       .catch(() => "");
     if (normalize(identity).includes(normalize(scope.name))) matches.push(index);
   }
-  if (matches.length === 1) return options.nth(matches[0]!);
-  throw new GroundingError("TARGET_SCOPE_INVALID", emptyDiagnostic(scope, matches.length));
+  return { options, matches };
+}
+
+/** Returns only a categorical scope count; the scope value itself is never emitted. */
+export async function inspectSemanticScope(
+  page: Page,
+  scope: InteractionTargetIntent["scope"],
+  options?: { allowedOrigins?: readonly string[] },
+) {
+  if (scope.kind === "page") return { matchCount: 1 } as const;
+  let matchCount = 0;
+  for (const frame of authorizedDocuments(page, options?.allowedOrigins)) {
+    try {
+      const parent = scope.within
+        ? await resolveScope(frame, scope.within)
+        : frame.locator("body");
+      const result = await matchingScopeOptions(parent, scope);
+      matchCount += result.matches.length;
+    } catch {
+      // A missing/ambiguous parent cannot establish a child boundary.
+    }
+  }
+  return { matchCount };
 }
 
 function documentIdentity(frame: Frame, index: number) {

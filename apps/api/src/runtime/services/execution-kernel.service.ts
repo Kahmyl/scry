@@ -53,7 +53,10 @@ export class ExecutionCapabilityFactory {
       : {};
     const compatibilityOptions: RuntimeExecutionCapabilities["options"] = {
       ...options,
-      openBrowser: options.openBrowser ?? ((contextOptions) => this.nativeBrowser.openBrowser(contextOptions)),
+      openBrowser: options.openBrowser ?? ((contextOptions) => this.nativeBrowser.openBrowser(contextOptions, {
+        kind: "protected_capsule",
+        ownerId: `${input.sessionId}:${input.operationId}`,
+      })),
       executeNativeControl:
         options.executeNativeControl ??
         ((page, target, operation, beforeDispatch) =>
@@ -377,14 +380,14 @@ export class ExecutionCapabilityFactory {
         },
         heartbeatIntervalMs: Math.max(250, Math.floor(leaseDurationMs / 3)),
       },
-      atomicOutputCapture: async ({ operationId, claim, outputs: capturedOutputs }) => outputs.persistOutputsAtomically({
+      atomicOutputCapture: async ({ operationId, claim, outputs: capturedOutputs, externalResourceBindings }) => outputs.persistOutputsAtomically({
         protectedOperationId: claim.id, projectId: context.projectId,
         environmentId: context.environmentId, missionId: context.missionId,
         objectiveId: context.objectiveId, agentSessionId: context.agentSessionId,
         ownerKind: context.ownerKind, ownerId: context.ownerId,
         operationId,
         leaseOwner: context.leaseOwner, fencingToken: claim.fencingToken, version: claim.version,
-      }, capturedOutputs.map((output) => ({ ...output, storageName: output.name }))),
+      }, capturedOutputs.map((output) => ({ ...output, storageName: output.name })), externalResourceBindings),
       stageProtectedResponseOutputs: async ({ operationId, claim, outputs: capturedOutputs }) => outputs.stageResponseOutputs({
         protectedOperationId: claim.id, projectId: context.projectId,
         environmentId: context.environmentId, missionId: context.missionId,
@@ -436,7 +439,7 @@ function projectProtectedDiagnostics(facts: Record<string, unknown>) {
     "mutation", "protectedExtraction", "publicExtraction", "protectedPersistence",
     "publicPersistence", "capsule", "reconciliation", "continuation", "evidence",
     "credentialSecurity", "recoveryExpiresAt", "acquisitionContractDigest",
-    "preparationEffects",
+    "preparationEffects", "responseEvidence", "protectedAcquisitionEvidence",
   ]);
   return Object.fromEntries(Object.entries(facts).filter(([key]) => allowed.has(key)));
 }

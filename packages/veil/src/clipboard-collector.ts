@@ -15,6 +15,7 @@ export class VeilClipboardCollector extends VeilChannelCollector {
   constructor(
     private readonly page: Page,
     private readonly attempts = 3,
+    private readonly attemptTimeoutMs = 1_000,
   ) {
     super("clipboard");
     clipboardCollectors.set(page, this);
@@ -29,11 +30,11 @@ export class VeilClipboardCollector extends VeilChannelCollector {
       let failure: unknown;
       for (let attempt = 0; attempt < this.attempts; attempt += 1) {
         try {
-          await this.page.evaluate(async () => {
+          await boundedCleanup(this.page.evaluate(async () => {
             await navigator.clipboard.writeText("");
             const observed = await navigator.clipboard.readText();
             if (observed !== "") throw new Error("clipboard remained non-empty");
-          });
+          }), this.attemptTimeoutMs);
           this.protectedClipboardTouched = false;
           failure = undefined;
           break;
@@ -47,6 +48,22 @@ export class VeilClipboardCollector extends VeilChannelCollector {
         );
     }
     await super.finalize();
+  }
+}
+
+async function boundedCleanup<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("VEIL_CLIPBOARD_CLEANUP_TIMEOUT")), Math.max(0, timeoutMs));
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    work.then(() => undefined, () => undefined);
   }
 }
 

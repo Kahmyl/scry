@@ -12,7 +12,12 @@ import type {
   MissionAuthoringIntent,
   MissionAuthoringTurnResult,
 } from "@scry/contracts";
-import { executionPolicySchema, missionAuthoringTurnResultSchema, operationOutcomeSchema } from "@scry/contracts";
+import {
+  executionPolicySchema,
+  missionAuthoringIntentSchema,
+  missionAuthoringTurnResultSchema,
+  operationOutcomeSchema,
+} from "@scry/contracts";
 
 import { decryptCredential } from "../access/index.js";
 import { Database } from "../infrastructure/index.js";
@@ -40,7 +45,19 @@ export class AdaptiveSessionRepository {
   create(workspaceId: string | null, input: StartAdaptiveSessionInput) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
-      await this.requireProjectEnvironment(q, workspaceId, input.projectId, input.environmentId);
+      const environment = await this.requireProjectEnvironment(
+        q,
+        workspaceId,
+        input.projectId,
+        input.environmentId,
+      );
+      const allowedOrigins = requireEnvironmentCapabilities(environment, input);
+      await this.requireActiveProtectedReferences(
+        q,
+        input.projectId,
+        input.environmentId,
+        input.initialProtectedReferenceIds ?? [],
+      );
       const initialFlow = await this.validateControlPlaneLinks(q, input);
       const replay = await q<{ id: string }>(
         `SELECT id FROM adaptive_sessions WHERE project_id=$1 AND idempotency_key=$2`,
@@ -61,7 +78,7 @@ export class AdaptiveSessionRepository {
           input.environmentId,
           input.correlationId ?? randomUUID(),
           input.objective,
-          JSON.stringify(input.allowedOrigins),
+          JSON.stringify(allowedOrigins),
           input.missionId,
           input.objectiveId,
           input.flowDraftId,
@@ -270,6 +287,21 @@ export class AdaptiveSessionRepository {
     if (input.intent.protectedInputReferences.some((reference) => !current.protectedAllowlist.includes(reference))) {
       throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED" });
     }
+    const lifecycleReferences = input.intent.credentialLifecycle?.credentialReferenceIds ?? [];
+    const statusCheckedReferences = [...new Set([
+      ...input.intent.protectedInputReferences,
+      ...lifecycleReferences,
+    ])];
+    if (lifecycleReferences.some((reference) => !current.protectedAllowlist.includes(reference))) {
+      throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED" });
+    }
+    await this.requireActiveProtectedReferences(
+      this.database.query.bind(this.database),
+      undefined,
+      current.environmentId,
+      statusCheckedReferences,
+      input.sessionId,
+    );
     if (input.intent.expectedEffect.kind === "new_page" && input.intent.expectedEffect.origin) {
       let origin: string;
       try { origin = new URL(input.intent.expectedEffect.origin).origin; } catch { throw new ConflictException({ code: "MISSION_AUTHORING_NEW_PAGE_ORIGIN_INVALID" }); }
@@ -294,6 +326,31 @@ export class AdaptiveSessionRepository {
     intentIds: string[];
     entryUrl: string;
   }) {
+    const referenced = await this.database.query<{ reference: string }>(
+      `SELECT DISTINCT protected_reference.value AS reference
+         FROM adaptive_operations operation
+         CROSS JOIN LATERAL jsonb_array_elements_text(
+           COALESCE(operation.authoring_intent->'protectedInputReferences','[]'::jsonb)
+         ) protected_reference(value)
+        WHERE operation.session_id=$1
+          AND operation.authoring_intent->>'intentId'=ANY($2::text[])`,
+      [input.sessionId, input.intentIds],
+    );
+    if (referenced.rowCount) {
+      const session = await this.database.query<{ projectId: string; environmentId: string }>(
+        `SELECT project_id AS "projectId",environment_id AS "environmentId"
+           FROM adaptive_sessions WHERE id=$1`,
+        [input.sessionId],
+      );
+      if (!session.rowCount) throw new NotFoundException("Adaptive session not found");
+      await this.requireActiveProtectedReferences(
+        this.database.query.bind(this.database),
+        session.rows[0]!.projectId,
+        session.rows[0]!.environmentId,
+        referenced.rows.map(({ reference }) => reference),
+        input.sessionId,
+      );
+    }
     const result = await this.database.query<{
       sequence: number;
       intentId: string;
@@ -485,7 +542,45 @@ export class AdaptiveSessionRepository {
         };
       }
       const adaptiveState = durable.state === "completed" ? "completed" : "failed";
-      await this.writeProtectedProjection(q, input, owner, outcome, decisionBoundary, adaptiveState);
+      let generatedCredentialIds: string[] = [];
+      if (durable.state === "completed") {
+        generatedCredentialIds = [...new Set(generatedReferences.flatMap((reference) =>
+          reference.classification === "protected" && reference.credentialId
+            ? [reference.credentialId]
+            : [],
+        ))];
+        if (generatedCredentialIds.length) {
+          const admissible = await q<{ id: string }>(
+            `SELECT credential.id::text
+               FROM adaptive_sessions session
+               JOIN environments environment
+                 ON environment.id=session.environment_id
+                AND environment.project_id=session.project_id
+               JOIN project_credentials credential
+                 ON credential.project_id=session.project_id
+                AND credential.id=ANY($2::uuid[])
+                AND credential.origin_protected_operation_id=$3
+                AND credential.deleted_at IS NULL
+                AND credential.security_status='active'
+              WHERE session.id=$1
+                AND environment.secret_refs ? credential.id::text`,
+            [input.sessionId, generatedCredentialIds, durable.id],
+          );
+          if (
+            admissible.rows.length !== generatedCredentialIds.length ||
+            generatedCredentialIds.some(
+              (credentialId) => !admissible.rows.some(({ id }) => id === credentialId),
+            )
+          ) {
+            throw new ConflictException({
+              code: "MISSION_AUTHORING_PROTECTED_REFERENCE_PROVENANCE_INVALID",
+            });
+          }
+        }
+      }
+      await this.writeProtectedProjection(
+        q, input, owner, outcome, decisionBoundary, adaptiveState, generatedCredentialIds,
+      );
       return { status: "settled" as const, state: durable.state, outcome, decisionBoundary };
     });
   }
@@ -651,6 +746,7 @@ export class AdaptiveSessionRepository {
     outcome: OperationOutcome,
     decisionBoundary: AgentDecisionBoundary,
     adaptiveState: "completed" | "failed",
+    generatedCredentialIds: string[],
   ) {
     const capabilityManifestDigest = createHash("sha256").update("durable-protected-operation").digest("hex");
     const projected = await q(
@@ -731,14 +827,33 @@ export class AdaptiveSessionRepository {
            WHEN $3='applied' AND state='recovery_required' THEN 'active'
            ELSE state
          END,
+         protected_reference_allowlist=(
+           SELECT COALESCE(jsonb_agg(value ORDER BY value),'[]'::jsonb)
+             FROM (
+               SELECT DISTINCT value
+                 FROM jsonb_array_elements_text(
+                   protected_reference_allowlist || $4::jsonb
+                 ) AS value
+             ) distinct_refs
+         ),
          decision_boundary=$2::jsonb,updated_at=now(),version=version+1
        WHERE id=$1
          AND (state IS DISTINCT FROM CASE
            WHEN $3='unknown' THEN 'recovery_required'
            WHEN $3='applied' AND state='recovery_required' THEN 'active'
            ELSE state
-         END OR decision_boundary IS DISTINCT FROM $2::jsonb)`,
-      [input.sessionId, JSON.stringify(decisionBoundary), outcome.mutationOutcome],
+         END OR decision_boundary IS DISTINCT FROM $2::jsonb
+         OR protected_reference_allowlist IS DISTINCT FROM (
+           SELECT COALESCE(jsonb_agg(value ORDER BY value),'[]'::jsonb)
+             FROM (
+               SELECT DISTINCT value
+                 FROM jsonb_array_elements_text(
+                   protected_reference_allowlist || $4::jsonb
+                 ) AS value
+             ) distinct_refs
+         ))`,
+      [input.sessionId, JSON.stringify(decisionBoundary), outcome.mutationOutcome,
+        JSON.stringify(generatedCredentialIds)],
     );
     if (projectionChanged) {
       await this.appendEvent(q, input.sessionId,
@@ -769,12 +884,29 @@ export class AdaptiveSessionRepository {
   }) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
-      const operation = await q<{ flowDraftId: string; missionId: string; objectiveId: string }>(
-        `SELECT flow_draft_id AS "flowDraftId",mission_id AS "missionId",objective_id AS "objectiveId"
-         FROM adaptive_operations WHERE session_id=$1 AND operation_id=$2 AND state='running' FOR UPDATE`,
+      const operation = await q<{
+        flowDraftId: string;
+        missionId: string;
+        objectiveId: string;
+        projectId: string;
+        environmentId: string;
+        authoringIntent: unknown;
+      }>(
+        `SELECT operation.flow_draft_id AS "flowDraftId",operation.mission_id AS "missionId",
+                operation.objective_id AS "objectiveId",session.project_id AS "projectId",
+                session.environment_id AS "environmentId",
+                operation.authoring_intent AS "authoringIntent"
+           FROM adaptive_operations operation
+           JOIN adaptive_sessions session ON session.id=operation.session_id
+          WHERE operation.session_id=$1 AND operation.operation_id=$2
+            AND operation.state='running' FOR UPDATE OF operation`,
         [input.sessionId, input.operationId],
       );
       if (!operation.rowCount) throw new ConflictException({ code: "ADAPTIVE_OPERATION_NOT_RUNNING" });
+      const durableIntent = missionAuthoringIntentSchema.parse(operation.rows[0]!.authoringIntent);
+      if (durableIntent.intentId !== input.intent.intentId) {
+        throw new ConflictException({ code: "MISSION_AUTHORING_INTENT_MISMATCH" });
+      }
       const state = input.outcome.functionalResult === "succeeded" && input.outcome.mutationOutcome !== "unknown"
         ? "completed"
         : "failed";
@@ -789,6 +921,15 @@ export class AdaptiveSessionRepository {
           JSON.stringify(input.outcome.qualityFindings), JSON.stringify(input.outcome), JSON.stringify(input.decisionBoundary)],
       );
       const owner = operation.rows[0]!;
+      await this.projectCredentialLifecycle(q, {
+        projectId: owner.projectId,
+        environmentId: owner.environmentId,
+        missionId: owner.missionId,
+        objectiveId: owner.objectiveId,
+        operationId: input.operationId,
+        intent: durableIntent,
+        outcome: input.outcome,
+      });
       if (state === "completed" && input.outcome.mutationOutcome !== "unknown") {
         const draft = await q<{ version: number; createdByAgentSessionId: string }>(
           `SELECT version,created_by_agent_session_id AS "createdByAgentSessionId" FROM flow_drafts WHERE id=$1
@@ -839,6 +980,103 @@ export class AdaptiveSessionRepository {
       );
       return { state, outcome: input.outcome, decisionBoundary: input.decisionBoundary };
     });
+  }
+
+  projectCredentialLifecycleForAuthoring(input: { sessionId: string; operationId: string }) {
+    return this.database.transaction(async (client) => {
+      const q = bind(client);
+      const operation = await q<{
+        projectId: string;
+        environmentId: string;
+        missionId: string;
+        objectiveId: string;
+        intent: unknown;
+        outcome: unknown;
+      }>(
+        `SELECT session.project_id AS "projectId",session.environment_id AS "environmentId",
+                operation.mission_id AS "missionId",operation.objective_id AS "objectiveId",
+                operation.authoring_intent AS intent,operation.safe_outcome AS outcome
+           FROM adaptive_operations operation
+           JOIN adaptive_sessions session ON session.id=operation.session_id
+          WHERE operation.session_id=$1 AND operation.operation_id=$2
+            AND operation.state IN ('completed','failed')
+          FOR UPDATE OF operation`,
+        [input.sessionId, input.operationId],
+      );
+      if (!operation.rowCount) {
+        throw new ConflictException({ code: "ADAPTIVE_OPERATION_NOT_SETTLED" });
+      }
+      const owner = operation.rows[0]!;
+      const intent = missionAuthoringIntentSchema.parse(owner.intent);
+      const outcome = operationOutcomeSchema.parse(owner.outcome);
+      const projected = await this.projectCredentialLifecycle(q, {
+        projectId: owner.projectId,
+        environmentId: owner.environmentId,
+        missionId: owner.missionId,
+        objectiveId: owner.objectiveId,
+        operationId: input.operationId,
+        intent,
+        outcome,
+      });
+      return { projected, lifecycle: intent.credentialLifecycle?.effect ?? null };
+    });
+  }
+
+  private async projectCredentialLifecycle(
+    q: Query,
+    input: {
+      projectId: string;
+      environmentId: string;
+      missionId: string;
+      objectiveId: string;
+      operationId: string;
+      intent: MissionAuthoringIntent;
+      outcome: OperationOutcome;
+    },
+  ) {
+    const lifecycle = input.intent.credentialLifecycle;
+    if (!lifecycle || input.outcome.mutationOutcome === "not_applied") return false;
+
+    const references = lifecycle.credentialReferenceIds;
+    const credentials = await q<{ id: string; securityStatus: "active" | "compromised" | "revoked" }>(
+      `SELECT credential.id::text,credential.security_status AS "securityStatus"
+         FROM environments environment
+         JOIN project_credentials credential ON credential.project_id=environment.project_id
+        WHERE environment.id=$1 AND environment.project_id=$2
+          AND credential.id=ANY($3::uuid[]) AND credential.deleted_at IS NULL
+          AND environment.secret_refs ? credential.id::text
+        FOR UPDATE OF credential`,
+      [input.environmentId, input.projectId, references],
+    );
+    if (credentials.rows.length !== references.length ||
+        references.some((reference) => !credentials.rows.some(({ id }) => id === reference))) {
+      throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED" });
+    }
+
+    const confirmed = input.outcome.mutationOutcome === "applied" &&
+      input.outcome.functionalResult === "succeeded";
+    const targetStatus = confirmed ? "revoked" : "compromised";
+    const updated = await q<{ id: string }>(
+      `UPDATE project_credentials
+          SET security_status=$2,updated_at=now()
+        WHERE id=ANY($1::uuid[])
+          AND security_status = ANY($3::text[])
+        RETURNING id::text`,
+      [references, targetStatus,
+        confirmed ? ["active", "compromised"] : ["active"]],
+    );
+    if (!updated.rowCount) return false;
+    await q(
+      `INSERT INTO mission_activities(mission_id,objective_id,type,summary,safe_metadata,technical)
+       VALUES($1,$2,'authoring','Protected credential lifecycle projected',$3::jsonb,true)`,
+      [input.missionId, input.objectiveId, JSON.stringify({
+        operationId: input.operationId,
+        effect: lifecycle.effect,
+        result: targetStatus,
+        credentialCount: references.length,
+      })],
+    );
+    return true;
   }
 
   async closeAtSafeBoundary(input: { workspaceId: string | null; sessionId: string; idempotencyKey: string }) {
@@ -1469,12 +1707,46 @@ export class AdaptiveSessionRepository {
     projectId: string,
     environmentId: string,
   ) {
-    const result = await q(
-      `SELECT 1 FROM projects p JOIN environments e ON e.project_id=p.id
+    const result = await q<{ policy: unknown; secretRefs: unknown }>(
+      `SELECT e.policy,e.secret_refs AS "secretRefs"
+       FROM projects p JOIN environments e ON e.project_id=p.id
        WHERE p.id=$1 AND e.id=$2 AND ($3::uuid IS NULL OR p.workspace_id=$3)`,
       [projectId, environmentId, workspaceId],
     );
     if (!result.rowCount) throw new NotFoundException("Project environment not found");
+    return result.rows[0]!;
+  }
+
+  private async requireActiveProtectedReferences(
+    q: Query,
+    projectId: string | undefined,
+    environmentId: string,
+    references: string[],
+    sessionId?: string,
+  ) {
+    if (!references.length) return;
+    const active = await q<{ id: string }>(
+      `SELECT credential.id::text
+         FROM environments environment
+         JOIN project_credentials credential
+           ON credential.project_id=environment.project_id
+          AND credential.id=ANY($3::uuid[])
+          AND credential.deleted_at IS NULL
+          AND credential.security_status='active'
+        WHERE environment.id=$2
+          AND ($1::uuid IS NULL OR environment.project_id=$1)
+          AND ($4::uuid IS NULL OR EXISTS (
+            SELECT 1 FROM adaptive_sessions session
+             WHERE session.id=$4 AND session.project_id=environment.project_id
+               AND session.environment_id=environment.id
+          ))
+          AND environment.secret_refs ? credential.id::text`,
+      [projectId ?? null, environmentId, references, sessionId ?? null],
+    );
+    const activeIds = new Set(active.rows.map(({ id }) => id));
+    if (references.some((reference) => !activeIds.has(reference))) {
+      throw new ConflictException({ code: "PROTECTED_REFERENCE_INACTIVE" });
+    }
   }
 
   private async validateControlPlaneLinks(q: Query, input: StartAdaptiveSessionInput) {
@@ -1519,6 +1791,35 @@ function canonicalReplayUrl(value: string) {
   } catch {
     throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REPLAY_CHECKPOINT_UNAVAILABLE" });
   }
+}
+
+export function requireEnvironmentCapabilities(
+  environment: { policy: unknown; secretRefs: unknown },
+  input: Pick<StartAdaptiveSessionInput, "allowedOrigins" | "initialProtectedReferenceIds">,
+) {
+  const policy = executionPolicySchema.parse(environment.policy);
+  const requestedOrigins = [...new Set(input.allowedOrigins.map((value) => new URL(value).origin))];
+  const missingOriginCount = requestedOrigins.filter(
+    (origin) => !policy.allowedOrigins.includes(origin),
+  ).length;
+  if (missingOriginCount) {
+    throw new ConflictException({
+      code: "ENVIRONMENT_CAPABILITY_INCOMPLETE",
+      capability: "allowed_origins",
+      missingCount: missingOriginCount,
+    });
+  }
+  const environmentReferences = Array.isArray(environment.secretRefs)
+    ? new Set(environment.secretRefs.filter((value): value is string => typeof value === "string"))
+    : new Set<string>();
+  if (
+    (input.initialProtectedReferenceIds ?? []).some(
+      (reference) => !environmentReferences.has(reference),
+    )
+  ) {
+    throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED" });
+  }
+  return requestedOrigins;
 }
 
 export function selectProtectedReplayPreparation(

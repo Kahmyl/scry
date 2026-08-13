@@ -17,6 +17,29 @@ function input() {
 }
 
 describe("MissionFlowAuthoringService grouped turns", () => {
+  it("releases the local runtime when durable safe closure requires reconciliation", async () => {
+    const sessionId = randomUUID();
+    const conflict = new ConflictException({
+      code: "MISSION_AUTHORING_CLOSE_RECONCILIATION_REQUIRED",
+    });
+    const repository = {
+      closeAtSafeBoundary: vi.fn().mockRejectedValue(conflict),
+    };
+    const runner = { close: vi.fn().mockResolvedValue(undefined) };
+    const service = new MissionFlowAuthoringService(
+      repository as never,
+      runner as never,
+      { assertAcceptingWork: vi.fn() } as never,
+    );
+
+    await expect(
+      service.close(principal, sessionId, "close-recovery-required"),
+    ).rejects.toBe(conflict);
+
+    expect(runner.close).toHaveBeenCalledOnce();
+    expect(runner.close).toHaveBeenCalledWith(sessionId);
+  });
+
   it("settles a turn when intent admission fails before any browser operation", async () => {
     const sessionId = randomUUID();
     const repository = {
@@ -48,6 +71,62 @@ describe("MissionFlowAuthoringService grouped turns", () => {
     });
     expect(repository.settleTurn).toHaveBeenCalledOnce();
     expect(repository.handoff).not.toHaveBeenCalled();
+    expect(repository.beginMissionOperation).not.toHaveBeenCalled();
+    expect(runner.execute).not.toHaveBeenCalled();
+  });
+
+  it("projects inactive protected references before preparation or kernel launch", async () => {
+    const sessionId = randomUUID();
+    const protectedReferenceId = randomUUID();
+    const repository = {
+      beginTurn: vi.fn().mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
+      validateIntentAdmission: vi.fn().mockRejectedValue(new ConflictException({
+        code: "PROTECTED_REFERENCE_INACTIVE",
+      })),
+      handoff: vi.fn(),
+      runtimeContextFor: vi.fn(),
+      protectedPreparationFor: vi.fn(),
+      beginMissionOperation: vi.fn(),
+      settleTurn: vi.fn(async ({ result }) => result),
+    };
+    const runner = { execute: vi.fn() };
+    const service = new MissionFlowAuthoringService(
+      repository as never,
+      runner as never,
+      { assertAcceptingWork: vi.fn() } as never,
+    );
+    const protectedIntent = {
+      intentId: "inactive-protected-reference",
+      objectiveId: ids.objectiveId,
+      flowDraftId: ids.flowDraftId,
+      action: {
+        kind: "fill" as const,
+        target: { concept: "client id", role: "textbox" as const, name: "Client ID", exact: true },
+        protectedReferenceId,
+      },
+      expectedEffect: { kind: "none" as const },
+      constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "authentication" as const },
+      protectedInputReferences: [protectedReferenceId],
+    };
+
+    const result = await service.advance(principal, sessionId, {
+      ...input(),
+      idempotencyKey: "inactive-protected-reference-turn",
+      intents: [protectedIntent],
+    });
+
+    expect(result).toMatchObject({
+      state: "decision_required",
+      completed: [],
+      decisionBoundary: {
+        type: "environment_unavailable",
+        reasonCode: "PROTECTED_REFERENCE_INACTIVE",
+      },
+    });
+    expect(repository.handoff).not.toHaveBeenCalled();
+    expect(repository.runtimeContextFor).not.toHaveBeenCalled();
+    expect(repository.protectedPreparationFor).not.toHaveBeenCalled();
     expect(repository.beginMissionOperation).not.toHaveBeenCalled();
     expect(runner.execute).not.toHaveBeenCalled();
   });
@@ -205,7 +284,10 @@ describe("MissionFlowAuthoringService grouped turns", () => {
     expect(repository.projectProtectedOperationForAuthoring).toHaveBeenCalledTimes(2);
   });
 
-  it("re-drives an unleased planned reservation after a process restart", async () => {
+  it.each([
+    "planned", "preparing", "ready_to_dispatch", "dispatching", "dispatched",
+    "acquiring", "persisting", "persisted", "reconciling",
+  ] as const)("re-drives an unleased %s reservation through authoritative reclaim after process loss", async (expiredState) => {
     const sessionId = randomUUID();
     const authorizationId = randomUUID();
     const acquisition = {
@@ -249,7 +331,7 @@ describe("MissionFlowAuthoringService grouped turns", () => {
       }),
       projectProtectedOperationForAuthoring: vi.fn().mockResolvedValue({
         status: "pending",
-        state: "planned",
+        state: expiredState,
         leaseActive: false,
       }),
       persistPending: vi.fn(async ({ result }) => result),

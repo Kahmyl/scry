@@ -32,7 +32,8 @@ import {
   reconcileProtectedMutation,
 } from "./protected-transaction-post-dispatch.js";
 import { classifyPassivePreparationRequest } from "./protected-preparation-effects.js";
-import { beginProtectedResponseEnvelope } from "./protected-response-envelope.js";
+import { beginProtectedResponseEnvelope, type ProtectedResponseEvidence } from "./protected-response-envelope.js";
+import { runProtectedStage } from "./protected-stage-supervisor.js";
 
 /** @deprecated Historical rows only. New operations use ProtectedOperationState. */
 export type MutationLedgerState = ProtectedOperationState;
@@ -73,6 +74,7 @@ export type ProtectedTransactionStore = {
   }): Promise<void>;
   heartbeat?(claim: ProtectedOperationClaim): Promise<void>;
   heartbeatIntervalMs?: number;
+  heartbeatTimeoutMs?: number;
 };
 
 export type ProtectedTransactionDependencies = {
@@ -106,6 +108,7 @@ export type ProtectedTransactionDependencies = {
       value: string;
       scope: "run" | "project";
     }>;
+    externalResourceBindings: ProtectedTransaction["extraction"]["externalResourceBindings"];
   }): Promise<{
     claim: ProtectedOperationClaim;
     references: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "run" | "project" }>;
@@ -211,7 +214,15 @@ export class ProtectedTransactionKernel {
     const leaseController = new AbortController();
     let heartbeatWork = Promise.resolve();
     const heartbeat = () => {
-      heartbeatWork = heartbeatWork.then(() => d.store.heartbeat?.(claim)).catch((error) => {
+      const ownedClaim = claim;
+      heartbeatWork = heartbeatWork.then(() => runProtectedStage({
+        stage: "protected_repository_heartbeat",
+        timeoutMs: d.store.heartbeatTimeoutMs ?? Math.max(250, d.store.heartbeatIntervalMs ?? 10_000),
+        signal: leaseController.signal,
+        timeoutCode: "PROTECTED_OPERATION_HEARTBEAT_TIMEOUT",
+        dispatchPosition: facts.mutation.dispatch === "not_started" ? "pre_dispatch" : "post_dispatch",
+        work: () => d.store.heartbeat?.(ownedClaim) ?? Promise.resolve(),
+      })).catch((error) => {
         heartbeatFailure ??= error;
         leaseController.abort(error);
       });
@@ -224,11 +235,26 @@ export class ProtectedTransactionKernel {
       if (heartbeatFailure) throw new PhaseError("PROTECTED_OPERATION_LEASE_LOST", facts.mutation.dispatch === "not_started" ? "preparation" : "mutation_dispatch", facts.mutation.dispatch === "not_started" ? "safe_to_retry" : "retry_requires_reconciliation");
     };
     const facts = initialFacts();
+    const lifecycleSignal = composeAbortSignals(d.signal, leaseController.signal);
+    const lifecycleDependencies: ProtectedTransactionDependencies = {
+      ...d,
+      signal: lifecycleSignal,
+    };
     let capsule: ProtectedBrowserSession | undefined;
     let responseEnvelope: Awaited<ReturnType<typeof beginProtectedResponseEnvelope>> | undefined;
     let capsulePrivacyFailed = false;
     let safeSession = d.safeSession;
+    const stopHeartbeat = async () => {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      await runProtectedStage({
+        stage: "protected_heartbeat_shutdown", timeoutMs: d.store.heartbeatTimeoutMs ?? 1_000,
+        timeoutCode: "PROTECTED_HEARTBEAT_SHUTDOWN_TIMEOUT",
+        dispatchPosition: facts.mutation.dispatch === "not_started" ? "pre_dispatch" : "post_dispatch",
+        work: () => heartbeatWork,
+      }).catch(() => undefined);
+    };
     try {
+      try {
       await d.store.record({
         operationId: transaction.operationId,
         fencingToken: claim.fencingToken,
@@ -240,10 +266,15 @@ export class ProtectedTransactionKernel {
         videoMaskEstablished: false,
       });
       safeSession.provenance.transition("safe_parked");
-      await d.onContextProvenance?.({
+      await runProtectedStage({
+        stage: "safe_context_provenance", timeoutMs: transaction.extraction.timeoutMs,
+        signal: lifecycleSignal,
+        timeoutCode: "PROTECTED_CONTEXT_PROVENANCE_TIMEOUT", dispatchPosition: "pre_dispatch",
+        work: () => d.onContextProvenance?.({
         contextId: safeSession.provenance.contextId,
         provenance: "safe_parked",
         operationId: transaction.operationId,
+        }) ?? Promise.resolve(),
       });
       await d.gate.beginProtected();
       facts.evidence = "stopped";
@@ -259,37 +290,53 @@ export class ProtectedTransactionKernel {
       try {
         // IndexedDB serialization is optional for capsule handoff. Some applications keep
         // non-serializable values there; cookies and web storage remain the portable auth state.
-        storageState = await safeSession.context
-          .storageState({ indexedDB: true })
-          .catch(() => safeSession.context.storageState());
+        storageState = await runProtectedStage({
+          stage: "portable_state_export", timeoutMs: transaction.extraction.timeoutMs,
+          signal: lifecycleSignal, timeoutCode: "PROTECTED_PORTABLE_STATE_EXPORT_TIMEOUT",
+          dispatchPosition: "pre_dispatch",
+          work: () => safeSession.context.storageState({ indexedDB: true })
+            .catch(() => safeSession.context.storageState()),
+        });
       } catch {
         throw new PhaseError("PROTECTED_PORTABLE_STATE_EXPORT_FAILED", "bootstrap", "safe_to_retry");
       }
       try {
         sessionStorageState = {
           origin: new URL(safeSession.page.url()).origin,
-          entries: await safeSession.page.evaluate(() => Object.entries(sessionStorage)),
+          entries: await runProtectedStage({
+            stage: "session_state_export", timeoutMs: transaction.extraction.timeoutMs,
+            signal: lifecycleSignal, timeoutCode: "PROTECTED_SESSION_STATE_EXPORT_TIMEOUT",
+            dispatchPosition: "pre_dispatch",
+            work: () => safeSession.page.evaluate(() => Object.entries(sessionStorage)),
+          }),
         };
       } catch {
         throw new PhaseError("PROTECTED_SESSION_STATE_EXPORT_FAILED", "bootstrap", "safe_to_retry");
       }
       try {
-        capsule = await abortable(
-          d.capsuleFactory.create({
+        capsule = await runProtectedStage({
+          stage: "capsule_bootstrap", timeoutMs: transaction.extraction.timeoutMs,
+          signal: lifecycleSignal, timeoutCode: "PROTECTED_CAPSULE_CREATION_TIMEOUT",
+          dispatchPosition: "pre_dispatch",
+          work: () => d.capsuleFactory.create({
             storageState,
             sessionStorage: sessionStorageState,
             prepare: d.prepareCapsule,
           }),
-          d.signal,
-        );
+        });
       } catch {
         throw new PhaseError("PROTECTED_CAPSULE_CREATION_FAILED", "bootstrap", "safe_to_retry");
       }
       facts.capsule = "active";
-      await d.onContextProvenance?.({
-        contextId: capsule.provenance.contextId,
-        provenance: "protected",
-        operationId: transaction.operationId,
+      await runProtectedStage({
+        stage: "protected_context_provenance", timeoutMs: transaction.extraction.timeoutMs,
+        signal: lifecycleSignal, timeoutCode: "PROTECTED_CONTEXT_PROVENANCE_TIMEOUT",
+        dispatchPosition: "pre_dispatch",
+        work: () => d.onContextProvenance?.({
+          contextId: capsule!.provenance.contextId,
+          provenance: "protected",
+          operationId: transaction.operationId,
+        }) ?? Promise.resolve(),
       });
       try {
         await capsule.page.goto(transaction.entry.url, { waitUntil: "domcontentloaded" });
@@ -368,18 +415,30 @@ export class ProtectedTransactionKernel {
       };
       capsule.page.on("request", observePreparationEffect);
       try {
-        await executeProtectedPreparation(capsule.page, transaction, d);
-        await verifyProtectedTransactionAssertions(
-          capsule.page,
-          transaction.preparation.assertions,
-          transaction,
-          d,
-        );
+        await runProtectedStage({
+          stage: "protected_preparation", timeoutMs: transaction.extraction.timeoutMs,
+          signal: lifecycleSignal, timeoutCode: "PROTECTED_PREPARATION_TIMEOUT",
+          dispatchPosition: "pre_dispatch",
+          work: async () => {
+            await executeProtectedPreparation(capsule!.page, transaction, lifecycleDependencies);
+            await verifyProtectedTransactionAssertions(
+              capsule!.page,
+              transaction.preparation.assertions,
+              transaction,
+              lifecycleDependencies,
+            );
+          },
+        });
         if (observedEffects.some((effect) => effect.disposition === "blocked"))
           throw new PhaseError("UNDECLARED_PREPARATION_SIDE_EFFECT", "preparation", "do_not_retry");
         // Calibration records the transaction boundary after deterministic preparation.
         // Production must verify at that identical boundary, never at capsule entry.
-        await d.verifyCalibration?.(capsule, transaction);
+        await runProtectedStage({
+          stage: "calibration_verification", timeoutMs: transaction.extraction.timeoutMs,
+          signal: lifecycleSignal, timeoutCode: "PROTECTED_CALIBRATION_TIMEOUT",
+          dispatchPosition: "pre_dispatch",
+          work: () => d.verifyCalibration?.(capsule!, transaction) ?? Promise.resolve(),
+        });
       } catch (error) {
         const failure =
           error instanceof PhaseError
@@ -402,7 +461,12 @@ export class ProtectedTransactionKernel {
         capsule.page.off("request", observePreparationEffect);
       }
       facts.preparation = { status: "succeeded" };
-      await d.onPreparationVerified?.(capsule, transaction);
+      await runProtectedStage({
+        stage: "preparation_verification_callback", timeoutMs: transaction.extraction.timeoutMs,
+        signal: lifecycleSignal, timeoutCode: "PROTECTED_PREPARATION_VERIFICATION_TIMEOUT",
+        dispatchPosition: "pre_dispatch",
+        work: () => d.onPreparationVerified?.(capsule!, transaction) ?? Promise.resolve(),
+      });
       await d.store.record({
         operationId: transaction.operationId,
         fencingToken: claim.fencingToken,
@@ -462,24 +526,159 @@ export class ProtectedTransactionKernel {
             }
           : undefined,
       );
-      await d.onMutationDispatch?.();
+      await runProtectedStage({
+        stage: "mutation_dispatch_callback", timeoutMs: transaction.extraction.timeoutMs,
+        signal: lifecycleSignal,
+        timeoutCode: "PROTECTED_MUTATION_DISPATCH_TIMEOUT", dispatchPosition: "post_dispatch",
+        work: () => Promise.resolve(d.onMutationDispatch?.()).then(() => undefined),
+      });
       facts.mutation.dispatch = "started";
       capsule.provenance.transition("tainted");
-      await d.onContextProvenance?.({
-        contextId: capsule.provenance.contextId,
-        provenance: "tainted",
-        operationId: transaction.operationId,
+      await runProtectedStage({
+        stage: "tainted_context_provenance", timeoutMs: transaction.extraction.timeoutMs,
+        signal: lifecycleSignal, timeoutCode: "PROTECTED_CONTEXT_PROVENANCE_TIMEOUT",
+        dispatchPosition: "post_dispatch",
+        work: () => d.onContextProvenance?.({
+          contextId: capsule!.provenance.contextId,
+          provenance: "tainted",
+          operationId: transaction.operationId,
+        }) ?? Promise.resolve(),
       });
       await d.store.record({
         operationId: transaction.operationId,
         fencingToken: claim.fencingToken,
         phase: "mutation_dispatching",
       });
-      await abortable(
-        executeProtectedReveal(capsule.page, transaction, d.allowedOrigins, composeAbortSignals(d.signal, leaseController.signal)),
-        composeAbortSignals(d.signal, leaseController.signal),
+      responseEnvelope.beginActionCapture();
+      try {
+        await abortable(
+          executeProtectedReveal(capsule.page, transaction, d.allowedOrigins, lifecycleSignal),
+          lifecycleSignal,
+        );
+      } finally {
+        responseEnvelope.endActionCapture();
+      }
+
+      if (transaction.mutation.dispatchSemantics === "read_only") {
+        const requestInitiation = await responseEnvelope.waitForRequestInitiation(
+          Math.min(5_000, transaction.extraction.timeoutMs),
+        );
+
+        if (requestInitiation.status === "initiated") {
+          facts.mutation.request = {
+            status: "initiated",
+            method: requestInitiation.method,
+            transport: requestInitiation.resourceType,
+            envelopeMatched: true,
+          };
+          await d.store.record({
+            operationId: transaction.operationId,
+            fencingToken: claim.fencingToken,
+            phase: "request_initiated",
+            facts: {
+              mutation: {
+                request: {
+                  status: "initiated",
+                  method: requestInitiation.method,
+                  transport: requestInitiation.resourceType,
+                  envelopeMatched: true,
+                },
+              },
+            },
+          });
+        } else {
+          const reasonCode =
+            requestInitiation.status === "lineage_ambiguous"
+              ? "PROTECTED_REQUEST_LINEAGE_AMBIGUOUS"
+              : requestInitiation.status === "outside_envelope"
+              ? "PROTECTED_REQUEST_OUTSIDE_ENVELOPE"
+              : requestInitiation.status === "unsupported_transport"
+                ? "PROTECTED_REQUEST_TRANSPORT_UNSUPPORTED"
+                : "PROTECTED_REQUEST_NOT_INITIATED";
+
+          facts.mutation.request = requestInitiation.status === "outside_envelope"
+            ? {
+                status: "outside_envelope",
+                method: requestInitiation.method,
+                transport: requestInitiation.resourceType,
+                envelopeMatched: false,
+              }
+              : requestInitiation.status === "unsupported_transport"
+              ? {
+                  status: "unsupported_transport",
+                  transport: requestInitiation.transport,
+                  envelopeMatched: false,
+                }
+              : {
+                  status: "not_initiated",
+                  envelopeMatched: false,
+                };
+
+          await d.store.record({
+            operationId: transaction.operationId,
+            fencingToken: claim.fencingToken,
+            phase:
+              requestInitiation.status === "lineage_ambiguous"
+                ? "request_lineage_ambiguous"
+                : requestInitiation.status === "outside_envelope"
+                ? "request_outside_envelope"
+                : requestInitiation.status === "unsupported_transport"
+                  ? "request_transport_unsupported"
+                  : "request_not_initiated",
+            facts: {
+              reasonCode,
+              mutation: {
+                request: {
+                    status: requestInitiation.status,
+                  ...(
+                    requestInitiation.status === "outside_envelope"
+                      ? {
+                          method: requestInitiation.method,
+                          transport: requestInitiation.resourceType,
+                          envelopeMatched: false,
+                        }
+                      : requestInitiation.status === "unsupported_transport"
+                        ? {
+                            transport: requestInitiation.transport,
+                            envelopeMatched: false,
+                          }
+                        : {
+                            envelopeMatched: false,
+                          }
+                  ),
+                },
+              },
+            },
+          });
+
+          throw new PhaseError(
+            reasonCode,
+            "acquisition",
+            "safe_to_retry",
+          );
+        }
+      }
+
+      const responseSettled = await responseEnvelope.settle(
+        transaction.extraction.timeoutMs,
       );
-      await responseEnvelope.settle();
+      facts.responseEvidence = responseEnvelope.evidence();
+      await d.store.record({
+        operationId: transaction.operationId,
+        fencingToken: claim.fencingToken,
+        phase: responseSettled ? "response_settled" : "response_settlement_timed_out",
+        facts: { responseEvidence: facts.responseEvidence },
+      });
+      if (!responseSettled) {
+        // The network adapter is now closed to late/partial admission, but a
+        // complete set may still be acquired through another declared method.
+        await d.store.record({
+          operationId: transaction.operationId,
+          fencingToken: claim.fencingToken,
+          phase: "response_settlement_timed_out",
+          facts: { reasonCode: "PROTECTED_RESPONSE_SETTLEMENT_TIMEOUT" },
+        });
+      }
       assertOwned();
       claim = await d.store.transition({
         id: claim.id, operationId: transaction.operationId, version: claim.version,
@@ -500,6 +699,7 @@ export class ProtectedTransactionKernel {
         phase: "acquisition_running",
       });
       const acquired = await acquireProtectedOutputs(capsule.page, transaction, d, facts);
+      facts.responseEvidence = responseEnvelope.evidence();
       assertOwned();
       claim = await d.store.transition({
         id: claim.id, operationId: transaction.operationId, version: claim.version,
@@ -511,8 +711,19 @@ export class ProtectedTransactionKernel {
         await recoverProtectedAcquisition(capsule.page, transaction, d, facts, claim);
       if (protectedOutputsPersisted(transaction, facts))
         facts.mutation.outcome = "confirmed_succeeded";
-    } catch (error) {
-      const failure = protectedPhaseFailure(error, facts);
+      } catch (error) {
+      if (responseEnvelope) facts.responseEvidence = responseEnvelope.evidence();
+      // An eligible non-success response is the authoritative cause even when
+      // its event races the outer acquisition deadline. Preserve the bounded
+      // status evidence and never let the scheduler-dependent stage timeout
+      // replace the precise fail-closed classification.
+      const authoritativeHttpRejection =
+        facts.responseEvidence?.eligibleResponseSelected === true &&
+        typeof facts.responseEvidence.httpStatusCode === "number" &&
+        (facts.responseEvidence.httpStatusCode < 200 || facts.responseEvidence.httpStatusCode >= 400);
+      const failure = authoritativeHttpRejection
+        ? new PhaseError("PROTECTED_RESPONSE_HTTP_REJECTED", "acquisition", "safe_to_retry")
+        : protectedPhaseFailure(error, facts);
       facts.reasonCode = failure.code;
       facts.failurePhase = failure.phase;
       facts.retryClass = failure.retryClass;
@@ -530,6 +741,7 @@ export class ProtectedTransactionKernel {
               id: claim.id, operationId: transaction.operationId, version: claim.version,
               fencingToken: claim.fencingToken, expected: claim.state, next: "failed_not_applied",
               phase: "failed_not_applied", reasonCode: failure.code,
+              facts: { ...facts, diagnostics: undefined },
             }).catch(() => claim);
           }
         }
@@ -538,12 +750,11 @@ export class ProtectedTransactionKernel {
             id: claim.id, operationId: transaction.operationId, version: claim.version,
             fencingToken: claim.fencingToken, expected: claim.state, next: "recovery_required",
             phase: "recovery_required", reasonCode: failure.code,
+            facts: { ...facts, diagnostics: undefined },
           }).catch(() => claim);
         }
       }
-    } finally {
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
-      await heartbeatWork;
+      } finally {
       await responseEnvelope?.close().catch(() => undefined);
       if (capsule) {
         try {
@@ -556,10 +767,15 @@ export class ProtectedTransactionKernel {
         }
         try {
           facts.capsule = await capsule.destroy();
-          await d.onContextProvenance?.({
-            contextId: capsule.provenance.contextId,
-            provenance: "destroyed",
-            operationId: transaction.operationId,
+          await runProtectedStage({
+            stage: "destroyed_context_provenance", timeoutMs: transaction.extraction.timeoutMs,
+            signal: lifecycleSignal, timeoutCode: "PROTECTED_CONTEXT_PROVENANCE_TIMEOUT",
+            dispatchPosition: facts.mutation.dispatch === "not_started" ? "pre_dispatch" : "post_dispatch",
+            work: () => d.onContextProvenance?.({
+              contextId: capsule!.provenance.contextId,
+              provenance: "destroyed",
+              operationId: transaction.operationId,
+            }) ?? Promise.resolve(),
           });
         } catch {
           facts.capsule = "destruction_failed";
@@ -621,10 +837,10 @@ export class ProtectedTransactionKernel {
       }
       facts.reconciliation = transaction.mutation.dispatchSemantics === "read_only"
         ? "not_applied"
-        : await reconcileProtectedMutation(safeSession, transaction, claim.fencingToken, facts, d);
+        : await reconcileProtectedMutation(safeSession, transaction, claim.fencingToken, facts, lifecycleDependencies);
       await d.gate.seal({ code: facts.reasonCode ?? "PROTECTED_TRANSACTION_FAILED" });
       if (["persisted", "reconciling"].includes(claim.state)) {
-        claim = await d.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: claim.state, next: "recovery_required", phase: "recovery_required", reasonCode: facts.reasonCode ?? "PROTECTED_TRANSACTION_FAILED" });
+        claim = await d.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: claim.state, next: "recovery_required", phase: "recovery_required", reasonCode: facts.reasonCode ?? "PROTECTED_TRANSACTION_FAILED", facts: { ...facts, diagnostics: undefined } });
       }
       const status = facts.mutation.outcome === "unknown" ? "outcome_unknown" : "aborted";
       await this.persistFinal(transaction, claim.fencingToken, status, facts);
@@ -639,7 +855,12 @@ export class ProtectedTransactionKernel {
       };
     }
 
-    await d.gate.markCaptured();
+    await runProtectedStage({
+      stage: "protected_capture_settlement", timeoutMs: transaction.extraction.timeoutMs,
+      signal: lifecycleSignal, timeoutCode: "PROTECTED_CAPTURE_SETTLEMENT_TIMEOUT",
+      dispatchPosition: "post_dispatch", work: () => d.gate.markCaptured(),
+    });
+    assertOwned();
     if (claim.state === "persisted") {
       claim = await d.store.transition({
         id: claim.id, operationId: transaction.operationId, version: claim.version,
@@ -652,7 +873,7 @@ export class ProtectedTransactionKernel {
       transaction,
       claim.fencingToken,
       facts,
-      d,
+      lifecycleDependencies,
     );
     if (facts.reconciliation === "not_applied" || facts.reconciliation === "failed") {
       await d.gate.seal({ code: "MUTATION_RECONCILIATION_FAILED" });
@@ -665,7 +886,8 @@ export class ProtectedTransactionKernel {
       };
     }
 
-    const continuation = await continueAfterProtectedMutation(transaction, safeSession, d);
+    const continuation = await continueAfterProtectedMutation(transaction, safeSession, lifecycleDependencies);
+    assertOwned();
     safeSession = continuation.safeSession;
     facts.continuation = continuation.status;
     if (continuation.status === "terminal") {
@@ -700,40 +922,100 @@ export class ProtectedTransactionKernel {
         result: result(facts, "aborted", ["retry_continuation", "abort"]),
       };
     }
-    await d.gate.beginSafeBoundary();
-    await d.gate.confirmSafeBoundary({
-      kind: "protected_context_destroyed",
-      contextId: capsule?.provenance.contextId ?? randomUUID(),
+    await runProtectedStage({
+      stage: "safe_boundary_establishment", timeoutMs: transaction.extraction.timeoutMs,
+      signal: lifecycleSignal, timeoutCode: "PROTECTED_SAFE_BOUNDARY_ESTABLISHMENT_TIMEOUT",
+      dispatchPosition: "post_dispatch", work: () => d.gate.beginSafeBoundary(),
     });
+    await runProtectedStage({
+      stage: "safe_boundary_confirmation", timeoutMs: transaction.extraction.timeoutMs,
+      signal: lifecycleSignal, timeoutCode: "PROTECTED_SAFE_BOUNDARY_CONFIRMATION_TIMEOUT",
+      dispatchPosition: "post_dispatch", work: () => d.gate.confirmSafeBoundary({
+        kind: "protected_context_destroyed",
+        contextId: capsule?.provenance.contextId ?? randomUUID(),
+      }),
+    });
+    assertOwned();
     facts.evidence = "resumed";
     facts.protectedAcquisitionEvidence = facts.protectedAcquisitionEvidence.map((evidence) => ({
       ...evidence,
       capsule: facts.capsule === "force_terminated" ? "force_terminated" : "destroyed",
       evidenceClosure: "resumed",
     }));
-    await d.onContextProvenance?.({
-      contextId: safeSession.provenance.contextId,
-      provenance: safeSession.provenance.value(),
-      operationId: transaction.operationId,
+    await runProtectedStage({
+      stage: "resumed_context_provenance", timeoutMs: transaction.extraction.timeoutMs,
+      signal: lifecycleSignal, timeoutCode: "PROTECTED_CONTEXT_PROVENANCE_TIMEOUT",
+      dispatchPosition: "post_dispatch",
+      work: () => d.onContextProvenance?.({
+        contextId: safeSession.provenance.contextId,
+        provenance: safeSession.provenance.value(),
+        operationId: transaction.operationId,
+      }) ?? Promise.resolve(),
     });
-    await d.onEvidenceResumed?.({
-      contextId: safeSession.provenance.contextId,
-      operationId: transaction.operationId,
-      continuedAtStepId: continuation.continuedAtStepId,
+    await runProtectedStage({
+      stage: "evidence_resumption", timeoutMs: transaction.extraction.timeoutMs,
+      signal: lifecycleSignal, timeoutCode: "PROTECTED_EVIDENCE_RESUMPTION_TIMEOUT",
+      dispatchPosition: "post_dispatch",
+      work: () => d.onEvidenceResumed?.({
+        contextId: safeSession.provenance.contextId,
+        operationId: transaction.operationId,
+        continuedAtStepId: continuation.continuedAtStepId,
+      }) ?? Promise.resolve(),
     });
+    assertOwned();
     if (claim.state === "reconciling") {
+      // Persist final diagnostics while this process still owns the lease.
+      // The terminal transition intentionally releases ownership, after which
+      // repository fencing must reject every late write from this execution.
+      await this.persistFinal(transaction, claim.fencingToken, "completed", facts);
       claim = await d.store.transition({
         id: claim.id, operationId: transaction.operationId, version: claim.version,
         fencingToken: claim.fencingToken, expected: "reconciling", next: "completed",
-        phase: "completed",
+        phase: "completed", facts: { ...facts, diagnostics: undefined },
       });
     }
-    await this.persistFinal(transaction, claim.fencingToken, "completed", facts);
-    return {
-      safeSession,
-      terminal: false,
-      result: result(facts, "completed", [], continuation.continuedAtStepId),
-    };
+      return {
+        safeSession,
+        terminal: false,
+        result: result(facts, "completed", [], continuation.continuedAtStepId),
+      };
+    } catch (error) {
+      const failure = protectedPhaseFailure(error, facts);
+      facts.reasonCode = failure.code;
+      facts.failurePhase = failure.phase;
+      facts.retryClass = facts.mutation.dispatch === "not_started"
+        ? "safe_to_retry"
+        : "retry_requires_reconciliation";
+      if (facts.mutation.dispatch !== "not_started") facts.mutation.outcome = "unknown";
+      await d.gate.seal({ code: failure.code }).catch(() => undefined);
+      if (["dispatching", "dispatched", "acquiring", "persisting", "persisted", "reconciling"].includes(claim.state)) {
+        claim = await d.store.transition({
+          id: claim.id, operationId: transaction.operationId, version: claim.version,
+          fencingToken: claim.fencingToken, expected: claim.state, next: "recovery_required",
+          phase: "recovery_required", reasonCode: failure.code,
+          facts: { ...facts, diagnostics: undefined },
+        }).catch(() => claim);
+      }
+      await this.persistFinal(
+        transaction,
+        claim.fencingToken,
+        facts.mutation.dispatch === "not_started" ? "aborted" : "outcome_unknown",
+        facts,
+      ).catch(() => undefined);
+      return {
+        safeSession,
+        terminal: true,
+        result: result(
+          facts,
+          facts.mutation.dispatch === "not_started" ? "aborted" : "outcome_unknown",
+          facts.mutation.dispatch === "not_started"
+            ? ["retry_transaction", "abort"]
+            : ["manual_reconciliation", "abort"],
+        ),
+      };
+    } finally {
+      await stopHeartbeat();
+    }
   }
 
   private async outcomeUnknown(
@@ -787,17 +1069,28 @@ export class ProtectedTransactionKernel {
     facts.mutation.outcome = "unknown";
     facts.capsule = "force_terminated";
     const references = claim.persistedReferences ?? {};
+    let protectedMaterialObserved = Object.values(references).some(
+      (stored) => stored.classification === "protected",
+    );
     for (const [reference, stored] of Object.entries(references)) {
       if (stored.classification === "protected" && stored.credentialId) facts.credentialReferences[reference] = stored.credentialId;
       if (stored.classification === "public" && stored.valueId) facts.publicValueReferences[reference] = stored.valueId;
     }
     let completeSet = transaction.extraction.outputs.every((output) => output.reference in references);
     if (!completeSet && claim.state === "recovery_required" && this.dependencies.recoverStagedResponseOutputs) {
-      const staged = await this.dependencies.recoverStagedResponseOutputs({
-        operationId: transaction.operationId,
-        claim,
+      const staged = await runProtectedStage({
+        stage: "staged_output_recovery", timeoutMs: transaction.extraction.timeoutMs,
+        signal: this.dependencies.signal, timeoutCode: "PROTECTED_STAGED_OUTPUT_RECOVERY_TIMEOUT",
+        dispatchPosition: transaction.mutation.dispatchSemantics === "read_only" ? "read_only" : "post_dispatch",
+        work: () => this.dependencies.recoverStagedResponseOutputs!({
+          operationId: transaction.operationId,
+          claim,
+        }),
       });
       if (staged?.length) {
+        protectedMaterialObserved ||= staged.some(
+          (output) => output.classification === "protected",
+        );
         claim = await this.dependencies.store.transition({
           id: claim.id,
           operationId: transaction.operationId,
@@ -834,14 +1127,19 @@ export class ProtectedTransactionKernel {
     if (!completeSet || claim.state === "compromised") {
       for (const credentialId of Object.values(facts.credentialReferences))
         await this.dependencies.markCredentialCompromised?.(credentialId, "PROTECTED_ACQUISITION_INTERRUPTED", transaction.operationId);
-      if (!["recovery_required", "compromised"].includes(claim.state)) {
-        claim = await this.dependencies.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: claim.state, next: "recovery_required", phase: "recovery_required", reasonCode: "PROTECTED_ACQUISITION_INTERRUPTED" });
+      if (protectedMaterialObserved || claim.state === "compromised") {
+        if (claim.state !== "compromised") {
+          claim = await this.dependencies.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: claim.state, next: "compromised", phase: "compromised", reasonCode: "PROTECTED_ACQUISITION_INTERRUPTED" });
+        }
+        facts.credentialSecurity = "compromised";
+        facts.reasonCode = "PROTECTED_ACQUISITION_INTERRUPTED";
+      } else {
+        if (claim.state !== "recovery_required") {
+          claim = await this.dependencies.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: claim.state, next: "recovery_required", phase: "recovery_required", reasonCode: "PROTECTED_ACQUISITION_INCOMPLETE" });
+        }
+        facts.credentialSecurity = "none";
+        facts.reasonCode = "PROTECTED_ACQUISITION_INCOMPLETE";
       }
-      if (claim.state === "recovery_required") {
-        claim = await this.dependencies.store.transition({ id: claim.id, operationId: transaction.operationId, version: claim.version, fencingToken: claim.fencingToken, expected: "recovery_required", next: "compromised", phase: "compromised", reasonCode: "PROTECTED_ACQUISITION_INTERRUPTED" });
-      }
-      facts.credentialSecurity = Object.keys(facts.credentialReferences).length ? "compromised" : "none";
-      facts.reasonCode = "PROTECTED_ACQUISITION_INTERRUPTED";
       facts.retryClass = "do_not_retry";
       return { safeSession: this.dependencies.safeSession, terminal: true, result: result(facts, "outcome_unknown", ["manual_reconciliation", "abort"]) };
     }
@@ -910,11 +1208,21 @@ export class ProtectedTransactionCoordinator extends ProtectedTransactionKernel 
 
 export type ProtectedTransactionFacts = ReturnType<typeof initialFacts>;
 type Facts = ProtectedTransactionFacts;
+type ProtectedRequestEvidence = {
+  status: "initiated" | "outside_envelope" | "unsupported_transport" | "not_initiated";
+  method?: string;
+  transport?: string;
+  envelopeMatched: boolean;
+};
 function initialFacts() {
   return {
     bootstrap: { status: "not_started" as const },
     preparation: { status: "not_started" as const },
-    mutation: { dispatch: "not_started" as const, outcome: "not_attempted" as const },
+    mutation: {
+      dispatch: "not_started" as const,
+      outcome: "not_attempted" as const,
+      request: undefined as undefined | ProtectedRequestEvidence,
+    },
     protectedExtraction: "not_attempted" as const,
     publicExtraction: "not_attempted" as const,
     protectedPersistence: "not_attempted" as const,
@@ -929,10 +1237,16 @@ function initialFacts() {
     preparationEffects: [] as ProtectedTransactionResult["preparationEffects"],
     diagnostics: [] as ProtectedTransactionResult["diagnostics"],
     protectedAcquisitionEvidence: [] as ProtectedTransactionResult["protectedAcquisitionEvidence"],
+    responseEvidence: undefined as undefined | ProtectedResponseEvidence,
     reasonCode: undefined as string | undefined,
     failurePhase: undefined as string | undefined,
     retryClass: undefined as string | undefined,
-  } as unknown as ProtectedTransactionResult & { failurePhase?: string; retryClass?: string };
+  } as unknown as ProtectedTransactionResult & {
+    mutation: ProtectedTransactionResult["mutation"] & { request?: ProtectedRequestEvidence };
+    responseEvidence?: ProtectedResponseEvidence;
+    failurePhase?: string;
+    retryClass?: string;
+  };
 }
 function result(
   facts: Facts,
@@ -940,7 +1254,8 @@ function result(
   safeActions: ProtectedTransactionResult["safeActions"],
   continuedAtStepId?: string,
 ): ProtectedTransactionResult {
-  return { ...facts, status, safeActions, ...(continuedAtStepId ? { continuedAtStepId } : {}) };
+  const { request: _request, ...mutation } = facts.mutation;
+  return { ...facts, mutation, status, safeActions, ...(continuedAtStepId ? { continuedAtStepId } : {}) };
 }
 function digests(transaction: ProtectedTransaction, allowedOrigins: string[]) {
   return {
@@ -955,7 +1270,13 @@ function composeAbortSignals(first: AbortSignal | undefined, second: AbortSignal
 }
 function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(signal.reason ?? new Error("RUN_ABORTED"));
+  if (signal.aborted) {
+    // Work may have started before the composed signal was inspected. Keep a
+    // rejection observer attached so a later cancellation result cannot escape
+    // as an unhandled rejection after this owner has already failed closed.
+    void promise.catch(() => undefined);
+    return Promise.reject(signal.reason ?? new Error("RUN_ABORTED"));
+  }
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(signal.reason ?? new Error("RUN_ABORTED"));
     signal.addEventListener("abort", abort, { once: true });

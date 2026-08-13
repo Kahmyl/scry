@@ -72,6 +72,7 @@ integration("protected operation repository integration", () => {
     operationId: string,
     reserve = false,
     reservationMutationIdentity = operationId,
+    protectedInputReferences: string[] = [],
   ) {
     const intent = {
       intentId: operationId,
@@ -89,7 +90,7 @@ integration("protected operation repository integration", () => {
       expectedEffect: { kind: "none" },
       constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
       authorization: { kind: "protected_mutation", authorizationId },
-      protectedInputReferences: [],
+      protectedInputReferences,
     };
     await new AdaptiveSessionRepository(database).beginMissionOperation({
       workspaceId,
@@ -255,6 +256,153 @@ integration("protected operation repository integration", () => {
       .rejects.toThrow("PROTECTED_MUTATION_CANNOT_SETTLE_NOT_APPLIED_AFTER_DISPATCH");
   });
 
+  it("classifies every expired active state through the authoritative claim without redispatch", async () => {
+    const states = [
+      "planned", "preparing", "ready_to_dispatch", "dispatching", "dispatched",
+      "acquiring", "persisting", "persisted", "reconciling",
+    ] as const;
+    const path = [
+      "planned", "preparing", "ready_to_dispatch", "dispatching", "dispatched",
+      "acquiring", "persisting", "persisted", "reconciling",
+    ] as const;
+    for (const semantics of ["mutation", "read_only"] as const) {
+      for (const target of states) {
+        const operationId = `expiry-${semantics}-${target}`;
+        await create(operationId, semantics);
+        let claim = await claimOperation(operationId, "matrix-owner-a", 30_000, semantics);
+        for (const next of path.slice(1, path.indexOf(target) + 1)) {
+          claim = await operations.transition({
+            id: claim.id, leaseOwner: "matrix-owner-a", fencingToken: claim.fencingToken,
+            version: claim.version, expected: claim.state, next, phase: next,
+          });
+        }
+        const oldFence = claim.fencingToken;
+        await database.query(`UPDATE protected_operations SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [claim.id]);
+        const reclaimed = await claimOperation(operationId, "matrix-owner-b", 30_000, semantics);
+        const postDispatch = path.indexOf(target) >= path.indexOf("dispatching");
+        expect(reclaimed.fencingToken).toBe(oldFence + 1);
+        expect(reclaimed.state).toBe(
+          postDispatch
+            ? semantics === "read_only" ? "failed_not_applied" : "recovery_required"
+            : target,
+        );
+        if (postDispatch) {
+          expect(reclaimed.mutationOutcome).toBe(semantics === "read_only" ? "not_applied" : "unknown");
+        }
+        const dispatches = await database.query<{ count: number }>(
+          `SELECT count(*)::int count FROM protected_operation_transitions
+            WHERE protected_operation_id=$1 AND to_state='dispatching'`,
+          [claim.id],
+        );
+        expect(dispatches.rows[0]!.count).toBe(postDispatch ? 1 : 0);
+      }
+    }
+  });
+
+  it("discards encrypted staged outputs when read-only settles not applied", async () => {
+    const operationId = "read-only-staging-disposal";
+    await create(operationId, "read_only");
+    let claim = await claimOperation(operationId, "reader-stage", 30_000, "read_only");
+    for (const next of ["preparing", "ready_to_dispatch", "dispatching"] as const) {
+      claim = await operations.transition({ id: claim.id, leaseOwner: "reader-stage",
+        fencingToken: claim.fencingToken, version: claim.version, expected: claim.state, next, phase: next });
+    }
+    const context = { protectedOperationId: claim.id,projectId,environmentId,missionId,objectiveId,
+      agentSessionId,ownerKind: "authoring_session" as const,ownerId: sessionId,operationId,
+      leaseOwner: "reader-stage",fencingToken: claim.fencingToken,version: claim.version };
+    await outputs.stageResponseOutputs(context, [
+      { reference: "clientId",classification: "public",storageName: "Client ID",value: "stale-id",scope: "project" },
+      { reference: "clientSecret",classification: "protected",storageName: "Client secret",value: "stale-secret",scope: "project" },
+    ]);
+    await operations.transition({ id: claim.id,leaseOwner: "reader-stage",fencingToken: claim.fencingToken,
+      version: claim.version,expected: "dispatching",next: "failed_not_applied",phase: "failed_not_applied",
+      safeDiagnostics: { mutation: { request: {
+        status: "initiated", method: "GET", transport: "fetch", envelopeMatched: true,
+      } }, responseEvidence: {
+        responseEventObserved: true, eligibleResponseSelected: true,
+        httpStatusCode: 200,
+        statusClass: "2xx", contentTypeClass: "json",
+        bodyAcquisitionStarted: true, bodyAcquisitionSettled: true,
+        bodyParseStatus: "success", topLevelShape: "object",
+        declaredSemanticLeafPresent: false,
+        declaredSemanticLeafMatchCount: "zero",
+        selectedPathClass: "unavailable",
+        extractionResultClass: "not_present", lateResultDiscarded: false,
+      } } });
+    const proof = await database.query<{ count: number; request: unknown; responseEvidence: unknown }>(
+      `SELECT
+         (SELECT count(*)::int FROM protected_response_output_staging
+           WHERE protected_operation_id=operation.id) count,
+         operation.safe_diagnostics->'mutation'->'request' request,
+         operation.safe_diagnostics->'responseEvidence' AS "responseEvidence"
+       FROM protected_operations operation WHERE operation.id=$1`,
+      [claim.id],
+    );
+    expect(proof.rows[0]).toEqual({ count: 0, request: {
+      status: "initiated", method: "GET", transport: "fetch", envelopeMatched: true,
+    }, responseEvidence: {
+      responseEventObserved: true, eligibleResponseSelected: true,
+      httpStatusCode: 200,
+      statusClass: "2xx", contentTypeClass: "json",
+      bodyAcquisitionStarted: true, bodyAcquisitionSettled: true,
+      bodyParseStatus: "success", topLevelShape: "object",
+      declaredSemanticLeafPresent: false,
+      declaredSemanticLeafMatchCount: "zero",
+      selectedPathClass: "unavailable",
+      extractionResultClass: "not_present", lateResultDiscarded: false,
+    } });
+  });
+
+  it("relinquishes execution ownership while preserving durable recovery-required state", async () => {
+    const operationId = "recovery-relinquishes-live-ownership";
+    await create(operationId);
+    let claim = await claimOperation(operationId, "relinquishing-owner");
+    for (const next of ["preparing", "ready_to_dispatch", "dispatching", "dispatched", "acquiring"] as const) {
+      claim = await operations.transition({
+        id: claim.id,
+        leaseOwner: "relinquishing-owner",
+        fencingToken: claim.fencingToken,
+        version: claim.version,
+        expected: claim.state,
+        next,
+        phase: next,
+      });
+    }
+
+    const recovered = await operations.transition({
+      id: claim.id,
+      leaseOwner: "relinquishing-owner",
+      fencingToken: claim.fencingToken,
+      version: claim.version,
+      expected: "acquiring",
+      next: "recovery_required",
+      phase: "recovery_required",
+      reasonCode: "PROTECTED_OUTPUT_ACQUISITION_TIMEOUT",
+    });
+    const ownership = await database.query<{
+      state: string;
+      leaseOwner: string | null;
+      leaseExpiresAt: Date | null;
+    }>(
+      `SELECT state,lease_owner AS "leaseOwner",lease_expires_at AS "leaseExpiresAt"
+         FROM protected_operations WHERE id=$1`,
+      [claim.id],
+    );
+
+    expect(recovered.state).toBe("recovery_required");
+    expect(ownership.rows[0]).toEqual({
+      state: "recovery_required",
+      leaseOwner: null,
+      leaseExpiresAt: null,
+    });
+    await expect(operations.heartbeat({
+      id: claim.id,
+      leaseOwner: "relinquishing-owner",
+      fencingToken: claim.fencingToken,
+      leaseDurationMs: 30_000,
+    })).rejects.toThrow("PROTECTED_OPERATION_FENCED");
+  });
+
   it("commits mixed outputs and the persisted state in one transaction", async () => {
     await create("atomic-operation");
     let claim = await claimOperation("atomic-operation", "owner-a");
@@ -272,6 +420,30 @@ integration("protected operation repository integration", () => {
     const rows = await database.query<{ credentials: string; values: string }>(`SELECT (SELECT count(*) FROM project_credentials WHERE origin_protected_operation_id=$1)::text credentials,(SELECT count(*) FROM generated_public_values WHERE source_protected_operation_id=$1)::text values`, [claim.id]);
     expect(rows.rows[0]).toEqual({ credentials: "1", values: "1" });
     expect(JSON.stringify(persisted)).not.toContain("integration-protected-canary");
+  });
+
+  it("rejects a partial output set before creating any durable reference", async () => {
+    await create("partial-output-operation");
+    let claim = await claimOperation("partial-output-operation", "partial-owner");
+    for (const next of ["preparing", "ready_to_dispatch", "dispatching", "dispatched", "acquiring", "persisting"] as const) {
+      claim = await operations.transition({ id: claim.id, leaseOwner: "partial-owner",
+        fencingToken: claim.fencingToken, version: claim.version, expected: claim.state, next, phase: next });
+    }
+    await expect(outputs.persistOutputsAtomically({ protectedOperationId: claim.id, projectId,
+      environmentId, missionId, objectiveId, agentSessionId, ownerKind: "authoring_session",
+      ownerId: sessionId, operationId: "partial-output-operation", leaseOwner: "partial-owner",
+      fencingToken: claim.fencingToken, version: claim.version }, [
+      { reference: "clientId", classification: "public", storageName: "Client ID",
+        value: "partial-value", scope: "project" },
+    ])).rejects.toThrow("PROTECTED_OUTPUT_SET_INCOMPLETE");
+    const proof = await database.query<{ state: string; credentials: number; values: number }>(
+      `SELECT operation.state,
+              (SELECT count(*)::int FROM project_credentials WHERE origin_protected_operation_id=operation.id) credentials,
+              (SELECT count(*)::int FROM generated_public_values WHERE source_protected_operation_id=operation.id) values
+         FROM protected_operations operation WHERE operation.id=$1`,
+      [claim.id],
+    );
+    expect(proof.rows[0]).toEqual({ state: "persisting", credentials: 0, values: 0 });
   });
 
   it("recovers an encrypted staged response after lease loss without redispatch", async () => {
@@ -310,6 +482,64 @@ integration("protected operation repository integration", () => {
       [claim.id],
     );
     expect(proof.rows[0]).toEqual({ staging: 0, dispatches: 1 });
+  });
+
+  it("observes a committed complete set after caller acknowledgement is lost without redispatch", async () => {
+    const operationId = "commit-acknowledgement-lost";
+    await create(operationId);
+    let claim = await claimOperation(operationId, "commit-owner", 30_000);
+    for (const next of ["preparing", "ready_to_dispatch", "dispatching", "dispatched", "acquiring", "persisting"] as const) {
+      claim = await operations.transition({ id: claim.id,leaseOwner: "commit-owner",fencingToken: claim.fencingToken,
+        version: claim.version,expected: claim.state,next,phase: next });
+    }
+    const staleContext = { protectedOperationId: claim.id,projectId,environmentId,missionId,objectiveId,
+      agentSessionId,ownerKind: "authoring_session" as const,ownerId: sessionId,operationId,
+      leaseOwner: "commit-owner",fencingToken: claim.fencingToken,version: claim.version };
+    // Deliberately discard the returned acknowledgement: durable state is the authority.
+    await outputs.persistOutputsAtomically(staleContext, [
+      { reference: "clientId",classification: "public",storageName: "Client ID",value: "lost-ack-id",scope: "project" },
+      { reference: "clientSecret",classification: "protected",storageName: "Client secret",value: "lost-ack-secret",scope: "project" },
+    ]).then(() => undefined);
+    await database.query(`UPDATE protected_operations SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [claim.id]);
+    const recovered = await claimOperation(operationId, "recovery-after-lost-ack");
+    expect(recovered).toMatchObject({ state: "recovery_required" });
+    expect(Object.keys(recovered.persistedReferences ?? {}).sort()).toEqual(["clientId", "clientSecret"]);
+    await expect(outputs.persistOutputsAtomically(staleContext, [
+      { reference: "clientId",classification: "public",storageName: "Client ID",value: "late-id",scope: "project" },
+      { reference: "clientSecret",classification: "protected",storageName: "Client secret",value: "late-secret",scope: "project" },
+    ])).rejects.toThrow("PROTECTED_OPERATION_PERSISTENCE_FENCED");
+    const proof = await database.query<{ dispatches: number; credentials: number; values: number }>(
+      `SELECT
+        (SELECT count(*)::int FROM protected_operation_transitions WHERE protected_operation_id=$1 AND to_state='dispatching') dispatches,
+        (SELECT count(*)::int FROM project_credentials WHERE origin_protected_operation_id=$1) credentials,
+        (SELECT count(*)::int FROM generated_public_values WHERE source_protected_operation_id=$1) values`,
+      [claim.id],
+    );
+    expect(proof.rows[0]).toEqual({ dispatches: 1, credentials: 1, values: 1 });
+  });
+
+  it("enforces the configured server statement and lock deadlines", async () => {
+    const settings = await database.query<{ statementTimeout: string; lockTimeout: string }>(
+      `SELECT current_setting('statement_timeout') AS "statementTimeout",
+              current_setting('lock_timeout') AS "lockTimeout"`,
+    );
+    expect(settings.rows[0]).toEqual({ statementTimeout: "250ms", lockTimeout: "100ms" });
+    await expect(database.query(`SELECT pg_sleep(0.5)`)).rejects.toMatchObject({ code: "57014" });
+
+    const operationId = "lock-timeout-policy";
+    await create(operationId);
+    const blocker = await database.pool.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(
+        `SELECT id FROM protected_operations WHERE operation_id=$1 FOR UPDATE`,
+        [operationId],
+      );
+      await expect(claimOperation(operationId, "lock-waiter")).rejects.toMatchObject({ code: "55P03" });
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
   });
 
   it("atomically repairs contradictory authoring state from completed durable state", async () => {
@@ -375,6 +605,87 @@ integration("protected operation repository integration", () => {
       stepCount: 1, completionEvents: 1, projectionActivities: 1 });
     expect(proof.rows[0]!.sessionVersion - versionBefore.rows[0]!.version).toBeLessThanOrEqual(1);
     expect(proof.rows[0]!.opaqueReferenceCount).toBe(2);
+    const generatedCredentialId = persisted.references.clientSecret?.credentialId;
+    expect(generatedCredentialId).toMatch(/^[0-9a-f-]{36}$/);
+    const admitted = await database.query<{ references: string[] }>(
+      `SELECT protected_reference_allowlist AS references FROM adaptive_sessions WHERE id=$1`,
+      [sessionId],
+    );
+    expect(admitted.rows[0]!.references.filter((id) => id === generatedCredentialId)).toHaveLength(1);
+
+    const downstreamOperationId = "consume-projected-reference";
+    await beginAdaptiveProtectedOperation(
+      downstreamOperationId,
+      true,
+      downstreamOperationId,
+      [generatedCredentialId!],
+    );
+    let downstream = await operations.claim({ ownerKind: "authoring_session",ownerId: sessionId,
+      operationId: downstreamOperationId,leaseOwner: "downstream-owner",leaseDurationMs: 30_000,
+      binding: { mutationIdentity: downstreamOperationId,projectId,environmentId,missionId,objectiveId,
+        agentSessionId,programDigest: "a".repeat(64),flowDraftId,dispatchSemantics: "mutation",authorizationId,
+        safeOutputManifest: [
+          { reference: "clientId",classification: "public",storageName: "Client ID" },
+          { reference: "clientSecret",classification: "protected",storageName: "Client secret" },
+        ] } });
+    for (const next of ["preparing", "ready_to_dispatch", "dispatching", "dispatched", "acquiring", "persisting"] as const) {
+      downstream = await operations.transition({ id: downstream.id, leaseOwner: "downstream-owner",
+        fencingToken: downstream.fencingToken, version: downstream.version,
+        expected: downstream.state, next, phase: next });
+    }
+    const downstreamPersisted = await outputs.persistOutputsAtomically({ protectedOperationId: downstream.id,
+      projectId,environmentId,missionId,objectiveId,agentSessionId,ownerKind: "authoring_session",
+      ownerId: sessionId,operationId: downstreamOperationId,leaseOwner: "downstream-owner",
+      fencingToken: downstream.fencingToken,version: downstream.version }, [
+      { reference: "clientId", classification: "public", storageName: "Client ID", value: "downstream-public", scope: "project" },
+      { reference: "clientSecret", classification: "protected", storageName: "Client secret", value: "downstream-protected-canary", scope: "project" },
+    ]);
+    downstream = await operations.transition({ id: downstreamPersisted.claim.id,leaseOwner: "downstream-owner",
+      fencingToken: downstreamPersisted.claim.fencingToken,version: downstreamPersisted.claim.version,
+      expected: "persisted",next: "reconciling",phase: "reconciling" });
+    await operations.transition({ id: downstream.id,leaseOwner: "downstream-owner",
+      fencingToken: downstream.fencingToken,version: downstream.version,
+      expected: "reconciling",next: "completed",phase: "completed" });
+    const composition = await database.query<{ firstDispatches: number; secondDispatches: number }>(
+      `SELECT
+         (SELECT count(*)::int FROM protected_operation_transitions WHERE protected_operation_id=$1 AND to_state='dispatching') AS "firstDispatches",
+         (SELECT count(*)::int FROM protected_operation_transitions WHERE protected_operation_id=$2 AND to_state='dispatching') AS "secondDispatches"`,
+      [claim.id, downstream.id],
+    );
+    expect(composition.rows[0]).toEqual({ firstDispatches: 1, secondDispatches: 1 });
+  });
+
+  it("rejects incomplete or foreign durable protected-reference provenance atomically", async () => {
+    const operationId = "reject-foreign-projection";
+    await beginAdaptiveProtectedOperation(operationId);
+    await create(operationId);
+    let claim = await claimOperation(operationId, "foreign-owner");
+    for (const next of ["preparing", "ready_to_dispatch", "dispatching", "dispatched", "acquiring", "persisting"] as const) {
+      claim = await operations.transition({ id: claim.id,leaseOwner: "foreign-owner",fencingToken: claim.fencingToken,
+        version: claim.version,expected: claim.state,next,phase: next });
+    }
+    const persisted = await outputs.persistOutputsAtomically({ protectedOperationId: claim.id,projectId,environmentId,
+      missionId,objectiveId,agentSessionId,ownerKind: "authoring_session",ownerId: sessionId,operationId,
+      leaseOwner: "foreign-owner",fencingToken: claim.fencingToken,version: claim.version }, [
+      { reference: "clientId", classification: "public", storageName: "Client ID", value: "foreign-public", scope: "project" },
+      { reference: "clientSecret", classification: "protected", storageName: "Client secret", value: "foreign-protected-canary", scope: "project" },
+    ]);
+    claim = await operations.transition({ id: persisted.claim.id,leaseOwner: "foreign-owner",
+      fencingToken: persisted.claim.fencingToken,version: persisted.claim.version,
+      expected: "persisted",next: "reconciling",phase: "reconciling" });
+    claim = await operations.transition({ id: claim.id,leaseOwner: "foreign-owner",fencingToken: claim.fencingToken,
+      version: claim.version,expected: "reconciling",next: "completed",phase: "completed" });
+    const credentialId = persisted.references.clientSecret!.credentialId!;
+    await database.query(`UPDATE environments SET secret_refs=secret_refs-$2 WHERE id=$1`, [environmentId, credentialId]);
+    const before = await database.query<{ references: string[] }>(
+      `SELECT protected_reference_allowlist AS references FROM adaptive_sessions WHERE id=$1`, [sessionId],
+    );
+    await expect(new AdaptiveSessionRepository(database).projectProtectedOperationForAuthoring({ sessionId, operationId }))
+      .rejects.toMatchObject({ response: { code: "MISSION_AUTHORING_PROTECTED_REFERENCE_PROVENANCE_INVALID" } });
+    const after = await database.query<{ references: string[] }>(
+      `SELECT protected_reference_allowlist AS references FROM adaptive_sessions WHERE id=$1`, [sessionId],
+    );
+    expect(after.rows[0]!.references).toEqual(before.rows[0]!.references);
   });
 
   it("projects failed, recovery, and missing durable states without inventing mutation success", async () => {

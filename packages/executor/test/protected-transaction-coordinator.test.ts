@@ -467,6 +467,13 @@ describe("protected transaction capsule", () => {
         state: () => channelCollector.state(),
       };
       const memory = memoryStore();
+      let heartbeatCalls = 0;
+      const lifecycleStore: ProtectedTransactionStore = {
+        ...memory.store,
+        heartbeatIntervalMs: 250,
+        heartbeatTimeoutMs: 100,
+        heartbeat: async () => { heartbeatCalls += 1; },
+      };
       const secrets: string[] = [];
       const publics: string[] = [];
       let calibrationBoundaryVerified = false;
@@ -477,7 +484,7 @@ describe("protected transaction capsule", () => {
         safeSession: { browser, context, page, provenance },
         gate: new VeilRuntimeCoordinator([collector]),
         redactor: new SecretRedactor(),
-        store: memory.store,
+        store: lifecycleStore,
         capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser),
         allowedOrigins: [origin],
         prepareCapsule: async (session) => {
@@ -498,7 +505,7 @@ describe("protected transaction capsule", () => {
           return { valueId: "22222222-2222-4222-8222-222222222222" };
         },
         persistOutputsAtomically: atomicProjectCapture(
-          memory.store,
+            lifecycleStore,
           async (value) => { secrets.push(value); return { credentialId: "11111111-1111-4111-8111-111111111111" }; },
           async (value) => { publics.push(value); return { valueId: "22222222-2222-4222-8222-222222222222" }; },
         ),
@@ -511,10 +518,18 @@ describe("protected transaction capsule", () => {
           calibrationBoundaryVerified = true;
         },
         reconcile: async (session) => {
+          const before = heartbeatCalls;
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          expect(heartbeatCalls).toBeGreaterThan(before);
           await session.page.goto(`${origin}/safe`);
           return (await session.page.getByTestId("created").textContent()) === "Created"
             ? "succeeded"
             : "not_applied";
+        },
+        onEvidenceResumed: async () => {
+          const before = heartbeatCalls;
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          expect(heartbeatCalls).toBeGreaterThan(before);
         },
       }).execute(transaction(origin));
       expect(result.result).toMatchObject({
@@ -534,6 +549,9 @@ describe("protected transaction capsule", () => {
       expect(calibrationBoundaryVerified).toBe(true);
       expect(await page.evaluate(() => localStorage.getItem("secret"))).toBeNull();
       expect(collectorStates).toEqual(["stopped", "resumed"]);
+      const terminalHeartbeatCount = heartbeatCalls;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(heartbeatCalls).toBe(terminalHeartbeatCount);
     } finally {
       await browser.close();
     }
@@ -585,8 +603,10 @@ describe("protected transaction capsule", () => {
   });
 
   it("settles a dispatched read-only acquisition failure as retry-safe and not applied", async () => {
+    let dispatches = 0;
     const server = createServer((request, response) => {
       if (request.url === "/orders") {
+        dispatches += 1;
         response.setHeader("content-type", "application/json");
         response.end(JSON.stringify({ status: "ok" }));
         return;
@@ -605,6 +625,18 @@ describe("protected transaction capsule", () => {
       const page = await context.newPage();
       await page.goto(origin);
       const memory = memoryStore();
+      const recordedFacts: Array<Record<string, unknown> | undefined> = [];
+      let terminalTransitionFacts: Record<string, unknown> | undefined;
+      const store: ProtectedTransactionStore = {
+        ...memory.store,
+        transition: async (entry) => {
+          if (entry.next === "failed_not_applied") terminalTransitionFacts = entry.facts;
+          return memory.store.transition(entry);
+        },
+        record: async (entry) => {
+          recordedFacts.push(entry.facts);
+        },
+      };
       const operation = transaction(origin);
       operation.entry.url = origin;
       operation.entry.assertions = [{ type: "visible", target: intent("Save", "button") }];
@@ -631,7 +663,7 @@ describe("protected transaction capsule", () => {
       const result = await new ProtectedTransactionKernel({
         safeSession: { browser, context, page, provenance: new BrowserSessionProvenance(randomUUID(), "safe") },
         gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]),
-        redactor: new SecretRedactor(), store: memory.store,
+        redactor: new SecretRedactor(), store,
         capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser), allowedOrigins: [origin],
         prepareCapsule: async (session) => {
           registerPraxisVeilAuthority(session.page, {
@@ -652,12 +684,343 @@ describe("protected transaction capsule", () => {
         safeActions: ["retry_transaction", "abort"],
       });
       expect(memory.state()).toBe("failed_not_applied");
+      expect(dispatches).toBe(1);
+      expect(recordedFacts.at(-1)).toMatchObject({
+        mutation: {
+          request: {
+            status: "initiated",
+            method: "GET",
+            transport: "fetch",
+            envelopeMatched: true,
+          },
+        },
+      });
+      expect(terminalTransitionFacts).toMatchObject({
+        mutation: {
+          request: {
+            status: "initiated",
+            method: "GET",
+            transport: "fetch",
+            envelopeMatched: true,
+          },
+        },
+        responseEvidence: {
+          responseEventObserved: true,
+          eligibleResponseSelected: true,
+          httpStatusCode: 200,
+          statusClass: "2xx",
+          contentTypeClass: "json",
+          bodyAcquisitionStarted: true,
+          bodyAcquisitionSettled: true,
+          bodyParseStatus: "success",
+          topLevelShape: "object",
+          declaredSemanticLeafPresent: false,
+          declaredSemanticLeafMatchCount: "zero",
+          selectedPathClass: "unavailable",
+          extractionResultClass: "not_present",
+          lateResultDiscarded: false,
+        },
+      });
     } finally {
       await browser.close();
     }
   }, 15_000);
 
-  it("never replays after dispatch authorization began", async () => {
+  it.each([200, 400, 401, 403, 404, 422, 429])(
+    "settles documented read-only request status %s through the production kernel",
+    async (httpStatusCode) => {
+    const expected = {
+      clientId: `client-${randomUUID()}`,
+      clientSecret: `secret-${randomUUID()}`,
+      orderId: randomUUID(),
+    };
+    let dispatches = 0;
+    const observations: Array<Record<string, unknown>> = [];
+    const server = createServer((request, response) => {
+      if (request.url === "/") {
+        response.setHeader("content-type", "text/html");
+        response.end(`<link rel="icon" href="data:,"><label>Client ID<input></label><label>Client secret<input></label><label>Order ID<input></label><button aria-label="Save">Save</button><output aria-label="id">response schema</output><script>
+          document.querySelector('[aria-label=Save]').onclick=()=>fetch('/api/v1/partner-api/orders/'+encodeURIComponent(document.querySelectorAll('input')[2].value),{method:'GET',headers:{'x-vitract-client-id':document.querySelectorAll('input')[0].value,'x-vitract-client-secret':document.querySelectorAll('input')[1].value}})
+        </script>`);
+        return;
+      }
+      if (request.url === "/safe") {
+        response.setHeader("content-type", "text/html");
+        response.end("<main>continued</main>");
+        return;
+      }
+      if (!request.url?.startsWith("/api/v1/partner-api/orders/")) {
+        response.statusCode = 404;
+        response.end();
+        return;
+      }
+      dispatches += 1;
+      let bodyBytes = 0;
+      request.on("data", (chunk) => { bodyBytes += chunk.length; });
+      request.on("end", () => {
+        const shape = {
+          method: request.method,
+          pathMatches: request.url === `/api/v1/partner-api/orders/${expected.orderId}`,
+          queryAbsent: !request.url?.includes("?"),
+          clientIdHeaderMatches: request.headers["x-vitract-client-id"] === expected.clientId,
+          clientSecretHeaderMatches: request.headers["x-vitract-client-secret"] === expected.clientSecret,
+          bodyAbsent: bodyBytes === 0,
+        };
+        observations.push(shape);
+        const accepted = Object.values(shape).every((value) => value === true || value === "GET");
+        response.statusCode = accepted ? httpStatusCode : shape.method !== "GET" ? 405
+          : !shape.pathMatches ? 404
+            : !shape.clientIdHeaderMatches || !shape.clientSecretHeaderMatches ? 401
+              : 422;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify(accepted && httpStatusCode === 200
+          ? { data: { id: expected.orderId } }
+          : { error: "rejected" }));
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("server unavailable");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" });
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.goto(origin);
+      const memory = memoryStore();
+      const operation = transaction(origin);
+      operation.entry = { url: origin, assertions: [{ type: "visible", target: intent("Save", "button") }] };
+      operation.inputs = {
+        clientId: { classification: "known_secret", credentialRef: "client-id-ref" },
+        clientSecret: { classification: "known_secret", credentialRef: "client-secret-ref" },
+        orderId: { classification: "known_secret", credentialRef: "order-id-ref" },
+      };
+      operation.preparation.actions = [
+        { type: "fillKnownSecret", input: "clientId", target: intent("Client ID", "textbox"), effect: "replayable_setup" },
+        { type: "fillKnownSecret", input: "clientSecret", target: intent("Client secret", "textbox"), effect: "replayable_setup" },
+        { type: "fillKnownSecret", input: "orderId", target: intent("Order ID", "textbox"), effect: "replayable_setup" },
+      ];
+      operation.preparation.assertions = [];
+      operation.mutation = {
+        action: { type: "click", target: intent("Save", "button"), expectedEffect: { type: "none" } },
+        kind: "repeatable", dispatchSemantics: "read_only",
+        reconciliation: { strategy: "persisted_outputs", requiredReferences: ["retrievedOrderId"] },
+      };
+      operation.extraction.outputs = [{
+        classification: "public", reference: "retrievedOrderId",
+        acquisition: { target: intent("id", "value"), classification: "public", permittedMethods: ["protected_network_value"], validation: { minimumLength: 1, maximumLength: 200 } },
+        storage: { name: "Retrieved Order ID", scope: "project" },
+      }];
+      operation.acquisitionReadiness.valueIntent = intent("id", "value");
+      operation.acquisitionReadiness.approvedMethods = ["protected_network_value"];
+      const authority = new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] }));
+      const startedAt = Date.now();
+      const result = await new ProtectedTransactionKernel({
+        safeSession: { browser, context, page, provenance: new BrowserSessionProvenance(randomUUID(), "safe") },
+        gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]), redactor: new SecretRedactor(),
+        store: memory.store, capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser), allowedOrigins: [origin],
+        prepareCapsule: async (session) => {
+          registerPraxisVeilAuthority(session.page, { authority, userId: "request-contract-test", environmentId: "test", browserContextId: session.provenance.contextId });
+        },
+        resolveKnownSecret: async (reference) => reference === "client-id-ref" ? expected.clientId : reference === "client-secret-ref" ? expected.clientSecret : expected.orderId,
+        persistSecret: async () => { throw new Error("must not persist a protected output"); },
+        persistPublicValue: async () => ({ valueId: randomUUID() }),
+        persistOutputsAtomically: atomicProjectCapture(
+          memory.store,
+          async () => { throw new Error("must not persist a protected output"); },
+          async () => ({ valueId: randomUUID() }),
+        ),
+        verifyAssertions: verify,
+      }).execute(operation);
+      if (httpStatusCode === 200) {
+        expect(result.result.status).toBe("completed");
+        expect(memory.state()).toBe("completed");
+      } else {
+        expect(result.result).toMatchObject({
+          status: "aborted",
+          reasonCode: "PROTECTED_RESPONSE_HTTP_REJECTED",
+          mutation: { dispatch: "acknowledged", outcome: "confirmed_not_applied" },
+          responseEvidence: {
+            httpStatusCode,
+            statusClass: "4xx",
+            bodyAcquisitionStarted: false,
+            bodyAcquisitionSettled: false,
+            extractionResultClass: "rejected",
+          },
+        });
+        expect(memory.state()).toBe("failed_not_applied");
+        expect(Date.now() - startedAt).toBeLessThan(3_000);
+      }
+      expect(dispatches).toBe(1);
+      expect(observations).toEqual([{
+        method: "GET", pathMatches: true, queryAbsent: true,
+        clientIdHeaderMatches: true, clientSecretHeaderMatches: true, bodyAbsent: true,
+      }]);
+      expect(JSON.stringify(observations)).not.toContain(expected.clientId);
+      expect(JSON.stringify(observations)).not.toContain(expected.clientSecret);
+      expect(JSON.stringify(observations)).not.toContain(expected.orderId);
+    } finally {
+      await browser.close();
+    }
+    },
+    15_000,
+  );
+
+  it("classifies a read-only activation with no initiated request before the full response timeout", async () => {
+    const server = createServer((_request, response) => {
+      response.setHeader("content-type", "text/html");
+      response.end(
+        `<button aria-label="Save">Save</button>`,
+      );
+    });
+
+    servers.push(server);
+
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("server unavailable");
+    }
+
+    const origin = `http://127.0.0.1:${address.port}`;
+
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
+
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.goto(origin);
+
+      const memory = memoryStore();
+      const recordedPhases: string[] = [];
+
+      const store: ProtectedTransactionStore = {
+        ...memory.store,
+        record: async ({ phase }) => {
+          recordedPhases.push(phase);
+        },
+      };
+
+      const operation = transaction(origin);
+
+      operation.entry.url = origin;
+      operation.entry.assertions = [
+        { type: "visible", target: intent("Save", "button") },
+      ];
+
+      operation.preparation.actions = [];
+      operation.preparation.assertions = [];
+
+      operation.mutation.kind = "repeatable";
+      operation.mutation.dispatchSemantics = "read_only";
+      operation.mutation.action.expectedEffect = { type: "none" };
+
+      operation.extraction.timeoutMs = 400;
+      operation.extraction.outputs = [
+        {
+          classification: "public",
+          reference: "orderId",
+          acquisition: {
+            target: intent("id", "value"),
+            classification: "public",
+            permittedMethods: ["protected_network_value"],
+            validation: {
+              minimumLength: 1,
+              maximumLength: 200,
+            },
+          },
+          storage: {
+            name: "Order ID",
+            scope: "project",
+          },
+        },
+      ];
+
+      operation.acquisitionReadiness.valueIntent = intent("id", "value");
+      operation.acquisitionReadiness.approvedMethods = [
+        "protected_network_value",
+      ];
+
+      operation.mutation.reconciliation = {
+        strategy: "persisted_outputs",
+        requiredReferences: ["orderId"],
+      };
+
+      const authority = new VeilAuthority(
+        compileVeilPolicy({
+          profile: "balanced",
+          allowedOrigins: [origin],
+        }),
+      );
+
+      const started = Date.now();
+
+      const result = await new ProtectedTransactionKernel({
+        safeSession: {
+          browser,
+          context,
+          page,
+          provenance: new BrowserSessionProvenance(randomUUID(), "safe"),
+        },
+        gate: new VeilRuntimeCoordinator([
+          new VeilChannelCollector("evidence"),
+        ]),
+        redactor: new SecretRedactor(),
+        store,
+        capsuleFactory: new PlaywrightProtectedCapsuleFactory(
+          openTestBrowser,
+        ),
+        allowedOrigins: [origin],
+        prepareCapsule: async (session) => {
+          registerPraxisVeilAuthority(session.page, {
+            authority,
+            userId: "request-initiation-test",
+            environmentId: "test",
+            browserContextId: session.provenance.contextId,
+          });
+        },
+        resolveKnownSecret: async () => "",
+        persistSecret: async () => {
+          throw new Error("must not persist");
+        },
+        persistPublicValue: async () => {
+          throw new Error("must not persist");
+        },
+        verifyAssertions: verify,
+      }).execute(operation);
+
+      const elapsed = Date.now() - started;
+
+      expect(result.result).toMatchObject({
+        status: "aborted",
+        reasonCode: "PROTECTED_REQUEST_NOT_INITIATED",
+        mutation: {
+          dispatch: "started",
+          outcome: "confirmed_not_applied",
+        },
+        retryClass: "safe_to_retry",
+        safeActions: ["retry_transaction", "abort"],
+      });
+
+      expect(memory.state()).toBe("failed_not_applied");
+      expect(recordedPhases).toContain("request_not_initiated");
+
+      // The request-initiation boundary must terminate independently
+      // instead of consuming a long response/recovery window.
+      expect(elapsed).toBeLessThan(2_000);
+    } finally {
+      await browser.close();
+    }
+  }, 15_000);
+
+  it("keeps zero-output post-dispatch loss in recovery without redispatch", async () => {
     const browser = await chromium.launch({
       headless: true,
       channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
@@ -688,11 +1051,48 @@ describe("protected transaction capsule", () => {
         },
         verifyAssertions: async () => undefined,
       }).execute(transaction("https://example.test"));
-      expect(result.result.status).toBe("outcome_unknown");
-      expect(memory.state()).toBe("compromised");
+      expect(result.result).toMatchObject({
+        status: "outcome_unknown",
+        reasonCode: "PROTECTED_ACQUISITION_INCOMPLETE",
+        mutation: { outcome: "unknown" },
+      });
+      expect(memory.state()).toBe("recovery_required");
     } finally {
       await browser.close();
     }
+  });
+
+  it("marks an incomplete staged protected set compromised without an intermediate lease-releasing transition", async () => {
+    const browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" });
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      const operation = transaction("https://example.test");
+      const memory = memoryStore("recovery_required");
+      const compromised = vi.fn();
+      const result = await new ProtectedTransactionKernel({
+        safeSession: { browser, context, page, provenance: new BrowserSessionProvenance(randomUUID(), "safe") },
+        gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]),
+        redactor: new SecretRedactor(), store: memory.store,
+        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser), allowedOrigins: ["https://example.test"],
+        prepareCapsule: async () => undefined, resolveKnownSecret: async () => "",
+        persistSecret: async () => { throw new Error("must not persist"); },
+        persistPublicValue: async () => { throw new Error("must not persist"); },
+        recoverStagedResponseOutputs: async () => [{
+          reference: "clientSecret", classification: "protected", name: "Secret",
+          value: "staged-protected-value", scope: "project",
+        }],
+        markCredentialCompromised: compromised,
+        verifyAssertions: async () => undefined,
+      }).execute(operation);
+      expect(result.result).toMatchObject({
+        status: "outcome_unknown",
+        reasonCode: "PROTECTED_ACQUISITION_INTERRUPTED",
+        credentialSecurity: "compromised",
+      });
+      expect(memory.state()).toBe("compromised");
+      expect(compromised).not.toHaveBeenCalled();
+    } finally { await browser.close(); }
   });
 
   it("reconciles committed opaque references after process death without redispatch", async () => {

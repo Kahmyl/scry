@@ -13,6 +13,7 @@ import type {
   createAuthoringBrowserSession,
   AuthoringBrowserSession,
 } from "@scry/executor";
+import { runProtectedStage } from "@scry/executor";
 import { inspectPraxisCandidates } from "@scry/praxis";
 
 import type {
@@ -642,10 +643,22 @@ export function createAuthoringRuntimeOwner(options: {
     clearInterval(owned.commandPoll);
 
     try {
-      await owned.session.close();
+      await runProtectedStage({
+        stage: "authoring_runtime_close",
+        timeoutMs: Math.max(1_000, options.heartbeatMs),
+        timeoutCode: "AUTHORING_RUNTIME_CLOSE_TIMEOUT",
+        dispatchPosition: "post_dispatch",
+        work: () => owned.session.close(),
+      }).catch(() => undefined);
     } finally {
       if (release) {
-        await options.repository.release(browserLeaseId, options.workerId, "cancelled");
+        await runProtectedStage({
+          stage: "authoring_runtime_lease_release",
+          timeoutMs: Math.max(1_000, options.heartbeatMs),
+          timeoutCode: "AUTHORING_RUNTIME_LEASE_RELEASE_TIMEOUT",
+          dispatchPosition: "post_dispatch",
+          work: () => options.repository.release(browserLeaseId, options.workerId, "cancelled"),
+        });
       }
     }
   }

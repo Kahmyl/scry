@@ -222,6 +222,76 @@ export const interactionTargetIntentSchema = z
       });
   });
 
+const externalResourceIdentifier = z
+  .string()
+  .trim()
+  .min(1)
+  .max(500);
+
+/**
+ * Declares how an authoritative provider resource may be projected onto a
+ * current browser surface. The canonical identity remains owned by the
+ * external resource binding; this contract only authorizes a fresh public
+ * presentation field for semantic browser scoping.
+ */
+export const externalResourcePresentationContractSchema = z
+  .object({
+    canonicalIdentity: z
+      .object({ source: z.literal("external_resource_binding") })
+      .strict(),
+    resource: z
+      .object({
+        provider: externalResourceIdentifier.regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+        kind: externalResourceIdentifier.regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+        scope: externalResourceIdentifier,
+      })
+      .strict(),
+    presentationObservation: z
+      .object({
+        source: z.literal("authoritative_read_only_resource_observation"),
+        resourceCollection: externalResourceIdentifier,
+      })
+      .strict(),
+    presentationIdentity: z
+      .object({
+        semanticField: externalResourceIdentifier.regex(/^[A-Za-z][A-Za-z0-9_.-]{0,199}$/),
+        classification: z.literal("internal_non_secret"),
+        stability: z.literal("current_projection"),
+      })
+      .strict(),
+    browserBoundary: z
+      .object({
+        kind: z.enum(["dialog", "form", "section", "field_group", "table", "row", "region"]),
+      })
+      .strict(),
+    action: interactionTargetIntentSchema,
+  })
+  .strict()
+  .superRefine((contract, context) => {
+    if (contract.action.scope.kind !== "page")
+      context.addIssue({
+        code: "custom",
+        path: ["action", "scope"],
+        message: "cross-surface action scope is supplied by the presentation projection",
+      });
+    if (contract.action.risk !== "destructive")
+      context.addIssue({
+        code: "custom",
+        path: ["action", "risk"],
+        message: "cross-surface preparation is reserved for destructive actions",
+      });
+    if (contract.action.matching !== "exact")
+      context.addIssue({
+        code: "custom",
+        path: ["action", "matching"],
+        message: "cross-surface actions require exact matching",
+      });
+  });
+
+export type ExternalResourcePresentationContract = z.infer<
+  typeof externalResourcePresentationContractSchema
+>;
+
 export const controlCapabilitiesSchema = z
   .object({
     canFocus: z.boolean(),
@@ -403,6 +473,7 @@ export const acquisitionValidationSchema = z
 export const acquisitionIntentSchema = z
   .object({
     target: interactionTargetIntentSchema,
+    prohibitedSourceTargets: z.array(interactionTargetIntentSchema).max(20).optional(),
     classification: z.enum(["public", "known_secret", "unknown_secret"]),
     permittedMethods: z.array(acquisitionMethodSchema).min(1).max(10),
     objective: protectedValueObjectiveSchema.optional(),

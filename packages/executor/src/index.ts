@@ -13,3 +13,6 @@ export * from "./types.js";
 export * from "./execution-kernel.js";
 export * from "./interaction-lifecycle.js";
 export * from "./native-browser-navigation.js";
+export * from "./protected-stage-supervisor.js";
+export * from "./protected-response-envelope.js";
+export * from "./external-resource-target-preparation.js";

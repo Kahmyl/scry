@@ -25,7 +25,11 @@ describe("protected output persistence routing", () => {
     };
     const claim = { id: "operation", state: "persisting" as const, version: 7, fencingToken: 3 };
     const result = await persistAcquiredProtectedOutputs(
-      { operationId: "generate", extraction: { outputs: acquired.map(({ output }) => output) } } as never,
+      {
+        operationId: "generate",
+        extraction: { outputs: acquired.map(({ output }) => output), timeoutMs: 1_000 },
+        mutation: { dispatchSemantics: "one_time" },
+      } as never,
       { persistSecret, persistPublicValue, persistOutputsAtomically } as never,
       facts as never,
       acquired as never,
@@ -45,7 +49,11 @@ describe("protected output persistence routing", () => {
       { output: { reference: "public", classification: "public", storage: { name: "Public", scope: "run" } }, value: "public-value", adapter: "semantic_field_value" },
     ];
     await expect(persistAcquiredProtectedOutputs(
-      { operationId: "generate", extraction: { outputs: acquired.map(({ output }) => output) } } as never,
+      {
+        operationId: "generate",
+        extraction: { outputs: acquired.map(({ output }) => output), timeoutMs: 1_000 },
+        mutation: { dispatchSemantics: "one_time" },
+      } as never,
       { persistOutputsAtomically: vi.fn(async () => { throw new Error("database unavailable"); }) } as never,
       { credentialReferences: {}, publicValueReferences: {}, protectedAcquisitionEvidence: [], protectedPersistence: "not_attempted", publicPersistence: "not_attempted", credentialSecurity: "not_applicable" } as never,
       acquired as never,

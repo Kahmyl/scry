@@ -132,6 +132,22 @@ describe("VeilRuntimeCoordinator", () => {
     expect(results.filter(({ status }) => status === "rejected")).toHaveLength(1);
   });
 
+  it("bounds a non-resolving safe-boundary emitter and never resumes collectors", async () => {
+    const target = collector("recording");
+    const emit = vi.fn(async ({ state }: { state: string }) => {
+      if (state === "safe_to_resume") await new Promise(() => undefined);
+    });
+    const gate = new VeilRuntimeCoordinator([target], emit, 5);
+    await gate.prepare("synthetic");
+    await gate.beginProtected();
+    await gate.markCaptured();
+    await gate.beginSafeBoundary();
+    await expect(gate.confirmSafeBoundary(boundary)).rejects.toThrow("VEIL_EMITTER_TIMEOUT");
+    await gate.seal({ code: "SAFE_BOUNDARY_TIMEOUT" });
+    expect(gate.state()).toBe("sealed");
+    expect(target.resume).not.toHaveBeenCalled();
+  });
+
   it("seals incomplete transitions during idempotent finalization", async () => {
     const target = collector("recording");
     const gate = new VeilRuntimeCoordinator([target]);

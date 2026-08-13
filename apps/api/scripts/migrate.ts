@@ -100,6 +100,9 @@ const protectedResponseOutputStagingPath = fileURLToPath(
 const protectedReadOnlyDispatchPath = fileURLToPath(
   new URL("../migrations/protected-read-only-dispatch.sql", import.meta.url),
 );
+const externalResourceBindingsPath = fileURLToPath(
+  new URL("../migrations/external-resource-bindings.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -138,6 +141,7 @@ const protectedOperationCompletion = await readFile(protectedOperationCompletion
 const protectedOperationAuthoritativeProjection = await readFile(protectedOperationAuthoritativeProjectionPath, "utf8");
 const protectedResponseOutputStaging = await readFile(protectedResponseOutputStagingPath, "utf8");
 const protectedReadOnlyDispatch = await readFile(protectedReadOnlyDispatchPath, "utf8");
+const externalResourceBindings = await readFile(externalResourceBindingsPath, "utf8");
 
 const expandFoundation = (source: string) =>
   source
@@ -166,6 +170,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "protected-operation-authoritative-projection.sql": protectedOperationAuthoritativeProjection,
   "protected-response-output-staging.sql": protectedResponseOutputStaging,
   "protected-read-only-dispatch.sql": protectedReadOnlyDispatch,
+  "external-resource-bindings.sql": externalResourceBindings,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) =>
@@ -179,31 +184,34 @@ const preMissionFirstM1Baseline = stagedBaseline(
       name !== "mission-authoring-grouped-turns-m2.sql" &&
       name !== "protected-operation-authoritative-projection.sql" &&
       name !== "protected-response-output-staging.sql" &&
-      name !== "protected-read-only-dispatch.sql",
+      name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql",
   ),
 );
 const preAdaptiveSessionsBaseline = stagedBaseline(
   OPTIONAL_BASELINE_MIGRATIONS.filter(
-    (name) => name !== "adaptive-sessions-m3.sql" && name !== "mission-authoring-grouped-turns-m2.sql" && name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql",
+    (name) => name !== "adaptive-sessions-m3.sql" && name !== "mission-authoring-grouped-turns-m2.sql" && name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql",
   ),
 );
 const preMissionAuthoringGroupedTurnsM2Baseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "mission-authoring-grouped-turns-m2.sql" && name !== "protected-operation-state-machine.sql" && name !== "protected-operation-completion.sql" && name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "mission-authoring-grouped-turns-m2.sql" && name !== "protected-operation-state-machine.sql" && name !== "protected-operation-completion.sql" && name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql"),
 );
 const preProtectedOperationStateMachineBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-operation-state-machine.sql" && name !== "protected-operation-completion.sql" && name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-operation-state-machine.sql" && name !== "protected-operation-completion.sql" && name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql"),
 );
 const preProtectedOperationCompletionBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-operation-completion.sql" && name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-operation-completion.sql" && name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql"),
 );
 const preProtectedOperationAuthoritativeProjectionBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql"),
 );
 const preProtectedResponseOutputStagingBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql"),
 );
 const preProtectedReadOnlyDispatchBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-read-only-dispatch.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql"),
+);
+const preExternalResourceBindingsBaseline = stagedBaseline(
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "external-resource-bindings.sql"),
 );
 
 const fingerprint = digest(baseline);
@@ -217,6 +225,7 @@ const preProtectedOperationCompletionFingerprint = digest(preProtectedOperationC
 const preProtectedOperationAuthoritativeProjectionFingerprint = digest(preProtectedOperationAuthoritativeProjectionBaseline);
 const preProtectedResponseOutputStagingFingerprint = digest(preProtectedResponseOutputStagingBaseline);
 const preProtectedReadOnlyDispatchFingerprint = digest(preProtectedReadOnlyDispatchBaseline);
+const preExternalResourceBindingsFingerprint = digest(preExternalResourceBindingsBaseline);
 
 const previousVeilFullFingerprint =
   "8c0e5ae0ae72f9a163189abe903b317e38aacf6b1674f3441b62dd7129b48c6a";
@@ -279,12 +288,28 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preProtectedReadOnlyDispatchFingerprint) {
+    if (installedFingerprint === preExternalResourceBindingsFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-external-resource-bindings'))");
+        await client.query(externalResourceBindings);
+        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query("COMMIT");
+        process.stdout.write(`Applied external resource bindings ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preProtectedReadOnlyDispatchFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-protected-read-only-dispatch'))");
         await client.query(protectedReadOnlyDispatch);
+        await client.query(externalResourceBindings);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied protected read-only dispatch ${fingerprint}\n`);
@@ -301,6 +326,7 @@ try {
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-protected-response-output-staging'))");
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
+        await client.query(externalResourceBindings);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied protected response output staging ${fingerprint}\n`);
@@ -318,6 +344,7 @@ try {
         await client.query(protectedOperationAuthoritativeProjection);
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
+        await client.query(externalResourceBindings);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied protected operation authoritative projection ${fingerprint}\n`);
@@ -336,6 +363,7 @@ try {
         await client.query(protectedOperationAuthoritativeProjection);
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
+        await client.query(externalResourceBindings);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied protected operation completion ${fingerprint}\n`);
@@ -357,6 +385,7 @@ try {
         await client.query(protectedOperationAuthoritativeProjection);
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
+        await client.query(externalResourceBindings);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -383,6 +412,7 @@ try {
         await client.query(protectedOperationAuthoritativeProjection);
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
+        await client.query(externalResourceBindings);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -410,6 +440,7 @@ try {
         await client.query(protectedOperationAuthoritativeProjection);
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
+        await client.query(externalResourceBindings);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -438,6 +469,7 @@ try {
         await client.query(protectedOperationAuthoritativeProjection);
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
+        await client.query(externalResourceBindings);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -472,6 +504,7 @@ try {
         await client.query(protectedOperationAuthoritativeProjection);
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
+        await client.query(externalResourceBindings);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,

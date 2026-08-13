@@ -141,6 +141,32 @@ describe("adaptive session contracts", () => {
     expect(() => missionAuthoringIntentSchema.parse({ ...request, authorization })).toThrow();
   });
 
+  it("binds credential revocation projection to one authorized mutating intent", () => {
+    const revocation = intent({
+      action: { kind: "activate", target: { ...target, role: "button", name: "Revoke", exact: true } },
+      authorization: { kind: "live_mutation", authorizationId: ids.authorizationId },
+      credentialLifecycle: {
+        effect: "revoke",
+        credentialReferenceIds: [ids.protectedReferenceId],
+      },
+    });
+    expect(missionAuthoringIntentSchema.parse(revocation)).toMatchObject({
+      credentialLifecycle: { effect: "revoke", credentialReferenceIds: [ids.protectedReferenceId] },
+    });
+    expect(() => missionAuthoringIntentSchema.parse({ ...revocation, authorization })).toThrow();
+    expect(() => missionAuthoringIntentSchema.parse({
+      ...revocation,
+      action: { kind: "inspect", target },
+    })).toThrow();
+    expect(() => missionAuthoringIntentSchema.parse({
+      ...revocation,
+      credentialLifecycle: {
+        effect: "revoke",
+        credentialReferenceIds: [ids.protectedReferenceId, ids.protectedReferenceId],
+      },
+    })).toThrow();
+  });
+
   it("accepts only strict grouped intent and continuation advances", () => {
     expect(
       advanceAdaptiveSessionSchema.parse({

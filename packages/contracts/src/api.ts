@@ -2,6 +2,10 @@ import { z } from "zod";
 
 import { executionPolicySchema } from "./policy.js";
 
+const environmentExecutionPolicyInputSchema = executionPolicySchema.omit({
+  externalResourcePresentationAuthorities: true,
+});
+
 export const uuidSchema = z.string().uuid();
 export const nameSchema = z.string().trim().min(1).max(200);
 
@@ -25,7 +29,7 @@ export const createEnvironmentSchema = z
         const url = new URL(value);
         return ["http:", "https:"].includes(url.protocol) && value === url.origin;
       }, "baseOrigin must be a canonical HTTP(S) origin without a trailing slash"),
-    policy: executionPolicySchema,
+    policy: environmentExecutionPolicyInputSchema,
     secretRefs: z.array(uuidSchema).max(100).default([]),
   })
   .strict();

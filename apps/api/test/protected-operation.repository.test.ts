@@ -20,7 +20,8 @@ function harness() {
     id: "88888888-8888-4888-8888-888888888888", state: "acquiring", phase: "acquisition",
     version: "7", fencingToken: "3", leaseOwner: "worker-a",
     leaseExpiresAt: new Date(Date.now() + 30_000), dispatchState: "acknowledged",
-    mutationOutcome: "unknown", persistedReferences: {}, ...binding, flowRevisionId: null,
+    mutationOutcome: "unknown", persistedReferences: {}, ...binding,
+    dispatchSemantics: "mutation", flowRevisionId: null,
   };
   const client = { query: vi.fn(async () => ({ rowCount: 1, rows: [row] })) };
   const database = { transaction: vi.fn((work: (value: typeof client) => unknown) => work(client)) };

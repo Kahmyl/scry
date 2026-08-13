@@ -8,6 +8,7 @@ import type {
   ProtectedTransactionFacts,
 } from "./protected-transaction-coordinator.js";
 import { ProtectedTransactionPhaseError as PhaseError } from "./protected-transaction-errors.js";
+import { runProtectedStage } from "./protected-stage-supervisor.js";
 
 export async function verifyProtectedAcquisitionReadiness(
   page: Page,
@@ -58,16 +59,52 @@ export async function acquireProtectedOutputs(
   facts: ProtectedTransactionFacts,
 ): Promise<AcquiredProtectedOutputSet> {
   const deadline = Date.now() + transaction.extraction.timeoutMs;
-  const extracted = await Promise.all(
-    transaction.extraction.outputs.map(async (output) => ({
-      output,
-      extraction: await acquireValue(
-        page,
-        output.acquisition,
-        Math.max(100, deadline - Date.now()),
-      ),
-    })),
+  const protectedInputTargets = (transaction.preparation?.actions ?? []).flatMap((action) =>
+    action.type === "fillKnownSecret" ? [action.target] : []
   );
+  const extracted = await runProtectedStage({
+    stage: "protected_output_acquisition",
+    timeoutMs: transaction.extraction.timeoutMs,
+    signal: dependencies.signal,
+    timeoutCode: "PROTECTED_OUTPUT_ACQUISITION_TIMEOUT",
+    dispatchPosition:
+      transaction.mutation.dispatchSemantics === "read_only"
+        ? "read_only"
+        : "post_dispatch",
+    work: (stageSignal) =>
+      Promise.all(
+        transaction.extraction.outputs.map(async (output) => {
+          const remainingMs = Math.max(1, deadline - Date.now());
+          // The dependency must terminate before its owning stage. Giving both
+          // timers the identical deadline makes their ordering scheduler-
+          // dependent and can replace a precise fail-closed classification
+          // with the supervisor's generic timeout.
+          const dependencyTimeoutMs = Math.max(
+            1,
+            remainingMs - Math.min(250, Math.max(25, Math.floor(remainingMs / 10))),
+          );
+          const extraction = await acquireValue(
+            page,
+            {
+              ...output.acquisition,
+              prohibitedSourceTargets: [
+                ...(output.acquisition.prohibitedSourceTargets ?? []),
+                ...protectedInputTargets,
+              ],
+            },
+            dependencyTimeoutMs,
+          );
+          // Cooperative browser cancellation is not guaranteed. If a locator
+          // completes after its owner expired, erase the late value before the
+          // abandoned promise can retain it.
+          if (stageSignal.aborted && extraction.result?.kind === "captured_value") {
+            extraction.result.value = "";
+            extraction.value = undefined;
+          }
+          return { output, extraction };
+        }),
+      ),
+  });
   const acquired: AcquiredProtectedOutputSet = [];
   for (const { output, extraction } of extracted) {
     facts.diagnostics.push(...extraction.diagnostics);
@@ -116,7 +153,13 @@ export async function persistAcquiredProtectedOutputs(
     if (!dependencies.persistOutputsAtomically)
       throw new PhaseError("ATOMIC_OUTPUT_PERSISTENCE_AUTHORITY_REQUIRED", "persistence", "do_not_retry");
     try {
-      const persisted = await dependencies.persistOutputsAtomically({
+      const persisted = await runProtectedStage({
+        stage: "atomic_persistence",
+        timeoutMs: transaction.extraction.timeoutMs,
+        signal: dependencies.signal,
+        timeoutCode: "ATOMIC_OUTPUT_PERSISTENCE_TIMEOUT",
+        dispatchPosition: transaction.mutation.dispatchSemantics === "read_only" ? "read_only" : "post_dispatch",
+        work: () => dependencies.persistOutputsAtomically!({
         operationId: transaction.operationId,
         claim,
         outputs: acquired.map(({ output, value }) => ({
@@ -126,6 +169,8 @@ export async function persistAcquiredProtectedOutputs(
           value,
           scope: output.storage.scope,
         })),
+        externalResourceBindings: transaction.extraction.externalResourceBindings ?? [],
+        }),
       });
       const references = persisted.references;
       for (const { output, adapter } of acquired) {

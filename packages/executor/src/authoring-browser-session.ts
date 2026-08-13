@@ -11,6 +11,7 @@ import type { Browser, BrowserContext, Page } from "playwright";
 
 import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
 import { BrowserSessionProvenance } from "./browser-session.js";
+import { runProtectedStage } from "./protected-stage-supervisor.js";
 
 export type AuthoringBrowserSessionState =
   "active" | "suspended" | "releasing" | "released" | "crashed";
@@ -52,7 +53,13 @@ export async function createAuthoringBrowserSession(input: {
   veilAdmissionKey: string;
   browserChannel: string;
   policy: ExecutionPolicy;
-  openBrowser(): Promise<{ browser: Browser; context: BrowserContext; page: Page }>;
+  openBrowser(): Promise<{
+    browser: Browser;
+    context: BrowserContext;
+    page: Page;
+    forceClose?: () => Promise<void>;
+    browserProcessId?: number;
+  }>;
   executeInteraction(input: {
     browser: Browser;
     context: BrowserContext;
@@ -85,6 +92,7 @@ export async function createAuthoringBrowserSession(input: {
   playwrightBrowserChannel(input.browserChannel);
   const opened = await input.openBrowser();
   const browser = opened.browser;
+  const forceClose = opened.forceClose;
   let context: BrowserContext | undefined = opened.context;
   let page: Page | undefined = opened.page;
 
@@ -255,9 +263,10 @@ export async function createAuthoringBrowserSession(input: {
         try {
           unregisterVeil.forEach((unregister) => unregister());
           await privacyGate.seal({ code: "AUTHORING_OPERATION_CANCELLED" }).catch(() => undefined);
-          await context!.close();
+          await boundedAuthoringClose("authoring_context_cancel", () => context!.close());
         } finally {
-          await browser.close().catch(() => undefined);
+          await boundedAuthoringClose("authoring_browser_cancel", () => browser.close())
+            .catch(() => forceClose?.());
         }
       },
 
@@ -269,12 +278,17 @@ export async function createAuthoringBrowserSession(input: {
         closed = true;
         lifecycle = "releasing";
         unregisterVeil.forEach((unregister) => unregister());
-        await privacyGate.finalize().catch(() => undefined);
+        await boundedAuthoringClose("authoring_veil_finalize", () => privacyGate.finalize())
+          .catch(() => privacyGate.seal({ code: "AUTHORING_FINALIZATION_TIMEOUT" }));
 
         try {
-          await context!.close();
+          await boundedAuthoringClose("authoring_context_close", () => context!.close());
         } finally {
-          await browser.close();
+          await boundedAuthoringClose("authoring_browser_close", () => browser.close())
+            .catch(async (error) => {
+              if (!forceClose) throw error;
+              await boundedAuthoringClose("authoring_browser_force_close", forceClose);
+            });
           lifecycle = "released";
         }
       },
@@ -284,6 +298,16 @@ export async function createAuthoringBrowserSession(input: {
     await browser.close().catch(() => undefined);
     throw error;
   }
+}
+
+function boundedAuthoringClose(stage: string, work: () => Promise<unknown>) {
+  return runProtectedStage({
+    stage,
+    timeoutMs: 2_000,
+    timeoutCode: "AUTHORING_BROWSER_CLOSE_TIMEOUT",
+    dispatchPosition: "post_dispatch",
+    work,
+  });
 }
 
 function waitForPopup(context: BrowserContext, timeoutMs: number) {

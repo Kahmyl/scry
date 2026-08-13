@@ -29,4 +29,13 @@ describe("VeilClipboardCollector", () => {
     expect(page.evaluate).toHaveBeenCalledTimes(2);
     expect(collector.state().status).not.toBe("finalized");
   });
+
+  it("bounds each cleanup attempt when page evaluation never settles", async () => {
+    const page = { evaluate: vi.fn(() => new Promise(() => undefined)) };
+    const collector = new VeilClipboardCollector(page as never, 2, 5);
+    collector.markProtectedClipboardTouched();
+    await expect(collector.finalize()).rejects.toBeInstanceOf(VeilClipboardCleanupError);
+    expect(page.evaluate).toHaveBeenCalledTimes(2);
+    expect(collector.state().status).not.toBe("finalized");
+  });
 });

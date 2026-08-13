@@ -1,12 +1,83 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { AdaptiveSessionOperationInput } from "@scry/contracts";
 
-import { AdaptiveSessionRepository } from "../src/adaptive-sessions/adaptive-session.repository.js";
+import {
+  AdaptiveSessionRepository,
+  requireEnvironmentCapabilities,
+} from "../src/adaptive-sessions/adaptive-session.repository.js";
 import { compileMissionAuthoringProtectedTransaction } from "../src/adaptive-sessions/mission-authoring-protected-transaction.js";
 import { Database } from "../src/infrastructure/index.js";
 
 const configuredDatabaseUrl = process.env.SCRY_AUTHORING_TEST_DATABASE_URL;
 const integration = configuredDatabaseUrl ? describe : describe.skip;
+
+describe("adaptive session environment capability admission", () => {
+  const policy = {
+    allowedOrigins: ["https://app.example.test", "https://api.example.test"],
+    trustedScriptOrigins: ["https://scripts.example.test"],
+  };
+
+  it("admits all required document origins under one environment identity", () => {
+    expect(requireEnvironmentCapabilities(
+      { policy, secretRefs: [] },
+      {
+        allowedOrigins: ["https://app.example.test", "https://api.example.test/docs"],
+        initialProtectedReferenceIds: [],
+      },
+    )).toEqual(["https://app.example.test", "https://api.example.test"]);
+  });
+
+  it("rejects a missing document origin before runtime creation", () => {
+    const error = capture(() => requireEnvironmentCapabilities(
+      { policy: { ...policy, allowedOrigins: ["https://app.example.test"] }, secretRefs: [] },
+      {
+        allowedOrigins: ["https://app.example.test", "https://api.example.test"],
+        initialProtectedReferenceIds: [],
+      },
+    ));
+    expect(error).toMatchObject({
+      response: expect.objectContaining({ code: "ENVIRONMENT_CAPABILITY_INCOMPLETE" }),
+    });
+  });
+
+  it("does not treat a trusted script origin as a navigable document origin", () => {
+    const error = capture(() => requireEnvironmentCapabilities(
+      { policy, secretRefs: [] },
+      {
+        allowedOrigins: ["https://scripts.example.test"],
+        initialProtectedReferenceIds: [],
+      },
+    ));
+    expect(error).toMatchObject({
+      response: expect.objectContaining({ code: "ENVIRONMENT_CAPABILITY_INCOMPLETE" }),
+    });
+  });
+
+  it("rejects a protected reference outside the selected environment", () => {
+    const error = capture(() => requireEnvironmentCapabilities(
+      { policy, secretRefs: ["11111111-1111-4111-8111-111111111111"] },
+      {
+        allowedOrigins: ["https://app.example.test"],
+        initialProtectedReferenceIds: ["22222222-2222-4222-8222-222222222222"],
+      },
+    ));
+    expect(error).toMatchObject({
+      response: expect.objectContaining({
+        code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+      }),
+    });
+  });
+});
+
+function capture(action: () => unknown) {
+  try {
+    action();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("EXPECTED_ACTION_TO_THROW");
+}
 
 integration("adaptive session repository integration", () => {
   let database: Database;
@@ -278,6 +349,224 @@ integration("adaptive session repository integration", () => {
       outcome: { functionalResult: "succeeded", mutationOutcome: "unknown" },
       decisionBoundary: boundary,
     });
+  });
+
+  it("atomically projects revoked credential pairs and denies cached-session reuse", async () => {
+    const credentialIds = [randomUUID(), randomUUID()];
+    const authorizationId = randomUUID();
+    await database.query(
+      `INSERT INTO mission_authorizations(
+         id,mission_id,objective_id,environment_id,kind,reason,status,granted_by_agent_session_id
+       ) VALUES($1,$2,$3,$4,'live_mutation','Credential lifecycle regression','approved',$5)`,
+      [authorizationId, missionId, objectiveId, environmentId, agentSessionId],
+    );
+    for (const [index, credentialId] of credentialIds.entries()) {
+      await database.query(
+        `INSERT INTO project_credentials(
+           id,project_id,name,ciphertext,initialization_vector,authentication_tag,
+           origin_mission_id,origin_objective_id,created_by_agent_session_id
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [credentialId, projectId, `Credential ${index}`, Buffer.from("ciphertext"),
+          Buffer.alloc(12), Buffer.alloc(16), missionId, objectiveId, agentSessionId],
+      );
+    }
+    await database.query(
+      `UPDATE environments SET secret_refs=secret_refs || $2::jsonb WHERE id=$1`,
+      [environmentId, JSON.stringify(credentialIds)],
+    );
+    const created = await repository.create(workspaceId, {
+      ...startInput("credential-revocation-start"),
+      initialProtectedReferenceIds: credentialIds,
+    });
+    sessionIds.push(created.id);
+    const operationId = "credential-revocation";
+    const intent = credentialRevocationIntent(operationId, credentialIds, authorizationId);
+    const action = credentialRevocationAction();
+    await expect(repository.validateIntentAdmission({ sessionId: created.id, intent })).resolves.toBeUndefined();
+    await repository.beginMissionOperation({
+      workspaceId,
+      sessionId: created.id,
+      operationId,
+      idempotencyKey: `${operationId}-key`,
+      intent,
+      action,
+      expectedEffect: { type: "none" },
+      mode: "transact",
+    });
+    await repository.settleMissionOperation({
+      sessionId: created.id,
+      operationId,
+      intent,
+      action,
+      outcome: successfulMutationOutcome(operationId),
+      capabilityManifestDigest: "e".repeat(64),
+      decisionBoundary: {
+        type: "objective_completed",
+        reasonCode: "OPERATION_COMPLETED",
+        safeActions: [],
+      },
+    });
+
+    const statuses = await credentialStatuses(credentialIds);
+    expect(statuses).toEqual(credentialIds.map((id) => ({ id, status: "revoked" })));
+    await expect(repository.validateIntentAdmission({ sessionId: created.id, intent }))
+      .rejects.toMatchObject({ response: { code: "PROTECTED_REFERENCE_INACTIVE" } });
+    await expect(repository.resolveCredential(created.id, credentialIds[0]!))
+      .rejects.toMatchObject({ response: { code: "ADAPTIVE_CREDENTIAL_UNAVAILABLE" } });
+    await expect(repository.create(workspaceId, {
+      ...startInput("revoked-credential-new-session"),
+      initialProtectedReferenceIds: [credentialIds[0]!],
+    })).rejects.toMatchObject({ response: { code: "PROTECTED_REFERENCE_INACTIVE" } });
+
+    await expect(repository.projectCredentialLifecycleForAuthoring({ sessionId: created.id, operationId }))
+      .resolves.toEqual({ projected: false, lifecycle: "revoke" });
+    const activity = await database.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM mission_activities
+        WHERE mission_id=$1 AND safe_metadata->>'operationId'=$2
+          AND summary='Protected credential lifecycle projected'`,
+      [missionId, operationId],
+    );
+    expect(activity.rows[0]!.count).toBe("1");
+  });
+
+  it.each(["compromised", "revoked"] as const)(
+    "rejects %s references for new and already-allowlisted sessions before preparation",
+    async (securityStatus) => {
+      const credentialId = randomUUID();
+      await database.query(
+        `INSERT INTO project_credentials(
+           id,project_id,name,ciphertext,initialization_vector,authentication_tag,
+           origin_mission_id,origin_objective_id,created_by_agent_session_id
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [credentialId, projectId, `Lifecycle ${securityStatus} ${credentialId}`,
+          Buffer.from("ciphertext"), Buffer.alloc(12), Buffer.alloc(16),
+          missionId, objectiveId, agentSessionId],
+      );
+      await database.query(
+        `UPDATE environments SET secret_refs=secret_refs || to_jsonb($2::text) WHERE id=$1`,
+        [environmentId, credentialId],
+      );
+      const existing = await repository.create(workspaceId, {
+        ...startInput(`lifecycle-${securityStatus}-existing`),
+        initialProtectedReferenceIds: [credentialId],
+      });
+      sessionIds.push(existing.id);
+      const intent = protectedFillIntent(`use-${securityStatus}`, credentialId);
+
+      await expect(repository.validateIntentAdmission({ sessionId: existing.id, intent }))
+        .resolves.toBeUndefined();
+      await database.query(
+        `UPDATE project_credentials SET security_status=$2,updated_at=now() WHERE id=$1`,
+        [credentialId, securityStatus],
+      );
+
+      await expect(repository.validateIntentAdmission({ sessionId: existing.id, intent }))
+        .rejects.toMatchObject({ response: { code: "PROTECTED_REFERENCE_INACTIVE" } });
+      await expect(repository.create(workspaceId, {
+        ...startInput(`lifecycle-${securityStatus}-new`),
+        initialProtectedReferenceIds: [credentialId],
+      })).rejects.toMatchObject({ response: { code: "PROTECTED_REFERENCE_INACTIVE" } });
+    },
+  );
+
+  it("rolls back the complete lifecycle projection when a credential pair is invalid", async () => {
+    const credentialId = randomUUID();
+    const missingCredentialId = randomUUID();
+    const authorizationId = randomUUID();
+    await database.query(
+      `INSERT INTO mission_authorizations(
+         id,mission_id,objective_id,environment_id,kind,reason,status,granted_by_agent_session_id
+       ) VALUES($1,$2,$3,$4,'live_mutation','Credential pair atomicity regression','approved',$5)`,
+      [authorizationId, missionId, objectiveId, environmentId, agentSessionId],
+    );
+    await database.query(
+      `INSERT INTO project_credentials(
+         id,project_id,name,ciphertext,initialization_vector,authentication_tag,
+         origin_mission_id,origin_objective_id,created_by_agent_session_id
+       ) VALUES($1,$2,'Atomic credential',$3,$4,$5,$6,$7,$8)`,
+      [credentialId, projectId, Buffer.from("ciphertext"), Buffer.alloc(12), Buffer.alloc(16),
+        missionId, objectiveId, agentSessionId],
+    );
+    await database.query(`UPDATE environments SET secret_refs=secret_refs || to_jsonb($2::text) WHERE id=$1`,
+      [environmentId, credentialId]);
+    const created = await repository.create(workspaceId, {
+      ...startInput("credential-pair-atomicity-start"), initialProtectedReferenceIds: [credentialId],
+    });
+    sessionIds.push(created.id);
+    const operationId = "credential-pair-atomicity";
+    const intent = credentialRevocationIntent(
+      operationId, [credentialId, missingCredentialId], authorizationId,
+    );
+    const action = credentialRevocationAction();
+    await repository.beginMissionOperation({
+      workspaceId, sessionId: created.id, operationId, idempotencyKey: `${operationId}-key`,
+      intent, action, expectedEffect: { type: "none" }, mode: "transact",
+    });
+    await expect(repository.settleMissionOperation({
+      sessionId: created.id, operationId, intent, action,
+      outcome: successfulMutationOutcome(operationId),
+      capabilityManifestDigest: "a".repeat(64),
+      decisionBoundary: { type: "objective_completed", reasonCode: "OPERATION_COMPLETED", safeActions: [] },
+    })).rejects.toMatchObject({
+      response: { code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED" },
+    });
+    expect(await credentialStatuses([credentialId])).toEqual([{ id: credentialId, status: "active" }]);
+    const operation = await database.query<{ state: string }>(
+      `SELECT state FROM adaptive_operations WHERE session_id=$1 AND operation_id=$2`,
+      [created.id, operationId],
+    );
+    expect(operation.rows[0]!.state).toBe("running");
+  });
+
+  it("fails closed on uncertain revocation and preserves active status when not applied", async () => {
+    const authorizationId = randomUUID();
+    await database.query(
+      `INSERT INTO mission_authorizations(
+         id,mission_id,objective_id,environment_id,kind,reason,status,granted_by_agent_session_id
+       ) VALUES($1,$2,$3,$4,'live_mutation','Credential lifecycle failure regression','approved',$5)`,
+      [authorizationId, missionId, objectiveId, environmentId, agentSessionId],
+    );
+    for (const mutationOutcome of ["unknown", "not_applied"] as const) {
+      const credentialId = randomUUID();
+      await database.query(
+        `INSERT INTO project_credentials(
+           id,project_id,name,ciphertext,initialization_vector,authentication_tag,
+           origin_mission_id,origin_objective_id,created_by_agent_session_id
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [credentialId, projectId, `Credential ${mutationOutcome}`, Buffer.from("ciphertext"),
+          Buffer.alloc(12), Buffer.alloc(16), missionId, objectiveId, agentSessionId],
+      );
+      await database.query(`UPDATE environments SET secret_refs=secret_refs || to_jsonb($2::text) WHERE id=$1`,
+        [environmentId, credentialId]);
+      const operationId = `credential-revocation-${mutationOutcome}`;
+      const created = await repository.create(workspaceId, {
+        ...startInput(`${operationId}-start`), initialProtectedReferenceIds: [credentialId],
+      });
+      sessionIds.push(created.id);
+      const intent = credentialRevocationIntent(operationId, [credentialId], authorizationId);
+      const action = credentialRevocationAction();
+      await repository.beginMissionOperation({
+        workspaceId, sessionId: created.id, operationId, idempotencyKey: `${operationId}-key`,
+        intent, action, expectedEffect: { type: "none" }, mode: "transact",
+      });
+      await repository.settleMissionOperation({
+        sessionId: created.id, operationId, intent, action,
+        outcome: {
+          ...successfulMutationOutcome(operationId),
+          functionalResult: "failed",
+          mutationOutcome,
+          reasonCode: "EXPECTED_EFFECT_NOT_OBSERVED",
+        },
+        capabilityManifestDigest: "f".repeat(64),
+        decisionBoundary: mutationOutcome === "unknown"
+          ? { type: "mutation_reconciliation_required", reasonCode: "MUTATION_OUTCOME_UNKNOWN", safeActions: ["get_flow_authoring"] }
+          : { type: "environment_unavailable", reasonCode: "EXPECTED_EFFECT_NOT_OBSERVED", safeActions: ["advance_session"] },
+      });
+      expect(await credentialStatuses([credentialId])).toEqual([{
+        id: credentialId,
+        status: mutationOutcome === "unknown" ? "compromised" : "active",
+      }]);
+    }
   });
 
   it("enforces ordered append-only journal and transition versions", async () => {
@@ -639,6 +928,73 @@ integration("adaptive session repository integration", () => {
       mode: "rehearse" as const,
       protectedInputReferences: [],
     };
+  }
+
+  function credentialRevocationIntent(operationId: string, credentialReferenceIds: string[], authorizationId: string) {
+    return {
+      intentId: operationId,
+      objectiveId,
+      flowDraftId,
+      action: {
+        kind: "activate" as const,
+        target: { concept: "revoke credential", role: "button" as const, name: "Revoke", exact: true },
+      },
+      expectedEffect: { kind: "none" as const },
+      constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "live_mutation" as const, authorizationId },
+      protectedInputReferences: [],
+      credentialLifecycle: { effect: "revoke" as const, credentialReferenceIds },
+    };
+  }
+
+  function protectedFillIntent(intentId: string, credentialReferenceId: string) {
+    return {
+      intentId,
+      objectiveId,
+      flowDraftId,
+      action: {
+        kind: "fill" as const,
+        target: { concept: "protected credential", role: "textbox" as const, name: "Client ID", exact: true },
+        protectedReferenceId: credentialReferenceId,
+      },
+      expectedEffect: { kind: "none" as const },
+      constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "authentication" as const },
+      protectedInputReferences: [credentialReferenceId],
+    };
+  }
+
+  function credentialRevocationAction(): AdaptiveSessionOperationInput["action"] {
+    return {
+      type: "click" as const,
+      target: {
+        concept: "revoke credential", requiredCapabilities: ["focusable", "pointer_activatable"],
+        preferredEvidence: { roles: ["button"], names: ["Revoke"], labels: [], descriptions: [], placeholders: [], inputTypes: [], testIds: [] },
+        scope: { kind: "page" as const }, relations: [], prohibited: ["hidden", "disabled"],
+        risk: "ordinary" as const, confidence: { requiredFamilies: [] }, matching: "exact" as const,
+      },
+      expectedEffect: { type: "none" as const }, timeoutMs: 1_000,
+    };
+  }
+
+  function successfulMutationOutcome(operationId: string) {
+    return {
+      operationId,
+      functionalResult: "succeeded" as const,
+      mutationOutcome: "applied" as const,
+      privacyResult: "verified" as const,
+      evidenceResult: [], qualityFindings: [], durationMs: 1,
+    };
+  }
+
+  async function credentialStatuses(ids: string[]) {
+    const result = await database.query<{ id: string; status: string }>(
+      `SELECT id::text,status FROM (
+         SELECT id,security_status AS status FROM project_credentials WHERE id=ANY($1::uuid[])
+       ) credentials ORDER BY array_position($1::uuid[],id)`,
+      [ids],
+    );
+    return result.rows;
   }
 
   async function controlPlaneCounts() {

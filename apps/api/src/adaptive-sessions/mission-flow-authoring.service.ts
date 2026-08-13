@@ -271,7 +271,10 @@ export class MissionFlowAuthoringService {
           operationId: operation.operationId,
         });
         if (projection.status === "pending") {
-          if (projection.state === "planned" && !projection.leaseActive) {
+          // Re-enter the execution kernel for every expired durable active state.
+          // Its protected repository claim is the sole authority that fences the
+          // prior owner and applies process-loss recovery classification.
+          if (!projection.leaseActive) {
             this.launchProtectedExecution(sessionId, operation);
           }
           const pending = turnResult({
@@ -391,9 +394,17 @@ export class MissionFlowAuthoringService {
 
   async close(principal: Principal, sessionId: string, idempotencyKey: string) {
     this.requireWrite(principal);
-    const result = await this.sessions.closeAtSafeBoundary({ workspaceId: workspaceId(principal), sessionId, idempotencyKey });
-    await this.runner.close(sessionId);
-    return result;
+    try {
+      return await this.sessions.closeAtSafeBoundary({
+        workspaceId: workspaceId(principal),
+        sessionId,
+        idempotencyKey,
+      });
+    } finally {
+      // A durable unknown-mutation conflict must remain visible to the caller,
+      // but it cannot leave this process owning a browser or runtime lease.
+      await this.runner.close(sessionId);
+    }
   }
 
   private requireWrite(principal: Principal) {

@@ -29,12 +29,23 @@ function harness(failPattern?: RegExp) {
   const client = {
     query: vi.fn(async (sql: string, _values?: unknown[]) => {
       if (failPattern?.test(sql)) throw new Error("INJECTED_DATABASE_FAILURE");
-      if (sql.includes("SELECT state FROM protected_operations")) return { rowCount: 1, rows: [{ state: "persisting" }] };
+      if (sql.includes("SELECT state,safe_output_manifest")) return {
+        rowCount: 1,
+        rows: [{
+          state: "persisting",
+          safeOutputManifest: [
+            { reference: "clientSecret", classification: "protected" },
+            { reference: "clientId", classification: "public" },
+          ],
+        }],
+      };
       if (sql.includes("SELECT 1 FROM project_credentials")) return { rowCount: 0, rows: [] };
       if (sql.includes("UPDATE protected_operations SET state='persisted'")) return { rowCount: 1, rows: [{ id: context.protectedOperationId, state: "persisted", version: "8", fencingToken: "3", persistedReferences: {} }] };
+      if (sql.includes("SELECT value FROM generated_public_values")) return { rowCount: 1, rows: [{ value: "public-client-id" }] };
       if (sql.includes("INSERT INTO project_credentials")) committed.push("credential");
       if (sql.includes("INSERT INTO run_captured_secrets")) committed.push("run-secret");
       if (sql.includes("INSERT INTO generated_public_values")) committed.push("public");
+      if (sql.includes("INSERT INTO external_resource_bindings")) committed.push("binding");
       if (sql.includes("UPDATE environments SET secret_refs")) committed.push("allowlist");
       return { rowCount: 1, rows: [] };
     }),
@@ -89,6 +100,51 @@ describe("atomic protected output persistence", () => {
     expect(JSON.stringify(client.query.mock.calls)).not.toContain("synthetic-canary-never-log");
     expect(acquired.every((output) => output.value === "")).toBe(true);
     expect(client.query.mock.calls.some(([sql]) => String(sql).includes("pg_advisory_xact_lock"))).toBe(true);
+  });
+
+  it("binds a response-provided project public identity in the same transaction", async () => {
+    const { repository, committed, client } = harness();
+    await repository.persistOutputsAtomically(context, outputs(), [{
+      status: "active", identityReference: "clientId", provider: "provider",
+      resourceKind: "credential_record", resourceScope: "application-a",
+      identityContractVersion: 1, identitySource: "response",
+      requiredForDestructiveLifecycle: true,
+    }]);
+    expect(committed).toEqual(["credential", "public", "binding", "allowlist"]);
+    const binding = client.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO external_resource_bindings"));
+    expect(binding?.[1]).toContain("public-client-id");
+  });
+
+  it("persists an explicit unavailable state for protected-only issuance", async () => {
+    const { repository, committed } = harness();
+    await repository.persistOutputsAtomically(context, outputs(), [{
+      status: "unavailable", provider: "provider", resourceKind: "credential_record",
+      resourceScope: "application-a", identityContractVersion: 1,
+      requiredForDestructiveLifecycle: true,
+    }]);
+    expect(committed).toEqual(["credential", "public", "binding", "allowlist"]);
+  });
+
+  it("rejects arbitrary or protected outputs as binding identity", async () => {
+    const { repository, database } = harness();
+    await expect(repository.persistOutputsAtomically(context, outputs(), [{
+      status: "active", identityReference: "clientSecret", provider: "provider",
+      resourceKind: "credential_record", resourceScope: "application-a",
+      identityContractVersion: 1, identitySource: "response",
+      requiredForDestructiveLifecycle: true,
+    }])).rejects.toThrow("EXTERNAL_RESOURCE_BINDING_PUBLIC_VALUE_REQUIRED");
+    expect(database.transaction).not.toHaveBeenCalled();
+  });
+
+  it("rolls back credential, public value, and binding when binding insertion fails", async () => {
+    const { repository, committed } = harness(/INSERT INTO external_resource_bindings/);
+    await expect(repository.persistOutputsAtomically(context, outputs(), [{
+      status: "active", identityReference: "clientId", provider: "provider",
+      resourceKind: "credential_record", resourceScope: "application-a",
+      identityContractVersion: 1, identitySource: "response",
+      requiredForDestructiveLifecycle: true,
+    }])).rejects.toThrow("INJECTED_DATABASE_FAILURE");
+    expect(committed).toEqual([]);
   });
 
   for (const [label, pattern] of [

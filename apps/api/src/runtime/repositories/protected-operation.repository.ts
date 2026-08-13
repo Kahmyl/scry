@@ -142,6 +142,12 @@ export class ProtectedOperationRepository {
         [current.id, state, input.leaseOwner, input.leaseDurationMs,
           state === "recovery_required" && ["dispatching","dispatched","acquiring","persisting","persisted","reconciling"].includes(current.state)],
       );
+      if (state === "failed_not_applied") {
+        await client.query(
+          `DELETE FROM protected_response_output_staging WHERE protected_operation_id=$1`,
+          [current.id],
+        );
+      }
       if (state !== current.state) await appendTransition(client, current.id, current.state, state, "lease_expired", Number(claimed.rows[0]!.fencingToken), "PROTECTED_OPERATION_LEASE_EXPIRED");
       return normalize(claimed.rows[0]!);
     });
@@ -184,16 +190,27 @@ export class ProtectedOperationRepository {
            dispatch_state=COALESCE($8,dispatch_state),mutation_outcome=COALESCE($9,mutation_outcome),
            failure_code=COALESCE($10,failure_code),safe_diagnostics=COALESCE($11::jsonb,safe_diagnostics),
            recovery_class=CASE WHEN $6='recovery_required' THEN 'reconciliation_required' ELSE recovery_class END,
-           completed_at=CASE WHEN $6=ANY($12::text[]) THEN now() ELSE completed_at END,updated_at=now()
+           completed_at=CASE WHEN $6=ANY($12::text[]) THEN now() ELSE completed_at END,
+           lease_owner=CASE WHEN $6=ANY($13::text[]) THEN NULL ELSE lease_owner END,
+           lease_expires_at=CASE WHEN $6=ANY($13::text[]) THEN NULL ELSE lease_expires_at END,
+           updated_at=now()
          WHERE id=$1 AND lease_owner=$2 AND fencing_token=$3 AND version=$4 AND state=$5 AND lease_expires_at>now()
          RETURNING id,state,phase,version,fencing_token AS "fencingToken",lease_owner AS "leaseOwner",
            lease_expires_at AS "leaseExpiresAt",dispatch_state AS "dispatchState",
            mutation_outcome AS "mutationOutcome",persisted_references AS "persistedReferences"`,
         [input.id,input.leaseOwner,input.fencingToken,input.version,input.expected,input.next,input.phase,
           dispatchState,mutationOutcome,input.reasonCode ?? null,input.safeDiagnostics ? JSON.stringify(input.safeDiagnostics) : null,
-          [...protectedOperationTerminalStates]],
+          [...protectedOperationTerminalStates],
+          [...protectedOperationTerminalStates, "recovery_required", "compromised"],
+        ],
       );
       if (!result.rowCount) throw new ConflictException("PROTECTED_OPERATION_TRANSITION_FENCED");
+      if (input.next === "failed_not_applied") {
+        await client.query(
+          `DELETE FROM protected_response_output_staging WHERE protected_operation_id=$1`,
+          [input.id],
+        );
+      }
       await appendTransition(client,input.id,input.expected,input.next,input.phase,input.fencingToken,input.reasonCode,input.safeDiagnostics);
       return normalize(result.rows[0]!);
     });

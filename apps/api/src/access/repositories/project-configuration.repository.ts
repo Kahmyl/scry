@@ -13,6 +13,7 @@ import type {
   UpdateEnvironmentInput,
   ValidateCredentialReferencesInput,
 } from "@scry/contracts";
+import { executionPolicySchema } from "@scry/contracts";
 
 import type { Principal } from "../../auth/index.js";
 import { Database } from "../../infrastructure/index.js";
@@ -262,8 +263,8 @@ export class ProjectConfigurationRepository {
   ) {
     this.requireWriteAccess(principal);
     const workspaceId = principal.kind === "user" ? principal.workspaceId : null;
-    const environment = await this.database.query(
-      `SELECT environment.project_id AS "projectId"
+    const environment = await this.database.query<{ projectId: string; policy: unknown }>(
+      `SELECT environment.project_id AS "projectId",environment.policy
        FROM environments environment
        JOIN projects project ON project.id = environment.project_id
        WHERE environment.id = $1
@@ -282,6 +283,12 @@ export class ProjectConfigurationRepository {
       environment.rows[0]!.projectId,
       input.secretRefs,
     );
+    const currentPolicy = executionPolicySchema.parse(environment.rows[0]!.policy);
+    const policy = executionPolicySchema.parse({
+      ...input.policy,
+      externalResourcePresentationAuthorities:
+        currentPolicy.externalResourcePresentationAuthorities ?? [],
+    });
     const result = await this.database.query(
       `UPDATE environments environment
        SET base_origin = $2, policy = $3::jsonb, secret_refs = $4::jsonb
@@ -295,7 +302,7 @@ export class ProjectConfigurationRepository {
       [
         environmentId,
         input.baseOrigin,
-        JSON.stringify(input.policy),
+        JSON.stringify(policy),
         JSON.stringify(input.secretRefs),
         workspaceId,
       ],

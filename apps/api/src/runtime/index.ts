@@ -25,6 +25,10 @@ export * from "./native-browser-driver/index.js";
 export { ExecutionKernelRepository } from "./repositories/execution-kernel.repository.js";
 export { ProtectedOperationRepository } from "./repositories/protected-operation.repository.js";
 export { ProtectedOutputPersistenceRepository } from "./repositories/protected-output-persistence.repository.js";
+export { ExternalResourceBindingRepository } from "./repositories/external-resource-binding.repository.js";
+export { ExternalResourcePresentationAuthorityRepository } from "./repositories/external-resource-presentation-authority.repository.js";
+export { ExternalResourceDestructiveTargetPreparationService } from "./services/external-resource-destructive-target-preparation.service.js";
+export { ExternalResourceCredentialLifecycleService } from "./services/external-resource-credential-lifecycle.service.js";
 export {
   ExecutionCapabilityFactory,
   ExecutionKernelService,

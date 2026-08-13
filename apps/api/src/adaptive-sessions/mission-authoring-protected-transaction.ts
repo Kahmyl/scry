@@ -22,6 +22,7 @@ export function compileMissionAuthoringProtectedTransaction(input: {
   const inputs: ProtectedTransaction["inputs"] = {};
   const preparationActions: ProtectedTransaction["preparation"]["actions"] = [];
   const assertions: ProtectedTransaction["preparation"]["assertions"] = [];
+  const protectedInputTargets: InteractionTargetIntent[] = [];
   for (const intent of input.preparation) {
     const timeoutMs = intent.constraints.timeoutMs;
     switch (intent.action.kind) {
@@ -37,6 +38,7 @@ export function compileMissionAuthoringProtectedTransaction(input: {
         if (intent.action.protectedReferenceId) {
           inputs[key] = { classification: "known_secret", credentialRef: intent.action.protectedReferenceId };
           preparationActions.push({ type: "fillKnownSecret", input: key, target: field, effect: "replayable_setup", timeoutMs });
+          protectedInputTargets.push(field);
         } else {
           inputs[key] = { classification: "public", value: intent.action.publicValue! };
           preparationActions.push({ type: "fillPublicInput", input: key, target: field, effect: "replayable_setup", timeoutMs });
@@ -94,8 +96,8 @@ export function compileMissionAuthoringProtectedTransaction(input: {
       "protected_network_value",
     ] as const;
     return output.classification === "protected"
-      ? { classification: "protected" as const, reference: output.reference, acquisition: { target: outputTarget, classification: "unknown_secret" as const, permittedMethods: [...permittedMethods], objective: { kind: "capture_value" as const, expectedValueType: "unknown_secret" as const }, validation: { minimumLength: 1, maximumLength: 20_000 } }, storage: { credentialName: output.storageName, scope: "project" as const } }
-      : { classification: "public" as const, reference: output.reference, acquisition: { target: outputTarget, classification: "public" as const, permittedMethods: [...permittedMethods], objective: { kind: "capture_value" as const, expectedValueType: "public" as const }, validation: { minimumLength: 1, maximumLength: 20_000 } }, storage: { name: output.storageName, scope: "project" as const } };
+      ? { classification: "protected" as const, reference: output.reference, acquisition: { target: outputTarget, prohibitedSourceTargets: protectedInputTargets, classification: "unknown_secret" as const, permittedMethods: [...permittedMethods], objective: { kind: "capture_value" as const, expectedValueType: "unknown_secret" as const }, validation: { minimumLength: 1, maximumLength: 20_000 } }, storage: { credentialName: output.storageName, scope: "project" as const } }
+      : { classification: "public" as const, reference: output.reference, acquisition: { target: outputTarget, prohibitedSourceTargets: protectedInputTargets, classification: "public" as const, permittedMethods: [...permittedMethods], objective: { kind: "capture_value" as const, expectedValueType: "public" as const }, validation: { minimumLength: 1, maximumLength: 20_000 } }, storage: { name: output.storageName, scope: "project" as const } };
   });
   const capabilityDigest = digest(JSON.stringify(mutationTarget.requiredCapabilities));
   const transaction = protectedTransactionSchema.parse({
@@ -110,7 +112,12 @@ export function compileMissionAuthoringProtectedTransaction(input: {
       dispatchSemantics: input.action.mutation.kind === "read_only" ? "read_only" : "mutation",
       reconciliation: { strategy: "persisted_outputs", requiredReferences: outputs.map((output) => output.reference) },
     },
-    extraction: { outputs, timeoutMs: input.timeoutMs, scheduling: "fair_shared_timeout" },
+    extraction: {
+      outputs,
+      externalResourceBindings: input.action.externalResourceBindings ?? [],
+      timeoutMs: input.timeoutMs,
+      scheduling: "fair_shared_timeout",
+    },
     acquisitionReadiness: {
       ceremonyIntent: mutationTarget,
       expectedContainerModel: { version: 2, digest: digest(JSON.stringify(mutationTarget)), concept: mutationTarget.concept, scopeKind: mutationTarget.scope.kind, capabilityDigest, structuralPath: [] },

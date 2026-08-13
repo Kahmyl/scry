@@ -199,6 +199,25 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
       storageName: z.string().trim().min(1).max(200),
     }).strict()).min(1).max(8)
       .refine((outputs) => new Set(outputs.map((output) => output.reference)).size === outputs.length, "output references must be unique"),
+    externalResourceBindings: z.array(z.discriminatedUnion("status", [
+      z.object({
+        status: z.literal("active"), identityReference: z.string().trim().min(1).max(100),
+        provider: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+        resourceKind: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+        resourceScope: z.string().trim().min(1).max(500),
+        identityContractVersion: z.number().int().min(1).max(1_000),
+        identitySource: z.literal("response"),
+        requiredForDestructiveLifecycle: z.boolean().default(true),
+      }).strict(),
+      z.object({
+        status: z.literal("unavailable"),
+        provider: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+        resourceKind: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+        resourceScope: z.string().trim().min(1).max(500),
+        identityContractVersion: z.number().int().min(1).max(1_000),
+        requiredForDestructiveLifecycle: z.boolean().default(true),
+      }).strict(),
+    ])).max(8).optional(),
   }).strict(),
   z
     .object({
@@ -283,6 +302,13 @@ export const missionAuthoringIntentSchema = z
       })
       .strict(),
     protectedInputReferences: z.array(uuid).max(20).default([]),
+    credentialLifecycle: z
+      .object({
+        effect: z.literal("revoke"),
+        credentialReferenceIds: z.array(uuid).min(1).max(20),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((intent, context) => {
@@ -316,6 +342,17 @@ export const missionAuthoringIntentSchema = z
       context.addIssue({ code: "custom", path: ["authorization"], message: "protected output acquisition requires explicit protected-mutation authorization" });
     if (intent.action.kind === "acquire_protected_outputs" && intent.expectedEffect.kind !== "none")
       context.addIssue({ code: "custom", path: ["expectedEffect"], message: "protected acquisition owns its effect lifecycle" });
+    if (intent.action.kind === "acquire_protected_outputs") {
+      const outputs = new Map(intent.action.outputs.map((output) => [output.reference, output]));
+      const keys = new Set<string>();
+      for (const [index, binding] of (intent.action.externalResourceBindings ?? []).entries()) {
+        const key = `${binding.provider}\u0000${binding.resourceKind}\u0000${binding.resourceScope}`;
+        if (keys.has(key)) context.addIssue({ code: "custom", path: ["action", "externalResourceBindings", index], message: "external resource binding declarations must be unique" });
+        keys.add(key);
+        if (binding.status === "active" && outputs.get(binding.identityReference)?.classification !== "public")
+          context.addIssue({ code: "custom", path: ["action", "externalResourceBindings", index, "identityReference"], message: "external resource identity must reference a public output" });
+      }
+    }
     if (
       intent.action.kind === "fill" &&
       intent.action.protectedReferenceId &&
@@ -326,6 +363,28 @@ export const missionAuthoringIntentSchema = z
         path: ["authorization", "kind"],
         message: "protected fills require authentication or live-mutation authorization",
       });
+    if (intent.credentialLifecycle) {
+      if (intent.action.kind !== "activate" && intent.action.kind !== "same_origin_request")
+        context.addIssue({
+          code: "custom",
+          path: ["credentialLifecycle", "effect"],
+          message: "credential revocation must be attached to an explicit activation or request",
+        });
+      if (!intent.authorization.authorizationId ||
+          !["live_mutation", "protected_mutation"].includes(intent.authorization.kind))
+        context.addIssue({
+          code: "custom",
+          path: ["credentialLifecycle"],
+          message: "credential lifecycle projection requires explicit mutation authorization",
+        });
+      if (new Set(intent.credentialLifecycle.credentialReferenceIds).size !==
+          intent.credentialLifecycle.credentialReferenceIds.length)
+        context.addIssue({
+          code: "custom",
+          path: ["credentialLifecycle", "credentialReferenceIds"],
+          message: "credential lifecycle references must be unique",
+        });
+    }
     if (!intent.constraints.allowNonExact && hasNonExactTarget(intent.action, intent.expectedEffect))
       context.addIssue({
         code: "custom",

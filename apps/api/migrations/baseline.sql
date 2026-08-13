@@ -408,3 +408,4 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir protected-operation-authoritative-projection.sql
 \ir protected-response-output-staging.sql
 \ir protected-read-only-dispatch.sql
+\ir external-resource-bindings.sql

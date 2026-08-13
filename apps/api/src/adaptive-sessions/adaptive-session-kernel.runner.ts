@@ -11,7 +11,7 @@ import type {
   ExpectedEffect,
   OperationOutcome,
 } from "@scry/contracts";
-import type { AuthoringBrowserSession } from "@scry/executor";
+import { runProtectedStage, type AuthoringBrowserSession } from "@scry/executor";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 
 import {
@@ -63,6 +63,9 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
   private readonly ownerId = randomUUID();
   private readonly leaseDurationMs = Number(
     process.env.ADAPTIVE_SESSION_RUNTIME_LEASE_MS ?? 30_000,
+  );
+  private readonly runtimeCloseTimeoutMs = Number(
+    process.env.ADAPTIVE_SESSION_RUNTIME_CLOSE_TIMEOUT_MS ?? 2_000,
   );
   private readonly browserChannel = process.env.SCRY_BROWSER_CHANNEL ?? "chrome";
   private readonly veilAdmissionKey = process.env.VEIL_ADMISSION_KEY;
@@ -153,13 +156,38 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     const runtime = this.runtimes.get(sessionId);
     if (!runtime) return;
     this.runtimes.delete(sessionId);
-    await runtime.tail;
-    await runtime.session.close().catch(() => undefined);
-    await this.sessions.releaseRuntimeLease({
-      sessionId,
-      ownerId: this.ownerId,
-      fencingToken: runtime.fencingToken,
-    });
+    try {
+      try {
+        await runProtectedStage({
+          stage: "adaptive_runtime_tail_shutdown",
+          timeoutMs: this.runtimeCloseTimeoutMs,
+          timeoutCode: "ADAPTIVE_RUNTIME_TAIL_SHUTDOWN_TIMEOUT",
+          dispatchPosition: "post_dispatch",
+          work: () => runtime.tail,
+        });
+      } catch {
+        await runProtectedStage({
+          stage: "adaptive_runtime_operation_cancel",
+          timeoutMs: this.runtimeCloseTimeoutMs,
+          timeoutCode: "ADAPTIVE_RUNTIME_OPERATION_CANCEL_TIMEOUT",
+          dispatchPosition: "post_dispatch",
+          work: () => runtime.session.cancelActiveOperation(),
+        }).catch(() => undefined);
+      }
+      await runProtectedStage({
+        stage: "adaptive_runtime_session_close",
+        timeoutMs: this.runtimeCloseTimeoutMs,
+        timeoutCode: "ADAPTIVE_RUNTIME_SESSION_CLOSE_TIMEOUT",
+        dispatchPosition: "post_dispatch",
+        work: () => runtime.session.close(),
+      }).catch(() => undefined);
+    } finally {
+      await this.sessions.releaseRuntimeLease({
+        sessionId,
+        ownerId: this.ownerId,
+        fencingToken: runtime.fencingToken,
+      });
+    }
   }
 
   async onModuleDestroy() {
@@ -216,7 +244,10 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           veilAdmissionKey: this.veilAdmissionKey,
           browserChannel: this.browserChannel,
           policy: context.policy,
-          openBrowser: () => this.nativeBrowser.openBrowser(),
+          openBrowser: () => this.nativeBrowser.openBrowser({}, {
+            kind: "safe_browser",
+            ownerId: sessionId,
+          }),
           executeInteraction: (input) =>
             this.executeInteraction({
               sessionId,
@@ -411,17 +442,25 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     runtime: OwnedRuntime,
   ): Promise<OperationLeaseGuard> {
     const controller = new AbortController();
+    const heartbeatTimeoutMs = Math.max(250, Math.floor(this.leaseDurationMs / 3));
     let stopped = false;
     let firstFailure: unknown;
     let renewalTail = Promise.resolve();
     const renew = (propagate: boolean) => {
       const renewal = renewalTail.then(async () => {
         if (firstFailure) throw firstFailure;
-        await this.sessions.heartbeatRuntimeLease({
+        await runProtectedStage({
+          stage: "adaptive_runtime_heartbeat",
+          timeoutMs: heartbeatTimeoutMs,
+          signal: controller.signal,
+          timeoutCode: "ADAPTIVE_RUNTIME_HEARTBEAT_TIMEOUT",
+          dispatchPosition: "post_dispatch",
+          work: () => this.sessions.heartbeatRuntimeLease({
           sessionId,
           ownerId: this.ownerId,
           fencingToken: runtime.fencingToken,
           leaseDurationMs: this.leaseDurationMs,
+          }),
         });
       });
       renewalTail = renewal.catch((error) => {
@@ -446,7 +485,13 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       async stop() {
         stopped = true;
         clearInterval(timer);
-        await renewalTail;
+        await runProtectedStage({
+          stage: "adaptive_runtime_heartbeat_shutdown",
+          timeoutMs: heartbeatTimeoutMs,
+          timeoutCode: "ADAPTIVE_RUNTIME_HEARTBEAT_SHUTDOWN_TIMEOUT",
+          dispatchPosition: "post_dispatch",
+          work: () => renewalTail,
+        }).catch(() => undefined);
       },
     };
   }

@@ -39,6 +39,7 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "protected-operation-authoritative-projection.sql",
   "protected-response-output-staging.sql",
   "protected-read-only-dispatch.sql",
+  "external-resource-bindings.sql",
 ] as const;
 
 export type OptionalBaselineMigration = (typeof OPTIONAL_BASELINE_MIGRATIONS)[number];
@@ -105,6 +106,8 @@ export function compatibilityBaseline(source: string): string {
     "protected-operation-completion.sql",
     "protected-operation-authoritative-projection.sql",
     "protected-response-output-staging.sql",
+    "protected-read-only-dispatch.sql",
+    "external-resource-bindings.sql",
   ].reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}\\r?\\n`, "g"), ""),

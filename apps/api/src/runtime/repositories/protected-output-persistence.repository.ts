@@ -27,6 +27,17 @@ export type AcquiredProtectedOutput = {
   scope: "run" | "project";
 };
 
+export type ExternalResourceBindingDeclaration = {
+  status: "active" | "unavailable";
+  provider: string;
+  resourceKind: string;
+  resourceScope: string;
+  identityContractVersion: number;
+  requiredForDestructiveLifecycle: boolean;
+  identityReference?: string;
+  identitySource?: "response";
+};
+
 @Injectable()
 export class ProtectedOutputPersistenceRepository {
   constructor(@Inject(Database) private readonly database: Database) {}
@@ -88,17 +99,22 @@ export class ProtectedOutputPersistenceRepository {
   async persistOutputsAtomically(
     context: ProtectedOutputPersistenceContext,
     outputs: AcquiredProtectedOutput[],
+    externalResourceBindings: ExternalResourceBindingDeclaration[] = [],
   ) {
     if (!outputs.length || outputs.length > 8) throw new Error("PROTECTED_OUTPUT_SET_INVALID");
     if (new Set(outputs.map((output) => output.reference)).size !== outputs.length)
       throw new Error("PROTECTED_OUTPUT_REFERENCE_DUPLICATE");
+    validateExternalResourceBindings(outputs, externalResourceBindings);
     const encrypted = outputs.map((output) => output.classification === "protected"
       ? { output, encrypted: encryptCredential(output.value) }
       : { output });
     try {
       return await this.database.transaction(async (client) => {
-        const operation = await client.query<{ state: string }>(
-          `SELECT state FROM protected_operations WHERE id=$1 AND project_id=$2 AND environment_id=$3
+        const operation = await client.query<{
+          state: string;
+          safeOutputManifest: Array<{ reference: string; classification: "protected" | "public" }>;
+        }>(
+          `SELECT state,safe_output_manifest AS "safeOutputManifest" FROM protected_operations WHERE id=$1 AND project_id=$2 AND environment_id=$3
              AND mission_id=$4 AND objective_id=$5 AND agent_session_id=$6 AND owner_kind=$7
              AND (($7='authoring_session' AND authoring_session_id=$8) OR ($7='run' AND run_id=$8))
              AND operation_id=$9 AND lease_owner=$10 AND fencing_token=$11 AND version=$12
@@ -109,6 +125,10 @@ export class ProtectedOutputPersistenceRepository {
         );
         if (operation.rows[0]?.state !== "persisting")
           throw new ConflictException("PROTECTED_OPERATION_PERSISTENCE_FENCED");
+        const manifest = operation.rows[0].safeOutputManifest;
+        const admitted = new Map(outputs.map((output) => [output.reference, output.classification]));
+        if (manifest.length !== admitted.size || manifest.some((output) => admitted.get(output.reference) !== output.classification))
+          throw new ConflictException("PROTECTED_OUTPUT_SET_INCOMPLETE");
 
         const references: Record<string, { classification: "protected" | "public"; credentialId?: string; valueId?: string; scope: "run" | "project" }> = {};
         const credentialIds: string[] = [];
@@ -166,6 +186,40 @@ export class ProtectedOutputPersistenceRepository {
             );
             references[item.output.reference] = { classification: "public", valueId: id, scope: item.output.scope };
           }
+        }
+        for (const binding of externalResourceBindings) {
+          if (binding.status === "unavailable") {
+            await client.query(
+              `INSERT INTO external_resource_bindings(
+                 source_protected_operation_id,project_id,environment_id,provider,resource_kind,
+                 resource_scope,identity_contract_version,lifecycle_state,required_for_destructive_lifecycle
+               ) VALUES($1,$2,$3,$4,$5,$6,$7,'unavailable',$8)`,
+              [context.protectedOperationId,context.projectId,context.environmentId,binding.provider,
+                binding.resourceKind,binding.resourceScope,binding.identityContractVersion,
+                binding.requiredForDestructiveLifecycle],
+            );
+            continue;
+          }
+          const stored = references[binding.identityReference!];
+          if (!stored?.valueId || stored.classification !== "public")
+            throw new ConflictException("EXTERNAL_RESOURCE_BINDING_PUBLIC_VALUE_REQUIRED");
+          const publicValue = await client.query<{ value: string }>(
+            `SELECT value FROM generated_public_values
+              WHERE id=$1 AND source_protected_operation_id=$2 AND project_id=$3 FOR SHARE`,
+            [stored.valueId,context.protectedOperationId,context.projectId],
+          );
+          if (publicValue.rowCount !== 1)
+            throw new ConflictException("EXTERNAL_RESOURCE_BINDING_PUBLIC_VALUE_REQUIRED");
+          await client.query(
+            `INSERT INTO external_resource_bindings(
+               source_protected_operation_id,generated_public_value_id,project_id,environment_id,
+               provider,resource_kind,resource_scope,canonical_external_identity,
+               identity_contract_version,identity_source,lifecycle_state,required_for_destructive_lifecycle
+             ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'active',$11)`,
+            [context.protectedOperationId,stored.valueId,context.projectId,context.environmentId,
+              binding.provider,binding.resourceKind,binding.resourceScope,publicValue.rows[0]!.value,
+              binding.identityContractVersion,binding.identitySource,binding.requiredForDestructiveLifecycle],
+          );
         }
         if (credentialIds.length) {
           await client.query(
@@ -266,5 +320,25 @@ function validateOutputs(outputs: AcquiredProtectedOutput[]) {
   for (const output of outputs) {
     if (!output.value || output.value.length > 64 * 1024) throw new Error("PROTECTED_OUTPUT_VALUE_INVALID");
     if (!output.reference || !output.storageName) throw new Error("PROTECTED_OUTPUT_IDENTITY_INVALID");
+  }
+}
+
+function validateExternalResourceBindings(
+  outputs: AcquiredProtectedOutput[],
+  bindings: ExternalResourceBindingDeclaration[],
+) {
+  if (bindings.length > 8) throw new Error("EXTERNAL_RESOURCE_BINDING_SET_INVALID");
+  const keys = new Set<string>();
+  for (const binding of bindings) {
+    const key = `${binding.provider}\u0000${binding.resourceKind}\u0000${binding.resourceScope}`;
+    if (keys.has(key)) throw new Error("EXTERNAL_RESOURCE_BINDING_DUPLICATE");
+    keys.add(key);
+    if (binding.status === "active") {
+      const output = outputs.find((candidate) => candidate.reference === binding.identityReference);
+      if (!output || output.classification !== "public" || output.scope !== "project" || !binding.identitySource)
+        throw new Error("EXTERNAL_RESOURCE_BINDING_PUBLIC_VALUE_REQUIRED");
+    } else if (binding.identityReference || binding.identitySource) {
+      throw new Error("EXTERNAL_RESOURCE_BINDING_UNAVAILABLE_HAS_IDENTITY");
+    }
   }
 }

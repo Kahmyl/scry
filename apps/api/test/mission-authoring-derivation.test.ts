@@ -169,6 +169,52 @@ describe("Mission authoring semantic derivation", () => {
     });
   });
 
+  it("compiles protected preparation fields as prohibited output sources", () => {
+    const protectedReferenceId = randomUUID();
+    const preparation = missionAuthoringIntentSchema.parse({
+      intentId: "fill-client-id", objectiveId: ids.objectiveId, flowDraftId: ids.flowDraftId,
+      action: {
+        kind: "fill",
+        target: { concept: "List Orders Client ID", role: "textbox", name: "Client ID", exact: true, scope: { kind: "section", name: "List Orders" } },
+        protectedReferenceId,
+      },
+      expectedEffect: { kind: "none" }, constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "authentication" }, protectedInputReferences: [protectedReferenceId],
+    });
+    const acquisition = missionAuthoringIntentSchema.parse({
+      intentId: "list-orders", objectiveId: ids.objectiveId, flowDraftId: ids.flowDraftId,
+      action: {
+        kind: "acquire_protected_outputs",
+        preparationIntentIds: ["fill-client-id"],
+        mutation: { kind: "read_only", target: { concept: "run list", role: "button", name: "Run", exact: true } },
+        outputs: [{
+          reference: "orderId", classification: "protected",
+          target: { concept: "order id", role: "value", name: "id", exact: true, scope: { kind: "section", name: "List Orders" } },
+          storageName: "Order ID",
+        }],
+      },
+      expectedEffect: { kind: "none" }, constraints: { timeoutMs: 2_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "protected_mutation", authorizationId: randomUUID() }, protectedInputReferences: [],
+    });
+    if (acquisition.action.kind !== "acquire_protected_outputs") throw new Error("test action mismatch");
+
+    const transaction = compileMissionAuthoringProtectedTransaction({
+      operationId: "authoring-list-orders", entryUrl: "https://example.test/docs",
+      action: acquisition.action, preparation: [preparation], timeoutMs: 2_000,
+    });
+
+    expect(transaction.extraction.outputs[0]!.acquisition.prohibitedSourceTargets).toEqual([
+      expect.objectContaining({
+        concept: "List Orders Client ID",
+        preferredEvidence: expect.objectContaining({ names: ["Client ID"] }),
+        scope: { kind: "section", name: "List Orders" },
+      }),
+    ]);
+    expect(Object.values(transaction.inputs)).toEqual([
+      { classification: "known_secret", credentialRef: protectedReferenceId },
+    ]);
+  });
+
   it("compiles a navigation-only checkpoint as a safe entry replay", () => {
     const acquisition = missionAuthoringIntentSchema.parse({
       intentId: "generate", objectiveId: ids.objectiveId, flowDraftId: ids.flowDraftId,

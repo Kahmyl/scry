@@ -45,6 +45,99 @@ const emailIntent: InteractionTargetIntent = {
 };
 
 describe("NativeBrowserDriver shared primitives", () => {
+  it("clamps native resolution to the remaining action deadline", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser();
+    try {
+      await opened.page.setContent("<main>waiting</main>");
+      const started = performance.now();
+      await expect(driver.executeSemanticControl(opened.page, emailIntent, {
+        type: "click",
+        timeoutMs: 10_000,
+        resolutionTimeoutMs: 5_000,
+        preDispatchDeadlineAt: performance.now() + 120,
+      })).rejects.toThrow("NATIVE_TARGET_NOT_FOUND");
+      expect(performance.now() - started).toBeLessThan(600);
+    } finally {
+      await driver.closeBrowser(opened.browser, opened.context);
+    }
+  }, 20_000);
+
+  it("rechecks the deadline after the dispatch boundary callback", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser();
+    try {
+      await opened.page.setContent("<label>Email<input placeholder='Work email'></label>");
+      const dispatch = vi.fn();
+      await expect(driver.executeSemanticControl(opened.page, emailIntent, {
+        type: "fill",
+        value: "must-not-dispatch",
+        protected: false,
+        timeoutMs: 10_000,
+        resolutionTimeoutMs: 5_000,
+        preDispatchDeadlineAt: performance.now() + 1_000,
+      }, async () => {
+        dispatch();
+        await new Promise((resolve) => setTimeout(resolve, 1_100));
+      })).rejects.toThrow("NATIVE_ACTION_DEADLINE_EXCEEDED");
+      expect(dispatch).toHaveBeenCalledOnce();
+      expect(await opened.page.getByPlaceholder("Work email").inputValue()).toBe("");
+    } finally {
+      await driver.closeBrowser(opened.browser, opened.context);
+    }
+  }, 20_000);
+
+  it("correlates logical ownership with graceful browser process termination", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser({}, {
+      kind: "safe_browser",
+      ownerId: "ownership-regression-session",
+    });
+    const pid = opened.browserProcessId;
+
+    await driver.closeBrowser(opened.browser, opened.context);
+
+    expect(opened.browser.isConnected()).toBe(false);
+    expect(opened.ownership).toMatchObject({
+      ownerKind: "safe_browser",
+      ownerId: "ownership-regression-session",
+    });
+    expect(opened.ownership.events.map((event) => event.milestone)).toEqual(expect.arrayContaining([
+      "created",
+      "ownership_acquired",
+      "close_requested",
+      "graceful_close_started",
+      "graceful_close_completed",
+      "process_exit_observed",
+      "ownership_released",
+    ]));
+    if (pid !== undefined) {
+      expect(() => process.kill(pid, 0)).toThrow();
+    }
+  }, 20_000);
+
+  it("force-terminates an owned browser process through its supported server handle", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser({}, {
+      kind: "protected_capsule",
+      ownerId: "ownership-regression-operation",
+    });
+    const pid = opened.browserProcessId;
+
+    await opened.forceClose();
+
+    expect(opened.browser.isConnected()).toBe(false);
+    expect(opened.ownership.events.map((event) => event.milestone)).toEqual(expect.arrayContaining([
+      "force_close_started",
+      "force_close_completed",
+      "process_exit_observed",
+      "ownership_released",
+    ]));
+    if (pid !== undefined) {
+      expect(() => process.kill(pid, 0)).toThrow();
+    }
+  }, 20_000);
+
   it("creates, navigates, resolves, executes, and safely tears down a Mission-owned browser", async () => {
     const driver = new NativeBrowserDriver();
     const opened = await driver.openBrowser();

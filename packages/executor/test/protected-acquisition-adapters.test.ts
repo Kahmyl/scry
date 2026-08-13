@@ -8,7 +8,10 @@ import {
   protectedAcquisitionAdapterRegistry,
   registerProtectedAcquisitionAdapter,
 } from "../src/protected-extractor.js";
-import { extractAndPersistProtectedOutputs } from "../src/protected-transaction-acquisition.js";
+import {
+  acquireProtectedOutputs,
+  extractAndPersistProtectedOutputs,
+} from "../src/protected-transaction-acquisition.js";
 import type {
   ProtectedTransactionDependencies,
   ProtectedTransactionFacts,
@@ -171,6 +174,142 @@ describe("protected acquisition adapter registry", () => {
     }
   }, 15_000);
 
+  it("never admits a protected preparation input as a newly acquired response output", async () => {
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`
+        <section aria-label="List Orders">
+          <label>Client ID<input value="CLIENT_ID_CANARY"></label>
+          <label>Client secret<input value="SECRET_CANARY"></label>
+          <button>Run</button>
+        </section>
+      `);
+      const acquisition = acquisitionIntentSchema.parse({
+        target: {
+          concept: "order id",
+          requiredCapabilities: ["readable_value"],
+          preferredEvidence: {
+            roles: ["value"], names: ["id"], labels: [], descriptions: [],
+            placeholders: [], inputTypes: [],
+          },
+          scope: { kind: "section", name: "List Orders" },
+          relations: [], prohibited: [], risk: "protected",
+          confidence: { requiredFamilies: [] },
+        },
+        prohibitedSourceTargets: [
+          {
+            concept: "List Orders Client ID",
+            requiredCapabilities: ["readable_value"],
+            preferredEvidence: {
+              roles: ["textbox"], names: ["Client ID"], labels: [], descriptions: [],
+              placeholders: [], inputTypes: [],
+            },
+            scope: { kind: "section", name: "List Orders" },
+            relations: [], prohibited: [], risk: "protected",
+            confidence: { requiredFamilies: [] },
+          },
+          {
+            concept: "List Orders Client secret",
+            requiredCapabilities: ["readable_value"],
+            preferredEvidence: {
+              roles: ["textbox"], names: ["Client secret"], labels: [], descriptions: [],
+              placeholders: [], inputTypes: [],
+            },
+            scope: { kind: "section", name: "List Orders" },
+            relations: [], prohibited: [], risk: "protected",
+            confidence: { requiredFamilies: [] },
+          },
+        ],
+        classification: "unknown_secret",
+        objective: { kind: "capture_value", expectedValueType: "unknown_secret" },
+        permittedMethods: [
+          "protected_network_value",
+          "semantic_field_value",
+          "input_value",
+          "text_content",
+          "copy_control",
+        ],
+        validation: { minimumLength: 1, maximumLength: 100 },
+      });
+
+      const result = await acquireValue(page, acquisition, 250);
+
+      expect(result.value).not.toBe("CLIENT_ID_CANARY");
+      expect(result.value).not.toBe("SECRET_CANARY");
+      expect(result.result).toBeUndefined();
+      expect(result.diagnostics.filter((item) =>
+        item.lastFailureCode === "ACQUISITION_SOURCE_PROHIBITED"
+      ).map((item) => item.method)).toEqual(expect.arrayContaining([
+        "semantic_field_value",
+      ]));
+    } finally {
+      await browser.close();
+    }
+  }, 15_000);
+
+  it("derives prohibited protected-input provenance at runtime when a compiled output omits it", async () => {
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<label>Client ID<input value="CLIENT_ID_CANARY"></label>`);
+      const protectedInputTarget = {
+        concept: "client id",
+        requiredCapabilities: ["focusable", "accepts_text", "editable", "readable_value"],
+        preferredEvidence: {
+          roles: ["textbox"], names: ["Client ID"], labels: [], descriptions: [],
+          placeholders: [], inputTypes: [],
+        },
+        scope: { kind: "page" }, relations: [], prohibited: [], risk: "protected",
+        confidence: { requiredFamilies: [] },
+      } as const;
+      const outputTarget = {
+        ...protectedInputTarget,
+        concept: "order id",
+        requiredCapabilities: ["readable_value"],
+        preferredEvidence: { ...protectedInputTarget.preferredEvidence, roles: ["value"], names: ["id"] },
+      } as const;
+      const facts = {
+        diagnostics: [], protectedAcquisitionEvidence: [], credentialReferences: {},
+        publicValueReferences: {}, protectedExtraction: "not_attempted", publicExtraction: "not_attempted",
+      } as unknown as ProtectedTransactionFacts;
+
+      await expect(acquireProtectedOutputs(
+        page,
+        {
+          preparation: { actions: [{ type: "fillKnownSecret", input: "clientId", target: protectedInputTarget }], assertions: [] },
+          mutation: { dispatchSemantics: "read_only" },
+          extraction: {
+            timeoutMs: 1_000,
+            outputs: [{
+              reference: "orderId", classification: "protected",
+              acquisition: {
+                target: outputTarget, classification: "unknown_secret",
+                objective: { kind: "capture_value", expectedValueType: "unknown_secret" },
+                permittedMethods: ["semantic_field_value", "input_value", "text_content"],
+                validation: { minimumLength: 1, maximumLength: 100 },
+              },
+              storage: { credentialName: "Order ID", scope: "project" },
+            }],
+          },
+        } as never,
+        {} as ProtectedTransactionDependencies,
+        facts,
+      )).rejects.toMatchObject({ code: "PROTECTED_VALUE_UNAVAILABLE" });
+      expect(facts.diagnostics.some((item) =>
+        item.lastFailureCode === "ACQUISITION_SOURCE_PROHIBITED"
+      )).toBe(true);
+    } finally {
+      await browser.close();
+    }
+  }, 15_000);
+
   it("falls back from an incorrect authored container while retaining semantic identity", async () => {
     const browser = await chromium.launch({
       headless: true,
@@ -304,7 +443,7 @@ describe("protected acquisition adapter registry", () => {
       const result = await acquireValue(page, acquisition, 120);
 
       expect(result.result).toBeUndefined();
-      expect(result.diagnostics.at(-1)?.lastFailureCode).toBe("COPY_EXPERIENCE_NOT_OBSERVED");
+      expect(result.diagnostics.at(-1)?.lastFailureCode).toBe("ACQUISITION_METHOD_TIMEOUT");
     } finally {
       await browser.close();
     }
@@ -329,6 +468,7 @@ describe("protected acquisition adapter registry", () => {
       const persistPublicValue = vi.fn();
       const operation = {
         operationId: "verify-copy",
+        mutation: { dispatchSemantics: "mutation" },
         extraction: {
           timeoutMs: 2_000,
           outputs: [

@@ -33,6 +33,7 @@ const context = await createCampaignContext();
 const mcp = await initializeMcp();
 const openSessions = new Set<string>();
 const callLatencies: Array<{ scenario: Scenario; call: string; durationMs: number }> = [];
+const selectedScenarios = qualificationScenarios();
 let pool: pg.Pool | undefined;
 
 try {
@@ -55,18 +56,15 @@ try {
   pool = new pg.Pool({ connectionString: databaseUrl() });
 
   const results = [];
-  for (const scenario of ["readonlyInput", "textOutput", "interruptedAcquisition"] as const) {
+  for (const scenario of selectedScenarios) {
     results.push(await runScenario(scenario, provisioned.ownership));
   }
 
   const snapshot = context.fixture.snapshot();
   const dispatches = snapshot.protectedDispatches;
-  assert(dispatches.readonlyInput === 1, "QUALIFICATION_READONLY_DISPATCH_COUNT_INVALID");
-  assert(dispatches.textOutput === 1, "QUALIFICATION_TEXT_DISPATCH_COUNT_INVALID");
-  assert(
-    dispatches.interruptedAcquisition === 1,
-    "QUALIFICATION_INTERRUPTED_DISPATCH_COUNT_INVALID",
-  );
+  assertScenarioDispatch("readonlyInput", dispatches.readonlyInput, "QUALIFICATION_READONLY_DISPATCH_COUNT_INVALID");
+  assertScenarioDispatch("textOutput", dispatches.textOutput, "QUALIFICATION_TEXT_DISPATCH_COUNT_INVALID");
+  assertScenarioDispatch("interruptedAcquisition", dispatches.interruptedAcquisition, "QUALIFICATION_INTERRUPTED_DISPATCH_COUNT_INVALID");
 
   const serialized = JSON.stringify(results);
   assert(!serialized.includes(context.secretValue), "QUALIFICATION_PROTECTED_VALUE_LEAK");
@@ -110,6 +108,21 @@ try {
   await mcp.close();
   await pool?.end();
   await closeCampaignContext(context);
+}
+
+function qualificationScenarios(): Scenario[] {
+  const configured = process.env.SCRY_PROTECTED_QUALIFICATION_SCENARIOS;
+  if (!configured) return ["readonlyInput", "textOutput", "interruptedAcquisition"];
+  const selected = configured.split(",").map((value) => value.trim()).filter(Boolean);
+  const allowed = new Set<Scenario>(["readonlyInput", "textOutput", "interruptedAcquisition"]);
+  if (!selected.length || selected.some((value) => !allowed.has(value as Scenario))) {
+    throw new Error("QUALIFICATION_SCENARIO_INVALID");
+  }
+  return selected as Scenario[];
+}
+
+function assertScenarioDispatch(scenario: Scenario, count: number, code: string) {
+  assert(count === (selectedScenarios.includes(scenario) ? 1 : 0), code);
 }
 
 async function runScenario(

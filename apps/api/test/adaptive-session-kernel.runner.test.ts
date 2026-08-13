@@ -4,6 +4,36 @@ import { compileDefaultVeilPolicy } from "@scry/veil";
 import { AdaptiveSessionKernelRunner } from "../src/adaptive-sessions/adaptive-session-kernel.runner.js";
 
 describe("AdaptiveSessionKernelRunner timing propagation", () => {
+  it("bounds a pending operation tail, cancels the browser, and releases its lease", async () => {
+    const sessionId = "99999999-9999-4999-8999-999999999999";
+    const cancelActiveOperation = vi.fn().mockResolvedValue(undefined);
+    const close = vi.fn().mockResolvedValue(undefined);
+    const releaseRuntimeLease = vi.fn().mockResolvedValue(undefined);
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      {} as never,
+      { releaseRuntimeLease } as never,
+      {} as never,
+    );
+    (runner as unknown as { runtimeCloseTimeoutMs: number }).runtimeCloseTimeoutMs = 10;
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
+      session: { cancelActiveOperation, close },
+      fencingToken: 17,
+      tail: new Promise<void>(() => undefined),
+    });
+
+    await expect(runner.close(sessionId)).resolves.toBeUndefined();
+
+    expect(cancelActiveOperation).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+    expect(releaseRuntimeLease).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId,
+      fencingToken: 17,
+    }));
+    expect((runner as unknown as { runtimes: Map<string, unknown> }).runtimes.has(sessionId))
+      .toBe(false);
+  });
+
   it("retains the original fenced lease across resolution through mutation dispatch", async () => {
     vi.useFakeTimers();
     try {
