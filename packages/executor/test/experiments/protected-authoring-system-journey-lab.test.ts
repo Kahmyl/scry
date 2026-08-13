@@ -40,6 +40,7 @@ type FixtureState = {
   revocations: Record<Shape, number>;
   credentials: Map<Shape, { clientId: string; clientSecret: string; receipt: string; revoked: boolean }>;
   orders: Map<string, { id: string; audience: string; identityMode: string }>;
+  idempotency: Map<string, { payload: string; id: string }>;
   apiCalls: Array<{ endpoint: string; status: number }>;
 };
 
@@ -80,9 +81,10 @@ describe("protected authoring whole-system architecture laboratory", () => {
         status: "completed",
         dispatches: 1,
         persistedReferences: 2,
-        authenticatedCalls: 7,
-        validCalls: 6,
-        invalidCalls: 1,
+        authenticatedCalls: 25,
+        validCalls: 11,
+        invalidCalls: 14,
+        externallyObservableOrders: 5,
         residualCredentials: 0,
       });
       expect(result.durationMs).toBeLessThan(20_000);
@@ -141,7 +143,7 @@ describe("protected authoring whole-system architecture laboratory", () => {
       dispatches: 1,
       recoveryAttempts: 1,
       persistedReferences: 2,
-      authenticatedCalls: 7,
+      authenticatedCalls: 25,
       residualCredentials: 0,
     });
     expect(JSON.stringify(result)).not.toContain(protectedCanary);
@@ -231,6 +233,7 @@ async function runWholeJourney(shape: Shape, prototype: Prototype) {
       authenticatedCalls: calls.length,
       validCalls: calls.filter((call) => call.status >= 200 && call.status < 300).length,
       invalidCalls: calls.filter((call) => call.status >= 400).length,
+      externallyObservableOrders: state.orders.size,
       residualCredentials: activeCredentialCount(shape),
       durationMs: performance.now() - started,
     });
@@ -462,6 +465,30 @@ async function completeDocumentationAndApiJourney(
   await session.page.selectOption("#identity-mode", "conflicting");
   await succeeded(session.interact({ type: "click", target: semantic("create order", "button", "Create order"), expectedEffect: { type: "none" }, timeoutMs: 2_000 }));
   await session.page.getByRole("status").filter({ hasText: "400" }).waitFor({ state: "visible", timeout: 2_000 });
+  await session.page.selectOption("#identity-mode", "existing");
+  for (const [requestCase, expected] of [
+    ["missing_identity", "400"], ["malformed_identity", "400"], ["nonexistent_identity", "404"],
+    ["missing_required", "400"], ["invalid_order_value", "400"], ["authentication_rejected", "401"],
+    ["authorization_rejected", "403"], ["idempotent", "201"], ["idempotent_replay", "200"],
+    ["idempotency_conflict", "409"],
+  ] as const) {
+    await session.page.selectOption("#request-case", requestCase);
+    await succeeded(session.interact({ type: "click", target: semantic("create order", "button", "Create order"), expectedEffect: { type: "none" }, timeoutMs: 2_000 }));
+    await session.page.getByRole("status").filter({ hasText: expected }).waitFor({ state: "visible", timeout: 2_000 });
+  }
+  for (const [queryCase, expected] of [
+    ["page_boundary", "200"], ["limit_boundary", "200"], ["status_filter", "200"],
+    ["page_invalid", "400"], ["limit_invalid", "400"], ["status_invalid", "400"],
+  ] as const) {
+    await session.page.selectOption("#query-case", queryCase);
+    await succeeded(session.interact({ type: "click", target: semantic("list orders", "button", "List orders"), expectedEffect: { type: "none" }, timeoutMs: 2_000 }));
+    await session.page.getByRole("status").filter({ hasText: expected }).waitFor({ state: "visible", timeout: 2_000 });
+  }
+  for (const [retrieveCase, expected] of [["malformed", "400"], ["nonexistent", "404"]] as const) {
+    await session.page.selectOption("#retrieve-case", retrieveCase);
+    await succeeded(session.interact({ type: "click", target: semantic("retrieve order", "button", "Retrieve order"), expectedEffect: { type: "none" }, timeoutMs: 2_000 }));
+    await session.page.getByRole("status").filter({ hasText: expected }).waitFor({ state: "visible", timeout: 2_000 });
+  }
 }
 
 async function succeeded(promise: Promise<{ outcome: { functionalResult: string } }>) {
@@ -541,7 +568,7 @@ function freshState(): FixtureState {
   return {
     dispatches: { vitract_dialog: 0, static_panel: 0, delayed_wizard: 0, network_only: 0 },
     revocations: { vitract_dialog: 0, static_panel: 0, delayed_wizard: 0, network_only: 0 },
-    credentials: new Map(), orders: new Map(), apiCalls: [],
+    credentials: new Map(), orders: new Map(), idempotency: new Map(), apiCalls: [],
   };
 }
 
@@ -550,6 +577,7 @@ function resetShape(shape: Shape) {
   state.revocations[shape] = 0;
   state.credentials.delete(shape);
   state.orders.clear();
+  state.idempotency.clear();
   state.apiCalls = [];
 }
 
@@ -602,16 +630,36 @@ async function route(request: IncomingMessage, response: ServerResponse, fixture
     const body = await bodyOf(request);
     const credential = [...fixture.credentials.values()].find((candidate) => !candidate.revoked && candidate.clientId === body.clientId && candidate.clientSecret === body.clientSecret);
     if (!credential) return api(response, fixture, url.pathname, 401, { code: "UNAUTHORIZED" });
+    if (body.requestCase === "authorization_rejected") return api(response, fixture, url.pathname, 403, { code: "FORBIDDEN" });
     if (body.identityMode === "conflicting") return api(response, fixture, url.pathname, 400, { code: "CONFLICTING_IDENTITY" });
+    if (["missing_identity", "malformed_identity", "missing_required", "invalid_order_value"].includes(String(body.requestCase)))
+      return api(response, fixture, url.pathname, 400, { code: "VALIDATION_REJECTED" });
+    if (body.requestCase === "nonexistent_identity") return api(response, fixture, url.pathname, 404, { code: "NOT_FOUND" });
+    const idempotencyKey = String(body.idempotencyKey ?? "");
+    const canonicalPayload = JSON.stringify({ audience: body.audience, identityMode: body.identityMode });
+    if (idempotencyKey) {
+      const existing = fixture.idempotency.get(idempotencyKey);
+      if (existing && existing.payload !== canonicalPayload) return api(response, fixture, url.pathname, 409, { code: "IDEMPOTENCY_CONFLICT" });
+      if (existing) return api(response, fixture, url.pathname, 200, { id: existing.id, replayed: true });
+    }
     const id = randomUUID();
     fixture.orders.set(id, { id, audience: String(body.audience), identityMode: String(body.identityMode) });
+    if (idempotencyKey) fixture.idempotency.set(idempotencyKey, { payload: canonicalPayload, id });
     return api(response, fixture, url.pathname, 201, { id });
   }
   if (request.method === "GET" && url.pathname.startsWith("/api/orders/")) {
-    const status = fixture.orders.size ? 200 : 404;
+    const identity = url.pathname.slice("/api/orders/".length);
+    const status = identity === "malformed" ? 400 : identity === "nonexistent" ? 404 : fixture.orders.size ? 200 : 404;
     return api(response, fixture, url.pathname, status, { found: status === 200 });
   }
-  if (request.method === "GET" && url.pathname === "/api/orders") return api(response, fixture, url.pathname, 200, { count: fixture.orders.size });
+  if (request.method === "GET" && url.pathname === "/api/orders") {
+    const page = Number(url.searchParams.get("page") ?? "1");
+    const limit = Number(url.searchParams.get("limit") ?? "20");
+    const status = url.searchParams.get("status");
+    const validStatuses = [null,"pending","paid","shipped","payment-pending","pending-invoice","partial-payment","payment-failed","cancelled"];
+    const responseStatus = Number.isInteger(page) && page >= 1 && Number.isInteger(limit) && limit >= 1 && limit <= 100 && validStatuses.includes(status) ? 200 : 400;
+    return api(response, fixture, url.pathname, responseStatus, { count: responseStatus === 200 ? fixture.orders.size : 0 });
+  }
   response.setHeader("content-type", "text/html; charset=utf-8");
   if (url.pathname === "/login") return response.end(loginDocument());
   if (url.pathname === "/portal") return response.end(`<a href="/developer">Developer</a>`);
@@ -652,11 +700,11 @@ function credentialsDocument(
 }
 
 function docsDocument() {
-  return `<!doctype html><main><h1>Orders API</h1><label>Client ID<input aria-label="Client ID" id="client-id"></label><label>Client secret<input aria-label="Client secret" id="client-secret" type="password"></label><label>Audience<select id="audience"><option value="client">Client</option><option value="practitioner">Practitioner</option></select></label><label>Identity mode<select id="identity-mode"><option value="existing">Existing ID</option><option value="nested">Nested object</option><option value="conflicting">Conflicting</option></select></label><button id="create">Create order</button><button id="retrieve">Retrieve order</button><button id="list">List orders</button><div role="status"></div></main><script>
+  return `<!doctype html><main><h1>Orders API</h1><label>Client ID<input aria-label="Client ID" id="client-id"></label><label>Client secret<input aria-label="Client secret" id="client-secret" type="password"></label><label>Audience<select id="audience"><option value="client">Client</option><option value="practitioner">Practitioner</option></select></label><label>Identity mode<select id="identity-mode"><option value="existing">Existing ID</option><option value="nested">Nested object</option><option value="conflicting">Conflicting</option></select></label><label>Request case<select id="request-case"><option value="valid">Valid</option><option>missing_identity</option><option>malformed_identity</option><option>nonexistent_identity</option><option>missing_required</option><option>invalid_order_value</option><option>authentication_rejected</option><option>authorization_rejected</option><option>idempotent</option><option>idempotent_replay</option><option>idempotency_conflict</option></select></label><label>Query case<select id="query-case"><option value="baseline">baseline</option><option>page_boundary</option><option>limit_boundary</option><option>status_filter</option><option>page_invalid</option><option>limit_invalid</option><option>status_invalid</option></select></label><label>Retrieve case<select id="retrieve-case"><option value="valid">valid</option><option>malformed</option><option>nonexistent</option></select></label><button id="create">Create order</button><button id="retrieve">Retrieve order</button><button id="list">List orders</button><div role="status"></div></main><script>
   const status=document.querySelector('[role=status]');const auth=()=>({clientId:document.querySelector('#client-id').value,clientSecret:document.querySelector('#client-secret').value});
-  create.onclick=async()=>{const response=await fetch('/api/orders',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...auth(),audience:audience.value,identityMode:document.querySelector('#identity-mode').value})});status.textContent=String(response.status)};
-  retrieve.onclick=async()=>{const response=await fetch('/api/orders/latest');status.textContent=String(response.status)};
-  list.onclick=async()=>{const response=await fetch('/api/orders');status.textContent=String(response.status)};
+  create.onclick=async()=>{const requestCase=document.querySelector('#request-case').value;const credentials=requestCase==='authentication_rejected'?{clientId:'invalid',clientSecret:'invalid'}:auth();const idempotencyKey=['idempotent','idempotent_replay','idempotency_conflict'].includes(requestCase)?'stable-key':'';const identityMode=requestCase==='idempotency_conflict'?'nested':document.querySelector('#identity-mode').value;const response=await fetch('/api/orders',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...credentials,audience:audience.value,identityMode,requestCase,idempotencyKey})});status.textContent=String(response.status)};
+  retrieve.onclick=async()=>{const value=document.querySelector('#retrieve-case').value;const response=await fetch('/api/orders/'+(value==='valid'?'latest':value));status.textContent=String(response.status)};
+  list.onclick=async()=>{const value=document.querySelector('#query-case').value;const query=value==='page_boundary'?'?page=2':value==='limit_boundary'?'?limit=100':value==='status_filter'?'?status=pending':value==='page_invalid'?'?page=0':value==='limit_invalid'?'?limit=101':value==='status_invalid'?'?status=unknown':'';const response=await fetch('/api/orders'+query);status.textContent=String(response.status)};
   </script>`;
 }
 
