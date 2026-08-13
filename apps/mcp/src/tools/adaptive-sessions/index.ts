@@ -8,7 +8,7 @@ import {
 } from "@scry/contracts";
 import { z } from "zod";
 
-import { ScryApiError, type ScryApiClient } from "../../api-client.js";
+import { apiRejection, ScryApiError, type ScryApiClient } from "../../api-client.js";
 import { readOnly, stableKey, toolResult, uuid, writes } from "../../tool-registry.js";
 
 export function registerAdaptiveSessionTools(server: McpServer, client: ScryApiClient) {
@@ -42,7 +42,7 @@ export function registerAdaptiveSessionTools(server: McpServer, client: ScryApiC
     {
       title: "Advance Flow Authoring",
       description:
-        "Execute 1-20 semantic Mission authoring intents within budgets.maxOperations (1-20) and budgets.maxDurationMs (1000-60000), or continue one stable pending turn. For kind=intents provide intents and omit turnId; for kind=continue provide turnId and omit intents. Inspect example action: {kind:'inspect',target:{concept:'email',role:'textbox',placeholder:'Email'}}. Protected fill example action: {kind:'fill',target:{concept:'password',role:'textbox'},protectedReferenceId:'<credential-uuid>'}; pair it with authorization:{kind:'authentication'}, constraints:{timeoutMs:30000,allowNewPage:false,allowNonExact:true}, expectedEffect:{kind:'none'}, and protectedInputReferences:['<same-credential-uuid>']. Scry owns resolution, readiness, effect verification, journaling, and safe waiting; do not poll.",
+        "Execute 1-20 semantic Mission authoring intents within budgets.maxOperations (1-20) and budgets.maxDurationMs (1000-60000), or continue one stable pending turn. For kind=intents provide intents and omit turnId; for kind=continue provide turnId and omit intents. Inspect example action: {kind:'inspect',target:{concept:'email',role:'textbox',placeholder:'Email'}}. Protected fill example action: {kind:'fill',target:{concept:'password',role:'textbox'},protectedReferenceId:'<credential-uuid>'}; pair it with authorization:{kind:'authentication'}, constraints:{timeoutMs:30000,allowNewPage:false,allowNonExact:true}, expectedEffect:{kind:'none'}, and protectedInputReferences:['<same-credential-uuid>']. Read completed[*].mutationOutcome before acting: not_applied permits only the reported prerequisite/revision path, applied may require effect observation, and unknown forbids blind retry. decisionBoundary.safeActions names the permitted continuation; pending returns the only stable turnId to continue. TARGET_NOT_FOUND means the observed target was absent; TARGET_NOT_ACTIONABLE or INSUFFICIENT_EVIDENCE is inconclusive and calls for fresh observation or a revised semantic target. Scry owns resolution, readiness, effect verification, journaling, and safe waiting; do not poll.",
       inputSchema: {
         sessionId: uuid,
         kind: z.enum(["intents", "continue"]),
@@ -136,11 +136,7 @@ async function withAdaptiveSessionError<T>(operation: () => Promise<T>, rejectio
     return {
       ...toolResult(
         {
-          rejection: {
-            code: error.code,
-            status: error.status,
-            safeActions: error.safeActions,
-          },
+          rejection: apiRejection(error),
         },
         rejectionMessage,
       ),

@@ -32,7 +32,7 @@ export function registerEndAgentSessionTool(server: McpServer, client: ScryApiCl
     {
       title: "End agent session",
       description:
-        "Close an agent session after persisting the Mission resume pointer or terminal decision.",
+        "Required final lifecycle write after persisting a Mission resume pointer, reviewed terminal Objective decision, or final report. Use completed when external work reached its intended terminal boundary, interrupted when resumable work stopped, and failed when no safe continuation remains.",
       inputSchema: {
         agentSessionId: uuid,
         status: z.enum(["completed", "interrupted", "failed"]),

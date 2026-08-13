@@ -17,6 +17,7 @@ import { z } from "zod";
 
 import type { ScryApiClient } from "../../api-client.js";
 import {
+  agentSessionFinalization,
   missionContext,
   objectiveContext,
   readOnly,
@@ -32,7 +33,7 @@ export function registerUpdateMissionObjectiveTool(server: McpServer, client: Sc
     {
       title: "Update Mission objective",
       description:
-        "Revise an existing Objective or explicitly record its reviewed terminal conclusion instead of replacing the Mission.",
+        "Revise an existing Objective or explicitly record its reviewed terminal conclusion instead of replacing the Mission. Terminal status responses include agentSessionFinalization naming the required end_agent_session call.",
       inputSchema: {
         ...missionContext,
         objectiveId: uuid,
@@ -56,9 +57,17 @@ export function registerUpdateMissionObjectiveTool(server: McpServer, client: Sc
       },
       annotations: writes,
     },
-    async ({ objectiveId, ...body }) =>
+    async ({ objectiveId, agentSessionId, ...body }) =>
       result(
-        { objective: await client.patch(`/objectives/${objectiveId}`, body) },
+        {
+          objective: await client.patch(`/objectives/${objectiveId}`, { agentSessionId, ...body }),
+          ...(["passed", "failed", "blocked", "skipped"].includes(body.status ?? "")
+            ? agentSessionFinalization(
+                agentSessionId,
+                body.status === "passed" || body.status === "skipped" ? "completed" : "failed",
+              )
+            : {}),
+        },
         "Objective updated after explicit review.",
       ),
   );

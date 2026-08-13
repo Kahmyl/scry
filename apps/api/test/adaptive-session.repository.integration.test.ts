@@ -37,7 +37,7 @@ describe("adaptive session environment capability admission", () => {
       },
     ));
     expect(error).toMatchObject({
-      response: expect.objectContaining({ code: "ENVIRONMENT_CAPABILITY_INCOMPLETE" }),
+      response: expect.objectContaining({ code: "ENVIRONMENT_CAPABILITY_INCOMPLETE", mutationOutcome: "not_applied", retry: "safe_after_prerequisite" }),
     });
   });
 
@@ -50,7 +50,7 @@ describe("adaptive session environment capability admission", () => {
       },
     ));
     expect(error).toMatchObject({
-      response: expect.objectContaining({ code: "ENVIRONMENT_CAPABILITY_INCOMPLETE" }),
+      response: expect.objectContaining({ code: "ENVIRONMENT_CAPABILITY_INCOMPLETE", mutationOutcome: "not_applied", retry: "safe_after_prerequisite" }),
     });
   });
 
@@ -65,6 +65,8 @@ describe("adaptive session environment capability admission", () => {
     expect(error).toMatchObject({
       response: expect.objectContaining({
         code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
       }),
     });
   });

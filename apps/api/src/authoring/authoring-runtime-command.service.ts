@@ -83,6 +83,10 @@ export class AuthoringRuntimeCommandService {
     throw new ConflictException({
       code: "AUTHORING_TURN_DEADLINE_EXCEEDED",
       commandId: command.id,
+      mutationOutcome: "unknown",
+      retry: "safe_same_idempotency_key",
+      recoveryTool: "advance_flow_authoring",
+      idempotencyReuse: "same_request_arguments",
       safeActions: ["retry_same_idempotency_key"],
     });
   }

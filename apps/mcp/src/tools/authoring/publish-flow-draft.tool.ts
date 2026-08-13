@@ -15,7 +15,7 @@ import {
 } from "@scry/contracts";
 import { z } from "zod";
 
-import { ScryApiError, type ScryApiClient } from "../../api-client.js";
+import { apiRejection, ScryApiError, type ScryApiClient } from "../../api-client.js";
 import {
   missionContext,
   objectiveContext,
@@ -60,10 +60,7 @@ export function registerPublishFlowDraftTool(server: McpServer, client: ScryApiC
         return {
           ...result(
             {
-              rejection: {
-                code: error.code,
-                safeActions: error.safeActions,
-              },
+              rejection: apiRejection(error),
             },
             "Flow publication was rejected.",
           ),

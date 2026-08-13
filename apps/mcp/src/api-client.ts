@@ -9,10 +9,31 @@ export class ScryApiError extends Error {
     readonly code: string,
     readonly status: number,
     readonly safeActions: string[] = [],
+    readonly context: Record<string, unknown> = {},
   ) {
-    super(`Scry API request failed: ${code}`);
+    super(`Scry API request rejected: ${JSON.stringify({ code, status, safeActions, context })}`);
     this.name = "ScryApiError";
   }
+}
+
+const SAFE_REJECTION_CONTEXT_KEYS = new Set([
+  "state", "current", "target", "phase", "capability", "missingCount", "limit",
+  "actualVersion", "actualRevision", "actualRevisionId", "commandId", "turnId",
+  "sourceMissionRevision", "currentMissionRevision", "objectiveId", "dependencyId",
+  "mutationOutcome", "retry", "retryClass", "continuation", "recoveryTool",
+  "requiresNewFlowDraftAndAuthoringSession", "idempotencyReuse",
+]);
+
+export function apiRejection(error: ScryApiError) {
+  const { mutationOutcome, retry, retryClass, ...context } = error.context;
+  return {
+    code: error.code,
+    status: error.status,
+    appliedState: mutationOutcome ?? "unknown",
+    retry: retry ?? retryClass ?? "unspecified",
+    safeActions: error.safeActions,
+    ...(Object.keys(context).length ? { context } : {}),
+  };
 }
 
 export class ScryApiClient {
@@ -63,7 +84,7 @@ export class ScryApiClient {
       throw new ScryApiError("SCRY_RELEASE_MISMATCH", 409, [
         "restart_mcp_with_current_release",
         "verify_api_release",
-      ]);
+      ], { mutationOutcome: "not_applied", retry: "safe_after_prerequisite" });
     }
     if (
       !capabilities.praxis ||
@@ -75,7 +96,7 @@ export class ScryApiClient {
       throw new ScryApiError("SCRY_PRAXIS_VERSION_MISMATCH", 409, [
         "restart_mcp_with_current_release",
         "verify_api_release",
-      ]);
+      ], { mutationOutcome: "not_applied", retry: "safe_after_prerequisite" });
     }
     return capabilities;
   }
@@ -112,10 +133,30 @@ export class ScryApiClient {
         `HTTP_${response.status}`;
       const safeActions =
         stringArrayField(detail, "safeActions") ?? stringArrayField(envelope, "safeActions") ?? [];
-      throw new ScryApiError(code, response.status, safeActions);
+      throw new ScryApiError(code, response.status, safeActions, safeRejectionContext(detail));
     }
     return body as T;
   }
+}
+
+function safeRejectionContext(value: Record<string, unknown> | undefined) {
+  return Object.fromEntries(
+    Object.entries(value ?? {}).filter(([key, candidate]) =>
+      SAFE_REJECTION_CONTEXT_KEYS.has(key) && isSafeRejectionValue(candidate)),
+  );
+}
+
+function isSafeRejectionValue(value: unknown): boolean {
+  if (typeof value === "string") return value.length <= 500;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "boolean" || value === null) return true;
+  if (Array.isArray(value)) return value.length <= 20 && value.every(isSafeRejectionValue);
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    return entries.length <= 20 && entries.every(([key, candidate]) =>
+      SAFE_REJECTION_CONTEXT_KEYS.has(key) && isSafeRejectionValue(candidate));
+  }
+  return false;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { ScryApiError, type ScryApiClient } from "../../api-client.js";
+import { apiRejection, ScryApiError, type ScryApiClient } from "../../api-client.js";
 import {
   objectiveContext,
   stableKey,
@@ -51,10 +51,7 @@ export function registerCompileAndCertifyFlowTool(server: McpServer, client: Scr
         return {
           ...result(
             {
-              rejection: {
-                code: error.code,
-                safeActions: error.safeActions,
-              },
+              rejection: apiRejection(error),
             },
             "Flow draft compilation or certification was rejected.",
           ),

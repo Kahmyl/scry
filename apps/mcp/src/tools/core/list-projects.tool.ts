@@ -8,7 +8,8 @@ export function registerListProjectsTool(server: McpServer, client: ScryApiClien
     "list_projects",
     {
       title: "List projects",
-      description: "List available Scry projects.",
+      description:
+        "List available Scry projects before any Mission write. If the result is empty, MCP has no project-creation capability: ask the user to create/select a project in the Scry dashboard, then call list_projects again.",
       inputSchema: {},
       annotations: readOnly,
     },

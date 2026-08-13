@@ -35,7 +35,7 @@ describe("ScryApiClient", () => {
         ),
     );
     await expect(client.get("/runs/missing")).rejects.toThrow(
-      "Scry API request failed: Run not found",
+      'Scry API request rejected: {"code":"Run not found"',
     );
   });
 
@@ -49,6 +49,10 @@ describe("ScryApiClient", () => {
             message: {
               code: "CERTIFICATION_RUN_REQUIRED",
               safeActions: ["compile_and_certify_flow"],
+              capability: "execution_ready_compilation",
+              missingCount: 1,
+              mutationOutcome: "not_applied",
+              retry: "safe_after_prerequisite",
             },
           }),
           { status: 409 },
@@ -64,7 +68,33 @@ describe("ScryApiClient", () => {
       code: "CERTIFICATION_RUN_REQUIRED",
       status: 409,
       safeActions: ["compile_and_certify_flow"],
+      context: {
+        capability: "execution_ready_compilation",
+        missingCount: 1,
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+      },
     });
+    expect(String((error as Error).message)).toContain('"mutationOutcome":"not_applied"');
+  });
+
+  it("does not project arbitrary or validation-derived fields into external rejection context", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      statusCode: 409,
+      message: {
+        code: "SAFE_REJECTION",
+        safeActions: ["get_flow_authoring"],
+        state: "recovery_required",
+        secret: "must-not-escape",
+        issues: [{ path: ["value"], input: "must-not-escape" }],
+      },
+    }), { status: 409 })));
+
+    const error = await new ScryApiClient("http://scry.test/api").get("/fixture")
+      .catch((cause: unknown) => cause) as ScryApiError;
+    expect(error.context).toEqual({ state: "recovery_required" });
+    expect(JSON.stringify(error)).not.toContain("must-not-escape");
+    expect(error.message).not.toContain("must-not-escape");
   });
 
   it("updates API resources with PATCH", async () => {

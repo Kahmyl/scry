@@ -1859,6 +1859,8 @@ export class AdaptiveSessionRepository {
     if (!result.rowCount) {
       throw new NotFoundException({
         code: "PROJECT_ENVIRONMENT_REQUIRED",
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
         safeActions: ["list_environments", "create_test_environment"],
       });
     }
@@ -1955,6 +1957,8 @@ export function requireEnvironmentCapabilities(
       code: "ENVIRONMENT_CAPABILITY_INCOMPLETE",
       capability: "allowed_origins",
       missingCount: missingOriginCount,
+      mutationOutcome: "not_applied",
+      retry: "safe_after_prerequisite",
       safeActions: ["list_environments", "create_test_environment"],
     });
   }
@@ -1968,6 +1972,8 @@ export function requireEnvironmentCapabilities(
   ) {
     throw new ConflictException({
       code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+      mutationOutcome: "not_applied",
+      retry: "safe_after_prerequisite",
       safeActions: ["list_project_credentials", "authorize_environment_credentials"],
     });
   }

@@ -39,6 +39,28 @@ describe("authoring runtime command service recovery", () => {
     expect(performance.now() - startedAt).toBeLessThan(500);
     expect(commands.result).toHaveBeenCalledOnce();
   });
+
+  it("classifies a response deadline as unknown and names the same-request recovery", async () => {
+    vi.useFakeTimers();
+    const commands = {
+      enqueue: vi.fn(async () => ({ id: "command", state: "queued", replayed: false })),
+      result: vi.fn(async () => ({ state: "running" })),
+    };
+    const service = new AuthoringRuntimeCommandService(commands as never, {
+      assertAcceptingWork: vi.fn(async () => undefined),
+    } as never);
+    const pending = service.advance(principal, crypto.randomUUID(), turnCommand());
+    const assertion = expect(pending).rejects.toMatchObject({ response: expect.objectContaining({
+      code: "AUTHORING_TURN_DEADLINE_EXCEEDED",
+      mutationOutcome: "unknown",
+      retry: "safe_same_idempotency_key",
+      recoveryTool: "advance_flow_authoring",
+      idempotencyReuse: "same_request_arguments",
+    }) });
+    await vi.advanceTimersByTimeAsync(16_100);
+    await assertion;
+    vi.useRealTimers();
+  });
 });
 
 function turnCommand() {

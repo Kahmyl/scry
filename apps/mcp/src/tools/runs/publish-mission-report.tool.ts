@@ -17,6 +17,7 @@ import { z } from "zod";
 
 import type { ScryApiClient } from "../../api-client.js";
 import {
+  agentSessionFinalization,
   missionContext,
   objectiveContext,
   readOnly,
@@ -32,7 +33,7 @@ export function registerPublishMissionReportTool(server: McpServer, client: Scry
     {
       title: "Publish Mission report",
       description:
-        "Publish an immutable consolidated report after all required objectives are terminal.",
+        "Publish an immutable consolidated report after all required objectives are terminal. The response includes agentSessionFinalization naming the required end_agent_session call.",
       inputSchema: {
         ...missionContext,
         overallConclusion: z.string().trim().min(1).max(20_000),
@@ -42,13 +43,15 @@ export function registerPublishMissionReportTool(server: McpServer, client: Scry
       },
       annotations: writes,
     },
-    async ({ missionId, ...body }) =>
+    async ({ missionId, agentSessionId, ...body }) =>
       result(
         {
           report: await client.post(`/missions/${missionId}/reports`, {
             missionId,
+            agentSessionId,
             ...body,
           }),
+          ...agentSessionFinalization(agentSessionId, "completed"),
         },
         "Immutable Mission report published.",
       ),

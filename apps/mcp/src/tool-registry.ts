@@ -26,3 +26,17 @@ export function toolResult(data: Record<string, unknown>, message: string) {
     structuredContent: { message, ...data },
   };
 }
+
+export function agentSessionFinalization(
+  agentSessionId: string,
+  recommendedStatus: "completed" | "interrupted" | "failed",
+) {
+  return {
+    agentSessionFinalization: {
+      required: true as const,
+      tool: "end_agent_session" as const,
+      agentSessionId,
+      recommendedStatus,
+    },
+  };
+}

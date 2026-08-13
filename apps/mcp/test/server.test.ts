@@ -142,6 +142,12 @@ describe("current Scry MCP surface", () => {
       .toContain("environmentRecovery.missingTrustedScriptOrigins");
     expect(tools.find(({ name }) => name === "create_flow_draft")?.description)
       .toContain("Minimal plan example");
+    expect(tools.find(({ name }) => name === "list_projects")?.description)
+      .toContain("MCP has no project-creation capability");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("unknown forbids blind retry");
+    expect(tools.find(({ name }) => name === "end_agent_session")?.description)
+      .toContain("Required final lifecycle write");
     await client.close();
     await server.close();
   });
@@ -369,6 +375,89 @@ describe("current Scry MCP surface", () => {
     expect(requests).toEqual(["/api/capabilities"]);
     await client.close();
     await server.close();
+  });
+
+  it("preserves safe causal rejection context through the external MCP result", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/capabilities")) return Promise.resolve(new Response(JSON.stringify(admittedCapabilities), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({
+        statusCode: 409,
+        message: {
+          code: "ENVIRONMENT_CAPABILITY_INCOMPLETE",
+          capability: "allowed_origins",
+          missingCount: 1,
+          mutationOutcome: "not_applied",
+          retry: "safe_after_prerequisite",
+          safeActions: ["list_environments", "create_test_environment"],
+          unsafeDiagnostic: "must-not-escape",
+        },
+      }), { status: 409 }));
+    }));
+    const { client, server } = await connected();
+    const response = await client.callTool({ name: "start_flow_authoring", arguments: {
+      projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      missionId: context.missionId,
+      objectiveId: context.objectiveId,
+      flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      agentSessionId: context.agentSessionId,
+      objective: "Inspect account details",
+      allowedOrigins: ["https://example.test"],
+    } });
+    expect(response.structuredContent).toMatchObject({ rejection: {
+      code: "ENVIRONMENT_CAPABILITY_INCOMPLETE",
+      appliedState: "not_applied",
+      retry: "safe_after_prerequisite",
+      context: { capability: "allowed_origins", missingCount: 1 },
+      safeActions: ["list_environments", "create_test_environment"],
+    } });
+    expect(JSON.stringify(response)).not.toContain("must-not-escape");
+    await client.close(); await server.close();
+  });
+
+  it("keeps safe rejection context when a direct tool delegates error translation to MCP", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      statusCode: 409,
+      message: {
+        code: "AUTHORING_DRAFT_CONTEXT_MISMATCH",
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+        safeActions: ["create_objective_scoped_draft"],
+        unsafeDiagnostic: "must-not-escape",
+      },
+    }), { status: 409 })));
+    const { client, server } = await connected();
+    const response = await client.callTool({ name: "create_flow_draft", arguments: {
+      ...context,
+      projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      name: "Read-only fixture",
+      content: { objective: "Observe", expectedOutcomes: ["Page visible"], preconditions: [], prohibitedSideEffects: [] },
+      plan: { name: "Observe", objective: "Observe", allowedOrigins: ["https://example.test"], budgets: { maxActions: 1, maxDurationMs: 1000, maxNavigations: 1 }, checkpoints: [], steps: [{ id: "open", title: "Open", action: { type: "navigate", url: "https://example.test" }, assertions: [], onFailure: "stop", evidence: [], captureIntent: "final" }] },
+    } });
+    const serialized = JSON.stringify(response);
+    expect(response.isError).toBe(true);
+    expect(serialized).toContain("AUTHORING_DRAFT_CONTEXT_MISMATCH");
+    expect(serialized).toContain("not_applied");
+    expect(serialized).not.toContain("must-not-escape");
+    await client.close(); await server.close();
+  });
+
+  it.each([
+    ["update_mission_objective", { ...context, objectiveId: context.objectiveId, status: "blocked", conclusion: "No safe continuation" }],
+    ["publish_mission_report", { missionId: context.missionId, agentSessionId: context.agentSessionId, overallConclusion: "Mission complete", journeySummary: ["Verified"], expectedRevision: 1 }],
+  ])("returns machine-readable agent-session finalization after terminal work via %s", async (name, args) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "terminal-resource" }), { status: 200 })));
+    const { client, server } = await connected();
+    const response = await client.callTool({ name, arguments: args });
+    expect(response.structuredContent).toMatchObject({ agentSessionFinalization: {
+      required: true,
+      tool: "end_agent_session",
+      agentSessionId: context.agentSessionId,
+      recommendedStatus: expect.stringMatching(/^(completed|failed)$/),
+    } });
+    await client.close(); await server.close();
   });
 
   it("creates a credential without returning its sensitive value", async () => {
