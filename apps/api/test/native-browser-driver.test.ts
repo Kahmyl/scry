@@ -22,6 +22,11 @@ beforeAll(async () => {
       response.end();
       return;
     }
+    if (request.url === "/blocked-script") {
+      response.setHeader("content-type", "text/html");
+      response.end("<main>Loading login</main><script src='https://maps.googleapis.com/maps/api/js'></script>");
+      return;
+    }
     response.setHeader("content-type", "text/html");
     response.end("<main><label>Email<input placeholder='Work email'></label><button>Continue</button></main>");
   });
@@ -338,7 +343,7 @@ describe("NativeBrowserDriver shared primitives", () => {
       await expect(driver.executeSemanticControl(opened.page, {
         ...emailIntent,
         concept: "dashboard",
-        requiredCapabilities: ["readable_value"],
+        requiredCapabilities: ["observable"],
         preferredEvidence: { roles: ["heading"], names: ["Dashboard"], labels: [], descriptions: [], placeholders: [], inputTypes: [] },
         risk: "ordinary",
       }, { type: "waitFor", state: "visible", timeoutMs: 2_000 })).resolves.toBeUndefined();
@@ -367,6 +372,19 @@ describe("NativeBrowserDriver shared primitives", () => {
         resolutionTimeoutMs: 250,
       })).rejects.toThrow("NATIVE_TARGET_NOT_FOUND");
       expect(performance.now() - startedAt).toBeLessThan(2_000);
+    } finally {
+      await driver.closeBrowser(opened.browser, opened.context);
+    }
+  }, 20_000);
+
+  it("classifies a missing target behind a blocked third-party script as environment configuration", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser();
+    try {
+      await driver.navigateAndWait(opened.page, `${origin}/blocked-script`, [origin], 2_000, []);
+      await expect(driver.executeSemanticControl(opened.page, emailIntent, {
+        type: "waitFor", state: "visible", timeoutMs: 150,
+      })).rejects.toThrow("ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED");
     } finally {
       await driver.closeBrowser(opened.browser, opened.context);
     }

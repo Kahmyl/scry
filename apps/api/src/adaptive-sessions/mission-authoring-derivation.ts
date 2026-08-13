@@ -29,7 +29,7 @@ export function deriveMissionAuthoringOperation(input: {
       case "set_checked": return { type: "check", target: target(intent.action.target, ["focusable", "toggleable"]), checked: intent.action.checked, timeoutMs: intent.constraints.timeoutMs };
       case "press": return { type: "press", ...(intent.action.target ? { target: target(intent.action.target, ["focusable", "keyboard_activatable"]) } : {}), key: intent.action.key, timeoutMs: intent.constraints.timeoutMs };
       case "wait_for": return { type: "waitFor", target: target(intent.action.target, ["observable"]), state: intent.action.state, timeoutMs: intent.constraints.timeoutMs };
-      case "inspect": return { type: "waitFor", target: target(intent.action.target, ["readable_value"]), state: "visible", timeoutMs: intent.constraints.timeoutMs };
+      case "inspect": return { type: "waitFor", target: target(intent.action.target, ["observable"]), state: "visible", timeoutMs: intent.constraints.timeoutMs };
       case "acquire_protected_outputs": {
         if (!input.protectedTransaction) throw new Error("MISSION_AUTHORING_PROTECTED_TRANSACTION_REQUIRED");
         return input.protectedTransaction;

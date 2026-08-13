@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { ExpectedEffect, InteractionTargetIntent, SemanticScope } from "@scry/contracts";
 import {
   NativeControlResolutionError,
+  blockedThirdPartyScriptOrigins,
   navigateAndWaitNative,
   waitForDocumentSurface,
 } from "@scry/executor";
@@ -187,6 +188,9 @@ export class NativeBrowserDriver {
       if (eligible.size > 1) throw new NativeControlResolutionError("NATIVE_TARGET_AMBIGUOUS");
       if (performance.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
     } while (performance.now() < deadline);
+    if (blockedThirdPartyScriptOrigins(page).length) {
+      throw new NativeError("ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED");
+    }
     throw new NativeControlResolutionError("NATIVE_TARGET_NOT_FOUND");
   }
 
@@ -261,6 +265,9 @@ export class NativeBrowserDriver {
       if (satisfied) return;
       if (performance.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
     } while (performance.now() < deadline);
+    if (blockedThirdPartyScriptOrigins(page).length) {
+      throw new NativeError("ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED");
+    }
     throw new NativeControlResolutionError("NATIVE_TARGET_NOT_FOUND");
   }
 }

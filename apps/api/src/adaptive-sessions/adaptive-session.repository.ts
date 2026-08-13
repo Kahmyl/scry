@@ -1856,7 +1856,12 @@ export class AdaptiveSessionRepository {
        WHERE p.id=$1 AND e.id=$2 AND ($3::uuid IS NULL OR p.workspace_id=$3)`,
       [projectId, environmentId, workspaceId],
     );
-    if (!result.rowCount) throw new NotFoundException("Project environment not found");
+    if (!result.rowCount) {
+      throw new NotFoundException({
+        code: "PROJECT_ENVIRONMENT_REQUIRED",
+        safeActions: ["list_environments", "create_test_environment"],
+      });
+    }
     return result.rows[0]!;
   }
 
@@ -1950,6 +1955,7 @@ export function requireEnvironmentCapabilities(
       code: "ENVIRONMENT_CAPABILITY_INCOMPLETE",
       capability: "allowed_origins",
       missingCount: missingOriginCount,
+      safeActions: ["list_environments", "create_test_environment"],
     });
   }
   const environmentReferences = Array.isArray(environment.secretRefs)
@@ -1960,7 +1966,10 @@ export function requireEnvironmentCapabilities(
       (reference) => !environmentReferences.has(reference),
     )
   ) {
-    throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED" });
+    throw new ConflictException({
+      code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+      safeActions: ["list_project_credentials", "authorize_environment_credentials"],
+    });
   }
   return requestedOrigins;
 }

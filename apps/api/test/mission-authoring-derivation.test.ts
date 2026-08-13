@@ -81,6 +81,23 @@ describe("Mission authoring semantic derivation", () => {
     expect(() => expectedEffectSchema.parse(operation.expectedEffect)).not.toThrow();
   });
 
+  it.each([
+    { concept: "login", role: "form" as const },
+    { concept: "email", role: "textbox" as const },
+  ])("keeps MCP-admitted role-only inspection targets valid for runtime execution: $role", (semanticTarget) => {
+    const operation = derive({ kind: "inspect", target: semanticTarget });
+
+    expect(() => currentActionSchema.parse(operation.action)).not.toThrow();
+    expect(operation.action).toMatchObject({
+      type: "waitFor",
+      target: {
+        concept: semanticTarget.concept,
+        requiredCapabilities: ["observable"],
+        preferredEvidence: { roles: [semanticTarget.role], names: [] },
+      },
+    });
+  });
+
   it("preserves conservative negative observation and value-reading capabilities", () => {
     expect(deriveWithEffect(
       { kind: "activate", target },

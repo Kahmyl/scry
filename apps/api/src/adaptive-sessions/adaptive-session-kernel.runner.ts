@@ -510,6 +510,13 @@ function composeSignals(...signals: Array<AbortSignal | undefined>) {
 
 function decisionBoundary(outcome: OperationOutcome): AgentDecisionBoundary {
   if (outcome.nextDecisionBoundary) return outcome.nextDecisionBoundary;
+  if (outcome.reasonCode === "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED") {
+    return {
+      type: "environment_unavailable",
+      reasonCode: outcome.reasonCode,
+      safeActions: ["list_environments", "create_test_environment"],
+    };
+  }
   if (outcome.mutationOutcome === "unknown") {
     return {
       type: "mutation_reconciliation_required",

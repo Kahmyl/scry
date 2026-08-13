@@ -311,7 +311,13 @@ export async function executeAction(
       }
       return;
     case "waitFor":
-      if (await executeNative(page, action.target, { type: "waitFor", state: action.state, ...nativeTimeout(action.timeoutMs), preDispatchDeadlineAt }, options)) return;
+      if (await executeNative(page, action.target, {
+        type: "waitFor", state: action.state,
+        ...nativeTimeout(roleOnlyTarget(action.target)
+          ? Math.min(action.timeoutMs ?? NATIVE_FAST_PATH_PROBE_MS, NATIVE_FAST_PATH_PROBE_MS)
+          : action.timeoutMs),
+        preDispatchDeadlineAt,
+      }, options)) return;
       requirePraxisFallback(options);
       await requirePraxisWithNoCapabilityRetry({
         page,
@@ -365,6 +371,14 @@ async function executeNative(
 
 function nativeTimeout(timeoutMs: number | undefined): { timeoutMs?: number } {
   return timeoutMs === undefined ? {} : { timeoutMs };
+}
+
+function roleOnlyTarget(target: InteractionTargetIntent) {
+  const evidence = target.preferredEvidence;
+  return evidence.roles.length > 0 &&
+    evidence.names.length === 0 && evidence.labels.length === 0 &&
+    evidence.placeholders.length === 0 && (evidence.testIds?.length ?? 0) === 0 &&
+    !evidence.expectedText && !evidence.visual?.expectedText && !evidence.visual?.icon;
 }
 
 const NATIVE_FAST_PATH_PROBE_MS = 100;

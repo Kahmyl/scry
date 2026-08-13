@@ -1,6 +1,11 @@
 import type { Page } from "playwright";
 
 const fencedPages = new WeakSet<Page>();
+const blockedScriptOriginsByPage = new WeakMap<Page, Set<string>>();
+
+export function blockedThirdPartyScriptOrigins(page: Page) {
+  return [...(blockedScriptOriginsByPage.get(page) ?? [])];
+}
 
 export async function navigateAndWaitNative(
   page: Page,
@@ -40,7 +45,13 @@ async function installThirdPartyScriptFence(page: Page, allowedOrigins: Set<stri
     const request = route.request();
     if (request.resourceType() !== "script") return route.continue();
     try {
-      if (!allowedOrigins.has(new URL(request.url()).origin)) return route.abort("blockedbyclient");
+      const origin = new URL(request.url()).origin;
+      if (!allowedOrigins.has(origin)) {
+        const blocked = blockedScriptOriginsByPage.get(page) ?? new Set<string>();
+        blocked.add(origin);
+        blockedScriptOriginsByPage.set(page, blocked);
+        return route.abort("blockedbyclient");
+      }
     } catch {
       return route.abort("blockedbyclient");
     }

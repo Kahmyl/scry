@@ -180,7 +180,7 @@ describe("current plan contract", () => {
         .success,
     ).toBe(false);
   });
-  it("accepts a test id as deterministic identity evidence", () => {
+  it("accepts a test id or semantic role as deterministic identity evidence", () => {
     const baseIntent = intent("Create Order client ID", "textbox");
     expect(
       interactionTargetIntentSchema.safeParse({
@@ -209,7 +209,7 @@ describe("current plan contract", () => {
           testIds: [],
         },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
   });
   it("has no feature-generation discriminator", () => {
     const parsed = currentPlanSchema.parse({

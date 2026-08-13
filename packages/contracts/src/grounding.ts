@@ -184,6 +184,7 @@ export const interactionTargetIntentSchema = z
     const identity = intent.preferredEvidence;
     if (
       ![
+        identity.roles,
         identity.names,
         identity.labels,
         identity.placeholders,

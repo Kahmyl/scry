@@ -16,7 +16,7 @@ export function registerAdaptiveSessionTools(server: McpServer, client: ScryApiC
     "start_flow_authoring",
     {
       title: "Start Flow Authoring",
-      description: "Start one durable browser session for an existing Mission-owned Flow draft.",
+      description: "Start one durable browser session for an existing Mission-owned Flow draft and approved environment. Create the environment first; credentials are needed only for protected fills and must be authorized to that environment.",
       inputSchema: {
         ...startAdaptiveSessionSchema.omit({ idempotencyKey: true }).shape,
         idempotencyKey: startAdaptiveSessionSchema.shape.idempotencyKey.optional(),
@@ -42,7 +42,7 @@ export function registerAdaptiveSessionTools(server: McpServer, client: ScryApiC
     {
       title: "Advance Flow Authoring",
       description:
-        "Execute a bounded group of semantic Mission authoring intents, or continue one stable pending turn. Scry owns resolution, readiness, effect verification, journaling, and safe waiting; do not poll.",
+        "Execute 1-20 semantic Mission authoring intents within budgets.maxOperations (1-20) and budgets.maxDurationMs (1000-60000), or continue one stable pending turn. For kind=intents provide intents and omit turnId; for kind=continue provide turnId and omit intents. An inspect target may use a unique role alone; add accessible name, label, placeholder, text, or testId when known. Scry owns resolution, readiness, effect verification, journaling, and safe waiting; do not poll.",
       inputSchema: {
         sessionId: uuid,
         kind: z.enum(["intents", "continue"]),

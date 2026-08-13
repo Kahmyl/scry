@@ -31,7 +31,7 @@ export function registerCreateTestEnvironmentTool(server: McpServer, client: Scr
     "create_test_environment",
     {
       title: "Create environment",
-      description: "Create an approved execution environment and credential allowlist.",
+      description: "Create an approved execution environment and credential allowlist. policy.allowedOrigins admits documents; policy.trustedScriptOrigins must separately include third-party script origins required to render the tested UI. If Scry reports ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED, create or update the environment with the required user-approved script origin before retrying.",
       inputSchema: {
         ...objectiveContext,
         projectId: uuid,
