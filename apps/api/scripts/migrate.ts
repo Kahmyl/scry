@@ -103,6 +103,10 @@ const protectedReadOnlyDispatchPath = fileURLToPath(
 const externalResourceBindingsPath = fileURLToPath(
   new URL("../migrations/external-resource-bindings.sql", import.meta.url),
 );
+const operationBoundSyntheticProtectedInputsPath = fileURLToPath(
+  new URL("../migrations/operation-bound-synthetic-protected-inputs.sql", import.meta.url),
+);
+const structuredSyntheticProtectedInputPath = fileURLToPath(new URL("../migrations/structured-synthetic-protected-input.sql", import.meta.url));
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -142,6 +146,8 @@ const protectedOperationAuthoritativeProjection = await readFile(protectedOperat
 const protectedResponseOutputStaging = await readFile(protectedResponseOutputStagingPath, "utf8");
 const protectedReadOnlyDispatch = await readFile(protectedReadOnlyDispatchPath, "utf8");
 const externalResourceBindings = await readFile(externalResourceBindingsPath, "utf8");
+const operationBoundSyntheticProtectedInputs = await readFile(operationBoundSyntheticProtectedInputsPath, "utf8");
+const structuredSyntheticProtectedInput = await readFile(structuredSyntheticProtectedInputPath, "utf8");
 
 const expandFoundation = (source: string) =>
   source
@@ -171,6 +177,8 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "protected-response-output-staging.sql": protectedResponseOutputStaging,
   "protected-read-only-dispatch.sql": protectedReadOnlyDispatch,
   "external-resource-bindings.sql": externalResourceBindings,
+  "operation-bound-synthetic-protected-inputs.sql": operationBoundSyntheticProtectedInputs,
+  "structured-synthetic-protected-input.sql": structuredSyntheticProtectedInput,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) =>
@@ -211,7 +219,13 @@ const preProtectedReadOnlyDispatchBaseline = stagedBaseline(
   OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql"),
 );
 const preExternalResourceBindingsBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "external-resource-bindings.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "external-resource-bindings.sql" && name !== "operation-bound-synthetic-protected-inputs.sql"),
+);
+const preOperationBoundSyntheticProtectedInputsBaseline = stagedBaseline(
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "operation-bound-synthetic-protected-inputs.sql" && name !== "structured-synthetic-protected-input.sql"),
+);
+const preStructuredSyntheticProtectedInputBaseline = stagedBaseline(
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "structured-synthetic-protected-input.sql"),
 );
 
 const fingerprint = digest(baseline);
@@ -226,6 +240,8 @@ const preProtectedOperationAuthoritativeProjectionFingerprint = digest(preProtec
 const preProtectedResponseOutputStagingFingerprint = digest(preProtectedResponseOutputStagingBaseline);
 const preProtectedReadOnlyDispatchFingerprint = digest(preProtectedReadOnlyDispatchBaseline);
 const preExternalResourceBindingsFingerprint = digest(preExternalResourceBindingsBaseline);
+const preOperationBoundSyntheticProtectedInputsFingerprint = digest(preOperationBoundSyntheticProtectedInputsBaseline);
+const preStructuredSyntheticProtectedInputFingerprint = digest(preStructuredSyntheticProtectedInputBaseline);
 
 const previousVeilFullFingerprint =
   "8c0e5ae0ae72f9a163189abe903b317e38aacf6b1674f3441b62dd7129b48c6a";
@@ -288,12 +304,41 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preExternalResourceBindingsFingerprint) {
+    if (installedFingerprint === preStructuredSyntheticProtectedInputFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-structured-synthetic-protected-input'))");
+        await client.query(structuredSyntheticProtectedInput);
+        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query("COMMIT");
+        process.stdout.write(`Applied structured synthetic protected input ${fingerprint}\n`);
+      } catch (error) { await client.query("ROLLBACK"); throw error; }
+      finally { client.release(); }
+    } else if (installedFingerprint === preOperationBoundSyntheticProtectedInputsFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-operation-bound-synthetic-protected-inputs'))");
+        await client.query(operationBoundSyntheticProtectedInputs);
+        await client.query(structuredSyntheticProtectedInput);
+        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query("COMMIT");
+        process.stdout.write(`Applied operation-bound synthetic protected inputs ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preExternalResourceBindingsFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-external-resource-bindings'))");
         await client.query(externalResourceBindings);
+        await client.query(operationBoundSyntheticProtectedInputs);
+        await client.query(structuredSyntheticProtectedInput);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied external resource bindings ${fingerprint}\n`);
@@ -310,6 +355,8 @@ try {
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-protected-read-only-dispatch'))");
         await client.query(protectedReadOnlyDispatch);
         await client.query(externalResourceBindings);
+        await client.query(operationBoundSyntheticProtectedInputs);
+        await client.query(structuredSyntheticProtectedInput);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied protected read-only dispatch ${fingerprint}\n`);
@@ -327,6 +374,8 @@ try {
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
         await client.query(externalResourceBindings);
+        await client.query(operationBoundSyntheticProtectedInputs);
+        await client.query(structuredSyntheticProtectedInput);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied protected response output staging ${fingerprint}\n`);
@@ -345,6 +394,8 @@ try {
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
         await client.query(externalResourceBindings);
+        await client.query(operationBoundSyntheticProtectedInputs);
+        await client.query(structuredSyntheticProtectedInput);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied protected operation authoritative projection ${fingerprint}\n`);
@@ -364,6 +415,8 @@ try {
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
         await client.query(externalResourceBindings);
+        await client.query(operationBoundSyntheticProtectedInputs);
+        await client.query(structuredSyntheticProtectedInput);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied protected operation completion ${fingerprint}\n`);
@@ -386,6 +439,8 @@ try {
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
         await client.query(externalResourceBindings);
+        await client.query(operationBoundSyntheticProtectedInputs);
+        await client.query(structuredSyntheticProtectedInput);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -413,6 +468,8 @@ try {
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
         await client.query(externalResourceBindings);
+        await client.query(operationBoundSyntheticProtectedInputs);
+        await client.query(structuredSyntheticProtectedInput);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -441,6 +498,8 @@ try {
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
         await client.query(externalResourceBindings);
+        await client.query(operationBoundSyntheticProtectedInputs);
+        await client.query(structuredSyntheticProtectedInput);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -470,6 +529,8 @@ try {
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
         await client.query(externalResourceBindings);
+        await client.query(operationBoundSyntheticProtectedInputs);
+        await client.query(structuredSyntheticProtectedInput);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -505,6 +566,8 @@ try {
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
         await client.query(externalResourceBindings);
+        await client.query(operationBoundSyntheticProtectedInputs);
+        await client.query(structuredSyntheticProtectedInput);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,

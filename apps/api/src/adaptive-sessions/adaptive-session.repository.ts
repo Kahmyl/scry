@@ -384,15 +384,94 @@ export class AdaptiveSessionRepository {
     return selectProtectedReplayPreparation(result.rows, input.intentIds, input.entryUrl);
   }
 
+  async reserveMissionProtectedOperation(input: {
+    sessionId: string;
+    operationId: string;
+    intent: MissionAuthoringIntent;
+  }) {
+    return this.database.transaction(async (client) => {
+      const q = bind(client);
+      const session = await this.requireSession(q, null, input.sessionId, true);
+      const runtime = await this.runtimeContext(q, input.sessionId);
+      const result = await q<{ id: string }>(
+        `INSERT INTO protected_operations(
+           operation_id,mutation_identity,owner_kind,authoring_session_id,project_id,
+           environment_id,mission_id,objective_id,agent_session_id,flow_draft_id,
+           authorization_id,program_digest,state,phase,safe_output_manifest
+         ) VALUES($1,$1,'authoring_session',$2,$3,$4,$5,$6,$7,$8,$9,NULL,'reserved','reserved','[]'::jsonb)
+         ON CONFLICT DO NOTHING RETURNING id`,
+        [input.operationId,input.sessionId,runtime.projectId,runtime.environmentId,
+         session.missionId,input.intent.objectiveId,runtime.agentSessionId,input.intent.flowDraftId,
+         input.intent.authorization.authorizationId],
+      );
+      if (!result.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_OPERATION_ALREADY_RESERVED" });
+      await q(
+        `INSERT INTO protected_operation_transitions(protected_operation_id,sequence,from_state,to_state,phase,fencing_token,safe_diagnostics)
+         VALUES($1,1,NULL,'reserved','reserved',0,'{}'::jsonb)`, [result.rows[0]!.id],
+      );
+      return { protectedOperationId: result.rows[0]!.id };
+    });
+  }
+
+  async replayMissionOperation(input: { sessionId: string; operationId: string }) {
+    const result = await this.database.query<{
+      idempotencyKey: string;
+      derivedAction: {
+        action: AdaptiveSessionOperationInput["action"];
+        expectedEffect: AdaptiveSessionOperationInput["expectedEffect"];
+        mode: AdaptiveSessionOperationInput["mode"];
+      };
+    }>(
+      `SELECT idempotency_key AS "idempotencyKey",derived_action AS "derivedAction"
+         FROM adaptive_operations
+        WHERE session_id=$1 AND operation_id=$2`,
+      [input.sessionId, input.operationId],
+    );
+    if (!result.rowCount) return null;
+    const row = result.rows[0]!;
+    return {
+      operationId: input.operationId,
+      idempotencyKey: row.idempotencyKey,
+      action: row.derivedAction.action,
+      expectedEffect: row.derivedAction.expectedEffect,
+      mode: row.derivedAction.mode,
+      protectedInputReferences: [],
+    } satisfies AdaptiveSessionOperationInput;
+  }
+
+  async closeReservedMissionProtectedOperation(input: { protectedOperationId: string; reasonCode: string }) {
+    await this.database.transaction(async (client) => {
+      const result = await client.query<{ version: string }>(
+        `UPDATE protected_operations SET state='failed_not_applied',phase='compilation_failed',
+           mutation_outcome='not_applied',failure_code=$2,recovery_class='do_not_retry',
+           completed_at=now(),updated_at=now(),version=version+1
+         WHERE id=$1 AND state='reserved' RETURNING version`, [input.protectedOperationId,input.reasonCode],
+      );
+      if (!result.rowCount) return;
+      await client.query(
+        `UPDATE operation_bound_protected_inputs SET ciphertext=NULL,initialization_vector=NULL,
+           authentication_tag=NULL,lifecycle='destroyed',destroyed_at=now()
+         WHERE protected_operation_id=$1 AND lifecycle='active'`, [input.protectedOperationId],
+      );
+      await client.query(
+        `INSERT INTO protected_operation_transitions(protected_operation_id,sequence,from_state,to_state,phase,fencing_token,reason_code,safe_diagnostics)
+         SELECT $1,COALESCE(max(sequence),0)+1,'reserved','failed_not_applied','compilation_failed',0,$2,'{}'::jsonb
+         FROM protected_operation_transitions WHERE protected_operation_id=$1`, [input.protectedOperationId,input.reasonCode],
+      );
+    });
+  }
+
   async protectedExecutionContext(sessionId: string, operationId: string) {
     const result = await this.database.query<{
       projectId: string; environmentId: string; missionId: string; objectiveId: string;
       agentSessionId: string; flowDraftId: string; authorizationId: string;
+      dispatchDisposition: "execute" | "qualification_only";
     }>(
       `SELECT session.project_id AS "projectId",session.environment_id AS "environmentId",
               operation.mission_id AS "missionId",operation.objective_id AS "objectiveId",
               session.agent_session_id AS "agentSessionId",operation.flow_draft_id AS "flowDraftId",
-              operation.authoring_intent->'authorization'->>'authorizationId' AS "authorizationId"
+              operation.authoring_intent->'authorization'->>'authorizationId' AS "authorizationId",
+              session.trusted_dispatch_disposition AS "dispatchDisposition"
        FROM adaptive_operations operation
        JOIN adaptive_sessions session ON session.id=operation.session_id
        JOIN mission_authorizations mission_authorization
@@ -409,6 +488,16 @@ export class AdaptiveSessionRepository {
     );
     if (!result.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID" });
     return result.rows[0]!;
+  }
+
+  async authorizeQualificationOnlySession(sessionId: string) {
+    const result = await this.database.query(
+      `UPDATE adaptive_sessions SET trusted_dispatch_disposition='qualification_only',updated_at=now(),version=version+1
+       WHERE id=$1 AND state='active' AND NOT EXISTS(
+         SELECT 1 FROM adaptive_operations WHERE session_id=$1 AND dispatch_boundary<>'not_dispatched'
+       ) RETURNING id`, [sessionId],
+    );
+    if (!result.rowCount) throw new ConflictException({ code: "QUALIFICATION_DISPOSITION_NOT_ADMISSIBLE" });
   }
 
   projectProtectedOperationForAuthoring(input: {
@@ -665,6 +754,7 @@ export class AdaptiveSessionRepository {
         storageName: string;
       }>;
     };
+    earlyProtectedOperationId?: string;
   }) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
@@ -694,7 +784,31 @@ export class AdaptiveSessionRepository {
         ) {
           throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_RESERVATION_INVALID" });
         }
-        const reserved = await q<{ id: string }>(
+        const syntheticCommitments = input.earlyProtectedOperationId
+          ? await q<{ semantic: string; commitment: string }>(
+            `SELECT semantic,commitment FROM operation_bound_protected_inputs
+             WHERE protected_operation_id=$1 AND lifecycle='active' ORDER BY semantic`,
+            [input.earlyProtectedOperationId],
+          ) : { rows: [] };
+        const syntheticInputSetCommitment = syntheticCommitments.rows.length
+          ? stableDigest(syntheticCommitments.rows)
+          : null;
+        const providerIdempotencyCommitment = syntheticCommitments.rows.find(
+          (row) => row.semantic === "provider_idempotency_key",
+        )?.commitment ?? null;
+        const reserved = input.earlyProtectedOperationId
+          ? await q<{ id: string }>(
+          `UPDATE protected_operations SET program_digest=$2,dispatch_semantics=$3,
+             state='planned',phase='planned',safe_output_manifest=$4::jsonb,
+             synthetic_input_set_commitment=$5,payload_commitment=$6,
+             provider_idempotency_commitment=$7,version=version+1,updated_at=now()
+           WHERE id=$1 AND state='reserved' AND program_digest IS NULL RETURNING id`,
+          [input.earlyProtectedOperationId,input.protectedReservation.programDigest,
+           input.protectedReservation.dispatchSemantics ?? "mutation",
+           JSON.stringify(input.protectedReservation.safeOutputManifest),syntheticInputSetCommitment,
+           stableDigest({ programDigest: input.protectedReservation.programDigest, syntheticInputSetCommitment }),
+           providerIdempotencyCommitment],
+        ) : await q<{ id: string }>(
           `INSERT INTO protected_operations(
              operation_id,mutation_identity,owner_kind,authoring_session_id,project_id,
              environment_id,mission_id,objective_id,agent_session_id,flow_draft_id,
@@ -717,11 +831,14 @@ export class AdaptiveSessionRepository {
             JSON.stringify(input.protectedReservation.safeOutputManifest),
           ],
         );
+        if (!reserved.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_RESERVATION_BIND_FAILED" });
         await q(
           `INSERT INTO protected_operation_transitions(
              protected_operation_id,sequence,from_state,to_state,phase,fencing_token,safe_diagnostics
-           ) VALUES($1,1,NULL,'planned','planned',0,'{}'::jsonb)`,
-          [reserved.rows[0]!.id],
+           ) SELECT $1,COALESCE(max(sequence),0)+1,
+                    CASE WHEN $2::boolean THEN 'reserved' ELSE NULL END,'planned','planned',0,'{}'::jsonb
+             FROM protected_operation_transitions WHERE protected_operation_id=$1`,
+          [reserved.rows[0]!.id,Boolean(input.earlyProtectedOperationId)],
         );
       }
       await this.appendEvent(q, input.sessionId, "operation_started", { operationId: input.operationId, objectiveId: input.intent.objectiveId, flowDraftId: input.intent.flowDraftId });
@@ -1243,6 +1360,32 @@ export class AdaptiveSessionRepository {
       [sessionId, reference],
     );
     if (!result.rowCount) throw new ConflictException({ code: "ADAPTIVE_CREDENTIAL_UNAVAILABLE" });
+    const encrypted = result.rows[0]!;
+    return decryptCredential({
+      ciphertext: Buffer.from(encrypted.ciphertext, "base64"),
+      initializationVector: Buffer.from(encrypted.initializationVector, "base64"),
+      authenticationTag: Buffer.from(encrypted.authenticationTag, "base64"),
+    });
+  }
+
+  async resolveProtectedInput(sessionId: string, operationId: string, reference: string) {
+    try {
+      return await this.resolveCredential(sessionId, reference);
+    } catch (error) {
+      if (!(error instanceof ConflictException)) throw error;
+    }
+    const result = await this.database.query<{
+      ciphertext: string; initializationVector: string; authenticationTag: string;
+    }>(
+      `SELECT source.ciphertext,source.initialization_vector AS "initializationVector",
+              source.authentication_tag AS "authenticationTag"
+       FROM operation_bound_protected_inputs source
+       JOIN protected_operations operation ON operation.id=source.protected_operation_id
+       WHERE source.id=$1 AND operation.authoring_session_id=$2 AND operation.operation_id=$3
+         AND source.lifecycle='active' AND operation.state IN ('planned','preparing','ready_to_dispatch')`,
+      [reference,sessionId,operationId],
+    );
+    if (!result.rowCount) throw new ConflictException({ code: "ADAPTIVE_PROTECTED_INPUT_UNAVAILABLE" });
     const encrypted = result.rows[0]!;
     return decryptCredential({
       ciphertext: Buffer.from(encrypted.ciphertext, "base64"),

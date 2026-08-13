@@ -28,19 +28,21 @@ const openTestBrowser = async (options?: BrowserContextOptions) => {
 };
 const intent = (
   concept: string,
-  role: "button" | "textbox" | "text" | "value" = "text",
+  role: "button" | "textbox" | "checkbox" | "text" | "value" = "text",
 ): InteractionTargetIntent => ({
   concept,
   requiredCapabilities:
     role === "textbox"
       ? ["focusable", "accepts_text", "editable", "readable_value"]
+      : role === "checkbox"
+        ? ["focusable", "toggleable"]
       : role === "button"
         ? ["pointer_activatable"]
         : ["readable_value"],
   preferredEvidence: {
     roles: [role],
     names: [concept],
-    labels: role === "textbox" ? [concept] : [],
+    labels: role === "textbox" || role === "checkbox" ? [concept] : [],
     descriptions: [],
     placeholders: role === "textbox" ? [concept] : [],
     inputTypes: [],
@@ -1119,4 +1121,118 @@ describe("protected transaction capsule", () => {
       expect(memory.state()).toBe("completed");
     } finally { await browser.close(); }
   });
+
+  it.each([
+    { label: "A valid Create response", status: 201, body: "canonical", expectedState: "completed", expectedOutcome: "confirmed_succeeded", qualificationOnly: false, acknowledged: true, expectedPostCount: 1 },
+    { label: "D provider-proven validation rejection", status: 400, body: "error", expectedState: "failed_not_applied", expectedOutcome: "confirmed_not_applied", qualificationOnly: false, acknowledged: true, expectedPostCount: 1 },
+    { label: "E success without canonical identity", status: 201, body: "missing", expectedState: "recovery_required", expectedOutcome: "unknown", qualificationOnly: false, acknowledged: true, expectedPostCount: 1 },
+    { label: "H final activation without acknowledgement", status: 201, body: "canonical", expectedState: "recovery_required", expectedOutcome: "unknown", qualificationOnly: false, acknowledged: false, expectedPostCount: 0 },
+    { label: "Q qualification policy withholds dispatch", status: 201, body: "canonical", expectedState: "failed_not_applied", expectedOutcome: "confirmed_not_applied", qualificationOnly: true, acknowledged: true, expectedPostCount: 0 },
+  ] as const)("certifies Create Order $label through the real protected kernel", async ({ status, body, expectedState, expectedOutcome, qualificationOnly, acknowledged, expectedPostCount }) => {
+    const protectedValues = {
+      clientId: `client-${randomUUID()}`,
+      clientSecret: `secret-${randomUUID()}`,
+      idempotencyKey: `create-${randomUUID()}`,
+      payload: JSON.stringify({
+        orderType: "monthly-billing", orderedFor: "client", quantity: 1,
+        kitType: "gut-scan", currency: "usd", deliveryMode: "dropship",
+        clientId: randomUUID(),
+        shipping: { country: "US", addressLineOne: "100 Local Street", city: "Boston", state: "MA", postalCode: "02108" },
+      }),
+      orderId: randomUUID(),
+    };
+    let dispatches = 0;
+    const safeObservations: Array<Record<string, unknown>> = [];
+    const server = createServer((request, response) => {
+      if (request.url === "/" || request.url === "/new") {
+        response.setHeader("content-type", "text/html");
+        response.end(`<link rel="icon" href="data:,"><label>Client ID<input></label><label>Client secret<input></label><label>Idempotency key<input></label><label>JSON body<textarea></textarea></label><label><input type="checkbox">I understand this sends a real request that may create or change Partner data.</label><button aria-label="Save">Save</button><output aria-label="id">response schema</output><script>
+          document.querySelector('[aria-label=Save]').onclick=()=>{if(!document.querySelector('input[type=checkbox]').checked)return;fetch('/api/v1/partner-api/orders',{method:'POST',headers:{'x-vitract-client-id':document.querySelectorAll('input')[0].value,'x-vitract-client-secret':document.querySelectorAll('input')[1].value,'Idempotency-Key':document.querySelectorAll('input')[2].value,'content-type':'application/json'},body:document.querySelector('textarea').value})}
+        </script>`);
+        return;
+      }
+      if (request.url === "/safe") {
+        response.setHeader("content-type", "text/html"); response.end("<main>continued</main>"); return;
+      }
+      if (request.url !== "/api/v1/partner-api/orders") { response.statusCode = 404; response.end(); return; }
+      dispatches += 1;
+      let payload = "";
+      request.on("data", (chunk) => { payload += chunk.toString(); });
+      request.on("end", () => {
+        const observation = {
+          method: request.method,
+          pathExact: request.url === "/api/v1/partner-api/orders",
+          clientIdPresent: request.headers["x-vitract-client-id"] === protectedValues.clientId,
+          clientSecretPresent: request.headers["x-vitract-client-secret"] === protectedValues.clientSecret,
+          idempotencyKeyPresent: request.headers["idempotency-key"] === protectedValues.idempotencyKey,
+          payloadExact: payload === protectedValues.payload,
+        };
+        safeObservations.push(observation);
+        response.statusCode = status;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify(body === "canonical" ? { data: { id: protectedValues.orderId, referenceId: "local-reference" } } : body === "missing" ? { data: { status: "created" } } : { error: { code: "VALIDATION_ERROR" } }));
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("server unavailable");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" });
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.goto(origin);
+      const memory = memoryStore();
+      const operation = transaction(origin);
+      operation.operationId = `create-order-${randomUUID()}`;
+      operation.entry = { url: origin, assertions: [{ type: "visible", target: intent("Save", "button") }] };
+      operation.inputs = Object.fromEntries(Object.keys(protectedValues).filter((key) => key !== "orderId").map((key) => [key, { classification: "known_secret", credentialRef: `${key}-ref` }])) as ProtectedTransaction["inputs"];
+      if (acknowledged) operation.inputs.mutationAcknowledged = { classification: "public", value: true };
+      operation.preparation.actions = [
+        { type: "fillKnownSecret", input: "clientId", target: intent("Client ID", "textbox"), effect: "replayable_setup" },
+        { type: "fillKnownSecret", input: "clientSecret", target: intent("Client secret", "textbox"), effect: "replayable_setup" },
+        { type: "fillKnownSecret", input: "idempotencyKey", target: intent("Idempotency key", "textbox"), effect: "replayable_setup" },
+        { type: "fillKnownSecret", input: "payload", target: intent("JSON body", "textbox"), effect: "replayable_setup" },
+        ...(acknowledged ? [{ type: "checkPublicInput" as const, input: "mutationAcknowledged", target: intent("I understand this sends a real request that may create or change Partner data.", "checkbox"), effect: "replayable_setup" as const }] : []),
+      ];
+      operation.preparation.assertions = acknowledged ? [{ type: "checkedMatchesInput", target: intent("I understand this sends a real request that may create or change Partner data.", "checkbox"), input: "mutationAcknowledged" }] : [];
+      operation.mutation = {
+        action: { type: "click", target: intent("Save", "button"), expectedEffect: { type: "none" } },
+        kind: "one_time",
+        request: { method: "POST", pathTemplate: "/api/v1/partner-api/orders", transports: ["fetch"] },
+        response: { confirmedNotAppliedStatuses: [400, 401, 403, 404, 409, 429] },
+        reconciliation: { strategy: "persisted_outputs", requiredReferences: ["createdOrderId"] },
+      };
+      operation.extraction.outputs = [{
+        classification: "public", reference: "createdOrderId",
+        acquisition: { target: intent("id", "value"), classification: "public", permittedMethods: ["protected_network_value"], validation: { minimumLength: 1, maximumLength: 200 } },
+        storage: { name: "Created Order ID", scope: "project" },
+      }];
+      operation.extraction.timeoutMs = 700;
+      operation.acquisitionReadiness.valueIntent = intent("id", "value");
+      operation.acquisitionReadiness.approvedMethods = ["protected_network_value"];
+      const authority = new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] }));
+      const result = await new ProtectedTransactionKernel({
+        safeSession: { browser, context, page, provenance: new BrowserSessionProvenance(randomUUID(), "safe") },
+        gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]), redactor: new SecretRedactor(),
+        store: memory.store, capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser), allowedOrigins: [origin],
+        prepareCapsule: async (session) => { registerPraxisVeilAuthority(session.page, { authority, userId: "create-order-local", environmentId: "test", browserContextId: session.provenance.contextId }); },
+        resolveKnownSecret: async (reference) => protectedValues[reference.replace(/-ref$/, "") as keyof typeof protectedValues],
+        persistSecret: async () => { throw new Error("must not persist protected output"); },
+        persistPublicValue: async () => ({ valueId: randomUUID() }),
+        persistOutputsAtomically: atomicProjectCapture(memory.store, async () => { throw new Error("must not persist protected output"); }, async () => ({ valueId: randomUUID() })),
+        verifyAssertions: verify,
+        ...(qualificationOnly ? { dispatchDisposition: "qualification_only" as const } : {}),
+      }).execute(operation);
+      expect(memory.state()).toBe(expectedState);
+      expect(result.result.mutation.outcome).toBe(expectedOutcome);
+      expect(dispatches).toBe(expectedPostCount);
+      expect(safeObservations).toEqual(expectedPostCount === 0 ? [] : [{ method: "POST", pathExact: true, clientIdPresent: true, clientSecretPresent: true, idempotencyKeyPresent: true, payloadExact: true }]);
+      const safeSerialized = JSON.stringify({ result: result.result, observations: safeObservations });
+      for (const value of Object.values(protectedValues)) expect(safeSerialized).not.toContain(value);
+    } finally {
+      await browser.close();
+    }
+  }, 60_000);
 });

@@ -189,6 +189,9 @@ export type ExecuteOptions = {
   onPraxisResult?: (result: import("@scry/contracts").PraxisResult) => void | Promise<void>;
   /** Durable fence hook invoked after target resolution, immediately before browser dispatch. */
   onMutationDispatch?: () => void | Promise<void>;
+  /** Trusted runtime-only disposition; absent from authored plans and actions. */
+  dispatchDisposition?: "execute" | "qualification_only";
+  onReadyToDispatch?: (input: { operationId: string; disposition: "execute" | "qualification_only" }) => void | Promise<void>;
   /** Internal phase signal used to derive privacy settlement from lifecycle facts. */
   onPrivacyBoundary?: (phase: "entered" | "verified" | "sealed") => void | Promise<void>;
   readinessTimeoutMultiplier?: number;

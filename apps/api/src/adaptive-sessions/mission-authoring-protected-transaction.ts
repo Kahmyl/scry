@@ -18,6 +18,7 @@ export function compileMissionAuthoringProtectedTransaction(input: {
   action: AcquisitionAction;
   preparation: MissionAuthoringIntent[];
   timeoutMs: number;
+  resolvedSyntheticReferences?: Readonly<Record<string, string>>;
 }): ProtectedTransaction {
   const inputs: ProtectedTransaction["inputs"] = {};
   const preparationActions: ProtectedTransaction["preparation"]["actions"] = [];
@@ -35,8 +36,9 @@ export function compileMissionAuthoringProtectedTransaction(input: {
       case "fill": {
         const key = `input_${createHash("sha256").update(intent.intentId).digest("hex").slice(0, 16)}`;
         const field = target(intent, intent.action.target, ["focusable", "accepts_text", "editable", "readable_value"]);
-        if (intent.action.protectedReferenceId) {
-          inputs[key] = { classification: "known_secret", credentialRef: intent.action.protectedReferenceId };
+        const protectedReference = intent.action.protectedReferenceId ?? input.resolvedSyntheticReferences?.[intent.intentId];
+        if (protectedReference) {
+          inputs[key] = { classification: "known_secret", credentialRef: protectedReference };
           preparationActions.push({ type: "fillKnownSecret", input: key, target: field, effect: "replayable_setup", timeoutMs });
           protectedInputTargets.push(field);
         } else {
@@ -72,6 +74,16 @@ export function compileMissionAuthoringProtectedTransaction(input: {
       default:
         throw new Error("MISSION_AUTHORING_PREPARATION_NOT_DETERMINISTIC");
     }
+  }
+  for (const source of input.action.syntheticProtectedInputs ?? []) {
+    const reference = input.resolvedSyntheticReferences?.[`synthetic:${source.semantic}`];
+    if (!reference) throw new Error("SYNTHETIC_PROTECTED_INPUT_REFERENCE_UNAVAILABLE");
+    const key = `synthetic_${createHash("sha256").update(source.semantic).digest("hex").slice(0, 16)}`;
+    const field = targetForAcquisition(source.target, ["focusable", "accepts_text", "editable", "readable_value"]);
+    inputs[key] = { classification: "known_secret", credentialRef: reference };
+    preparationActions.push({ type: "fillKnownSecret", input: key, target: field, effect: "replayable_setup", timeoutMs: input.timeoutMs });
+    assertions.push({ type: "fieldValueMatchesInput", target: field, input: key, timeoutMs: input.timeoutMs });
+    protectedInputTargets.push(field);
   }
   if (preparationActions.length === 0) {
     preparationActions.push({
@@ -110,6 +122,8 @@ export function compileMissionAuthoringProtectedTransaction(input: {
       action: { type: "click", target: mutationTarget, expectedEffect: { type: "none" }, timeoutMs: input.timeoutMs },
       kind: input.action.mutation.kind === "read_only" ? "repeatable" : "one_time",
       dispatchSemantics: input.action.mutation.kind === "read_only" ? "read_only" : "mutation",
+      ...(input.action.request ? { request: input.action.request } : {}),
+      ...(input.action.response ? { response: input.action.response } : {}),
       reconciliation: { strategy: "persisted_outputs", requiredReferences: outputs.map((output) => output.reference) },
     },
     extraction: {

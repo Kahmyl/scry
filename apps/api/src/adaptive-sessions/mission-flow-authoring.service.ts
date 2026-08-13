@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Inject, Injectable } from "@nestjs/common";
+import { ConflictException, ForbiddenException, Inject, Injectable, Optional } from "@nestjs/common";
 import type {
   AdaptiveSessionOperationInput,
   AdvanceAdaptiveSessionInput,
@@ -13,6 +13,7 @@ import type { Principal } from "../auth/index.js";
 import { ReleaseAdmissionService } from "../runtime/index.js";
 import { AdaptiveSessionKernelRunner } from "./adaptive-session-kernel.runner.js";
 import { AdaptiveSessionRepository } from "./adaptive-session.repository.js";
+import { OperationBoundProtectedInputRepository } from "./operation-bound-protected-input.repository.js";
 import { deriveMissionAuthoringOperation, missionAuthoringOperationIdentity } from "./mission-authoring-derivation.js";
 import {
   compileMissionAuthoringProtectedTransaction,
@@ -28,6 +29,7 @@ export class MissionFlowAuthoringService {
     @Inject(AdaptiveSessionRepository) private readonly sessions: AdaptiveSessionRepository,
     @Inject(AdaptiveSessionKernelRunner) private readonly runner: AdaptiveSessionKernelRunner,
     @Inject(ReleaseAdmissionService) private readonly admission: ReleaseAdmissionService,
+    @Optional() @Inject(OperationBoundProtectedInputRepository) private readonly syntheticInputs?: OperationBoundProtectedInputRepository,
   ) {}
 
   async start(principal: Principal, input: StartAdaptiveSessionInput) {
@@ -195,6 +197,8 @@ export class MissionFlowAuthoringService {
       let protectedReservation:
         | ReturnType<typeof missionAuthoringProtectedOperationReservation>
         | undefined;
+      let earlyProtectedOperationId: string | undefined;
+      let replayedOperation: AdaptiveSessionOperationInput | null = null;
       try {
         await this.sessions.validateIntentAdmission({ sessionId, intent });
         const handoff = await this.sessions.handoff({
@@ -207,35 +211,77 @@ export class MissionFlowAuthoringService {
         let protectedTransaction;
         if (intent.action.kind === "acquire_protected_outputs") {
           const identity = missionAuthoringOperationIdentity(turnId, intent.intentId);
-          const runtime = await this.sessions.runtimeContextFor(sessionId);
-          const entryUrl = runtime.lastObservation?.url;
-          if (!entryUrl) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_ENTRY_UNAVAILABLE" });
-          const preparation = await this.sessions.protectedPreparationFor({
-            sessionId,
-            objectiveId: intent.objectiveId,
-            flowDraftId: intent.flowDraftId,
-            intentIds: intent.action.preparationIntentIds,
-            entryUrl,
-          });
-          protectedTransaction = compileMissionAuthoringProtectedTransaction({
-            operationId: identity.operationId,
-            entryUrl,
-            action: intent.action,
-            preparation,
-            timeoutMs: intent.constraints.timeoutMs,
-          });
-          protectedReservation = missionAuthoringProtectedOperationReservation(
-            protectedTransaction,
-            runtime.policy.allowedOrigins,
-          );
+          replayedOperation = await this.sessions.replayMissionOperation({ sessionId, operationId: identity.operationId });
+          if (!replayedOperation) {
+            const reserved = await this.sessions.reserveMissionProtectedOperation({
+              sessionId,
+              operationId: identity.operationId,
+              intent,
+            });
+            earlyProtectedOperationId = reserved.protectedOperationId;
+            const runtime = await this.sessions.runtimeContextFor(sessionId);
+            const entryUrl = runtime.lastObservation?.url;
+            if (!entryUrl) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_ENTRY_UNAVAILABLE" });
+            const preparation = await this.sessions.protectedPreparationFor({
+              sessionId,
+              objectiveId: intent.objectiveId,
+              flowDraftId: intent.flowDraftId,
+              intentIds: intent.action.preparationIntentIds,
+              entryUrl,
+            });
+            const resolvedSyntheticReferences: Record<string, string> = {};
+            for (const preparationIntent of preparation) {
+              if (preparationIntent.action.kind !== "fill" || !preparationIntent.action.syntheticProtectedSource) continue;
+              if (!this.syntheticInputs) throw new ConflictException({ code: "SYNTHETIC_PROTECTED_INPUT_RUNTIME_UNAVAILABLE" });
+              const source = preparationIntent.action.syntheticProtectedSource;
+              const materialized = await this.syntheticInputs.materialize({
+                protectedOperationId: earlyProtectedOperationId,
+                projectId: runtime.projectId,
+                environmentId: runtime.environmentId,
+                policy: runtime.policy,
+                resourceKind: source.resourceKind,
+                operation: source.operation,
+                declaration: source,
+              });
+              resolvedSyntheticReferences[preparationIntent.intentId] = materialized.referenceId;
+            }
+            for (const source of intent.action.syntheticProtectedInputs ?? []) {
+              if (!this.syntheticInputs) throw new ConflictException({ code: "SYNTHETIC_PROTECTED_INPUT_RUNTIME_UNAVAILABLE" });
+              const materialized = await this.syntheticInputs.materialize({
+                protectedOperationId: earlyProtectedOperationId, projectId: runtime.projectId,
+                environmentId: runtime.environmentId, policy: runtime.policy,
+                resourceKind: source.resourceKind, operation: source.operation,
+                declaration: source,
+              });
+              resolvedSyntheticReferences[`synthetic:${source.semantic}`] = materialized.referenceId;
+            }
+            protectedTransaction = compileMissionAuthoringProtectedTransaction({
+              operationId: identity.operationId,
+              entryUrl,
+              action: intent.action,
+              preparation,
+              timeoutMs: intent.constraints.timeoutMs,
+              resolvedSyntheticReferences,
+            });
+            protectedReservation = missionAuthoringProtectedOperationReservation(
+              protectedTransaction,
+              runtime.policy.allowedOrigins,
+            );
+          }
         }
-        const derived = deriveMissionAuthoringOperation({ turnId, intent, ...(protectedTransaction ? { protectedTransaction } : {}) });
+        const derived = replayedOperation ?? deriveMissionAuthoringOperation({ turnId, intent, ...(protectedTransaction ? { protectedTransaction } : {}) });
         operation = {
           operationId: derived.operationId, idempotencyKey: derived.idempotencyKey,
           action: derived.action, expectedEffect: derived.expectedEffect, mode: derived.mode,
           protectedInputReferences: intent.protectedInputReferences,
         };
       } catch (error) {
+        if (earlyProtectedOperationId) {
+          await this.sessions.closeReservedMissionProtectedOperation({
+            protectedOperationId: earlyProtectedOperationId,
+            reasonCode: "PROTECTED_OPERATION_COMPILATION_FAILED",
+          });
+        }
         timings.resolveMs += performance.now() - resolveStartedAt;
         const decision = turnResult({
           turnId, state: "decision_required", completed, handoffChanged,
@@ -250,6 +296,7 @@ export class MissionFlowAuthoringService {
         operationId: operation.operationId, idempotencyKey: operation.idempotencyKey,
         action: operation.action, expectedEffect: operation.expectedEffect, mode: operation.mode,
         ...(protectedReservation ? { protectedReservation } : {}),
+        ...(earlyProtectedOperationId ? { earlyProtectedOperationId } : {}),
       });
       timings.resolveMs += performance.now() - resolveStartedAt;
       if (operation.action.type === "protectedTransaction") {

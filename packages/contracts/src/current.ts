@@ -348,6 +348,26 @@ export const protectedTransactionSchema = z
         action: mutationActionSchema,
         kind: z.enum(["one_time", "repeatable"]),
         dispatchSemantics: z.enum(["mutation", "read_only"]).optional(),
+        request: z
+          .object({
+            method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+            pathTemplate: z.string().startsWith("/").max(500),
+            transports: z.array(z.enum(["document", "fetch", "xhr"])).min(1).max(3),
+          })
+          .strict()
+          .optional(),
+        response: z
+          .object({
+            confirmedNotAppliedStatuses: z
+              .array(z.number().int().min(400).max(499))
+              .min(1)
+              .max(32)
+              .refine((statuses) => new Set(statuses).size === statuses.length, {
+                message: "confirmed-not-applied statuses must be unique",
+              }),
+          })
+          .strict()
+          .optional(),
         reconciliation: z.discriminatedUnion("strategy", [
           z.object({ strategy: z.literal("none"), acceptUnknownOutcome: z.boolean() }).strict(),
           z

@@ -78,6 +78,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     @Inject(NativeBrowserDriver) private readonly nativeBrowser: NativeBrowserDriver,
   ) {}
 
+
   /** Test seam only. Production execution always provisions from durable session state. */
   async bindForTest(sessionId: string, binding: TestRuntimeBinding) {
     if (process.env.NODE_ENV !== "test") {
@@ -337,6 +338,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       operationId: input.operationId,
       mode: input.mode,
       policy: input.policy,
+      dispatchDisposition: protectedContext?.dispatchDisposition ?? "execute",
       ...(protectedContext ? {
         protectedContext,
         leaseOwner: `${this.ownerId}:${input.fencingToken}`,
@@ -389,11 +391,13 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     operationId: string;
     mode: ExecutionMode;
     policy: ExecutionPolicy;
+    dispatchDisposition?: "execute" | "qualification_only";
     onMutationDispatch?: () => Promise<void>;
     signal?: AbortSignal;
     protectedContext?: {
       projectId: string; environmentId: string; missionId: string; objectiveId: string;
       agentSessionId: string; flowDraftId: string; authorizationId: string;
+      dispatchDisposition: "execute" | "qualification_only";
     };
     leaseOwner?: string;
     onNativeResolution?: (result: { status: "resolved" | "fallback"; reasonCode?: string; durationMs: number }) => void;
@@ -413,7 +417,8 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         environmentId: input.environmentId,
         veilAdmissionKey: this.veilAdmissionKey!,
         veilPolicySnapshot: compileDefaultVeilPolicy(input.policy),
-        secretResolver: (reference) => this.sessions.resolveCredential(input.sessionId, reference),
+        secretResolver: (reference) => this.sessions.resolveProtectedInput(input.sessionId, input.operationId, reference),
+        dispatchDisposition: input.dispatchDisposition ?? "execute",
         ...(input.onMutationDispatch ? { onMutationDispatch: input.onMutationDispatch } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
         ...(input.onNativeResolution ? { onNativeResolution: input.onNativeResolution } : {}),

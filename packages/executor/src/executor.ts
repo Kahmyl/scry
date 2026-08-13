@@ -598,6 +598,8 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               },
               emit,
               signal: timeoutController.signal,
+              ...(options.dispatchDisposition ? { dispatchDisposition: options.dispatchDisposition } : {}),
+              ...(options.onReadyToDispatch ? { onReadyToDispatch: options.onReadyToDispatch } : {}),
               ...(options.onMutationDispatch ? { onMutationDispatch: options.onMutationDispatch } : {}),
               ...(options.markCredentialCompromised ? { markCredentialCompromised: options.markCredentialCompromised } : {}),
             }).execute(step.action);

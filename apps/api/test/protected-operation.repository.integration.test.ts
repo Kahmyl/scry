@@ -5,6 +5,7 @@ import { AdaptiveSessionRepository } from "../src/adaptive-sessions/adaptive-ses
 import { Database } from "../src/infrastructure/index.js";
 import { ProtectedOperationRepository } from "../src/runtime/repositories/protected-operation.repository.js";
 import { ProtectedOutputPersistenceRepository } from "../src/runtime/repositories/protected-output-persistence.repository.js";
+import { OperationBoundProtectedInputRepository } from "../src/adaptive-sessions/operation-bound-protected-input.repository.js";
 
 const databaseUrl = process.env.SCRY_AUTHORING_TEST_DATABASE_URL;
 const integration = databaseUrl ? describe : describe.skip;
@@ -13,6 +14,7 @@ integration("protected operation repository integration", () => {
   let database: Database;
   let operations: ProtectedOperationRepository;
   let outputs: ProtectedOutputPersistenceRepository;
+  let syntheticInputs: OperationBoundProtectedInputRepository;
   let sessionId: string;
   const workspaceId = randomUUID();
   const projectId = randomUUID();
@@ -28,6 +30,7 @@ integration("protected operation repository integration", () => {
     database = new Database();
     operations = new ProtectedOperationRepository(database);
     outputs = new ProtectedOutputPersistenceRepository(database);
+    syntheticInputs = new OperationBoundProtectedInputRepository(database);
     await database.query(`INSERT INTO workspaces(id,name,slug) VALUES($1,'Protected integration',$2)`, [workspaceId,`protected-${workspaceId}`]);
     await database.query(`INSERT INTO projects(id,workspace_id,name) VALUES($1,$2,'Protected integration')`, [projectId,workspaceId]);
     await database.query(`INSERT INTO environments(id,project_id,name,base_origin,policy) VALUES($1,$2,'Protected','https://example.test',$3::jsonb)`, [environmentId,projectId,JSON.stringify({ allowedOrigins: ["https://example.test"], allowPrivateNetwork: false, allowDownloads: false, allowPopups: false, maxActions: 20, maxDurationMs: 30_000, maxNavigations: 10 })]);
@@ -67,6 +70,77 @@ integration("protected operation repository integration", () => {
       },
     });
   }
+
+  it("materializes exactly one encrypted operation-bound value across a concurrent race and restart", async () => {
+    const operationId = `synthetic-${randomUUID()}`;
+    const reserved = await operations.reserve({
+      ownerKind: "authoring_session", ownerId: sessionId, flowDraftId, authorizationId,
+      operationId, mutationIdentity: operationId, projectId, environmentId, missionId,
+      objectiveId, agentSessionId,
+    });
+    const policy = {
+      allowedOrigins: ["https://example.test"],
+      allowPrivateNetwork: false, allowDownloads: false as const, allowPopups: false as const,
+      maxActions: 20, maxDurationMs: 30_000, maxNavigations: 10,
+      protectedSyntheticInputs: { enabled: true as const, generators: [{
+        contract: "nested_client_order_json", version: 1 as const,
+        purposes: ["test_order_qualification"],
+        resourceScopes: [{ resourceKind: "order", operation: "create" }],
+      }] },
+    };
+    const declaration = { semantic: "nested_client_payload", generatorContract: "nested_client_order_json" as const,
+      generatorVersion: 1 as const, purpose: "test_order_qualification" as const };
+    const input = { protectedOperationId: reserved.id, projectId, environmentId, policy,
+      resourceKind: "order", operation: "create", declaration };
+    const [first, second] = await Promise.all([syntheticInputs.materialize(input), syntheticInputs.materialize(input)]);
+    expect(first.referenceId).toBe(second.referenceId);
+    const plaintext = await new OperationBoundProtectedInputRepository(database).resolve({
+      protectedOperationId: reserved.id, operationId, projectId, environmentId, referenceId: first.referenceId,
+    });
+    expect(JSON.parse(plaintext)).toMatchObject({ orderedFor: "client", kitType: "gut-scan", deliveryMode: "dropship" });
+    const rows = await database.query<{ count: string; plaintext: boolean }>(
+      `SELECT count(*)::text AS count,bool_or(ciphertext IS NULL) AS plaintext
+       FROM operation_bound_protected_inputs WHERE protected_operation_id=$1 AND semantic=$2`,
+      [reserved.id,declaration.semantic],
+    );
+    expect(rows.rows[0]).toEqual({ count: "1", plaintext: false });
+    await operations.bindProgram({
+      id: reserved.id,
+      programDigest: "a".repeat(64),
+      safeOutputManifest: [],
+    });
+    const claimed = await operations.claim({
+      ownerKind: "authoring_session",
+      ownerId: sessionId,
+      operationId,
+      leaseOwner: "synthetic-terminal-owner",
+      leaseDurationMs: 30_000,
+      binding: {
+        mutationIdentity: operationId, projectId, environmentId, missionId,
+        objectiveId, agentSessionId, flowDraftId, authorizationId,
+        programDigest: "a".repeat(64), safeOutputManifest: [],
+      },
+    });
+    await operations.transition({
+      id: claimed.id,
+      leaseOwner: "synthetic-terminal-owner",
+      fencingToken: claimed.fencingToken,
+      version: claimed.version,
+      expected: "planned",
+      next: "failed_not_applied",
+      phase: "qualification_withheld",
+      reasonCode: "PROTECTED_DISPATCH_WITHHELD_BY_QUALIFICATION_POLICY",
+    });
+    await expect(syntheticInputs.resolve({ protectedOperationId: reserved.id, operationId, projectId, environmentId, referenceId: first.referenceId }))
+      .rejects.toThrow("SYNTHETIC_PROTECTED_INPUT_UNAVAILABLE");
+    const destroyed = await database.query<{ destroyed: boolean }>(
+      `SELECT lifecycle='destroyed' AND ciphertext IS NULL AND initialization_vector IS NULL
+              AND authentication_tag IS NULL AS destroyed
+         FROM operation_bound_protected_inputs WHERE id=$1`,
+      [first.referenceId],
+    );
+    expect(destroyed.rows[0]?.destroyed).toBe(true);
+  });
 
   async function beginAdaptiveProtectedOperation(
     operationId: string,

@@ -62,6 +62,65 @@ function capture(page: MockPage, envelope: ReturnType<typeof beginProtectedRespo
 }
 
 describe("protected response envelope request lineage", () => {
+  it("owns only the exact authored mutation method, safe route template, and transport", async () => {
+    const page = new MockPage();
+    const stage = vi.fn().mockResolvedValue(undefined);
+    const envelope = beginProtectedResponseEnvelope(page as never, ["https://api.example.test"], new SecretRedactor(), {
+      outputs: [output()] as never,
+      stage,
+      request: { method: "POST", pathTemplate: "/api/v1/partner-api/orders", transports: ["fetch"] },
+    });
+    const exact = request({
+      method: "POST", resourceType: "fetch",
+      url: "https://api.example.test/api/v1/partner-api/orders",
+    });
+    capture(page, envelope, exact);
+    page.emit("response", response(exact, { data: { id: "CREATED_ORDER" } }));
+    await expect(envelope.waitForRequestInitiation(1)).resolves.toMatchObject({
+      status: "initiated", method: "POST", resourceType: "fetch",
+    });
+    await expect(envelope.settle(100)).resolves.toBe(true);
+    expect(stage).toHaveBeenCalledOnce();
+    await envelope.close();
+  });
+
+  it.each([
+    ["GET", "fetch", "/api/v1/partner-api/orders"],
+    ["POST", "xhr", "/api/v1/partner-api/orders"],
+    ["POST", "fetch", "/api/v1/partner-api/clients"],
+  ])("does not own a neighboring request with method=%s transport=%s path=%s", async (method, resourceType, path) => {
+    const page = new MockPage();
+    const body = vi.fn(async () => Buffer.from(JSON.stringify({ id: "UNRELATED" })));
+    const envelope = beginProtectedResponseEnvelope(page as never, ["https://api.example.test"], new SecretRedactor(), {
+      outputs: [output()] as never,
+      stage: vi.fn(),
+      request: { method: "POST", pathTemplate: "/api/v1/partner-api/orders", transports: ["fetch"] },
+    });
+    const unrelated = request({ method, resourceType, url: `https://api.example.test${path}` });
+    capture(page, envelope, unrelated);
+    page.emit("response", response(unrelated, {}, { body }));
+    await expect(envelope.waitForRequestInitiation(1)).resolves.toMatchObject({
+      status: "outside_envelope", method, resourceType,
+    });
+    await envelope.settle(10);
+    expect(body).not.toHaveBeenCalled();
+    await envelope.close();
+  });
+
+  it("matches protected path segments internally without emitting their value", async () => {
+    const page = new MockPage();
+    const envelope = beginProtectedResponseEnvelope(page as never, ["https://api.example.test"], new SecretRedactor(), {
+      request: { method: "GET", pathTemplate: "/orders/{protected-id}", transports: ["fetch"] },
+    });
+    const exact = request({ url: "https://api.example.test/orders/SECRET_ORDER_ID" });
+    capture(page, envelope, exact);
+    expect(await envelope.waitForRequestInitiation(1)).toMatchObject({ status: "initiated" });
+    expect(JSON.stringify(envelope.evidence())).not.toContain("SECRET_ORDER_ID");
+    page.emit("requestfailed", exact);
+    await envelope.settle(10);
+    await envelope.close();
+  });
+
   it("stages exactly once after final aggregate analysis for one owned root", async () => {
     const page = new MockPage();
     const stage = vi.fn().mockResolvedValue(undefined);

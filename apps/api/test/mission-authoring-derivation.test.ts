@@ -110,7 +110,7 @@ describe("Mission authoring semantic derivation", () => {
       action: { kind: "acquire_protected_outputs", preparationIntentIds: ["fill-name"], mutation: { kind: "one_time", target: { concept: "generate", role: "button", name: "Generate", exact: true } }, outputs: [
         { reference: "clientId", classification: "public", target: { concept: "client id", role: "textbox", name: "Client ID", exact: true }, storageName: "Client ID" },
         { reference: "clientSecret", classification: "protected", target: { concept: "client secret", role: "textbox", name: "Client secret", exact: true }, storageName: "Client secret" },
-      ] },
+      ], request: { method: "POST", pathTemplate: "/api/v1/partner-api/orders", transports: ["fetch"] }, response: { confirmedNotAppliedStatuses: [400, 401, 403, 404, 409, 429] } },
       expectedEffect: { kind: "none" }, constraints: { timeoutMs: 2_000, allowNewPage: false, allowNonExact: false },
       authorization: { kind: "protected_mutation", authorizationId: randomUUID() }, protectedInputReferences: [],
     });
@@ -122,6 +122,8 @@ describe("Mission authoring semantic derivation", () => {
     });
     expect(transaction.mutation.kind).toBe("one_time");
     expect(transaction.mutation.dispatchSemantics).toBe("mutation");
+    expect(transaction.mutation.request).toEqual({ method: "POST", pathTemplate: "/api/v1/partner-api/orders", transports: ["fetch"] });
+    expect(transaction.mutation.response?.confirmedNotAppliedStatuses).toEqual([400, 401, 403, 404, 409, 429]);
     if (!transaction.mutation.action.target) throw new Error("mutation target missing");
     expect(transaction.mutation.action.target.confidence.minimumFamilyCount).toBeUndefined();
     expect(transaction.extraction.outputs).toHaveLength(2);

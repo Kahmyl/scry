@@ -30,6 +30,10 @@ export { ExternalResourcePresentationAuthorityRepository } from "./repositories/
 export { ExternalResourceDestructiveTargetPreparationService } from "./services/external-resource-destructive-target-preparation.service.js";
 export { ExternalResourceCredentialLifecycleService } from "./services/external-resource-credential-lifecycle.service.js";
 export {
+  UnknownMutationAdministrationService,
+  UNKNOWN_HISTORICAL_MUTATION_CLOSED_REASON,
+} from "./services/unknown-mutation-administration.service.js";
+export {
   ExecutionCapabilityFactory,
   ExecutionKernelService,
 } from "./services/execution-kernel.service.js";

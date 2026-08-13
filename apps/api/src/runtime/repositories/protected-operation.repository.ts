@@ -27,6 +27,11 @@ export type CreateProtectedOperationInput = Owner & {
   safeOutputManifest: Array<{ reference: string; classification: "public" | "protected"; storageName: string }>;
 };
 
+export type ReserveProtectedOperationInput = Owner & Omit<
+  CreateProtectedOperationInput,
+  keyof Owner | "programDigest" | "safeOutputManifest" | "dispatchSemantics"
+>;
+
 type OperationRow = {
   id: string;
   state: ProtectedOperationState;
@@ -70,6 +75,49 @@ type ProtectedOperationBinding = {
 @Injectable()
 export class ProtectedOperationRepository {
   constructor(@Inject(Database) private readonly database: Database) {}
+
+  async reserve(input: ReserveProtectedOperationInput) {
+    const result = await this.database.query<{ id: string; state: "reserved" }>(
+      `INSERT INTO protected_operations(
+         operation_id,mutation_identity,owner_kind,authoring_session_id,run_id,project_id,
+         environment_id,mission_id,objective_id,agent_session_id,flow_draft_id,flow_revision_id,
+         authorization_id,program_digest,state,phase,safe_output_manifest
+       ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NULL,'reserved','reserved','[]'::jsonb)
+       ON CONFLICT DO NOTHING RETURNING id,state`,
+      [input.operationId,input.mutationIdentity,input.ownerKind,
+       input.ownerKind === "authoring_session" ? input.ownerId : null,
+       input.ownerKind === "run" ? input.ownerId : null,input.projectId,input.environmentId,
+       input.missionId,input.objectiveId,input.agentSessionId,
+       input.ownerKind === "authoring_session" ? input.flowDraftId : null,
+       input.ownerKind === "run" ? input.flowRevisionId : null,input.authorizationId ?? null],
+    );
+    if (!result.rowCount) throw new ConflictException("PROTECTED_OPERATION_ALREADY_EXISTS");
+    await this.appendTransition(result.rows[0]!.id, null, "reserved", "reserved", 0);
+    return result.rows[0]!;
+  }
+
+  async bindProgram(input: {
+    id: string;
+    programDigest: string;
+    dispatchSemantics?: "mutation" | "read_only";
+    safeOutputManifest: CreateProtectedOperationInput["safeOutputManifest"];
+    syntheticInputSetCommitment?: string;
+    payloadCommitment?: string;
+    providerIdempotencyCommitment?: string;
+  }) {
+    const result = await this.database.query<{ id: string }>(
+      `UPDATE protected_operations SET program_digest=$2,dispatch_semantics=$3,
+         safe_output_manifest=$4::jsonb,synthetic_input_set_commitment=$5,
+         payload_commitment=$6,provider_idempotency_commitment=$7,
+         state='planned',phase='planned',version=version+1,updated_at=now()
+       WHERE id=$1 AND state='reserved' AND program_digest IS NULL RETURNING id`,
+      [input.id,input.programDigest,input.dispatchSemantics ?? "mutation",
+       JSON.stringify(input.safeOutputManifest),input.syntheticInputSetCommitment ?? null,
+       input.payloadCommitment ?? null,input.providerIdempotencyCommitment ?? null],
+    );
+    if (!result.rowCount) throw new ConflictException("PROTECTED_OPERATION_PROGRAM_ALREADY_BOUND");
+    await this.appendTransition(input.id, "reserved", "planned", "planned", 0);
+  }
 
   async create(input: CreateProtectedOperationInput) {
     const result = await this.database.query<OperationRow>(
@@ -147,6 +195,7 @@ export class ProtectedOperationRepository {
           `DELETE FROM protected_response_output_staging WHERE protected_operation_id=$1`,
           [current.id],
         );
+        await destroyOperationBoundInputs(client, current.id);
       }
       if (state !== current.state) await appendTransition(client, current.id, current.state, state, "lease_expired", Number(claimed.rows[0]!.fencingToken), "PROTECTED_OPERATION_LEASE_EXPIRED");
       return normalize(claimed.rows[0]!);
@@ -211,6 +260,9 @@ export class ProtectedOperationRepository {
           [input.id],
         );
       }
+      if (protectedOperationTerminalStates.has(input.next)) {
+        await destroyOperationBoundInputs(client, input.id);
+      }
       await appendTransition(client,input.id,input.expected,input.next,input.phase,input.fencingToken,input.reasonCode,input.safeDiagnostics);
       return normalize(result.rows[0]!);
     });
@@ -238,6 +290,19 @@ export class ProtectedOperationRepository {
   private appendTransition(id: string, from: ProtectedOperationState | null, to: ProtectedOperationState, phase: string, fencingToken: number) {
     return this.database.transaction((client) => appendTransition(client,id,from,to,phase,fencingToken));
   }
+}
+
+async function destroyOperationBoundInputs(
+  client: { query: (text: string, values?: unknown[]) => Promise<unknown> },
+  protectedOperationId: string,
+) {
+  await client.query(
+    `UPDATE operation_bound_protected_inputs
+        SET ciphertext=NULL,initialization_vector=NULL,authentication_tag=NULL,
+            lifecycle='destroyed',destroyed_at=now()
+      WHERE protected_operation_id=$1 AND lifecycle='active'`,
+    [protectedOperationId],
+  );
 }
 
 async function appendTransition(client: { query: (text: string, values?: unknown[]) => Promise<unknown> }, id: string, from: ProtectedOperationState | null, to: ProtectedOperationState, phase: string, fencingToken: number, reasonCode?: string, diagnostics?: Record<string, unknown>) {

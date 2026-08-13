@@ -173,6 +173,8 @@ export type ProtectedTransactionDependencies = {
   }>;
   signal?: AbortSignal;
   onMutationDispatch?(): void | Promise<void>;
+  dispatchDisposition?: "execute" | "qualification_only";
+  onReadyToDispatch?(input: { operationId: string; disposition: "execute" | "qualification_only" }): void | Promise<void>;
   markCredentialCompromised?(credentialId: string, code: string, operationId: string): Promise<void>;
 };
 
@@ -506,6 +508,20 @@ export class ProtectedTransactionKernel {
         fencingToken: claim.fencingToken,
         phase: "dispatch_authorized",
       });
+      await d.onReadyToDispatch?.({ operationId: transaction.operationId, disposition: d.dispatchDisposition ?? "execute" });
+      if (d.dispatchDisposition === "qualification_only") {
+        await d.store.record({ operationId: transaction.operationId, fencingToken: claim.fencingToken,
+          phase: "ready_to_dispatch_proven", facts: { dispatchDisposition: "qualification_only" } });
+        claim = await d.store.transition({
+          id: claim.id, operationId: transaction.operationId, version: claim.version,
+          fencingToken: claim.fencingToken, expected: "ready_to_dispatch", next: "failed_not_applied",
+          phase: "dispatch_withheld_by_policy",
+          reasonCode: "PROTECTED_DISPATCH_WITHHELD_BY_QUALIFICATION_POLICY",
+        });
+        facts.mutation.dispatch = "not_started";
+        facts.mutation.outcome = "confirmed_not_applied";
+        throw new PhaseError("PROTECTED_DISPATCH_WITHHELD_BY_QUALIFICATION_POLICY", "mutation_dispatch", "do_not_retry");
+      }
       claim = await d.store.transition({
         id: claim.id, operationId: transaction.operationId, version: claim.version,
         fencingToken: claim.fencingToken, expected: "ready_to_dispatch", next: "dispatching",
@@ -515,14 +531,17 @@ export class ProtectedTransactionKernel {
         capsule.page,
         d.allowedOrigins,
         d.redactor,
-        d.stageResponseOutputsAtomically
+        d.stageResponseOutputsAtomically || transaction.mutation.request
           ? {
+              ...(d.stageResponseOutputsAtomically ? {
               outputs: transaction.extraction.outputs,
               stage: (outputs) => d.stageResponseOutputsAtomically!({
                 operationId: transaction.operationId,
                 claim,
                 outputs,
               }),
+              } : {}),
+              ...(transaction.mutation.request ? { request: transaction.mutation.request } : {}),
             }
           : undefined,
       );
@@ -559,7 +578,10 @@ export class ProtectedTransactionKernel {
         responseEnvelope.endActionCapture();
       }
 
-      if (transaction.mutation.dispatchSemantics === "read_only") {
+      if (
+        transaction.mutation.dispatchSemantics === "read_only" ||
+        transaction.mutation.request
+      ) {
         const requestInitiation = await responseEnvelope.waitForRequestInitiation(
           Math.min(5_000, transaction.extraction.timeoutMs),
         );
@@ -733,8 +755,16 @@ export class ProtectedTransactionKernel {
         facts.preparation = { status: "failed", code: failure.code };
       if (facts.mutation.dispatch !== "not_started") {
         const readOnly = transaction.mutation.dispatchSemantics === "read_only";
-        facts.mutation.outcome = readOnly ? "confirmed_not_applied" : "unknown";
-        if (readOnly) {
+        const responseProvesNotApplied =
+          authoritativeHttpRejection &&
+          typeof facts.responseEvidence?.httpStatusCode === "number" &&
+          (transaction.mutation.response?.confirmedNotAppliedStatuses.includes(
+            facts.responseEvidence.httpStatusCode,
+          ) ?? false);
+        facts.mutation.outcome = readOnly || responseProvesNotApplied
+          ? "confirmed_not_applied"
+          : "unknown";
+        if (readOnly || responseProvesNotApplied) {
           facts.retryClass = "safe_to_retry";
           if (["dispatching", "dispatched", "acquiring", "persisting", "persisted", "reconciling"].includes(claim.state)) {
             claim = await d.store.transition({

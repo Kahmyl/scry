@@ -3,6 +3,7 @@ import { z } from "zod";
 export const protectedOperationOwnerKindSchema = z.enum(["authoring_session", "run"]);
 
 export const protectedOperationStateSchema = z.enum([
+  "reserved",
   "planned",
   "preparing",
   "ready_to_dispatch",
@@ -24,6 +25,7 @@ export type ProtectedOperationState = z.infer<typeof protectedOperationStateSche
 export type ProtectedOperationOwnerKind = z.infer<typeof protectedOperationOwnerKindSchema>;
 
 const transitions = {
+  reserved: ["planned", "failed_not_applied"],
   planned: ["preparing", "failed_not_applied"],
   preparing: ["ready_to_dispatch", "failed_not_applied"],
   ready_to_dispatch: ["dispatching", "failed_not_applied"],
@@ -75,7 +77,7 @@ export function protectedOperationLeaseExpiryState(
   current: ProtectedOperationState,
   dispatchSemantics: "mutation" | "read_only" = "mutation",
 ) {
-  if (["planned", "preparing", "ready_to_dispatch"].includes(current)) return current;
+  if (["reserved", "planned", "preparing", "ready_to_dispatch"].includes(current)) return current;
   if (protectedOperationTerminalStates.has(current) || current === "compromised") return current;
   if (dispatchSemantics === "read_only") return "failed_not_applied" as const;
   return "recovery_required" as const;

@@ -16,6 +16,7 @@ import { RunQueueService } from "./services/run-queue.service.js";
 import { NativeBrowserDriver } from "./native-browser-driver/index.js";
 import { ExternalResourceDestructiveTargetPreparationService } from "./services/external-resource-destructive-target-preparation.service.js";
 import { ExternalResourceCredentialLifecycleService } from "./services/external-resource-credential-lifecycle.service.js";
+import { UnknownMutationAdministrationService } from "./services/unknown-mutation-administration.service.js";
 
 @Module({
   imports: [InfrastructureModule],
@@ -28,6 +29,7 @@ import { ExternalResourceCredentialLifecycleService } from "./services/external-
     ExternalResourcePresentationAuthorityRepository,
     ExternalResourceDestructiveTargetPreparationService,
     ExternalResourceCredentialLifecycleService,
+    UnknownMutationAdministrationService,
     ExecutionCapabilityFactory,
     ExecutionKernelService,
     RunQueueService,
@@ -43,6 +45,7 @@ import { ExternalResourceCredentialLifecycleService } from "./services/external-
     ExternalResourcePresentationAuthorityRepository,
     ExternalResourceDestructiveTargetPreparationService,
     ExternalResourceCredentialLifecycleService,
+    UnknownMutationAdministrationService,
     ExecutionCapabilityFactory,
     ExecutionKernelService,
     RunQueueService,

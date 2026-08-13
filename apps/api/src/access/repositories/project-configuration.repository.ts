@@ -288,6 +288,7 @@ export class ProjectConfigurationRepository {
       ...input.policy,
       externalResourcePresentationAuthorities:
         currentPolicy.externalResourcePresentationAuthorities ?? [],
+      protectedSyntheticInputs: currentPolicy.protectedSyntheticInputs,
     });
     const result = await this.database.query(
       `UPDATE environments environment

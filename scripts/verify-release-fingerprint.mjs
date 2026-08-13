@@ -88,6 +88,10 @@ const externalResourceBindings = await readFile(
   new URL("external-resource-bindings.sql", migrations),
   "utf8",
 );
+const operationBoundSyntheticProtectedInputs = await readFile(
+  new URL("operation-bound-synthetic-protected-inputs.sql", migrations), "utf8",
+);
+const structuredSyntheticProtectedInput = await readFile(new URL("structured-synthetic-protected-input.sql", migrations), "utf8");
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", migrations), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -112,6 +116,8 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", migration
   ["protected-response-output-staging.sql", protectedResponseOutputStaging],
   ["protected-read-only-dispatch.sql", protectedReadOnlyDispatch],
   ["external-resource-bindings.sql", externalResourceBindings],
+  ["operation-bound-synthetic-protected-inputs.sql", operationBoundSyntheticProtectedInputs],
+  ["structured-synthetic-protected-input.sql", structuredSyntheticProtectedInput],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

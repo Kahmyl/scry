@@ -14,6 +14,8 @@ type RequestObservation = {
   envelopeMatched: boolean;
 };
 
+type RequestContract = NonNullable<ProtectedTransaction["mutation"]["request"]>;
+
 type EligibleRequestLifecycle = {
   terminal: boolean;
   phase: "awaiting_response" | "awaiting_redirect_handoff" | "body" | "terminal";
@@ -98,19 +100,20 @@ export function beginProtectedResponseEnvelope(
   allowedOrigins: string[],
   redactor: SecretRedactor,
   options?: {
-    outputs: ProtectedTransaction["extraction"]["outputs"];
-    stage: (outputs: Array<{
+    outputs?: ProtectedTransaction["extraction"]["outputs"];
+    stage?: (outputs: Array<{
       reference: string;
       classification: "public" | "protected";
       name: string;
       value: string;
       scope: "run" | "project";
     }>) => Promise<void>;
+    request?: RequestContract;
   },
 ) {
   const allowed = new Set(allowedOrigins);
   const networkAcquisitionDeclared =
-    !options ||
+    !options?.outputs ||
     options.outputs.some((output) =>
       output.acquisition.permittedMethods.includes("protected_network_value"),
     );
@@ -178,7 +181,10 @@ export function beginProtectedResponseEnvelope(
 
     let envelopeMatched = false;
     try {
-      envelopeMatched = allowed.has(new URL(request.url()).origin);
+      const url = new URL(request.url());
+      envelopeMatched =
+        allowed.has(url.origin) &&
+        (!options?.request || requestMatchesContract(method, resourceType, url.pathname, options.request));
     } catch {
       return;
     }
@@ -495,7 +501,7 @@ export function beginProtectedResponseEnvelope(
       // Lifecycle quiescence freezes the aggregate before semantic analysis
       // and staging. Only settlement bookkeeping may proceed past this point.
       envelope.accepting = false;
-      if (!options || stagingAttempted) {
+      if (!options?.outputs || !options.stage || stagingAttempted) {
         finalize(true);
         return true;
       }
@@ -565,6 +571,23 @@ export function beginProtectedResponseEnvelope(
       envelopes.delete(page);
     },
   };
+}
+
+function requestMatchesContract(
+  method: string,
+  resourceType: string,
+  pathname: string,
+  contract: RequestContract,
+) {
+  if (method !== contract.method || !contract.transports.some((type) => type === resourceType)) return false;
+  const expected = contract.pathTemplate.split("/").filter(Boolean);
+  const actual = pathname.split("/").filter(Boolean);
+  if (expected.length !== actual.length) return false;
+  return expected.every((segment, index) =>
+    /^\{[a-zA-Z][a-zA-Z0-9_-]*\}$/.test(segment)
+      ? Boolean(actual[index])
+      : segment === actual[index],
+  );
 }
 
 function updateOwnershipEvidence(envelope: {

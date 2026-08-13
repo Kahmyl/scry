@@ -149,13 +149,21 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
       target: missionAuthoringSemanticTargetSchema,
       publicValue: z.string().max(20_000).optional(),
       protectedReferenceId: uuid.optional(),
+      syntheticProtectedSource: z.object({
+        semantic: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+        generatorContract: z.enum(["reserved_test_email", "synthetic_person_name", "sandbox_shipping_address_json", "opaque_operation_token"]),
+        generatorVersion: z.literal(1),
+        purpose: z.literal("test_order_qualification"),
+        resourceKind: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+        operation: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+      }).strict().optional(),
     })
     .strict()
     .superRefine((action, context) => {
-      if ([action.publicValue, action.protectedReferenceId].filter((value) => value !== undefined).length !== 1)
+      if ([action.publicValue, action.protectedReferenceId, action.syntheticProtectedSource].filter((value) => value !== undefined).length !== 1)
         context.addIssue({
           code: "custom",
-          message: "fill requires exactly one public or protected value source",
+          message: "fill requires exactly one public, credential, or synthetic protected value source",
         });
     }),
   z
@@ -192,6 +200,25 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
     preparationIntentIds: z.array(z.string().trim().min(1).max(200)).min(1).max(50)
       .refine((values) => new Set(values).size === values.length, "preparation intent IDs must be unique"),
     mutation: z.object({ kind: z.enum(["one_time", "read_only"]), target: missionAuthoringSemanticTargetSchema }).strict(),
+    syntheticProtectedInputs: z.array(z.object({
+      semantic: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+      generatorContract: z.enum(["nested_client_order_json", "opaque_operation_token"]),
+      generatorVersion: z.literal(1),
+      purpose: z.literal("test_order_qualification"),
+      resourceKind: z.literal("order"),
+      operation: z.literal("create"),
+      target: missionAuthoringSemanticTargetSchema,
+    }).strict()).max(4).refine((values) => new Set(values.map((value) => value.semantic)).size === values.length,
+      "synthetic protected input semantics must be unique").optional(),
+    request: z.object({
+      method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+      pathTemplate: z.string().startsWith("/").max(500),
+      transports: z.array(z.enum(["document", "fetch", "xhr"])).min(1).max(3),
+    }).strict().optional(),
+    response: z.object({
+      confirmedNotAppliedStatuses: z.array(z.number().int().min(400).max(499)).min(1).max(32)
+        .refine((statuses) => new Set(statuses).size === statuses.length, "confirmed-not-applied statuses must be unique"),
+    }).strict().optional(),
     outputs: z.array(z.object({
       reference: z.string().trim().min(1).max(100).regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
       classification: z.enum(["public", "protected"]),

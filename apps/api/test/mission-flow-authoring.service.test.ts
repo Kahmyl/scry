@@ -139,6 +139,9 @@ describe("MissionFlowAuthoringService grouped turns", () => {
       beginTurn: vi.fn().mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
       validateIntentAdmission: vi.fn(),
       handoff: vi.fn().mockResolvedValue({ handedOff: false }),
+      replayMissionOperation: vi.fn().mockResolvedValue(null),
+      reserveMissionProtectedOperation: vi.fn().mockResolvedValue({ protectedOperationId: randomUUID() }),
+      closeReservedMissionProtectedOperation: vi.fn(),
       runtimeContextFor: vi.fn().mockResolvedValue({
         lastObservation: { url: "https://example.test/docs" },
         policy: { allowedOrigins: ["https://example.test"] },
@@ -215,6 +218,20 @@ describe("MissionFlowAuthoringService grouped turns", () => {
       beginTurn: vi.fn(async () => ({ turnId: ids.turnId, replayed: false, response: null })),
       continueTurn: vi.fn(async () => ({ id: ids.turnId, replayed: false, safeInput: { intents: [acquisition] }, safeResponse: null, nextIntentIndex: 0 })),
       validateIntentAdmission: vi.fn(), handoff: vi.fn().mockResolvedValue({ handedOff: false }),
+      replayMissionOperation: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockImplementation(async () => {
+          const created = repository.beginMissionOperation.mock.calls[0]![0];
+          return {
+            operationId: created.operationId,
+            idempotencyKey: created.idempotencyKey,
+            action: created.action,
+            expectedEffect: created.expectedEffect,
+            mode: created.mode,
+            protectedInputReferences: [],
+          };
+        }),
+      reserveMissionProtectedOperation: vi.fn().mockResolvedValue({ protectedOperationId: randomUUID() }),
       protectedPreparationFor: vi.fn().mockResolvedValue([preparation]),
       runtimeContextFor: vi.fn().mockResolvedValue({
         lastObservation: { url: "https://example.test/credentials" },
@@ -319,6 +336,14 @@ describe("MissionFlowAuthoringService grouped turns", () => {
       })),
       validateIntentAdmission: vi.fn(),
       handoff: vi.fn().mockResolvedValue({ handedOff: false }),
+      replayMissionOperation: vi.fn().mockResolvedValue({
+        operationId: "m2-recovered",
+        idempotencyKey: "protected:m2-recovered",
+        action: { type: "protectedTransaction" },
+        expectedEffect: { type: "none" },
+        mode: "mutation",
+        protectedInputReferences: [],
+      }),
       runtimeContextFor: vi.fn().mockResolvedValue({
         lastObservation: { url: "https://example.test/credentials" },
         policy: { allowedOrigins: ["https://example.test"] },
@@ -352,12 +377,10 @@ describe("MissionFlowAuthoringService grouped turns", () => {
     });
     expect(result.state).toBe("pending");
     await vi.waitFor(() => expect(runner.execute).toHaveBeenCalledOnce());
-    expect(repository.beginMissionOperation).toHaveBeenCalledWith(expect.objectContaining({
-      protectedReservation: expect.objectContaining({
-        mutationIdentity: expect.any(String),
-        programDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
-      }),
-    }));
+    expect(repository.replayMissionOperation).toHaveBeenCalledOnce();
+    expect(repository.beginMissionOperation).toHaveBeenCalledWith(
+      expect.not.objectContaining({ protectedReservation: expect.anything() }),
+    );
   });
 
   it.each([

@@ -45,9 +45,11 @@ type SafeTurn = {
 const pool = new pg.Pool({ connectionString: databaseUrl() });
 let mcp: Awaited<ReturnType<typeof initializeMcp>> | undefined;
 const openSessions = new Set<string>();
+let safeStage = "QUALIFICATION_LOAD";
 
 try {
   const qualification = await identifyQualification();
+  const createdOperationId = argumentValue("--created-operation=");
   if (process.argv.includes("--preflight-only")) {
     process.stdout.write([
       "qualificationProvenance: exact",
@@ -59,8 +61,13 @@ try {
       "FINAL_STATUS: LIVE_RETRIEVE_ORDER_PREFLIGHT_READY",
     ].join("\n") + "\n");
     process.exitCode = 0;
+  } else if (createdOperationId) {
+    await retrieveExactCreatedOperation(qualification, createdOperationId);
   } else {
   mcp = await initializeMcp();
+  if (process.argv.includes("--acquire-existing-identity")) {
+    await acquireExistingIdentity(qualification);
+  } else {
   const runId = randomUUID();
   const started = await checkedCall({
     name: "start_flow_authoring",
@@ -200,13 +207,234 @@ try {
     "FINAL_STATUS: LIVE_RETRIEVE_ORDER_READ_ONLY_ACCEPTED",
   ].join("\n") + "\n");
   }
+  }
 } catch (error) {
+  process.stderr.write(`safeStage: ${safeStage}\n`);
   process.stderr.write(`${safeCode(error)}\n`);
   process.exitCode = 1;
 } finally {
   for (const sessionId of openSessions) await closeSession(sessionId).catch(() => undefined);
   await mcp?.close();
   await pool.end();
+}
+
+async function retrieveExactCreatedOperation(
+  qualification: Qualification,
+  protectedOperationId: string,
+) {
+  const source = await pool.query<{ reference: StoredReference; dispatchCount: number }>(
+    `SELECT operation.persisted_references->'createdOrderId' AS reference,
+            count(transition.id) FILTER (WHERE transition.to_state='dispatching')::int AS "dispatchCount"
+       FROM protected_operations operation
+       LEFT JOIN protected_operation_transitions transition
+         ON transition.protected_operation_id=operation.id
+      WHERE operation.id=$1 AND operation.project_id=$2 AND operation.environment_id=$3
+        AND operation.state='completed' AND operation.persistence_state='committed'
+        AND operation.mutation_outcome='applied'
+        AND operation.persisted_references ? 'createdOrderId'
+      GROUP BY operation.id`,
+    [protectedOperationId, qualification.projectId, qualification.environmentId],
+  );
+  assert(source.rowCount === 1, "POST_CREATE_SOURCE_OPERATION_INVALID");
+  assert(source.rows[0]!.dispatchCount === 1, "POST_CREATE_SOURCE_DISPATCH_COUNT_INVALID");
+  const createdReference = source.rows[0]!.reference;
+  assert(
+    createdReference.classification === "protected" && Boolean(createdReference.credentialId),
+    "POST_CREATE_REFERENCE_NOT_PROTECTED",
+  );
+
+  mcp = await initializeMcp();
+  const runId = randomUUID();
+  const started = await checkedCall({
+    name: "start_flow_authoring",
+    arguments: {
+      projectId: qualification.projectId, environmentId: qualification.environmentId,
+      missionId: qualification.missionId, agentSessionId: qualification.agentSessionId,
+      objectiveId: qualification.objectiveId, flowDraftId: qualification.flowDraftId,
+      objective: "Verify the exact newly created Vitract Test order read-only",
+      allowedOrigins: qualification.allowedOrigins, correlationId: randomUUID(),
+      initialProtectedReferenceIds: [
+        ...qualification.credentialReferenceIds,
+        opaqueId(createdReference),
+      ],
+      turnBudgets: { maxOperations: 1, maxDurationMs: 30_000 },
+      idempotencyKey: `vitract-post-create-retrieve-start-${runId}`,
+    },
+  });
+  const sessionId = findAdaptiveSessionId(started);
+  assert(sessionId, "POST_CREATE_RETRIEVE_SESSION_ID_MISSING");
+  openSessions.add(sessionId);
+  const retrieve = retrieveFromQualification(
+    qualification,
+    opaqueId(createdReference),
+    runId,
+  );
+  const prepared = await checkedCall({
+    name: "advance_flow_authoring",
+    arguments: {
+      sessionId, kind: "intents",
+      intents: [navigationIntent(qualification, runId), ...retrieve.preparation],
+      budgets: { maxOperations: retrieve.preparation.length + 1, maxDurationMs: 30_000 },
+      idempotencyKey: `vitract-post-create-retrieve-prepare-${runId}`,
+    },
+  });
+  assert(findTurn(prepared).state === "completed", "POST_CREATE_RETRIEVE_PREPARATION_FAILED");
+  const retrieveTurn = await executeProtectedTurn(
+    sessionId,
+    retrieve.intent,
+    `vitract-post-create-retrieve-${runId}`,
+  );
+  const proof = await operationProof(sessionId, retrieveTurn.turnId, retrieve.intent.intentId);
+  assert(proof.state === "completed", "POST_CREATE_RETRIEVE_NOT_COMPLETED");
+  assert(proof.dispatchCount === 1 && proof.redispatchCount === 0, "POST_CREATE_RETRIEVE_DISPATCH_INVALID");
+  assert(proof.requestStatus === "initiated" && proof.requestEnvelopeMatched, "POST_CREATE_RETRIEVE_REQUEST_NOT_EXACT");
+  assert(proof.requestMethod === "GET", "POST_CREATE_RETRIEVE_NOT_READ_ONLY");
+  assert(proof.httpStatus !== null && proof.httpStatus >= 200 && proof.httpStatus < 300, "POST_CREATE_RETRIEVE_RESPONSE_INVALID");
+  const returned = retrieveTurn.completed.flatMap((entry) => entry.generatedReferences ?? []);
+  assert(returned.length === 1, "POST_CREATE_RETRIEVE_OUTPUT_INVALID");
+  const [createdIdentity, returnedIdentity] = await Promise.all([
+    decryptCommittedReference(qualification.projectId, createdReference),
+    decryptCommittedReference(qualification.projectId, returned[0]!),
+  ]);
+  assert(createdIdentity === returnedIdentity, "POST_CREATE_RETRIEVE_IDENTITY_MISMATCH");
+  process.stdout.write([
+    "postCreateRetrieve: PASS",
+    "retrieveRequestCorrelation: exact",
+    "retrieveResponseCorrelation: exact",
+    "requestedCreatedOrderIdentityMatched: yes",
+    "providerMutationCountDuringRetrieve: 0",
+    "canonicalCreatedOrderIdentityExposed: no",
+  ].join("\n") + "\n");
+}
+
+function argumentValue(prefix: string) {
+  const value = process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length);
+  return value && /^[0-9a-f-]{36}$/i.test(value) ? value : undefined;
+}
+
+async function acquireExistingIdentity(qualification: Qualification) {
+  const credentialMapping = mappedCredentialReferences(qualification);
+  const identityTypes = process.argv.includes("--practitioner-only")
+    ? (["practitioner"] as const)
+    : (["client", "practitioner"] as const);
+  for (const identityType of identityTypes) {
+    const runId = randomUUID();
+    safeStage = `${identityType.toUpperCase()}_SESSION_START`;
+    const started = await checkedCall({
+      name: "start_flow_authoring",
+      arguments: {
+        projectId: qualification.projectId, environmentId: qualification.environmentId,
+        missionId: qualification.missionId, agentSessionId: qualification.agentSessionId,
+        objectiveId: qualification.objectiveId, flowDraftId: qualification.flowDraftId,
+        objective: `Acquire one authoritative existing Vitract ${identityType} identity read-only`,
+        allowedOrigins: qualification.allowedOrigins, correlationId: randomUUID(),
+        initialProtectedReferenceIds: [credentialMapping.clientId, credentialMapping.clientSecret],
+        turnBudgets: { maxOperations: 1, maxDurationMs: 30_000 },
+        idempotencyKey: `vitract-${identityType}-identity-start-${runId}`,
+      },
+    });
+    const sessionId = findAdaptiveSessionId(started);
+    assert(sessionId, "IDENTITY_SESSION_ID_MISSING");
+    openSessions.add(sessionId);
+    try {
+      const operationName = identityType === "client" ? "List Clients" : "List Practitioners";
+      const section = `${operationName} examples`;
+      const prefix = identityType === "client" ? "listPartnerClients" : "listPartnerPractitioners";
+      const preparation: MissionAuthoringIntent[] = [
+        identityFill(qualification, runId, `${prefix}-client-id`, "Client ID", credentialMapping.clientId, section, 0),
+        identityFill(qualification, runId, `${prefix}-client-secret`, "Client secret", credentialMapping.clientSecret, section, 1),
+        identityPublicFill(qualification, runId, `${prefix}-query-page`, "page", "1", section, 2),
+        // Two is deliberate: a second record makes the canonical `id` leaf
+        // ambiguous and prevents persistence instead of selecting by position.
+        identityPublicFill(qualification, runId, `${prefix}-query-limit`, "limit", "2", section, 3),
+      ];
+      const navigation = navigationIntent(qualification, runId);
+      safeStage = `${identityType.toUpperCase()}_PREPARATION`;
+      const prepared = await checkedCall({
+        name: "advance_flow_authoring",
+        arguments: { sessionId, kind: "intents", intents: [navigation, ...preparation],
+          budgets: { maxOperations: preparation.length + 1, maxDurationMs: 30_000 },
+          idempotencyKey: `vitract-${identityType}-identity-prepare-${runId}` },
+      });
+      assert(findTurn(prepared).state === "completed", "IDENTITY_PREPARATION_FAILED");
+      const pathTemplate = identityType === "client"
+        ? "/api/v1/partner-api/clients"
+        : "/api/v1/partner-api/practitioners";
+      const intent: MissionAuthoringIntent = {
+        intentId: `vitract-${identityType}-identity-${runId}`,
+        objectiveId: qualification.objectiveId, flowDraftId: qualification.flowDraftId,
+        action: {
+          kind: "acquire_protected_outputs",
+          preparationIntentIds: preparation.map((item) => item.intentId),
+          mutation: { kind: "read_only", target: { concept: `${operationName} Run`, role: "button", name: "Run", scope: { kind: "region", name: section }, exact: true } },
+          request: { method: "GET", pathTemplate, transports: ["fetch", "xhr"] },
+          outputs: [
+            { reference: `${identityType}CanonicalId`, classification: "protected", target: { concept: `${identityType} canonical id`, role: "value", name: "id", scope: { kind: "region", name: section }, exact: true }, storageName: `Vitract ${identityType} canonical ID` },
+            { reference: `${identityType}CollectionCount`, classification: "public", target: { concept: `${identityType} collection count`, role: "value", name: "count", scope: { kind: "region", name: section }, exact: true }, storageName: `Vitract ${identityType} collection count` },
+          ],
+        },
+        expectedEffect: { kind: "none" },
+        constraints: { timeoutMs: 30_000, allowNewPage: false, allowNonExact: false },
+        authorization: { kind: "protected_mutation", authorizationId: qualification.authorizationId },
+        protectedInputReferences: [],
+      };
+      safeStage = `${identityType.toUpperCase()}_ACQUISITION`;
+      const turn = await executeProtectedTurn(sessionId, intent, `vitract-${identityType}-identity-${runId}`);
+      if (turn.state !== "completed") continue;
+      const proof = await operationProof(sessionId, turn.turnId, intent.intentId);
+      const references = turn.completed.flatMap((entry) => entry.generatedReferences ?? []);
+      const canonical = references.find((reference) => reference.reference === `${identityType}CanonicalId`);
+      const countReference = references.find((reference) => reference.reference === `${identityType}CollectionCount`);
+      if (!canonical || !countReference || references.length !== 2) continue;
+      const count = await decryptCommittedReference(qualification.projectId, countReference);
+      assert(count === "1", "IDENTITY_SINGLETON_NOT_PROVEN");
+      assert(proof.httpStatus === 200 && proof.dispatchCount === 1 && proof.requestStatus === "initiated" && proof.requestEnvelopeMatched && proof.requestMethod === "GET", "IDENTITY_READ_ONLY_LIFECYCLE_UNPROVEN");
+      process.stdout.write([
+        `identityType: ${identityType}`, `identityAcquisitionOperation: ${operationName}`,
+        "identityRequestCorrelation: exact", "identityResponseCorrelation: exact",
+        "canonicalExistingIdentityAcquired: yes", "canonicalExistingIdentityExposed: no",
+        "PIIExposed: no", "identityPersistence: PASS", "providerMutationCount: 0",
+        `identityOpaqueReferenceId: ${opaqueId(canonical)}`,
+        "FINAL_STATUS: EXISTING_IDENTITY_ACQUIRED",
+      ].join("\n") + "\n");
+      return;
+    } finally {
+      await closeSession(sessionId).catch(() => undefined);
+      openSessions.delete(sessionId);
+    }
+  }
+  throw new Error("NO_SAFE_EXISTING_IDENTITY_AVAILABLE");
+}
+
+function mappedCredentialReferences(qualification: Qualification) {
+  const mapped = qualification.listPreparation.flatMap((intent) => {
+    if (intent.action.kind !== "fill" || !intent.action.protectedReferenceId) return [];
+    const concept = `${intent.action.target.concept} ${intent.action.target.name ?? ""} ${intent.action.target.label ?? ""}`.toLowerCase();
+    return [{ concept, reference: intent.action.protectedReferenceId }];
+  });
+  const clientId = mapped.filter(({ concept }) => concept.includes("client id"));
+  const clientSecret = mapped.filter(({ concept }) => concept.includes("client secret"));
+  assert(clientId.length === 1 && clientSecret.length === 1, "IDENTITY_CREDENTIAL_MAPPING_AMBIGUOUS");
+  assert(clientId[0]!.reference !== clientSecret[0]!.reference, "IDENTITY_CREDENTIAL_MAPPING_COLLISION");
+  return { clientId: clientId[0]!.reference, clientSecret: clientSecret[0]!.reference };
+}
+
+function identityFill(qualification: Qualification, runId: string, testId: string, label: string, protectedReferenceId: string, section: string, index: number): MissionAuthoringIntent {
+  return {
+    intentId: `identity-protected-${index}-${runId}`, objectiveId: qualification.objectiveId, flowDraftId: qualification.flowDraftId,
+    action: { kind: "fill", target: { concept: `${section} ${label}`, role: "textbox", label, testId, scope: { kind: "region", name: section }, exact: true }, protectedReferenceId },
+    expectedEffect: { kind: "none" }, constraints: { timeoutMs: 10_000, allowNewPage: false, allowNonExact: false },
+    authorization: { kind: "authentication" }, protectedInputReferences: [protectedReferenceId],
+  };
+}
+
+function identityPublicFill(qualification: Qualification, runId: string, testId: string, label: string, publicValue: string, section: string, index: number): MissionAuthoringIntent {
+  return {
+    intentId: `identity-public-${index}-${runId}`, objectiveId: qualification.objectiveId, flowDraftId: qualification.flowDraftId,
+    action: { kind: "fill", target: { concept: `${section} ${label}`, role: "textbox", label, testId, scope: { kind: "region", name: section }, exact: true }, publicValue },
+    expectedEffect: { kind: "none" }, constraints: { timeoutMs: 10_000, allowNewPage: false, allowNonExact: false },
+    authorization: { kind: "ordinary" }, protectedInputReferences: [],
+  };
 }
 
 async function identifyQualification(): Promise<Qualification> {
@@ -603,8 +831,33 @@ function opaqueId(reference: StoredReference) {
 async function checkedCall(tool: { name: string; arguments: Record<string, unknown> }) {
   assert(mcp, "POSTFIX_MCP_NOT_INITIALIZED");
   const response = await mcp.call(tool);
-  rejectToolError(response);
+  try {
+    rejectToolError(response);
+  } catch (error) {
+    process.stderr.write(`safeToolShape: ${JSON.stringify(safeShape(response))}\n`);
+    const rejectionCode = findNested(response, (record) =>
+      typeof record.code === "string"
+        ? /release/i.test(record.code) ? "RELEASE_ADMISSION_REJECTED"
+          : /reference/i.test(record.code) ? "PROTECTED_REFERENCE_ADMISSION_REJECTED"
+            : /ownership/i.test(record.code) ? "OWNERSHIP_ADMISSION_REJECTED"
+              : /capabilit|origin/i.test(record.code) ? "ENVIRONMENT_CAPABILITY_REJECTED"
+                : "UNCLASSIFIED_ADMISSION_REJECTION"
+        : undefined,
+    );
+    if (rejectionCode) process.stderr.write(`safeRejectionCode: ${rejectionCode}\n`);
+    const rejectionStatus = findNested(response, (record) =>
+      typeof record.status === "number" ? record.status : undefined,
+    );
+    if (rejectionStatus) process.stderr.write(`safeRejectionStatus: ${rejectionStatus}\n`);
+    throw error;
+  }
   return response;
+}
+
+function safeShape(value: unknown): unknown {
+  if (Array.isArray(value)) return value.slice(0, 5).map(safeShape);
+  if (!value || typeof value !== "object") return typeof value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).slice(0, 20).map(([key, child]) => [key, safeShape(child)]));
 }
 
 async function closeSession(sessionId: string) {
