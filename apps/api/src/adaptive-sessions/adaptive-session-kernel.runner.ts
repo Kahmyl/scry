@@ -140,7 +140,10 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         return {
           outcome: result.outcome,
           capabilityManifestDigest: capability.manifest.digest,
-          decisionBoundary: decisionBoundary(result.outcome),
+          decisionBoundary: decisionBoundary(result.outcome, {
+            environmentId: context.environmentId,
+            trustedScriptOrigins: context.policy.trustedScriptOrigins ?? [],
+          }),
           timings: { resolveMs, executeMs: performance.now() - executeStartedAt, verifyMs },
           safeState: { url: result.url, documentEpoch: result.documentEpoch },
         };
@@ -508,13 +511,26 @@ function composeSignals(...signals: Array<AbortSignal | undefined>) {
   return present.length === 1 ? present[0] : AbortSignal.any(present);
 }
 
-function decisionBoundary(outcome: OperationOutcome): AgentDecisionBoundary {
+function decisionBoundary(outcome: OperationOutcome, environment?: {
+  environmentId: string;
+  trustedScriptOrigins: string[];
+}): AgentDecisionBoundary {
   if (outcome.nextDecisionBoundary) return outcome.nextDecisionBoundary;
   if (outcome.reasonCode === "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED") {
     return {
       type: "environment_unavailable",
       reasonCode: outcome.reasonCode,
-      safeActions: ["list_environments", "create_test_environment"],
+      safeActions: ["list_environments", "create_test_environment", "create_flow_draft", "start_flow_authoring"],
+      ...(environment && outcome.environmentFailure ? {
+        environmentRecovery: {
+          environmentId: environment.environmentId,
+          missingTrustedScriptOrigins: outcome.environmentFailure.missingTrustedScriptOrigins,
+          missingOriginClassification: outcome.environmentFailure.missingOriginClassification,
+          currentTrustedScriptOrigins: environment.trustedScriptOrigins,
+          recoveryTool: "create_test_environment" as const,
+          requiresNewFlowDraftAndAuthoringSession: true as const,
+        },
+      } : {}),
     };
   }
   if (outcome.mutationOutcome === "unknown") {

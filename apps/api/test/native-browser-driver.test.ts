@@ -27,6 +27,11 @@ beforeAll(async () => {
       response.end("<main>Loading login</main><script src='https://maps.googleapis.com/maps/api/js'></script>");
       return;
     }
+    if (request.url === "/blocked-private-script") {
+      response.setHeader("content-type", "text/html");
+      response.end("<main>Loading login</main><script src='http://127.0.0.1:9/private.js'></script>");
+      return;
+    }
     response.setHeader("content-type", "text/html");
     response.end("<main><label>Email<input placeholder='Work email'></label><button>Continue</button></main>");
   });
@@ -381,10 +386,35 @@ describe("NativeBrowserDriver shared primitives", () => {
     const driver = new NativeBrowserDriver();
     const opened = await driver.openBrowser();
     try {
-      await driver.navigateAndWait(opened.page, `${origin}/blocked-script`, [origin], 2_000, []);
+      await driver.navigateAndWait(opened.page, `${origin}/blocked-script`, [origin], 2_000, ["https://wrong.example.com"]);
       await expect(driver.executeSemanticControl(opened.page, emailIntent, {
         type: "waitFor", state: "visible", timeoutMs: 150,
-      })).rejects.toThrow("ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED");
+      })).rejects.toMatchObject({
+        code: "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED",
+        safeEnvironmentFailure: {
+          missingTrustedScriptOrigins: ["https://maps.googleapis.com"],
+          missingOriginClassification: "public",
+        },
+      });
+    } finally {
+      await driver.closeBrowser(opened.browser, opened.context);
+    }
+  }, 20_000);
+
+  it("does not disclose a blocked private script origin", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser();
+    try {
+      await driver.navigateAndWait(opened.page, `${origin}/blocked-private-script`, [origin], 2_000, []);
+      await expect(driver.executeSemanticControl(opened.page, emailIntent, {
+        type: "waitFor", state: "visible", timeoutMs: 150,
+      })).rejects.toMatchObject({
+        code: "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED",
+        safeEnvironmentFailure: {
+          missingTrustedScriptOrigins: [],
+          missingOriginClassification: "redacted",
+        },
+      });
     } finally {
       await driver.closeBrowser(opened.browser, opened.context);
     }

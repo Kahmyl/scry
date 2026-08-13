@@ -71,7 +71,8 @@ describe("current Scry MCP surface", () => {
       vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 })),
     );
     const { client, server } = await connected();
-    expect((await client.listTools()).tools.map(({ name }) => name)).toEqual([
+    const tools = (await client.listTools()).tools;
+    expect(tools.map(({ name }) => name)).toEqual([
       "get_capabilities",
       "list_projects",
       "start_flow_authoring",
@@ -135,6 +136,12 @@ describe("current Scry MCP surface", () => {
       "search_artifact",
       "extract_artifact_html",
     ]);
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("Protected fill example action");
+    expect(tools.find(({ name }) => name === "create_test_environment")?.description)
+      .toContain("environmentRecovery.missingTrustedScriptOrigins");
+    expect(tools.find(({ name }) => name === "create_flow_draft")?.description)
+      .toContain("Minimal plan example");
     await client.close();
     await server.close();
   });

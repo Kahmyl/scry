@@ -31,7 +31,7 @@ export function registerCreateTestEnvironmentTool(server: McpServer, client: Scr
     "create_test_environment",
     {
       title: "Create environment",
-      description: "Create an approved execution environment and credential allowlist. policy.allowedOrigins admits documents; policy.trustedScriptOrigins must separately include third-party script origins required to render the tested UI. If Scry reports ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED, create or update the environment with the required user-approved script origin before retrying.",
+      description: "Create an approved execution environment and credential allowlist. policy.allowedOrigins admits documents; policy.trustedScriptOrigins separately admits user-approved third-party scripts. Example policy: {allowedOrigins:['https://example.test'],trustedScriptOrigins:['https://scripts.example.test'],allowPrivateNetwork:false,allowDownloads:false,allowPopups:false,maxActions:10,maxDurationMs:60000,maxNavigations:2}. On ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED, copy the current policy into a replacement environment, add each public environmentRecovery.missingTrustedScriptOrigins value after approval, then create a new Flow draft and authoring session as environmentRecovery requires. Scry never auto-trusts it.",
       inputSchema: {
         ...objectiveContext,
         projectId: uuid,

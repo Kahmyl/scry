@@ -99,6 +99,14 @@ export const agentDecisionBoundarySchema = z
       )
       .max(10)
       .optional(),
+    environmentRecovery: z.object({
+      environmentId: z.string().uuid(),
+      missingTrustedScriptOrigins: z.array(z.string().url()).max(20).default([]),
+      missingOriginClassification: z.enum(["public", "redacted"]),
+      currentTrustedScriptOrigins: z.array(z.string().url()).max(20).default([]),
+      recoveryTool: z.literal("create_test_environment"),
+      requiresNewFlowDraftAndAuthoringSession: z.literal(true),
+    }).strict().optional(),
   })
   .strict();
 
@@ -112,6 +120,10 @@ export const operationOutcomeSchema = z
     qualityFindings: z.array(z.record(z.string(), z.unknown())),
     durationMs: z.number().nonnegative(),
     reasonCode: z.string().trim().min(1).max(120).optional(),
+    environmentFailure: z.object({
+      missingTrustedScriptOrigins: z.array(z.string().url()).max(20).default([]),
+      missingOriginClassification: z.enum(["public", "redacted"]),
+    }).strict().optional(),
     resolvedTarget: semanticFingerprintSchema.optional(),
     nextDecisionBoundary: agentDecisionBoundarySchema.optional(),
     generatedReferences: z.array(z.object({

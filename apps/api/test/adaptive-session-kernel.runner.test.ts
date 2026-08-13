@@ -4,6 +4,49 @@ import { compileDefaultVeilPolicy } from "@scry/veil";
 import { AdaptiveSessionKernelRunner } from "../src/adaptive-sessions/adaptive-session-kernel.runner.js";
 
 describe("AdaptiveSessionKernelRunner timing propagation", () => {
+  it("projects the exact safe missing origin and replacement-session recovery", async () => {
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    const environmentId = "22222222-2222-4222-8222-222222222222";
+    const policy = { allowedOrigins: ["https://example.test"], trustedScriptOrigins: ["https://wrong.example.test"],
+      allowPrivateNetwork: false, allowDownloads: false, allowPopups: false,
+      maxActions: 2, maxDurationMs: 30_000, maxNavigations: 1 };
+    const sessions = {
+      heartbeatRuntimeLease: vi.fn(async () => undefined),
+      runtimeContextFor: vi.fn(async () => ({ environmentId, correlationId: "correlation", policy })),
+      recordVerifiedObservation: vi.fn(async () => undefined),
+    };
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      { createSession: vi.fn(() => ({ manifest: { digest: "a".repeat(64) } })) } as never,
+      sessions as never,
+      {} as never,
+    );
+    const outcome = { operationId: "inspect", functionalResult: "failed" as const,
+      mutationOutcome: "not_applied" as const, privacyResult: "unverified" as const,
+      evidenceResult: [], qualityFindings: [], durationMs: 1,
+      reasonCode: "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED",
+      environmentFailure: { missingTrustedScriptOrigins: ["https://scripts.example.test"],
+        missingOriginClassification: "public" as const } };
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
+      session: { interact: vi.fn(async () => ({ documentEpoch: 1, url: "https://example.test", outcome })) },
+      fencingToken: 1, tail: Promise.resolve(),
+    });
+
+    const result = await runner.execute(sessionId, { operationId: "inspect",
+      idempotencyKey: "inspect-idempotency", mode: "observe", action: { type: "waitFor" },
+      expectedEffect: { type: "none" }, protectedInputReferences: [] } as never);
+
+    expect(result.decisionBoundary).toMatchObject({
+      safeActions: ["list_environments", "create_test_environment", "create_flow_draft", "start_flow_authoring"],
+      environmentRecovery: {
+        environmentId,
+        missingTrustedScriptOrigins: ["https://scripts.example.test"],
+        currentTrustedScriptOrigins: ["https://wrong.example.test"],
+        requiresNewFlowDraftAndAuthoringSession: true,
+      },
+    });
+  });
+
   it("bounds a pending operation tail, cancels the browser, and releases its lease", async () => {
     const sessionId = "99999999-9999-4999-8999-999999999999";
     const cancelActiveOperation = vi.fn().mockResolvedValue(undefined);

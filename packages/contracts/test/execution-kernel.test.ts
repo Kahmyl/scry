@@ -27,4 +27,20 @@ describe("execution kernel contracts", () => {
       nextDecisionBoundary: boundary,
     })).toMatchObject({ mutationOutcome: "applied", nextDecisionBoundary: boundary });
   });
+
+  it("models an actionable trusted-script-origin recovery without authorizing it", () => {
+    expect(agentDecisionBoundarySchema.parse({
+      type: "environment_unavailable",
+      reasonCode: "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED",
+      safeActions: ["create_test_environment", "create_flow_draft", "start_flow_authoring"],
+      environmentRecovery: {
+        environmentId: "11111111-1111-4111-8111-111111111111",
+        missingTrustedScriptOrigins: ["https://scripts.example.test"],
+        missingOriginClassification: "public",
+        currentTrustedScriptOrigins: [],
+        recoveryTool: "create_test_environment",
+        requiresNewFlowDraftAndAuthoringSession: true,
+      },
+    })).toMatchObject({ environmentRecovery: { missingTrustedScriptOrigins: ["https://scripts.example.test"] } });
+  });
 });

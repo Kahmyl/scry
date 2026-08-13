@@ -31,7 +31,7 @@ export function registerCreateFlowDraftTool(server: McpServer, client: ScryApiCl
     "create_flow_draft",
     {
       title: "Create Flow draft",
-      description: "Create mutable authoring state; this does not publish a Flow revision.",
+      description: "Create mutable authoring state; this does not publish a Flow revision. Minimal plan example: {name:'Observe login',objective:'Find public controls',allowedOrigins:['https://example.test'],budgets:{maxActions:5,maxDurationMs:60000,maxNavigations:1},checkpoints:[],steps:[{id:'open',title:'Open login',action:{type:'navigate',url:'https://example.test/login'},assertions:[],onFailure:'stop',evidence:[],captureIntent:'final'}]}.",
       inputSchema: {
         ...objectiveContext,
         projectId: uuid,

@@ -248,6 +248,7 @@ integration("adaptive session repository integration", () => {
       agentSessionId,
       flowDraftId,
       authorizationId,
+      dispatchDisposition: "execute",
     });
   });
 

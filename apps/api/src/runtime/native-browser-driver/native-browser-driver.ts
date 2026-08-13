@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import type { ExpectedEffect, InteractionTargetIntent, SemanticScope } from "@scry/contracts";
+import { isPrivateAddress } from "@scry/policy";
 import {
   NativeControlResolutionError,
   blockedThirdPartyScriptOrigins,
@@ -189,7 +191,7 @@ export class NativeBrowserDriver {
       if (performance.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
     } while (performance.now() < deadline);
     if (blockedThirdPartyScriptOrigins(page).length) {
-      throw new NativeError("ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED");
+      throw trustedScriptOriginRequired(page);
     }
     throw new NativeControlResolutionError("NATIVE_TARGET_NOT_FOUND");
   }
@@ -266,7 +268,7 @@ export class NativeBrowserDriver {
       if (performance.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
     } while (performance.now() < deadline);
     if (blockedThirdPartyScriptOrigins(page).length) {
-      throw new NativeError("ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED");
+      throw trustedScriptOriginRequired(page);
     }
     throw new NativeControlResolutionError("NATIVE_TARGET_NOT_FOUND");
   }
@@ -376,7 +378,30 @@ async function supportsRequiredCapabilities(locator: Locator, intent: Interactio
 }
 
 class NativeError extends Error {
-  constructor(readonly code: string) { super(code); }
+  constructor(readonly code: string, readonly safeEnvironmentFailure?: {
+    missingTrustedScriptOrigins: string[];
+    missingOriginClassification: "public" | "redacted";
+  }) { super(code); }
+}
+
+function trustedScriptOriginRequired(page: Page) {
+  const blocked = blockedThirdPartyScriptOrigins(page);
+  const publicOrigins = blocked.filter(isSafelyDisclosablePublicOrigin).sort();
+  return new NativeError("ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED", {
+    missingTrustedScriptOrigins: publicOrigins,
+    missingOriginClassification: publicOrigins.length === blocked.length ? "public" : "redacted",
+  });
+}
+
+function isSafelyDisclosablePublicOrigin(value: string) {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+    if (url.protocol !== "https:" || hostname === "localhost" || !hostname.includes(".") ||
+        [".localhost", ".local", ".internal", ".lan", ".home", ".test", ".example", ".invalid"]
+          .some((suffix) => hostname.endsWith(suffix))) return false;
+    return !isIP(hostname) || !isPrivateAddress(hostname);
+  } catch { return false; }
 }
 
 export { waitForDocumentSurface };

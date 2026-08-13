@@ -704,6 +704,7 @@ export async function executeInteractionCompatibility(input: {
       ...resolvedTargetOutcome(praxisResults),
       durationMs: performance.now() - startedAt,
       reasonCode,
+      ...safeEnvironmentFailure(error),
       ...(rejectedCandidateDistinctions &&
       (reasonCode === "PRAXIS_TARGET_AMBIGUOUS" ||
         reasonCode === "PRAXIS_INSUFFICIENT_EVIDENCE")
@@ -1170,4 +1171,22 @@ function safeCode(error: unknown): string {
   if (code && /^[A-Z][A-Z0-9_]*$/.test(code)) return code;
   const value = error instanceof Error ? error.message : String(error);
   return /^[A-Z][A-Z0-9_]*$/.test(value) ? value : "EXECUTION_KERNEL_FAILED";
+}
+
+function safeEnvironmentFailure(error: unknown) {
+  if (typeof error !== "object" || error === null || !("safeEnvironmentFailure" in error)) return {};
+  const details = (error as { safeEnvironmentFailure?: unknown }).safeEnvironmentFailure;
+  if (typeof details !== "object" || details === null) return {};
+  const candidate = details as Record<string, unknown>;
+  if (candidate.missingOriginClassification !== "public" && candidate.missingOriginClassification !== "redacted") return {};
+  if (!Array.isArray(candidate.missingTrustedScriptOrigins) || candidate.missingTrustedScriptOrigins.length > 20 ||
+      !candidate.missingTrustedScriptOrigins.every((origin) => typeof origin === "string" && safeUrl(origin))) return {};
+  return { environmentFailure: {
+    missingTrustedScriptOrigins: candidate.missingTrustedScriptOrigins as string[],
+    missingOriginClassification: candidate.missingOriginClassification,
+  } };
+}
+
+function safeUrl(value: string) {
+  try { new URL(value); return true; } catch { return false; }
 }
