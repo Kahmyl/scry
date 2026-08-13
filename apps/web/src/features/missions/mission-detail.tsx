@@ -59,6 +59,10 @@ export function MissionDetailPage({
   useEffect(load, [load]);
   if (!data) return <PageSkeleton />;
   const statusLabel = data.status.replaceAll("_", " ");
+  const waitingLabel =
+    data.resumePointer?.externalInput?.condition === "USER_AUTHORIZATION_REQUIRED"
+      ? "Waiting for authorization"
+      : "Waiting for input";
   const statusTone =
     data.status === "completed"
       ? "success"
@@ -73,7 +77,9 @@ export function MissionDetailPage({
       <section className={`mission-hero mission-hero-${statusTone}`}>
         <div className="mission-hero-copy">
           <div className="mission-hero-meta">
-            <span className={`mission-status mission-status-${statusTone}`}>{statusLabel}</span>
+            <span className={`mission-status mission-status-${statusTone}`}>
+              {data.status === "awaiting_user" ? waitingLabel : statusLabel}
+            </span>
             <span>
               {data.terminalObjectiveCount} of {data.objectiveCount} objectives resolved
             </span>
@@ -83,7 +89,12 @@ export function MissionDetailPage({
         </div>
         <div className="page-title-actions">
           <button className="secondary-button" onClick={onOpenFlows}>
-            <FileCode2 size={15} /> Flows ({data.authoring.filter((draft) => !["published", "abandoned"].includes(draft.state)).length} drafts · {data.flows.length} published)
+            <FileCode2 size={15} /> Flows (
+            {
+              data.authoring.filter((draft) => !["published", "abandoned"].includes(draft.state))
+                .length
+            }{" "}
+            drafts · {data.flows.length} published)
           </button>
           {data.resumePointer?.runId && (
             <button
@@ -117,6 +128,16 @@ export function MissionDetailPage({
         </div>
       </section>
       {error && <div className="form-error">{error}</div>}
+      {data.status === "awaiting_user" && data.resumePointer?.externalInput && (
+        <section className="panel">
+          <PanelHeader title={waitingLabel} kicker="NON-TERMINAL" />
+          <p>{data.resumePointer.externalInput.cause}</p>
+          <p>{data.resumePointer.externalInput.authority.reason}</p>
+          {data.resumePointer.externalInput.effectState === "unknown" && (
+            <p>Effect state is unknown; blind retry is not safe.</p>
+          )}
+        </section>
+      )}
       <section className="mission-detail-grid">
         <div className="panel mission-objectives-panel">
           <PanelHeader title="Objectives" kicker="OUTCOMES" />

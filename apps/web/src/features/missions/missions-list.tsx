@@ -63,7 +63,11 @@ export function Missions({
                   <Eye size={19} />
                 </div>
                 <span className={m.status === "completed" ? "ready-tag" : "draft-tag"}>
-                  {m.status.replace("_", " ")}
+                  {m.status === "awaiting_user"
+                    ? m.resumePointer?.externalInput?.condition === "USER_AUTHORIZATION_REQUIRED"
+                      ? "waiting for authorization"
+                      : "waiting for input"
+                    : m.status.replace("_", " ")}
                 </span>
               </div>
               <h3>{m.title}</h3>

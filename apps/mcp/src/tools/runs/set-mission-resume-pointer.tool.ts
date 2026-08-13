@@ -31,7 +31,8 @@ export function registerSetMissionResumePointerTool(server: McpServer, client: S
     "set_mission_resume_pointer",
     {
       title: "Set Mission resume pointer",
-      description: "Persist the single authoritative next action for later agents and users.",
+      description:
+        "Persist the single authoritative next action for later agents and users. For await_user, store factual external-input context and leave the Objective non-terminal: do not publish failure, blindly retry, continue background mutation, or manufacture human choices. Ask conversationally when human input is truly needed; later agents recover the same context with resume_mission.",
       inputSchema: {
         ...missionContext,
         pointer: missionResumePointerSchema.nullable(),

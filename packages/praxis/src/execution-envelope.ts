@@ -44,7 +44,10 @@ export class PraxisExecutionEnvelope {
   }
 
   static groundingWindow(request: PraxisRequest) {
-    return Math.max(1, request.policy.totalTimeoutMs);
+    // Leave the transaction owner enough time to classify the final grounding
+    // result instead of racing it with the total-timeout abort.
+    const classificationReserve = Math.min(250, Math.max(25, request.policy.totalTimeoutMs / 2));
+    return Math.max(1, request.policy.totalTimeoutMs - classificationReserve);
   }
   static remaining(deadline: number) {
     return Math.max(0, deadline - performance.now());

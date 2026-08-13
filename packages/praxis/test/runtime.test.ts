@@ -74,7 +74,6 @@ const request = (operation: PraxisOperation, target = intent("Save")): PraxisReq
     context: { pageId: "page", origin: "https://example.test", documentEpoch: 0 },
   });
 
-
 describe("Praxis candidate resume fencing", () => {
   it("rejects a stale candidate before runtime resume dispatch", async () => {
     await page.setContent("<button>Save</button>");
@@ -100,6 +99,24 @@ describe("Praxis candidate resume fencing", () => {
 });
 
 describe("Praxis strategy, dispatch, and verification", () => {
+  it("reports an absent observed target before the transaction deadline masks its cause", async () => {
+    await page.setContent("<main><label>Username <input /></label></main>");
+    const base = request({ type: "wait_for_state", state: "visible" }, intent("Email", "textbox"));
+    const input = authorizePraxisRequest(page, {
+      ...base,
+      policy: { ...base.policy, totalTimeoutMs: 500 },
+    });
+    const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(
+      input,
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      code: "PRAXIS_INSUFFICIENT_EVIDENCE",
+      mutationOutcome: "not_started",
+    });
+  });
+
   it("selects typed least-invasive strategies", () => {
     expect(selectPraxisStrategy({ type: "activate" }, "native_click")).toBe("native_activate");
     expect(

@@ -36,8 +36,36 @@ describe("current Scry MCP surface", () => {
   it("returns the shared safe Mission projection unchanged for get and resume", async () => {
     const safeMission = {
       id: context.missionId,
-      status: "running",
-      resumePointer: { objectiveId: context.objectiveId, recommendedAction: "review_failure", explanation: "Review safe reason" },
+      status: "awaiting_user",
+      resumePointer: {
+        objectiveId: context.objectiveId,
+        recommendedAction: "await_user",
+        explanation: "A factual decision is pending",
+        externalInput: {
+          condition: "USER_DECISION_REQUIRED",
+          cause: "The external operation requires a user-owned decision.",
+          affectedOperation: "operation-ref",
+          effectState: "unknown",
+          authority: {
+            required: true,
+            type: "user",
+            reason: "Only the user can supply this decision.",
+          },
+          availableCapabilities: ["resume_mission", "update_mission_objective"],
+          constraints: ["Do not retry while the effect remains unknown."],
+          consequences: ["Continuation requires authoritative re-observation."],
+          continuation: {
+            retryCurrentOperation: false,
+            freshObservationRequired: true,
+            newOperationRequired: true,
+            newDraftRequired: false,
+            newSessionRequired: false,
+          },
+          waiting: true,
+          terminal: false,
+          resumeRef: context.objectiveId,
+        },
+      },
       objectives: [{ id: context.objectiveId, title: "Safe objective", status: "running" }],
       authoring: [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", state: "editing",
         probes: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", state: "completed" }],

@@ -52,6 +52,49 @@ export const resumeActionSchema = z.enum([
   "await_user",
   "publish_report",
 ]);
+export const externalInputConditionSchema = z.enum([
+  "USER_INPUT_REQUIRED",
+  "USER_AUTHORIZATION_REQUIRED",
+  "USER_DECISION_REQUIRED",
+]);
+export const missionContinuationCapabilitySchema = z.enum([
+  "grant_mission_execution_authorization",
+  "resume_mission",
+  "update_mission_objective",
+  "set_mission_resume_pointer",
+  "cancel_mission_orchestration",
+]);
+export const missionExternalInputSchema = z
+  .object({
+    condition: externalInputConditionSchema,
+    cause: z.string().trim().min(1).max(2_000),
+    affectedOperation: z.string().trim().min(1).max(500).optional(),
+    affectedResource: z.string().trim().min(1).max(500).optional(),
+    effectState: z.enum(["applied", "not_applied", "unknown"]),
+    authority: z
+      .object({
+        required: z.boolean(),
+        type: z.enum(["user", "policy", "external", "other"]),
+        reason: z.string().trim().min(1).max(2_000),
+      })
+      .strict(),
+    availableCapabilities: z.array(missionContinuationCapabilitySchema).max(20),
+    constraints: z.array(z.string().trim().min(1).max(1_000)).max(50),
+    consequences: z.array(z.string().trim().min(1).max(1_000)).max(50),
+    continuation: z
+      .object({
+        retryCurrentOperation: z.boolean(),
+        freshObservationRequired: z.boolean(),
+        newOperationRequired: z.boolean(),
+        newDraftRequired: z.boolean(),
+        newSessionRequired: z.boolean(),
+      })
+      .strict(),
+    waiting: z.literal(true),
+    terminal: z.literal(false),
+    resumeRef: uuidSchema,
+  })
+  .strict();
 export const activityRelationSchema = z.enum([
   "caused_by",
   "diagnoses",
@@ -109,8 +152,29 @@ export const missionResumePointerSchema = z
     revisionId: uuidSchema.optional(),
     runId: uuidSchema.optional(),
     explanation: z.string().trim().min(1).max(2_000),
+    externalInput: missionExternalInputSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.recommendedAction === "await_user" && !value.externalInput)
+      context.addIssue({
+        code: "custom",
+        path: ["externalInput"],
+        message: "await_user requires durable external-input context",
+      });
+    if (value.recommendedAction !== "await_user" && value.externalInput)
+      context.addIssue({
+        code: "custom",
+        path: ["externalInput"],
+        message: "external-input context is only valid for await_user",
+      });
+    if (value.externalInput && value.externalInput.resumeRef !== value.objectiveId)
+      context.addIssue({
+        code: "custom",
+        path: ["externalInput", "resumeRef"],
+        message: "resumeRef must identify the durable objective",
+      });
+  });
 
 export const objectiveCriterionSchema = z
   .object({

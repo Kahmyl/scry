@@ -40,6 +40,57 @@ describe("Mission contracts", () => {
       }).success,
     ).toBe(false);
   });
+  it("requires factual durable context for a non-terminal human wait", () => {
+    const pointer = {
+      objectiveId: ids.objectiveId,
+      recommendedAction: "await_user",
+      explanation: "Trust-policy authorization is pending",
+      externalInput: {
+        condition: "USER_AUTHORIZATION_REQUIRED",
+        cause: "The requested origin is not in the active environment policy.",
+        affectedOperation: "policy-change-1",
+        effectState: "not_applied",
+        authority: {
+          required: true,
+          type: "user",
+          reason: "Only the user may authorize this policy change.",
+        },
+        availableCapabilities: [
+          "grant_mission_execution_authorization",
+          "resume_mission",
+          "cancel_mission_orchestration",
+        ],
+        constraints: ["No browser mutation may continue while waiting."],
+        consequences: [
+          "Authorization permits revalidation; it does not bypass later policy checks.",
+        ],
+        continuation: {
+          retryCurrentOperation: false,
+          freshObservationRequired: true,
+          newOperationRequired: true,
+          newDraftRequired: false,
+          newSessionRequired: false,
+        },
+        waiting: true,
+        terminal: false,
+        resumeRef: ids.objectiveId,
+      },
+    } as const;
+    expect(missionResumePointerSchema.safeParse(pointer).success).toBe(true);
+    expect(
+      missionResumePointerSchema.safeParse({
+        objectiveId: ids.objectiveId,
+        recommendedAction: "await_user",
+        explanation: "Wait",
+      }).success,
+    ).toBe(false);
+    expect(
+      missionResumePointerSchema.safeParse({
+        ...pointer,
+        externalInput: { ...pointer.externalInput, terminal: true },
+      }).success,
+    ).toBe(false);
+  });
   it("requires explicit accepted evidence context", () => {
     expect(
       acceptEvidenceSchema.safeParse({

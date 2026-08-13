@@ -209,7 +209,12 @@ export type FlowDetail = {
   originMissionId?: string;
   originObjectiveId?: string;
   version: number;
-  content: { objective?: string; expectedOutcomes?: string[]; preconditions?: string[]; prohibitedSideEffects?: string[] };
+  content: {
+    objective?: string;
+    expectedOutcomes?: string[];
+    preconditions?: string[];
+    prohibitedSideEffects?: string[];
+  };
   plan: {
     name?: string;
     objective?: string;
@@ -301,6 +306,31 @@ export type MissionResumePointer = {
   revisionId?: string;
   runId?: string;
   explanation: string;
+  externalInput?: {
+    condition: "USER_INPUT_REQUIRED" | "USER_AUTHORIZATION_REQUIRED" | "USER_DECISION_REQUIRED";
+    cause: string;
+    affectedOperation?: string;
+    affectedResource?: string;
+    effectState: "applied" | "not_applied" | "unknown";
+    authority: {
+      required: boolean;
+      type: "user" | "policy" | "external" | "other";
+      reason: string;
+    };
+    availableCapabilities: string[];
+    constraints: string[];
+    consequences: string[];
+    continuation: {
+      retryCurrentOperation: boolean;
+      freshObservationRequired: boolean;
+      newOperationRequired: boolean;
+      newDraftRequired: boolean;
+      newSessionRequired: boolean;
+    };
+    waiting: true;
+    terminal: false;
+    resumeRef: string;
+  };
 };
 export type MissionObjective = {
   id: string;

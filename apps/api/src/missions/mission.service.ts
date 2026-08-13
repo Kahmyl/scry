@@ -606,8 +606,13 @@ export class MissionService {
         if (!found.rowCount) throw new ConflictException({ code: "RESUME_TARGET_MISMATCH" });
       }
       await q(
-        `UPDATE missions SET resume_pointer=$2::jsonb,current_objective_id=$3,updated_at=now(),revision=revision+1 WHERE id=$1`,
-        [missionId, JSON.stringify(input.pointer), input.pointer?.objectiveId ?? null],
+        `UPDATE missions SET resume_pointer=$2::jsonb,current_objective_id=$3,status=CASE WHEN $4 THEN 'awaiting_user' WHEN status='awaiting_user' THEN 'running' ELSE status END,updated_at=now(),revision=revision+1 WHERE id=$1`,
+        [
+          missionId,
+          JSON.stringify(input.pointer),
+          input.pointer?.objectiveId ?? null,
+          input.pointer?.recommendedAction === "await_user",
+        ],
       );
       await this.activity(
         q,
@@ -909,93 +914,113 @@ function projectAgentMissionContext(value: MissionProjectionRow) {
     objectiveCount: mission.objectiveCount,
     terminalObjectiveCount: mission.terminalObjectiveCount,
     acceptedEvidenceCount: mission.acceptedEvidenceCount,
-    objectives: rows(mission.objectives, 100).map((item) => compact({
-      id: item.id,
-      title: bounded(item.title, 500),
-      description: bounded(item.description, 2_000),
-      status: item.status,
-      dependencies: scalarList(item.dependencies, 100),
-      completionCriteria: rows(item.completionCriteria, 100).map((criterion) => compact({
-        description: bounded(criterion.description, 2_000), required: criterion.required,
-      })),
-      conclusion: bounded(item.conclusion, 5_000),
-      order: item.order,
-      latestCandidateRunId: item.latestCandidateRunId,
+    objectives: rows(mission.objectives, 100).map((item) =>
+      compact({
+        id: item.id,
+        title: bounded(item.title, 500),
+        description: bounded(item.description, 2_000),
+        status: item.status,
+        dependencies: scalarList(item.dependencies, 100),
+        completionCriteria: rows(item.completionCriteria, 100).map((criterion) =>
+          compact({
+            description: bounded(criterion.description, 2_000),
+            required: criterion.required,
+          }),
+        ),
+        conclusion: bounded(item.conclusion, 5_000),
+        order: item.order,
+        latestCandidateRunId: item.latestCandidateRunId,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
       orchestrationState: item.orchestrationState,
-      blockerCode: bounded(item.blockerCode, 200),
-      activeRunId: item.activeRunId,
-      executionMode: item.executionMode,
-    })),
-    flows: rows(mission.flows, 250).map((item) => compact({
-      objectiveId: item.objectiveId,
-      visibility: item.visibility,
-      purpose: item.purpose,
+        blockerCode: bounded(item.blockerCode, 200),
+        activeRunId: item.activeRunId,
+        executionMode: item.executionMode,
+      }),
+    ),
+    flows: rows(mission.flows, 250).map((item) =>
+      compact({
+        objectiveId: item.objectiveId,
+        visibility: item.visibility,
+        purpose: item.purpose,
       reason: bounded(item.reason, 2_000),
       id: item.id,
       name: bounded(item.name, 500),
-      description: bounded(item.description, 2_000),
-      latestRevisionId: item.latestRevisionId,
-      latestRevision: item.latestRevision,
-    })),
-    runs: rows(mission.runs, 500).map((item) => compact({
-      id: item.id,
-      objectiveId: item.objectiveId,
-      state: item.state,
+        description: bounded(item.description, 2_000),
+        latestRevisionId: item.latestRevisionId,
+        latestRevision: item.latestRevision,
+      }),
+    ),
+    runs: rows(mission.runs, 500).map((item) =>
+      compact({
+        id: item.id,
+        objectiveId: item.objectiveId,
+        state: item.state,
       phase: item.phase,
       outcomeClassification: item.outcomeClassification,
       resultClassification: item.resultClassification,
       reliabilityEligible: item.reliabilityEligible,
       compiledContractId: item.compiledContractId,
       role: item.role,
-      reason: bounded(item.reason, 2_000),
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt,
-    })),
-    acceptedEvidence: rows(mission.acceptedEvidence, 500).map((item) => compact({
-      id: item.id,
-      objectiveId: item.objectiveId,
-      runId: item.runId,
+        reason: bounded(item.reason, 2_000),
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+      }),
+    ),
+    acceptedEvidence: rows(mission.acceptedEvidence, 500).map((item) =>
+      compact({
+        id: item.id,
+        objectiveId: item.objectiveId,
+        runId: item.runId,
       artifactId: item.artifactId,
       conclusion: bounded(item.conclusion, 10_000),
-      acceptedAt: item.acceptedAt,
-      supersededAt: item.supersededAt,
-      invalidatedAt: item.invalidatedAt,
-    })),
-    reports: rows(mission.reports, 100).map((item) => compact({
-      id: item.id,
-      revision: item.revision,
-      status: item.status,
-      createdAt: item.createdAt,
-      supersededAt: item.supersededAt,
-    })),
-    authoring: rows(mission.authoring, 250).map((item) => compact({
-      id: item.id,
-      objectiveId: item.objectiveId,
-      name: bounded(item.name, 500),
-      state: item.state,
-      version: item.version,
-      updatedAt: item.updatedAt,
-      probes: rows(item.probes, 100).map((probe) => compact({
-        id: probe.id,
-        level: probe.level,
-        state: probe.state,
-        draftVersion: probe.draftVersion,
-        createdAt: probe.createdAt,
-      })),
-      compilations: rows(item.compilations, 100).map((compilation) => compact({
-        id: compilation.id,
-        status: compilation.status,
-        draftVersion: compilation.draftVersion,
-        createdAt: compilation.createdAt,
-      })),
-    })),
+        acceptedAt: item.acceptedAt,
+        supersededAt: item.supersededAt,
+        invalidatedAt: item.invalidatedAt,
+      }),
+    ),
+    reports: rows(mission.reports, 100).map((item) =>
+      compact({
+        id: item.id,
+        revision: item.revision,
+        status: item.status,
+        createdAt: item.createdAt,
+        supersededAt: item.supersededAt,
+      }),
+    ),
+    authoring: rows(mission.authoring, 250).map((item) =>
+      compact({
+        id: item.id,
+        objectiveId: item.objectiveId,
+        name: bounded(item.name, 500),
+        state: item.state,
+        version: item.version,
+        updatedAt: item.updatedAt,
+        probes: rows(item.probes, 100).map((probe) =>
+          compact({
+            id: probe.id,
+            level: probe.level,
+            state: probe.state,
+            draftVersion: probe.draftVersion,
+            createdAt: probe.createdAt,
+          }),
+        ),
+        compilations: rows(item.compilations, 100).map((compilation) =>
+          compact({
+            id: compilation.id,
+            status: compilation.status,
+            draftVersion: compilation.draftVersion,
+            createdAt: compilation.createdAt,
+          }),
+        ),
+      }),
+    ),
   });
 }
 
 function projectResumePointer(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value === null ? null : undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return value === null ? null : undefined;
   const pointer = asRow(value);
   return compact({
     objectiveId: pointer.objectiveId,
@@ -1004,12 +1029,45 @@ function projectResumePointer(value: unknown) {
     revisionId: pointer.revisionId,
     runId: pointer.runId,
     explanation: bounded(pointer.explanation, 2_000),
+    externalInput: projectExternalInput(pointer.externalInput),
+  });
+}
+
+function projectExternalInput(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const input = asRow(value);
+  const authority = asRow(input.authority);
+  const continuation = asRow(input.continuation);
+  return compact({
+    condition: input.condition,
+    cause: bounded(input.cause, 2_000),
+    affectedOperation: bounded(input.affectedOperation, 500),
+    affectedResource: bounded(input.affectedResource, 500),
+    effectState: input.effectState,
+    authority: compact({
+      required: authority.required,
+      type: authority.type,
+      reason: bounded(authority.reason, 2_000),
+    }),
+    availableCapabilities: scalarList(input.availableCapabilities, 20),
+    constraints: scalarList(input.constraints, 50),
+    consequences: scalarList(input.consequences, 50),
+    continuation: compact({
+      retryCurrentOperation: continuation.retryCurrentOperation,
+      freshObservationRequired: continuation.freshObservationRequired,
+      newOperationRequired: continuation.newOperationRequired,
+      newDraftRequired: continuation.newDraftRequired,
+      newSessionRequired: continuation.newSessionRequired,
+    }),
+    waiting: input.waiting,
+    terminal: input.terminal,
+    resumeRef: input.resumeRef,
   });
 }
 
 function asRow(value: unknown): MissionProjectionRow {
   return value && typeof value === "object" && !Array.isArray(value)
-    ? value as MissionProjectionRow
+    ? (value as MissionProjectionRow)
     : {};
 }
 
@@ -1019,7 +1077,12 @@ function rows(value: unknown, maximum: number) {
 
 function scalarList(value: unknown, maximum: number) {
   return Array.isArray(value)
-    ? value.filter((item) => typeof item === "string" || typeof item === "number" || typeof item === "boolean").slice(0, maximum)
+    ? value
+        .filter(
+          (item) =>
+            typeof item === "string" || typeof item === "number" || typeof item === "boolean",
+        )
+        .slice(0, maximum)
     : [];
 }
 
