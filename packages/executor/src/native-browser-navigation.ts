@@ -31,15 +31,18 @@ export async function navigateAndWaitNative(
 
 export async function waitForDocumentSurface(page: Page, timeout: number) {
   try {
-    await page.locator(
-      "body,form,main,dialog,h1,h2,h3,button,a,input,textarea,select,[role=dialog],[role=heading],[role=button],[role=link],[role=tab]",
-    ).first().waitFor({ state: "visible", timeout });
+    await page
+      .locator(
+        "body,form,main,dialog,h1,h2,h3,button,a,input,textarea,select,[role=dialog],[role=heading],[role=button],[role=link],[role=tab]",
+      )
+      .first()
+      .waitFor({ state: "visible", timeout });
   } catch {
     throw new NativeNavigationError("NATIVE_DOCUMENT_SURFACE_NOT_READY");
   }
 }
 
-async function installThirdPartyScriptFence(page: Page, allowedOrigins: Set<string>) {
+export async function installThirdPartyScriptFence(page: Page, allowedOrigins: Set<string>) {
   if (fencedPages.has(page)) return;
   await page.route("**/*", async (route) => {
     const request = route.request();
@@ -61,12 +64,17 @@ async function installThirdPartyScriptFence(page: Page, allowedOrigins: Set<stri
 }
 
 class NativeNavigationError extends Error {
-  constructor(readonly code: string) { super(code); }
+  constructor(readonly code: string) {
+    super(code);
+  }
 }
 
 function requireAllowedOrigin(value: string, allowed: Set<string>) {
   let origin: string;
-  try { origin = new URL(value).origin; }
-  catch { throw new NativeNavigationError("NATIVE_URL_INVALID"); }
+  try {
+    origin = new URL(value).origin;
+  } catch {
+    throw new NativeNavigationError("NATIVE_URL_INVALID");
+  }
   if (!allowed.has(origin)) throw new NativeNavigationError("NATIVE_ORIGIN_NOT_ALLOWED");
 }

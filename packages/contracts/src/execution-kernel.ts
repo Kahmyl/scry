@@ -147,6 +147,49 @@ export const operationOutcomeSchema = z
       .strict()
       .optional(),
     resolvedTarget: semanticFingerprintSchema.optional(),
+    semanticPageContext: z
+      .object({
+        schemaVersion: z.literal(1),
+        authority: z
+          .object({
+            pageId: z.string().trim().min(1).max(120),
+            documentEpoch: z.number().int().nonnegative(),
+            url: z.string().url().max(2_000),
+            title: z.string().max(200),
+            readiness: z.literal("stable"),
+          })
+          .strict(),
+        completeness: z
+          .object({
+            kind: z.literal("bounded"),
+            observed: z.number().int().nonnegative(),
+            returned: z.number().int().nonnegative().max(64),
+            truncated: z.boolean(),
+          })
+          .strict(),
+        controls: z
+          .array(
+            z
+              .object({
+                reference: z.string().regex(/^context-control-[a-f0-9]{16}$/),
+                role: z.string().trim().min(1).max(40),
+                name: z.string().trim().min(1).max(160),
+                group: z.string().trim().min(1).max(120).optional(),
+                capabilities: z
+                  .array(z.enum(["observe", "activate", "enter_text", "toggle", "select_option"]))
+                  .max(5),
+                selected: z.boolean().optional(),
+                expanded: z.boolean().optional(),
+                checked: z.boolean().optional(),
+                disabled: z.boolean().optional(),
+                current: z.boolean().optional(),
+              })
+              .strict(),
+          )
+          .max(64),
+      })
+      .strict()
+      .optional(),
     nextDecisionBoundary: agentDecisionBoundarySchema.optional(),
     generatedReferences: z
       .array(

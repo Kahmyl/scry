@@ -201,6 +201,7 @@ export const missionAuthoringSemanticDeltaSchema = z
       })
       .strict()
       .default({ count: 0 }),
+    semanticPageContext: operationOutcomeSchema.shape.semanticPageContext,
     quality: z
       .object({
         findingCount: z.number().int().nonnegative(),

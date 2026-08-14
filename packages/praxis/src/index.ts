@@ -12,3 +12,4 @@ export * from "./consumer.js";
 export * from "./quality.js";
 export * from "./execution-envelope.js";
 export * from "./veil-bridge.js";
+export * from "./page-context.js";

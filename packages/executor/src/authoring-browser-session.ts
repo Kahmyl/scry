@@ -1,16 +1,22 @@
 import {
   currentActionSchema,
+  operationOutcomeSchema,
   type CurrentAction,
   type ExecutionPolicy,
   type ExpectedEffect,
   type OperationOutcome,
 } from "@scry/contracts";
-import { playwrightBrowserChannel, registerPraxisVeilAuthority } from "@scry/praxis";
+import {
+  observeSemanticPageContext,
+  playwrightBrowserChannel,
+  registerPraxisVeilAuthority,
+} from "@scry/praxis";
 import { VeilAuthority, VeilRuntimeCoordinator } from "@scry/veil";
 import type { Browser, BrowserContext, Page } from "playwright";
 
 import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
 import { BrowserSessionProvenance } from "./browser-session.js";
+import { installThirdPartyScriptFence } from "./native-browser-navigation.js";
 import { runProtectedStage } from "./protected-stage-supervisor.js";
 
 export type AuthoringBrowserSessionState =
@@ -118,6 +124,19 @@ export async function createAuthoringBrowserSession(input: {
     let lastDocumentToken: string | undefined;
     let interactionOrdinal = 0;
     let closed = false;
+    const pageOwnership = expectedPageOwnership(context, () => page!);
+    const allowedDocumentOrigins = new Set(input.policy.allowedOrigins);
+    await context.route("**/*", async (route) => {
+      const request = route.request();
+      if (request.resourceType() !== "document") return route.continue();
+      try {
+        if (allowedDocumentOrigins.has(new URL(request.url()).origin)) return route.continue();
+      } catch {
+        // Invalid document URLs are denied below.
+      }
+      pageOwnership.rejectDocument(request.url());
+      await route.abort("blockedbyclient");
+    });
     const provenance = new BrowserSessionProvenance(`authoring-${input.sessionId}`, "safe");
 
     browser.on("disconnected", () => {
@@ -185,9 +204,8 @@ export async function createAuthoringBrowserSession(input: {
           interactionContext.operationId ?? `authoring-interaction-${interactionOrdinal}`;
         const expectedEffect = interactionContext.expectedEffect ?? { type: "none" };
         const popupCandidate =
-          (action.type === "click" || action.type === "press") &&
-          expectedEffect.type === "new_page"
-            ? waitForPopup(context!, ("timeoutMs" in action ? action.timeoutMs : undefined) ?? 10_000)
+          (action.type === "click" || action.type === "press") && expectedEffect.type === "new_page"
+            ? pageOwnership.arm(("timeoutMs" in action ? action.timeoutMs : undefined) ?? 10_000)
             : undefined;
 
         const outcome = await input
@@ -210,22 +228,53 @@ export async function createAuthoringBrowserSession(input: {
             ...(popupCandidate
               ? {
                   resolveEffectPage: async () => {
-                    const popup = await popupCandidate.resolve();
-                    if (!popup) return undefined;
-                    const popupTimeoutMs = ("timeoutMs" in action ? action.timeoutMs : undefined) ?? 10_000;
-                    await popup.waitForURL((url) => url.href !== "about:blank", { timeout: popupTimeoutMs })
-                      .catch(() => { throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED"); });
-                    await popup.waitForLoadState("domcontentloaded", { timeout: popupTimeoutMs })
-                      .catch(() => { throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED"); });
+                    const { candidates, rejectedDocumentUrl } = await popupCandidate.resolve();
+                    if (rejectedDocumentUrl) {
+                      throw new Error("EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED");
+                    }
+                    if (candidates.length === 0) return undefined;
+                    if (candidates.length !== 1) {
+                      await Promise.all(
+                        candidates.map((candidate) => candidate.close().catch(() => undefined)),
+                      );
+                      throw new Error("EXPECTED_NEW_PAGE_AMBIGUOUS");
+                    }
+                    const popup = candidates[0]!;
+                    const popupTimeoutMs =
+                      ("timeoutMs" in action ? action.timeoutMs : undefined) ?? 10_000;
+                    await installThirdPartyScriptFence(
+                      popup,
+                      new Set([
+                        ...input.policy.allowedOrigins,
+                        ...(input.policy.trustedScriptOrigins ?? []),
+                      ]),
+                    );
+                    await popup
+                      .waitForURL((url) => url.href !== "about:blank", { timeout: popupTimeoutMs })
+                      .catch(() => {
+                        throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED");
+                      });
+                    await popup
+                      .waitForLoadState("domcontentloaded", { timeout: popupTimeoutMs })
+                      .catch(() => {
+                        throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED");
+                      });
                     if (popup === page) throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED");
                     const popupOrigin = new URL(popup.url()).origin;
-                    if (!input.policy.allowedOrigins.includes(popupOrigin) ||
-                      (expectedEffect.type === "new_page" && expectedEffect.origin && popupOrigin !== new URL(expectedEffect.origin).origin)) {
+                    if (
+                      !input.policy.allowedOrigins.includes(popupOrigin) ||
+                      (expectedEffect.type === "new_page" &&
+                        expectedEffect.origin &&
+                        popupOrigin !== new URL(expectedEffect.origin).origin)
+                    ) {
                       await popup.close().catch(() => undefined);
-                      throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED");
+                      throw new Error("EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED");
                     }
+                    const previousPage = page!;
                     page = popup;
+                    popupCandidate.adopt(popup);
                     unregisterVeil.push(registerPraxisVeilAuthority(popup, veilRegistration));
+                    await previousPage.close().catch(() => undefined);
                     return popup;
                   },
                 }
@@ -237,7 +286,24 @@ export async function createAuthoringBrowserSession(input: {
           })
           .finally(() => popupCandidate?.dispose());
         const observation = await observe();
-        return { ...observation, outcome };
+        // Context enrichment is informational. Its failure must never erase a
+        // completed interaction outcome or manufacture mutation uncertainty.
+        const semanticPageContext = await observeSemanticPageContext(page!).catch(
+          (error: unknown) => {
+            console.warn(
+              "SEMANTIC_PAGE_CONTEXT_UNAVAILABLE",
+              error instanceof Error ? error.message : "UNKNOWN_CONTEXT_FAILURE",
+            );
+            return undefined;
+          },
+        );
+        return {
+          ...observation,
+          outcome: operationOutcomeSchema.parse({
+            ...outcome,
+            ...(semanticPageContext ? { semanticPageContext } : {}),
+          }),
+        };
       },
 
       suspend() {
@@ -265,8 +331,9 @@ export async function createAuthoringBrowserSession(input: {
           await privacyGate.seal({ code: "AUTHORING_OPERATION_CANCELLED" }).catch(() => undefined);
           await boundedAuthoringClose("authoring_context_cancel", () => context!.close());
         } finally {
-          await boundedAuthoringClose("authoring_browser_cancel", () => browser.close())
-            .catch(() => forceClose?.());
+          await boundedAuthoringClose("authoring_browser_cancel", () => browser.close()).catch(() =>
+            forceClose?.(),
+          );
         }
       },
 
@@ -278,17 +345,19 @@ export async function createAuthoringBrowserSession(input: {
         closed = true;
         lifecycle = "releasing";
         unregisterVeil.forEach((unregister) => unregister());
-        await boundedAuthoringClose("authoring_veil_finalize", () => privacyGate.finalize())
-          .catch(() => privacyGate.seal({ code: "AUTHORING_FINALIZATION_TIMEOUT" }));
+        await boundedAuthoringClose("authoring_veil_finalize", () => privacyGate.finalize()).catch(
+          () => privacyGate.seal({ code: "AUTHORING_FINALIZATION_TIMEOUT" }),
+        );
 
         try {
           await boundedAuthoringClose("authoring_context_close", () => context!.close());
         } finally {
-          await boundedAuthoringClose("authoring_browser_close", () => browser.close())
-            .catch(async (error) => {
+          await boundedAuthoringClose("authoring_browser_close", () => browser.close()).catch(
+            async (error) => {
               if (!forceClose) throw error;
               await boundedAuthoringClose("authoring_browser_force_close", forceClose);
-            });
+            },
+          );
           lifecycle = "released";
         }
       },
@@ -310,30 +379,65 @@ function boundedAuthoringClose(stage: string, work: () => Promise<unknown>) {
   });
 }
 
-function waitForPopup(context: BrowserContext, timeoutMs: number) {
-  let settled = false;
-  let resolve!: (page: Page | undefined) => void;
-  const result = new Promise<Page | undefined>((done) => {
-    resolve = done;
-  });
-  const onPage = async (candidate: Page) => {
-    if (settled) return;
-    settled = true;
-    // The event establishes distinct ownership immediately. Readiness is bounded by
-    // the operation timeout in resolveEffectPage, never by this listener's race.
-    resolve(candidate);
+function expectedPageOwnership(context: BrowserContext, currentPage: () => Page) {
+  type Capture = {
+    pages: Page[];
+    adopted?: Page;
+    rejectedDocumentUrl?: string;
+    first: Promise<void>;
+    signalFirst: () => void;
   };
-  context.on("page", onPage);
+  let active: Capture | undefined;
+  context.on("page", (candidate) => {
+    if (candidate === currentPage()) return;
+    if (!active) {
+      void candidate.close().catch(() => undefined);
+      return;
+    }
+    active.pages.push(candidate);
+    active.signalFirst();
+  });
   return {
-    resolve: () =>
-      Promise.race([
-        result,
-        new Promise<undefined>((done) => setTimeout(() => done(undefined), timeoutMs)),
-      ]),
-    dispose() {
-      settled = true;
-      context.off("page", onPage);
-      resolve(undefined);
+    rejectDocument(url: string) {
+      if (!active) return;
+      active.rejectedDocumentUrl ??= url;
+      active.signalFirst();
+    },
+    arm(timeoutMs: number) {
+      if (active) throw new Error("EXPECTED_NEW_PAGE_CAPTURE_ALREADY_ACTIVE");
+      let signalFirst!: () => void;
+      const capture: Capture = {
+        pages: [],
+        first: new Promise<void>((resolve) => {
+          signalFirst = resolve;
+        }),
+        signalFirst: () => signalFirst(),
+      };
+      active = capture;
+      return {
+        async resolve() {
+          await Promise.race([
+            capture.first,
+            new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+          ]);
+          if (capture.pages.length) await new Promise((resolve) => setTimeout(resolve, 50));
+          return {
+            candidates: [...capture.pages],
+            rejectedDocumentUrl: capture.rejectedDocumentUrl,
+          };
+        },
+        adopt(page: Page) {
+          capture.adopted = page;
+        },
+        async dispose() {
+          if (active === capture) active = undefined;
+          await Promise.all(
+            capture.pages
+              .filter((candidate) => candidate !== capture.adopted)
+              .map((candidate) => candidate.close().catch(() => undefined)),
+          );
+        },
+      };
     },
   };
 }

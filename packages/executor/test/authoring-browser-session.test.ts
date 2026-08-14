@@ -23,7 +23,10 @@ beforeAll(async () => {
         <h1>${heading}</h1>
         <a href="/second">Continue</a>
         <a href="/docs" target="_blank">API documentation</a>
+        <a href="https://disallowed.example.test/docs" target="_blank">External documentation</a>
         <a href="/slow-docs" target="_blank">Slow API documentation</a>
+        <button>Open two pages</button>
+        <a href="/docs" target="_blank">Unexpected documentation popup</a>
         <label>
           Name
           <input aria-label="Name" />
@@ -57,6 +60,11 @@ describe("persistent authoring browser session", () => {
       allowedOrigins: [origin],
       allowPrivateNetwork: true,
     });
+    const executeInteraction = kernelInteractionExecutor({
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      environmentId: "authoring-test-environment",
+      policy,
+    });
     const session = await createAuthoringBrowserSession({
       sessionId: "11111111-1111-4111-8111-111111111111",
       environmentId: "authoring-test-environment",
@@ -64,11 +72,11 @@ describe("persistent authoring browser session", () => {
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
       policy,
       openBrowser: openTestBrowser,
-      executeInteraction: kernelInteractionExecutor({
-        sessionId: "11111111-1111-4111-8111-111111111111",
-        environmentId: "authoring-test-environment",
-        policy,
-      }),
+      executeInteraction: async (input) => {
+        if (input.operationId === "multiple-documentation-pages")
+          await Promise.all([input.context.newPage(), input.context.newPage()]);
+        return executeInteraction(input);
+      },
     });
 
     try {
@@ -101,6 +109,24 @@ describe("persistent authoring browser session", () => {
 
       expect(await session.page.getByRole("textbox", { name: "Name" }).inputValue()).toBe("Habib");
       expect(session.documentEpoch()).toBe(1);
+      expect(
+        documentationContext(
+          outcomeOf(
+            await session.interact({
+              type: "waitFor",
+              target: target("api documentation", "link", "API documentation"),
+              state: "visible",
+              timeoutMs: 1_000,
+            }),
+          ),
+        ),
+      ).toMatchObject({
+        completeness: { kind: "bounded", truncated: false },
+        controls: expect.arrayContaining([
+          expect.objectContaining({ role: "link", name: "API documentation" }),
+          expect.objectContaining({ role: "textbox", name: "Name" }),
+        ]),
+      });
 
       await session.interact({
         type: "click",
@@ -115,6 +141,24 @@ describe("persistent authoring browser session", () => {
       expect(session.documentEpoch()).toBe(2);
       expect(await session.page.getByRole("heading").textContent()).toBe("Second page");
       expect(session.page.url()).toBe(`${origin}/second`);
+
+      const wrongOrigin = await session.interact(
+        {
+          type: "click",
+          target: target("external documentation", "link", "External documentation"),
+          expectedEffect: { type: "new_page", origin },
+          timeoutMs: 1_000,
+        },
+        {
+          operationId: "reject-external-documentation-origin",
+          expectedEffect: { type: "new_page", origin },
+        },
+      );
+      expect(wrongOrigin.outcome).toMatchObject({
+        functionalResult: "failed",
+        reasonCode: "EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED",
+      });
+      await expect.poll(() => session.context.pages().length).toBe(1);
 
       const documentation = await session.interact(
         {
@@ -155,11 +199,40 @@ describe("persistent authoring browser session", () => {
           expectedEffect: { type: "new_page", origin },
           timeoutMs: 2_000,
         },
-        { operationId: "open-slow-documentation-popup", expectedEffect: { type: "new_page", origin } },
+        {
+          operationId: "open-slow-documentation-popup",
+          expectedEffect: { type: "new_page", origin },
+        },
       );
       expect(slowDocumentation.outcome.functionalResult).toBe("succeeded");
       expect(session.page.url()).toBe(`${origin}/slow-docs`);
       expect(session.documentEpoch()).toBe(4);
+
+      const multiplePages = await session.interact(
+        {
+          type: "click",
+          target: target("open two pages", "button", "Open two pages"),
+          expectedEffect: { type: "new_page", origin },
+          timeoutMs: 1_000,
+        },
+        {
+          operationId: "multiple-documentation-pages",
+          expectedEffect: { type: "new_page", origin },
+        },
+      );
+      expect(multiplePages.outcome).toMatchObject({
+        functionalResult: "failed",
+        reasonCode: "EXPECTED_NEW_PAGE_AMBIGUOUS",
+      });
+      await expect.poll(() => session.context.pages().length).toBe(1);
+
+      await session.interact({
+        type: "click",
+        target: target("unexpected documentation popup", "link", "Unexpected documentation popup"),
+        expectedEffect: { type: "none" },
+        timeoutMs: 1_000,
+      });
+      await expect.poll(() => session.context.pages().length).toBe(1);
 
       const sameTab = await session.interact(
         {
@@ -204,7 +277,7 @@ describe("persistent authoring browser session", () => {
     }
 
     expect(session.state()).toBe("released");
-  }, 20_000);
+  }, 40_000);
 
   it("fills protected references through a Veil-owned interval without returning plaintext", async () => {
     const policy = executionPolicySchema.parse({
@@ -245,6 +318,19 @@ describe("persistent authoring browser session", () => {
     }
   }, 20_000);
 });
+
+function outcomeOf(
+  result: Awaited<
+    ReturnType<import("../src/authoring-browser-session.js").AuthoringBrowserSession["interact"]>
+  >,
+) {
+  return result.outcome;
+}
+
+function documentationContext(outcome: ReturnType<typeof outcomeOf>) {
+  expect(JSON.stringify(outcome.semanticPageContext).length).toBeLessThan(16_000);
+  return outcome.semanticPageContext;
+}
 
 function target(
   concept: string,

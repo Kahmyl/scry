@@ -740,6 +740,7 @@ function compactSemanticDelta(
       count: outcome.resolvedTarget ? 1 : 0,
       ...(outcome.resolvedTarget ? { resolvedTarget: outcome.resolvedTarget } : {}),
     },
+    ...(outcome.semanticPageContext ? { semanticPageContext: outcome.semanticPageContext } : {}),
     quality: {
       findingCount: outcome.qualityFindings.length,
       reasonCodes: outcome.qualityFindings
