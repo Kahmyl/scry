@@ -31,6 +31,7 @@ import { publicConfig } from "../../infrastructure/config/runtime-config.js";
 
 export function Settings({ projectId }: { projectId: string }) {
   const [credentials, setCredentials] = useState<Credential[]>([]);
+  const [credentialsTruncated, setCredentialsTruncated] = useState(false);
   const [calibrations, setCalibrations] = useState<Calibration[]>([]);
   const [incidents, setIncidents] = useState<CredentialIncident[]>([]);
   const [dialog, setDialog] = useState(false);
@@ -38,12 +39,13 @@ export function Settings({ projectId }: { projectId: string }) {
 
   const load = useCallback(() => {
     void Promise.all([
-      api<Credential[]>(`/projects/${projectId}/credentials`),
+      api<{ items: Credential[]; truncated: boolean }>(`/projects/${projectId}/credential-candidates`),
       api<Calibration[]>(`/projects/${projectId}/calibrations`),
       api<CredentialIncident[]>(`/projects/${projectId}/credential-incidents`),
     ])
       .then(([nextCredentials, nextCalibrations, nextIncidents]) => {
-        setCredentials(nextCredentials);
+        setCredentials(nextCredentials.items);
+        setCredentialsTruncated(nextCredentials.truncated);
         setCalibrations(nextCalibrations);
         setIncidents(nextIncidents);
       })
@@ -147,7 +149,12 @@ export function Settings({ projectId }: { projectId: string }) {
               </span>
               <div>
                 <strong>{credential.name}</strong>
-                <small>Value protected · updated {relativeTime(credential.updatedAt)}</small>
+                <small>
+                  {credential.securityStatus === "active"
+                    ? "Active protected value"
+                    : `${credential.securityStatus[0]!.toUpperCase()}${credential.securityStatus.slice(1)} · unavailable`}
+                  {" · updated "}{relativeTime(credential.updatedAt)}
+                </small>
               </div>
               <span className="credential-value">••••••••••••</span>
               <button
@@ -165,6 +172,12 @@ export function Settings({ projectId }: { projectId: string }) {
               title="No test credentials yet"
               copy="Add protected information once, then select it safely inside any Flow."
             />
+          )}
+          {credentialsTruncated && (
+            <div className="form-error" role="status">
+              <AlertTriangle size={15} /> More credentials exist. Use an exact credential reference
+              or a scoped agent lookup before assuming a match is unique.
+            </div>
           )}
         </div>
       </section>
@@ -283,16 +296,14 @@ export function Settings({ projectId }: { projectId: string }) {
   );
 }
 
-function CredentialDialog({
+export function CredentialDialog({
   projectId,
   onClose,
   onSaved,
-  getContext,
 }: {
   projectId: string;
   onClose: () => void;
   onSaved: (credential: Credential) => void;
-  getContext?: () => Promise<{ missionId: string; objectiveId: string; agentSessionId: string }>;
 }) {
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
@@ -304,11 +315,7 @@ function CredentialDialog({
     setError(null);
     setSaving(true);
     try {
-      if (!getContext)
-        throw new Error("Select a Mission objective before creating protected information.");
-      const context = await getContext();
       const credential = await post<Credential>(`/projects/${projectId}/credentials`, {
-        ...context,
         name: name.trim(),
         value,
       });

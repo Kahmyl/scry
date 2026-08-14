@@ -42,17 +42,39 @@ export const validateCredentialReferencesSchema = z
   })
   .strict();
 
+export const listCredentialsSchema = z.object({
+  referenceId: uuidSchema.optional(),
+}).strict();
+
 export const createCredentialSchema = z
   .object({
-    missionId: uuidSchema,
-    objectiveId: uuidSchema,
-    agentSessionId: uuidSchema,
+    missionId: uuidSchema.optional(),
+    objectiveId: uuidSchema.optional(),
+    agentSessionId: uuidSchema.optional(),
     name: nameSchema,
     value: z.string().min(1).max(20_000),
   })
-  .strict();
+  .strict()
+  .refine((input) => {
+    const count = [input.missionId, input.objectiveId, input.agentSessionId]
+      .filter((value) => value !== undefined).length;
+    return count === 0 || count === 3;
+  }, "Mission provenance must be omitted or supplied as one complete context");
 
-export const updateCredentialSchema = createCredentialSchema;
+export const updateCredentialSchema = z
+  .object({
+    missionId: uuidSchema.optional(),
+    objectiveId: uuidSchema.optional(),
+    agentSessionId: uuidSchema.optional(),
+    name: nameSchema,
+    value: z.string().min(1).max(20_000),
+  })
+  .strict()
+  .refine((input) => {
+    const count = [input.missionId, input.objectiveId, input.agentSessionId]
+      .filter((value) => value !== undefined).length;
+    return count === 0 || count === 3;
+  }, "Deprecated Mission provenance must be omitted or supplied as one complete context");
 
 export const flowRevisionContentSchema = z
   .object({
@@ -67,6 +89,7 @@ export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 export type CreateEnvironmentInput = z.infer<typeof createEnvironmentSchema>;
 export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentSchema>;
 export type ValidateCredentialReferencesInput = z.infer<typeof validateCredentialReferencesSchema>;
+export type ListCredentialsInput = z.infer<typeof listCredentialsSchema>;
 export type CreateCredentialInput = z.infer<typeof createCredentialSchema>;
 export type UpdateCredentialInput = z.infer<typeof updateCredentialSchema>;
 export type FlowRevisionContent = z.infer<typeof flowRevisionContentSchema>;

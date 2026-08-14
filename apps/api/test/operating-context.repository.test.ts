@@ -42,7 +42,12 @@ describe("operating context repository", () => {
               newOperationRequired: true, newDraftRequired: false, newSessionRequired: false },
             waiting: true, terminal: false, resumeRef: objectiveId,
           } } }] };
-      if (text.includes("project_credentials")) return { rowCount: 1, rows: [{ referenceId: objectiveId, name: "Credential" }] };
+      if (text.includes("project_credentials")) return { rowCount: 1, rows: [{
+        referenceId: objectiveId, name: "Credential", securityStatus: "active",
+        eligibleForAuthorization: true, authorizedEnvironmentIds: [environmentId],
+        authorizedEnvironmentIdsTruncated: false,
+        createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z",
+      }] };
       if (text.includes("FROM environments")) return { rowCount: 2, rows: [
         { id: environmentId, name: "Compatible", baseOrigin: "https://example.test", secretRefs: [objectiveId],
           policy: { allowedOrigins: ["https://example.test"] } },
@@ -60,6 +65,10 @@ describe("operating context repository", () => {
     });
     expect(result.authoring).toMatchObject({ ready: false, reusable: { items: [] } });
     expect(result.continuation.deterministicPreparationAvailable).toBe(false);
+    expect(result.credentials.items[0]).toMatchObject({
+      name: "Credential", securityStatus: "active", eligibleForAuthorization: true,
+      authorizedEnvironmentIds: [environmentId],
+    });
     expect(result.missions.candidates.items[0]?.resumePointer?.externalInput).toMatchObject({
       fulfillmentPaths: [],
       lifecycle: { terminal: false, taskStillActive: true, sameMissionResumable: true,

@@ -57,8 +57,13 @@ export type VeilRunObservation = {
 
 export type Credential = {
   id: string;
+  referenceId?: string;
   projectId: string;
   name: string;
+  securityStatus: "active" | "compromised" | "revoked";
+  eligibleForAuthorization: boolean;
+  authorizedEnvironmentIds: string[];
+  authorizedEnvironmentIdsTruncated: boolean;
   createdAt: string;
   updatedAt: string;
 };

@@ -32,7 +32,7 @@ export function registerCreateProjectCredentialTool(server: McpServer, client: S
     {
       title: "Create project credential",
       description:
-        "AGENT-ASSISTED trust path only: create an encrypted credential when the user explicitly chooses to provide its value to the agent interaction for this project and purpose. The agent/model sees that source plaintext before this call; Scry then encrypts it and returns only an opaque reference. Never claim this is equivalent to dashboard-managed entry, infer a value, reuse transcript content from another purpose, or replace an existing credential.",
+        "AGENT-ASSISTED trust path only: create a reusable Project-scoped encrypted credential when the user explicitly chooses to provide its value to the agent interaction for this project and purpose. Mission/Objective/session fields record this agent action as provenance; they do not own the credential. Dashboard/API user-managed creation requires no Mission Objective. The agent/model sees that source plaintext before this call; Scry then encrypts it and returns only safe metadata and an opaque reference. Later use still requires applicable environment/task authorization. Never infer a value, reuse transcript content from another purpose, or replace an existing credential.",
       inputSchema: {
         ...objectiveContext,
         projectId: uuid,

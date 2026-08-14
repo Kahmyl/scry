@@ -1,13 +1,15 @@
-import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Post, Query } from "@nestjs/common";
 import {
   createCredentialSchema,
   createEnvironmentSchema,
   createProjectSchema,
   getOperatingContextSchema,
+  listCredentialsSchema,
   type CreateCredentialInput,
   type CreateEnvironmentInput,
   type CreateProjectInput,
   type GetOperatingContextInput,
+  type ListCredentialsInput,
 } from "@scry/contracts";
 
 import { CurrentPrincipal, type Principal } from "../../auth/index.js";
@@ -59,6 +61,13 @@ export class ProjectsController {
   @Get(":projectId/credentials")
   listCredentials(@Param("projectId") projectId: string, @CurrentPrincipal() principal: Principal) {
     return this.repository.listCredentials(principal, projectId);
+  }
+
+  @Get(":projectId/credential-candidates")
+  listCredentialCandidates(@Param("projectId") projectId: string,
+    @CurrentPrincipal() principal: Principal,
+    @Query(new ZodValidationPipe(listCredentialsSchema)) input: ListCredentialsInput) {
+    return this.repository.listCredentialCandidates(principal, projectId, input);
   }
 
   @Get(":projectId/credential-incidents")

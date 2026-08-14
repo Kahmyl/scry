@@ -31,13 +31,22 @@ export function registerListProjectCredentialsTool(server: McpServer, client: Sc
     "list_project_credentials",
     {
       title: "List project credentials",
-      description: "List Project-scoped credential names and opaque references without values. Use after the human adds a credential through Project settings → Test credentials → Add credential; select only an unambiguous intended reference and otherwise ask the human to identify it.",
-      inputSchema: { projectId: uuid },
+      description: "List a bounded set of Project-scoped safe credential metadata: opaque reference, human name, active/compromised/revoked state, eligibility for authorization, authorized environment IDs with a per-item truncation flag, and timestamps—never values. Credentials persist independently across Missions. Refresh after dashboard creation through Project settings → Test credentials → Add credential. An external agent may use a unique obvious semantic match, but must not choose by order or among multiple plausible/role-ambiguous candidates; ask the human with safe names/refs instead. A supplied exact credential reference ID resolves precisely, subject to Project scope, active state, and later environment/task authorization. Top-level or per-item truncation forbids negative/uniqueness inference.",
+      inputSchema: {
+        projectId: uuid,
+        credentialReferenceId: uuid.optional().describe(
+          "Exact opaque credential reference supplied by the human; resolves only inside this Project.",
+        ),
+      },
       annotations: readOnly,
     },
-    async ({ projectId }) => {
-      const credentials = await client.get<unknown[]>(`/projects/${projectId}/credentials`);
-      return result({ credentials }, `Found ${credentials.length} credentials.`);
+    async ({ projectId, credentialReferenceId }) => {
+      const credentials = await client.get<{ items: unknown[]; truncated: boolean }>(
+        `/projects/${projectId}/credential-candidates${credentialReferenceId
+          ? `?referenceId=${encodeURIComponent(credentialReferenceId)}` : ""}`,
+      );
+      return result({ credentials },
+        `Found ${credentials.items.length} credential records${credentials.truncated ? "; more exist, so do not infer uniqueness" : ""}.`);
     },
   );
 }

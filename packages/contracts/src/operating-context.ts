@@ -38,6 +38,12 @@ export const operatingContextSchema = z.object({
   credentials: boundedCollection(z.object({
     referenceId: uuid,
     name: z.string(),
+    securityStatus: z.enum(["active", "compromised", "revoked"]),
+    eligibleForAuthorization: z.boolean(),
+    authorizedEnvironmentIds: z.array(uuid).max(20),
+    authorizedEnvironmentIdsTruncated: z.boolean(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
   }).strict(), 20),
   environments: boundedCollection(z.object({
     id: uuid,

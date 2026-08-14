@@ -8,7 +8,7 @@ import { readOnly, toolResult } from "../../tool-registry.js";
 export function registerGetOperatingContextTool(server: McpServer, client: ScryApiClient) {
   server.registerTool("get_operating_context", {
     title: "Get agent operating context",
-    description: "Return one bounded, coherent readiness view of projects and, only when selection is unambiguous, resumable Missions, their non-terminal awaiting_user lifecycle and factual fulfillment paths, opaque credential references, compatible environments, and reusable authoring. This never returns protected values. After dashboard credential creation, call this again to discover references by name; if multiple candidates fit, ask rather than guess.",
+    description: "Return one bounded Project readiness view with resumable Missions, non-terminal awaiting_user lifecycle/paths, and safe Project credential candidates (opaque ref, name, security state, eligibility for authorization, authorized environments with completeness flag, timestamps). This never returns protected values. Credentials persist independently of Missions. Refresh after dashboard creation. A unique obvious semantic match may be used without needless confirmation; if candidates are multiple, role-ambiguous, stale/revoked, unrelated, or top-level/per-item truncated, ask using safe names/refs rather than guessing or selecting by order. Protected use remains separately constrained by Project scope and environment/task authorization.",
     inputSchema: getOperatingContextSchema,
     outputSchema: operatingContextSchema.extend({ message: z.string() }),
     annotations: readOnly,

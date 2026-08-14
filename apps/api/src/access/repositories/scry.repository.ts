@@ -44,6 +44,9 @@ export class ScryRepository {
   listCredentials(...args: Parameters<ProjectConfigurationRepository["listCredentials"]>) {
     return this.configuration.listCredentials(...args);
   }
+  listCredentialCandidates(...args: Parameters<ProjectConfigurationRepository["listCredentialCandidates"]>) {
+    return this.configuration.listCredentialCandidates(...args);
+  }
   listCredentialIncidents(
     ...args: Parameters<ProjectConfigurationRepository["listCredentialIncidents"]>
   ) {

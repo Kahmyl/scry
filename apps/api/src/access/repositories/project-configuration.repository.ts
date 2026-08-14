@@ -10,6 +10,7 @@ import type {
   CreateEnvironmentInput,
   CreateProjectInput,
   GetOperatingContextInput,
+  ListCredentialsInput,
   OperatingContext,
   UpdateCredentialInput,
   UpdateEnvironmentInput,
@@ -101,9 +102,24 @@ export class ProjectConfigurationRepository {
              AND status IN ('planning','running','blocked','awaiting_user')
              AND ($2::uuid IS NULL OR id=$2)
            ORDER BY updated_at DESC LIMIT 6`, [selected.id, input.missionId ?? null]),
-        query.query<{ referenceId: string; name: string }>(
-          `SELECT id AS "referenceId",name FROM project_credentials
-           WHERE project_id=$1 AND deleted_at IS NULL ORDER BY name LIMIT 21`, [selected.id]),
+        query.query<{ referenceId: string; name: string; securityStatus: "active" | "compromised" | "revoked";
+          eligibleForAuthorization: boolean; authorizedEnvironmentIds: string[];
+          authorizedEnvironmentIdsTruncated: boolean; createdAt: string; updatedAt: string }>(
+          `SELECT credential.id AS "referenceId",credential.name,
+                  credential.security_status AS "securityStatus",
+                  (credential.security_status='active') AS "eligibleForAuthorization",
+                  ARRAY(SELECT environment.id::text FROM environments environment
+                    WHERE environment.project_id=credential.project_id
+                      AND environment.secret_refs ? credential.id::text
+                    ORDER BY environment.created_at LIMIT 20) AS "authorizedEnvironmentIds",
+                  ((SELECT count(*) FROM environments environment
+                    WHERE environment.project_id=credential.project_id
+                      AND environment.secret_refs ? credential.id::text) > 20)
+                    AS "authorizedEnvironmentIdsTruncated",
+                  credential.created_at AS "createdAt",credential.updated_at AS "updatedAt"
+           FROM project_credentials credential
+           WHERE credential.project_id=$1 AND credential.deleted_at IS NULL
+           ORDER BY credential.name,credential.created_at LIMIT 21`, [selected.id]),
         query.query<{ id: string; name: string; baseOrigin: string; secretRefs: string[]; policy: Record<string, unknown> }>(
           `SELECT id,name,base_origin AS "baseOrigin",secret_refs AS "secretRefs",policy
            FROM environments WHERE project_id=$1
@@ -217,16 +233,37 @@ export class ProjectConfigurationRepository {
 
   async listCredentials(principal: Principal, projectId: string) {
     await this.requireProject(principal, projectId);
-    return (
-      await this.database.query(
-        `SELECT id, project_id AS "projectId", name,
-                created_at AS "createdAt", updated_at AS "updatedAt"
-         FROM project_credentials
-         WHERE project_id = $1 AND deleted_at IS NULL
-         ORDER BY name`,
-        [projectId],
-      )
-    ).rows;
+    return (await this.database.query(
+      `SELECT id,project_id AS "projectId",name,security_status AS "securityStatus",
+              created_at AS "createdAt",updated_at AS "updatedAt"
+       FROM project_credentials WHERE project_id=$1 AND deleted_at IS NULL
+       ORDER BY name,created_at`, [projectId])).rows;
+  }
+
+  async listCredentialCandidates(principal: Principal, projectId: string,
+    input: ListCredentialsInput = {}) {
+    await this.requireProject(principal, projectId);
+    const result = await this.database.query(
+      `SELECT credential.id,credential.id AS "referenceId",
+              credential.project_id AS "projectId",credential.name,
+              credential.security_status AS "securityStatus",
+              (credential.security_status='active') AS "eligibleForAuthorization",
+              ARRAY(SELECT environment.id::text FROM environments environment
+                WHERE environment.project_id=credential.project_id
+                  AND environment.secret_refs ? credential.id::text
+                ORDER BY environment.created_at LIMIT 20) AS "authorizedEnvironmentIds",
+              ((SELECT count(*) FROM environments environment
+                WHERE environment.project_id=credential.project_id
+                  AND environment.secret_refs ? credential.id::text) > 20)
+                AS "authorizedEnvironmentIdsTruncated",
+              credential.created_at AS "createdAt",credential.updated_at AS "updatedAt"
+       FROM project_credentials credential
+       WHERE credential.project_id=$1 AND credential.deleted_at IS NULL
+         AND ($2::uuid IS NULL OR credential.id=$2)
+       ORDER BY credential.name,credential.created_at LIMIT 101`,
+      [projectId,input.referenceId ?? null],
+    );
+    return { items: result.rows.slice(0, 100), truncated: result.rows.length > 100 };
   }
 
   async listCredentialIncidents(principal: Principal, projectId: string) {
@@ -245,42 +282,44 @@ export class ProjectConfigurationRepository {
   async createCredential(principal: Principal, projectId: string, input: CreateCredentialInput) {
     this.requireWriteAccess(principal);
     await this.requireProject(principal, projectId);
-    const context = await this.database.query(
-      `SELECT 1 FROM missions m JOIN mission_objectives o ON o.mission_id=m.id AND o.id=$3
-       JOIN agent_sessions s ON s.mission_id=m.id AND s.id=$4 AND s.status='active'
-       WHERE m.id=$2 AND m.project_id=$1`,
-      [projectId, input.missionId, input.objectiveId, input.agentSessionId],
-    );
-    if (!context.rowCount) throw new BadRequestException({ code: "MISSION_CONTEXT_INVALID" });
+    const provenanceValues = [input.missionId, input.objectiveId, input.agentSessionId];
+    const hasProvenance = provenanceValues.every((value) => value !== undefined);
+    if (!hasProvenance && provenanceValues.some((value) => value !== undefined))
+      throw new BadRequestException({ code: "MISSION_CONTEXT_INCOMPLETE" });
     const encrypted = encryptCredential(input.value);
     try {
-      const result = await this.database.query(
-        `INSERT INTO project_credentials(project_id,name,ciphertext,initialization_vector,authentication_tag,origin_mission_id,origin_objective_id,created_by_agent_session_id)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-         RETURNING id, project_id AS "projectId", name,
-                   created_at AS "createdAt", updated_at AS "updatedAt"`,
-        [
-          projectId,
-          input.name,
-          encrypted.ciphertext,
-          encrypted.initializationVector,
-          encrypted.authenticationTag,
-          input.missionId,
-          input.objectiveId,
-          input.agentSessionId,
-        ],
-      );
-      await this.database.query(
-        `INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata) VALUES($1,$2,$3,'credential_created',$4,$5::jsonb)`,
-        [
-          input.missionId,
-          input.objectiveId,
-          input.agentSessionId,
-          `Credential created: ${input.name}`,
-          JSON.stringify({ credentialId: result.rows[0]!.id }),
-        ],
-      );
-      return result.rows[0]!;
+      return await this.database.transaction(async (client) => {
+        if (hasProvenance) {
+          const context = await client.query(
+            `SELECT 1 FROM missions m JOIN mission_objectives o ON o.mission_id=m.id AND o.id=$3
+             JOIN agent_sessions s ON s.mission_id=m.id AND s.id=$4 AND s.status='active'
+             WHERE m.id=$2 AND m.project_id=$1`,
+            [projectId,input.missionId,input.objectiveId,input.agentSessionId],
+          );
+          if (!context.rowCount)
+            throw new BadRequestException({ code: "MISSION_CONTEXT_INVALID" });
+        }
+        const result = await client.query(
+          `INSERT INTO project_credentials(project_id,name,ciphertext,initialization_vector,authentication_tag,origin_mission_id,origin_objective_id,created_by_agent_session_id)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+           RETURNING id, project_id AS "projectId", name,
+                     security_status AS "securityStatus",true AS "eligibleForAuthorization",
+                     ARRAY[]::text[] AS "authorizedEnvironmentIds",
+                     false AS "authorizedEnvironmentIdsTruncated",
+                     created_at AS "createdAt", updated_at AS "updatedAt"`,
+          [projectId,input.name,encrypted.ciphertext,encrypted.initializationVector,
+            encrypted.authenticationTag,input.missionId ?? null,input.objectiveId ?? null,
+            input.agentSessionId ?? null],
+        );
+        if (hasProvenance)
+          await client.query(
+          `INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata) VALUES($1,$2,$3,'credential_created',$4,$5::jsonb)`,
+          [input.missionId,input.objectiveId,input.agentSessionId,
+            `Credential created: ${input.name}`,
+            JSON.stringify({ credentialId: result.rows[0]!.id })],
+          );
+        return result.rows[0]!;
+      });
     } catch (error) {
       if (isPostgresUniqueViolation(error)) {
         throw new ConflictException({
@@ -298,16 +337,28 @@ export class ProjectConfigurationRepository {
     const workspaceId = principal.kind === "user" ? principal.workspaceId : null;
     const encrypted = encryptCredential(input.value);
     const result = await this.database.query(
-      `UPDATE project_credentials credential
-       SET name = $2, ciphertext = $3, initialization_vector = $4,
-           authentication_tag = $5, updated_at = now()
-       FROM projects project
-       WHERE credential.id = $1 AND credential.deleted_at IS NULL
-         AND project.id = credential.project_id
-         AND ($6::uuid IS NULL OR project.workspace_id = $6)
-       RETURNING credential.id, credential.project_id AS "projectId",
-                 credential.name, credential.created_at AS "createdAt",
-                 credential.updated_at AS "updatedAt"`,
+      `WITH updated AS (
+         UPDATE project_credentials credential
+         SET name=$2,ciphertext=$3,initialization_vector=$4,
+             authentication_tag=$5,updated_at=now()
+         FROM projects project
+         WHERE credential.id=$1 AND credential.deleted_at IS NULL
+           AND project.id=credential.project_id
+           AND ($6::uuid IS NULL OR project.workspace_id=$6)
+         RETURNING credential.*
+       ) SELECT updated.id,updated.id AS "referenceId",updated.project_id AS "projectId",
+                updated.name,updated.security_status AS "securityStatus",
+                (updated.security_status='active') AS "eligibleForAuthorization",
+                ARRAY(SELECT environment.id::text FROM environments environment
+                  WHERE environment.project_id=updated.project_id
+                    AND environment.secret_refs ? updated.id::text
+                  ORDER BY environment.created_at LIMIT 20) AS "authorizedEnvironmentIds",
+                ((SELECT count(*) FROM environments environment
+                  WHERE environment.project_id=updated.project_id
+                    AND environment.secret_refs ? updated.id::text) > 20)
+                  AS "authorizedEnvironmentIdsTruncated",
+                updated.created_at AS "createdAt",updated.updated_at AS "updatedAt"
+         FROM updated`,
       [
         credentialId,
         input.name,
@@ -395,7 +446,8 @@ export class ProjectConfigurationRepository {
     }
     const active = await this.database.query<{ id: string }>(
       `SELECT id::text FROM project_credentials
-       WHERE project_id = $1 AND deleted_at IS NULL AND id = ANY($2::uuid[])`,
+       WHERE project_id = $1 AND deleted_at IS NULL AND security_status='active'
+         AND id = ANY($2::uuid[])`,
       [input.projectId, input.secretRefs],
     );
     const activeIds = new Set(active.rows.map(({ id }) => String(id)));
@@ -508,7 +560,8 @@ export class ProjectConfigurationRepository {
         `Protected credential reference "${malformed}" is invalid or unavailable for this Flow.`,
       );
     const result = await query(
-      `SELECT id::text FROM project_credentials WHERE project_id = $1 AND deleted_at IS NULL AND id = ANY($2::uuid[])`,
+      `SELECT id::text FROM project_credentials WHERE project_id = $1
+         AND deleted_at IS NULL AND security_status='active' AND id = ANY($2::uuid[])`,
       [projectId, references],
     );
     const active = new Set(result.rows.map((row) => String(row.id)));

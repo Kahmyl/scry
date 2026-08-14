@@ -296,6 +296,9 @@ describe("current Scry MCP surface", () => {
       .toContain("agent/model sees that source plaintext");
     expect(tools.find(({ name }) => name === "list_project_credentials")?.description)
       .toContain("Project settings → Test credentials → Add credential");
+    const credentialListSchema = tools.find(({ name }) => name === "list_project_credentials")!
+      .inputSchema as any;
+    expect(credentialListSchema.properties.credentialReferenceId.format).toBe("uuid");
     expect(tools.find(({ name }) => name === "cancel_mission_orchestration")?.description)
       .toContain("explicit user cancellation");
     const externalInputSchema = resumePointerSchema.properties.pointer.anyOf[0]
@@ -670,6 +673,49 @@ describe("current Scry MCP surface", () => {
     });
     await client.close();
     await server.close();
+  });
+
+  it("lists bounded safe credential metadata and preserves ambiguity", async () => {
+    const requested: string[] = [];
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request) => {
+      requested.push(String(input));
+      return Promise.resolve(new Response(JSON.stringify({
+      items: [
+        { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          referenceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Preview password",
+          securityStatus: "active", eligibleForAuthorization: true, authorizedEnvironmentIds: [],
+          authorizedEnvironmentIdsTruncated: false,
+          createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
+        { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          referenceId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Preview password old",
+          securityStatus: "revoked", eligibleForAuthorization: false, authorizedEnvironmentIds: [],
+          authorizedEnvironmentIdsTruncated: true,
+          createdAt: "2026-07-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
+      ], truncated: true,
+    }), { status: 200 }));
+    }));
+    const { client, server } = await connected();
+    const response = await client.callTool({ name: "list_project_credentials", arguments: {
+      projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    } });
+    expect(response.structuredContent).toMatchObject({ credentials: {
+      truncated: true, items: [
+        { name: "Preview password", securityStatus: "active", eligibleForAuthorization: true },
+        { name: "Preview password old", securityStatus: "revoked",
+          eligibleForAuthorization: false, authorizedEnvironmentIdsTruncated: true },
+      ],
+    } });
+    expect(JSON.stringify(response)).not.toContain("value");
+    expect(JSON.stringify(response)).toContain("do not infer uniqueness");
+    await client.callTool({ name: "list_project_credentials", arguments: {
+      projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      credentialReferenceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    } });
+    expect(requested[0]).toContain("/credential-candidates");
+    expect(requested[1]).toContain("referenceId=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    await client.close(); await server.close();
   });
 
   it("adds credential references to an environment without replacing its allowlist", async () => {
