@@ -16,7 +16,12 @@ import type {
   UpdateEnvironmentInput,
   ValidateCredentialReferencesInput,
 } from "@scry/contracts";
-import { agentDecisionBoundarySchema, executionPolicySchema, missionResumePointerSchema } from "@scry/contracts";
+import {
+  agentDecisionBoundarySchema,
+  executionPolicySchema,
+  missionResumePointerSchema,
+  operatingContextSchema,
+} from "@scry/contracts";
 
 import type { Principal } from "../../auth/index.js";
 import { Database } from "../../infrastructure/index.js";
@@ -92,7 +97,7 @@ export class ProjectConfigurationRepository {
         blockerCode: projectCount > 1 ? "PROJECT_SELECTION_REQUIRED" : "NO_PROJECT",
       },
     };
-    if (!selected) return empty;
+    if (!selected) return operatingContextSchema.parse(empty);
 
       const requiredCredentialReferences = input.requiredCredentialReferences;
       const [missions, credentials, environments, authoring] = await Promise.all([
@@ -105,7 +110,7 @@ export class ProjectConfigurationRepository {
            ORDER BY updated_at DESC LIMIT 6`, [selected.id, input.missionId ?? null]),
         query.query<{ referenceId: string; name: string; securityStatus: "active" | "compromised" | "revoked";
           eligibleForAuthorization: boolean; authorizedEnvironmentIds: string[];
-          authorizedEnvironmentIdsTruncated: boolean; createdAt: string; updatedAt: string }>(
+          authorizedEnvironmentIdsTruncated: boolean; createdAt: Date | string; updatedAt: Date | string }>(
           `SELECT credential.id AS "referenceId",credential.name,
                   credential.security_status AS "securityStatus",
                   (credential.security_status='active') AS "eligibleForAuthorization",
@@ -146,7 +151,8 @@ export class ProjectConfigurationRepository {
         query.query<{ sessionId: string; missionId: string; objectiveId: string; flowDraftId: string;
           environmentId: string; state: "active"; decisionBoundary: unknown; turnId: string | null;
           turnState: string | null; operationId: string | null; mutationOutcome: string | null;
-          operationObjectiveId: string | null; operationFlowDraftId: string | null }>(
+          operationObjectiveId: string | null; operationFlowDraftId: string | null;
+          _categoryRank: number }>(
           `SELECT * FROM (SELECT s.id AS "sessionId",s.mission_id AS "missionId",
                   s.active_objective_id AS "objectiveId",s.active_flow_draft_id AS "flowDraftId",
                   s.environment_id AS "environmentId",s.state,
@@ -208,6 +214,13 @@ export class ProjectConfigurationRepository {
         credentialReferenceIds: environment.secretRefs.slice(0, 20),
       };
     });
+    const credentialItems = snapshot.credentials.rows.slice(0, 20).map((credential) => ({
+      ...credential,
+      createdAt: credential.createdAt instanceof Date
+        ? credential.createdAt.toISOString() : credential.createdAt,
+      updatedAt: credential.updatedAt instanceof Date
+        ? credential.updatedAt.toISOString() : credential.updatedAt,
+    }));
     const compatibleEnvironmentIds = new Set(environmentItems
       .filter(({ compatible }) => compatible).map(({ id }) => id));
     const reusableCandidates = snapshot.authoring.rows
@@ -220,6 +233,7 @@ export class ProjectConfigurationRepository {
       .map(({ decisionBoundary: _decisionBoundary, turnId: _turnId, turnState: _turnState,
         operationId: _operationId, mutationOutcome: _mutationOutcome,
         operationObjectiveId: _operationObjectiveId, operationFlowDraftId: _operationFlowDraftId,
+        _categoryRank,
         ...session }) => session);
     const recoverableCandidates = snapshot.authoring.rows.flatMap((session) => {
       const parsed = agentDecisionBoundarySchema.safeParse(session.decisionBoundary);
@@ -256,7 +270,7 @@ export class ProjectConfigurationRepository {
     if (!compatibleEnvironment) missing.push("environment");
     if (compatibleReusable.length === 0) missing.push("flow_draft", "authoring_session");
     const requirementBlocked = Boolean(input.requiredOrigin || requiredCredentialReferences.length) && !compatibleEnvironment;
-      return {
+      return operatingContextSchema.parse({
       selection: {
         project: { id: selected.id, name: selected.name }, requiresProjectSelection: false,
         projectCandidates: { items: projectCandidates, truncated: projectCount > 5 },
@@ -265,7 +279,7 @@ export class ProjectConfigurationRepository {
         ...(selectedMissionId ? { selectedMissionId } : {}),
         candidates: { items: missionItems, truncated: (snapshot.missions.rowCount ?? snapshot.missions.rows.length) > 5 },
       },
-      credentials: { items: snapshot.credentials.rows.slice(0, 20), truncated: (snapshot.credentials.rowCount ?? snapshot.credentials.rows.length) > 20 },
+      credentials: { items: credentialItems, truncated: (snapshot.credentials.rowCount ?? snapshot.credentials.rows.length) > 20 },
       environments: { items: environmentItems, truncated: (snapshot.environments.rowCount ?? snapshot.environments.rows.length) > 10 },
       authoring: {
         reusable: { items: compatibleReusable, truncated: reusableCandidates.length > 5 },
@@ -291,7 +305,7 @@ export class ProjectConfigurationRepository {
           ? { blockerCode: "MISSION_SELECTION_REQUIRED" as const }
           : requirementBlocked ? { blockerCode: "REQUIREMENTS_UNSATISFIED" as const } : {}),
       },
-      };
+      });
     });
   }
 

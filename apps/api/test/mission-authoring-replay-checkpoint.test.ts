@@ -48,6 +48,49 @@ describe("Mission authoring protected replay checkpoints", () => {
     ]);
   });
 
+  it("removes epoch-bound references when portable semantic evidence is available", () => {
+    const referenced = activate("open-dialog", "Add credential");
+    if (referenced.action.kind !== "activate") throw new Error("test setup");
+    referenced.action.target.reference = "context-control-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const selected = selectProtectedReplayPreparation(
+      [
+        row(1, "checkpoint", navigate("checkpoint", "https://app.test/credentials"), "https://app.test/credentials"),
+        row(2, "open-dialog", referenced, "https://app.test/credentials"),
+      ],
+      ["open-dialog"],
+      "https://app.test/credentials",
+    );
+    expect(selected[0]?.action).toMatchObject({
+      kind: "activate",
+      target: { concept: "open-dialog", role: "button", name: "Add credential" },
+    });
+    expect((selected[0]?.action as { target?: { reference?: string } }).target?.reference)
+      .toBeUndefined();
+  });
+
+  it("rejects a reference-only target that cannot be replayed in the protected context", () => {
+    const referenced = activate("open-dialog", "Add credential");
+    if (referenced.action.kind !== "activate") throw new Error("test setup");
+    referenced.action.target = {
+      concept: "open-dialog",
+      reference: "context-control-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      exact: true,
+    };
+    expect(() => selectProtectedReplayPreparation(
+      [
+        row(1, "checkpoint", navigate("checkpoint", "https://app.test/credentials"), "https://app.test/credentials"),
+        row(2, "open-dialog", referenced, "https://app.test/credentials"),
+      ],
+      ["open-dialog"],
+      "https://app.test/credentials",
+    )).toThrowError(expect.objectContaining({
+      response: expect.objectContaining({
+        code: "MISSION_AUTHORING_PREPARATION_REFERENCE_NOT_REPLAYABLE",
+        mutationOutcome: "not_applied",
+      }),
+    }));
+  });
+
   it("allows an empty ephemeral suffix when the imported route is already mutation-ready", () => {
     const rows = [
       row(1, "home", navigate("home", "https://app.test/home"), "https://app.test/home"),

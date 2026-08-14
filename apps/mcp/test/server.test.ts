@@ -228,6 +228,10 @@ describe("current Scry MCP surface", () => {
       .toContain("urlPattern is also accepted as a host-compatible alias");
     expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
       .toContain("login/authentication submit");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("Protected acquisition must be atomic with its preparation intents in the same turn");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("action has no top-level target");
     expect(tools.find(({ name }) => name === "set_mission_resume_pointer")?.description)
       .toContain("must exactly equal pointer.objectiveId");
     expect(tools.find(({ name }) => name === "set_mission_resume_pointer")?.description)
@@ -259,12 +263,24 @@ describe("current Scry MCP surface", () => {
     );
     const authoringSchema = tools.find(({ name }) => name === "advance_flow_authoring")!
       .inputSchema as any;
-    const intentActionUnion = authoringSchema.properties.intents.items.properties.action.oneOf;
-    const waitAction = intentActionUnion.find((item: any) => item.properties.kind.const === "wait_for");
-    expect(waitAction.required).toEqual(expect.arrayContaining(["kind", "target", "state"]));
-    expect(waitAction.properties.state.enum).toEqual(["visible", "hidden", "attached", "detached"]);
-    expect(waitAction.properties.target.properties.reference.pattern)
+    const intentSchema = authoringSchema.properties.intents.items;
+    const actionSchema = intentSchema.properties.action;
+    expect(actionSchema.properties.kind.enum).toEqual(expect.arrayContaining([
+      "navigate", "fill", "wait_for", "same_origin_request",
+    ]));
+    expect(actionSchema.properties.publicValue.description).toContain("Ordinary literal fill source");
+    expect(actionSchema.properties.protectedReferenceId).toMatchObject({ type: "string", format: "uuid" });
+    expect(actionSchema.properties.protectedReferenceId.description).toContain("Opaque Project credential UUID");
+    expect(intentSchema.properties.protectedInputReferences.description)
+      .toContain("exactly [action.protectedReferenceId]");
+    expect(actionSchema.properties.state.enum).toEqual(["visible", "hidden", "attached", "detached"]);
+    expect(actionSchema.properties.target.properties.reference.pattern)
       .toBe("^context-control-[a-f0-9]{32}$");
+    expect(actionSchema.properties.target.properties.scope.properties.kind.enum)
+      .toEqual(expect.arrayContaining(["dialog", "section", "row", "live_region"]));
+    expect(intentSchema.properties.credentialLifecycle.properties.effect.const).toBe("revoke");
+    expect(actionSchema.properties.syntheticProtectedSource.properties.generatorContract.enum)
+      .toEqual(expect.arrayContaining(["reserved_test_email", "opaque_operation_token"]));
     expect(tools.find(({ name }) => name === "list_projects")?.description)
       .toContain("MCP has no project-creation capability");
     expect(tools.find(({ name }) => name === "get_operating_context")?.description)
@@ -382,6 +398,77 @@ describe("current Scry MCP surface", () => {
         intents: [expect.objectContaining({ intentId: "open-details" })],
       },
     });
+    requests.length = 0;
+    const credentialReference = "99999999-9999-4999-8999-999999999999";
+    const protectedFill = await client.callTool({
+      name: "advance_flow_authoring",
+      arguments: {
+        sessionId: "11111111-1111-4111-8111-111111111111",
+        kind: "intents",
+        intents: [{
+          intentId: "fill-password",
+          objectiveId: context.objectiveId,
+          flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          action: { kind: "fill", target: { concept: "password", role: "textbox" },
+            protectedReferenceId: credentialReference },
+          expectedEffect: { kind: "none" },
+          constraints: { timeoutMs: 5_000, allowNewPage: false, allowNonExact: true },
+          authorization: { kind: "authentication" },
+          protectedInputReferences: [credentialReference],
+        }],
+        budgets: { maxOperations: 1, maxDurationMs: 5_000 },
+      },
+    });
+    expect(protectedFill.isError).not.toBe(true);
+    expect(requests[0]?.body).toMatchObject({
+      intents: [{
+        action: { kind: "fill", protectedReferenceId: credentialReference },
+        protectedInputReferences: [credentialReference],
+      }],
+    });
+    requests.length = 0;
+    const ordinaryFill = await client.callTool({
+      name: "advance_flow_authoring",
+      arguments: {
+        sessionId: "11111111-1111-4111-8111-111111111111",
+        kind: "intents",
+        intents: [{
+          intentId: "fill-public-name",
+          objectiveId: context.objectiveId,
+          flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          action: { kind: "fill", target: { concept: "credential name", role: "textbox" },
+            publicValue: "Qualification credential" },
+          expectedEffect: { kind: "none" },
+          constraints: { timeoutMs: 5_000, allowNewPage: false, allowNonExact: false },
+          authorization: { kind: "ordinary" },
+          protectedInputReferences: [],
+        }],
+        budgets: { maxOperations: 1, maxDurationMs: 5_000 },
+      },
+    });
+    expect(ordinaryFill.isError).not.toBe(true);
+    expect(requests[0]?.body).toMatchObject({
+      intents: [{ action: { kind: "fill", publicValue: "Qualification credential" },
+        protectedInputReferences: [] }],
+    });
+    requests.length = 0;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const continuation = await client.callTool({
+        name: "advance_flow_authoring",
+        arguments: {
+          sessionId: "11111111-1111-4111-8111-111111111111",
+          kind: "continue",
+          turnId: "22222222-2222-4222-8222-222222222222",
+          budgets: { maxOperations: 1, maxDurationMs: 5_000 },
+        },
+      });
+      expect(continuation.isError).not.toBe(true);
+    }
+    expect(requests).toHaveLength(2);
+    const continuationKeys = requests.map(({ body }) => body?.idempotencyKey);
+    expect(continuationKeys[0]).toMatch(/^flow-authoring-continuation-/);
+    expect(continuationKeys[1]).toMatch(/^flow-authoring-continuation-/);
+    expect(continuationKeys[0]).not.toBe(continuationKeys[1]);
     await client.close();
     await server.close();
   });

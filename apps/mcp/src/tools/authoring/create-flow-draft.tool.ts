@@ -57,13 +57,14 @@ export const publicPlanSchema = z.object({
   budgets: budgetsSchema,
   checkpoints: z.array(z.object({
     id: z.string(), beforeStepId: z.string(), restorationUrl: z.string().url(),
-    verificationAssertions: z.array(z.unknown()).min(1), continueAtStepId: z.string(),
+    verificationAssertions: z.array(z.object({}).passthrough()).min(1), continueAtStepId: z.string(),
     maxRestorations: z.literal(1),
     state: z.object({ cookies: z.literal(true), localStorage: z.literal(true), indexedDb: z.boolean().optional() }),
   }).strict()).max(20).default([]),
   steps: z.array(z.object({
     id: z.string(), title: z.string(), action: publicPlanActionSchema,
-    after: z.unknown().optional(), assertions: z.array(z.unknown()).optional(),
+    after: z.object({}).passthrough().optional(),
+    assertions: z.array(z.object({}).passthrough()).optional(),
     onFailure: z.enum(["stop", "continue"]).optional(),
     evidence: z.array(z.enum(["screenshot", "dom", "network"])).optional(),
     captureIntent: z.enum(["final", "transient"]).optional(),

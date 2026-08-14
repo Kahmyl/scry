@@ -2690,7 +2690,28 @@ export function selectProtectedReplayPreparation(
   const checkpointSequence = rows[checkpointIndex]!.sequence;
   return rows
     .filter((row) => row.sequence > checkpointSequence && selected.has(row.intentId))
-    .map((row) => row.intent);
+    .map((row) => portableProtectedReplayIntent(row.intent));
+}
+
+function portableProtectedReplayIntent(intent: MissionAuthoringIntent): MissionAuthoringIntent {
+  const action = intent.action;
+  if (!("target" in action) || !action.target?.reference) return intent;
+  const target = action.target;
+  const hasPortableEvidence = Boolean(
+    target.role || target.name || target.label || target.placeholder || target.text || target.testId,
+  );
+  if (!hasPortableEvidence) {
+    throw new ConflictException({
+      code: "MISSION_AUTHORING_PREPARATION_REFERENCE_NOT_REPLAYABLE",
+      mutationOutcome: "not_applied",
+      safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+    });
+  }
+  const { reference: _ephemeralReference, ...portableTarget } = target;
+  return {
+    ...intent,
+    action: { ...action, target: portableTarget },
+  } as MissionAuthoringIntent;
 }
 
 function bind(client: PoolClient): Query {
