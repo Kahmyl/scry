@@ -81,14 +81,14 @@ export class AuthoringService {
 
       const unknownMutation = await q(
         `SELECT 1 FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
-         WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' LIMIT 1`,
+         WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id) LIMIT 1`,
         [input.missionId],
       );
       if (unknownMutation.rowCount)
         throw new ConflictException({
           code: "MISSION_RECONCILIATION_REQUIRED",
           mutationOutcome: "unknown",
-          safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"],
+          safeActions: ["get_flow_authoring"],
         });
 
       const priorRuns = await q(
@@ -1195,14 +1195,14 @@ export class AuthoringService {
         }
         const uncertain = await q(
           `SELECT 1 FROM adaptive_operations
-           WHERE session_id=$1 AND mutation_outcome='unknown' LIMIT 1`,
+           WHERE session_id=$1 AND mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(session_id,operation_id) LIMIT 1`,
           [input.authoringSessionId],
         );
         if (uncertain.rowCount) {
           throw new ConflictException({
             code: "MISSION_RECONCILIATION_REQUIRED",
             mutationOutcome: "unknown",
-            safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"],
+            safeActions: ["get_flow_authoring"],
           });
         }
       }
@@ -1246,8 +1246,20 @@ export class AuthoringService {
             expectedEffect: Record<string, unknown>;
             qualityFindings: Array<Record<string, unknown>>;
           }>(
-            `SELECT operation_id AS "operationId",functional_result AS "functionalResult",
-                    mutation_outcome AS "mutationOutcome",privacy_result AS "privacyResult",
+            `SELECT operation_id AS "operationId",
+                    CASE WHEN EXISTS(SELECT 1 FROM adaptive_operation_reconciliations reconciliation
+                      WHERE reconciliation.session_id=adaptive_operations.session_id
+                        AND reconciliation.operation_id=adaptive_operations.operation_id
+                        AND reconciliation.result='proven_applied') THEN 'succeeded' ELSE functional_result END AS "functionalResult",
+                    CASE WHEN EXISTS(SELECT 1 FROM adaptive_operation_reconciliations reconciliation
+                      WHERE reconciliation.session_id=adaptive_operations.session_id
+                        AND reconciliation.operation_id=adaptive_operations.operation_id
+                        AND reconciliation.result='proven_applied') THEN 'applied'
+                      WHEN EXISTS(SELECT 1 FROM adaptive_operation_reconciliations reconciliation
+                        WHERE reconciliation.session_id=adaptive_operations.session_id
+                          AND reconciliation.operation_id=adaptive_operations.operation_id
+                          AND reconciliation.result='proven_not_applied') THEN 'not_applied'
+                      ELSE mutation_outcome END AS "mutationOutcome",privacy_result AS "privacyResult",
                     safe_outcome->'resolvedTarget'->>'digest' AS "targetDigest",
                     safe_outcome->'resolvedTarget'->>'capabilityDigest' AS "capabilityDigest",
                     authoring_intent AS intent,derived_action AS operation,
@@ -2511,7 +2523,7 @@ export class AuthoringService {
     const adaptiveUnknown = await q(
       `SELECT 1 FROM adaptive_operations operation
        JOIN adaptive_sessions session ON session.id=operation.session_id
-       WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown'
+       WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id)
        LIMIT 1`,
       [draft.missionId],
     );
@@ -2519,7 +2531,7 @@ export class AuthoringService {
       throw new ConflictException({
         code: "MISSION_RECONCILIATION_REQUIRED",
         mutationOutcome: "unknown",
-        safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"],
+        safeActions: ["get_flow_authoring"],
       });
     }
     const protectedUnknown = await q(

@@ -152,12 +152,12 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
       await this.requireSession(c, missionId, input.agentSessionId);
       const unknownMutation = await c.query(
         `SELECT 1 FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
-         WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' LIMIT 1`,
+         WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id) LIMIT 1`,
         [missionId],
       );
       if (unknownMutation.rowCount)
         throw new ConflictException({ code: "MISSION_RECONCILIATION_REQUIRED",
-          mutationOutcome: "unknown", safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"] });
+          mutationOutcome: "unknown", safeActions: ["get_flow_authoring"] });
       const plan = await c.query<{
         id: string;
         source_mission_revision: number;

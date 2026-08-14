@@ -76,7 +76,7 @@ describe("execution kernel contracts", () => {
 
   it("admits only bounded authoritative semantic page context", () => {
     const context = {
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       authority: {
         pageId: "page-1",
         documentEpoch: 7,
@@ -94,8 +94,15 @@ describe("execution kernel contracts", () => {
           valueProtected: true,
           capabilities: ["observe", "activate"] as const,
           selected: true,
+          containerReferences: ["context-container-fedcba9876543210fedcba9876543210"],
         },
       ],
+      containers: [{
+        reference: "context-container-fedcba9876543210fedcba9876543210",
+        kind: "row" as const,
+        controlReferences: ["context-control-0123456789abcdef0123456789abcdef"],
+      }],
+      containerCompleteness: { kind: "bounded" as const, observed: 1, returned: 1, truncated: false },
     };
     expect(
       operationOutcomeSchema.parse({
@@ -121,5 +128,37 @@ describe("execution kernel contracts", () => {
         semanticPageContext: { ...context, controls: Array(65).fill(context.controls[0]) },
       }),
     ).toThrow();
+    expect(() =>
+      operationOutcomeSchema.parse({
+        operationId: "incoherent-structure",
+        functionalResult: "succeeded",
+        mutationOutcome: "not_applied",
+        privacyResult: "unverified",
+        evidenceResult: [],
+        qualityFindings: [],
+        durationMs: 1,
+        semanticPageContext: {
+          ...context,
+          controls: [{ ...context.controls[0], containerReferences: [] }],
+        },
+      }),
+    ).toThrow("container membership must be symmetric");
+    const durableV1 = operationOutcomeSchema.parse({
+      operationId: "durable-v1-context",
+      functionalResult: "succeeded",
+      mutationOutcome: "not_applied",
+      privacyResult: "unverified",
+      evidenceResult: [], qualityFindings: [], durationMs: 1,
+      semanticPageContext: {
+        schemaVersion: 1,
+        authority: context.authority,
+        completeness: context.completeness,
+        controls: context.controls.map(({ containerReferences: _containers, ...control }) => control),
+      },
+    });
+    expect(durableV1.semanticPageContext).toMatchObject({
+      schemaVersion: 1, containers: [],
+      containerCompleteness: { observed: 0, returned: 0, truncated: false },
+    });
   });
 });

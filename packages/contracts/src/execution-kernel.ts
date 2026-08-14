@@ -186,7 +186,7 @@ export const operationOutcomeSchema = z
     resolvedTarget: semanticFingerprintSchema.optional(),
     semanticPageContext: z
       .object({
-        schemaVersion: z.literal(1),
+        schemaVersion: z.union([z.literal(1), z.literal(2)]),
         authority: z
           .object({
             pageId: z.string().trim().min(1).max(120),
@@ -226,10 +226,41 @@ export const operationOutcomeSchema = z
                 checked: z.boolean().optional(),
                 disabled: z.boolean().optional(),
                 current: z.boolean().optional(),
+                containerReferences: z
+                  .array(z.string().regex(/^context-container-[a-f0-9]{32}$/))
+                  .max(4)
+                  .optional(),
               })
               .strict(),
           )
           .max(64),
+        containers: z
+          .array(
+            z
+              .object({
+                reference: z.string().regex(/^context-container-[a-f0-9]{32}$/),
+                kind: z.enum(["row", "list_item", "card", "group"]),
+                parentReference: z
+                  .string()
+                  .regex(/^context-container-[a-f0-9]{32}$/)
+                  .optional(),
+                controlReferences: z
+                  .array(z.string().regex(/^context-control-[a-f0-9]{32}$/))
+                  .max(64),
+              })
+              .strict(),
+          )
+          .max(64)
+          .default([]),
+        containerCompleteness: z
+          .object({
+            kind: z.literal("bounded"),
+            observed: z.number().int().nonnegative(),
+            returned: z.number().int().nonnegative().max(64),
+            truncated: z.boolean(),
+          })
+          .strict()
+          .default({ kind: "bounded", observed: 0, returned: 0, truncated: false }),
         sections: z
           .array(
             z
@@ -252,6 +283,46 @@ export const operationOutcomeSchema = z
           .optional(),
       })
       .strict()
+      .superRefine((context, refinement) => {
+        const controls = new Map(context.controls.map((control) => [control.reference, control]));
+        const containers = new Map(context.containers.map((container) => [container.reference, container]));
+        if (
+          context.containerCompleteness.returned !== context.containers.length ||
+          context.containerCompleteness.observed < context.containerCompleteness.returned
+        )
+          refinement.addIssue({ code: "custom", path: ["containerCompleteness"], message: "container completeness must match the bounded projection" });
+        if (controls.size !== context.controls.length)
+          refinement.addIssue({ code: "custom", path: ["controls"], message: "control references must be unique" });
+        if (containers.size !== context.containers.length)
+          refinement.addIssue({ code: "custom", path: ["containers"], message: "container references must be unique" });
+        for (const [index, container] of context.containers.entries()) {
+          if (new Set(container.controlReferences).size !== container.controlReferences.length)
+            refinement.addIssue({ code: "custom", path: ["containers", index, "controlReferences"], message: "container control references must be unique" });
+          if (container.parentReference && !containers.has(container.parentReference))
+            refinement.addIssue({ code: "custom", path: ["containers", index, "parentReference"], message: "container parent must be in the same snapshot" });
+          for (const controlReference of container.controlReferences) {
+            const control = controls.get(controlReference);
+            if (!control?.containerReferences?.includes(container.reference))
+              refinement.addIssue({ code: "custom", path: ["containers", index, "controlReferences"], message: "container membership must be symmetric" });
+          }
+        }
+        for (const [index, control] of context.controls.entries())
+          for (const containerReference of control.containerReferences ?? [])
+            if (!containers.get(containerReference)?.controlReferences.includes(control.reference))
+              refinement.addIssue({ code: "custom", path: ["controls", index, "containerReferences"], message: "control membership must be symmetric" });
+        for (const container of context.containers) {
+          const visited = new Set<string>([container.reference]);
+          let parent = container.parentReference;
+          while (parent) {
+            if (visited.has(parent)) {
+              refinement.addIssue({ code: "custom", path: ["containers"], message: "container ancestry must be acyclic" });
+              break;
+            }
+            visited.add(parent);
+            parent = containers.get(parent)?.parentReference;
+          }
+        }
+      })
       .optional(),
     nextDecisionBoundary: agentDecisionBoundarySchema.optional(),
     generatedReferences: z

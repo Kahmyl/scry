@@ -29,6 +29,8 @@ export const adaptiveSessionEventTypeSchema = z.enum([
   "session_failed",
   "session_cancelled",
   "recovery_required",
+  "reconciliation_started",
+  "reconciliation_completed",
   "operation_started",
   "operation_completed",
   "operation_failed",
@@ -168,6 +170,26 @@ export const continueAdaptiveSessionTurnSchema = z
     budgets: missionAuthoringTurnBudgetsSchema,
   })
   .strict();
+
+export const reconcileAdaptiveOperationSchema = z.object({
+  missionId: uuid,
+  operationId: z.string().trim().min(1).max(200),
+  idempotencyKey: z.string().trim().min(8).max(200),
+}).strict();
+
+export const adaptiveOperationReconciliationResultSchema = z.object({
+  sessionId: uuid,
+  operationId: z.string().trim().min(1).max(200),
+  originalMutationOutcome: z.literal("unknown"),
+  result: z.enum(["proven_applied", "proven_not_applied", "still_unknown"]),
+  redispatchAllowed: z.literal(false),
+  missionFenceCleared: z.boolean(),
+  reasonCode: z.string().trim().min(1).max(120),
+  replayed: z.boolean(),
+  safeActions: z.array(z.string().trim().min(1).max(120)),
+  requiresFreshIdempotencyKey: z.boolean(),
+  nextAttemptId: uuid.optional(),
+}).strict();
 
 export const advanceAdaptiveSessionSchema = z.discriminatedUnion("kind", [
   advanceAdaptiveSessionIntentsSchema,
@@ -322,6 +344,13 @@ export const adaptiveSessionOperationSchema = z
     dispatchBoundary: z.enum(["not_dispatched", "dispatching", "dispatched", "acknowledged"]),
     outcome: operationOutcomeSchema.nullable(),
     decisionBoundary: agentDecisionBoundarySchema.nullable(),
+    reconciliation: z.object({
+      available: z.boolean(),
+      redispatchAllowed: z.literal(false),
+      result: z.enum(["proven_applied", "proven_not_applied", "still_unknown"]).nullable(),
+      reasonCode: z.string().nullable(),
+      safeAction: z.literal("reconcile_unknown_operation").nullable(),
+    }).strict().nullable().default(null),
     startedAt: z.string().datetime(),
     completedAt: z.string().datetime().nullable(),
   })
@@ -392,4 +421,6 @@ export type AdvanceAdaptiveSessionInput =
 export type AdaptiveSessionTransitionInput = z.infer<typeof adaptiveSessionTransitionSchema>;
 export type CloseAdaptiveSessionInput = z.infer<typeof closeAdaptiveSessionSchema>;
 export type RecoverTrustedOriginsInput = z.infer<typeof recoverTrustedOriginsSchema>;
+export type ReconcileAdaptiveOperationInput = z.infer<typeof reconcileAdaptiveOperationSchema>;
+export type AdaptiveOperationReconciliationResult = z.infer<typeof adaptiveOperationReconciliationResultSchema>;
 export type AdaptiveSession = z.infer<typeof adaptiveSessionSchema>;

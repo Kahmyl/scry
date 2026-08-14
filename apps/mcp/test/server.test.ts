@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ScryApiClient } from "../src/api-client.js";
 import { createScryMcpServer } from "../src/server.js";
+import { SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS } from "../src/server-composition.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -33,6 +34,17 @@ const admittedCapabilities = {
 };
 
 describe("current Scry MCP surface", () => {
+  it("exposes privacy-safe structural grouping through the negotiated MCP instructions", async () => {
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("containerReferences");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("without revealing suppressed row text");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("not action targets or resource identity");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("Never select the first container");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("request clarification");
+    const { client, server } = await connected();
+    expect(client.getInstructions()).toContain(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS);
+    await client.close();
+    await server.close();
+  });
   it("returns the operating-context message envelope accepted by its host schema", async () => {
     const payload = {
       selection: { project: null, requiresProjectSelection: false,
@@ -141,6 +153,7 @@ describe("current Scry MCP surface", () => {
       "advance_flow_authoring",
       "recover_trusted_script_origins",
       "get_flow_authoring",
+      "reconcile_unknown_operation",
       "close_flow_authoring",
       "start_mission",
       "resume_mission",

@@ -109,6 +109,7 @@ const operationBoundSyntheticProtectedInputsPath = fileURLToPath(
 const structuredSyntheticProtectedInputPath = fileURLToPath(new URL("../migrations/structured-synthetic-protected-input.sql", import.meta.url));
 const segmentedFlowSuccessorCheckpointsPath = fileURLToPath(new URL("../migrations/segmented-flow-successor-checkpoints.sql", import.meta.url));
 const adaptiveCertificationProvenancePath = fileURLToPath(new URL("../migrations/adaptive-certification-provenance.sql", import.meta.url));
+const adaptiveOperationReconciliationPath = fileURLToPath(new URL("../migrations/adaptive-operation-reconciliation.sql", import.meta.url));
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -152,6 +153,7 @@ const operationBoundSyntheticProtectedInputs = await readFile(operationBoundSynt
 const structuredSyntheticProtectedInput = await readFile(structuredSyntheticProtectedInputPath, "utf8");
 const segmentedFlowSuccessorCheckpoints = await readFile(segmentedFlowSuccessorCheckpointsPath, "utf8");
 const adaptiveCertificationProvenance = await readFile(adaptiveCertificationProvenancePath, "utf8");
+const adaptiveOperationReconciliation = await readFile(adaptiveOperationReconciliationPath, "utf8");
 const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
 
 const expandFoundation = (source: string) =>
@@ -186,12 +188,16 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "structured-synthetic-protected-input.sql": structuredSyntheticProtectedInput,
   "segmented-flow-successor-checkpoints.sql": segmentedFlowSuccessorCheckpoints,
   "adaptive-certification-provenance.sql": adaptiveCertificationProvenance,
+  "adaptive-operation-reconciliation.sql": adaptiveOperationReconciliation,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) =>
   expandFoundation(expandBaselineStage(baselineSource, optionalMigrationSources, included));
 
 const baseline = stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS);
+const preAdaptiveOperationReconciliationFingerprint = createHash("sha256").update(
+  stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "adaptive-operation-reconciliation.sql")),
+).digest("hex");
 const preSegmentedFlowSuccessorCheckpointsFingerprint = createHash("sha256").update(
   stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "segmented-flow-successor-checkpoints.sql" && name !== "adaptive-certification-provenance.sql")),
 ).digest("hex");
@@ -321,12 +327,24 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if ([preQualifiedDraftVersionFingerprint, preVerifiedAttestationFingerprint].includes(installedFingerprint)) {
+    if (installedFingerprint === preAdaptiveOperationReconciliationFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-operation-reconciliation'))");
+        await client.query(adaptiveOperationReconciliation);
+        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query("COMMIT");
+        process.stdout.write(`Applied adaptive operation reconciliation ${fingerprint}\n`);
+      } catch (error) { await client.query("ROLLBACK"); throw error; }
+      finally { client.release(); }
+    } else if ([preQualifiedDraftVersionFingerprint, preVerifiedAttestationFingerprint].includes(installedFingerprint)) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-certification-provenance'))");
         await client.query(adaptiveCertificationProvenance);
+        await client.query(adaptiveOperationReconciliation);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied qualified draft-version provenance ${fingerprint}\n`);
@@ -338,6 +356,7 @@ try {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-certification-provenance'))");
         await client.query(adaptiveCertificationProvenance);
+        await client.query(adaptiveOperationReconciliation);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied adaptive certification provenance ${fingerprint}\n`);

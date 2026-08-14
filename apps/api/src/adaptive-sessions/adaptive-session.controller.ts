@@ -4,12 +4,14 @@ import {
   closeAdaptiveSessionSchema,
   recoverTrustedOriginsSchema,
   prepareFlowAuthoringSchema,
+  reconcileAdaptiveOperationSchema,
   startAdaptiveSessionSchema,
   type CloseAdaptiveSessionInput,
   type MissionAuthoringAdvanceInput,
   type StartAdaptiveSessionInput,
   type RecoverTrustedOriginsInput,
   type PrepareFlowAuthoringInput,
+  type ReconcileAdaptiveOperationInput,
 } from "@scry/contracts";
 
 import { CurrentPrincipal, type Principal } from "../auth/index.js";
@@ -58,6 +60,14 @@ export class AdaptiveSessionController {
     return this.sessions.advance(principal, sessionId, input);
   }
 
+  @Post(":sessionId/reconcile-unknown")
+  reconcileUnknown(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(reconcileAdaptiveOperationSchema)) input: ReconcileAdaptiveOperationInput,
+  ) {
+    return this.sessions.reconcileUnknown(principal, sessionId, input);
+  }
   @Post(":sessionId/close")
   close(
     @CurrentPrincipal() principal: Principal,

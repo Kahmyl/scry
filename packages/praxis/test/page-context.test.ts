@@ -3,7 +3,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { InteractionTargetIntent } from "@scry/contracts";
 import { resolveTarget } from "../src/grounding.js";
-import { observeSemanticPageContext } from "../src/page-context.js";
+import {
+  observeSemanticPageContext,
+  observeSemanticPageContextReferenceState,
+} from "../src/page-context.js";
 
 let browser: Browser;
 let page: Page;
@@ -131,6 +134,102 @@ describe("bounded semantic page context", () => {
     expect(serialized).not.toContain("new-secret");
   });
 
+  it("projects privacy-safe structural identity for repeated protected rows", async () => {
+    await page.setContent(`
+      <main data-private="must-not-project">
+        <div role="row"><span data-scry-redacted="true">credential-secret-a</span><button>Rotate</button><button>Revoke</button></div>
+        <div role="row"><span data-scry-redacted="true">credential-secret-b</span><button>Rotate</button><button>Revoke</button></div>
+        <div role="row" style="display:none"><span>decoy</span><button>Rotate</button></div>
+      </main>
+    `);
+    const context = await observeSemanticPageContext(page);
+    const rotate = context.controls.filter((control) => control.name === "Rotate");
+    expect(context.schemaVersion).toBe(2);
+    expect(rotate).toHaveLength(2);
+    expect(rotate[0]!.containerReferences).toHaveLength(1);
+    expect(rotate[1]!.containerReferences).toHaveLength(1);
+    expect(rotate[0]!.containerReferences![0]).not.toBe(rotate[1]!.containerReferences![0]);
+    for (const control of rotate) {
+      const container = context.containers.find(
+        (candidate) => candidate.reference === control.containerReferences![0],
+      );
+      expect(container).toMatchObject({ kind: "row" });
+      expect(container!.controlReferences).toEqual(expect.arrayContaining([
+        control.reference,
+        context.controls.find((candidate) =>
+          candidate.name === "Revoke" &&
+          candidate.containerReferences?.[0] === container!.reference,
+        )!.reference,
+      ]));
+    }
+    expect(context.containerCompleteness).toEqual({
+      kind: "bounded", observed: 2, returned: 2, truncated: false,
+    });
+    expect(JSON.stringify(context)).not.toMatch(/credential-secret|must-not-project|data-private/);
+  });
+
+  it("keeps row membership across reorder and denies replacement, movement, and forged references", async () => {
+    await page.setContent(`
+      <div role="row" id="a"><button>Rotate</button></div>
+      <div role="row" id="b"><button>Rotate</button></div>
+    `);
+    const context = await observeSemanticPageContext(page);
+    const control = context.controls[0]!;
+    const intent = referenceIntent(control.reference);
+    intent.concept = "rotate";
+    intent.requiredCapabilities = ["focusable", "pointer_activatable"];
+    intent.risk = "protected";
+
+    await page.locator("#b").evaluate((row) => row.parentElement!.prepend(row));
+    await expect(resolveTarget(page, intent)).resolves.toMatchObject({ adapter: "native_click" });
+
+    await page.locator("#a button").evaluate((button) =>
+      document.querySelector("#b")!.append(button),
+    );
+    await expect(resolveTarget(page, intent)).rejects.toThrow("TARGET_CHANGED_BEFORE_ACTION");
+
+    await page.setContent(`
+      <div role="row" data-structural-reference="${control.containerReferences![0]}">
+        <button data-reference="${control.reference}">Rotate</button>
+      </div>
+    `);
+    const replacement = await observeSemanticPageContext(page);
+    expect(replacement.controls[0]!.reference).not.toBe(control.reference);
+    expect(replacement.containers[0]!.reference).not.toBe(control.containerReferences![0]);
+  });
+
+  it("denies same-element semantic and structural-kind drift", async () => {
+    await page.setContent('<div role="row"><button id="action">Rotate</button></div>');
+    const context = await observeSemanticPageContext(page);
+    const intent = referenceIntent(context.controls[0]!.reference);
+    intent.requiredCapabilities = ["focusable", "pointer_activatable"];
+    await page.locator("#action").evaluate((button) => { button.textContent = "Revoke"; });
+    await expect(resolveTarget(page, intent)).rejects.toThrow("TARGET_CHANGED_BEFORE_ACTION");
+
+    await page.setContent('<div role="row" id="row"><button>Rotate</button></div>');
+    const structural = await observeSemanticPageContext(page);
+    const structuralIntent = referenceIntent(structural.controls[0]!.reference);
+    structuralIntent.requiredCapabilities = ["focusable", "pointer_activatable"];
+    await page.locator("#row").evaluate((row) => row.setAttribute("role", "group"));
+    await expect(resolveTarget(page, structuralIntent)).rejects.toThrow("TARGET_CHANGED_BEFORE_ACTION");
+  });
+
+  it("suppresses group text around protected descendants and bounds candidate relocation", async () => {
+    await page.setContent(`
+      <section aria-label="protected-client-id-must-not-leak">
+        <span data-scry-redacted="true">secret</span><button>Rotate</button>
+      </section>
+    `);
+    const protectedContext = await observeSemanticPageContext(page);
+    expect(protectedContext.controls.find((control) => control.name === "Rotate")!.group).toBeUndefined();
+    expect(JSON.stringify(protectedContext)).not.toContain("protected-client-id-must-not-leak");
+
+    await page.setContent(`${Array.from({ length: 5_001 }, () => '<button hidden>Hidden</button>').join("")}<button>Visible after budget</button>`);
+    const bounded = await observeSemanticPageContext(page);
+    expect(bounded.completeness).toMatchObject({ observed: 5_002, returned: 0, truncated: true });
+    expect(bounded.controls).toHaveLength(0);
+  });
+
   it.each([
     ["email and password", '<label>Email <input type="email"></label><label>Password <input type="password"></label>', ["Password"]],
     ["ordinary textboxes and password", '<input aria-label="First"><input aria-label="Second"><label>Password <input type="password"></label>', ["Password"]],
@@ -233,6 +332,69 @@ describe("bounded semantic page context", () => {
     const disabledContext = await observeSemanticPageContext(page);
     expect(disabledContext.controls.find((control) => control.name === "New password")!.reference)
       .not.toBe(protectedReference);
+  });
+
+  it("authoritatively observes the exact registered handle as visible, then absent after removal", async () => {
+    await page.setContent(`
+      <div role="row"><button id="target">Rotate key</button></div>
+      <script>
+        window.actionDispatches = 0;
+        document.querySelector('#target').addEventListener('click', () => window.actionDispatches += 1);
+      </script>
+    `);
+    const context = await observeSemanticPageContext(page);
+    const reference = context.controls.find((control) => control.name === "Rotate key")!.reference;
+
+    await expect(observeSemanticPageContextReferenceState(page, reference)).resolves.toEqual({
+      state: "visible", reasonCode: "CONTEXT_REFERENCE_VISIBLE",
+    });
+    await page.locator("#target").evaluate((element) => element.remove());
+    await expect(observeSemanticPageContextReferenceState(page, reference)).resolves.toEqual({
+      state: "absent", reasonCode: "CONTEXT_REFERENCE_ABSENT",
+    });
+    expect(await page.evaluate(() => (window as typeof window & { actionDispatches: number }).actionDispatches)).toBe(0);
+  });
+
+  it("keeps a same-semantic replacement ambiguous instead of adopting it", async () => {
+    await page.setContent('<div role="row"><button id="target">Rotate key</button></div>');
+    const context = await observeSemanticPageContext(page);
+    const reference = context.controls.find((control) => control.name === "Rotate key")!.reference;
+    await page.locator("#target").evaluate((element) => {
+      const replacement = document.createElement("button");
+      replacement.id = "replacement";
+      replacement.textContent = "Rotate key";
+      element.replaceWith(replacement);
+    });
+
+    await expect(observeSemanticPageContextReferenceState(page, reference)).resolves.toEqual({
+      state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_REPLACEMENT_AMBIGUOUS",
+    });
+  });
+
+  it("treats exact-handle moves, semantic drift, and cross-document reuse as stale", async () => {
+    await page.setContent(`
+      <div role="row" id="first"><button id="target">Rotate key</button></div>
+      <div role="row" id="second"></div>
+    `);
+    const context = await observeSemanticPageContext(page);
+    const reference = context.controls.find((control) => control.name === "Rotate key")!.reference;
+    await page.locator("#target").evaluate((element) => document.querySelector("#second")!.append(element));
+    await expect(observeSemanticPageContextReferenceState(page, reference)).resolves.toMatchObject({
+      state: "ambiguous_stale",
+    });
+
+    await page.setContent('<button id="target">Rotate key</button>');
+    const semanticContext = await observeSemanticPageContext(page);
+    const semanticReference = semanticContext.controls[0]!.reference;
+    await page.locator("#target").evaluate((element) => { element.textContent = "Delete key"; });
+    await expect(observeSemanticPageContextReferenceState(page, semanticReference)).resolves.toEqual({
+      state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_SEMANTICS_CHANGED",
+    });
+
+    await page.goto('data:text/html,<button id="new-document">Rotate key</button>');
+    await expect(observeSemanticPageContextReferenceState(page, semanticReference)).resolves.toEqual({
+      state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_DOCUMENT_CHANGED",
+    });
   });
 });
 

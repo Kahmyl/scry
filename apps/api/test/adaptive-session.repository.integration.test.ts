@@ -507,10 +507,12 @@ integration("adaptive session repository integration", () => {
       expectedEffect: { type: "none" },
       mode: "rehearse",
     });
+    await database.query(`UPDATE adaptive_operations SET dispatch_boundary='dispatching'
+      WHERE session_id=$1 AND operation_id='unknown-activate'`,[created.id]);
     const boundary = {
       type: "mutation_reconciliation_required" as const,
       reasonCode: "MUTATION_OUTCOME_UNKNOWN",
-      safeActions: ["get_flow_authoring"],
+      safeActions: ["get_flow_authoring", "reconcile_unknown_operation"],
     };
     const settled = await repository.settleMissionOperation({
       sessionId: created.id,
@@ -551,6 +553,79 @@ integration("adaptive session repository integration", () => {
       outcome: { functionalResult: "succeeded", mutationOutcome: "unknown" },
       decisionBoundary: boundary,
     });
+    await repository.recordDispatchBaseline({sessionId:created.id,operationId:"unknown-activate",
+      expectedEffect:{type:"none"},documentEpoch:7,url:"https://example.test/before",effectState:{state:"unsupported"}});
+    await expect(database.query(`DELETE FROM adaptive_operation_dispatch_baselines
+      WHERE session_id=$1 AND operation_id='unknown-activate'`,[created.id])).rejects.toThrow();
+
+    const first = await repository.beginUnknownReconciliation({
+      workspaceId,sessionId: created.id,missionId,operationId: "unknown-activate",
+      idempotencyKey: "unknown-reconciliation-still",
+    });
+    expect(first).toMatchObject({ state: "observing", replayed: false, expectedEffect: { type: "none" } });
+    const unresolved = await repository.completeUnknownReconciliation({
+      sessionId: created.id,missionId,operationId: "unknown-activate",
+      idempotencyKey: "unknown-reconciliation-still",result: "still_unknown",
+      reasonCode: "RECONCILIATION_EXPECTED_EFFECT_UNAVAILABLE",evidence: { expectedEffectType: "none" },runtimeOwned:false,
+    });
+    expect(unresolved).toMatchObject({ missionFenceCleared: false, authoringSessionState: "recovery_required" });
+    const original = await database.query<{ mutationOutcome: string; reconciliationResult: string }>(
+      `SELECT operation.mutation_outcome AS "mutationOutcome",reconciliation.result AS "reconciliationResult"
+         FROM adaptive_operations operation JOIN adaptive_operation_reconciliations reconciliation
+           ON reconciliation.session_id=operation.session_id AND reconciliation.operation_id=operation.operation_id
+        WHERE operation.session_id=$1 AND operation.operation_id=$2 ORDER BY reconciliation.attempt DESC LIMIT 1`,
+      [created.id,"unknown-activate"]);
+    expect(original.rows[0]).toEqual({ mutationOutcome: "unknown", reconciliationResult: "still_unknown" });
+
+    const second = await repository.beginUnknownReconciliation({
+      workspaceId,sessionId: created.id,missionId,operationId: "unknown-activate",
+      idempotencyKey: "unknown-reconciliation-not-applied",
+    });
+    expect(second).toMatchObject({ state: "observing", attempt: 2 });
+    const resolved = await repository.completeUnknownReconciliation({
+      sessionId: created.id,missionId,operationId: "unknown-activate",
+      idempotencyKey: "unknown-reconciliation-not-applied",result: "proven_not_applied",
+      reasonCode: "RECONCILIATION_INVERSE_VISIBILITY_PROVEN",evidence: { targetState: "visible" },runtimeOwned:false,
+    });
+    expect(resolved).toMatchObject({ missionFenceCleared: true, authoringSessionState: "failed" });
+    const afterResolution = await repository.get(workspaceId,created.id);
+    expect(afterResolution).toMatchObject({state:"failed",
+      decisionBoundary:{reasonCode:"AUTHORING_SESSION_RESTART_REQUIRED",
+        safeActions:["get_flow_authoring","start_flow_authoring"]}});
+    const deadLifecycle = await database.query<{completedAt:string|null}>(
+      `SELECT completed_at AS "completedAt" FROM adaptive_sessions WHERE id=$1`,[created.id]);
+    expect(deadLifecycle.rows[0]!.completedAt).not.toBeNull();
+    await expect(repository.beginUnknownReconciliation({
+      workspaceId,sessionId: created.id,missionId: randomUUID(),operationId: "unknown-activate",
+      idempotencyKey: "unknown-reconciliation-wrong-mission",
+    })).rejects.toThrow();
+    const replay = await repository.beginUnknownReconciliation({
+      workspaceId,sessionId: created.id,missionId,operationId: "unknown-activate",
+      idempotencyKey: "unknown-reconciliation-not-applied",
+    });
+    expect(replay).toMatchObject({ state: "completed", result: "proven_not_applied", replayed: true });
+    const restarted = await repository.create(workspaceId,startInput("restart-after-reconciliation"));
+    sessionIds.push(restarted.id);
+    expect(await repository.get(workspaceId,restarted.id)).toMatchObject({state:"provisioning",missionId,objectiveId,flowDraftId});
+
+    await database.query(`UPDATE adaptive_sessions SET state='recovery_required',completed_at=NULL WHERE id=$1`,[created.id]);
+    await database.query(`INSERT INTO adaptive_session_runtime_leases(session_id,owner_id,lease_expires_at)
+      VALUES($1,$2,now()+interval '5 minutes') ON CONFLICT(session_id) DO UPDATE
+      SET lease_expires_at=EXCLUDED.lease_expires_at`,[created.id,randomUUID()]);
+    await database.query(`INSERT INTO adaptive_operations
+      SELECT (jsonb_populate_record(NULL::adaptive_operations,to_jsonb(operation) || jsonb_build_object(
+        'operation_id','unknown-live-owner','idempotency_key','unknown-live-owner-key','sequence',2,'started_at',now(),
+        'completed_at',now()))).* FROM adaptive_operations operation
+      WHERE session_id=$1 AND operation_id='unknown-activate'`,[created.id]);
+    await repository.beginUnknownReconciliation({workspaceId,sessionId:created.id,missionId,
+      operationId:"unknown-live-owner",idempotencyKey:"unknown-live-owner-reconcile"});
+    const liveOwned = await repository.completeUnknownReconciliation({sessionId:created.id,missionId,
+      operationId:"unknown-live-owner",idempotencyKey:"unknown-live-owner-reconcile",
+      result:"proven_not_applied",reasonCode:"TEST_AUTHORITATIVE_NOT_APPLIED",evidence:{fixture:true},runtimeOwned:true});
+    expect(liveOwned).toMatchObject({missionFenceCleared:true,authoringSessionState:"active"});
+    const liveLifecycle = await database.query<{state:string;completedAt:string|null}>(
+      `SELECT state,completed_at AS "completedAt" FROM adaptive_sessions WHERE id=$1`,[created.id]);
+    expect(liveLifecycle.rows[0]).toEqual({state:"active",completedAt:null});
   });
 
   it("recovers the exact stale running turn only before a safe dispatch", async () => {
@@ -605,6 +680,46 @@ integration("adaptive session repository integration", () => {
       recovered: true,
       phase: "resume",
     });
+  });
+
+  it("serializes concurrent reconciliation and clears a Mission fence only after every UNKNOWN resolves", async () => {
+    const created = await createActive(startInput(`multiple-unknown-${randomUUID()}`));
+    sessionIds.push(created.id);
+    for (const [sequence,operationId] of ["unknown-one","unknown-two"].entries()) {
+      const safeOutcome = { operationId,functionalResult:"inconclusive",mutationOutcome:"unknown",
+        privacyResult:"unverified",evidenceResult:[],qualityFindings:[],durationMs:0 };
+      await database.query(`INSERT INTO adaptive_operations(session_id,operation_id,sequence,mode,state,
+          semantic_intent,expected_effect,policy_digest,dispatch_boundary,mutation_outcome,functional_result,
+          privacy_result,evidence_result,quality_findings,safe_outcome,decision_boundary,idempotency_key,
+          mission_id,objective_id,flow_draft_id,authoring_intent,derived_action,completed_at)
+        VALUES($1,$2,$3,'observe','failed',$4::jsonb,'{"type":"none"}'::jsonb,$5,'dispatching','unknown',
+          'inconclusive','unverified','[]'::jsonb,'[]'::jsonb,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$4::jsonb,$12::jsonb,now())`,
+        [created.id,operationId,sequence+1,JSON.stringify({ intentId: operationId,objectiveId,flowDraftId,
+          action:{kind:"inspect",target:{concept:"fixture",role:"text"}},expectedEffect:{kind:"none"},
+          constraints:{timeoutMs:1000,allowNewPage:false,allowNonExact:false},authorization:{kind:"ordinary"},protectedInputReferences:[] }),
+          "d".repeat(64),JSON.stringify(safeOutcome),JSON.stringify({type:"mutation_reconciliation_required",reasonCode:"TEST_UNKNOWN",safeActions:["get_flow_authoring"]}),
+          `idempotency-${operationId}`,missionId,objectiveId,flowDraftId,
+          JSON.stringify({ action:{type:"waitFor",timeoutMs:1000},expectedEffect:{type:"none"},mode:"observe" })]);
+    }
+    await database.query(`UPDATE adaptive_sessions SET state='recovery_required' WHERE id=$1`,[created.id]);
+    const attempts = await Promise.allSettled([
+      repository.beginUnknownReconciliation({workspaceId,sessionId:created.id,missionId,operationId:"unknown-one",idempotencyKey:"concurrent-one-a"}),
+      repository.beginUnknownReconciliation({workspaceId,sessionId:created.id,missionId,operationId:"unknown-one",idempotencyKey:"concurrent-one-b"}),
+    ]);
+    expect(attempts.filter((value) => value.status === "fulfilled")).toHaveLength(1);
+    expect(attempts.filter((value) => value.status === "rejected")).toHaveLength(1);
+    const winnerKey =
+      (await database.query<{ key:string }>(`SELECT idempotency_key AS key FROM adaptive_operation_reconciliations
+        WHERE session_id=$1 AND operation_id='unknown-one' AND state='observing'`,[created.id])).rows[0]!.key;
+    const first = await repository.completeUnknownReconciliation({sessionId:created.id,missionId,operationId:"unknown-one",
+      idempotencyKey:winnerKey,result:"proven_not_applied",reasonCode:"TEST_NOT_APPLIED",evidence:{fixture:true},runtimeOwned:false});
+    expect(first.missionFenceCleared).toBe(false);
+    await repository.beginUnknownReconciliation({workspaceId,sessionId:created.id,missionId,operationId:"unknown-two",idempotencyKey:"unknown-two-reconcile"});
+    const second = await repository.completeUnknownReconciliation({sessionId:created.id,missionId,operationId:"unknown-two",
+      idempotencyKey:"unknown-two-reconcile",result:"proven_not_applied",reasonCode:"TEST_NOT_APPLIED",evidence:{fixture:true},runtimeOwned:false});
+    expect(second.missionFenceCleared).toBe(true);
+    await expect(database.query(`DELETE FROM adaptive_operation_reconciliations WHERE session_id=$1`,[created.id])).rejects.toThrow();
+    await expect(database.query(`UPDATE adaptive_operation_reconciliations SET reason_code='TAMPERED' WHERE session_id=$1`,[created.id])).rejects.toThrow();
   });
 
   it("reclaims a stale post-dispatch turn without authorizing redispatch", async () => {
@@ -863,6 +978,9 @@ integration("adaptive session repository integration", () => {
         workspaceId, sessionId: created.id, operationId, idempotencyKey: `${operationId}-key`,
         intent, action, expectedEffect: { type: "none" }, mode: "transact",
       });
+      if (mutationOutcome === "unknown") await database.query(
+        `UPDATE adaptive_operations SET dispatch_boundary='dispatching' WHERE session_id=$1 AND operation_id=$2`,
+        [created.id,operationId]);
       await repository.settleMissionOperation({
         sessionId: created.id, operationId, intent, action,
         outcome: {
@@ -880,6 +998,13 @@ integration("adaptive session repository integration", () => {
         id: credentialId,
         status: mutationOutcome === "unknown" ? "compromised" : "active",
       }]);
+      if (mutationOutcome === "unknown") {
+        await repository.beginUnknownReconciliation({ workspaceId,sessionId: created.id,missionId,
+          operationId,idempotencyKey: `${operationId}-reconcile` });
+        await repository.completeUnknownReconciliation({ sessionId: created.id,missionId,operationId,
+          idempotencyKey: `${operationId}-reconcile`,result: "proven_not_applied",
+          reasonCode: "TEST_AUTHORITATIVE_NOT_APPLIED",evidence: { fixture: true },runtimeOwned:false });
+      }
     }
   });
 

@@ -27,6 +27,7 @@ describe("migration fingerprint compatibility", () => {
     expect(historical).not.toContain("\\ir authentication-authoring.sql");
     expect(historical).not.toContain("\\ir adaptive-authoring-pr9-pr12.sql");
     expect(historical).not.toContain("\\ir adaptive-execution-foundation-m0-m1.sql");
+    expect(historical).not.toContain("\\ir adaptive-operation-reconciliation.sql");
   });
 
   it("reconstructs the immutable released fingerprints from the real migration sources", async () => {

@@ -8,6 +8,8 @@ import {
   missionAuthoringIntentSchema,
   missionAuthoringTurnResultSchema,
   startAdaptiveSessionSchema,
+  reconcileAdaptiveOperationSchema,
+  adaptiveOperationReconciliationResultSchema,
 } from "../src/index.js";
 
 const ids = {
@@ -40,6 +42,20 @@ function intent(overrides: Record<string, unknown> = {}) {
 }
 
 describe("adaptive session contracts", () => {
+  it("admits only server-owned UNKNOWN reconciliation decisions", () => {
+    const input = { missionId: ids.missionId, operationId: "uncertain-operation", idempotencyKey: "reconcile-unknown-1" };
+    expect(reconcileAdaptiveOperationSchema.parse(input)).toEqual(input);
+    expect(() => reconcileAdaptiveOperationSchema.parse({ ...input, result: "proven_applied" })).toThrow();
+    expect(adaptiveOperationReconciliationResultSchema.parse({
+      sessionId: ids.turnId, operationId: input.operationId,
+      originalMutationOutcome: "unknown", result: "still_unknown",
+      redispatchAllowed: false, missionFenceCleared: false,
+      reasonCode: "RECONCILIATION_EVIDENCE_INSUFFICIENT", replayed: false,
+      safeActions: ["get_flow_authoring"],
+      requiresFreshIdempotencyKey: true,
+      nextAttemptId: ids.authorizationId,
+    }).redispatchAllowed).toBe(false);
+  });
   it("starts Mission authoring with bounded default turns and protected references", () => {
     const parsed = startAdaptiveSessionSchema.parse({
       projectId: ids.projectId,

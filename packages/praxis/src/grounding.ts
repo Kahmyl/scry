@@ -21,7 +21,10 @@ import { PraxisDocumentEpoch, PraxisGroundingPolicyV1 } from "./observation.js";
 import { collectPraxisEvidence } from "./evidence.js";
 import { escalationLevel } from "./latency.js";
 import { interactionRiskPolicy } from "./risk-policy.js";
-import { resolveSemanticPageContextControl } from "./page-context.js";
+import {
+  resolveSemanticPageContextControl,
+  revalidateSemanticPageContextControl,
+} from "./page-context.js";
 
 type SafeAction =
   | "narrow_scope"
@@ -450,11 +453,44 @@ async function resolveAuthoritativeContextReference(
       safeActions: ["use_supported_capability"],
     });
 
+  let currentLocator = await entry.locate();
+  if (!currentLocator)
+    throw new GroundingError("TARGET_CHANGED_BEFORE_ACTION", {
+      ...emptyDiagnostic(intent.scope, 1), safeActions: ["retry_after_render"],
+    });
   const observe = async () => {
     let meta: ObservedControl;
     try {
-      meta = await entry.handle.use(async (locator) => {
+      currentLocator = await entry.locate();
+      if (!currentLocator) throw new Error("CONTEXT_CONTROL_MISSING");
+      meta = await entry.handle.use(async () => {
+        const locator = currentLocator!;
         if ((await locator.count()) !== 1) throw new Error("CONTEXT_CONTROL_MISSING");
+        const currentElement = await locator.elementHandle();
+        if (!currentElement) throw new Error("CONTEXT_CONTROL_MISSING");
+        const sameControl = await entry.element
+          .evaluate((observed, current) => observed === current, currentElement)
+          .catch(() => false);
+        await currentElement.dispose();
+        if (!sameControl) throw new Error("CONTEXT_CONTROL_REPLACED");
+        if (!(await revalidateSemanticPageContextControl(entry, locator)))
+          throw new Error("CONTEXT_CONTROL_SEMANTICS_CHANGED");
+        for (let index = 0; index < entry.containers.length; index += 1) {
+          const container = entry.containers[index]!;
+          if (container.documentIdentity !== entry.handle.documentIdentity)
+            throw new Error("CONTEXT_CONTAINER_DOCUMENT_CHANGED");
+          const contains = await container.element
+            .evaluate((parent, child) => parent.contains(child), entry.element)
+            .catch(() => false);
+          if (!contains) throw new Error("CONTEXT_CONTAINER_MEMBERSHIP_CHANGED");
+          const parent = entry.containers[index + 1];
+          if (parent) {
+            const chainCurrent = await parent.element
+              .evaluate((outer, inner) => outer.contains(inner), container.element)
+              .catch(() => false);
+            if (!chainCurrent) throw new Error("CONTEXT_CONTAINER_ANCESTRY_CHANGED");
+          }
+        }
         return locator.evaluate(observeControlInPage, intent.relations);
       });
       meta.path = [documentIdentity(frame, 0), ...meta.path];
@@ -465,7 +501,7 @@ async function resolveAuthoritativeContextReference(
       });
     }
     const violations = capabilityViolations(intent, meta, false);
-    if (meta.runtimeId !== entry.runtimeId || violations.length)
+    if (violations.length)
       throw new GroundingError("TARGET_CHANGED_BEFORE_ACTION", {
         ...emptyDiagnostic(intent.scope, 1),
         rejectedConstraints: violations,
@@ -499,7 +535,7 @@ async function resolveAuthoritativeContextReference(
   };
   return {
     frame,
-    locator: entry.locator,
+    get locator() { return currentLocator!; },
     diagnostic,
     adapter,
     async revalidate() {

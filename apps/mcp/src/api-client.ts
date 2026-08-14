@@ -31,6 +31,7 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "environmentResourceExists", "refreshedDecisionBoundary", "requestedTurnId",
   "currentTurnState", "type", "reasonCode", "authoringRecovery",
   "idempotencyKey",
+  "operationId", "reconciliation", "redispatchAllowed", "missionFenceCleared",
   "safeActions",
 ]);
 

@@ -13,6 +13,7 @@ import type {
   MissionAuthoringTurnResult,
   StartAdaptiveSessionInput,
   RecoverTrustedOriginsInput,
+  ReconcileAdaptiveOperationInput,
   CurrentAction,
   PrepareFlowAuthoringInput,
 } from "@scry/contracts";
@@ -23,6 +24,7 @@ import { ReleaseAdmissionService } from "../runtime/index.js";
 import { AdaptiveSessionKernelRunner } from "./adaptive-session-kernel.runner.js";
 import { AdaptiveSessionRepository } from "./adaptive-session.repository.js";
 import { OperationBoundProtectedInputRepository } from "./operation-bound-protected-input.repository.js";
+import { AdaptiveOperationReconciliationRegistry } from "./adaptive-operation-reconciliation.registry.js";
 import {
   deriveMissionAuthoringOperation,
   missionAuthoringOperationIdentity,
@@ -44,6 +46,9 @@ export class MissionFlowAuthoringService {
     @Optional()
     @Inject(OperationBoundProtectedInputRepository)
     private readonly syntheticInputs?: OperationBoundProtectedInputRepository,
+    @Optional()
+    @Inject(AdaptiveOperationReconciliationRegistry)
+    private readonly reconciliationRegistry?: AdaptiveOperationReconciliationRegistry,
   ) {}
 
   async start(principal: Principal, input: StartAdaptiveSessionInput) {
@@ -126,8 +131,66 @@ export class MissionFlowAuthoringService {
     return this.sessions.recoverTrustedOrigins(workspaceId(principal), input);
   }
 
-  get(principal: Principal, sessionId: string) {
-    return this.sessions.get(workspaceId(principal), sessionId);
+  async get(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    return { ...session, operations: await Promise.all(session.operations.map(async (operation: any) => {
+      if (!operation.reconciliation) return operation;
+      const authority = await this.sessions.getUnknownReconciliationAuthority(
+        workspaceId(principal), sessionId, operation.operationId);
+      const available = this.runner.reconciliationAvailable(sessionId, operation.expectedEffect)
+        || Boolean(authority && this.reconciliationRegistry?.available(authority));
+      return { ...operation, reconciliation: { ...operation.reconciliation, available,
+        safeAction: available ? "reconcile_unknown_operation" : null } };
+    })) };
+  }
+
+  async reconcileUnknown(
+    principal: Principal,
+    sessionId: string,
+    input: ReconcileAdaptiveOperationInput,
+  ) {
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+    const claim = await this.sessions.beginUnknownReconciliation({
+      workspaceId: workspaceId(principal), sessionId, ...input,
+    });
+    if (claim.state === "completed" && "result" in claim && claim.result && claim.reasonCode) return {
+      sessionId, operationId: input.operationId, originalMutationOutcome: "unknown" as const,
+      result: claim.result, redispatchAllowed: false as const,
+      missionFenceCleared: claim.missionFenceCleared, reasonCode: claim.reasonCode,
+      replayed: true, safeActions: claim.result === "still_unknown" ? ["get_flow_authoring"]
+        : claim.authoringSessionState === "active"
+          ? ["get_flow_authoring", "advance_flow_authoring"]
+          : ["get_flow_authoring", "start_flow_authoring"],
+      requiresFreshIdempotencyKey: claim.result === "still_unknown",
+      ...(claim.result === "still_unknown" ? { nextAttemptId: randomUUID() } : {}),
+    };
+    if (claim.replayed) throw new ConflictException({
+      code: "UNKNOWN_RECONCILIATION_IN_PROGRESS", mutationOutcome: "unknown",
+      safeActions: ["get_flow_authoring"],
+    });
+    const resourceObservation = await this.reconciliationRegistry?.reconcile(claim.authority);
+    const observation = resourceObservation ?? (claim.expectedEffect.type === "none"
+      ? { result: "still_unknown" as const, reasonCode: "RECONCILIATION_EXPECTED_EFFECT_UNAVAILABLE",
+          evidence: { expectedEffectType: "none" } }
+      : await this.runner.reconcileUnknownEffect(sessionId, claim.expectedEffect, claim.baseline));
+    const settled = await this.sessions.completeUnknownReconciliation({
+      sessionId, missionId: input.missionId, operationId: input.operationId,
+      idempotencyKey: input.idempotencyKey, runtimeOwned: this.runner.hasRuntime(sessionId), ...observation,
+    });
+    return {
+      sessionId, operationId: input.operationId, originalMutationOutcome: "unknown" as const,
+      result: observation.result, redispatchAllowed: false as const,
+      missionFenceCleared: settled.missionFenceCleared,
+      reasonCode: observation.reasonCode, replayed: false,
+      safeActions: observation.result !== "still_unknown"
+        ? settled.authoringSessionState === "active"
+          ? ["get_flow_authoring", "advance_flow_authoring"]
+          : ["get_flow_authoring", "start_flow_authoring"]
+        : ["get_flow_authoring"],
+      requiresFreshIdempotencyKey: observation.result === "still_unknown",
+      ...(observation.result === "still_unknown" ? { nextAttemptId: randomUUID() } : {}),
+    };
   }
 
   async advance(

@@ -12,7 +12,7 @@ import type {
   OperationOutcome,
 } from "@scry/contracts";
 import { runProtectedStage, type AuthoringBrowserSession } from "@scry/executor";
-import { observeSemanticPageContext } from "@scry/praxis";
+import { observeSemanticPageContext, observeSemanticPageContextReferenceState, resolveTargetLocator } from "@scry/praxis";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 
 import {
@@ -128,6 +128,11 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       });
       this.operationLeaseGuards.set(modeKey, leaseGuard);
       try {
+        await this.sessions.recordDispatchBaseline({
+          sessionId,operationId: operation.operationId,expectedEffect: operation.expectedEffect,
+          documentEpoch: owned.session.documentEpoch(),url: owned.session.page.url(),
+          effectState: await observeEffectState(owned.session.page,operation.expectedEffect),
+        });
         const executeStartedAt = performance.now();
         const result = await owned.session.interact(operation.action, {
           operationId: operation.operationId,
@@ -172,6 +177,90 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       expectedEffect: { type: "none" },
       protectedInputReferences: [],
     } as unknown as AdaptiveSessionOperationInput);
+  }
+
+  /** Observation-only reconciliation. Never provisions, navigates, or dispatches. */
+  reconciliationAvailable(sessionId: string, expectedEffect: ExpectedEffect) {
+    return this.runtimes.has(sessionId) && ["navigation","visibility_change"].includes(expectedEffect.type);
+  }
+
+  hasRuntime(sessionId: string) { return this.runtimes.has(sessionId); }
+
+  async reconcileUnknownEffect(sessionId: string, expectedEffect: ExpectedEffect,
+    baseline: { url: string; documentEpoch: number; effectState: Record<string, unknown> } | null) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) return {
+      result: "still_unknown" as const,
+      reasonCode: "RECONCILIATION_RUNTIME_UNAVAILABLE",
+      evidence: { runtimeAvailable: false },
+    };
+    return this.exclusive(runtime, async () => {
+      if (!baseline) return { result: "still_unknown" as const,
+        reasonCode: "RECONCILIATION_PRE_DISPATCH_BASELINE_UNAVAILABLE", evidence: { runtimeAvailable: true } };
+      const url = runtime.session.page.url();
+      if (expectedEffect.type === "navigation") {
+        if (!expectedEffect.url) return { result: "still_unknown" as const,
+          reasonCode: "RECONCILIATION_EXPECTED_DESTINATION_MISSING", evidence: { runtimeAvailable: true } };
+        const beforeMatched = navigationMatches(baseline.url, expectedEffect.url, expectedEffect.match);
+        const matches = navigationMatches(url, expectedEffect.url, expectedEffect.match);
+        const applied = matches && !beforeMatched;
+        return { result: applied ? "proven_applied" as const : "still_unknown" as const,
+          reasonCode: applied ? "RECONCILIATION_NAVIGATION_TRANSITION_PROVEN" :
+            beforeMatched ? "RECONCILIATION_EFFECT_ALREADY_SATISFIED_BEFORE_DISPATCH" : "RECONCILIATION_NAVIGATION_INSUFFICIENT",
+          evidence: { runtimeAvailable: true, observedUrl: url, expectedEffectType: expectedEffect.type } };
+      }
+      if (expectedEffect.type === "visibility_change") {
+        const currentEpoch = runtime.session.documentEpoch();
+        if (baseline.documentEpoch !== currentEpoch) return {
+          result: "still_unknown" as const,
+          reasonCode: "RECONCILIATION_VISIBILITY_DOCUMENT_CHANGED",
+          evidence: { runtimeAvailable: true, expectedEffectType: expectedEffect.type, documentEpoch: currentEpoch },
+        };
+        const baselineVisibility = baseline.effectState.visibility;
+        const explicitInverse = expectedEffect.visible
+          ? baselineVisibility === "hidden_or_absent"
+          : baselineVisibility === "visible";
+        const baselineSatisfied = expectedEffect.visible
+          ? baselineVisibility === "visible"
+          : baselineVisibility === "hidden_or_absent";
+        if (!explicitInverse) return {
+          result: "still_unknown" as const,
+          reasonCode: baselineSatisfied ? "RECONCILIATION_EFFECT_ALREADY_SATISFIED_BEFORE_DISPATCH"
+            : "RECONCILIATION_PRE_DISPATCH_VISIBILITY_UNRESOLVED",
+          evidence: { runtimeAvailable: true, expectedEffectType: expectedEffect.type, documentEpoch: currentEpoch },
+        };
+        let visible = false;
+        let targetAbsent = false;
+        let targetResolved = false;
+        const reference = expectedEffect.target.authoritativeReference;
+        if (reference) {
+          const state = await observeSemanticPageContextReferenceState(runtime.session.page, reference);
+          if (state.state === "ambiguous_stale") return { result: "still_unknown" as const,
+            reasonCode: state.reasonCode, evidence: { runtimeAvailable: true,
+              expectedEffectType: expectedEffect.type, documentEpoch: currentEpoch } };
+          visible = state.state === "visible";
+          targetAbsent = state.state === "absent";
+          targetResolved = state.state === "visible" || state.state === "hidden";
+        } else return {
+          result: "still_unknown" as const,
+          reasonCode: "RECONCILIATION_AUTHORITATIVE_REFERENCE_REQUIRED",
+          evidence: { runtimeAvailable: true, expectedEffectType: expectedEffect.type,
+            documentEpoch: currentEpoch },
+        };
+        if (targetResolved || targetAbsent) {
+          const effectSatisfied = expectedEffect.visible ? visible : targetAbsent || !visible;
+          const applied = effectSatisfied && explicitInverse;
+          return { result: applied ? "proven_applied" as const : "still_unknown" as const,
+            reasonCode: applied ? "RECONCILIATION_VISIBILITY_TRANSITION_PROVEN" :
+              baselineSatisfied ? "RECONCILIATION_EFFECT_ALREADY_SATISFIED_BEFORE_DISPATCH" : "RECONCILIATION_VISIBILITY_INSUFFICIENT",
+            evidence: { runtimeAvailable: true, documentEpoch: currentEpoch,
+              expectedEffectType: expectedEffect.type,
+              targetState: visible ? "visible" : targetAbsent ? "absent" : "hidden" } };
+        }
+      }
+      return { result: "still_unknown" as const, reasonCode: "RECONCILIATION_EVIDENCE_INSUFFICIENT",
+        evidence: { runtimeAvailable: true, expectedEffectType: expectedEffect.type } };
+    });
   }
 
   async cancelActiveOperation(sessionId: string) {
@@ -596,6 +685,23 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       },
     };
   }
+}
+
+async function observeEffectState(page: import("playwright").Page, effect: ExpectedEffect) {
+  if (effect.type === "navigation") return { navigationUrl: page.url() };
+  if (effect.type === "visibility_change") {
+    try { return { visibility: await (await resolveTargetLocator(page,effect.target)).isVisible() ? "visible" : "hidden_or_absent" }; }
+    catch (error) { return { visibility: /TARGET_NOT_FOUND/.test(error instanceof Error ? error.message : "")
+      ? "hidden_or_absent" : "unresolved" }; }
+  }
+  return { state: "unsupported" };
+}
+
+function navigationMatches(actual: string, expected: string, match: "exact"|"path"|"contains") {
+  if (match === "contains") return actual.includes(expected);
+  if (match === "exact") return actual === expected;
+  try { return new URL(actual).pathname === new URL(expected, actual).pathname; }
+  catch { return false; }
 }
 
 function safeCheckpointFailure(message: string) {

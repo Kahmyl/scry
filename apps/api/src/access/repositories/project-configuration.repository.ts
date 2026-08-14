@@ -180,7 +180,7 @@ export class ProjectConfigurationRepository {
            WHERE s.project_id=$1 AND s.state='active'
              AND ($2::uuid IS NULL OR s.mission_id=$2)
              AND NOT EXISTS (SELECT 1 FROM adaptive_operations operation WHERE operation.session_id=s.id
-               AND (operation.state='running' OR operation.mutation_outcome='unknown'))
+               AND (operation.state='running' OR (operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id))))
            ) ranked WHERE "_categoryRank"<=6
            ORDER BY ("decisionBoundary" ? 'authoringRecovery') DESC,"_categoryRank"`, [selected.id, input.missionId ?? null]),
       ]);

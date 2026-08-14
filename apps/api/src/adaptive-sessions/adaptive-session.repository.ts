@@ -92,18 +92,18 @@ export class AdaptiveSessionRepository {
            WHERE s.id=$1 AND s.project_id=$2 AND s.state='active'
              AND (s.decision_boundary IS NULL OR s.decision_boundary->>'type'='objective_completed')
              AND NOT EXISTS (SELECT 1 FROM adaptive_operations operation WHERE operation.session_id=s.id
-               AND (operation.state='running' OR operation.mutation_outcome='unknown'))
+               AND (operation.state='running' OR (operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id))))
            FOR UPDATE OF s`,
           [input.authoringSessionId, input.projectId]);
         if (!reusable.rowCount) throw new ConflictException({ code: "AUTHORING_PREPARATION_REUSE_UNAVAILABLE" });
         const unknownMutation = await q(
           `SELECT 1 FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
-           WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' LIMIT 1`,
+           WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id) LIMIT 1`,
           [reusable.rows[0]!.missionId],
         );
         if (unknownMutation.rowCount)
           throw new ConflictException({ code: "MISSION_RECONCILIATION_REQUIRED",
-            mutationOutcome: "unknown", safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"] });
+            mutationOutcome: "unknown", safeActions: ["get_flow_authoring"] });
         const response: PreparedFlowAuthoring = { ...reusable.rows[0]!, replayed: false, reused: true,
           authoringReady: true, continuation: { nextSafeCapability: "advance_flow_authoring" } };
         await q(`UPDATE idempotency_records SET response=$3::jsonb,completed_at=now() WHERE scope=$1 AND key=$2`,
@@ -213,12 +213,12 @@ export class AdaptiveSessionRepository {
 
       const unknownMutation = await q(
         `SELECT 1 FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
-         WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' LIMIT 1`,
+         WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id) LIMIT 1`,
         [input.missionId],
       );
       if (unknownMutation.rowCount)
         throw new ConflictException({ code: "MISSION_RECONCILIATION_REQUIRED",
-          mutationOutcome: "unknown", safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"] });
+          mutationOutcome: "unknown", safeActions: ["get_flow_authoring"] });
 
       const id = randomUUID();
       await q(
@@ -427,7 +427,20 @@ export class AdaptiveSessionRepository {
                   candidate_decision_digest AS "candidateDecisionDigest",
                   capability_manifest_digest AS "capabilityManifestDigest",
                   dispatch_boundary AS "dispatchBoundary",safe_outcome AS outcome,
-                  decision_boundary AS "decisionBoundary",started_at AS "startedAt",
+                  decision_boundary AS "decisionBoundary",
+                  CASE WHEN mutation_outcome='unknown' THEN jsonb_build_object(
+                    'available',false,
+                    'redispatchAllowed',false,
+                    'result',(SELECT reconciliation.result FROM adaptive_operation_reconciliations reconciliation
+                      WHERE reconciliation.session_id=adaptive_operations.session_id
+                        AND reconciliation.operation_id=adaptive_operations.operation_id
+                        AND reconciliation.state='completed' ORDER BY reconciliation.attempt DESC LIMIT 1),
+                    'reasonCode',(SELECT reconciliation.reason_code FROM adaptive_operation_reconciliations reconciliation
+                      WHERE reconciliation.session_id=adaptive_operations.session_id
+                        AND reconciliation.operation_id=adaptive_operations.operation_id
+                        AND reconciliation.state='completed' ORDER BY reconciliation.attempt DESC LIMIT 1),
+                    'safeAction',NULL) ELSE NULL END AS reconciliation,
+                  started_at AS "startedAt",
                   completed_at AS "completedAt"
            FROM adaptive_operations WHERE session_id=$1 ORDER BY sequence`,
           [sessionId],
@@ -561,7 +574,7 @@ export class AdaptiveSessionRepository {
   continueTurn(input: { workspaceId: string | null; sessionId: string; turnId: string; idempotencyKey: string; budgets: { maxOperations: number; maxDurationMs: number } }) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
-      await this.requireSession(q, input.workspaceId, input.sessionId, true);
+      const session = await this.requireSession(q, input.workspaceId, input.sessionId, true);
       const turn = await q<{ id: string; state: string; safeInput: { intents?: MissionAuthoringIntent[] }; safeResponse: MissionAuthoringTurnResult | null; currentPhase: string; nextIntentIndex: number }>(
         `SELECT id,state,safe_input AS "safeInput",safe_response AS "safeResponse",current_phase AS "currentPhase",
                 next_intent_index AS "nextIntentIndex"
@@ -1482,6 +1495,7 @@ export class AdaptiveSessionRepository {
         operationId: input.operationId, functionalResult: input.outcome.functionalResult, mutationOutcome: input.outcome.mutationOutcome,
       });
       if (input.outcome.mutationOutcome === "unknown") {
+        await q(`SELECT id FROM missions WHERE id=$1 FOR UPDATE`,[owner.missionId]);
         await q(
           `UPDATE adaptive_sessions SET state='recovery_required',decision_boundary=$2::jsonb,
              version=version+1,updated_at=now() WHERE id=$1 AND state='active'`,
@@ -1498,6 +1512,197 @@ export class AdaptiveSessionRepository {
         [owner.missionId, owner.objectiveId, JSON.stringify({ flowDraftId: owner.flowDraftId, operationId: input.operationId, outcome: state })],
       );
       return { state, outcome: input.outcome, decisionBoundary };
+    });
+  }
+
+  beginUnknownReconciliation(input: {
+    workspaceId: string | null; sessionId: string; missionId: string;
+    operationId: string; idempotencyKey: string;
+  }) {
+    return this.database.transaction(async (client) => {
+      const q = bind(client);
+      const session = await this.requireSession(q, input.workspaceId, input.sessionId, true);
+      const operation = await q<{
+        projectId: string; environmentId: string; missionId: string; objectiveId: string; flowDraftId: string;
+        action: AdaptiveSessionOperationInput["action"]; idempotencyKey: string; operationCreatedAt: string;
+        expectedEffect: AdaptiveSessionOperationInput["expectedEffect"];
+        outcome: OperationOutcome; dispatchBoundary: string;
+        baseline: { url: string; documentEpoch: number; effectState: Record<string, unknown> } | null;
+      }>(`SELECT session.project_id AS "projectId",session.environment_id AS "environmentId",
+                  operation.mission_id AS "missionId",operation.objective_id AS "objectiveId",
+                  operation.flow_draft_id AS "flowDraftId",operation.derived_action->'action' AS action,
+                  operation.expected_effect AS "expectedEffect",operation.safe_outcome AS outcome,
+                  operation.idempotency_key AS "idempotencyKey",operation.started_at::text AS "operationCreatedAt",
+                  operation.dispatch_boundary AS "dispatchBoundary",
+                  (SELECT jsonb_build_object('url',baseline.url,'documentEpoch',baseline.document_epoch,
+                    'effectState',baseline.effect_state) FROM adaptive_operation_dispatch_baselines baseline
+                    WHERE baseline.session_id=operation.session_id
+                      AND baseline.operation_id=operation.operation_id) AS baseline
+             FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
+             WHERE operation.session_id=$1 AND operation.operation_id=$2
+               AND operation.mission_id=$3 AND operation.mutation_outcome='unknown' FOR UPDATE OF operation`,
+        [input.sessionId,input.operationId,input.missionId]);
+      if (!operation.rowCount) throw new ConflictException({ code: "UNKNOWN_OPERATION_NOT_FOUND_OR_RESOLVED" });
+      const owner = operation.rows[0]!;
+      const authority = { projectId: owner.projectId, environmentId: owner.environmentId,
+        missionId: owner.missionId, objectiveId: owner.objectiveId, flowDraftId: owner.flowDraftId,
+        sessionId: input.sessionId, operationId: input.operationId, action: owner.action,
+        expectedEffect: owner.expectedEffect, idempotencyKey: owner.idempotencyKey,
+        dispatchBoundary: owner.dispatchBoundary,
+        dispatchIdentity: { operationCreatedAt: owner.operationCreatedAt }, baseline: owner.baseline };
+      if (!['dispatching','dispatched','acknowledged'].includes(owner.dispatchBoundary))
+        throw new ConflictException({ code: "UNKNOWN_OPERATION_NOT_DISPATCHED" });
+      const requestDigest = stableDigest({ sessionId: input.sessionId, missionId: input.missionId, operationId: input.operationId });
+      const stale = await q<{ attempt: number }>(`UPDATE adaptive_operation_reconciliations SET state='completed',result='still_unknown',
+          reason_code='RECONCILIATION_OBSERVER_LOST',evidence='{"runtimeObservation":"lost"}'::jsonb,
+          completed_at=now(),fencing_token=fencing_token+1
+        WHERE session_id=$1 AND operation_id=$2 AND state='observing'
+          AND started_at < now()-interval '60 seconds' RETURNING attempt`,[input.sessionId,input.operationId]);
+      for (const recovered of stale.rows) await this.appendEvent(q,input.sessionId,'reconciliation_completed',{
+        operationId: input.operationId, attempt: recovered.attempt,
+        reconciliationResult: 'still_unknown', reasonCode: 'RECONCILIATION_OBSERVER_LOST',
+      });
+      const existing = await q<{ state: string; result: string | null; reasonCode: string | null }>(
+        `SELECT state,result,reason_code AS "reasonCode" FROM adaptive_operation_reconciliations
+          WHERE session_id=$1 AND operation_id=$2 AND idempotency_key=$3 FOR UPDATE`,
+        [input.sessionId,input.operationId,input.idempotencyKey]);
+      if (existing.rowCount) {
+        const remaining = await q(`SELECT 1 FROM unresolved_adaptive_unknown_operations WHERE mission_id=$1 LIMIT 1`,[input.missionId]);
+        return { ...existing.rows[0]!, replayed: true, expectedEffect: owner.expectedEffect, baseline: owner.baseline, authority,
+          missionFenceCleared: !remaining.rowCount, authoringSessionState: session.state };
+      }
+      const resolved = await q<{ result: string; reasonCode: string }>(
+        `SELECT result,reason_code AS "reasonCode" FROM adaptive_operation_reconciliations
+          WHERE session_id=$1 AND operation_id=$2 AND state='completed'
+            AND result IN ('proven_applied','proven_not_applied') ORDER BY attempt DESC LIMIT 1`,
+        [input.sessionId,input.operationId]);
+      if (resolved.rowCount) {
+        const remaining = await q(`SELECT 1 FROM unresolved_adaptive_unknown_operations WHERE mission_id=$1 LIMIT 1`,[input.missionId]);
+        return { state: 'completed', ...resolved.rows[0]!, replayed: true,
+          expectedEffect: owner.expectedEffect, baseline: owner.baseline, authority, missionFenceCleared: !remaining.rowCount,
+          authoringSessionState: session.state };
+      }
+      const observing = await q(`SELECT 1 FROM adaptive_operation_reconciliations
+        WHERE session_id=$1 AND operation_id=$2 AND state='observing' LIMIT 1`,
+        [input.sessionId,input.operationId]);
+      if (observing.rowCount) throw new ConflictException({
+        code: 'UNKNOWN_RECONCILIATION_IN_PROGRESS', mutationOutcome: 'unknown',
+        safeActions: ['get_flow_authoring'],
+      });
+      const inserted = await q<{ id: string; attempt: number }>(
+        `INSERT INTO adaptive_operation_reconciliations(session_id,operation_id,mission_id,objective_id,
+           flow_draft_id,idempotency_key,request_digest,attempt,state,strategy,expected_effect,original_outcome)
+         SELECT $1,$2,$3,$4,$5,$6,$7,COALESCE(max(attempt),0)+1,'observing',
+           CASE WHEN $8::jsonb->>'type'='none' THEN 'unavailable' ELSE 'browser_effect' END,$8::jsonb,$9::jsonb
+           FROM adaptive_operation_reconciliations WHERE session_id=$1 AND operation_id=$2 RETURNING id,attempt`,
+        [input.sessionId,input.operationId,owner.missionId,owner.objectiveId,owner.flowDraftId,
+          input.idempotencyKey,requestDigest,JSON.stringify(owner.expectedEffect),JSON.stringify(owner.outcome)]);
+      await this.appendEvent(q,input.sessionId,'reconciliation_started',{
+        operationId: input.operationId, attempt: inserted.rows[0]!.attempt, redispatchAllowed: false,
+      });
+      return { state: 'observing', id: inserted.rows[0]!.id, attempt: inserted.rows[0]!.attempt,
+        replayed: false, expectedEffect: owner.expectedEffect, baseline: owner.baseline, authority };
+    });
+  }
+
+  async recordDispatchBaseline(input: { sessionId: string; operationId: string;
+    expectedEffect: AdaptiveSessionOperationInput['expectedEffect']; documentEpoch: number; url: string;
+    effectState: Record<string, unknown> }) {
+    await this.database.query(`INSERT INTO adaptive_operation_dispatch_baselines(
+      session_id,operation_id,expected_effect,document_epoch,url,effect_state)
+      VALUES($1,$2,$3::jsonb,$4,$5,$6::jsonb) ON CONFLICT DO NOTHING`,
+      [input.sessionId,input.operationId,JSON.stringify(input.expectedEffect),input.documentEpoch,input.url,
+        JSON.stringify(input.effectState)]);
+  }
+
+  async getUnknownReconciliationAuthority(workspaceId: string | null, sessionId: string, operationId: string) {
+    await this.get(workspaceId, sessionId);
+    const result = await this.database.query<any>(`SELECT session.project_id AS "projectId",
+      session.environment_id AS "environmentId",operation.mission_id AS "missionId",
+      operation.objective_id AS "objectiveId",operation.flow_draft_id AS "flowDraftId",
+      operation.session_id AS "sessionId",operation.operation_id AS "operationId",
+      operation.derived_action->'action' AS action,operation.expected_effect AS "expectedEffect",
+      operation.idempotency_key AS "idempotencyKey",operation.dispatch_boundary AS "dispatchBoundary",
+      jsonb_build_object('operationCreatedAt',operation.started_at::text) AS "dispatchIdentity",
+      (SELECT jsonb_build_object('url',baseline.url,'documentEpoch',baseline.document_epoch,
+        'effectState',baseline.effect_state) FROM adaptive_operation_dispatch_baselines baseline
+        WHERE baseline.session_id=operation.session_id AND baseline.operation_id=operation.operation_id) AS baseline
+      FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
+      WHERE operation.session_id=$1 AND operation.operation_id=$2 AND operation.mutation_outcome='unknown'`,
+      [sessionId,operationId]);
+    return result.rows[0] ?? null;
+  }
+
+  completeUnknownReconciliation(input: {
+    sessionId: string; missionId: string; operationId: string; idempotencyKey: string;
+    result: 'proven_applied'|'proven_not_applied'|'still_unknown'; reasonCode: string;
+    evidence: Record<string, unknown>;
+    runtimeOwned: boolean;
+  }) {
+    return this.database.transaction(async (client) => {
+      const q = bind(client);
+      const mission = await q(`SELECT id FROM missions WHERE id=$1 FOR UPDATE`,[input.missionId]);
+      if (!mission.rowCount) throw new ConflictException({ code: 'MISSION_NOT_FOUND' });
+      const completed = await q(`UPDATE adaptive_operation_reconciliations SET state='completed',result=$4,
+          reason_code=$5,evidence=$6::jsonb,completed_at=now(),fencing_token=fencing_token+1
+        WHERE session_id=$1 AND operation_id=$2 AND idempotency_key=$3 AND state='observing' RETURNING id`,
+        [input.sessionId,input.operationId,input.idempotencyKey,input.result,input.reasonCode,JSON.stringify(input.evidence)]);
+      if (!completed.rowCount) throw new ConflictException({ code: "UNKNOWN_RECONCILIATION_FENCE_LOST" });
+      if (input.result === 'proven_applied') {
+        const operation = await q<{ flowDraftId: string; missionId: string; objectiveId: string;
+          action: AdaptiveSessionOperationInput['action']; intent: MissionAuthoringIntent }>(
+          `SELECT flow_draft_id AS "flowDraftId",mission_id AS "missionId",objective_id AS "objectiveId",
+                  derived_action->'action' AS action,authoring_intent AS intent
+             FROM adaptive_operations WHERE session_id=$1 AND operation_id=$2 FOR UPDATE`,
+          [input.sessionId,input.operationId]);
+        const owner = operation.rows[0]!;
+        const draft = await q<{ version: number; agentSessionId: string; stepExists: boolean }>(
+          `SELECT version,created_by_agent_session_id AS "agentSessionId",
+                  COALESCE(plan->'steps','[]'::jsonb) @> $4::jsonb AS "stepExists"
+             FROM flow_drafts WHERE id=$1 AND mission_id=$2 AND objective_id=$3 FOR UPDATE`,
+          [owner.flowDraftId,owner.missionId,owner.objectiveId,JSON.stringify([{ id: input.operationId }])]);
+        if (draft.rowCount && !draft.rows[0]!.stepExists) {
+          const nextVersion = draft.rows[0]!.version + 1;
+          const step = { id: input.operationId,
+            title: `Authoring reconciled: ${safeIntentTitle(owner.intent)}`, action: owner.action,
+            assertions: [], onFailure: 'stop', evidence: [], captureIntent: 'final' };
+          await q(`UPDATE flow_drafts SET plan=jsonb_set(plan,'{steps}',COALESCE(plan->'steps','[]'::jsonb) || $2::jsonb,true),
+              version=$3,state='editing',updated_at=now() WHERE id=$1`,
+            [owner.flowDraftId,JSON.stringify(step),nextVersion]);
+          await q(`UPDATE flow_compilations SET status='stale',invalidated_at=now() WHERE draft_id=$1
+            AND status IN ('pending','execution_ready','calibration_required')`,[owner.flowDraftId]);
+          await q(`INSERT INTO flow_draft_events(draft_id,version,type,agent_session_id,summary,safe_metadata)
+            VALUES($1,$2,'authoring_step_appended',$3,'Authoritative UNKNOWN reconciliation appended step',$4::jsonb)`,
+            [owner.flowDraftId,nextVersion,draft.rows[0]!.agentSessionId,JSON.stringify({ operationId: input.operationId })]);
+        }
+      }
+      await this.appendEvent(q,input.sessionId,'reconciliation_completed',{
+        operationId: input.operationId, reconciliationResult: input.result, reasonCode: input.reasonCode,
+      });
+      const remaining = await q(`SELECT 1 FROM unresolved_adaptive_unknown_operations
+        WHERE mission_id=$1 LIMIT 1`,[input.missionId]);
+      const missionFenceCleared = !remaining.rowCount;
+      if (missionFenceCleared) {
+        await q(`UPDATE adaptive_sessions SET state=CASE WHEN id=$1 AND $3::boolean AND EXISTS(
+            SELECT 1 FROM adaptive_session_runtime_leases lease
+             WHERE lease.session_id=adaptive_sessions.id AND lease.lease_expires_at>now()) THEN 'active'
+            WHEN id=$1 THEN 'failed' ELSE state END,
+          decision_boundary=CASE WHEN id=$1 AND $3::boolean AND EXISTS(
+            SELECT 1 FROM adaptive_session_runtime_leases lease
+             WHERE lease.session_id=adaptive_sessions.id AND lease.lease_expires_at>now()) THEN NULL
+            WHEN id=$1 THEN jsonb_build_object('type','environment_unavailable',
+              'reasonCode','AUTHORING_SESSION_RESTART_REQUIRED',
+              'safeActions',jsonb_build_array('get_flow_authoring','start_flow_authoring'))
+            ELSE decision_boundary END,
+          completed_at=CASE WHEN id=$1 AND $3::boolean AND EXISTS(
+            SELECT 1 FROM adaptive_session_runtime_leases lease
+             WHERE lease.session_id=adaptive_sessions.id AND lease.lease_expires_at>now()) THEN NULL
+            WHEN id=$1 THEN COALESCE(completed_at,now()) ELSE completed_at END,
+          version=version+1,updated_at=now() WHERE mission_id=$2 AND state='recovery_required'`,
+          [input.sessionId,input.missionId,input.runtimeOwned]);
+      }
+      const current = await q<{ state: string }>(`SELECT state FROM adaptive_sessions WHERE id=$1`,[input.sessionId]);
+      return { missionFenceCleared, authoringSessionState: current.rows[0]?.state ?? 'recovery_required' };
     });
   }
 
@@ -1604,7 +1809,7 @@ export class AdaptiveSessionRepository {
       const session = await this.requireSession(q, input.workspaceId, input.sessionId, true);
       const unsafe = await q(
         `SELECT 1 FROM adaptive_operations WHERE session_id=$1 AND
-          (state='running' OR mutation_outcome='unknown') LIMIT 1 FOR UPDATE`, [input.sessionId],
+          (state='running' OR (mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(session_id,operation_id))) LIMIT 1 FOR UPDATE`, [input.sessionId],
       );
       if (unsafe.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_CLOSE_RECONCILIATION_REQUIRED" });
       if (session.state === "completed") return { replayed: true };
@@ -1823,7 +2028,7 @@ export class AdaptiveSessionRepository {
            AND checkpoint.expires_at>now()
            AND NOT EXISTS(
              SELECT 1 FROM adaptive_operations operation
-             WHERE operation.session_id=$1 AND operation.mutation_outcome='unknown'
+             WHERE operation.session_id=$1 AND operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id)
            )
          RETURNING checkpoint.id AS "checkpointId",checkpoint.run_id AS "runId",
            checkpoint.ciphertext,checkpoint.initialization_vector AS "initializationVector",

@@ -387,7 +387,7 @@ export class MissionService {
         throw new ConflictException({ code: "MISSION_AUTHORING_CLOSE_REQUIRED" });
       const unsafe = await q(`SELECT 1 FROM adaptive_operations o
         WHERE o.mission_id=$1 AND o.objective_id=$2
-          AND (o.state='running' OR o.mutation_outcome='unknown') LIMIT 1 FOR UPDATE`,
+          AND (o.state='running' OR (o.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(o.session_id,o.operation_id))) LIMIT 1 FOR UPDATE`,
         [input.missionId,input.objectiveId]);
       if (unsafe.rowCount) throw new ConflictException({
         code: "MISSION_AUTHORING_CLOSE_RECONCILIATION_REQUIRED",
