@@ -1,5 +1,5 @@
 import { ConflictException, Inject, Injectable, OnModuleDestroy } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
 import type {
@@ -12,6 +12,7 @@ import type {
   OperationOutcome,
 } from "@scry/contracts";
 import { runProtectedStage, type AuthoringBrowserSession } from "@scry/executor";
+import { observeSemanticPageContext } from "@scry/praxis";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 
 import {
@@ -162,6 +163,17 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     });
   }
 
+  async initialize(sessionId: string) {
+    await this.runtime(sessionId, {
+      operationId: "successor-checkpoint-restore",
+      idempotencyKey: "successor-checkpoint-restore",
+      mode: "observe",
+      action: { type: "waitFor" },
+      expectedEffect: { type: "none" },
+      protectedInputReferences: [],
+    } as unknown as AdaptiveSessionOperationInput);
+  }
+
   async cancelActiveOperation(sessionId: string) {
     const runtime = this.runtimes.get(sessionId);
     if (!runtime) return;
@@ -251,7 +263,13 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       idempotencyKey: operationId,
     });
     let browser: AuthoringBrowserSession | undefined;
+    let successorCheckpoint: Awaited<ReturnType<AdaptiveSessionRepository["claimSuccessorCheckpoint"]>>;
     try {
+      successorCheckpoint = await this.sessions.claimSuccessorCheckpoint(
+        sessionId,
+        this.ownerId,
+        lease.fencingToken,
+      );
       browser = await this.kernel.openAuthoringSession({
         request,
         capabilities: capability,
@@ -261,10 +279,25 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           veilAdmissionKey: this.veilAdmissionKey,
           browserChannel: this.browserChannel,
           policy: context.policy,
-          openBrowser: () => this.nativeBrowser.openBrowser({}, {
-            kind: "safe_browser",
-            ownerId: sessionId,
-          }),
+          openBrowser: async () => {
+            const restored = await this.nativeBrowser.openBrowser(
+              successorCheckpoint
+                ? { storageState: successorCheckpoint.payload.storageState, serviceWorkers: "block" }
+                : {},
+              { kind: "safe_browser", ownerId: sessionId },
+            );
+            if (successorCheckpoint) {
+              const sessionState = successorCheckpoint.payload.sessionStorage;
+              await restored.context.addInitScript(
+                ({ origin, entries }) => {
+                  if (location.origin !== origin) return;
+                  for (const [key, value] of entries) sessionStorage.setItem(key, value);
+                },
+                sessionState,
+              );
+            }
+            return restored;
+          },
           executeInteraction: (input) =>
             this.executeInteraction({
               sessionId,
@@ -285,11 +318,38 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         : undefined;
       await this.nativeBrowser.navigateAndWait(
         browser.page,
-        continuationUrl ?? admittedFirstNavigation ?? context.baseOrigin,
+        successorCheckpoint?.payload.restorationUrl ?? continuationUrl ?? admittedFirstNavigation ?? context.baseOrigin,
         context.policy.allowedOrigins,
         30_000,
         context.policy.trustedScriptOrigins ?? [],
       );
+      if (successorCheckpoint) {
+        if (
+          successorCheckpoint.payload.policyDigest !==
+          createHash("sha256").update(JSON.stringify(context.policy)).digest("hex")
+        )
+          throw new Error("SUCCESSOR_CHECKPOINT_POLICY_CHANGED");
+        if (browser.page.url() !== successorCheckpoint.payload.restorationUrl)
+          throw new Error("SUCCESSOR_CHECKPOINT_LOCATION_MISMATCH");
+        const semantic = await observeSemanticPageContext(browser.page);
+        const expected = successorCheckpoint.payload.safeSemanticContext;
+        if (expected.title && semantic.authority.title !== expected.title)
+          throw new Error("SUCCESSOR_CHECKPOINT_SEMANTIC_MISMATCH");
+        const actualControls = semantic.controls
+          .slice(0, 24)
+          .map(({ role, name }) => ({ role, name }));
+        if (
+          expected.controls.length > 0 &&
+          JSON.stringify(actualControls) !== JSON.stringify(expected.controls)
+        )
+          throw new Error("SUCCESSOR_CHECKPOINT_SEMANTIC_MISMATCH");
+        await this.sessions.heartbeatRuntimeLease({
+          sessionId,
+          ownerId: this.ownerId,
+          fencingToken: lease.fencingToken,
+          leaseDurationMs: this.leaseDurationMs,
+        });
+      }
       const observation = await browser.observeDocument();
       await this.sessions.recordVerifiedObservation({
         sessionId,
@@ -297,10 +357,29 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         documentEpoch: observation.documentEpoch,
         url: observation.url,
       });
+      if (successorCheckpoint)
+        await this.sessions.completeSuccessorCheckpoint(
+          sessionId,
+          successorCheckpoint.checkpointId,
+          this.ownerId,
+          lease.fencingToken,
+          "verified",
+        );
       const owned = { session: browser, fencingToken: lease.fencingToken, tail: Promise.resolve() };
       this.runtimes.set(sessionId, owned);
       return owned;
     } catch (error) {
+      if (successorCheckpoint!)
+        await this.sessions
+          .completeSuccessorCheckpoint(
+            sessionId,
+            successorCheckpoint.checkpointId,
+            this.ownerId,
+            lease.fencingToken,
+            "failed",
+            error instanceof Error ? safeCheckpointFailure(error.message) : "SUCCESSOR_CHECKPOINT_RESTORE_FAILED",
+          )
+          .catch(() => undefined);
       await browser?.close().catch(() => undefined);
       await this.sessions.releaseRuntimeLease({
         sessionId,
@@ -516,6 +595,12 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       },
     };
   }
+}
+
+function safeCheckpointFailure(message: string) {
+  return message.startsWith("SUCCESSOR_CHECKPOINT_")
+    ? message
+    : "SUCCESSOR_CHECKPOINT_RESTORE_FAILED";
 }
 
 function composeSignals(...signals: Array<AbortSignal | undefined>) {

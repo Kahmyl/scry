@@ -120,6 +120,17 @@ export type ExecuteOptions = {
   /** Internal authoring boundary: execute against the already-owned safe session. */
   existingSafeSession?: import("./browser-session.js").SafeBrowserSession;
   captureBrowserState?: (state: BrowserStorageState) => void | Promise<void>;
+  captureSuccessorCheckpoint?: (checkpoint: {
+    schemaVersion: 1;
+    policyDigest: string;
+    storageState: BrowserStorageState;
+    sessionStorage: { origin: string; entries: Array<[string, string]> };
+    restorationUrl: string;
+    safeSemanticContext: {
+      title: string;
+      controls: Array<{ role: string; name: string }>;
+    };
+  }) => void | Promise<void>;
   secretResolver?: SecretResolver;
   secretCapture?: SecretCapture;
   atomicSecretCapture?: AtomicSecretCapture;

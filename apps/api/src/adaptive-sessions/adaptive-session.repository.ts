@@ -250,7 +250,8 @@ export class AdaptiveSessionRepository {
       );
       await this.appendEvent(q, id, "session_created", {}, input.idempotencyKey);
       await this.transitionLocked(q, id, "created", "provisioning", "provisioning_started", {});
-      await this.transitionLocked(q, id, "provisioning", "active", "session_activated", {});
+      if (!initialFlow.predecessorRunId)
+        await this.transitionLocked(q, id, "provisioning", "active", "session_activated", {});
       return { id, replayed: false };
     });
   }
@@ -306,6 +307,12 @@ export class AdaptiveSessionRepository {
         throw new ConflictException({ code: "TRUST_RECOVERY_SOURCE_STALE" });
       if (current.draftState !== "editing")
         throw new ConflictException({ code: "TRUST_RECOVERY_DRAFT_STALE" });
+      const completedPrefix = await q(`SELECT 1 FROM runs WHERE mission_id=$1 LIMIT 1`, [input.missionId]);
+      if (completedPrefix.rowCount)
+        throw new ConflictException({
+          code: "TRUST_RECOVERY_REQUIRES_EXPLICIT_CHECKPOINT_REPLAY",
+          safeActions: ["get_mission", "create_flow_draft", "start_flow_authoring"],
+        });
       const recovery = current.decisionBoundary?.environmentRecovery;
       if (current.decisionBoundary?.reasonCode !== "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED" ||
           !recovery || recovery.environmentId !== input.sourceEnvironmentId)
@@ -1011,13 +1018,19 @@ export class AdaptiveSessionRepository {
         [input.sessionId, input.objectiveId, input.flowDraftId],
       );
       if (running.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_HANDOFF_OPERATION_RUNNING" });
-      const target = await q<{ purpose: string }>(
-        `SELECT d.purpose FROM flow_drafts d JOIN environments e ON e.id=d.environment_id
+      const target = await q<{ purpose: string; predecessorRunId: string | null }>(
+        `SELECT d.purpose,d.predecessor_run_id AS "predecessorRunId"
+         FROM flow_drafts d JOIN environments e ON e.id=d.environment_id
          WHERE d.id=$1 AND d.objective_id=$2 AND d.mission_id=$3 AND d.project_id=$4
            AND e.id=$5`,
         [input.flowDraftId, input.objectiveId, session.missionId, session.projectId, session.environmentId],
       );
       if (!target.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_HANDOFF_OWNERSHIP_INVALID" });
+      if (target.rows[0]!.predecessorRunId)
+        throw new ConflictException({
+          code: "SUCCESSOR_FLOW_REQUIRES_NEW_AUTHORING_SESSION",
+          safeActions: ["start_flow_authoring"],
+        });
       const sequence = await q<{ sequence: number }>(
         `SELECT COALESCE(max(sequence),0)+1 AS sequence FROM mission_authoring_handoffs WHERE session_id=$1`, [input.sessionId],
       );
@@ -1643,6 +1656,216 @@ export class AdaptiveSessionRepository {
     return this.database.transaction((client) => this.runtimeContext(bind(client), sessionId));
   }
 
+  async activateProvisionedSession(sessionId: string) {
+    return this.database.transaction(async (client) => {
+      const q = bind(client);
+      const continuity = await q<{
+        predecessorRunId: string | null;
+        checkpointState: string | null;
+        hasRuns: boolean;
+      }>(
+        `SELECT draft.predecessor_run_id AS "predecessorRunId",checkpoint.state AS "checkpointState",
+                EXISTS(SELECT 1 FROM runs WHERE mission_id=session.mission_id) AS "hasRuns"
+         FROM adaptive_sessions session
+         JOIN flow_drafts draft ON draft.id=session.active_flow_draft_id
+         LEFT JOIN run_successor_checkpoints checkpoint
+           ON checkpoint.id=session.restored_successor_checkpoint_id
+         WHERE session.id=$1 AND session.state='provisioning' FOR UPDATE OF session`,
+        [sessionId],
+      );
+      if (!continuity.rowCount)
+        throw new ConflictException({ code: "ADAPTIVE_SESSION_NOT_PROVISIONING" });
+      const row = continuity.rows[0]!;
+      if (
+        (row.hasRuns && !row.predecessorRunId) ||
+        (row.predecessorRunId && row.checkpointState !== "verified")
+      )
+        throw new ConflictException({ code: "SUCCESSOR_CHECKPOINT_NOT_VERIFIED" });
+      await this.transitionLocked(q, sessionId, "provisioning", "active", "session_activated", {});
+    });
+  }
+
+  async failProvisionedSession(sessionId: string, reasonCode: string) {
+    await this.database.transaction(async (client) => {
+      await client.query(
+        `UPDATE adaptive_sessions SET state='failed',failure_code=$2,updated_at=now(),version=version+1
+         WHERE id=$1 AND state='provisioning'`,
+        [sessionId, reasonCode],
+      );
+      await client.query(
+        `UPDATE run_successor_checkpoints SET state='destroyed',ciphertext=NULL,
+           initialization_vector=NULL,authentication_tag=NULL,reason_code=$2,updated_at=now()
+         WHERE claimed_by_authoring_session_id=$1
+           AND state IN ('available','restoring','verified')`,
+        [sessionId, reasonCode],
+      );
+    });
+  }
+
+  async claimSuccessorCheckpoint(
+    sessionId: string,
+    ownerId: string,
+    fencingToken: number,
+  ) {
+    const claimed = await this.database.transaction(async (client) => {
+      await client.query(
+        `UPDATE run_successor_checkpoints SET state='destroyed',ciphertext=NULL,
+           initialization_vector=NULL,authentication_tag=NULL,reason_code='CHECKPOINT_EXPIRED',updated_at=now()
+         WHERE expires_at<=now() AND state IN ('establishing','available','restoring','verified')`,
+      );
+      await client.query(
+        `UPDATE run_successor_checkpoints checkpoint SET state='available',
+           claimed_by_authoring_session_id=NULL,restore_owner_id=NULL,restore_fencing_token=NULL,
+           reason_code='STALE_RESTORE_RECOVERED',updated_at=now()
+         FROM adaptive_sessions session
+         LEFT JOIN adaptive_session_runtime_leases lease ON lease.session_id=session.id
+         WHERE checkpoint.claimed_by_authoring_session_id=session.id
+           AND checkpoint.state='restoring' AND checkpoint.expires_at>now()
+           AND (lease.session_id IS NULL OR lease.lease_expires_at<=now()
+             OR checkpoint.restore_owner_id<>lease.owner_id
+             OR checkpoint.restore_fencing_token<>lease.fencing_token)`,
+      );
+      const result = await client.query<{
+        checkpointId: string;
+        runId: string;
+        ciphertext: Buffer;
+        initializationVector: Buffer;
+        authenticationTag: Buffer;
+        bindingFingerprint: string;
+      }>(
+        `UPDATE run_successor_checkpoints checkpoint SET
+           state='restoring',claimed_by_authoring_session_id=$1,
+           restore_owner_id=$2,restore_fencing_token=$3,
+           restoration_attempts=restoration_attempts+1,updated_at=now()
+         FROM adaptive_sessions session
+         JOIN flow_drafts draft ON draft.id=session.active_flow_draft_id
+         JOIN runs run ON run.id=draft.predecessor_run_id
+         JOIN adaptive_session_runtime_leases lease ON lease.session_id=session.id
+         WHERE session.id=$1 AND session.state IN ('provisioning','active')
+           AND lease.owner_id=$2 AND lease.fencing_token=$3 AND lease.lease_expires_at>now()
+           AND checkpoint.run_id=run.id AND checkpoint.mission_id=session.mission_id
+           AND checkpoint.environment_id=session.environment_id
+           AND run.state='passed' AND run.outcome_classification='passed'
+           AND checkpoint.state IN ('available','verified') AND checkpoint.restoration_attempts<10
+           AND (checkpoint.claimed_by_authoring_session_id IS NULL
+             OR checkpoint.claimed_by_authoring_session_id=$1)
+           AND checkpoint.expires_at>now()
+           AND NOT EXISTS(
+             SELECT 1 FROM adaptive_operations operation
+             WHERE operation.session_id=$1 AND operation.mutation_outcome='unknown'
+           )
+         RETURNING checkpoint.id AS "checkpointId",checkpoint.run_id AS "runId",
+           checkpoint.ciphertext,checkpoint.initialization_vector AS "initializationVector",
+           checkpoint.authentication_tag AS "authenticationTag",
+           checkpoint.binding_fingerprint AS "bindingFingerprint"`,
+        [sessionId, ownerId, fencingToken],
+      );
+      if (!result.rowCount) {
+        const draft = await client.query<{ predecessorRunId: string | null }>(
+          `SELECT draft.predecessor_run_id AS "predecessorRunId"
+           FROM adaptive_sessions session JOIN flow_drafts draft ON draft.id=session.active_flow_draft_id
+           WHERE session.id=$1`,
+          [sessionId],
+        );
+        if (!draft.rowCount) throw new ConflictException({ code: "ADAPTIVE_SESSION_NOT_ACTIVE" });
+        if (!draft.rows[0]!.predecessorRunId) return null;
+        throw new ConflictException({ code: "SUCCESSOR_CHECKPOINT_UNAVAILABLE" });
+      }
+      const row = result.rows[0]!;
+      let payload: {
+        schemaVersion: 1;
+        policyDigest: string;
+        storageState: NonNullable<import("playwright").BrowserContextOptions["storageState"]>;
+        sessionStorage: { origin: string; entries: Array<[string, string]> };
+        restorationUrl: string;
+        safeSemanticContext: { title: string; controls: Array<{ role: string; name: string }> };
+      };
+      try {
+        payload = JSON.parse(
+          decryptCredential({
+            ciphertext: row.ciphertext,
+            initializationVector: row.initializationVector,
+            authenticationTag: row.authenticationTag,
+          }),
+        );
+        if (
+          payload.schemaVersion !== 1 ||
+          !/^[a-f0-9]{64}$/.test(payload.policyDigest) ||
+          typeof payload.restorationUrl !== "string" ||
+          typeof payload.sessionStorage?.origin !== "string" ||
+          !Array.isArray(payload.sessionStorage.entries) ||
+          !Array.isArray(payload.safeSemanticContext?.controls)
+        )
+          throw new Error("invalid checkpoint payload");
+        if (new URL(payload.restorationUrl).origin !== payload.sessionStorage.origin)
+          throw new Error("checkpoint origin mismatch");
+      } catch {
+        await client.query(
+          `UPDATE run_successor_checkpoints SET state='failed',ciphertext=NULL,
+             initialization_vector=NULL,authentication_tag=NULL,reason_code='CHECKPOINT_PAYLOAD_INVALID',updated_at=now()
+           WHERE id=$1`,
+          [row.checkpointId],
+        );
+        return { errorCode: "SUCCESSOR_CHECKPOINT_PAYLOAD_INVALID" as const };
+      }
+      const expectedBinding = createHash("sha256")
+        .update(JSON.stringify({
+          schemaVersion: payload.schemaVersion,
+          policyDigest: payload.policyDigest,
+          runId: row.runId,
+          missionId: (await client.query(`SELECT mission_id FROM adaptive_sessions WHERE id=$1`, [sessionId])).rows[0]!.mission_id,
+          objectiveId: (await client.query(`SELECT objective_id FROM runs WHERE id=$1`, [row.runId])).rows[0]!.objective_id,
+          flowRevisionId: (await client.query(`SELECT flow_revision_id FROM runs WHERE id=$1`, [row.runId])).rows[0]!.flow_revision_id,
+          environmentId: (await client.query(`SELECT environment_id FROM adaptive_sessions WHERE id=$1`, [sessionId])).rows[0]!.environment_id,
+          restorationUrl: payload.restorationUrl,
+        }))
+        .digest("hex");
+      if (expectedBinding !== row.bindingFingerprint) {
+        await client.query(
+          `UPDATE run_successor_checkpoints SET state='failed',ciphertext=NULL,
+             initialization_vector=NULL,authentication_tag=NULL,reason_code='CHECKPOINT_BINDING_MISMATCH',updated_at=now()
+           WHERE id=$1`,
+          [row.checkpointId],
+        );
+        return { errorCode: "SUCCESSOR_CHECKPOINT_BINDING_MISMATCH" as const };
+      }
+      await client.query(
+        `UPDATE adaptive_sessions SET restored_successor_checkpoint_id=$2,updated_at=now() WHERE id=$1`,
+        [sessionId, row.checkpointId],
+      );
+      return { checkpointId: row.checkpointId, payload };
+    });
+    if (claimed && "errorCode" in claimed)
+      throw new ConflictException({ code: claimed.errorCode });
+    return claimed;
+  }
+
+  async completeSuccessorCheckpoint(
+    sessionId: string,
+    checkpointId: string,
+    ownerId: string,
+    fencingToken: number,
+    outcome: "verified" | "failed",
+    reasonCode?: string,
+  ) {
+    const result = await this.database.query(
+      `UPDATE run_successor_checkpoints checkpoint SET state=$5,
+         ciphertext=CASE WHEN $5='failed' THEN NULL ELSE ciphertext END,
+         initialization_vector=CASE WHEN $5='failed' THEN NULL ELSE initialization_vector END,
+         authentication_tag=CASE WHEN $5='failed' THEN NULL ELSE authentication_tag END,
+         restore_owner_id=NULL,restore_fencing_token=NULL,reason_code=$6,
+         restored_at=CASE WHEN $5='verified' THEN now() ELSE NULL END,updated_at=now()
+       FROM adaptive_session_runtime_leases lease
+       WHERE checkpoint.id=$2 AND checkpoint.claimed_by_authoring_session_id=$1
+         AND checkpoint.state='restoring' AND lease.session_id=$1
+         AND lease.owner_id=$3 AND lease.fencing_token=$4 AND lease.lease_expires_at>now()
+         AND checkpoint.restore_owner_id=$3 AND checkpoint.restore_fencing_token=$4
+       RETURNING checkpoint.id`,
+      [sessionId, checkpointId, ownerId, fencingToken, outcome, reasonCode ?? null],
+    );
+    if (!result.rowCount) throw new ConflictException({ code: "SUCCESSOR_CHECKPOINT_STATE_CONFLICT" });
+  }
+
   async recordVerifiedObservation(input: {
     sessionId: string;
     operationId: string;
@@ -2047,6 +2270,16 @@ export class AdaptiveSessionRepository {
        WHERE id=$1`,
       [sessionId, target],
     );
+    if (["completed", "failed", "cancelled"].includes(target)) {
+      await q(
+        `UPDATE run_successor_checkpoints SET state='destroyed',ciphertext=NULL,
+           initialization_vector=NULL,authentication_tag=NULL,
+           reason_code='AUTHORING_SESSION_TERMINATED',updated_at=now()
+         WHERE claimed_by_authoring_session_id=$1
+           AND state IN ('available','restoring','verified')`,
+        [sessionId],
+      );
+    }
     await this.appendEvent(q, sessionId, eventType, safeFacts, idempotencyKey);
   }
 
@@ -2232,8 +2465,8 @@ export class AdaptiveSessionRepository {
   }
 
   private async validateControlPlaneLinks(q: Query, input: StartAdaptiveSessionInput) {
-    const ownership = await q<{ purpose: string }>(
-      `SELECT d.purpose
+    const ownership = await q<{ purpose: string; predecessorRunId: string | null }>(
+      `SELECT d.purpose,d.predecessor_run_id AS "predecessorRunId"
        FROM missions m
        JOIN mission_objectives o ON o.mission_id=m.id
        JOIN flow_drafts d

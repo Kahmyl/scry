@@ -91,6 +91,34 @@ export class AuthoringService {
           safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"],
         });
 
+      const priorRuns = await q(`SELECT 1 FROM runs WHERE mission_id=$1 LIMIT 1`, [input.missionId]);
+      if (!priorRuns.rowCount && input.predecessorRunId) {
+        throw new ConflictException({ code: "FIRST_FLOW_PREDECESSOR_FORBIDDEN" });
+      }
+      if (priorRuns.rowCount && !input.predecessorRunId) {
+        throw new ConflictException({
+          code: "SUCCESSOR_PREDECESSOR_RUN_REQUIRED",
+          safeActions: ["get_mission"],
+        });
+      }
+      if (input.predecessorRunId) {
+        const predecessor = await q(
+          `SELECT 1 FROM runs run
+           JOIN run_successor_checkpoints checkpoint ON checkpoint.run_id=run.id
+           WHERE run.id=$1 AND run.mission_id=$2
+             AND run.environment_id=$3 AND run.state='passed'
+             AND run.outcome_classification='passed'
+             AND checkpoint.state='available' AND checkpoint.expires_at>now()
+             AND checkpoint.claimed_by_authoring_session_id IS NULL`,
+          [input.predecessorRunId, input.missionId, input.environmentId],
+        );
+        if (!predecessor.rowCount)
+          throw new ConflictException({
+            code: "SUCCESSOR_CHECKPOINT_UNAVAILABLE",
+            safeActions: ["get_mission"],
+          });
+      }
+
       const id = randomUUID();
 
       await q(
@@ -108,11 +136,12 @@ export class AuthoringService {
           state,
           version,
           plan,
+          predecessor_run_id,
           created_by_agent_session_id
         )
         VALUES(
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,
-          'editing',1,$11::jsonb,$12
+          'editing',1,$11::jsonb,$12,$13
         )`,
         [
           id,
@@ -126,6 +155,7 @@ export class AuthoringService {
           input.purpose ?? "primary",
           JSON.stringify(input.content),
           JSON.stringify(input.plan),
+          input.predecessorRunId ?? null,
           input.agentSessionId,
         ],
       );
@@ -136,6 +166,7 @@ export class AuthoringService {
 
       await this.activity(q, input, "Flow draft created", {
         draftId: id,
+        ...(input.predecessorRunId ? { predecessorRunId: input.predecessorRunId } : {}),
       });
 
       return {

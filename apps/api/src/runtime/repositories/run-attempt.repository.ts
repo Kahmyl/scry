@@ -196,6 +196,41 @@ export class RunAttemptRepository {
          WHERE id = $1 AND state IN ('preparing','running','finalizing')`,
         [runId, state, outcomeClassification, resultClassification],
       );
+      if (state === "passed" && resultClassification === "application_pass") {
+        const checkpoint = await client.query(
+          `UPDATE run_successor_checkpoints checkpoint
+           SET state='available',sealed_at=now(),updated_at=now()
+           WHERE checkpoint.run_id=$1 AND checkpoint.state='establishing'
+             AND checkpoint.expires_at>now()
+             AND NOT EXISTS(SELECT 1 FROM credential_incidents WHERE run_id=$1)
+             AND NOT EXISTS(
+               SELECT 1 FROM protected_transactions
+               WHERE run_id=$1 AND (capsule_status NOT IN ('destroyed','force_terminated')
+                 OR evidence_status NOT IN ('resumed','permanently_suppressed'))
+             )
+             AND NOT EXISTS(
+               SELECT 1 FROM attempts a
+               LEFT JOIN artifacts artifact ON artifact.attempt_id=a.id
+               LEFT JOIN artifact_timeline_entries timeline ON timeline.attempt_id=a.id
+               LEFT JOIN privacy_intervals privacy ON privacy.attempt_id=a.id
+               WHERE a.id=$2 AND (artifact.availability IN ('failed','incomplete','quarantined')
+                 OR timeline.entry_type IN ('unavailable_interval','quarantine_record')
+                 OR (privacy.id IS NOT NULL AND privacy.ended_at IS NULL))
+             )
+           RETURNING checkpoint.id`,
+          [runId, attemptId],
+        );
+        if (!checkpoint.rowCount)
+          throw new ConflictException("SUCCESSOR_CHECKPOINT_NOT_PRIVACY_ADMISSIBLE");
+      } else {
+        await client.query(
+          `UPDATE run_successor_checkpoints
+           SET state='destroyed',ciphertext=NULL,initialization_vector=NULL,
+               authentication_tag=NULL,reason_code='RUN_NOT_SUCCESSFUL',updated_at=now()
+           WHERE run_id=$1 AND state='establishing'`,
+          [runId],
+        );
+      }
       await client.query(
         `UPDATE flow_compilations
          SET publication_gate=jsonb_build_object(
@@ -331,6 +366,13 @@ export class RunAttemptRepository {
         [attemptId, claimToken, error],
       );
       if (!attempt.rowCount) return;
+      await client.query(
+        `UPDATE run_successor_checkpoints SET state='destroyed',ciphertext=NULL,
+           initialization_vector=NULL,authentication_tag=NULL,
+           reason_code='RUN_ATTEMPT_FAILED',updated_at=now()
+         WHERE run_id=$1 AND state='establishing'`,
+        [runId],
+      );
       await client.query(
         `UPDATE runs SET state = $2, phase = CASE WHEN $3::boolean THEN 'queued' ELSE 'completed' END,
                          outcome_classification = CASE WHEN $3::boolean THEN outcome_classification ELSE 'infrastructure_failure' END,

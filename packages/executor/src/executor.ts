@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -32,7 +32,7 @@ import {
   registerVeilEvidenceAdmission,
   writeJson,
 } from "./artifacts.js";
-import { playwrightBrowserChannel, visualRedactionInitScript } from "@scry/praxis";
+import { observeSemanticPageContext, playwrightBrowserChannel, visualRedactionInitScript } from "@scry/praxis";
 import {
   registerGroundingHistoryProvider,
   registerGroundingObserver,
@@ -942,6 +942,51 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       runArtifacts.push(...traceArtifacts);
       for (const artifact of traceArtifacts)
         await emit("artifact.created", { artifact, path: artifact.relativePath });
+    }
+    if (context && page && state.terminalState === "passed" && options.captureSuccessorCheckpoint) {
+      try {
+        const [storageState, sessionEntries, semantic] = await Promise.all([
+          context.storageState({ indexedDB: true }),
+          page.evaluate(() => Object.entries(sessionStorage)),
+          observeSemanticPageContext(page),
+        ]);
+        const restorationUrl = page.url();
+        if (!options.policy.allowedOrigins.includes(new URL(restorationUrl).origin))
+          throw new Error("SUCCESSOR_CHECKPOINT_ORIGIN_NOT_ALLOWED");
+        const admittedOrigins = new Set(options.policy.allowedOrigins);
+        const admittedHosts = new Set(
+          options.policy.allowedOrigins.map((origin) => new URL(origin).hostname),
+        );
+        storageState.origins = storageState.origins.filter((entry) => admittedOrigins.has(entry.origin));
+        storageState.cookies = storageState.cookies.filter((cookie) => {
+          const cookieDomain = cookie.domain.replace(/^\./, "");
+          return [...admittedHosts].some(
+            (host) => host === cookieDomain || host.endsWith(`.${cookieDomain}`),
+          );
+        });
+        const sessionBytes = sessionEntries.reduce(
+          (total, [key, value]) => total + Buffer.byteLength(key) + Buffer.byteLength(value),
+          0,
+        );
+        if (sessionEntries.length > 512 || sessionBytes > 512 * 1024)
+          throw new Error("SUCCESSOR_CHECKPOINT_SESSION_STORAGE_TOO_LARGE");
+        if (Buffer.byteLength(JSON.stringify(storageState)) > 2 * 1024 * 1024)
+          throw new Error("SUCCESSOR_CHECKPOINT_STORAGE_STATE_TOO_LARGE");
+        await options.captureSuccessorCheckpoint({
+          schemaVersion: 1,
+          policyDigest: createHash("sha256").update(JSON.stringify(options.policy)).digest("hex"),
+          storageState,
+          sessionStorage: { origin: new URL(page.url()).origin, entries: sessionEntries },
+          restorationUrl,
+          safeSemanticContext: {
+            title: semantic.authority.title,
+            controls: semantic.controls.slice(0, 24).map(({ role, name }) => ({ role, name })),
+          },
+        });
+      } catch (error) {
+        state.terminalState = "infrastructure_error";
+        state.fatalError = "SUCCESSOR_CHECKPOINT_ESTABLISHMENT_FAILED";
+      }
     }
     if (context && state.terminalState === "passed" && options.captureBrowserState) {
       await Promise.resolve(options.captureBrowserState(await context.storageState())).catch(

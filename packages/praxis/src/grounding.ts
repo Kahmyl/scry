@@ -731,7 +731,9 @@ async function resolveScope(
   if (scope.kind === "page") return parent;
   const { options, matches } = await matchingScopeOptions(parent, scope);
   if (matches.length === 1) return options.nth(matches[0]!);
-  const code = matches.length === 0 ? "TARGET_SCOPE_NOT_FOUND" : "TARGET_SCOPE_INVALID";
+  const code = matches.length === 0 && (await options.count()) === 0
+    ? "TARGET_SCOPE_NOT_FOUND"
+    : "TARGET_SCOPE_INVALID";
   throw new GroundingError(code, scopeDiagnostic(scope, matches.length, code));
 }
 

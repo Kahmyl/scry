@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { currentPlanSchema, executionPolicySchema } from "@scry/contracts";
 import { resolveTargetLocator } from "@scry/praxis";
 
@@ -51,14 +51,54 @@ describe("DOM-stable readiness", () => {
         },
       ],
     });
+    const captureSuccessorCheckpoint = vi.fn();
     const report = await executePlan({
       plan,
       policy: executionPolicySchema.parse({ allowedOrigins: [origin], allowPrivateNetwork: true }),
       outputDirectory: await mkdtemp(path.join(tmpdir(), "scry-dom-stable-")),
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+      captureSuccessorCheckpoint,
     });
     expect(report.state).toBe("passed");
     expect(report.steps[0]?.readiness).toMatchObject({ status: "passed" });
+    expect(captureSuccessorCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schemaVersion: 1,
+        policyDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        restorationUrl: `${origin}/`,
+        storageState: expect.objectContaining({ cookies: expect.any(Array), origins: expect.any(Array) }),
+        sessionStorage: { origin, entries: [] },
+      }),
+    );
+  }, 15_000);
+
+  it("fails the Run closed when the durable successor checkpoint cannot be staged", async () => {
+    const server = createServer((_request, response) => {
+      response.setHeader("content-type", "text/html");
+      response.end("<main>ready</main>");
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("server unavailable");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const plan = currentPlanSchema.parse({
+      name: "Checkpoint failure", objective: "Fail closed", allowedOrigins: [origin],
+      budgets: { maxActions: 1, maxDurationMs: 10_000, maxNavigations: 1 }, checkpoints: [],
+      steps: [{ id: "open", title: "Open", action: { type: "navigate", url: origin },
+        assertions: [], evidence: [], onFailure: "stop", captureIntent: "transient" }],
+    });
+    const report = await executePlan({
+      plan,
+      policy: executionPolicySchema.parse({ allowedOrigins: [origin], allowPrivateNetwork: true }),
+      outputDirectory: await mkdtemp(path.join(tmpdir(), "scry-checkpoint-failure-")),
+      browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+      captureSuccessorCheckpoint: () => { throw new Error("storage unavailable"); },
+    });
+    expect(report).toMatchObject({
+      state: "infrastructure_error",
+      error: "SUCCESSOR_CHECKPOINT_ESTABLISHMENT_FAILED",
+    });
   }, 15_000);
 
   it("keeps post-action readiness independent after the pre-dispatch deadline expires", async () => {

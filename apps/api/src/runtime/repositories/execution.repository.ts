@@ -180,6 +180,13 @@ export class ExecutionRepository {
     return this.protectedState.completeCheckpoint(runId, checkpointId, outcome, reasonCode);
   }
 
+  stageSuccessorCheckpoint(
+    runId: string,
+    input: Parameters<ProtectedExecutionStateRepository["stageSuccessorCheckpoint"]>[1],
+  ) {
+    return this.protectedState.stageSuccessorCheckpoint(runId, input);
+  }
+
   verifyCalibrationAttestation(
     runId: string,
     attestationId: string,

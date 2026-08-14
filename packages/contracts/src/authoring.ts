@@ -733,6 +733,7 @@ export const createFlowDraftSchema = objectiveContextSchema
   .extend({
     projectId: uuid,
     environmentId: uuid,
+    predecessorRunId: uuid.optional(),
     flowId: uuid.optional(),
     name: z.string().trim().min(1).max(200),
     description: z.string().trim().max(2_000).default(""),

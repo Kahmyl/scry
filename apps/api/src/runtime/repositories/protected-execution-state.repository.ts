@@ -1,5 +1,5 @@
 import { ConflictException, NotFoundException } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { decryptCredential, encryptCredential } from "../../access/credential.crypto.js";
 import { Database } from "../../infrastructure/index.js";
@@ -284,6 +284,91 @@ export class ProtectedExecutionStateRepository {
       [runId, checkpointId, outcome, reasonCode ?? null],
     );
     if (!result.rowCount) throw new ConflictException("CHECKPOINT_STATE_CONFLICT");
+  }
+
+  async stageSuccessorCheckpoint(
+    runId: string,
+    input: {
+      schemaVersion: 1;
+      policyDigest: string;
+      storageState: unknown;
+      sessionStorage: { origin: string; entries: Array<[string, string]> };
+      restorationUrl: string;
+      safeSemanticContext: {
+        title: string;
+        controls: Array<{ role: string; name: string }>;
+      };
+    },
+  ) {
+    const encrypted = encryptCredential(JSON.stringify(input));
+    return this.database.transaction(async (client) => {
+      const run = await client.query<{
+        mission_id: string;
+        objective_id: string;
+        flow_revision_id: string;
+        environment_id: string;
+      }>(
+        `SELECT mission_id,objective_id,flow_revision_id,environment_id
+         FROM runs WHERE id=$1 AND state IN ('running','finalizing') FOR UPDATE`,
+        [runId],
+      );
+      if (!run.rowCount) throw new ConflictException("SUCCESSOR_CHECKPOINT_RUN_NOT_ACTIVE");
+      const source = run.rows[0]!;
+      const bindingFingerprint = createHash("sha256")
+        .update(
+          JSON.stringify({
+            schemaVersion: input.schemaVersion,
+            policyDigest: input.policyDigest,
+            runId,
+            missionId: source.mission_id,
+            objectiveId: source.objective_id,
+            flowRevisionId: source.flow_revision_id,
+            environmentId: source.environment_id,
+            restorationUrl: input.restorationUrl,
+          }),
+        )
+        .digest("hex");
+      const restorationCommitment = createHash("sha256").update(input.restorationUrl).digest("hex");
+      const semanticCommitment = createHash("sha256")
+        .update(JSON.stringify(input.safeSemanticContext))
+        .digest("hex");
+      const result = await client.query<{ id: string }>(
+        `INSERT INTO run_successor_checkpoints(
+           id,run_id,mission_id,objective_id,flow_revision_id,environment_id,state,
+           ciphertext,initialization_vector,authentication_tag,binding_fingerprint,
+           restoration_commitment,semantic_commitment,expires_at
+         ) VALUES($1,$2,$3,$4,$5,$6,'establishing',$7,$8,$9,$10,$11,$12,now()+interval '24 hours')
+         ON CONFLICT(run_id) DO UPDATE SET
+           state='establishing',ciphertext=EXCLUDED.ciphertext,
+           initialization_vector=EXCLUDED.initialization_vector,
+           authentication_tag=EXCLUDED.authentication_tag,
+           binding_fingerprint=EXCLUDED.binding_fingerprint,
+           restoration_commitment=EXCLUDED.restoration_commitment,
+           semantic_commitment=EXCLUDED.semantic_commitment,
+           claimed_by_authoring_session_id=NULL,restore_owner_id=NULL,restore_fencing_token=NULL,
+           restoration_attempts=0,
+           expires_at=EXCLUDED.expires_at,reason_code=NULL,sealed_at=NULL,
+           restored_at=NULL,updated_at=now()
+         WHERE run_successor_checkpoints.state IN ('establishing','failed','destroyed')
+         RETURNING id`,
+        [
+          randomUUID(),
+          runId,
+          source.mission_id,
+          source.objective_id,
+          source.flow_revision_id,
+          source.environment_id,
+          encrypted.ciphertext,
+          encrypted.initializationVector,
+          encrypted.authenticationTag,
+          bindingFingerprint,
+          restorationCommitment,
+          semanticCommitment,
+        ],
+      );
+      if (!result.rowCount) throw new ConflictException("SUCCESSOR_CHECKPOINT_ALREADY_CONSUMED");
+      return { checkpointId: result.rows[0]!.id };
+    });
   }
 
   async verifyCalibrationAttestation(

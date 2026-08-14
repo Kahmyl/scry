@@ -114,6 +114,9 @@ export function createRunProcessor(options: RunProcessorOptions) {
             ? { readinessTimeoutMultiplier: execution.readinessTimeoutMultiplier }
             : {}),
           signal: controller.signal,
+          captureSuccessorCheckpoint: async (checkpoint) => {
+            await options.executions.stageSuccessorCheckpoint(job.data.runId, checkpoint);
+          },
           onEvent: async (event) => {
             const phase = phaseForEvent(event.type);
             if (phase) await options.executions.setRunPhase(job.data.runId, phase);

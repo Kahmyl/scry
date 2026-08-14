@@ -80,6 +80,7 @@ describe("schema migration manifest", () => {
       expect(source).toContain("protected-response-output-staging.sql");
       expect(source).toContain("protected-read-only-dispatch.sql");
       expect(source).toContain("external-resource-bindings.sql");
+      expect(source).toContain("segmented-flow-successor-checkpoints.sql");
     }
   });
 
@@ -94,6 +95,19 @@ describe("schema migration manifest", () => {
     expect(migration).toContain("durable_count<>1");
     expect(migration).toContain("Completed adaptive protected projection disagrees with durable operation");
     expect(migration).not.toContain("current_setting");
+  });
+
+  it("stores successor browser restoration material only as ciphertext and commitments", async () => {
+    const migration = await readFile(
+      new URL("migrations/segmented-flow-successor-checkpoints.sql", root),
+      "utf8",
+    );
+    expect(migration).toContain("ciphertext bytea");
+    expect(migration).toContain("restoration_commitment text");
+    expect(migration).toContain("semantic_commitment text");
+    expect(migration).not.toContain("restoration_url");
+    expect(migration).not.toContain("safe_semantic_context");
+    expect(migration).toContain("restore_fencing_token");
   });
 
   it("defines the complete Mission-first M1 ownership cutover", async () => {

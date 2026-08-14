@@ -50,6 +50,22 @@ export class MissionFlowAuthoringService {
     await this.admission.assertAcceptingWork();
     this.requireWrite(principal);
     const result = await this.sessions.create(workspaceId(principal), input);
+    const created = await this.sessions.get(workspaceId(principal), result.id);
+    if (created.state === "provisioning") {
+      try {
+        await this.runner.initialize(result.id);
+        await this.sessions.activateProvisionedSession(result.id);
+      } catch (error) {
+        await this.runner.close(result.id).catch(() => undefined);
+        await this.sessions.failProvisionedSession(
+          result.id,
+          error instanceof Error && error.message.startsWith("SUCCESSOR_CHECKPOINT_")
+            ? error.message
+            : "AUTHORING_PROVISIONING_FAILED",
+        );
+        throw error;
+      }
+    }
     return {
       ...(await this.sessions.get(workspaceId(principal), result.id)),
       replayed: result.replayed,
