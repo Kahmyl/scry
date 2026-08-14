@@ -20,7 +20,7 @@ export function registerGetOperatingContextTool(server: McpServer, client: ScryA
     return toolResult(context, selectedMission?.status === "awaiting_user"
       ? "This is a non-terminal human prerequisite. Preserve and resume the same Mission/Objective; explain the factual fulfillment paths and do not publish a final result while input remains obtainable."
       : context.authoring.uncertain.items.length
-        ? "An unresolved UNKNOWN operation fences this Mission. Do not redispatch it. Call each uncertain item's exact inspectionTool with its sessionId; reconcile only if that current authoring result exposes reconciliation as available."
+        ? `An unresolved UNKNOWN operation fences this Mission. Do not redispatch it. Call each uncertain item's exact inspectionTool with its sessionId; reconcile only if that current authoring result exposes reconciliation as available.${context.authoring.uncertain.items.some((item) => item.distinctMissionAlternative) ? " A distinctMissionAlternative does not resolve or weaken this Mission's fence; use it only when the user's explicit authority permits starting separate work, and preserve the fenced Mission." : ""}`
       : context.authoring.recoverable.items.length
         ? "Authoring is recoverable without replacing the Mission or Flow. Call the exact recoveryTool/recoveryKind and include the returned recoveryBinding; this is a fresh intents turn, never a pending-turn continuation."
       : context.authoring.ready

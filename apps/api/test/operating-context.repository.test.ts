@@ -122,6 +122,7 @@ describe("operating context repository", () => {
       if (text.includes("FROM projects")) return { rowCount: 1, rows: [{ id: projectId, name: "One", description: "" }] };
       if (text.includes("session.state='recovery_required'")) return { rowCount: 1, rows: [{
         sessionId, missionId, objectiveId, flowDraftId, environmentId, operationId,
+        dispatchSemantics: "read_only",
       }] };
       if (text.includes("FROM missions")) return { rowCount: 1, rows: [{ id: missionId, title: "Mission",
         status: "running", revision: 1, currentObjectiveId: objectiveId, resumePointer: null }] };
@@ -139,8 +140,12 @@ describe("operating context repository", () => {
     expect(result.authoring.uncertain.items).toEqual([expect.objectContaining({
       sessionId, operationId, originalMutationOutcome: "unknown", redispatchAllowed: false,
       inspectionTool: "get_flow_authoring", reconciliationAvailable: false,
+      distinctMissionAlternative: {
+        available: true, tool: "start_mission", requiresExplicitUserAuthority: true,
+        preservesCurrentMissionFence: true, basis: "uncertain_operation_declared_read_only",
+      },
     })]);
-    expect(result.continuation.safeActions).toEqual(["get_flow_authoring"]);
+    expect(result.continuation.safeActions).toEqual(["get_flow_authoring", "start_mission"]);
     expect(result.continuation.deterministicPreparationAvailable).toBe(false);
     const uncertainQuery = query.mock.calls.map(([text]) => String(text))
       .find((text) => text.includes("session.state='recovery_required'"));

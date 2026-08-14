@@ -91,6 +91,13 @@ export const operatingContextSchema = z.object({
       redispatchAllowed: z.literal(false),
       inspectionTool: z.literal("get_flow_authoring"),
       reconciliationAvailable: z.boolean(),
+      distinctMissionAlternative: z.object({
+        available: z.literal(true),
+        tool: z.literal("start_mission"),
+        requiresExplicitUserAuthority: z.literal(true),
+        preservesCurrentMissionFence: z.literal(true),
+        basis: z.literal("uncertain_operation_declared_read_only"),
+      }).strict().optional(),
     }).strict(), 5),
     ready: z.boolean(),
     missing: z.array(z.enum([

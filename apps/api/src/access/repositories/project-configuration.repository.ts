@@ -185,7 +185,7 @@ export class ProjectConfigurationRepository {
            ) ranked WHERE "_categoryRank"<=6
            ORDER BY ("decisionBoundary" ? 'authoringRecovery') DESC,"_categoryRank"`, [selected.id, input.missionId ?? null]),
         query.query<{ sessionId: string; missionId: string; objectiveId: string; flowDraftId: string;
-          environmentId: string; operationId: string }>(
+          environmentId: string; operationId: string; dispatchSemantics: string | null }>(
           `WITH candidate_missions AS (
              SELECT candidate.id FROM missions candidate
               WHERE candidate.project_id=$1
@@ -196,6 +196,7 @@ export class ProjectConfigurationRepository {
            SELECT session.id AS "sessionId",session.mission_id AS "missionId",
                   session.active_objective_id AS "objectiveId",session.active_flow_draft_id AS "flowDraftId",
                   session.environment_id AS "environmentId",operation.operation_id AS "operationId",
+                  operation.dispatch_semantics AS "dispatchSemantics",
                   row_number() OVER (PARTITION BY session.mission_id ORDER BY session.updated_at DESC) AS rank
              FROM adaptive_sessions session
              JOIN candidate_missions mission ON mission.id=session.mission_id
@@ -203,14 +204,16 @@ export class ProjectConfigurationRepository {
              JOIN agent_sessions agent ON agent.id=session.agent_session_id
              JOIN flow_drafts draft ON draft.id=session.active_flow_draft_id
              JOIN LATERAL (
-               SELECT candidate.operation_id FROM adaptive_operations candidate
+               SELECT candidate.operation_id,
+                      candidate.derived_action->'action'->>'dispatchSemantics' AS dispatch_semantics
+                 FROM adaptive_operations candidate
                 WHERE candidate.session_id=session.id AND candidate.mutation_outcome='unknown'
                   AND adaptive_operation_unknown_unresolved(candidate.session_id,candidate.operation_id)
                 ORDER BY candidate.sequence DESC LIMIT 1
              ) operation ON true
             WHERE session.project_id=$1 AND session.state='recovery_required'
               AND ($2::uuid IS NULL OR session.mission_id=$2)
-           ) SELECT "sessionId","missionId","objectiveId","flowDraftId","environmentId","operationId"
+           ) SELECT "sessionId","missionId","objectiveId","flowDraftId","environmentId","operationId","dispatchSemantics"
                FROM ranked WHERE rank<=6 ORDER BY "missionId",rank`, [selected.id, input.missionId ?? null]),
       ]);
       const snapshot = { missions, credentials, environments, authoring, uncertainAuthoring };
@@ -292,12 +295,19 @@ export class ProjectConfigurationRepository {
       }));
     const uncertainCandidates = snapshot.uncertainAuthoring.rows.filter(({ missionId }) =>
       missionId === selectedMissionId);
-    const uncertain = uncertainCandidates.slice(0, 5).map((item) => ({
+    const uncertain = uncertainCandidates.slice(0, 5).map(({ dispatchSemantics, ...item }) => ({
       ...item,
       originalMutationOutcome: "unknown" as const,
       redispatchAllowed: false as const,
       inspectionTool: "get_flow_authoring" as const,
       reconciliationAvailable: false,
+      ...(dispatchSemantics === "read_only" ? { distinctMissionAlternative: {
+        available: true as const,
+        tool: "start_mission" as const,
+        requiresExplicitUserAuthority: true as const,
+        preservesCurrentMissionFence: true as const,
+        basis: "uncertain_operation_declared_read_only" as const,
+      } } : {}),
     }));
     const compatibleReusable = reusable.filter(({ missionId, environmentId }) =>
       missionId === selectedMissionId && compatibleEnvironmentIds.has(environmentId));
@@ -332,7 +342,8 @@ export class ProjectConfigurationRepository {
         ),
         userAuthorityRequired: !selectedMissionId && missionItems.length > 1,
         safeActions: uncertain.length > 0
-          ? ["get_flow_authoring"]
+          ? ["get_flow_authoring", ...(uncertain.some((item) => item.distinctMissionAlternative)
+            ? ["start_mission"] : [])]
           : recoverable.length > 0
           ? ["get_flow_authoring", "advance_flow_authoring"]
           : missing.length === 0
