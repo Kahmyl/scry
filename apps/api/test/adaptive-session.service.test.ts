@@ -1,280 +1,172 @@
-import { ConflictException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 import { MissionFlowAuthoringService } from "../src/adaptive-sessions/mission-flow-authoring.service.js";
 
-const principal = {
-  kind: "user" as const,
-  subject: "user:test",
-  userId: randomUUID(),
-  email: "test@example.test",
-  workspaceId: randomUUID(),
-  role: "owner" as const,
-};
+const principal = { kind: "user" as const, subject: "user:test", userId: randomUUID(),
+  email: "test@example.test", workspaceId: randomUUID(), role: "owner" as const };
+const objectiveId = randomUUID();
+const flowDraftId = randomUUID();
 
-describe("MissionFlowAuthoringService", () => {
-  it("settles a durable operation with the kernel runner result", async () => {
-    const outcome = {
-      operationId: "inspect",
-      functionalResult: "succeeded" as const,
-      mutationOutcome: "not_applied" as const,
-      privacyResult: "verified" as const,
-      evidenceResult: [],
-      qualityFindings: [],
-      durationMs: 5,
-    };
-    const repository = {
-      beginOperation: vi.fn().mockResolvedValue({ replayed: false }),
-      settleOperation: vi.fn().mockResolvedValue({ state: "completed" }),
-      markOperationFailed: vi.fn(),
-    };
-    const runner = {
-      execute: vi.fn().mockResolvedValue({
-        outcome,
-        capabilityManifestDigest: "b".repeat(64),
-        decisionBoundary: {
-          type: "objective_completed",
-          reasonCode: "OBJECTIVE_COMPLETED",
-          safeActions: [],
-        },
-      }),
-    };
-    const service = new MissionFlowAuthoringService(
-      repository as never,
-      runner as never,
-      { assertAcceptingWork: vi.fn() } as never,
-    );
-    await expect(service.advance(principal, randomUUID(), operation())).resolves.toMatchObject({
-      state: "completed",
+const outcome = (operationId = "operation") => ({ operationId,
+  functionalResult: "succeeded" as const, mutationOutcome: "not_applied" as const,
+  privacyResult: "unverified" as const, evidenceResult: [], qualityFindings: [], durationMs: 5 });
+
+function request(count = 1) {
+  return { kind: "intents" as const, idempotencyKey: `semantic-turn-${count}`,
+    budgets: { maxOperations: count, maxDurationMs: 30_000 },
+    intents: Array.from({ length: count }, (_, index) => ({
+      intentId: `inspect-${index}`, objectiveId, flowDraftId,
+      action: { kind: "inspect" as const, target: { concept: `region ${index}`,
+        role: "region" as const, name: `Region ${index}`, exact: true } },
+      authorization: { kind: "ordinary" as const },
+      constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      expectedEffect: { kind: "none" as const }, protectedInputReferences: [],
+    })) };
+}
+
+function repository(overrides: Record<string, unknown> = {}) {
+  return {
+    beginTurn: vi.fn().mockResolvedValue({ turnId: randomUUID(), replayed: false, response: null }),
+    validateIntentAdmission: vi.fn(), handoff: vi.fn().mockResolvedValue({ handedOff: false }),
+    beginMissionOperation: vi.fn().mockResolvedValue({ replayed: false, state: "running" }),
+    settleMissionOperation: vi.fn(async ({ operationId, outcome: result }) => ({
+      state: "completed", outcome: result ?? outcome(operationId),
+      decisionBoundary: { type: "objective_completed", reasonCode: "DONE", safeActions: [] },
+    })),
+    settleTurn: vi.fn(async ({ result }) => result), persistPending: vi.fn(async ({ result }) => result),
+    markOperationFailed: vi.fn(), replayDisposition: vi.fn(),
+    markRunningOperationRecoveryRequired: vi.fn(), ...overrides,
+  };
+}
+
+function runner(overrides: Record<string, unknown> = {}) {
+  return { execute: vi.fn(async (_sessionId, operation) => ({ outcome: outcome(operation.operationId),
+    capabilityManifestDigest: "a".repeat(64),
+    decisionBoundary: { type: "objective_completed", reasonCode: "DONE", safeActions: [] },
+    timings: { resolveMs: 1, executeMs: 1, verifyMs: 1 },
+    safeState: { url: "https://example.test", documentEpoch: 1 },
+  })), cancelActiveOperation: vi.fn(), ...overrides };
+}
+
+describe("MissionFlowAuthoringService current semantic contract", () => {
+  it("settles a durable semantic operation with the kernel result", async () => {
+    const repo = repository(); const runtime = runner();
+    const service = new MissionFlowAuthoringService(repo as never, runtime as never,
+      { assertAcceptingWork: vi.fn() } as never);
+    await expect(service.advance(principal, randomUUID(), request())).resolves.toMatchObject({
+      state: "completed", completed: [{ intentId: "inspect-0" }],
     });
-    expect(runner.execute).toHaveBeenCalledOnce();
-    expect(repository.settleOperation).toHaveBeenCalledWith(
-      expect.objectContaining({ outcome, capabilityManifestDigest: "b".repeat(64) }),
-    );
-  });
-
-  it("moves a failed runtime operation to recovery through the repository", async () => {
-    const repository = {
-      beginOperation: vi.fn().mockResolvedValue({ replayed: false }),
-      settleOperation: vi.fn(),
-      markOperationFailed: vi.fn(),
-    };
-    const runner = {
-      execute: vi
-        .fn()
-        .mockRejectedValue(new ConflictException({ code: "ADAPTIVE_SESSION_RUNTIME_NOT_BOUND" })),
-      close: vi.fn(),
-    };
-    const service = new MissionFlowAuthoringService(
-      repository as never,
-      runner as never,
-      { assertAcceptingWork: vi.fn() } as never,
-    );
-    await expect(service.advance(principal, randomUUID(), operation())).rejects.toMatchObject({
-      response: {
-        code: "ADAPTIVE_SESSION_RUNTIME_NOT_BOUND",
-        safeActions: ["get_flow_authoring", "advance_flow_authoring"],
-      },
-    });
-    expect(repository.markOperationFailed).toHaveBeenCalledWith(
-      expect.any(String),
-      "inspect",
-      "ADAPTIVE_SESSION_RUNTIME_NOT_BOUND",
-    );
-  });
-
-  it("preserves a kernel admission code instead of collapsing it to an internal error", async () => {
-    const repository = {
-      beginOperation: vi.fn().mockResolvedValue({ replayed: false }),
-      settleOperation: vi.fn(),
-      markOperationFailed: vi.fn(),
-    };
-    const runner = {
-      execute: vi.fn().mockRejectedValue(
-        Object.assign(new Error("EXECUTION_MODE_POLICY_DENIED"), {
-          code: "EXECUTION_MODE_POLICY_DENIED",
-        }),
-      ),
-      close: vi.fn(),
-    };
-    const service = new MissionFlowAuthoringService(
-      repository as never,
-      runner as never,
-      { assertAcceptingWork: vi.fn() } as never,
-    );
-
-    await expect(service.advance(principal, randomUUID(), operation())).rejects.toMatchObject({
-      response: {
-        code: "EXECUTION_MODE_POLICY_DENIED",
-        safeActions: ["get_flow_authoring", "advance_flow_authoring"],
-      },
-    });
-    expect(repository.markOperationFailed).toHaveBeenCalledWith(
-      expect.any(String),
-      "inspect",
-      "EXECUTION_MODE_POLICY_DENIED",
-    );
-  });
-
-  it("does not redispatch an operation left running by a crashed owner", async () => {
-    const repository = {
-      beginOperation: vi.fn().mockResolvedValue({ replayed: true, state: "running" }),
-      replayDisposition: vi.fn().mockResolvedValue({ requiresReconciliation: true }),
-      markRunningOperationRecoveryRequired: vi.fn(),
-    };
-    const runner = { execute: vi.fn() };
-    const service = new MissionFlowAuthoringService(
-      repository as never,
-      runner as never,
-      { assertAcceptingWork: vi.fn() } as never,
-    );
-    await expect(service.advance(principal, randomUUID(), operation())).rejects.toMatchObject({
-      response: { code: "ADAPTIVE_OPERATION_RECONCILIATION_REQUIRED" },
-    });
-    expect(repository.markRunningOperationRecoveryRequired).toHaveBeenCalledOnce();
-    expect(runner.execute).not.toHaveBeenCalled();
-  });
-
-  it("returns one stable pending identity for a concurrent same-key request", async () => {
-    const repository = {
-      beginOperation: vi.fn().mockResolvedValue({ replayed: true, state: "running" }),
-      replayDisposition: vi.fn().mockResolvedValue({
-        requiresReconciliation: false,
-        canResume: false,
-        dispatchBoundary: "dispatching",
-      }),
-      markRunningOperationRecoveryRequired: vi.fn(),
-    };
-    const runner = { execute: vi.fn() };
-    const service = new MissionFlowAuthoringService(
-      repository as never,
-      runner as never,
-      { assertAcceptingWork: vi.fn() } as never,
-    );
-    await expect(service.advance(principal, randomUUID(), operation())).resolves.toEqual({
-      operationId: "inspect",
-      state: "running",
-      dispatchBoundary: "dispatching",
-      replayed: true,
-    });
-    expect(repository.markRunningOperationRecoveryRequired).not.toHaveBeenCalled();
-    expect(runner.execute).not.toHaveBeenCalled();
-  });
-
-  it("safely resumes an undispatched operation after its owner lease expires", async () => {
-    const outcome = {
-      operationId: "inspect",
-      functionalResult: "succeeded" as const,
-      mutationOutcome: "not_applied" as const,
-      privacyResult: "verified" as const,
-      evidenceResult: [],
-      qualityFindings: [],
-      durationMs: 5,
-    };
-    const repository = {
-      beginOperation: vi.fn().mockResolvedValue({ replayed: true, state: "running" }),
-      replayDisposition: vi.fn().mockResolvedValue({
-        requiresReconciliation: false,
-        canResume: true,
-        dispatchBoundary: "not_dispatched",
-      }),
-      settleOperation: vi.fn().mockResolvedValue({ state: "completed", outcome }),
-      markOperationFailed: vi.fn(),
-    };
-    const runner = {
-      execute: vi.fn().mockResolvedValue({
-        outcome,
-        capabilityManifestDigest: "a".repeat(64),
-        decisionBoundary: { type: "objective_completed", reasonCode: "DONE", safeActions: [] },
-      }),
-      close: vi.fn(),
-    };
-    const service = new MissionFlowAuthoringService(
-      repository as never,
-      runner as never,
-      { assertAcceptingWork: vi.fn() } as never,
-    );
-
-    await expect(service.advance(principal, randomUUID(), operation())).resolves.toMatchObject({
-      operationId: "inspect",
-      replayed: true,
-      state: "completed",
-    });
-    expect(runner.execute).toHaveBeenCalledOnce();
-  });
-
-  it("executes a bounded deterministic operation group without client polling", async () => {
-    const outcome = {
-      operationId: "placeholder",
-      functionalResult: "succeeded" as const,
-      mutationOutcome: "not_applied" as const,
-      privacyResult: "verified" as const,
-      evidenceResult: [],
-      qualityFindings: [],
-      durationMs: 5,
-    };
-    const repository = {
-      beginOperation: vi.fn().mockResolvedValue({ replayed: false }),
-      settleOperation: vi.fn(async ({ operationId }) => ({
-        state: "completed",
-        outcome: { ...outcome, operationId },
-        decisionBoundary: {
-          type: "objective_completed",
-          reasonCode: "OPERATION_COMPLETED",
-          safeActions: [],
-        },
-      })),
-      markOperationFailed: vi.fn(),
-    };
-    const runner = {
-      execute: vi.fn(async (_sessionId, item) => ({
-        outcome: { ...outcome, operationId: item.operationId },
-        capabilityManifestDigest: "b".repeat(64),
-        decisionBoundary: {
-          type: "objective_completed",
-          reasonCode: "OPERATION_COMPLETED",
-          safeActions: [],
-        },
-      })),
-    };
-    const admission = { assertAcceptingWork: vi.fn() };
-    const service = new MissionFlowAuthoringService(
-      repository as never,
-      runner as never,
-      admission as never,
-    );
-    const operations = ["one", "two", "three"].map((id) => ({
-      ...operation(),
-      operationId: id,
-      idempotencyKey: `adaptive-operation-${id}`,
+    expect(runtime.execute).toHaveBeenCalledOnce();
+    expect(repo.settleMissionOperation).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: expect.objectContaining({ functionalResult: "succeeded" }),
+      capabilityManifestDigest: "a".repeat(64),
     }));
-    await expect(
-      service.advance(principal, randomUUID(), {
-        idempotencyKey: "adaptive-group-1",
-        operations,
-        budgets: { maxOperations: 3, maxDurationMs: 30_000 },
-      }),
-    ).resolves.toMatchObject({
-      operationsCompleted: [{ state: "completed" }, { state: "completed" }, { state: "completed" }],
-      decisionBoundary: { type: "objective_completed", reasonCode: "ADAPTIVE_TURN_COMPLETED" },
+  });
+
+  it("moves a failed runtime operation through durable failure settlement", async () => {
+    const error = Object.assign(new Error("ADAPTIVE_SESSION_RUNTIME_NOT_BOUND"),
+      { code: "ADAPTIVE_SESSION_RUNTIME_NOT_BOUND" });
+    const repo = repository(); const runtime = runner({ execute: vi.fn().mockRejectedValue(error) });
+    const service = new MissionFlowAuthoringService(repo as never, runtime as never,
+      { assertAcceptingWork: vi.fn() } as never);
+    await expect(service.advance(principal, randomUUID(), request())).resolves.toMatchObject({
+      state: "decision_required", decisionBoundary: {
+        reasonCode: "ADAPTIVE_SESSION_RUNTIME_NOT_BOUND",
+      },
     });
-    expect(runner.execute).toHaveBeenCalledTimes(3);
+    expect(repo.markOperationFailed).toHaveBeenCalledWith(expect.any(String), expect.any(String),
+      "ADAPTIVE_SESSION_RUNTIME_NOT_BOUND");
+  });
+
+  it("preserves a kernel policy-admission code", async () => {
+    const error = Object.assign(new Error("EXECUTION_MODE_POLICY_DENIED"),
+      { code: "EXECUTION_MODE_POLICY_DENIED" });
+    const repo = repository(); const runtime = runner({ execute: vi.fn().mockRejectedValue(error) });
+    const service = new MissionFlowAuthoringService(repo as never, runtime as never,
+      { assertAcceptingWork: vi.fn() } as never);
+    await expect(service.advance(principal, randomUUID(), request())).resolves.toMatchObject({
+      state: "decision_required", decisionBoundary: { type: "policy_refused",
+        reasonCode: "EXECUTION_MODE_POLICY_DENIED" },
+    });
+    expect(repo.markOperationFailed).toHaveBeenCalledWith(expect.any(String), expect.any(String),
+      "EXECUTION_MODE_POLICY_DENIED");
+  });
+
+  it("returns authoritative UNKNOWN reconciliation after a post-dispatch failure", async () => {
+    const error = Object.assign(new Error("AUTHORING_TURN_BUDGET_EXHAUSTED"),
+      { code: "AUTHORING_TURN_BUDGET_EXHAUSTED" });
+    const reconciliation = { type: "mutation_reconciliation_required" as const,
+      reasonCode: "ADAPTIVE_OPERATION_OUTCOME_UNKNOWN", safeActions: ["get_flow_authoring"] };
+    const repo = repository({ markOperationFailed: vi.fn().mockResolvedValue({
+      outcome: { ...outcome(), functionalResult: "failed", mutationOutcome: "unknown" },
+      decisionBoundary: reconciliation,
+    }) });
+    const runtime = runner({ execute: vi.fn().mockRejectedValue(error) });
+    const service = new MissionFlowAuthoringService(repo as never, runtime as never,
+      { assertAcceptingWork: vi.fn() } as never);
+    await expect(service.advance(principal, randomUUID(), request())).resolves.toMatchObject({
+      state: "decision_required", decisionBoundary: reconciliation,
+    });
+  });
+
+  it("does not redispatch a replayed running operation requiring reconciliation", async () => {
+    const repo = repository({ beginMissionOperation: vi.fn().mockResolvedValue({ replayed: true,
+      state: "running" }), replayDisposition: vi.fn().mockResolvedValue({
+      requiresReconciliation: true, canResume: false, dispatchBoundary: "dispatched" }) });
+    const runtime = runner();
+    const service = new MissionFlowAuthoringService(repo as never, runtime as never,
+      { assertAcceptingWork: vi.fn() } as never);
+    await expect(service.advance(principal, randomUUID(), request())).resolves.toMatchObject({
+      state: "decision_required", decisionBoundary: {
+        reasonCode: "ADAPTIVE_OPERATION_RECONCILIATION_REQUIRED",
+      },
+    });
+    expect(repo.markRunningOperationRecoveryRequired).toHaveBeenCalledOnce();
+    expect(runtime.execute).not.toHaveBeenCalled();
+  });
+
+  it("returns one stable pending turn for an active replayed operation", async () => {
+    const repo = repository({ beginMissionOperation: vi.fn().mockResolvedValue({ replayed: true,
+      state: "running" }), replayDisposition: vi.fn().mockResolvedValue({
+      requiresReconciliation: false, canResume: false, dispatchBoundary: "dispatching" }) });
+    const runtime = runner();
+    const service = new MissionFlowAuthoringService(repo as never, runtime as never,
+      { assertAcceptingWork: vi.fn() } as never);
+    const result = await service.advance(principal, randomUUID(), request());
+    expect(result).toMatchObject({
+      state: "pending", continuation: { phase: "operation_running" },
+    });
+    expect(result.turnId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(repo.persistPending.mock.calls[0]![0].result.turnId).toBe(result.turnId);
+    expect(repo.persistPending).toHaveBeenCalledOnce();
+    expect(runtime.execute).not.toHaveBeenCalled();
+  });
+
+  it("resumes only a replayed operation proven undispatched", async () => {
+    const repo = repository({ beginMissionOperation: vi.fn().mockResolvedValue({ replayed: true,
+      state: "running" }), replayDisposition: vi.fn().mockResolvedValue({
+      requiresReconciliation: false, canResume: true, dispatchBoundary: "not_dispatched" }) });
+    const runtime = runner();
+    const service = new MissionFlowAuthoringService(repo as never, runtime as never,
+      { assertAcceptingWork: vi.fn() } as never);
+    await expect(service.advance(principal, randomUUID(), request())).resolves.toMatchObject({
+      state: "completed",
+    });
+    expect(runtime.execute).toHaveBeenCalledOnce();
+  });
+
+  it("executes a bounded deterministic semantic group without client polling", async () => {
+    const repo = repository(); const runtime = runner();
+    const admission = { assertAcceptingWork: vi.fn() };
+    const service = new MissionFlowAuthoringService(repo as never, runtime as never,
+      admission as never);
+    await expect(service.advance(principal, randomUUID(), request(3))).resolves.toMatchObject({
+      state: "completed", completed: [{ intentId: "inspect-0" }, { intentId: "inspect-1" },
+        { intentId: "inspect-2" }],
+    });
+    expect(runtime.execute).toHaveBeenCalledTimes(3);
+    expect(repo.settleMissionOperation).toHaveBeenCalledTimes(3);
     expect(admission.assertAcceptingWork).toHaveBeenCalledOnce();
   });
 });
-
-function operation() {
-  return {
-    operationId: "inspect",
-    idempotencyKey: "adaptive-inspect-1",
-    action: { type: "navigate" as const, url: "https://example.test", timeoutMs: 10_000 },
-    expectedEffect: {
-      type: "navigation" as const,
-      url: "https://example.test",
-      match: "exact" as const,
-    },
-    mode: "rehearse" as const,
-    protectedInputReferences: [],
-  };
-}

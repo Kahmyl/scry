@@ -158,6 +158,8 @@ describe("bounded semantic page context", () => {
     const intent = referenceIntent(reference);
 
     await page.getByLabel("Email").fill("safe@example.test");
+    const refreshed = await observeSemanticPageContext(page);
+    expect(refreshed.controls.find((control) => control.valueProtected)!.reference).toBe(reference);
     await expect(resolveTarget(page, intent)).resolves.toMatchObject({ adapter: "native_fill" });
 
     await page.locator("#password").evaluate((element) => { element.setAttribute("disabled", ""); });
@@ -176,6 +178,30 @@ describe("bounded semantic page context", () => {
     intent.requiredCapabilities = ["focusable", "pointer_activatable"];
     intent.risk = "authentication";
     await expect(resolveTarget(page, intent)).resolves.toMatchObject({ adapter: "native_click" });
+  });
+
+  it("invalidates a reference when the same element changes protected purpose or capability", async () => {
+    await page.setContent('<label>Account <input id="field" aria-label="Account"></label>');
+    const ordinary = await observeSemanticPageContext(page);
+    const ordinaryReference = ordinary.controls.find((control) => control.name === "Account")!.reference;
+
+    await page.locator("#field").evaluate((element) => {
+      element.setAttribute("type", "password");
+      element.setAttribute("autocomplete", "new-password");
+      element.setAttribute("aria-label", "New password");
+    });
+    const protectedContext = await observeSemanticPageContext(page);
+    const protectedControl = protectedContext.controls.find((control) => control.valueProtected)!;
+    expect(protectedControl.reference).not.toBe(ordinaryReference);
+    await expect(resolveTarget(page, referenceIntent(ordinaryReference))).rejects.toThrow(
+      "TARGET_CHANGED_BEFORE_ACTION",
+    );
+
+    const protectedReference = protectedControl.reference;
+    await page.locator("#field").evaluate((element) => element.setAttribute("disabled", ""));
+    const disabledContext = await observeSemanticPageContext(page);
+    expect(disabledContext.controls.find((control) => control.name === "New password")!.reference)
+      .not.toBe(protectedReference);
   });
 });
 

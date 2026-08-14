@@ -22,6 +22,7 @@ type ContextControlEntry = {
   runtimeId: string;
   capabilities: SemanticPageContext["controls"][number]["capabilities"];
   valueProtected: boolean;
+  semanticIdentity: string;
 };
 const contextControls = new WeakMap<Page, Map<string, ContextControlEntry>>();
 
@@ -197,19 +198,45 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
   }, { limit: MAX_CONTEXT_CONTROLS, selector: CONTEXT_CONTROL_SELECTOR });
   const controls: SemanticPageContext["controls"] = [];
   const registered = new Map<string, ContextControlEntry>();
+  const previous = contextControls.get(page);
   for (const control of observed.controls) {
     const role = cleanContextText(control.role, 40);
     const name = cleanContextText(control.name, 160);
     const group = cleanContextText(control.group, 120);
     if (!role || !name) continue;
     const locator = page.locator(CONTEXT_CONTROL_SELECTOR).nth(control.candidateIndex);
-    const reference = `context-control-${randomBytes(16).toString("hex")}`;
+    const semanticIdentity = JSON.stringify({
+      role, name, group, capabilities: [...control.capabilities].sort(),
+      semanticPurpose: control.semanticPurpose ?? null,
+      valueProtected: Boolean(control.valueProtected),
+      disabled: Boolean(control.disabled),
+    });
+    let reference: string | undefined;
+    const currentElement = await locator.elementHandle();
+    if (previous && currentElement) {
+      for (const [candidateReference, entry] of previous) {
+        if (
+          entry.handle.documentIdentity !== documentIdentity ||
+          entry.semanticIdentity !== semanticIdentity
+        ) continue;
+        const sameElement = await entry.locator
+          .evaluate((priorElement, candidateElement) => priorElement === candidateElement, currentElement)
+          .catch(() => false);
+        if (sameElement) {
+          reference = candidateReference;
+          break;
+        }
+      }
+    }
+    await currentElement?.dispose();
+    reference ??= `context-control-${randomBytes(16).toString("hex")}`;
     registered.set(reference, {
       handle: new PraxisTargetHandle(page, frame, locator, documentEpoch, documentIdentity),
       locator,
       runtimeId: control.runtimeId,
       capabilities: control.capabilities as SemanticPageContext["controls"][number]["capabilities"],
       valueProtected: Boolean(control.valueProtected),
+      semanticIdentity,
     });
     const { candidateIndex: _candidateIndex, runtimeId: _runtimeId, ...publicControl } = control;
     const projected = {

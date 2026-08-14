@@ -414,11 +414,22 @@ describe("MissionFlowAuthoringService grouped turns", () => {
     };
     const runner = { execute: vi.fn().mockResolvedValue({ outcome, capabilityManifestDigest: "a".repeat(64), decisionBoundary: { type: "objective_completed", reasonCode: "DONE", safeActions: [] }, timings: { resolveMs: 7, executeMs: 11, verifyMs: 13 } }) };
     const service = new MissionFlowAuthoringService(repository as never, runner as never, { assertAcceptingWork: vi.fn() } as never);
-    const result = await service.advance(principal, randomUUID(), input());
+    const result = await service.advance(principal, randomUUID(), {
+      ...input(),
+      budgets: { maxOperations: 1, maxDurationMs: 1_000 },
+      intents: [{ ...input().intents[0], constraints: {
+        ...input().intents[0]!.constraints, timeoutMs: 60_000,
+      } }],
+    } as never);
     expect(result).toMatchObject({ state: "completed", channels: { functional: { state: "passed" }, privacy: { state: "not_applicable" }, quality: { state: "passed", reasonCode: "QUALITY_FINDINGS_PRESENT" } } });
     expect(result.completed[0]).toMatchObject({ functionalResult: "succeeded", mutationOutcome: "not_applied", privacyApplicable: false, privacyResult: "unverified", evidence: { count: 1 }, semanticEvidence: { count: 1, resolvedTarget }, quality: { findingCount: 1, reasonCodes: ["LOW_CONTRAST"] } });
     expect(result.timings).toMatchObject({ resolveMs: expect.any(Number), executeMs: expect.any(Number), verifyMs: 13, journalMs: expect.any(Number) });
     expect(result.timings.executeMs).toBeGreaterThanOrEqual(11);
+    expect(runner.execute.mock.calls[0]?.[1]).toMatchObject({
+      action: { timeoutMs: expect.any(Number) },
+    });
+    expect(runner.execute.mock.calls[0]![1].action.timeoutMs).toBeLessThanOrEqual(1_000);
+    expect(runner.execute.mock.calls[0]?.[2]).toBeInstanceOf(AbortSignal);
   });
 
   it("replays the exact stored safe turn response without a browser call", async () => {

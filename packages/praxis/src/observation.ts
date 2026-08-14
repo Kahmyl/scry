@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { CandidateEvidence, EvidenceFamily } from "@scry/contracts";
-import type { Frame, Locator, Page } from "playwright";
+import type { Frame, JSHandle, Locator, Page } from "playwright";
 
 export const PRAXIS_OBSERVATION_RUNTIME_VERSION = "1";
 export const PRAXIS_GROUNDING_POLICY_VERSION = 1;
@@ -220,19 +220,27 @@ export class PraxisDocumentEpoch {
 }
 
 export class PraxisDocumentIdentity {
+  private static readonly identities = new WeakMap<Frame, {
+    handle: JSHandle<Document>;
+    identity: string;
+  }>();
+
   static async current(page: Page, frame: Frame = page.mainFrame()): Promise<string> {
     if (page.isClosed() || frame.isDetached()) throw new PraxisStaleTargetError();
-    return frame.evaluate(() => {
-      const state = globalThis as typeof globalThis & { __scryPraxisDocumentId?: string };
-      if (!state.__scryPraxisDocumentId) {
-        const values = new Uint32Array(4);
-        globalThis.crypto.getRandomValues(values);
-        state.__scryPraxisDocumentId = [...values]
-          .map((value) => value.toString(16).padStart(8, "0"))
-          .join("");
+    const prior = this.identities.get(frame);
+    if (prior) {
+      try {
+        if (await prior.handle.evaluate((documentHandle) => documentHandle === document))
+          return prior.identity;
+      } catch {
+        // A navigation destroys the prior execution context and its document handle.
       }
-      return state.__scryPraxisDocumentId;
-    });
+      await prior.handle.dispose().catch(() => undefined);
+    }
+    const handle = await frame.evaluateHandle(() => document) as JSHandle<Document>;
+    const identity = randomUUID().replaceAll("-", "");
+    this.identities.set(frame, { handle, identity });
+    return identity;
   }
 }
 

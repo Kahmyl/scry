@@ -91,7 +91,11 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     return () => this.testBindings.delete(sessionId);
   }
 
-  async execute(sessionId: string, operation: AdaptiveSessionOperationInput) {
+  async execute(
+    sessionId: string,
+    operation: AdaptiveSessionOperationInput,
+    signal?: AbortSignal,
+  ) {
     const testBinding = this.testBindings.get(sessionId);
     if (testBinding) return testBinding(this.kernel, { sessionId, operation });
 
@@ -129,6 +133,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           correlationId: context.correlationId,
           mutationIdentity: `adaptive-${sessionId}-${operation.idempotencyKey}`,
           expectedEffect: operation.expectedEffect,
+          ...(signal ? { signal } : {}),
         });
         if (result.outcome.mutationOutcome !== "unknown") leaseGuard.assertOwned();
         await this.sessions.recordVerifiedObservation({
@@ -154,6 +159,13 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         await leaseGuard.stop();
       }
     });
+  }
+
+  async cancelActiveOperation(sessionId: string) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) return;
+    this.runtimes.delete(sessionId);
+    await runtime.session.cancelActiveOperation();
   }
 
   async close(sessionId: string) {

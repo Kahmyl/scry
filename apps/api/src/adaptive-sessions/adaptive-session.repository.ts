@@ -1706,7 +1706,7 @@ export class AdaptiveSessionRepository {
   }
 
   async markOperationFailed(sessionId: string, operationId: string, reasonCode: string) {
-    await this.database.transaction(async (client) => {
+    return this.database.transaction(async (client) => {
       const q = bind(client);
       const operation = await q<{ dispatchBoundary: string; actionType: string; method: string | null }>(
         `SELECT dispatch_boundary AS "dispatchBoundary",
@@ -1715,7 +1715,7 @@ export class AdaptiveSessionRepository {
          WHERE session_id=$1 AND operation_id=$2 AND state='running' FOR UPDATE`,
         [sessionId, operationId],
       );
-      if (!operation.rowCount) return;
+      if (!operation.rowCount) return null;
       const mutating = [
         "click",
         "fill",
@@ -1727,7 +1727,7 @@ export class AdaptiveSessionRepository {
         (operation.rows[0]!.actionType === "sameOriginRequest" && operation.rows[0]!.method !== "GET");
       const crossedDispatch = mutating && operation.rows[0]!.dispatchBoundary !== "not_dispatched";
       const policyRefused = reasonCode === "EXECUTION_MODE_POLICY_DENIED";
-      const boundary = crossedDispatch
+      const boundary: AgentDecisionBoundary = crossedDispatch
         ? {
             type: "mutation_reconciliation_required",
             reasonCode: "ADAPTIVE_OPERATION_OUTCOME_UNKNOWN",
@@ -1773,6 +1773,19 @@ export class AdaptiveSessionRepository {
           });
         }
       }
+      return {
+        outcome: {
+          operationId,
+          functionalResult: "failed" as const,
+          mutationOutcome: crossedDispatch ? "unknown" as const : "not_applied" as const,
+          privacyResult: "unverified" as const,
+          evidenceResult: [],
+          qualityFindings: [],
+          durationMs: 0,
+          reasonCode,
+        },
+        decisionBoundary: boundary,
+      };
     });
   }
 

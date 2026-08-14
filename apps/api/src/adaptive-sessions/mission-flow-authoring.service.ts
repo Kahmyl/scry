@@ -13,6 +13,7 @@ import type {
   MissionAuthoringTurnResult,
   StartAdaptiveSessionInput,
   RecoverTrustedOriginsInput,
+  CurrentAction,
 } from "@scry/contracts";
 import { createHash } from "node:crypto";
 
@@ -383,6 +384,44 @@ export class MissionFlowAuthoringService {
         ...(earlyProtectedOperationId ? { earlyProtectedOperationId } : {}),
       });
       timings.resolveMs += performance.now() - resolveStartedAt;
+      if (
+        operation.action.type !== "protectedTransaction" &&
+        claim.replayed &&
+        claim.state === "running"
+      ) {
+        const disposition = await this.sessions.replayDisposition(
+          sessionId,
+          operation.operationId,
+        );
+        if (disposition.requiresReconciliation) {
+          await this.sessions.markRunningOperationRecoveryRequired(
+            sessionId,
+            operation.operationId,
+          );
+          const decision = turnResult({
+            turnId, state: "decision_required", completed, handoffChanged,
+            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
+            startedAt, elapsedBaseMs: priorTotalMs, timings,
+            decisionBoundary: {
+              type: "mutation_reconciliation_required",
+              reasonCode: "ADAPTIVE_OPERATION_RECONCILIATION_REQUIRED",
+              safeActions: ["get_flow_authoring", "do_not_retry"],
+            },
+          });
+          return this.settleTurn(sessionId, turnId, decision, timings, startedAt);
+        }
+        if (!disposition.canResume) {
+          const pending = turnResult({
+            turnId, state: "pending", completed, handoffChanged,
+            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
+            startedAt, elapsedBaseMs: priorTotalMs, phase: "operation_running", timings,
+          });
+          return this.sessions.persistPending({
+            sessionId, turnId, result: pending, phase: "operation_running",
+            nextIntentIndex: intentIndex,
+          });
+        }
+      }
       if (operation.action.type === "protectedTransaction") {
         if (!claim.replayed) {
           operationsThisAttempt += 1;
@@ -492,7 +531,18 @@ export class MissionFlowAuthoringService {
       }
       operationsThisAttempt += 1;
       try {
-        const result = await this.executeWithOnePreDispatchRetry(sessionId, operation);
+        const remainingMs = Math.floor(budgets.maxDurationMs - (performance.now() - startedAt));
+        if (remainingMs < 100) {
+          const pending = turnResult({
+            turnId, state: "pending", completed, handoffChanged,
+            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
+            startedAt, elapsedBaseMs: priorTotalMs, phase: "budget", timings,
+          });
+          return this.sessions.persistPending({
+            sessionId, turnId, result: pending, phase: "budget", nextIntentIndex: intentIndex,
+          });
+        }
+        const result = await this.executeWithinTurnDeadline(sessionId, operation, remainingMs);
         timings.resolveMs += result.timings.resolveMs;
         timings.executeMs += result.timings.executeMs;
         timings.verifyMs += result.timings.verifyMs;
@@ -530,7 +580,11 @@ export class MissionFlowAuthoringService {
         }
       } catch (error) {
         const code = errorCode(error, "ADAPTIVE_SESSION_EXECUTION_FAILED");
-        await this.sessions.markOperationFailed(sessionId, operation.operationId, code);
+        const failure = await this.sessions.markOperationFailed(
+          sessionId,
+          operation.operationId,
+          code,
+        );
         const decision = turnResult({
           turnId,
           state: "decision_required",
@@ -541,14 +595,14 @@ export class MissionFlowAuthoringService {
           startedAt,
           elapsedBaseMs: priorTotalMs,
           timings,
-          decisionBoundary:
+          decisionBoundary: failure?.decisionBoundary ?? (
             code === "EXECUTION_MODE_POLICY_DENIED"
               ? liveReadPolicyBoundary(intent)
               : {
                   type: "environment_unavailable",
                   reasonCode: code,
                   safeActions: ["get_flow_authoring"],
-                },
+                }),
         });
         return this.settleTurn(sessionId, turnId, decision, timings, startedAt);
       }
@@ -587,9 +641,10 @@ export class MissionFlowAuthoringService {
   private async executeWithOnePreDispatchRetry(
     sessionId: string,
     operation: AdaptiveSessionOperationInput,
+    signal?: AbortSignal,
   ) {
     try {
-      return await this.runner.execute(sessionId, operation);
+      return await this.runner.execute(sessionId, operation, signal);
     } catch (error) {
       if (!(
         typeof error === "object" &&
@@ -598,7 +653,29 @@ export class MissionFlowAuthoringService {
         error.preDispatchTransient === true
       ))
         throw error;
-      return this.runner.execute(sessionId, operation);
+      return this.runner.execute(sessionId, operation, signal);
+    }
+  }
+
+  private async executeWithinTurnDeadline(
+    sessionId: string,
+    operation: AdaptiveSessionOperationInput,
+    remainingMs: number,
+  ) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort(new Error("AUTHORING_TURN_BUDGET_EXHAUSTED"));
+      void this.runner.cancelActiveOperation(sessionId);
+    }, remainingMs);
+    timeout.unref();
+    const bounded = {
+      ...operation,
+      action: clampActionTimeout(operation.action, remainingMs),
+    } satisfies AdaptiveSessionOperationInput;
+    try {
+      return await this.executeWithOnePreDispatchRetry(sessionId, bounded, controller.signal);
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -676,6 +753,14 @@ function liveReadPolicyBoundary(
 
 function workspaceId(principal: Principal) {
   return principal.kind === "user" ? principal.workspaceId : null;
+}
+
+function clampActionTimeout(action: CurrentAction, remainingMs: number): CurrentAction {
+  if (!("timeoutMs" in action)) return action;
+  return {
+    ...action,
+    timeoutMs: Math.max(100, Math.min(action.timeoutMs ?? remainingMs, remainingMs)),
+  } as CurrentAction;
 }
 
 function errorCode(error: unknown, fallback: string) {
