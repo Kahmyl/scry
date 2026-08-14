@@ -97,6 +97,51 @@ describe("NativeBrowserDriver shared primitives", () => {
     }
   }, 20_000);
 
+  it.each([
+    ['<label>Password<input type="password" aria-label="Password"></label>', "Password"],
+    ['<label>Code<input autocomplete="one-time-code" aria-label="Code"></label>', "Code"],
+    ['<label>PIN<input inputmode="numeric" aria-label="PIN"></label>', "PIN"],
+  ])("denies an ordinary literal at a protected native target before dispatch", async (markup, name) => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser();
+    const dispatch = vi.fn();
+    try {
+      await opened.page.setContent(markup);
+      await expect(driver.executeSemanticControl(opened.page, {
+        ...emailIntent,
+        concept: name,
+        preferredEvidence: { ...emailIntent.preferredEvidence, names: [name], placeholders: [] },
+      }, { type: "fill", value: "must-not-dispatch", protected: false }, async () => dispatch()))
+        .rejects.toThrow("PROTECTED_INPUT_REFERENCE_REQUIRED");
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(await opened.page.locator("input").inputValue()).toBe("");
+    } finally {
+      await driver.closeBrowser(opened.browser, opened.context);
+    }
+  }, 20_000);
+
+  it("pins the checked ordinary element so a reactive replacement cannot receive a literal", async () => {
+    const driver = new NativeBrowserDriver();
+    const opened = await driver.openBrowser();
+    try {
+      await opened.page.setContent('<label>Name<input aria-label="Name"></label>');
+      await expect(driver.executeSemanticControl(opened.page, {
+        ...emailIntent,
+        concept: "Name",
+        preferredEvidence: { ...emailIntent.preferredEvidence, names: ["Name"], placeholders: [] },
+      }, { type: "fill", value: "must-not-dispatch", protected: false }, async () => {
+        await opened.page.getByRole("textbox", { name: "Name" }).evaluate((old) => {
+          const replacement = old.cloneNode() as HTMLInputElement;
+          replacement.type = "password";
+          old.replaceWith(replacement);
+        });
+      })).rejects.toThrow();
+      expect(await opened.page.getByRole("textbox", { name: "Name" }).inputValue()).toBe("");
+    } finally {
+      await driver.closeBrowser(opened.browser, opened.context);
+    }
+  }, 20_000);
+
   it("correlates logical ownership with graceful browser process termination", async () => {
     const driver = new NativeBrowserDriver();
     const opened = await driver.openBrowser({}, {

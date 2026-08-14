@@ -55,6 +55,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       runtimeId: string;
       semanticPurpose?: string;
       valueProtected?: boolean;
+      inputSources?: Array<"literal" | "protected_reference">;
     }> = [];
     const state = globalThis as typeof globalThis & {
       __scryGroundingIds?: WeakMap<Element, string>;
@@ -79,7 +80,10 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         continue;
       const sensitive =
         Boolean(element.closest('[data-scry-redacted="true"]')) ||
-        (element.tagName.toLowerCase() === "input" && input.type === "password");
+        (element.tagName.toLowerCase() === "input" &&
+          (input.type === "password" ||
+            ["current-password", "new-password", "one-time-code"].includes(input.autocomplete.toLowerCase()) ||
+            input.inputMode === "numeric"));
       const redactedBoundary = Boolean(element.closest('[data-scry-redacted="true"]'));
       const tag = element.tagName.toLowerCase();
       let runtimeId = state.__scryGroundingIds.get(element);
@@ -158,6 +162,11 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         ...(["checkbox", "radio", "switch"].includes(role) ? ["toggle"] : []),
         ...(tag === "select" || ["combobox", "listbox"].includes(role) ? ["select_option"] : []),
       ];
+      const inputSources: Array<"literal" | "protected_reference"> | undefined = capabilities.includes("enter_text")
+        ? sensitive
+          ? ["protected_reference"]
+          : ["literal", "protected_reference"]
+        : undefined;
       const selectedAttribute = element.getAttribute("aria-selected");
       const expandedAttribute = element.getAttribute("aria-expanded");
       const checkedAttribute = element.getAttribute("aria-checked");
@@ -172,6 +181,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         ...(semanticPurpose ? { semanticPurpose, valueProtected: true } : {}),
         ...(group ? { group } : {}),
         capabilities,
+        ...(inputSources ? { inputSources } : {}),
         ...(selected === undefined ? {} : { selected }),
         ...(expanded === undefined ? {} : { expanded }),
         ...("checked" in input && ["checkbox", "radio"].includes(input.type)
@@ -194,6 +204,25 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       observed: candidates.length,
       truncated: projected.length >= limit && candidates.length > projected.length,
       controls: projected,
+      sectionObserved: document.querySelectorAll("h1,h2,h3,[role=heading]").length,
+      sections: Array.from(document.querySelectorAll("h1,h2,h3,[role=heading]"))
+        .filter((heading) => !heading.closest('[data-scry-redacted="true"],[aria-hidden="true"],[inert]'))
+        .slice(0, 12)
+        .map((heading) => {
+          const parts: string[] = [];
+          let sibling = heading.nextElementSibling;
+          while (sibling && !sibling.matches("h1,h2,h3,[role=heading]") && parts.join(" ").length < 4000) {
+            if (!sibling.closest('[data-scry-redacted="true"],[aria-hidden="true"],[inert]')) {
+              const safeClone = sibling.cloneNode(true) as HTMLElement;
+              safeClone.querySelectorAll('[data-scry-redacted="true"],[aria-hidden="true"],[inert],script,style').forEach((node) => node.remove());
+              const text = safeClone.innerText || safeClone.textContent || "";
+              if (text.trim()) parts.push(text.trim());
+            }
+            sibling = sibling.nextElementSibling;
+          }
+          return { heading: (heading.textContent || "").trim(), content: parts.join(" ").slice(0, 4000) };
+        })
+        .filter((section) => section.heading && section.content),
     };
   }, { limit: MAX_CONTEXT_CONTROLS, selector: CONTEXT_CONTROL_SELECTOR });
   const controls: SemanticPageContext["controls"] = [];
@@ -269,6 +298,16 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       truncated: observed.truncated,
     },
     controls,
+    sections: observed.sections.map((section) => ({
+      heading: cleanContextText(section.heading, 200),
+      content: cleanContextText(section.content, 4_000),
+    })).filter((section) => section.heading && section.content),
+    sectionCompleteness: {
+      kind: "bounded",
+      observed: observed.sectionObserved,
+      returned: observed.sections.length,
+      truncated: observed.sectionObserved > observed.sections.length,
+    },
   };
 }
 

@@ -198,6 +198,10 @@ export const operationOutcomeSchema = z
                 capabilities: z
                   .array(z.enum(["observe", "activate", "enter_text", "toggle", "select_option"]))
                   .max(5),
+                inputSources: z
+                  .array(z.enum(["literal", "protected_reference"]))
+                  .max(2)
+                  .optional(),
                 selected: z.boolean().optional(),
                 expanded: z.boolean().optional(),
                 checked: z.boolean().optional(),
@@ -207,6 +211,26 @@ export const operationOutcomeSchema = z
               .strict(),
           )
           .max(64),
+        sections: z
+          .array(
+            z
+              .object({
+                heading: z.string().trim().min(1).max(200),
+                content: z.string().trim().min(1).max(4_000),
+              })
+              .strict(),
+          )
+          .max(12)
+          .optional(),
+        sectionCompleteness: z
+          .object({
+            kind: z.literal("bounded"),
+            observed: z.number().int().nonnegative(),
+            returned: z.number().int().nonnegative().max(12),
+            truncated: z.boolean(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

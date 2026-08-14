@@ -266,6 +266,9 @@ export type Run = {
     | "legacy_authoring_attempt";
   reliabilityEligible?: boolean;
   compiledContractId?: string;
+  flowId?: string;
+  flowName?: string;
+  availableEvidenceCount?: number;
   confirmationOfRunId?: string;
   confirmationRunId?: string;
   environmentSnapshot: { name: string; baseOrigin: string };
@@ -359,6 +362,13 @@ export type MissionObjective = {
   latestCandidateRunId?: string;
 };
 export type MissionDetail = MissionSummary & {
+  flowProgress: {
+    terminalRuns: number;
+    passedRuns: number;
+    needsAttentionRuns: number;
+    current: null | { kind: "authoring" | "run"; flowId: string; name: string; phase: string };
+    evidenceAvailable: boolean;
+  };
   objectives: MissionObjective[];
   flows: Array<Flow & { objectiveId: string }>;
   runs: Array<Run>;

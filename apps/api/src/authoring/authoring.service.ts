@@ -79,6 +79,18 @@ export class AuthoringService {
         };
       }
 
+      const unknownMutation = await q(
+        `SELECT 1 FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
+         WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' LIMIT 1`,
+        [input.missionId],
+      );
+      if (unknownMutation.rowCount)
+        throw new ConflictException({
+          code: "MISSION_RECONCILIATION_REQUIRED",
+          mutationOutcome: "unknown",
+          safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"],
+        });
+
       const id = randomUUID();
 
       await q(

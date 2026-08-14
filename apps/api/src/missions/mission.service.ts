@@ -187,7 +187,7 @@ export class MissionService {
         [missionId],
       ),
       this.database.query(
-        `SELECT r.id,r.objective_id AS "objectiveId",r.state,r.phase,r.outcome_classification AS "outcomeClassification",r.result_classification AS "resultClassification",r.reliability_eligible AS "reliabilityEligible",r.compiled_contract_id AS "compiledContractId",l.role,l.reason,r.created_at AS "createdAt",r.updated_at AS "updatedAt" FROM runs r JOIN mission_run_links l ON l.run_id=r.id WHERE r.mission_id=$1 ORDER BY CASE l.role WHEN 'accepted' THEN 0 WHEN 'candidate' THEN 1 ELSE 2 END,r.created_at DESC`,
+        `SELECT r.id,r.objective_id AS "objectiveId",r.state,r.phase,r.outcome_classification AS "outcomeClassification",r.result_classification AS "resultClassification",r.reliability_eligible AS "reliabilityEligible",r.compiled_contract_id AS "compiledContractId",fr.flow_id AS "flowId",f.name AS "flowName",l.role,l.reason,r.created_at AS "createdAt",r.updated_at AS "updatedAt",COALESCE(ae.available_count,0)::int AS "availableEvidenceCount" FROM runs r JOIN mission_run_links l ON l.run_id=r.id JOIN flow_revisions fr ON fr.id=r.flow_revision_id JOIN flows f ON f.id=fr.flow_id LEFT JOIN (SELECT ra.run_id,COUNT(*) FILTER (WHERE a.availability='available' AND a.privacy_classification IN ('safe','sanitized')) AS available_count FROM attempts ra JOIN artifacts a ON a.attempt_id=ra.id GROUP BY ra.run_id) ae ON ae.run_id=r.id WHERE r.mission_id=$1 ORDER BY r.created_at DESC,r.id DESC`,
         [missionId],
       ),
       this.database.query(
@@ -203,14 +203,30 @@ export class MissionService {
         [missionId],
       ),
     ]);
+    const runRows = runs.rows as Array<Record<string, unknown> & { state: string; phase: string; flowId: string; flowName: string }>;
+    const terminalRunStates = new Set(["passed", "failed", "cancelled", "timed_out", "infrastructure_error"]);
+    const currentRun = runRows.find((run) => !terminalRunStates.has(run.state));
+    const currentDraft = (authoring.rows as Array<Record<string, unknown> & { id: string; name: string; state: string; updatedAt: string }>)
+      .find((draft) => !["published", "abandoned"].includes(draft.state));
     return projectAgentMissionContext({
       ...mission,
       objectives: objectives.rows,
       flows: flows.rows,
-      runs: runs.rows,
+      runs: runRows,
       acceptedEvidence: evidence.rows,
       reports: reports.rows,
       authoring: authoring.rows,
+      flowProgress: {
+        terminalRuns: runRows.filter((run) => terminalRunStates.has(run.state)).length,
+        passedRuns: runRows.filter((run) => run.state === "passed").length,
+        needsAttentionRuns: runRows.filter((run) => ["failed", "timed_out", "infrastructure_error"].includes(run.state)).length,
+        current: currentRun
+          ? { kind: "run", flowId: currentRun.flowId, name: currentRun.flowName, phase: currentRun.phase }
+          : currentDraft
+            ? { kind: "authoring", flowId: currentDraft.id, name: currentDraft.name, phase: currentDraft.state }
+            : null,
+        evidenceAvailable: runRows.some((run) => Number(run.availableEvidenceCount ?? 0) > 0),
+      },
     });
   }
 
@@ -1008,6 +1024,7 @@ function projectAgentMissionContext(value: MissionProjectionRow) {
     id: mission.id,
     projectId: mission.projectId,
     title: bounded(mission.title, 500),
+    originalInstruction: bounded(mission.originalInstruction, 20_000),
     status: mission.status,
     currentObjectiveId: mission.currentObjectiveId,
     resumePointer: projectResumePointer(mission.resumePointer),
@@ -1061,6 +1078,9 @@ function projectAgentMissionContext(value: MissionProjectionRow) {
       compact({
         id: item.id,
         objectiveId: item.objectiveId,
+        flowId: item.flowId,
+        flowName: bounded(item.flowName, 500),
+        availableEvidenceCount: item.availableEvidenceCount,
         state: item.state,
       phase: item.phase,
       outcomeClassification: item.outcomeClassification,
@@ -1121,6 +1141,7 @@ function projectAgentMissionContext(value: MissionProjectionRow) {
         ),
       }),
     ),
+    flowProgress: mission.flowProgress,
   });
 }
 

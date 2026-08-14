@@ -236,7 +236,15 @@ describe("Mission lifecycle regression", () => {
     expect(mission).toMatchObject({
       id: "11111111-1111-4111-8111-111111111111",
       status: "running",
+      originalInstruction: "Continue safely",
       resumePointer: { explanation: "Review bounded failure" },
+      flowProgress: {
+        terminalRuns: 0,
+        passedRuns: 0,
+        needsAttentionRuns: 0,
+        current: { kind: "authoring", name: "Safe draft", phase: "editing" },
+        evidenceAvailable: false,
+      },
       objectives: [{ title: "Safe objective" }],
       reports: [{ id: "44444444-4444-4444-8444-444444444444", status: "published" }],
       authoring: [

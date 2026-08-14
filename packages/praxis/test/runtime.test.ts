@@ -244,6 +244,25 @@ describe("Praxis strategy, dispatch, and verification", () => {
     expect(await page.locator("input").inputValue()).toBe("Ada");
   });
 
+  it("denies public literal text at the freshly resolved protected target before dispatch", async () => {
+    await page.setContent('<label>Password <input type="password" value="unchanged"></label>');
+    const result = await new PraxisTransactionCoordinator(
+      new PraxisAdapter(page, async () => "must-not-dispatch"),
+    ).execute(
+      request(
+        { type: "enter_text", input: { reference: "password", classification: "public" } },
+        intent("Password", "textbox"),
+      ),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      code: "PROTECTED_INPUT_REFERENCE_REQUIRED",
+      mutationOutcome: "not_applied",
+    });
+    expect(await page.locator("input").inputValue()).toBe("unchanged");
+  });
+
   it("refreshes once when an SPA replaces the control immediately beside dispatch", async () => {
     await page.setContent(
       `<button onclick="document.body.dataset.count=String(Number(document.body.dataset.count||0)+1)">Continue</button>`,

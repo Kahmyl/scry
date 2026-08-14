@@ -14,6 +14,7 @@ import {
   type Browser,
   type BrowserContext,
   type BrowserContextOptions,
+  type ElementHandle,
   type Locator,
   type Page,
 } from "playwright";
@@ -228,6 +229,12 @@ export class NativeBrowserDriver {
           )
         : 10_000,
     );
+    const literalFillTarget = operation.type === "fill" && !operation.protected
+      ? await target.elementHandle({ timeout: "resolutionTimeoutMs" in operation
+        ? remainingActionTime(operation, operation.resolutionTimeoutMs ?? operation.timeoutMs ?? 10_000)
+        : 10_000 })
+      : null;
+    if (literalFillTarget) await assertPublicLiteralTarget(literalFillTarget);
     if ("preDispatchDeadlineAt" in operation) assertPreDispatchDeadline(operation);
     await beforeDispatch?.();
     if ("preDispatchDeadlineAt" in operation) assertPreDispatchDeadline(operation);
@@ -238,7 +245,10 @@ export class NativeBrowserDriver {
       case "click": await target.click(timeout); return;
       case "fill":
         if (operation.protected) await maskProtectedTarget(target);
-        await target.fill(operation.value, timeout);
+        if (literalFillTarget) {
+          await assertPublicLiteralTarget(literalFillTarget);
+          await literalFillTarget.fill(operation.value, timeout);
+        } else await target.fill(operation.value, timeout);
         return;
       case "select": await target.selectOption(operation.value, timeout); return;
       case "check": await target.setChecked(operation.checked, timeout); return;
@@ -454,6 +464,17 @@ async function maskProtectedTarget(target: Locator) {
     element.setAttribute("data-scry-redacted", "true");
     (element as HTMLElement).style.setProperty("-webkit-text-security", "disc");
   });
+}
+
+async function assertPublicLiteralTarget(target: ElementHandle<HTMLElement | SVGElement>) {
+  const protectedTarget = await target.evaluate((element) =>
+    Boolean(element.closest('[data-scry-redacted="true"]')) ||
+    (element instanceof HTMLInputElement &&
+      (element.type === "password" ||
+        ["current-password", "new-password", "one-time-code"].includes(element.autocomplete.toLowerCase()) ||
+        element.inputMode === "numeric")),
+  );
+  if (protectedTarget) throw new NativeError("PROTECTED_INPUT_REFERENCE_REQUIRED");
 }
 
 function remainingActionTime(

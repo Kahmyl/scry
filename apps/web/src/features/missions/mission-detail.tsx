@@ -112,18 +112,20 @@ export function MissionDetailPage({
         </div>
         <div className="mission-summary-strip">
           <div>
-            <span>Progress</span>
-            <strong>
-              {data.terminalObjectiveCount}/{data.objectiveCount}
-            </strong>
+            <span>Flow Runs</span>
+            <strong>{data.flowProgress.passedRuns} passed · {data.flowProgress.needsAttentionRuns} attention</strong>
           </div>
           <div>
-            <span>Accepted evidence</span>
-            <strong>{data.acceptedEvidenceCount}</strong>
+            <span>Run evidence</span>
+            <strong>{data.flowProgress.evidenceAvailable ? "Available" : "Not yet"}</strong>
           </div>
           <div className="mission-next-action">
-            <span>Next action</span>
-            <strong>{data.resumePointer?.explanation ?? "No pending action"}</strong>
+            <span>Current Flow</span>
+            <strong>
+              {data.flowProgress.current
+                ? `${data.flowProgress.current.name} · ${data.flowProgress.current.phase.replaceAll("_", " ")}`
+                : data.resumePointer?.explanation ?? "No active Flow"}
+            </strong>
           </div>
         </div>
       </section>
@@ -266,6 +268,30 @@ export function MissionDetailPage({
           )}
         </section>
       )}
+      <section className="panel mission-evidence-panel">
+        <PanelHeader title="Flow Runs" kicker={`${data.flowProgress.terminalRuns} TERMINAL`} />
+        {data.runs.length ? (
+          <div className="mission-evidence-list">
+            {data.runs.map((run) => (
+              <button key={run.id} onClick={() => onOpenRun(run.id)}>
+                <span>
+                  <small>{run.role ?? "run"} · {relativeTime(run.updatedAt)}</small>
+                  <strong>{run.flowName ?? `Flow ${run.flowId?.slice(0, 8) ?? "unknown"}`}</strong>
+                </span>
+                <span>
+                  {run.state.replaceAll("_", " ")} · {run.phase?.replaceAll("_", " ") ?? "queued"} · {run.availableEvidenceCount ?? 0} evidence <ArrowRight size={14} />
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <EmptyBlock
+            icon={<FileCode2 />}
+            title="No executed Flow Runs yet"
+            copy="Authoring and probes remain separate until a qualified Flow is submitted to deterministic execution."
+          />
+        )}
+      </section>
       <section className="panel mission-evidence-panel">
         <PanelHeader title="Accepted evidence" kicker="AUTHORITATIVE SET" />
         {data.acceptedEvidence.length ? (

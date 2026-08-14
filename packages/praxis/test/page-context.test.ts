@@ -55,6 +55,11 @@ describe("bounded semantic page context", () => {
         expect.objectContaining({ role: "link", name: "Developer documentation" }),
       ]),
     );
+    expect(context.controls.find((control) => control.name === "API secret")).toMatchObject({
+      capabilities: expect.arrayContaining(["enter_text"]),
+      inputSources: ["protected_reference"],
+      valueProtected: true,
+    });
     expect(serialized).not.toContain("must-not-leak");
     expect(serialized.length).toBeLessThan(16_384);
     expect(elapsedMs).toBeLessThan(3_000);
@@ -68,6 +73,32 @@ describe("bounded semantic page context", () => {
     expect(changed.controls).toContainEqual(
       expect.objectContaining({ role: "tab", name: "Live mode", selected: true }),
     );
+  });
+
+  it("advertises literal input for ordinary text and returns bounded public documentation sections", async () => {
+    await page.setContent(`
+      <main>
+        <label>Credential name <input aria-label="Credential name"></label>
+        <h2>Create Order</h2>
+        <p>POST /orders</p>
+        <p>Requires the customerId field.</p>
+        <div>Public fact <span data-scry-redacted="true">must-not-leak</span></div>
+        <h2 data-scry-redacted="true">Private notes</h2>
+      </main>
+    `);
+    const context = await observeSemanticPageContext(page);
+    expect(context.controls.find((control) => control.name === "Credential name")).toMatchObject({
+      capabilities: expect.arrayContaining(["enter_text"]),
+      inputSources: ["literal", "protected_reference"],
+    });
+    expect(context.sections).toContainEqual({
+      heading: "Create Order",
+      content: "POST /orders Requires the customerId field. Public fact",
+    });
+    expect(JSON.stringify(context)).not.toContain("must-not-leak");
+    expect(context.sectionCompleteness).toEqual({
+      kind: "bounded", observed: 2, returned: 1, truncated: true,
+    });
   });
 
   it("reports bounded incompleteness instead of claiming a complete large surface", async () => {

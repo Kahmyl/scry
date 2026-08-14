@@ -95,6 +95,14 @@ export class AdaptiveSessionRepository {
            FOR UPDATE OF s`,
           [input.authoringSessionId, input.projectId]);
         if (!reusable.rowCount) throw new ConflictException({ code: "AUTHORING_PREPARATION_REUSE_UNAVAILABLE" });
+        const unknownMutation = await q(
+          `SELECT 1 FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
+           WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' LIMIT 1`,
+          [reusable.rows[0]!.missionId],
+        );
+        if (unknownMutation.rowCount)
+          throw new ConflictException({ code: "MISSION_RECONCILIATION_REQUIRED",
+            mutationOutcome: "unknown", safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"] });
         const response: PreparedFlowAuthoring = { ...reusable.rows[0]!, replayed: false, reused: true,
           authoringReady: true, continuation: { nextSafeCapability: "advance_flow_authoring" } };
         await q(`UPDATE idempotency_records SET response=$3::jsonb,completed_at=now() WHERE scope=$1 AND key=$2`,
@@ -201,6 +209,15 @@ export class AdaptiveSessionRepository {
         [input.projectId, input.idempotencyKey],
       );
       if (replay.rowCount) return { id: replay.rows[0]!.id, replayed: true };
+
+      const unknownMutation = await q(
+        `SELECT 1 FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
+         WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' LIMIT 1`,
+        [input.missionId],
+      );
+      if (unknownMutation.rowCount)
+        throw new ConflictException({ code: "MISSION_RECONCILIATION_REQUIRED",
+          mutationOutcome: "unknown", safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"] });
 
       const id = randomUUID();
       await q(

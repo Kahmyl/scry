@@ -377,6 +377,14 @@ export class FlowService {
         hash(input),
       );
       if (replay) return replay;
+      const unknownMutation = await query(
+        `SELECT 1 FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
+         WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' LIMIT 1`,
+        [input.missionId],
+      );
+      if (unknownMutation.rowCount)
+        throw new ConflictException({ code: "MISSION_RECONCILIATION_REQUIRED",
+          mutationOutcome: "unknown", safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"] });
       await query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [projectId]);
       const authority = await query<{
         state: string;

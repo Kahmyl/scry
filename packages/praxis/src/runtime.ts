@@ -129,7 +129,12 @@ export class PraxisGroundingEngine {
       request.operation.type === "enter_text" &&
       !["known_secret", "captured_secret"].includes(request.operation.input.classification)
     )
-      throw new Error("PROTECTED_INPUT_REFERENCE_REQUIRED");
+      throw new PraxisAdapterError("PROTECTED_INPUT_REFERENCE_REQUIRED", {
+        provenance: "policy",
+        mutationOutcome: "not_applied",
+        retry: "requires_revision",
+        safeActions: ["revise_intent"],
+      });
     const started = performance.now();
     const observationDeadline = started + PraxisExecutionEnvelope.groundingWindow(request);
     let stablePendingSince = started;
@@ -340,6 +345,23 @@ export class PraxisDispatcher {
       await target.handle.reconcile(async (locator) => {
         checkAbort(signal);
         await target.revalidate();
+        if (
+          request.operation.type === "enter_text" &&
+          !["known_secret", "captured_secret"].includes(request.operation.input.classification) &&
+          (await locator.evaluate((element) =>
+            Boolean(element.closest('[data-scry-redacted="true"]')) ||
+            (element instanceof HTMLInputElement &&
+              (element.type === "password" ||
+                ["current-password", "new-password", "one-time-code"].includes(element.autocomplete.toLowerCase()) ||
+                element.inputMode === "numeric")),
+          ))
+        )
+          throw new PraxisAdapterError("PROTECTED_INPUT_REFERENCE_REQUIRED", {
+            provenance: "policy",
+            mutationOutcome: "not_applied",
+            retry: "requires_revision",
+            safeActions: ["revise_intent"],
+          });
         let activationTarget: ElementHandle<HTMLElement | SVGElement> | undefined;
         if (request.operation.type === "activate") {
           await assertActivationReady(locator, this.timeout(request.policy.actionTimeoutMs));

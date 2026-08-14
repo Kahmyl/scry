@@ -189,6 +189,10 @@ describe("current Scry MCP surface", () => {
     ]);
     expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
       .toContain("Protected fill example action");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("Ordinary fill example action");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("inputSources: literal or protected_reference");
     expect(tools.find(({ name }) => name === "create_test_environment")?.description)
       .toContain("environmentRecovery.missingTrustedScriptOrigins");
     expect(tools.find(({ name }) => name === "create_test_environment")?.description)
