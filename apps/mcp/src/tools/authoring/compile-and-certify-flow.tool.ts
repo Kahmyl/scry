@@ -16,13 +16,13 @@ export function registerCompileAndCertifyFlowTool(server: McpServer, client: Scr
     {
       title: "Compile and certify Flow draft",
       description:
-        "Compile successful authoring transcript knowledge and bind a fresh passing certification Run before publication.",
+        "Compile a completed Flow authoring session for the exact draft and bind a fresh certification Run before publication. Reuse the same idempotency key only to reconcile response loss or a pending certification Run; rejected certification requires factual revision guidance.",
       inputSchema: {
         ...objectiveContext,
         draftId: uuid,
         environmentId: uuid,
         draftVersion: z.number().int().positive(),
-        probeSessionId: uuid,
+        authoringSessionId: uuid,
         authenticationContractRevisionId: uuid.optional(),
         viewport: z
           .object({

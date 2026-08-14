@@ -786,6 +786,7 @@ export const compileFlowDraftSchema = objectiveContextSchema
     environmentId: uuid,
     draftVersion: z.number().int().positive(),
     probeSessionId: uuid.optional(),
+    authoringSessionId: uuid.optional(),
     authenticationContractRevisionId: uuid.optional(),
     idempotencyKey: z.string().trim().min(8).max(200),
   })

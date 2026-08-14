@@ -108,6 +108,7 @@ const operationBoundSyntheticProtectedInputsPath = fileURLToPath(
 );
 const structuredSyntheticProtectedInputPath = fileURLToPath(new URL("../migrations/structured-synthetic-protected-input.sql", import.meta.url));
 const segmentedFlowSuccessorCheckpointsPath = fileURLToPath(new URL("../migrations/segmented-flow-successor-checkpoints.sql", import.meta.url));
+const adaptiveCertificationProvenancePath = fileURLToPath(new URL("../migrations/adaptive-certification-provenance.sql", import.meta.url));
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -150,6 +151,8 @@ const externalResourceBindings = await readFile(externalResourceBindingsPath, "u
 const operationBoundSyntheticProtectedInputs = await readFile(operationBoundSyntheticProtectedInputsPath, "utf8");
 const structuredSyntheticProtectedInput = await readFile(structuredSyntheticProtectedInputPath, "utf8");
 const segmentedFlowSuccessorCheckpoints = await readFile(segmentedFlowSuccessorCheckpointsPath, "utf8");
+const adaptiveCertificationProvenance = await readFile(adaptiveCertificationProvenancePath, "utf8");
+const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
 
 const expandFoundation = (source: string) =>
   source
@@ -182,6 +185,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "operation-bound-synthetic-protected-inputs.sql": operationBoundSyntheticProtectedInputs,
   "structured-synthetic-protected-input.sql": structuredSyntheticProtectedInput,
   "segmented-flow-successor-checkpoints.sql": segmentedFlowSuccessorCheckpoints,
+  "adaptive-certification-provenance.sql": adaptiveCertificationProvenance,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) =>
@@ -189,8 +193,15 @@ const stagedBaseline = (included: readonly OptionalBaselineMigration[]) =>
 
 const baseline = stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS);
 const preSegmentedFlowSuccessorCheckpointsFingerprint = createHash("sha256").update(
-  stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "segmented-flow-successor-checkpoints.sql")),
+  stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "segmented-flow-successor-checkpoints.sql" && name !== "adaptive-certification-provenance.sql")),
 ).digest("hex");
+const preAdaptiveCertificationProvenanceFingerprint = createHash("sha256").update(
+  stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "adaptive-certification-provenance.sql")),
+).digest("hex");
+const preQualifiedDraftVersionFingerprint =
+  "ab026810c7b0421eb118e16ffb746d1e080424c753c4cfac5bf8428f0f8dfe43";
+const preVerifiedAttestationFingerprint =
+  "9f50ce3c9f5a50c2b611ae595a1a208c60d5d872c362e8ec812d78962ef871a0";
 const preMissionFirstM1Baseline = stagedBaseline(
   OPTIONAL_BASELINE_MIGRATIONS.filter(
     (name) =>
@@ -310,12 +321,34 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preSegmentedFlowSuccessorCheckpointsFingerprint) {
+    if ([preQualifiedDraftVersionFingerprint, preVerifiedAttestationFingerprint].includes(installedFingerprint)) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-certification-provenance'))");
+        await client.query(adaptiveCertificationProvenance);
+        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query("COMMIT");
+        process.stdout.write(`Applied qualified draft-version provenance ${fingerprint}\n`);
+      } catch (error) { await client.query("ROLLBACK"); throw error; }
+      finally { client.release(); }
+    } else if (installedFingerprint === preAdaptiveCertificationProvenanceFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-certification-provenance'))");
+        await client.query(adaptiveCertificationProvenance);
+        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query("COMMIT");
+        process.stdout.write(`Applied adaptive certification provenance ${fingerprint}\n`);
+      } catch (error) { await client.query("ROLLBACK"); throw error; }
+      finally { client.release(); }
+    } else if (installedFingerprint === preSegmentedFlowSuccessorCheckpointsFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-segmented-flow-successor-checkpoints'))");
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied segmented Flow successor checkpoints ${fingerprint}\n`);
@@ -327,7 +360,7 @@ try {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-structured-synthetic-protected-input'))");
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied structured synthetic protected input ${fingerprint}\n`);
@@ -340,7 +373,7 @@ try {
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-operation-bound-synthetic-protected-inputs'))");
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied operation-bound synthetic protected inputs ${fingerprint}\n`);
@@ -358,7 +391,7 @@ try {
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied external resource bindings ${fingerprint}\n`);
@@ -377,7 +410,7 @@ try {
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied protected read-only dispatch ${fingerprint}\n`);
@@ -397,7 +430,7 @@ try {
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied protected response output staging ${fingerprint}\n`);
@@ -418,7 +451,7 @@ try {
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied protected operation authoritative projection ${fingerprint}\n`);
@@ -440,7 +473,7 @@ try {
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied protected operation completion ${fingerprint}\n`);
@@ -465,7 +498,7 @@ try {
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -495,7 +528,7 @@ try {
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -526,7 +559,7 @@ try {
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -558,7 +591,7 @@ try {
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -596,7 +629,7 @@ try {
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(protectedOperationStateMachine);
         await client.query(protectedOperationCompletion);
         await client.query(protectedOperationAuthoritativeProjection);
@@ -605,7 +638,7 @@ try {
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -658,7 +691,7 @@ try {
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(
           `UPDATE schema_baseline
            SET schema_fingerprint=$1,applied_at=now()
@@ -759,7 +792,7 @@ try {
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
-        await client.query(segmentedFlowSuccessorCheckpoints);
+        await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
 
         await client.query(
           `UPDATE schema_baseline

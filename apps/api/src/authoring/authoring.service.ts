@@ -91,7 +91,13 @@ export class AuthoringService {
           safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"],
         });
 
-      const priorRuns = await q(`SELECT 1 FROM runs WHERE mission_id=$1 LIMIT 1`, [input.missionId]);
+      const priorRuns = await q(
+        `SELECT 1 FROM runs
+         WHERE mission_id=$1
+           AND COALESCE((execution_snapshot->>'certificationCandidate')::boolean,false)=false
+         LIMIT 1`,
+        [input.missionId],
+      );
       if (!priorRuns.rowCount && input.predecessorRunId) {
         throw new ConflictException({ code: "FIRST_FLOW_PREDECESSOR_FORBIDDEN" });
       }
@@ -107,6 +113,7 @@ export class AuthoringService {
            JOIN run_successor_checkpoints checkpoint ON checkpoint.run_id=run.id
            WHERE run.id=$1 AND run.mission_id=$2
              AND run.environment_id=$3 AND run.state='passed'
+             AND COALESCE((run.execution_snapshot->>'certificationCandidate')::boolean,false)=false
              AND run.outcome_classification='passed'
              AND checkpoint.state='available' AND checkpoint.expires_at>now()
              AND checkpoint.claimed_by_authoring_session_id IS NULL`,
@@ -1006,6 +1013,7 @@ export class AuthoringService {
         objectiveId: string;
         environmentId: string;
         probeSessionId: string | null;
+        authoringSessionId: string | null;
         authenticationContractRevisionId: string | null;
         agentSessionId: string;
       }>(
@@ -1016,6 +1024,7 @@ export class AuthoringService {
                 objective_id AS "objectiveId",
                 environment_id AS "environmentId",
                 probe_session_id AS "probeSessionId",
+                adaptive_session_id AS "authoringSessionId",
                 authentication_contract_revision_id AS "authenticationContractRevisionId",
                 created_by_agent_session_id AS "agentSessionId"
          FROM flow_compilations
@@ -1033,6 +1042,7 @@ export class AuthoringService {
           existing.objectiveId !== input.objectiveId ||
           existing.environmentId !== input.environmentId ||
           existing.probeSessionId !== (input.probeSessionId ?? null) ||
+          existing.authoringSessionId !== (input.authoringSessionId ?? null) ||
           existing.authenticationContractRevisionId !==
             (input.authenticationContractRevisionId ?? null) ||
           existing.agentSessionId !== input.agentSessionId
@@ -1043,6 +1053,63 @@ export class AuthoringService {
           });
         }
 
+        return {
+          id: existing.id,
+          status: existing.status,
+          diagnostics: existing.diagnostics,
+          blockers: [],
+          warnings: [],
+          qualityFindings: [],
+          contractVersion: existing.contractVersion,
+          compiledContractDigest: existing.compiledContractDigest,
+          replayed: true,
+        };
+      }
+
+      const current = await q<{
+        id: string;
+        status: string;
+        diagnostics: Array<Record<string, unknown>>;
+        contractVersion: string;
+        compiledContractDigest: string;
+        missionId: string;
+        objectiveId: string;
+        environmentId: string;
+        probeSessionId: string | null;
+        authoringSessionId: string | null;
+        authenticationContractRevisionId: string | null;
+        agentSessionId: string;
+      }>(
+        `SELECT id,status,diagnostics,contract_version AS "contractVersion",
+                compiled_contract_digest AS "compiledContractDigest",
+                mission_id AS "missionId",objective_id AS "objectiveId",
+                environment_id AS "environmentId",probe_session_id AS "probeSessionId",
+                adaptive_session_id AS "authoringSessionId",
+                authentication_contract_revision_id AS "authenticationContractRevisionId",
+                created_by_agent_session_id AS "agentSessionId"
+         FROM flow_compilations
+         WHERE draft_id=$1 AND draft_version=$2 AND status='execution_ready'
+         FOR UPDATE`,
+        [draftId, d.version],
+      );
+      if (current.rowCount) {
+        const existing = current.rows[0]!;
+        if (
+          existing.missionId !== input.missionId ||
+          existing.objectiveId !== input.objectiveId ||
+          existing.environmentId !== input.environmentId ||
+          existing.probeSessionId !== (input.probeSessionId ?? null) ||
+          existing.authoringSessionId !== (input.authoringSessionId ?? null) ||
+          existing.authenticationContractRevisionId !==
+            (input.authenticationContractRevisionId ?? null) ||
+          existing.agentSessionId !== input.agentSessionId
+        ) {
+          throw new ConflictException({
+            code: "CERTIFICATION_COMPILATION_CONFLICT",
+            mutationOutcome: "not_applied",
+            safeActions: ["get_flow_draft"],
+          });
+        }
         return {
           id: existing.id,
           status: existing.status,
@@ -1075,6 +1142,71 @@ export class AuthoringService {
             rows: [],
           };
 
+      if (input.probeSessionId && !probe.rowCount) {
+        throw new ConflictException({
+          code: "PROBE_SESSION_INVALID",
+          mutationOutcome: "not_applied",
+          safeActions: ["get_flow_draft"],
+        });
+      }
+
+      const adaptive = input.authoringSessionId
+        ? await q<{
+          state: string;
+          decisionBoundary: Record<string, unknown> | null;
+          completedAt: Date | null;
+          qualifiedFlowDraftVersion: number | null;
+          }>(
+            `SELECT state,decision_boundary AS "decisionBoundary",completed_at AS "completedAt",
+                    qualified_flow_draft_version AS "qualifiedFlowDraftVersion"
+             FROM adaptive_sessions
+             WHERE id=$1
+               AND project_id=$2
+               AND mission_id=$3
+               AND active_objective_id=$4
+               AND active_flow_draft_id=$5
+               AND environment_id=$6
+             FOR SHARE`,
+            [
+              input.authoringSessionId,
+              d.projectId,
+              input.missionId,
+              input.objectiveId,
+              draftId,
+              input.environmentId,
+            ],
+          )
+        : { rowCount: 0, rows: [] };
+
+      if (input.authoringSessionId) {
+        const source = adaptive.rows[0];
+        if (
+          !source ||
+          source.state !== "completed" ||
+          source.decisionBoundary?.type !== "objective_completed" ||
+          !source.completedAt ||
+          source.qualifiedFlowDraftVersion !== d.version
+        ) {
+          throw new ConflictException({
+            code: "AUTHORING_QUALIFICATION_SESSION_NOT_COMPLETED",
+            mutationOutcome: "not_applied",
+            safeActions: ["get_flow_authoring"],
+          });
+        }
+        const uncertain = await q(
+          `SELECT 1 FROM adaptive_operations
+           WHERE session_id=$1 AND mutation_outcome='unknown' LIMIT 1`,
+          [input.authoringSessionId],
+        );
+        if (uncertain.rowCount) {
+          throw new ConflictException({
+            code: "MISSION_RECONCILIATION_REQUIRED",
+            mutationOutcome: "unknown",
+            safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"],
+          });
+        }
+      }
+
       const blockers: Array<Record<string, unknown>> = [];
       const warnings: Array<Record<string, unknown>> = [];
       const qualityFindings: Array<Record<string, unknown>> = [];
@@ -1083,17 +1215,17 @@ export class AuthoringService {
         blockers.push(...runtime.diagnostics);
       }
 
-      if (!probe.rowCount) {
+      if (!probe.rowCount && !adaptive.rowCount) {
         blockers.push({
           code: "PROBE_REQUIRED",
           message: "Compile from a completed Probe Session.",
         });
-      } else if (probe.rows[0]!.state !== "completed") {
+      } else if (probe.rowCount && probe.rows[0]!.state !== "completed") {
         blockers.push({
           code: "PROBE_INCOMPLETE",
           message: "Probe Session is not complete.",
         });
-      } else {
+      } else if (probe.rowCount) {
         const classified = classifyProbeCompilationInput(probe.rows[0]!.result);
 
         blockers.push(...classified.blockers);
@@ -1101,7 +1233,93 @@ export class AuthoringService {
         qualityFindings.push(...classified.qualityFindings);
       }
 
-      const probeResult = probe.rows[0]?.result ?? null;
+      const adaptiveEvidence = adaptive.rowCount
+        ? await q<{
+            operationId: string;
+            functionalResult: string | null;
+            mutationOutcome: string | null;
+            privacyResult: string | null;
+            targetDigest: string | null;
+            capabilityDigest: string | null;
+            intent: Record<string, unknown>;
+            operation: Record<string, unknown>;
+            expectedEffect: Record<string, unknown>;
+            qualityFindings: Array<Record<string, unknown>>;
+          }>(
+            `SELECT operation_id AS "operationId",functional_result AS "functionalResult",
+                    mutation_outcome AS "mutationOutcome",privacy_result AS "privacyResult",
+                    safe_outcome->'resolvedTarget'->>'digest' AS "targetDigest",
+                    safe_outcome->'resolvedTarget'->>'capabilityDigest' AS "capabilityDigest",
+                    authoring_intent AS intent,derived_action AS operation,
+                    expected_effect AS "expectedEffect",
+                    COALESCE(quality_findings,'[]'::jsonb) AS "qualityFindings"
+             FROM adaptive_operations
+             WHERE session_id=$1 AND flow_draft_id=$2
+             ORDER BY sequence`,
+            [input.authoringSessionId, draftId],
+          )
+        : { rowCount: 0, rows: [] };
+      const probeResult: ProbeResult | null = probe.rows[0]?.result ??
+        (adaptive.rowCount
+          ? {
+              targets: [],
+              readiness: [],
+              learnedContracts: adaptiveEvidence.rows
+                .filter(
+                  (operation) =>
+                    operation.functionalResult === "succeeded" &&
+                    operation.mutationOutcome !== "unknown" &&
+                    ["verified", "sealed"].includes(operation.privacyResult ?? "") &&
+                    adaptiveOperationDeterministic(operation),
+                )
+                .map((operation) => ({
+                  schemaVersion: 1,
+                  interactionId: operation.operationId,
+                  stepId: operation.operationId,
+                  intent: operation.intent,
+                  operation: operation.operation,
+                  functionalResult: "passed",
+                  mutationOutcome: operation.mutationOutcome ?? "not_applied",
+                  successfulEvidenceFamilies: [
+                    "runtime",
+                    ...(operation.targetDigest ? ["accessibility" as const] : []),
+                    "effect",
+                  ],
+                  scope: { kind: "adaptive_authoring_session" },
+                  relationships: [],
+                  capabilityProfile: {
+                    targetDigest: operation.targetDigest,
+                    capabilityDigest: operation.capabilityDigest,
+                  },
+                  expectedEffect: operation.expectedEffect,
+                  sanitizedFingerprint: {
+                    digest: hash({
+                      operationId: operation.operationId,
+                      targetDigest: operation.targetDigest,
+                      capabilityDigest: operation.capabilityDigest,
+                    }),
+                  },
+                  qualityFindings: operation.qualityFindings,
+                  usedSelectorHint: false,
+                  unresolvedMutation: false,
+                  veilPolicyViolated: false,
+                  veilEvidenceClosed: ["verified", "sealed"].includes(
+                    operation.privacyResult ?? "",
+                  ),
+                  expectedEffectVerified: operation.functionalResult === "succeeded",
+                  deterministic: adaptiveOperationDeterministic(operation),
+                })),
+              diagnostics: [],
+              pageFingerprint: hash({
+                authoringSessionId: input.authoringSessionId,
+                operations: adaptiveEvidence.rows,
+              }),
+              authoringTrajectory: {
+                source: "adaptive_authoring_session",
+                operationCount: adaptiveEvidence.rowCount,
+              },
+            }
+          : null);
       const transcript = compileSuccessfulInteractions(probeResult);
       blockers.push(...transcript.blockers);
       warnings.push(...transcript.warnings);
@@ -1185,6 +1403,7 @@ export class AuthoringService {
           objective_id,
           environment_id,
           probe_session_id,
+          adaptive_session_id,
           authentication_contract_revision_id,
           status,
           compiled_plan,
@@ -1208,10 +1427,10 @@ export class AuthoringService {
           completed_at
         )
         VALUES(
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-          $11::jsonb,$12,$13,$14,$15::jsonb,$16::jsonb,$17::jsonb,$18,$19,$20,
-          $21,$22::jsonb,$23::jsonb,$24::jsonb,
-          $25,$26,$27,$28,now()
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+          $12::jsonb,$13,$14,$15,$16::jsonb,$17::jsonb,$18::jsonb,$19,$20,$21,
+          $22,$23::jsonb,$24::jsonb,$25::jsonb,
+          $26,$27,$28,$29,now()
         )`,
         [
           id,
@@ -1222,6 +1441,7 @@ export class AuthoringService {
           input.objectiveId,
           input.environmentId,
           input.probeSessionId ?? null,
+          input.authoringSessionId ?? null,
           input.authenticationContractRevisionId ?? null,
           status,
           JSON.stringify(compiledPlan),
@@ -1690,7 +1910,7 @@ export class AuthoringService {
         certification: {
           status: "rejected",
           rejectionReasons: ["COMPILATION_NOT_EXECUTION_READY"],
-          safeActions: ["revise_flow", "compile_and_certify_flow"],
+          safeActions: ["get_flow_draft", "revise_flow"],
           decisionBoundary: {
             type: "compilation_rejected",
             terminal: true,
@@ -1713,6 +1933,19 @@ export class AuthoringService {
         input.environmentId,
       );
 
+      const certificationLock = await q(
+        `SELECT 1 FROM flow_compilations
+         WHERE id=$1 AND draft_id=$2 AND status='execution_ready'
+         FOR UPDATE`,
+        [compilation.id, draftId],
+      );
+      if (!certificationLock.rowCount) {
+        throw new ConflictException({
+          code: "EXECUTION_READY_COMPILATION_REQUIRED",
+          mutationOutcome: "not_applied",
+          safeActions: ["get_flow_draft"],
+        });
+      }
       const existing = await q<{
         runId: string;
         state: string;
@@ -1740,7 +1973,7 @@ export class AuthoringService {
           safeActions: certified
             ? ["publish_flow_draft"]
             : rejected
-              ? ["revise_flow", "compile_and_certify_flow"]
+              ? ["get_run", "revise_flow"]
               : [],
           ...(certified || rejected
             ? {
@@ -1753,6 +1986,8 @@ export class AuthoringService {
           replayed: true,
         };
       }
+
+      await this.requireCertificationLineage(q, d, input.authoringSessionId ?? null);
 
       const contract = await q<{
         contractVersion: string;
@@ -1873,7 +2108,12 @@ export class AuthoringService {
           }),
           JSON.stringify(policy),
           JSON.stringify(veilPolicy),
-          JSON.stringify({ browser: "chromium", viewport: input.viewport, seed: input.seed }),
+          JSON.stringify({
+            browser: "chromium",
+            viewport: input.viewport,
+            seed: input.seed,
+            certificationCandidate: true,
+          }),
           `certification:${compilation.id}`,
         ],
       );
@@ -1970,7 +2210,7 @@ export class AuthoringService {
           ...certification,
           status: "rejected",
           rejectionReasons: ["CERTIFICATION_RUN_NOT_FOUND"],
-          safeActions: ["compile_and_certify_flow"],
+          safeActions: ["get_flow_draft", "get_mission"],
           decisionBoundary: {
             type: "certification_rejected",
             terminal: true,
@@ -1996,7 +2236,7 @@ export class AuthoringService {
           ...certification,
           status: "rejected",
           rejectionReasons: ["CERTIFICATION_RUN_DID_NOT_PASS"],
-          safeActions: ["revise_flow", "compile_and_certify_flow"],
+          safeActions: ["get_run", "revise_flow"],
           decisionBoundary: {
             type: "certification_rejected",
             terminal: true,
@@ -2258,6 +2498,116 @@ export class AuthoringService {
     }
   }
 
+  private async requireCertificationLineage(
+    q: Query,
+    draft: {
+      id: string;
+      missionId: string;
+      environmentId: string;
+      predecessorRunId: string | null;
+    },
+    authoringSessionId: string | null,
+  ) {
+    const adaptiveUnknown = await q(
+      `SELECT 1 FROM adaptive_operations operation
+       JOIN adaptive_sessions session ON session.id=operation.session_id
+       WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown'
+       LIMIT 1`,
+      [draft.missionId],
+    );
+    if (adaptiveUnknown.rowCount) {
+      throw new ConflictException({
+        code: "MISSION_RECONCILIATION_REQUIRED",
+        mutationOutcome: "unknown",
+        safeActions: ["get_flow_authoring", "reconcile_unknown_mutation"],
+      });
+    }
+    const protectedUnknown = await q(
+      `SELECT 1 FROM protected_transactions transaction
+       JOIN runs run ON run.id=transaction.run_id
+       WHERE run.mission_id=$1
+         AND (transaction.mutation_outcome_status='unknown'
+           OR transaction.reconciliation_status='unknown')
+       LIMIT 1`,
+      [draft.missionId],
+    );
+    if (protectedUnknown.rowCount) {
+      throw new ConflictException({
+        code: "MISSION_RECONCILIATION_REQUIRED",
+        mutationOutcome: "unknown",
+        safeActions: ["get_mission", "get_run"],
+      });
+    }
+
+    const immediate = await q<{ id: string }>(
+      `SELECT id FROM runs
+       WHERE mission_id=$1
+         AND COALESCE((execution_snapshot->>'certificationCandidate')::boolean,false)=false
+       ORDER BY created_at DESC,id DESC
+       LIMIT 1
+       FOR SHARE`,
+      [draft.missionId],
+    );
+    const immediateRunId = immediate.rows[0]?.id ?? null;
+    if (!draft.predecessorRunId) {
+      if (immediateRunId) {
+        throw new ConflictException({
+          code: "SUCCESSOR_PREDECESSOR_RUN_REQUIRED",
+          mutationOutcome: "not_applied",
+          safeActions: ["get_mission"],
+        });
+      }
+      return;
+    }
+    if (immediateRunId !== draft.predecessorRunId) {
+      throw new ConflictException({
+        code: "FLOW_PREDECESSOR_STATE_STALE",
+        mutationOutcome: "not_applied",
+        safeActions: ["get_mission"],
+      });
+    }
+    if (!authoringSessionId) {
+      throw new ConflictException({
+        code: "SUCCESSOR_AUTHORING_RESTORATION_REQUIRED",
+        mutationOutcome: "not_applied",
+        safeActions: ["get_mission", "get_flow_authoring"],
+      });
+    }
+    const predecessor = await q(
+      `SELECT 1
+       FROM runs run
+       JOIN run_successor_checkpoints checkpoint ON checkpoint.run_id=run.id
+       JOIN adaptive_sessions session
+         ON session.id=$4
+        AND session.restored_successor_checkpoint_id=checkpoint.id
+        AND session.active_flow_draft_id=$5
+       WHERE run.id=$1
+         AND run.mission_id=$2
+         AND run.environment_id=$3
+         AND run.state='passed'
+         AND run.outcome_classification='passed'
+         AND run.result_classification='application_pass'
+         AND COALESCE((run.execution_snapshot->>'certificationCandidate')::boolean,false)=false
+         AND checkpoint.state='verified'
+         AND checkpoint.expires_at>now()
+         AND checkpoint.claimed_by_authoring_session_id=session.id`,
+      [
+        draft.predecessorRunId,
+        draft.missionId,
+        draft.environmentId,
+        authoringSessionId,
+        draft.id,
+      ],
+    );
+    if (!predecessor.rowCount) {
+      throw new ConflictException({
+        code: "SUCCESSOR_CHECKPOINT_UNAVAILABLE",
+        mutationOutcome: "not_applied",
+        safeActions: ["get_mission", "get_flow_authoring"],
+      });
+    }
+  }
+
   private async requireDraft(q: Query, principal: Principal, id: string, lock: boolean) {
     const result = await q<{
       id: string;
@@ -2266,6 +2616,7 @@ export class AuthoringService {
       objectiveId: string;
       environmentId: string;
       flowId: string | null;
+      predecessorRunId: string | null;
       name: string;
       description: string;
       purpose: string;
@@ -2273,6 +2624,7 @@ export class AuthoringService {
       plan: CurrentPlan;
       state: string;
       version: number;
+      updatedAt: Date;
     }>(
       `SELECT
          d.id,
@@ -2281,13 +2633,15 @@ export class AuthoringService {
          d.objective_id AS "objectiveId",
          d.environment_id AS "environmentId",
          d.flow_id AS "flowId",
+         d.predecessor_run_id AS "predecessorRunId",
          d.name,
          d.description,
          d.purpose,
          d.content,
          d.plan,
          d.state,
-         d.version
+         d.version,
+         d.updated_at AS "updatedAt"
        FROM flow_drafts d
        JOIN projects p
          ON p.id=d.project_id
@@ -2720,6 +3074,12 @@ async function certificationSatisfied(q: Query, compilationId: string) {
        AND r.state='passed'
        AND r.result_classification='application_pass'
        AND fc.publication_gate->>'status'='certified'
+       AND EXISTS(
+         SELECT 1 FROM attempts evidence_attempt
+         JOIN step_results evidence_step ON evidence_step.attempt_id=evidence_attempt.id
+         WHERE evidence_attempt.run_id=r.id
+           AND evidence_step.action_status='passed'
+       )
        AND NOT EXISTS(
          SELECT 1 FROM credential_incidents ci WHERE ci.run_id=r.id
        )
@@ -2813,6 +3173,18 @@ function bind(client: PoolClient): Query {
 
 function workspace(principal: Principal) {
   return principal.kind === "user" ? principal.workspaceId : null;
+}
+
+function adaptiveOperationDeterministic(operation: {
+  targetDigest: string | null;
+  capabilityDigest: string | null;
+  operation: Record<string, unknown>;
+}) {
+  if (operation.targetDigest && operation.capabilityDigest) return true;
+  const action = operation.operation.action;
+  if (!action || typeof action !== "object") return false;
+  const type = (action as Record<string, unknown>).type;
+  return type === "navigate" || type === "sameOriginRequest";
 }
 
 function hash(value: unknown) {

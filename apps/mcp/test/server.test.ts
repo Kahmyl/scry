@@ -841,7 +841,7 @@ describe("current Scry MCP surface", () => {
         draftId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         draftVersion: 1,
-        probeSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        authoringSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       },
     });
     expect(response.isError).toBe(true);
@@ -970,7 +970,7 @@ describe("current Scry MCP surface", () => {
         draftId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         draftVersion: 1,
-        probeSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        authoringSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       },
     });
     expect(response.isError).toBe(true);

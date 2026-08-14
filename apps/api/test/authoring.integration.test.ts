@@ -9,6 +9,7 @@ import {
   AuthenticationAuthoringService,
 } from "../src/authentication-authoring/index.js";
 import { AuthoringService } from "../src/authoring/index.js";
+import { AdaptiveSessionRepository } from "../src/adaptive-sessions/adaptive-session.repository.js";
 import { Database } from "../src/infrastructure/database.js";
 import { RunAttemptRepository } from "../src/runtime/repositories/run-attempt.repository.js";
 
@@ -371,6 +372,11 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
         claimToken,
       );
       await attempts.markRunning(result.certification.certificationRunId, attempt!.id, claimToken);
+      await stageCertificationEvidence(
+        database,
+        result.certification.certificationRunId,
+        attempt!.id,
+      );
       await attempts.markFinalizing(
         result.certification.certificationRunId,
         attempt!.id,
@@ -443,6 +449,245 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       if (previousWaitTimeout === undefined) delete process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS;
       else process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS = previousWaitTimeout;
     }
+  });
+
+  it("certifies one adaptive authoring source and rejects its UUID as a legacy Probe reference", async () => {
+    const plan = currentPlanSchema.parse({
+      name: "Adaptive qualification",
+      objective: "Open the qualified application",
+      preconditions: [],
+      allowedOrigins: ["https://example.test"],
+      budgets: { maxActions: 1, maxDurationMs: 10_000, maxNavigations: 1 },
+      checkpoints: [],
+      steps: [
+        {
+          id: "open-adaptive",
+          title: "Open qualified application",
+          action: { type: "navigate", url: "https://example.test" },
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "final",
+        },
+      ],
+    });
+    const created = await service.createDraft(principal, {
+      ...context,
+      projectId: project,
+      environmentId: environment,
+      name: `Adaptive qualification ${randomUUID()}`,
+      description: "",
+      content: {
+        objective: "Open the qualified application",
+        preconditions: [],
+        expectedOutcomes: ["Application opens"],
+        prohibitedSideEffects: [],
+      },
+      plan,
+      idempotencyKey: `adaptive-draft-${randomUUID()}`,
+    });
+    const authoringSessionId = randomUUID();
+    await database.query(
+      `INSERT INTO adaptive_sessions(
+         id,project_id,environment_id,correlation_id,state,objective,allowed_origins,
+         decision_boundary,mission_id,objective_id,flow_draft_id,idempotency_key,
+         completed_at,active_objective_id,active_flow_draft_id,authoring_turn_budgets,
+         protected_reference_allowlist,agent_session_id,qualified_flow_draft_version
+       ) VALUES(
+         $1,$2,$3,$4,'completed','Open the qualified application',$5::jsonb,
+         $6::jsonb,$7,$8,$9,$10,now(),$8,$9,$11::jsonb,'[]'::jsonb,$12,1
+       )`,
+      [
+        authoringSessionId,
+        project,
+        environment,
+        randomUUID(),
+        JSON.stringify(["https://example.test"]),
+        JSON.stringify({
+          type: "objective_completed",
+          reasonCode: "MISSION_AUTHORING_TURN_COMPLETED",
+          safeActions: [],
+        }),
+        mission,
+        objective,
+        created.id,
+        `adaptive-certification-${randomUUID()}`,
+        JSON.stringify({ maxIntents: 5, maxDurationMs: 60_000 }),
+        session,
+      ],
+    );
+    await database.query(
+      `INSERT INTO adaptive_operations(
+         session_id,operation_id,sequence,mode,state,semantic_intent,expected_effect,
+         policy_digest,dispatch_boundary,mutation_outcome,functional_result,privacy_result,
+         evidence_result,quality_findings,safe_outcome,decision_boundary,idempotency_key,
+         completed_at,mission_id,objective_id,flow_draft_id,authoring_intent,derived_action
+       ) VALUES(
+         $1,'open-adaptive',1,'rehearse','completed',$2::jsonb,$3::jsonb,$4,
+         'acknowledged','applied','succeeded','verified','[]'::jsonb,'[]'::jsonb,
+         $5::jsonb,$6::jsonb,$7,now(),$8,$9,$10,$2::jsonb,$11::jsonb
+       )`,
+      [
+        authoringSessionId,
+        JSON.stringify({
+          intentId: "open-adaptive",
+          action: { kind: "navigate", url: "https://example.test" },
+          expectedEffect: { kind: "navigation", match: "path" },
+        }),
+        JSON.stringify({ type: "navigation", match: "path" }),
+        "b".repeat(64),
+        JSON.stringify({
+          resolvedTarget: {
+            digest: "c".repeat(64),
+            capabilityDigest: "d".repeat(64),
+          },
+        }),
+        JSON.stringify({ type: "objective_completed", safeActions: [] }),
+        `adaptive-operation-${randomUUID()}`,
+        mission,
+        objective,
+        created.id,
+        JSON.stringify({
+          mode: "rehearse",
+          action: { type: "navigate", url: "https://example.test" },
+          expectedEffect: { type: "navigation", match: "path" },
+        }),
+      ],
+    );
+
+    await expect(
+      service.compileAndCertify(principal, created.id!, {
+        ...context,
+        environmentId: environment,
+        draftVersion: 1,
+        probeSessionId: authoringSessionId,
+        idempotencyKey: `invalid-probe-${randomUUID()}`,
+        viewport: { width: 1280, height: 720 },
+        seed: 1,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "PROBE_SESSION_INVALID",
+        mutationOutcome: "not_applied",
+        safeActions: ["get_flow_draft"],
+      },
+    });
+    expect(
+      Number(
+        (
+          await database.query(
+            `SELECT count(*) FROM flow_compilations WHERE draft_id=$1`,
+            [created.id],
+          )
+        ).rows[0]!.count,
+      ),
+    ).toBe(0);
+
+    const request = (key: string) =>
+      service.compileAndCertify(principal, created.id!, {
+        ...context,
+        environmentId: environment,
+        draftVersion: 1,
+        authoringSessionId,
+        idempotencyKey: key,
+        viewport: { width: 1280, height: 720 },
+        seed: 1,
+      });
+    const [first, concurrent] = await Promise.all([
+      request(`adaptive-compile-a-${randomUUID()}`),
+      request(`adaptive-compile-b-${randomUUID()}`),
+    ]);
+    expect(first.compiledContractId).toBe(concurrent.compiledContractId);
+    expect(first.certification).toMatchObject({ status: "certification_pending" });
+    expect(concurrent.certification).toMatchObject({ status: "certification_pending" });
+
+    const persisted = await database.query<{
+      compilationCount: number;
+      runCount: number;
+      authoringSessionId: string;
+      certificationCandidate: boolean;
+    }>(
+      `SELECT
+         (SELECT count(*)::integer FROM flow_compilations WHERE draft_id=$1) AS "compilationCount",
+         (SELECT count(*)::integer FROM runs WHERE compiled_contract_id=$2) AS "runCount",
+         compilation.adaptive_session_id AS "authoringSessionId",
+         (run.execution_snapshot->>'certificationCandidate')::boolean AS "certificationCandidate"
+       FROM flow_compilations compilation
+       JOIN runs run ON run.id=compilation.certification_run_id
+       WHERE compilation.id=$2`,
+      [created.id, first.compiledContractId],
+    );
+    expect(persisted.rows[0]).toEqual({
+      compilationCount: 1,
+      runCount: 1,
+      authoringSessionId,
+      certificationCandidate: true,
+    });
+
+    const certificationRunId = "certificationRunId" in first.certification
+      ? first.certification.certificationRunId
+      : undefined;
+    if (!certificationRunId) throw new Error("Certification Run was not queued");
+    await completeCertification(database, { certificationRunId });
+    const restoreOwnerId = randomUUID();
+    await database.query(
+      `INSERT INTO adaptive_session_runtime_leases(
+         session_id,owner_id,fencing_token,lease_expires_at
+       ) VALUES($1,$2,1,now()+interval '1 minute')
+       ON CONFLICT(session_id) DO UPDATE SET owner_id=excluded.owner_id,
+         fencing_token=excluded.fencing_token,lease_expires_at=excluded.lease_expires_at`,
+      [authoringSessionId, restoreOwnerId],
+    );
+    const checkpoint = await database.query<{ id: string }>(
+      `UPDATE run_successor_checkpoints SET state='restoring',
+         claimed_by_authoring_session_id=$2,restore_owner_id=$3,restore_fencing_token=1
+       WHERE run_id=$1 RETURNING id`,
+      [certificationRunId, authoringSessionId, restoreOwnerId],
+    );
+    await new AdaptiveSessionRepository(database).completeSuccessorCheckpoint(
+      authoringSessionId,
+      checkpoint.rows[0]!.id,
+      restoreOwnerId,
+      1,
+      "verified",
+    );
+    expect(
+      (
+        await database.query(
+          `SELECT state,ciphertext,initialization_vector,authentication_tag
+           FROM run_successor_checkpoints WHERE id=$1`,
+          [checkpoint.rows[0]!.id],
+        )
+      ).rows[0],
+    ).toEqual({
+      state: "verified",
+      ciphertext: null,
+      initialization_vector: null,
+      authentication_tag: null,
+    });
+
+    const edited = await service.updateDraft(principal, created.id!, {
+      ...context,
+      expectedVersion: 1,
+      description: "Changed after the qualification session closed",
+      reason: "Exercise stale adaptive qualification fencing",
+    });
+    await expect(
+      service.compileAndCertify(principal, created.id!, {
+        ...context,
+        environmentId: environment,
+        draftVersion: edited.version!,
+        authoringSessionId,
+        idempotencyKey: `stale-adaptive-${randomUUID()}`,
+        viewport: { width: 1280, height: 720 },
+        seed: 1,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "AUTHORING_QUALIFICATION_SESSION_NOT_COMPLETED",
+        mutationOutcome: "not_applied",
+      },
+    });
   });
 
   it("keeps quality findings visible without blocking compilation", async () => {
@@ -1214,6 +1459,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       claimToken,
     );
     await attempts.markRunning(certificationRun, attempt!.id, claimToken);
+    await stageCertificationEvidence(database, certificationRun, attempt!.id);
     await attempts.markFinalizing(certificationRun, attempt!.id, claimToken);
     await attempts.completeAttempt(certificationRun, attempt!.id, claimToken, "passed", "passed");
 
@@ -1482,6 +1728,7 @@ async function completeCertification(
   );
   if (!attempt) throw new Error("Certification attempt was not claimable");
   await attempts.markRunning(certification.certificationRunId, attempt.id, claimToken);
+  await stageCertificationEvidence(database, certification.certificationRunId, attempt.id);
   await attempts.markFinalizing(certification.certificationRunId, attempt.id, claimToken);
   await attempts.completeAttempt(
     certification.certificationRunId,
@@ -1489,6 +1736,42 @@ async function completeCertification(
     claimToken,
     "passed",
     "passed",
+  );
+}
+
+async function stageCertificationEvidence(database: Database, runId: string, attemptId: string) {
+  await database.query(
+    `INSERT INTO run_events(attempt_id,sequence,type,payload,occurred_at)
+     VALUES($1,1,'action_completed',$2::jsonb,now())`,
+    [attemptId, JSON.stringify({ evidence: "certification application outcome observed" })],
+  );
+  await database.query(
+    `INSERT INTO step_results(
+       attempt_id,step_id,ordinal,action_status,assertions_summary,evidence,
+       started_at,completed_at,duration_ms
+     ) VALUES($1,'certification-step',0,'passed',$2::jsonb,$3::jsonb,now(),now(),1)`,
+    [
+      attemptId,
+      JSON.stringify({ passed: 0, failed: 0, unevaluated: 0 }),
+      JSON.stringify([{ kind: "application_outcome", status: "observed" }]),
+    ],
+  );
+  await database.query(
+    `INSERT INTO run_successor_checkpoints(
+       run_id,mission_id,objective_id,flow_revision_id,environment_id,state,
+       ciphertext,initialization_vector,authentication_tag,binding_fingerprint,
+       restoration_commitment,semantic_commitment,expires_at
+     )
+     SELECT id,mission_id,objective_id,flow_revision_id,environment_id,'establishing',
+            $2,$3,$4,$5,$5,$5,now()+interval '1 hour'
+     FROM runs WHERE id=$1`,
+    [
+      runId,
+      Buffer.from("encrypted-checkpoint"),
+      Buffer.alloc(12, 1),
+      Buffer.alloc(16, 2),
+      "a".repeat(64),
+    ],
   );
 }
 

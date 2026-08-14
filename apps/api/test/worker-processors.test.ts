@@ -101,7 +101,10 @@ describe("worker processor boundaries", () => {
           allowedOrigins: ["https://example.test"],
           allowDownloads: false,
         }),
-        executionSnapshot: { viewport: { width: 1280, height: 720 } },
+        executionSnapshot: {
+          viewport: { width: 1280, height: 720 },
+          certificationCandidate: true,
+        },
       })),
       markRunning: vi.fn(async () => undefined),
       setRunPhase: vi.fn(async () => undefined),
@@ -110,10 +113,12 @@ describe("worker processor boundaries", () => {
       failAttempt: vi.fn(async () => undefined),
     };
     const mutationStates = new Map<string, string>();
+    const modes: string[] = [];
     const requestInputs: Array<{ mutationIdentity?: string; operationId: string }> = [];
     const capabilities = {
       createRun: vi.fn(
         (input: { correlationId: string; mode: "run" | "certify"; options: object }) => {
+          modes.push(input.mode);
           const manifest = createExecutionCapabilityManifest({
             mode: input.mode,
             correlationId: input.correlationId,
@@ -210,6 +215,7 @@ describe("worker processor boundaries", () => {
     ).rejects.toThrow("EXECUTION_UNKNOWN_MUTATION_REQUIRES_RECONCILIATION");
 
     expect(dispatch).toHaveBeenCalledOnce();
+    expect(modes).toEqual(["certify", "certify"]);
     expect(requestInputs).toEqual([
       {
         operationId: "attempt-22222222-2222-4222-8222-222222222221",

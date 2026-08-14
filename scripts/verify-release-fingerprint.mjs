@@ -93,6 +93,7 @@ const operationBoundSyntheticProtectedInputs = await readFile(
 );
 const structuredSyntheticProtectedInput = await readFile(new URL("structured-synthetic-protected-input.sql", migrations), "utf8");
 const segmentedFlowSuccessorCheckpoints = await readFile(new URL("segmented-flow-successor-checkpoints.sql", migrations), "utf8");
+const adaptiveCertificationProvenance = await readFile(new URL("adaptive-certification-provenance.sql", migrations), "utf8");
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", migrations), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -120,6 +121,7 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", migration
   ["operation-bound-synthetic-protected-inputs.sql", operationBoundSyntheticProtectedInputs],
   ["structured-synthetic-protected-input.sql", structuredSyntheticProtectedInput],
   ["segmented-flow-successor-checkpoints.sql", segmentedFlowSuccessorCheckpoints],
+  ["adaptive-certification-provenance.sql", adaptiveCertificationProvenance],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

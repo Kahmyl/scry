@@ -1921,16 +1921,16 @@ export class AdaptiveSessionRepository {
   ) {
     const result = await this.database.query(
       `UPDATE run_successor_checkpoints checkpoint SET state=$5,
-         ciphertext=CASE WHEN $5='failed' THEN NULL ELSE ciphertext END,
-         initialization_vector=CASE WHEN $5='failed' THEN NULL ELSE initialization_vector END,
-         authentication_tag=CASE WHEN $5='failed' THEN NULL ELSE authentication_tag END,
+         ciphertext=NULL,
+         initialization_vector=NULL,
+         authentication_tag=NULL,
          restore_owner_id=NULL,restore_fencing_token=NULL,reason_code=$6,
          restored_at=CASE WHEN $5='verified' THEN now() ELSE NULL END,updated_at=now()
        FROM adaptive_session_runtime_leases lease
        WHERE checkpoint.id=$2 AND checkpoint.claimed_by_authoring_session_id=$1
          AND checkpoint.state='restoring' AND lease.session_id=$1
-         AND lease.owner_id=$3 AND lease.fencing_token=$4 AND lease.lease_expires_at>now()
-         AND checkpoint.restore_owner_id=$3 AND checkpoint.restore_fencing_token=$4
+         AND lease.owner_id=$3::uuid AND lease.fencing_token=$4 AND lease.lease_expires_at>now()
+         AND checkpoint.restore_owner_id=$3::text AND checkpoint.restore_fencing_token=$4
        RETURNING checkpoint.id`,
       [sessionId, checkpointId, ownerId, fencingToken, outcome, reasonCode ?? null],
     );
@@ -2368,6 +2368,13 @@ export class AdaptiveSessionRepository {
     }
     await q(
       `UPDATE adaptive_sessions SET state=$2,version=version+1,updated_at=now(),
+         qualified_flow_draft_version=CASE
+           WHEN $2='completed' THEN (
+             SELECT version FROM flow_drafts
+             WHERE id=adaptive_sessions.active_flow_draft_id
+           )
+           ELSE qualified_flow_draft_version
+         END,
          completed_at=CASE WHEN $2 IN ('completed','failed','cancelled') THEN now() ELSE completed_at END
        WHERE id=$1`,
       [sessionId, target],
@@ -2378,8 +2385,11 @@ export class AdaptiveSessionRepository {
            initialization_vector=NULL,authentication_tag=NULL,
            reason_code='AUTHORING_SESSION_TERMINATED',updated_at=now()
          WHERE claimed_by_authoring_session_id=$1
-           AND state IN ('available','restoring','verified')`,
-        [sessionId],
+           AND (
+             state IN ('available','restoring')
+             OR ($2<>'completed' AND state='verified')
+           )`,
+        [sessionId, target],
       );
     }
     await this.appendEvent(q, sessionId, eventType, safeFacts, idempotencyKey);

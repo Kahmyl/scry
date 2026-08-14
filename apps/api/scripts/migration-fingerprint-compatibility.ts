@@ -43,6 +43,7 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "operation-bound-synthetic-protected-inputs.sql",
   "structured-synthetic-protected-input.sql",
   "segmented-flow-successor-checkpoints.sql",
+  "adaptive-certification-provenance.sql",
 ] as const;
 
 export type OptionalBaselineMigration = (typeof OPTIONAL_BASELINE_MIGRATIONS)[number];
@@ -114,6 +115,7 @@ export function compatibilityBaseline(source: string): string {
     "operation-bound-synthetic-protected-inputs.sql",
     "structured-synthetic-protected-input.sql",
     "segmented-flow-successor-checkpoints.sql",
+    "adaptive-certification-provenance.sql",
   ].reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}\\r?\\n`, "g"), ""),

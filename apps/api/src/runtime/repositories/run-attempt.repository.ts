@@ -202,6 +202,10 @@ export class RunAttemptRepository {
            SET state='available',sealed_at=now(),updated_at=now()
            WHERE checkpoint.run_id=$1 AND checkpoint.state='establishing'
              AND checkpoint.expires_at>now()
+             AND EXISTS(
+               SELECT 1 FROM step_results evidence
+               WHERE evidence.attempt_id=$2 AND evidence.action_status='passed'
+             )
              AND NOT EXISTS(SELECT 1 FROM credential_incidents WHERE run_id=$1)
              AND NOT EXISTS(
                SELECT 1 FROM protected_transactions
@@ -236,6 +240,10 @@ export class RunAttemptRepository {
          SET publication_gate=jsonb_build_object(
                'status',CASE
                  WHEN $2='passed' AND $3='application_pass'
+                   AND EXISTS(
+                     SELECT 1 FROM step_results evidence
+                     WHERE evidence.attempt_id=$4 AND evidence.action_status='passed'
+                   )
                    AND NOT EXISTS(SELECT 1 FROM credential_incidents WHERE run_id=$1)
                    AND NOT EXISTS(
                      SELECT 1 FROM protected_transactions
