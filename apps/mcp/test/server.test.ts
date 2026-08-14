@@ -168,8 +168,37 @@ describe("current Scry MCP surface", () => {
       .toContain("Protected fill example action");
     expect(tools.find(({ name }) => name === "create_test_environment")?.description)
       .toContain("environmentRecovery.missingTrustedScriptOrigins");
+    expect(tools.find(({ name }) => name === "create_test_environment")?.description)
+      .toContain("maxNavigations 1-50");
     expect(tools.find(({ name }) => name === "create_flow_draft")?.description)
-      .toContain("Minimal plan example");
+      .toContain("plan.steps is required with at least one item");
+    expect(tools.find(({ name }) => name === "create_flow_draft")?.description)
+      .toContain("waitFor+target+state");
+    expect(tools.find(({ name }) => name === "create_flow_draft")?.description)
+      .toContain("not the simpler advance_flow_authoring semantic target");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("the public field is reference, never authoritativeReference");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("wait_for requires state, one of visible, hidden, attached, detached");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("Valid roles: button, checkbox, combobox");
+    const draftSchema = tools.find(({ name }) => name === "create_flow_draft")!
+      .inputSchema as any;
+    const stepsSchema = draftSchema.properties.plan.properties.steps;
+    expect(stepsSchema.minItems).toBe(1);
+    expect(stepsSchema.items.required).toEqual(
+      expect.arrayContaining(["id", "title", "action"]),
+    );
+    expect(stepsSchema.items.properties.action.anyOf.map((item: any) => item.properties.type.const))
+      .toEqual(expect.arrayContaining(["navigate", "waitFor", "fill", "click"]));
+    const authoringSchema = tools.find(({ name }) => name === "advance_flow_authoring")!
+      .inputSchema as any;
+    const intentActionUnion = authoringSchema.properties.intents.items.properties.action.oneOf;
+    const waitAction = intentActionUnion.find((item: any) => item.properties.kind.const === "wait_for");
+    expect(waitAction.required).toEqual(expect.arrayContaining(["kind", "target", "state"]));
+    expect(waitAction.properties.state.enum).toEqual(["visible", "hidden", "attached", "detached"]);
+    expect(waitAction.properties.target.properties.reference.pattern)
+      .toBe("^context-control-[a-f0-9]{32}$");
     expect(tools.find(({ name }) => name === "list_projects")?.description)
       .toContain("MCP has no project-creation capability");
     expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
@@ -177,7 +206,7 @@ describe("current Scry MCP surface", () => {
     expect(tools.find(({ name }) => name === "start_flow_authoring")?.description)
       .toContain("maxDurationMs 1000-60000");
     expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("role alone is not supported");
+      .toContain("observable role/name/label/placeholder/text/testId fact");
     expect(tools.find(({ name }) => name === "end_agent_session")?.description)
       .toContain("Required final lifecycle write");
     await client.close();
