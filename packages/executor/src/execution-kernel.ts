@@ -480,6 +480,7 @@ export class ExecutionKernel {
               safeCode(error) === "EXECUTION_KERNEL_FAILED"
                 ? "EXPECTED_EFFECT_NOT_OBSERVED"
                 : safeCode(error),
+            ...safeNavigationEnvironmentFailure(error),
             ...(outcome.mutationOutcome === "applied"
               ? {
                   nextDecisionBoundary: {
@@ -981,6 +982,7 @@ function failureOutcome(
     ...resolvedTargetOutcome(praxisResults),
     durationMs: performance.now() - startedAt,
     reasonCode,
+    ...safeNavigationEnvironmentFailure(error),
   });
 }
 
@@ -1268,6 +1270,17 @@ function safeEnvironmentFailure(error: unknown) {
       missingOriginClassification: candidate.missingOriginClassification,
     },
   };
+}
+
+function safeNavigationEnvironmentFailure(error: unknown) {
+  if (typeof error !== "object" || error === null || !("safeNavigationEnvironmentFailure" in error))
+    return {};
+  const details = (error as { safeNavigationEnvironmentFailure?: unknown })
+    .safeNavigationEnvironmentFailure;
+  if (typeof details !== "object" || details === null) return {};
+  const missingAllowedOrigin = (details as Record<string, unknown>).missingAllowedOrigin;
+  if (typeof missingAllowedOrigin !== "string" || !safeUrl(missingAllowedOrigin)) return {};
+  return { navigationEnvironmentFailure: { missingAllowedOrigin: new URL(missingAllowedOrigin).origin } };
 }
 
 function safeUrl(value: string) {

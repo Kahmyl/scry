@@ -236,6 +236,11 @@ integration("adaptive session repository integration", () => {
     const created = await repository.create(workspaceId, startInput("trusted-recovery-source"));
     sessionIds.push(created.id);
     await database.query(
+      `INSERT INTO environments(id,project_id,name,base_origin,policy)
+       VALUES($1,$2,'Adaptive recovery','https://example.test',$3::jsonb)`,
+      [randomUUID(), projectId, JSON.stringify({ allowedOrigins: ["https://example.test"] })],
+    );
+    await database.query(
       `UPDATE adaptive_sessions SET decision_boundary=$2::jsonb WHERE id=$1`,
       [created.id, JSON.stringify({
         type: "environment_unavailable",
@@ -272,14 +277,21 @@ integration("adaptive session repository integration", () => {
       recoveryApplied: true,
       replayed: true,
       sessionId: recovered.sessionId,
+      approvedOrigins: ["https://maps.example.com", "https://scripts.example.com"],
     });
+    await expect(repository.recoverTrustedOrigins(workspaceId, {
+      ...input, approvedOrigins: ["https://changed.example.com"],
+    })).rejects.toMatchObject({ response: {
+      code: "TRUST_RECOVERY_IDEMPOTENCY_CONFLICT", mutationOutcome: "not_applied",
+    } });
     const after = await controlPlaneCounts();
     expect(after.environments).toBe(before.environments + 1);
     expect(after.drafts).toBe(before.drafts + 1);
     expect(after.sessions).toBe(before.sessions + 1);
-    const environment = await database.query<{ policy: { trustedScriptOrigins: string[] } }>(
-      `SELECT policy FROM environments WHERE id=$1`, [recovered.environmentId!],
+    const environment = await database.query<{ name: string; policy: { trustedScriptOrigins: string[] } }>(
+      `SELECT name,policy FROM environments WHERE id=$1`, [recovered.environmentId!],
     );
+    expect(environment.rows[0]!.name).toMatch(/^Adaptive recovery [0-9a-f]{8}$/);
     expect(environment.rows[0]!.policy.trustedScriptOrigins).toEqual([
       "https://maps.example.com", "https://scripts.example.com",
     ]);
@@ -464,6 +476,118 @@ integration("adaptive session repository integration", () => {
       state: "failed",
       outcome: { functionalResult: "succeeded", mutationOutcome: "unknown" },
       decisionBoundary: boundary,
+    });
+  });
+
+  it("recovers the exact stale running turn only before a safe dispatch", async () => {
+    const created = await repository.create(workspaceId, startInput("stale-turn-recovery-start"));
+    sessionIds.push(created.id);
+    const intent = {
+      intentId: "stale-navigation",
+      objectiveId,
+      flowDraftId,
+      action: { kind: "navigate" as const, url: "https://example.test/details" },
+      expectedEffect: { kind: "navigation" as const, url: "https://example.test/details", match: "exact" as const },
+      constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "ordinary" as const },
+      protectedInputReferences: [],
+    };
+    const turnInput = {
+      workspaceId,
+      sessionId: created.id,
+      idempotencyKey: "stale-navigation-turn",
+      inputDigest: "a".repeat(64),
+      budgets: { maxOperations: 1, maxDurationMs: 10_000 },
+      intents: [intent],
+    };
+    const turn = await repository.beginTurn(turnInput);
+    await repository.beginMissionOperation({
+      workspaceId,
+      sessionId: created.id,
+      operationId: "stale-navigation-operation",
+      idempotencyKey: "stale-navigation-operation-key",
+      intent,
+      action: {
+        type: "navigate",
+        url: "https://example.test/details",
+        timeoutMs: 1_000,
+      },
+      expectedEffect: { type: "navigation", url: "https://example.test/details", match: "exact" },
+      mode: "rehearse",
+    });
+
+    await expect(repository.beginTurn(turnInput)).resolves.toMatchObject({
+      turnId: turn.turnId,
+      replayed: true,
+      state: "running",
+    });
+    await database.query(
+      `UPDATE mission_authoring_turns SET updated_at=now()-interval '20 seconds' WHERE id=$1`,
+      [turn.turnId],
+    );
+    await expect(repository.beginTurn(turnInput)).resolves.toMatchObject({
+      turnId: turn.turnId,
+      replayed: false,
+      recovered: true,
+      phase: "resume",
+    });
+  });
+
+  it("reclaims a stale post-dispatch turn without authorizing redispatch", async () => {
+    const created = await repository.create(workspaceId, startInput("unsafe-turn-recovery-start"));
+    sessionIds.push(created.id);
+    const intent = {
+      intentId: "stale-submit",
+      objectiveId,
+      flowDraftId,
+      action: {
+        kind: "activate" as const,
+        target: { concept: "submit", role: "button" as const, name: "Submit", exact: true },
+      },
+      expectedEffect: { kind: "none" as const },
+      constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "ordinary" as const },
+      protectedInputReferences: [],
+    };
+    const turnInput = {
+      workspaceId,
+      sessionId: created.id,
+      idempotencyKey: "stale-submit-turn",
+      inputDigest: "b".repeat(64),
+      budgets: { maxOperations: 1, maxDurationMs: 10_000 },
+      intents: [intent],
+    };
+    const turn = await repository.beginTurn(turnInput);
+    await repository.beginMissionOperation({
+      workspaceId,
+      sessionId: created.id,
+      operationId: "stale-submit-operation",
+      idempotencyKey: "stale-submit-operation-key",
+      intent,
+      action: credentialRevocationAction(),
+      expectedEffect: { type: "none" },
+      mode: "rehearse",
+    });
+    await database.query(
+      `UPDATE adaptive_operations SET dispatch_boundary='dispatching'
+       WHERE session_id=$1 AND operation_id='stale-submit-operation'`,
+      [created.id],
+    );
+
+    await expect(repository.beginTurn(turnInput)).resolves.toMatchObject({
+      turnId: turn.turnId,
+      replayed: true,
+      state: "running",
+    });
+    await database.query(
+      `UPDATE mission_authoring_turns SET updated_at=now()-interval '20 seconds' WHERE id=$1`,
+      [turn.turnId],
+    );
+    await expect(repository.beginTurn(turnInput)).resolves.toMatchObject({
+      turnId: turn.turnId,
+      replayed: false,
+      recovered: true,
+      phase: "resume",
     });
   });
 

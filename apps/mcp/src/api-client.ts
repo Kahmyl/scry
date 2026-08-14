@@ -22,6 +22,7 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "sourceMissionRevision", "currentMissionRevision", "objectiveId", "dependencyId",
   "mutationOutcome", "retry", "retryClass", "continuation", "recoveryTool",
   "requiresNewFlowDraftAndAuthoringSession", "idempotencyReuse",
+  "disclosedOrigins", "missingTrustedScriptOrigins", "missingAllowedOrigin",
 ]);
 
 export function apiRejection(error: ScryApiError) {

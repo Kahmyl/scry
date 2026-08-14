@@ -49,7 +49,7 @@ const publicPlanActionSchema = z.object({
   name: z.string().optional(),
   timeoutMs: z.number().int().optional(),
 }).passthrough();
-const publicPlanSchema = z.object({
+export const publicPlanSchema = z.object({
   name: z.string().trim().min(1).max(200),
   objective: z.string().trim().min(1),
   preconditions: z.array(z.string().trim().min(1)).max(20).default([]),

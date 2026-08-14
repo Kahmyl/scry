@@ -230,7 +230,7 @@ export async function createAuthoringBrowserSession(input: {
                   resolveEffectPage: async () => {
                     const { candidates, rejectedDocumentUrl } = await popupCandidate.resolve();
                     if (rejectedDocumentUrl) {
-                      throw new Error("EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED");
+                      throw newPageOriginNotAllowed(rejectedDocumentUrl);
                     }
                     if (candidates.length === 0) return undefined;
                     if (candidates.length !== 1) {
@@ -268,7 +268,7 @@ export async function createAuthoringBrowserSession(input: {
                         popupOrigin !== new URL(expectedEffect.origin).origin)
                     ) {
                       await popup.close().catch(() => undefined);
-                      throw new Error("EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED");
+                      throw newPageOriginNotAllowed(popupOrigin);
                     }
                     const previousPage = page!;
                     page = popup;
@@ -376,6 +376,13 @@ export async function createAuthoringBrowserSession(input: {
     await browser.close().catch(() => undefined);
     throw error;
   }
+}
+
+function newPageOriginNotAllowed(url: string) {
+  const missingAllowedOrigin = new URL(url).origin;
+  return Object.assign(new Error("EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED"), {
+    safeNavigationEnvironmentFailure: { missingAllowedOrigin },
+  });
 }
 
 async function observeSettledSemanticPageContext(input: {

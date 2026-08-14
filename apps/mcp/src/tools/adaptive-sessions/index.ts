@@ -8,25 +8,62 @@ import {
   startAdaptiveSessionSchema,
   prepareFlowAuthoringSchema,
   preparedFlowAuthoringSchema,
+  agentProviderSchema,
+  flowDraftPurposeSchema,
+  flowRevisionContentSchema,
 } from "@scry/contracts";
 import { z } from "zod";
 
 import { apiRejection, ScryApiError, type ScryApiClient } from "../../api-client.js";
 import { readOnly, stableKey, toolResult, uuid, writes } from "../../tool-registry.js";
+import { publicPlanSchema } from "../authoring/create-flow-draft.tool.js";
 
 const navigationExpectedEffectGuidance =
-  "Expected same-page navigation accepts {kind:'navigation',url:'https://example.test/path',match:'exact'}; urlPattern is also accepted as a host-compatible alias for the same absolute URL, but never provide both url and urlPattern. ";
+  "Expected same-page navigation accepts {kind:'navigation',url:'https://example.test/path',match:'exact'}; urlPattern is also accepted as a host-compatible alias for the same absolute URL, but never provide both url and urlPattern. For a link or control expected to open a new page, declare constraints.allowNewPage:true AND expectedEffect:{kind:'new_page'}; optionally include the known destination origin as origin. allowNewPage alone grants permission but does not arm safe new-page adoption, and expectedEffect:{kind:'none'} keeps authority on the current page. ";
 
 export function registerAdaptiveSessionTools(server: McpServer, client: ScryApiClient) {
   server.registerTool("prepare_flow_authoring", {
     title: "Prepare Flow Authoring",
     description: "Atomically create the explicitly supplied Mission, agent session, first Objective (dependencies must be []), complete Flow draft content/current plan, and active authoring session, or explicitly reuse one exact active authoringSessionId returned by get_operating_context. kind=create requires projectId, environmentId, mission, objective, draft, and authoring. kind=reuse requires projectId and authoringSessionId. idempotencyKey is optional and deterministically synthesized when omitted. This performs no browser navigation or product action and never infers equivalence between Missions or Objectives.",
-    inputSchema: prepareFlowAuthoringSchema,
-    outputSchema: preparedFlowAuthoringSchema,
+    inputSchema: {
+      kind: z.enum(["create", "reuse"]),
+      projectId: uuid,
+      environmentId: uuid.optional(),
+      authoringSessionId: uuid.optional(),
+      mission: z.object({
+        title: z.string().trim().min(1).max(200),
+        originalInstruction: z.string().trim().min(1).max(20_000),
+        provider: agentProviderSchema.default("codex"),
+        instructionSnapshot: z.string().trim().min(1).max(20_000),
+        connectionId: z.string().trim().min(1).max(500).optional(),
+        distinctReason: z.string().trim().min(1).max(2_000).optional(),
+      }).strict().optional(),
+      objective: z.object({
+        title: z.string().trim().min(1).max(200), description: z.string().trim().max(2_000).default(""),
+        dependencies: z.array(uuid).max(0).default([]),
+        completionCriteria: z.array(z.object({ description: z.string().trim().min(1).max(2_000),
+          required: z.boolean().default(true) }).strict()).min(1).max(100),
+        order: z.number().int().nonnegative(),
+      }).strict().optional(),
+      draft: z.object({
+        name: z.string().trim().min(1).max(200), description: z.string().trim().max(2_000).default(""),
+        purpose: flowDraftPurposeSchema.default("primary"), content: flowRevisionContentSchema,
+        plan: publicPlanSchema,
+      }).strict().optional(),
+      authoring: z.object({
+        objective: z.string().trim().min(1).max(4_000),
+        allowedOrigins: z.array(z.string().url()).min(1).max(20),
+        turnBudgets: missionAuthoringTurnBudgetsSchema.default({ maxOperations: 20, maxDurationMs: 60_000 }),
+        initialProtectedReferenceIds: z.array(uuid).max(20).default([]),
+      }).strict().optional(),
+      idempotencyKey: z.string().trim().min(8).max(200).optional(),
+    },
+    outputSchema: preparedFlowAuthoringSchema.extend({ message: z.string() }),
     annotations: writes,
   }, async (input) => withAdaptiveSessionError(async () => {
     await client.requireCurrentRelease();
-    const prepared = preparedFlowAuthoringSchema.parse(await client.post("/mission-flow-authoring/prepare", input));
+    const body = prepareFlowAuthoringSchema.parse(input);
+    const prepared = preparedFlowAuthoringSchema.parse(await client.post("/mission-flow-authoring/prepare", body));
     return toolResult(prepared, prepared.reused ? "Existing authoring session is ready." : "Flow authoring lifecycle prepared atomically.");
   }, "Flow authoring preparation was rejected."));
 
@@ -60,7 +97,7 @@ export function registerAdaptiveSessionTools(server: McpServer, client: ScryApiC
     {
       title: "Advance Flow Authoring",
       description: navigationExpectedEffectGuidance +
-        "Execute 1-20 semantic Mission authoring intents within budgets.maxOperations (1-20) and budgets.maxDurationMs (1000-60000), or continue one stable pending turn. For kind=intents provide intents and omit turnId; for kind=continue provide turnId and omit intents. Every intent requires the complete constraints object {timeoutMs:100-60000,allowNewPage:boolean,allowNonExact:boolean}; allowNonExact has no implicit default. Action kinds are navigate, activate, fill, select, set_checked, press, wait_for, inspect, acquire_protected_outputs, and same_origin_request. Authorization kinds are ordinary, authentication, reversible, live_read, live_mutation, and protected_mutation. Every target requires concept plus either reference from the latest semanticPageContext or an observable role/name/label/placeholder/text/testId fact; the public field is reference, never authoritativeReference. Valid roles: button, checkbox, combobox, dialog, field, form, heading, link, listbox, menuitem, option, radio, region, row, tab, table, textbox, text, value. Inspect example: {kind:'inspect',target:{concept:'email',role:'textbox',placeholder:'Email'}}. Fresh-reference example: {kind:'inspect',target:{concept:'observed control',reference:'context-control-<32 lowercase hex>'}}. wait_for requires state, one of visible, hidden, attached, detached; example: {kind:'wait_for',target:{concept:'login form',role:'form'},state:'visible'}. An activate action must declare semanticEffect: read_context_transition only when its intended effect is proven to be read-only navigation or UI context selection; declare resource_mutation for a product/resource change, or unknown when the effect is not established. Missing or unknown effects fail closed under live_read. A login/authentication submit that only transitions into an authenticated read context uses semanticEffect:'read_context_transition' with authorization:{kind:'live_read'}; authentication authority is for protected input, not admission of that activation. A read-context transition may use a click but never authorizes production mutation. Protected fill example action: {kind:'fill',target:{concept:'password',role:'textbox'},protectedReferenceId:'<credential-uuid>'}; pair it with authorization:{kind:'authentication'}, constraints:{timeoutMs:30000,allowNewPage:false,allowNonExact:true}, expectedEffect:{kind:'none'}, and protectedInputReferences:['<same-credential-uuid>']. Read completed[*].mutationOutcome before acting: not_applied permits only the reported prerequisite/revision path, applied may require effect observation, and unknown forbids blind retry. decisionBoundary.safeActions names the permitted continuation; pending returns the only stable turnId to continue. TARGET_NOT_FOUND means the observed target was absent; TARGET_NOT_ACTIONABLE or INSUFFICIENT_EVIDENCE is inconclusive and calls for fresh observation or a revised semantic target. Scry owns resolution, readiness, effect verification, journaling, and safe waiting; do not poll.",
+        "Execute 1-20 semantic Mission authoring intents within budgets.maxOperations (1-20) and budgets.maxDurationMs (1000-60000), or continue one stable pending turn. For kind=intents provide intents and omit turnId; for kind=continue provide turnId and omit intents. After process loss, continue is valid only for state=pending. If get_flow_authoring proves a running operation stayed not_dispatched, resubmit the exact original kind=intents payload with its original idempotencyKey after the stale runtime lease expires; Scry recovers that same durable turn rather than creating a new operation. Never do this after dispatch may have occurred. Every intent requires the complete constraints object {timeoutMs:100-60000,allowNewPage:boolean,allowNonExact:boolean}; allowNonExact has no implicit default. Action kinds are navigate, activate, fill, select, set_checked, press, wait_for, inspect, acquire_protected_outputs, and same_origin_request. Authorization kinds are ordinary, authentication, reversible, live_read, live_mutation, and protected_mutation. Every target requires concept plus either reference from the latest semanticPageContext or an observable role/name/label/placeholder/text/testId fact; the public field is reference, never authoritativeReference. Valid roles: button, checkbox, combobox, dialog, field, form, heading, link, listbox, menuitem, option, radio, region, row, tab, table, textbox, text, value. Inspect example: {kind:'inspect',target:{concept:'email',role:'textbox',placeholder:'Email'}}. Fresh-reference example: {kind:'inspect',target:{concept:'observed control',reference:'context-control-<32 lowercase hex>'}}. wait_for requires state, one of visible, hidden, attached, detached; example: {kind:'wait_for',target:{concept:'login form',role:'form'},state:'visible'}. An activate action must declare semanticEffect: read_context_transition only when its intended effect is proven to be read-only navigation or UI context selection; declare resource_mutation for a product/resource change, or unknown when the effect is not established. Missing or unknown effects fail closed under live_read. A login/authentication submit that only transitions into an authenticated read context uses semanticEffect:'read_context_transition' with authorization:{kind:'live_read'}; authentication authority is for protected input, not admission of that activation. A read-context transition may use a click but never authorizes production mutation. Protected fill example action: {kind:'fill',target:{concept:'password',role:'textbox'},protectedReferenceId:'<credential-uuid>'}; pair it with authorization:{kind:'authentication'}, constraints:{timeoutMs:30000,allowNewPage:false,allowNonExact:true}, expectedEffect:{kind:'none'}, and protectedInputReferences:['<same-credential-uuid>']. Read completed[*].mutationOutcome before acting: not_applied permits only the reported prerequisite/revision path, applied may require effect observation, and unknown forbids blind retry. decisionBoundary.safeActions names the permitted continuation; pending returns the only stable turnId to continue. TARGET_NOT_FOUND means the observed target was absent; TARGET_NOT_ACTIONABLE or INSUFFICIENT_EVIDENCE is inconclusive and calls for fresh observation or a revised semantic target. Scry owns resolution, readiness, effect verification, journaling, and safe waiting; do not poll.",
       inputSchema: {
         sessionId: uuid,
         kind: z.enum(["intents", "continue"]),

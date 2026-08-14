@@ -110,6 +110,20 @@ export const agentDecisionBoundarySchema = z
       })
       .strict()
       .optional(),
+    navigationRecovery: z
+      .object({
+        environmentId: z.string().uuid(),
+        missingAllowedOrigin: z.string().url(),
+        currentAllowedOrigins: z.array(z.string().url()).max(20),
+        recoveryTools: z.tuple([
+          z.literal("create_test_environment"),
+          z.literal("create_flow_draft"),
+          z.literal("start_flow_authoring"),
+        ]),
+        requiresNewFlowDraftAndAuthoringSession: z.literal(true),
+      })
+      .strict()
+      .optional(),
     policyContext: z
       .object({
         governingMode: executionKernelModeSchema,
@@ -144,6 +158,10 @@ export const operationOutcomeSchema = z
         missingTrustedScriptOrigins: z.array(z.string().url()).max(20).default([]),
         missingOriginClassification: z.enum(["public", "redacted"]),
       })
+      .strict()
+      .optional(),
+    navigationEnvironmentFailure: z
+      .object({ missingAllowedOrigin: z.string().url() })
       .strict()
       .optional(),
     resolvedTarget: semanticFingerprintSchema.optional(),

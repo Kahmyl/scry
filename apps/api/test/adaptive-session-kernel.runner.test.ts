@@ -47,6 +47,51 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     });
   });
 
+  it("projects a rejected popup origin as factual document-policy recovery", async () => {
+    const sessionId = "33333333-3333-4333-8333-333333333333";
+    const environmentId = "44444444-4444-4444-8444-444444444444";
+    const policy = { allowedOrigins: ["https://app.example.test"], trustedScriptOrigins: [],
+      allowPrivateNetwork: false, allowDownloads: false, allowPopups: true,
+      maxActions: 2, maxDurationMs: 30_000, maxNavigations: 1 };
+    const sessions = {
+      heartbeatRuntimeLease: vi.fn(async () => undefined),
+      runtimeContextFor: vi.fn(async () => ({ environmentId, correlationId: "correlation", policy })),
+      recordVerifiedObservation: vi.fn(async () => undefined),
+    };
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      { createSession: vi.fn(() => ({ manifest: { digest: "a".repeat(64) } })) } as never,
+      sessions as never,
+      {} as never,
+    );
+    const outcome = { operationId: "docs", functionalResult: "failed" as const,
+      mutationOutcome: "not_applied" as const, privacyResult: "unverified" as const,
+      evidenceResult: [], qualityFindings: [], durationMs: 1,
+      reasonCode: "EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED",
+      navigationEnvironmentFailure: { missingAllowedOrigin: "https://docs.example.test" } };
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
+      session: { interact: vi.fn(async () => ({ documentEpoch: 1, url: "https://app.example.test", outcome })) },
+      fencingToken: 1, tail: Promise.resolve(),
+    });
+
+    const result = await runner.execute(sessionId, { operationId: "docs",
+      idempotencyKey: "docs-idempotency", mode: "observe", action: { type: "waitFor" },
+      expectedEffect: { type: "new_page" }, protectedInputReferences: [] } as never);
+
+    expect(result.decisionBoundary).toEqual({
+      type: "environment_unavailable",
+      reasonCode: "EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED",
+      safeActions: ["create_test_environment", "create_flow_draft", "start_flow_authoring"],
+      navigationRecovery: {
+        environmentId,
+        missingAllowedOrigin: "https://docs.example.test",
+        currentAllowedOrigins: ["https://app.example.test"],
+        recoveryTools: ["create_test_environment", "create_flow_draft", "start_flow_authoring"],
+        requiresNewFlowDraftAndAuthoringSession: true,
+      },
+    });
+  });
+
   it("bounds a pending operation tail, cancels the browser, and releases its lease", async () => {
     const sessionId = "99999999-9999-4999-8999-999999999999";
     const cancelActiveOperation = vi.fn().mockResolvedValue(undefined);

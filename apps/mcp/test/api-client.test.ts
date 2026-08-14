@@ -97,6 +97,32 @@ describe("ScryApiClient", () => {
     expect(error.message).not.toContain("must-not-escape");
   });
 
+  it("projects only bounded factual origins for a pre-write trust recovery mismatch", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      statusCode: 409,
+      message: {
+        code: "TRUST_RECOVERY_ORIGIN_MISMATCH",
+        safeActions: ["get_flow_authoring", "recover_trusted_script_origins"],
+        disclosedOrigins: ["https://scripts.example.test"],
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+        secret: "must-not-escape",
+      },
+    }), { status: 409 })));
+
+    const error = await new ScryApiClient("http://scry.test/api").post("/fixture")
+      .catch((cause: unknown) => cause) as ScryApiError;
+    expect(error).toMatchObject({
+      safeActions: ["get_flow_authoring", "recover_trusted_script_origins"],
+      context: {
+        disclosedOrigins: ["https://scripts.example.test"],
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+      },
+    });
+    expect(error.message).not.toContain("must-not-escape");
+  });
+
   it("updates API resources with PATCH", async () => {
     const fetchMock = vi
       .fn()

@@ -200,6 +200,9 @@ describe("persistent authoring browser session", () => {
       expect(wrongOrigin.outcome).toMatchObject({
         functionalResult: "failed",
         reasonCode: "EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED",
+        navigationEnvironmentFailure: {
+          missingAllowedOrigin: "https://disallowed.example.test",
+        },
       });
       await expect.poll(() => session.context.pages().length).toBe(1);
 

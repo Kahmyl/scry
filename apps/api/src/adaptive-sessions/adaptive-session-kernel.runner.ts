@@ -147,6 +147,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           capabilityManifestDigest: capability.manifest.digest,
           decisionBoundary: decisionBoundary(result.outcome, {
             environmentId: context.environmentId,
+            allowedOrigins: context.policy.allowedOrigins,
             trustedScriptOrigins: context.policy.trustedScriptOrigins ?? [],
           }),
           timings: { resolveMs, executeMs: performance.now() - executeStartedAt, verifyMs },
@@ -525,6 +526,7 @@ function composeSignals(...signals: Array<AbortSignal | undefined>) {
 
 function decisionBoundary(outcome: OperationOutcome, environment?: {
   environmentId: string;
+  allowedOrigins: string[];
   trustedScriptOrigins: string[];
 }): AgentDecisionBoundary {
   if (outcome.nextDecisionBoundary) return outcome.nextDecisionBoundary;
@@ -543,6 +545,21 @@ function decisionBoundary(outcome: OperationOutcome, environment?: {
           requiresNewFlowDraftAndAuthoringSession: true as const,
         },
       } : {}),
+    };
+  }
+  if (outcome.reasonCode === "EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED"
+      && environment && outcome.navigationEnvironmentFailure) {
+    return {
+      type: "environment_unavailable",
+      reasonCode: outcome.reasonCode,
+      safeActions: ["create_test_environment", "create_flow_draft", "start_flow_authoring"],
+      navigationRecovery: {
+        environmentId: environment.environmentId,
+        missingAllowedOrigin: outcome.navigationEnvironmentFailure.missingAllowedOrigin,
+        currentAllowedOrigins: environment.allowedOrigins,
+        recoveryTools: ["create_test_environment", "create_flow_draft", "start_flow_authoring"],
+        requiresNewFlowDraftAndAuthoringSession: true,
+      },
     };
   }
   if (outcome.mutationOutcome === "unknown") {

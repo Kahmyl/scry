@@ -33,6 +33,25 @@ const admittedCapabilities = {
 };
 
 describe("current Scry MCP surface", () => {
+  it("returns the operating-context message envelope accepted by its host schema", async () => {
+    const payload = {
+      selection: { project: null, requiresProjectSelection: false,
+        projectCandidates: { items: [], truncated: false } },
+      missions: { candidates: { items: [], truncated: false } },
+      credentials: { items: [], truncated: false }, environments: { items: [], truncated: false },
+      authoring: { reusable: { items: [], truncated: false }, ready: false,
+        missing: ["project", "mission", "objective", "environment", "flow_draft", "authoring_session"] },
+      continuation: { deterministicPreparationAvailable: false, userAuthorityRequired: false,
+        safeActions: ["create_project_in_dashboard"], blockerCode: "NO_PROJECT" },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 })));
+    const { client, server } = await connected();
+    const response = await client.callTool({ name: "get_operating_context", arguments: {} });
+    expect(response.structuredContent).toMatchObject({ message: expect.any(String), ...payload });
+    await client.close();
+    await server.close();
+  });
+
   it("returns the shared safe Mission projection unchanged for get and resume", async () => {
     const safeMission = {
       id: context.missionId,
@@ -235,6 +254,12 @@ describe("current Scry MCP surface", () => {
       .toContain("never returns protected values");
     expect(tools.find(({ name }) => name === "prepare_flow_authoring")?.description)
       .toContain("performs no browser navigation");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("allowNewPage alone grants permission but does not arm safe new-page adoption");
+    const preparationSchema = tools.find(({ name }) => name === "prepare_flow_authoring")!
+      .inputSchema as any;
+    expect(preparationSchema.properties.draft.properties.plan.properties.steps.items.properties.action
+      .properties.type.enum).toEqual(expect.arrayContaining(["navigate", "click", "waitFor"]));
     const operatingContextInput = tools.find(({ name }) => name === "get_operating_context")!
       .inputSchema as any;
     expect(operatingContextInput.properties.requiredCredentialReferences.maxItems).toBe(20);

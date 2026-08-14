@@ -30,6 +30,21 @@ type Query = <T extends QueryResultRow = QueryResultRow>(
   values?: unknown[],
 ) => Promise<{ rowCount: number | null; rows: T[] }>;
 
+type TrustedOriginRecoveryResult = {
+  recoveryApplied: true;
+  replayed: boolean;
+  environmentId: string;
+  flowDraftId: string;
+  sessionId: string;
+  approvedOrigins: string[];
+  remainingKnownBlockedOrigins: string[];
+  continuation: {
+    navigationRequired: true;
+    navigationAutomaticallyPerformed: false;
+    nextSafeCapability: "advance_flow_authoring";
+  };
+};
+
 const transitions: Readonly<Record<AdaptiveSessionState, readonly AdaptiveSessionState[]>> = {
   created: ["provisioning", "cancelled"],
   provisioning: ["active", "failed", "cancelled", "recovery_required"],
@@ -226,16 +241,18 @@ export class AdaptiveSessionRepository {
   recoverTrustedOrigins(workspaceId: string | null, input: RecoverTrustedOriginsInput) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
-      const replay = await q<{
-        sessionId: string; environmentId: string; flowDraftId: string;
-      }>(
-        `SELECT id AS "sessionId",environment_id AS "environmentId",flow_draft_id AS "flowDraftId"
-         FROM adaptive_sessions WHERE project_id=$1 AND idempotency_key=$2`,
-        [input.projectId, `trust-recovery:${input.idempotencyKey}`],
-      );
-      if (replay.rowCount)
-        return { recoveryApplied: true, replayed: true, ...replay.rows[0], approvedOrigins: input.approvedOrigins,
-          continuation: { navigationRequired: true, navigationAutomaticallyPerformed: false, nextSafeCapability: "advance_flow_authoring" } };
+      const digest = stableDigest(input);
+      const scope = `authoring:trust-recovery:${input.projectId}`;
+      await q(`INSERT INTO idempotency_records(scope,key,request_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+        [scope,input.idempotencyKey,digest]);
+      const record = await q<{ requestHash: string; response: TrustedOriginRecoveryResult | null }>(
+        `SELECT request_hash AS "requestHash",response FROM idempotency_records
+         WHERE scope=$1 AND key=$2 FOR UPDATE`, [scope,input.idempotencyKey]);
+      if (record.rows[0]!.requestHash !== digest)
+        throw new ConflictException({ code: "TRUST_RECOVERY_IDEMPOTENCY_CONFLICT",
+          mutationOutcome: "not_applied", retry: "not_safe", safeActions: ["get_flow_authoring"] });
+      if (record.rows[0]!.response)
+        return { ...record.rows[0]!.response, replayed: true };
 
       const source = await q<{
         sessionId: string; state: string; projectId: string; missionId: string; objectiveId: string;
@@ -279,7 +296,9 @@ export class AdaptiveSessionRepository {
       const approved = [...new Set(input.approvedOrigins)].sort();
       const disclosed = [...new Set(recovery.missingTrustedScriptOrigins)].sort();
       if (JSON.stringify(approved) !== JSON.stringify(disclosed))
-        throw new ConflictException({ code: "TRUST_RECOVERY_ORIGIN_MISMATCH", disclosedOrigins: disclosed });
+        throw new ConflictException({ code: "TRUST_RECOVERY_ORIGIN_MISMATCH", disclosedOrigins: disclosed,
+          mutationOutcome: "not_applied", retry: "safe_after_prerequisite",
+          safeActions: ["get_flow_authoring", "recover_trusted_script_origins"] });
 
       const environmentId = randomUUID();
       const trusted = [...new Set([...(current.policy.trustedScriptOrigins ?? []), ...approved])].sort();
@@ -287,7 +306,8 @@ export class AdaptiveSessionRepository {
       await q(
         `INSERT INTO environments(id,project_id,name,base_origin,policy,secret_refs)
          VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb)`,
-        [environmentId, input.projectId, `${current.environmentName} recovery`, current.baseOrigin,
+        [environmentId, input.projectId,
+          `${current.environmentName.slice(0, 181)} recovery ${environmentId.slice(0, 8)}`, current.baseOrigin,
           JSON.stringify(policy), JSON.stringify(current.secretRefs)],
       );
       await this.requireActiveProtectedReferences(
@@ -303,7 +323,9 @@ export class AdaptiveSessionRepository {
           description,purpose,content,state,version,plan,created_by_agent_session_id)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,'editing',1,$11::jsonb,$12)`,
         [flowDraftId, input.projectId, input.missionId, input.objectiveId, environmentId,
-          current.flowId, `${current.draftName} recovery`, current.description, current.purpose,
+          current.flowId,
+          `${current.draftName.slice(0, 181)} recovery ${flowDraftId.slice(0, 8)}`,
+          current.description, current.purpose,
           JSON.stringify(current.content), JSON.stringify(current.plan), input.agentSessionId],
       );
       await q(
@@ -354,10 +376,15 @@ export class AdaptiveSessionRepository {
           approvalKind: input.approval.kind,
         })],
       );
-      return { recoveryApplied: true, replayed: false, environmentId, flowDraftId, sessionId,
+      const response: TrustedOriginRecoveryResult = {
+        recoveryApplied: true, replayed: false, environmentId, flowDraftId, sessionId,
         approvedOrigins: approved, remainingKnownBlockedOrigins: [],
         continuation: { navigationRequired: true, navigationAutomaticallyPerformed: false,
-          nextSafeCapability: "advance_flow_authoring" } };
+          nextSafeCapability: "advance_flow_authoring" },
+      };
+      await q(`UPDATE idempotency_records SET response=$3::jsonb,completed_at=now()
+        WHERE scope=$1 AND key=$2`, [scope,input.idempotencyKey,JSON.stringify(response)]);
+      return response;
     });
   }
 
@@ -407,15 +434,30 @@ export class AdaptiveSessionRepository {
       const q = bind(client);
       const session = await this.requireSession(q, input.workspaceId, input.sessionId, true);
       if (session.state !== "active") throw new ConflictException({ code: "ADAPTIVE_SESSION_NOT_ACTIVE" });
-      const existing = await q<{ id: string; inputDigest: string; state: string; safeResponse: MissionAuthoringTurnResult | null; currentPhase: string }>(
-        `SELECT id,input_digest AS "inputDigest",state,safe_response AS "safeResponse",current_phase AS "currentPhase"
+      const existing = await q<{ id: string; inputDigest: string; state: string; safeResponse: MissionAuthoringTurnResult | null; currentPhase: string; stale: boolean }>(
+        `SELECT id,input_digest AS "inputDigest",state,safe_response AS "safeResponse",current_phase AS "currentPhase",
+                updated_at < now()-(($3::int+5000)*interval '1 millisecond') AS stale
          FROM mission_authoring_turns WHERE session_id=$1 AND idempotency_key=$2 FOR UPDATE`,
-        [input.sessionId, input.idempotencyKey],
+        [input.sessionId, input.idempotencyKey, input.budgets.maxDurationMs],
       );
       if (existing.rowCount) {
         const turn = existing.rows[0]!;
         if (turn.inputDigest !== input.inputDigest) {
           throw new ConflictException({ code: "MISSION_AUTHORING_TURN_IDEMPOTENCY_CONFLICT" });
+        }
+        if (turn.state === "running") {
+          const recovery = await q<{ leaseHealthy: boolean }>(
+            `SELECT COALESCE(bool_or(lease.lease_expires_at>now()),false) AS "leaseHealthy"
+             FROM adaptive_operations operation
+             LEFT JOIN adaptive_session_runtime_leases lease ON lease.session_id=operation.session_id
+             WHERE operation.session_id=$1 AND operation.state='running'`, [input.sessionId]);
+          const disposition = recovery.rows[0]!;
+          if (turn.stale && !disposition.leaseHealthy) {
+            await q(`UPDATE mission_authoring_turns SET current_phase='resume',updated_at=now()
+              WHERE id=$1`, [turn.id]);
+            return { turnId: turn.id, replayed: false, state: turn.state,
+              response: turn.safeResponse, phase: "resume", recovered: true };
+          }
         }
         return { turnId: turn.id, replayed: true, state: turn.state, response: turn.safeResponse, phase: turn.currentPhase };
       }

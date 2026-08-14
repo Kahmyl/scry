@@ -469,6 +469,30 @@ describe("MissionFlowAuthoringService grouped turns", () => {
     expect(runner.execute).not.toHaveBeenCalled();
   });
 
+  it("reconciles a reclaimed post-dispatch mutation as UNKNOWN without redispatch", async () => {
+    const repository = {
+      beginTurn: vi.fn().mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null,
+        recovered: true, phase: "resume" }),
+      validateIntentAdmission: vi.fn(), handoff: vi.fn().mockResolvedValue({ handedOff: false }),
+      beginMissionOperation: vi.fn().mockResolvedValue({ replayed: true, state: "running", outcome: null }),
+      replayDisposition: vi.fn().mockResolvedValue({ requiresReconciliation: true, canResume: false }),
+      markRunningOperationRecoveryRequired: vi.fn(),
+      settleTurn: vi.fn(async ({ result }) => result),
+    };
+    const runner = { execute: vi.fn() };
+    const service = new MissionFlowAuthoringService(repository as never, runner as never,
+      { assertAcceptingWork: vi.fn() } as never);
+
+    const result = await service.advance(principal, randomUUID(), input());
+
+    expect(result).toMatchObject({ state: "decision_required", completed: [],
+      decisionBoundary: { type: "mutation_reconciliation_required",
+        reasonCode: "ADAPTIVE_OPERATION_RECONCILIATION_REQUIRED",
+        safeActions: ["get_flow_authoring", "do_not_retry"] } });
+    expect(repository.markRunningOperationRecoveryRequired).toHaveBeenCalledOnce();
+    expect(runner.execute).not.toHaveBeenCalled();
+  });
+
   it("normalizes raw database SQLSTATE values to a valid safe failure code", async () => {
     const repository = {
       beginTurn: vi.fn().mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
