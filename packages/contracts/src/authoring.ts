@@ -101,14 +101,25 @@ export const missionAuthoringSemanticTargetSchema = z
       .strict()
       .superRefine((scope, context) => {
         if (scope.kind === "section" && !scope.name)
-          context.addIssue({ code: "custom", path: ["name"], message: "section scope requires a visible anchor name" });
+          context.addIssue({
+            code: "custom",
+            path: ["name"],
+            message: "section scope requires a visible anchor name",
+          });
       })
       .optional(),
     exact: z.boolean().default(true),
   })
   .strict()
   .superRefine((target, context) => {
-    if (!target.role && !target.name && !target.label && !target.placeholder && !target.text && !target.testId)
+    if (
+      !target.role &&
+      !target.name &&
+      !target.label &&
+      !target.placeholder &&
+      !target.text &&
+      !target.testId
+    )
       context.addIssue({
         code: "custom",
         message: "semantic target requires an observable locator fact besides concept",
@@ -124,46 +135,69 @@ const safePressKeySchema = z.enum([
   "ArrowLeft",
   "ArrowRight",
 ]);
-const publicJsonBodySchema = z.record(
-  z.string().trim().min(1).max(100),
-  z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]),
-).superRefine((body, context) => {
-  if (Object.keys(body).length > 100)
-    context.addIssue({ code: "custom", message: "same-origin request body has too many fields" });
-  for (const key of Object.keys(body)) {
-    if (/(secret|protected|credential|token|password|authorization)/i.test(key))
-      context.addIssue({
-        code: "custom",
-        path: [key],
-        message: "same-origin request bodies may contain public values only",
-      });
-  }
-});
+const publicJsonBodySchema = z
+  .record(
+    z.string().trim().min(1).max(100),
+    z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]),
+  )
+  .superRefine((body, context) => {
+    if (Object.keys(body).length > 100)
+      context.addIssue({ code: "custom", message: "same-origin request body has too many fields" });
+    for (const key of Object.keys(body)) {
+      if (/(secret|protected|credential|token|password|authorization)/i.test(key))
+        context.addIssue({
+          code: "custom",
+          path: [key],
+          message: "same-origin request bodies may contain public values only",
+        });
+    }
+  });
 
 export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("navigate"), url: z.string().url() }).strict(),
-  z.object({ kind: z.literal("activate"), target: missionAuthoringSemanticTargetSchema }).strict(),
+  z
+    .object({
+      kind: z.literal("activate"),
+      target: missionAuthoringSemanticTargetSchema,
+      semanticEffect: z
+        .enum(["read_context_transition", "resource_mutation", "unknown"])
+        .optional(),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal("fill"),
       target: missionAuthoringSemanticTargetSchema,
       publicValue: z.string().max(20_000).optional(),
       protectedReferenceId: uuid.optional(),
-      syntheticProtectedSource: z.object({
-        semantic: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
-        generatorContract: z.enum(["reserved_test_email", "synthetic_person_name", "sandbox_shipping_address_json", "opaque_operation_token"]),
-        generatorVersion: z.literal(1),
-        purpose: z.literal("test_order_qualification"),
-        resourceKind: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
-        operation: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
-      }).strict().optional(),
+      syntheticProtectedSource: z
+        .object({
+          semantic: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+          generatorContract: z.enum([
+            "reserved_test_email",
+            "synthetic_person_name",
+            "sandbox_shipping_address_json",
+            "opaque_operation_token",
+          ]),
+          generatorVersion: z.literal(1),
+          purpose: z.literal("test_order_qualification"),
+          resourceKind: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+          operation: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+        })
+        .strict()
+        .optional(),
     })
     .strict()
     .superRefine((action, context) => {
-      if ([action.publicValue, action.protectedReferenceId, action.syntheticProtectedSource].filter((value) => value !== undefined).length !== 1)
+      if (
+        [action.publicValue, action.protectedReferenceId, action.syntheticProtectedSource].filter(
+          (value) => value !== undefined,
+        ).length !== 1
+      )
         context.addIssue({
           code: "custom",
-          message: "fill requires exactly one public, credential, or synthetic protected value source",
+          message:
+            "fill requires exactly one public, credential, or synthetic protected value source",
         });
     }),
   z
@@ -195,57 +229,132 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
     })
     .strict(),
   z.object({ kind: z.literal("inspect"), target: missionAuthoringSemanticTargetSchema }).strict(),
-  z.object({
-    kind: z.literal("acquire_protected_outputs"),
-    preparationIntentIds: z.array(z.string().trim().min(1).max(200)).min(1).max(50)
-      .refine((values) => new Set(values).size === values.length, "preparation intent IDs must be unique"),
-    mutation: z.object({ kind: z.enum(["one_time", "read_only"]), target: missionAuthoringSemanticTargetSchema }).strict(),
-    syntheticProtectedInputs: z.array(z.object({
-      semantic: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
-      generatorContract: z.enum(["nested_client_order_json", "opaque_operation_token"]),
-      generatorVersion: z.literal(1),
-      purpose: z.literal("test_order_qualification"),
-      resourceKind: z.literal("order"),
-      operation: z.literal("create"),
-      target: missionAuthoringSemanticTargetSchema,
-    }).strict()).max(4).refine((values) => new Set(values.map((value) => value.semantic)).size === values.length,
-      "synthetic protected input semantics must be unique").optional(),
-    request: z.object({
-      method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
-      pathTemplate: z.string().startsWith("/").max(500),
-      transports: z.array(z.enum(["document", "fetch", "xhr"])).min(1).max(3),
-    }).strict().optional(),
-    response: z.object({
-      confirmedNotAppliedStatuses: z.array(z.number().int().min(400).max(499)).min(1).max(32)
-        .refine((statuses) => new Set(statuses).size === statuses.length, "confirmed-not-applied statuses must be unique"),
-    }).strict().optional(),
-    outputs: z.array(z.object({
-      reference: z.string().trim().min(1).max(100).regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
-      classification: z.enum(["public", "protected"]),
-      target: missionAuthoringSemanticTargetSchema,
-      storageName: z.string().trim().min(1).max(200),
-    }).strict()).min(1).max(8)
-      .refine((outputs) => new Set(outputs.map((output) => output.reference)).size === outputs.length, "output references must be unique"),
-    externalResourceBindings: z.array(z.discriminatedUnion("status", [
-      z.object({
-        status: z.literal("active"), identityReference: z.string().trim().min(1).max(100),
-        provider: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
-        resourceKind: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
-        resourceScope: z.string().trim().min(1).max(500),
-        identityContractVersion: z.number().int().min(1).max(1_000),
-        identitySource: z.literal("response"),
-        requiredForDestructiveLifecycle: z.boolean().default(true),
-      }).strict(),
-      z.object({
-        status: z.literal("unavailable"),
-        provider: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
-        resourceKind: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
-        resourceScope: z.string().trim().min(1).max(500),
-        identityContractVersion: z.number().int().min(1).max(1_000),
-        requiredForDestructiveLifecycle: z.boolean().default(true),
-      }).strict(),
-    ])).max(8).optional(),
-  }).strict(),
+  z
+    .object({
+      kind: z.literal("acquire_protected_outputs"),
+      preparationIntentIds: z
+        .array(z.string().trim().min(1).max(200))
+        .min(1)
+        .max(50)
+        .refine(
+          (values) => new Set(values).size === values.length,
+          "preparation intent IDs must be unique",
+        ),
+      mutation: z
+        .object({
+          kind: z.enum(["one_time", "read_only"]),
+          target: missionAuthoringSemanticTargetSchema,
+        })
+        .strict(),
+      syntheticProtectedInputs: z
+        .array(
+          z
+            .object({
+              semantic: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+              generatorContract: z.enum(["nested_client_order_json", "opaque_operation_token"]),
+              generatorVersion: z.literal(1),
+              purpose: z.literal("test_order_qualification"),
+              resourceKind: z.literal("order"),
+              operation: z.literal("create"),
+              target: missionAuthoringSemanticTargetSchema,
+            })
+            .strict(),
+        )
+        .max(4)
+        .refine(
+          (values) => new Set(values.map((value) => value.semantic)).size === values.length,
+          "synthetic protected input semantics must be unique",
+        )
+        .optional(),
+      request: z
+        .object({
+          method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+          pathTemplate: z.string().startsWith("/").max(500),
+          transports: z
+            .array(z.enum(["document", "fetch", "xhr"]))
+            .min(1)
+            .max(3),
+        })
+        .strict()
+        .optional(),
+      response: z
+        .object({
+          confirmedNotAppliedStatuses: z
+            .array(z.number().int().min(400).max(499))
+            .min(1)
+            .max(32)
+            .refine(
+              (statuses) => new Set(statuses).size === statuses.length,
+              "confirmed-not-applied statuses must be unique",
+            ),
+        })
+        .strict()
+        .optional(),
+      outputs: z
+        .array(
+          z
+            .object({
+              reference: z
+                .string()
+                .trim()
+                .min(1)
+                .max(100)
+                .regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
+              classification: z.enum(["public", "protected"]),
+              target: missionAuthoringSemanticTargetSchema,
+              storageName: z.string().trim().min(1).max(200),
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(8)
+        .refine(
+          (outputs) => new Set(outputs.map((output) => output.reference)).size === outputs.length,
+          "output references must be unique",
+        ),
+      externalResourceBindings: z
+        .array(
+          z.discriminatedUnion("status", [
+            z
+              .object({
+                status: z.literal("active"),
+                identityReference: z.string().trim().min(1).max(100),
+                provider: z
+                  .string()
+                  .trim()
+                  .regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+                resourceKind: z
+                  .string()
+                  .trim()
+                  .regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+                resourceScope: z.string().trim().min(1).max(500),
+                identityContractVersion: z.number().int().min(1).max(1_000),
+                identitySource: z.literal("response"),
+                requiredForDestructiveLifecycle: z.boolean().default(true),
+              })
+              .strict(),
+            z
+              .object({
+                status: z.literal("unavailable"),
+                provider: z
+                  .string()
+                  .trim()
+                  .regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+                resourceKind: z
+                  .string()
+                  .trim()
+                  .regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+                resourceScope: z.string().trim().min(1).max(500),
+                identityContractVersion: z.number().int().min(1).max(1_000),
+                requiredForDestructiveLifecycle: z.boolean().default(true),
+              })
+              .strict(),
+          ]),
+        )
+        .max(8)
+        .optional(),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal("same_origin_request"),
@@ -255,16 +364,25 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
         .string()
         .startsWith("/")
         .max(1_000)
-        .refine((value) => !value.startsWith("//") && !value.includes("://") && !value.includes("\\"), {
-          message: "same-origin request path may not include a scheme or host",
-        }),
+        .refine(
+          (value) => !value.startsWith("//") && !value.includes("://") && !value.includes("\\"),
+          {
+            message: "same-origin request path may not include a scheme or host",
+          },
+        ),
       body: publicJsonBodySchema.optional(),
       expectedStatus: z
-        .object({ min: z.number().int().min(100).max(599), max: z.number().int().min(100).max(599) })
+        .object({
+          min: z.number().int().min(100).max(599),
+          max: z.number().int().min(100).max(599),
+        })
         .strict()
         .superRefine((status, context) => {
           if (status.min > status.max)
-            context.addIssue({ code: "custom", message: "expected status minimum exceeds maximum" });
+            context.addIssue({
+              code: "custom",
+              message: "expected status minimum exceeds maximum",
+            });
         }),
     })
     .strict(),
@@ -303,7 +421,10 @@ export const missionAuthoringSemanticEffectSchema = z.discriminatedUnion("kind",
     .strict()
     .superRefine((effect, context) => {
       if (effect.checked === undefined && effect.enabled === undefined)
-        context.addIssue({ code: "custom", message: "target state requires a checked or enabled value" });
+        context.addIssue({
+          code: "custom",
+          message: "target state requires a checked or enabled value",
+        });
     }),
   z.object({ kind: z.literal("new_page"), origin: z.string().url().optional() }).strict(),
 ]);
@@ -324,7 +445,14 @@ export const missionAuthoringIntentSchema = z
       .strict(),
     authorization: z
       .object({
-        kind: z.enum(["ordinary", "authentication", "reversible", "live_read", "live_mutation", "protected_mutation"]),
+        kind: z.enum([
+          "ordinary",
+          "authentication",
+          "reversible",
+          "live_read",
+          "live_mutation",
+          "protected_mutation",
+        ]),
         authorizationId: uuid.optional(),
       })
       .strict(),
@@ -339,6 +467,16 @@ export const missionAuthoringIntentSchema = z
   })
   .strict()
   .superRefine((intent, context) => {
+    if (
+      intent.action.kind === "activate" &&
+      intent.action.semanticEffect === "read_context_transition" &&
+      intent.authorization.kind !== "live_read"
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["authorization", "kind"],
+        message: "read-context activation requires explicit live_read authority",
+      });
     const protectedReferences =
       intent.action.kind === "fill" && intent.action.protectedReferenceId
         ? [intent.action.protectedReferenceId]
@@ -354,7 +492,8 @@ export const missionAuthoringIntentSchema = z
         message: "protected references must exactly match protected fill references",
       });
     if (
-      (["live_mutation", "protected_mutation"].includes(intent.authorization.kind) && !intent.authorization.authorizationId) ||
+      (["live_mutation", "protected_mutation"].includes(intent.authorization.kind) &&
+        !intent.authorization.authorizationId) ||
       (intent.action.kind === "same_origin_request" &&
         intent.action.method !== "GET" &&
         (!intent.authorization.authorizationId || intent.authorization.kind !== "live_mutation"))
@@ -364,20 +503,42 @@ export const missionAuthoringIntentSchema = z
         path: ["authorization", "authorizationId"],
         message: "live mutation requires explicit authorization",
       });
-    if (intent.action.kind === "acquire_protected_outputs" &&
-        (intent.authorization.kind !== "protected_mutation" || !intent.authorization.authorizationId))
-      context.addIssue({ code: "custom", path: ["authorization"], message: "protected output acquisition requires explicit protected-mutation authorization" });
+    if (
+      intent.action.kind === "acquire_protected_outputs" &&
+      (intent.authorization.kind !== "protected_mutation" || !intent.authorization.authorizationId)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["authorization"],
+        message: "protected output acquisition requires explicit protected-mutation authorization",
+      });
     if (intent.action.kind === "acquire_protected_outputs" && intent.expectedEffect.kind !== "none")
-      context.addIssue({ code: "custom", path: ["expectedEffect"], message: "protected acquisition owns its effect lifecycle" });
+      context.addIssue({
+        code: "custom",
+        path: ["expectedEffect"],
+        message: "protected acquisition owns its effect lifecycle",
+      });
     if (intent.action.kind === "acquire_protected_outputs") {
       const outputs = new Map(intent.action.outputs.map((output) => [output.reference, output]));
       const keys = new Set<string>();
       for (const [index, binding] of (intent.action.externalResourceBindings ?? []).entries()) {
         const key = `${binding.provider}\u0000${binding.resourceKind}\u0000${binding.resourceScope}`;
-        if (keys.has(key)) context.addIssue({ code: "custom", path: ["action", "externalResourceBindings", index], message: "external resource binding declarations must be unique" });
+        if (keys.has(key))
+          context.addIssue({
+            code: "custom",
+            path: ["action", "externalResourceBindings", index],
+            message: "external resource binding declarations must be unique",
+          });
         keys.add(key);
-        if (binding.status === "active" && outputs.get(binding.identityReference)?.classification !== "public")
-          context.addIssue({ code: "custom", path: ["action", "externalResourceBindings", index, "identityReference"], message: "external resource identity must reference a public output" });
+        if (
+          binding.status === "active" &&
+          outputs.get(binding.identityReference)?.classification !== "public"
+        )
+          context.addIssue({
+            code: "custom",
+            path: ["action", "externalResourceBindings", index, "identityReference"],
+            message: "external resource identity must reference a public output",
+          });
       }
     }
     if (
@@ -397,29 +558,40 @@ export const missionAuthoringIntentSchema = z
           path: ["credentialLifecycle", "effect"],
           message: "credential revocation must be attached to an explicit activation or request",
         });
-      if (!intent.authorization.authorizationId ||
-          !["live_mutation", "protected_mutation"].includes(intent.authorization.kind))
+      if (
+        !intent.authorization.authorizationId ||
+        !["live_mutation", "protected_mutation"].includes(intent.authorization.kind)
+      )
         context.addIssue({
           code: "custom",
           path: ["credentialLifecycle"],
           message: "credential lifecycle projection requires explicit mutation authorization",
         });
-      if (new Set(intent.credentialLifecycle.credentialReferenceIds).size !==
-          intent.credentialLifecycle.credentialReferenceIds.length)
+      if (
+        new Set(intent.credentialLifecycle.credentialReferenceIds).size !==
+        intent.credentialLifecycle.credentialReferenceIds.length
+      )
         context.addIssue({
           code: "custom",
           path: ["credentialLifecycle", "credentialReferenceIds"],
           message: "credential lifecycle references must be unique",
         });
     }
-    if (!intent.constraints.allowNonExact && hasNonExactTarget(intent.action, intent.expectedEffect))
+    if (
+      !intent.constraints.allowNonExact &&
+      hasNonExactTarget(intent.action, intent.expectedEffect)
+    )
       context.addIssue({
         code: "custom",
         path: ["constraints", "allowNonExact"],
         message: "non-exact matching requires explicit admission",
       });
     if (intent.expectedEffect.kind === "new_page" && !intent.constraints.allowNewPage)
-      context.addIssue({ code: "custom", path: ["constraints", "allowNewPage"], message: "new-page effects require explicit admission" });
+      context.addIssue({
+        code: "custom",
+        path: ["constraints", "allowNewPage"],
+        message: "new-page effects require explicit admission",
+      });
   });
 
 function hasNonExactTarget(
@@ -429,7 +601,9 @@ function hasNonExactTarget(
   const targets = [
     "target" in action ? action.target : undefined,
     action.kind === "acquire_protected_outputs" ? action.mutation.target : undefined,
-    ...(action.kind === "acquire_protected_outputs" ? action.outputs.map((output) => output.target) : []),
+    ...(action.kind === "acquire_protected_outputs"
+      ? action.outputs.map((output) => output.target)
+      : []),
     "target" in effect ? effect.target : undefined,
   ];
   return targets.some((target) => target?.exact === false);

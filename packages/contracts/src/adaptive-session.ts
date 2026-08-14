@@ -178,7 +178,10 @@ export const missionAuthoringSemanticDeltaSchema = z
     intentId: z.string().trim().min(1).max(200),
     state: z.enum(["completed", "failed", "skipped"]),
     effectVerified: z.boolean(),
-    reasonCode: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),
+    reasonCode: z
+      .string()
+      .regex(/^[A-Z][A-Z0-9_]*$/)
+      .optional(),
     functionalResult: z.enum(["succeeded", "failed", "inconclusive"]),
     mutationOutcome: z.enum(["not_applied", "applied", "unknown"]),
     /** Whether this semantic action entered a Veil-protected interval. */
@@ -191,6 +194,13 @@ export const missionAuthoringSemanticDeltaSchema = z
         reasonCodes: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/)).max(8),
       })
       .strict(),
+    semanticEvidence: z
+      .object({
+        count: z.number().int().min(0).max(1),
+        resolvedTarget: operationOutcomeSchema.shape.resolvedTarget,
+      })
+      .strict()
+      .default({ count: 0 }),
     quality: z
       .object({
         findingCount: z.number().int().nonnegative(),
@@ -204,7 +214,10 @@ export const missionAuthoringSemanticDeltaSchema = z
 const missionAuthoringChannelOutcomeSchema = z
   .object({
     state: z.enum(["passed", "failed", "unavailable", "not_applicable", "pending"]),
-    reasonCode: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),
+    reasonCode: z
+      .string()
+      .regex(/^[A-Z][A-Z0-9_]*$/)
+      .optional(),
   })
   .strict();
 
@@ -326,7 +339,25 @@ export const adaptiveSessionSchema = z
         })
         .strict(),
     ),
-    linkedFlows: z.array(z.object({ objectiveId: uuid, flowDraftId: uuid, purpose: z.enum(["setup", "primary", "acceptance", "diagnostic", "reconciliation", "cleanup"]), sequence: z.number().int().positive() }).strict()).default([]),
+    linkedFlows: z
+      .array(
+        z
+          .object({
+            objectiveId: uuid,
+            flowDraftId: uuid,
+            purpose: z.enum([
+              "setup",
+              "primary",
+              "acceptance",
+              "diagnostic",
+              "reconciliation",
+              "cleanup",
+            ]),
+            sequence: z.number().int().positive(),
+          })
+          .strict(),
+      )
+      .default([]),
     latestTurn: missionAuthoringTurnResultSchema.nullable().default(null),
   })
   .strict();
@@ -340,8 +371,7 @@ export type MissionAuthoringTurnResult = z.infer<typeof missionAuthoringTurnResu
 export type AdaptiveSessionOperationInput = z.infer<typeof adaptiveSessionOperationInputSchema>;
 /** @deprecated Internal compatibility type retained until Packet C. */
 export type AdvanceAdaptiveSessionInput =
-  | AdaptiveSessionOperationInput
-  | z.infer<typeof internalAdaptiveSessionTurnSchema>;
+  AdaptiveSessionOperationInput | z.infer<typeof internalAdaptiveSessionTurnSchema>;
 export type AdaptiveSessionTransitionInput = z.infer<typeof adaptiveSessionTransitionSchema>;
 export type CloseAdaptiveSessionInput = z.infer<typeof closeAdaptiveSessionSchema>;
 export type AdaptiveSession = z.infer<typeof adaptiveSessionSchema>;

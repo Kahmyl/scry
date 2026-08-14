@@ -110,6 +110,7 @@ const mutationActionSchema = z.discriminatedUnion("type", [
       type: z.literal("click"),
       target: interactionTargetIntentSchema,
       expectedEffect: expectedEffectSchema.default({ type: "none" }),
+      dispatchSemantics: z.enum(["read_only", "mutation"]).optional(),
       timeoutMs: timeout,
     })
     .strict(),
@@ -281,24 +282,28 @@ const transactionOutputSchema = z.discriminatedUnion("classification", [
 ]);
 
 const externalResourceBindingSchema = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("active"),
-    identityReference: identifier,
-    provider: identifier,
-    resourceKind: identifier,
-    resourceScope: z.string().trim().min(1).max(500),
-    identityContractVersion: z.number().int().min(1).max(1_000),
-    identitySource: z.literal("response"),
-    requiredForDestructiveLifecycle: z.boolean().default(true),
-  }).strict(),
-  z.object({
-    status: z.literal("unavailable"),
-    provider: identifier,
-    resourceKind: identifier,
-    resourceScope: z.string().trim().min(1).max(500),
-    identityContractVersion: z.number().int().min(1).max(1_000),
-    requiredForDestructiveLifecycle: z.boolean().default(true),
-  }).strict(),
+  z
+    .object({
+      status: z.literal("active"),
+      identityReference: identifier,
+      provider: identifier,
+      resourceKind: identifier,
+      resourceScope: z.string().trim().min(1).max(500),
+      identityContractVersion: z.number().int().min(1).max(1_000),
+      identitySource: z.literal("response"),
+      requiredForDestructiveLifecycle: z.boolean().default(true),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("unavailable"),
+      provider: identifier,
+      resourceKind: identifier,
+      resourceScope: z.string().trim().min(1).max(500),
+      identityContractVersion: z.number().int().min(1).max(1_000),
+      requiredForDestructiveLifecycle: z.boolean().default(true),
+    })
+    .strict(),
 ]);
 
 export const protectedTransactionSchema = z
@@ -352,7 +357,10 @@ export const protectedTransactionSchema = z
           .object({
             method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
             pathTemplate: z.string().startsWith("/").max(500),
-            transports: z.array(z.enum(["document", "fetch", "xhr"])).min(1).max(3),
+            transports: z
+              .array(z.enum(["document", "fetch", "xhr"]))
+              .min(1)
+              .max(3),
           })
           .strict()
           .optional(),
@@ -607,21 +615,27 @@ export const protectedTransactionSchema = z
         });
     }
     const bindingKeys = new Set<string>();
-    for (const [bindingIndex, binding] of (transaction.extraction.externalResourceBindings ?? []).entries()) {
+    for (const [bindingIndex, binding] of (
+      transaction.extraction.externalResourceBindings ?? []
+    ).entries()) {
       const key = `${binding.provider}\u0000${binding.resourceKind}\u0000${binding.resourceScope}`;
-      if (bindingKeys.has(key)) context.addIssue({
-        code: "custom",
-        message: "duplicate external resource binding declaration",
-        path: ["extraction", "externalResourceBindings", bindingIndex],
-      });
+      if (bindingKeys.has(key))
+        context.addIssue({
+          code: "custom",
+          message: "duplicate external resource binding declaration",
+          path: ["extraction", "externalResourceBindings", bindingIndex],
+        });
       bindingKeys.add(key);
       if (binding.status === "active") {
-        const output = transaction.extraction.outputs.find((candidate) => candidate.reference === binding.identityReference);
-        if (!output || output.classification !== "public" || output.storage.scope !== "project") context.addIssue({
-          code: "custom",
-          message: "external resource identity must reference a project-scoped public output",
-          path: ["extraction", "externalResourceBindings", bindingIndex, "identityReference"],
-        });
+        const output = transaction.extraction.outputs.find(
+          (candidate) => candidate.reference === binding.identityReference,
+        );
+        if (!output || output.classification !== "public" || output.storage.scope !== "project")
+          context.addIssue({
+            code: "custom",
+            message: "external resource identity must reference a project-scoped public output",
+            path: ["extraction", "externalResourceBindings", bindingIndex, "identityReference"],
+          });
       }
     }
     if (transaction.mutation.reconciliation.strategy === "persisted_outputs") {
@@ -694,17 +708,38 @@ export const currentActionSchema = z.union([
     .object({
       type: z.literal("sameOriginRequest"),
       method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
-      path: z.string().startsWith("/").max(1_000).refine((path) => !path.startsWith("//") && !path.includes("://") && !path.includes("\\"), "same-origin path must be relative"),
-      body: z.record(z.string().min(1).max(100), z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]))
+      path: z
+        .string()
+        .startsWith("/")
+        .max(1_000)
+        .refine(
+          (path) => !path.startsWith("//") && !path.includes("://") && !path.includes("\\"),
+          "same-origin path must be relative",
+        ),
+      body: z
+        .record(
+          z.string().min(1).max(100),
+          z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]),
+        )
         .superRefine((body, context) => {
           for (const key of Object.keys(body)) {
             if (/(secret|protected|credential|token|password|authorization)/i.test(key)) {
-              context.addIssue({ code: "custom", path: [key], message: "same-origin body must contain public values only" });
+              context.addIssue({
+                code: "custom",
+                path: [key],
+                message: "same-origin body must contain public values only",
+              });
             }
           }
         })
         .optional(),
-      expectedStatus: z.object({ min: z.number().int().min(100).max(599), max: z.number().int().min(100).max(599) }).strict().refine((status) => status.min <= status.max),
+      expectedStatus: z
+        .object({
+          min: z.number().int().min(100).max(599),
+          max: z.number().int().min(100).max(599),
+        })
+        .strict()
+        .refine((status) => status.min <= status.max),
       authentication: z.literal("current_browser_session"),
       timeoutMs: timeout,
     })
@@ -714,6 +749,7 @@ export const currentActionSchema = z.union([
       type: z.literal("click"),
       target: interactionTargetIntentSchema,
       expectedEffect: expectedEffectSchema.default({ type: "none" }),
+      dispatchSemantics: z.enum(["read_only", "mutation"]).optional(),
       timeoutMs: timeout,
     })
     .strict(),

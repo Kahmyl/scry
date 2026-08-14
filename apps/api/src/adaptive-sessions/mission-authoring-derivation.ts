@@ -13,33 +13,108 @@ export function deriveMissionAuthoringOperation(input: {
   turnId: string;
   intent: MissionAuthoringIntent;
   protectedTransaction?: ProtectedTransaction;
-}): { operationId: string; idempotencyKey: string; action: CurrentAction; expectedEffect: ExpectedEffect; mode: ExecutionMode } {
+}): {
+  operationId: string;
+  idempotencyKey: string;
+  action: CurrentAction;
+  expectedEffect: ExpectedEffect;
+  mode: ExecutionMode;
+} {
   const { intent } = input;
   const identity = missionAuthoringOperationIdentity(input.turnId, intent.intentId);
-  const target = (target: MissionAuthoringSemanticTarget, requiredCapabilities: InteractionTargetIntent["requiredCapabilities"]) =>
-    deriveTarget(target, intent.constraints.allowNonExact, intent.authorization.kind, requiredCapabilities);
+  const target = (
+    target: MissionAuthoringSemanticTarget,
+    requiredCapabilities: InteractionTargetIntent["requiredCapabilities"],
+  ) =>
+    deriveTarget(
+      target,
+      intent.constraints.allowNonExact,
+      intent.authorization.kind,
+      requiredCapabilities,
+    );
   const action: CurrentAction = (() => {
     switch (intent.action.kind) {
-      case "navigate": return { type: "navigate", url: intent.action.url, timeoutMs: intent.constraints.timeoutMs };
-      case "activate": return { type: "click", target: target(intent.action.target, ["focusable", "pointer_activatable"]), expectedEffect: deriveEffect(intent.expectedEffect, target), timeoutMs: intent.constraints.timeoutMs };
-      case "fill": return intent.action.protectedReferenceId
-        ? { type: "fill", target: target(intent.action.target, ["focusable", "accepts_text", "editable"]), secretRef: intent.action.protectedReferenceId, timeoutMs: intent.constraints.timeoutMs }
-        : { type: "fill", target: target(intent.action.target, ["focusable", "accepts_text", "editable"]), value: intent.action.publicValue!, timeoutMs: intent.constraints.timeoutMs };
-      case "select": return { type: "select", target: target(intent.action.target, ["focusable", "selects_option"]), value: intent.action.value, timeoutMs: intent.constraints.timeoutMs };
-      case "set_checked": return { type: "check", target: target(intent.action.target, ["focusable", "toggleable"]), checked: intent.action.checked, timeoutMs: intent.constraints.timeoutMs };
-      case "press": return { type: "press", ...(intent.action.target ? { target: target(intent.action.target, ["focusable", "keyboard_activatable"]) } : {}), key: intent.action.key, timeoutMs: intent.constraints.timeoutMs };
-      case "wait_for": return { type: "waitFor", target: target(intent.action.target, ["observable"]), state: intent.action.state, timeoutMs: intent.constraints.timeoutMs };
-      case "inspect": return { type: "waitFor", target: target(intent.action.target, ["observable"]), state: "visible", timeoutMs: intent.constraints.timeoutMs };
+      case "navigate":
+        return {
+          type: "navigate",
+          url: intent.action.url,
+          timeoutMs: intent.constraints.timeoutMs,
+        };
+      case "activate":
+        return {
+          type: "click",
+          target: target(intent.action.target, ["focusable", "pointer_activatable"]),
+          expectedEffect: deriveEffect(intent.expectedEffect, target),
+          dispatchSemantics:
+            intent.action.semanticEffect === "read_context_transition" ? "read_only" : "mutation",
+          timeoutMs: intent.constraints.timeoutMs,
+        };
+      case "fill":
+        return intent.action.protectedReferenceId
+          ? {
+              type: "fill",
+              target: target(intent.action.target, ["focusable", "accepts_text", "editable"]),
+              secretRef: intent.action.protectedReferenceId,
+              timeoutMs: intent.constraints.timeoutMs,
+            }
+          : {
+              type: "fill",
+              target: target(intent.action.target, ["focusable", "accepts_text", "editable"]),
+              value: intent.action.publicValue!,
+              timeoutMs: intent.constraints.timeoutMs,
+            };
+      case "select":
+        return {
+          type: "select",
+          target: target(intent.action.target, ["focusable", "selects_option"]),
+          value: intent.action.value,
+          timeoutMs: intent.constraints.timeoutMs,
+        };
+      case "set_checked":
+        return {
+          type: "check",
+          target: target(intent.action.target, ["focusable", "toggleable"]),
+          checked: intent.action.checked,
+          timeoutMs: intent.constraints.timeoutMs,
+        };
+      case "press":
+        return {
+          type: "press",
+          ...(intent.action.target
+            ? { target: target(intent.action.target, ["focusable", "keyboard_activatable"]) }
+            : {}),
+          key: intent.action.key,
+          timeoutMs: intent.constraints.timeoutMs,
+        };
+      case "wait_for":
+        return {
+          type: "waitFor",
+          target: target(intent.action.target, ["observable"]),
+          state: intent.action.state,
+          timeoutMs: intent.constraints.timeoutMs,
+        };
+      case "inspect":
+        return {
+          type: "waitFor",
+          target: target(intent.action.target, ["observable"]),
+          state: "visible",
+          timeoutMs: intent.constraints.timeoutMs,
+        };
       case "acquire_protected_outputs": {
-        if (!input.protectedTransaction) throw new Error("MISSION_AUTHORING_PROTECTED_TRANSACTION_REQUIRED");
+        if (!input.protectedTransaction)
+          throw new Error("MISSION_AUTHORING_PROTECTED_TRANSACTION_REQUIRED");
         return input.protectedTransaction;
       }
-      case "same_origin_request": return {
-        type: "sameOriginRequest", method: intent.action.method, path: intent.action.path,
-        ...(intent.action.body ? { body: intent.action.body } : {}),
-        expectedStatus: intent.action.expectedStatus, authentication: intent.action.authentication,
-        timeoutMs: intent.constraints.timeoutMs,
-      };
+      case "same_origin_request":
+        return {
+          type: "sameOriginRequest",
+          method: intent.action.method,
+          path: intent.action.path,
+          ...(intent.action.body ? { body: intent.action.body } : {}),
+          expectedStatus: intent.action.expectedStatus,
+          authentication: intent.action.authentication,
+          timeoutMs: intent.constraints.timeoutMs,
+        };
     }
   })();
   return {
@@ -71,19 +146,29 @@ export function deriveMissionAuthoringTarget(
   return {
     concept: target.concept,
     requiredCapabilities,
-    preferredEvidence: { roles: role, names, labels, descriptions: [], placeholders, inputTypes: [], testIds: target.testId ? [target.testId] : [], ...(text ? { expectedText: text } : {}) },
+    preferredEvidence: {
+      roles: role,
+      names,
+      labels,
+      descriptions: [],
+      placeholders,
+      inputTypes: [],
+      testIds: target.testId ? [target.testId] : [],
+      ...(text ? { expectedText: text } : {}),
+    },
     scope: target.scope
       ? { kind: target.scope.kind, ...(target.scope.name ? { name: target.scope.name } : {}) }
       : { kind: "page" },
     relations: [],
     prohibited: ["hidden", "disabled"],
-    risk: authorization === "authentication"
-      ? "authentication"
-      : authorization === "protected_mutation"
-        ? "protected"
-        : authorization.startsWith("live")
-          ? "live"
-          : "ordinary",
+    risk:
+      authorization === "authentication"
+        ? "authentication"
+        : authorization === "protected_mutation"
+          ? "protected"
+          : authorization.startsWith("live")
+            ? "live"
+            : "ordinary",
     confidence: { requiredFamilies: [] },
     matching: allowNonExact && target.exact === false ? "non_exact" : "exact",
   };
@@ -93,25 +178,54 @@ const deriveTarget = deriveMissionAuthoringTarget;
 
 function deriveEffect(
   effect: MissionAuthoringIntent["expectedEffect"],
-  target: (input: MissionAuthoringSemanticTarget, capabilities: InteractionTargetIntent["requiredCapabilities"]) => InteractionTargetIntent,
+  target: (
+    input: MissionAuthoringSemanticTarget,
+    capabilities: InteractionTargetIntent["requiredCapabilities"],
+  ) => InteractionTargetIntent,
 ): ExpectedEffect {
   switch (effect.kind) {
-    case "none": return { type: "none" };
-    case "navigation": return { type: "navigation", ...(effect.url ? { url: effect.url } : {}), match: effect.match };
-    case "target_visibility": return { type: "visibility_change", target: target(effect.target, ["observable"]), visible: effect.visible };
-    case "target_value": return { type: "value_change", target: target(effect.target, ["readable_value"]), ...(effect.expected ? { expected: effect.expected } : {}) };
+    case "none":
+      return { type: "none" };
+    case "navigation":
+      return {
+        type: "navigation",
+        ...(effect.url ? { url: effect.url } : {}),
+        match: effect.match,
+      };
+    case "target_visibility":
+      return {
+        type: "visibility_change",
+        target: target(effect.target, ["observable"]),
+        visible: effect.visible,
+      };
+    case "target_value":
+      return {
+        type: "value_change",
+        target: target(effect.target, ["readable_value"]),
+        ...(effect.expected ? { expected: effect.expected } : {}),
+      };
     case "target_state": {
       const capabilities: InteractionTargetIntent["requiredCapabilities"] = [];
       if (effect.checked !== undefined) capabilities.push("toggleable");
       if (effect.enabled !== undefined) capabilities.push("observable");
-      return { type: "state_change", target: target(effect.target, capabilities), ...(effect.checked === undefined ? {} : { checked: effect.checked }), ...(effect.enabled === undefined ? {} : { enabled: effect.enabled }) };
+      return {
+        type: "state_change",
+        target: target(effect.target, capabilities),
+        ...(effect.checked === undefined ? {} : { checked: effect.checked }),
+        ...(effect.enabled === undefined ? {} : { enabled: effect.enabled }),
+      };
     }
-    case "new_page": return { type: "new_page", ...(effect.origin ? { origin: effect.origin } : {}) };
+    case "new_page":
+      return { type: "new_page", ...(effect.origin ? { origin: effect.origin } : {}) };
   }
 }
 
 function deriveMode(kind: MissionAuthoringIntent["authorization"]["kind"]): ExecutionMode {
-  return ["live_mutation", "protected_mutation"].includes(kind) ? "transact" : kind === "live_read" ? "observe" : "rehearse";
+  return ["live_mutation", "protected_mutation"].includes(kind)
+    ? "transact"
+    : kind === "live_read"
+      ? "observe"
+      : "rehearse";
 }
 
 function digest(value: string) {

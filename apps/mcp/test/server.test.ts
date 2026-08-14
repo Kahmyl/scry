@@ -174,6 +174,10 @@ describe("current Scry MCP surface", () => {
       .toContain("MCP has no project-creation capability");
     expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
       .toContain("unknown forbids blind retry");
+    expect(tools.find(({ name }) => name === "start_flow_authoring")?.description)
+      .toContain("maxDurationMs 1000-60000");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("role alone is not supported");
     expect(tools.find(({ name }) => name === "end_agent_session")?.description)
       .toContain("Required final lifecycle write");
     await client.close();

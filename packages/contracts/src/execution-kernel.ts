@@ -99,14 +99,33 @@ export const agentDecisionBoundarySchema = z
       )
       .max(10)
       .optional(),
-    environmentRecovery: z.object({
-      environmentId: z.string().uuid(),
-      missingTrustedScriptOrigins: z.array(z.string().url()).max(20).default([]),
-      missingOriginClassification: z.enum(["public", "redacted"]),
-      currentTrustedScriptOrigins: z.array(z.string().url()).max(20).default([]),
-      recoveryTool: z.literal("create_test_environment"),
-      requiresNewFlowDraftAndAuthoringSession: z.literal(true),
-    }).strict().optional(),
+    environmentRecovery: z
+      .object({
+        environmentId: z.string().uuid(),
+        missingTrustedScriptOrigins: z.array(z.string().url()).max(20).default([]),
+        missingOriginClassification: z.enum(["public", "redacted"]),
+        currentTrustedScriptOrigins: z.array(z.string().url()).max(20).default([]),
+        recoveryTool: z.literal("create_test_environment"),
+        requiresNewFlowDraftAndAuthoringSession: z.literal(true),
+      })
+      .strict()
+      .optional(),
+    policyContext: z
+      .object({
+        governingMode: executionKernelModeSchema,
+        requestedSemanticEffect: z.enum([
+          "read_context_transition",
+          "resource_mutation",
+          "unknown",
+        ]),
+        gesture: z.string().trim().min(1).max(120),
+        effectApplied: z.literal(false),
+        strongerAuthorityCouldPermit: z.boolean(),
+        recoverable: z.boolean(),
+        explanation: z.string().trim().min(1).max(1_000),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -120,23 +139,44 @@ export const operationOutcomeSchema = z
     qualityFindings: z.array(z.record(z.string(), z.unknown())),
     durationMs: z.number().nonnegative(),
     reasonCode: z.string().trim().min(1).max(120).optional(),
-    environmentFailure: z.object({
-      missingTrustedScriptOrigins: z.array(z.string().url()).max(20).default([]),
-      missingOriginClassification: z.enum(["public", "redacted"]),
-    }).strict().optional(),
+    environmentFailure: z
+      .object({
+        missingTrustedScriptOrigins: z.array(z.string().url()).max(20).default([]),
+        missingOriginClassification: z.enum(["public", "redacted"]),
+      })
+      .strict()
+      .optional(),
     resolvedTarget: semanticFingerprintSchema.optional(),
     nextDecisionBoundary: agentDecisionBoundarySchema.optional(),
-    generatedReferences: z.array(z.object({
-      reference: z.string().trim().min(1).max(100).regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
-      classification: z.enum(["public", "protected"]),
-      credentialId: z.string().uuid().optional(),
-      valueId: z.string().uuid().optional(),
-      scope: z.literal("project"),
-    }).strict().superRefine((value, context) => {
-      if ((value.classification === "protected") !== Boolean(value.credentialId) ||
-          (value.classification === "public") !== Boolean(value.valueId))
-        context.addIssue({ code: "custom", message: "generated reference ID does not match classification" });
-    })).max(8).optional(),
+    generatedReferences: z
+      .array(
+        z
+          .object({
+            reference: z
+              .string()
+              .trim()
+              .min(1)
+              .max(100)
+              .regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
+            classification: z.enum(["public", "protected"]),
+            credentialId: z.string().uuid().optional(),
+            valueId: z.string().uuid().optional(),
+            scope: z.literal("project"),
+          })
+          .strict()
+          .superRefine((value, context) => {
+            if (
+              (value.classification === "protected") !== Boolean(value.credentialId) ||
+              (value.classification === "public") !== Boolean(value.valueId)
+            )
+              context.addIssue({
+                code: "custom",
+                message: "generated reference ID does not match classification",
+              });
+          }),
+      )
+      .max(8)
+      .optional(),
   })
   .strict();
 

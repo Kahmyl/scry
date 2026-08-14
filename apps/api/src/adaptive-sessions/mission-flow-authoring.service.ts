@@ -1,4 +1,10 @@
-import { ConflictException, ForbiddenException, Inject, Injectable, Optional } from "@nestjs/common";
+import {
+  ConflictException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  Optional,
+} from "@nestjs/common";
 import type {
   AdaptiveSessionOperationInput,
   AdvanceAdaptiveSessionInput,
@@ -14,7 +20,10 @@ import { ReleaseAdmissionService } from "../runtime/index.js";
 import { AdaptiveSessionKernelRunner } from "./adaptive-session-kernel.runner.js";
 import { AdaptiveSessionRepository } from "./adaptive-session.repository.js";
 import { OperationBoundProtectedInputRepository } from "./operation-bound-protected-input.repository.js";
-import { deriveMissionAuthoringOperation, missionAuthoringOperationIdentity } from "./mission-authoring-derivation.js";
+import {
+  deriveMissionAuthoringOperation,
+  missionAuthoringOperationIdentity,
+} from "./mission-authoring-derivation.js";
 import {
   compileMissionAuthoringProtectedTransaction,
   missionAuthoringProtectedOperationReservation,
@@ -29,7 +38,9 @@ export class MissionFlowAuthoringService {
     @Inject(AdaptiveSessionRepository) private readonly sessions: AdaptiveSessionRepository,
     @Inject(AdaptiveSessionKernelRunner) private readonly runner: AdaptiveSessionKernelRunner,
     @Inject(ReleaseAdmissionService) private readonly admission: ReleaseAdmissionService,
-    @Optional() @Inject(OperationBoundProtectedInputRepository) private readonly syntheticInputs?: OperationBoundProtectedInputRepository,
+    @Optional()
+    @Inject(OperationBoundProtectedInputRepository)
+    private readonly syntheticInputs?: OperationBoundProtectedInputRepository,
   ) {}
 
   async start(principal: Principal, input: StartAdaptiveSessionInput) {
@@ -46,10 +57,15 @@ export class MissionFlowAuthoringService {
     return this.sessions.get(workspaceId(principal), sessionId);
   }
 
-  async advance(principal: Principal, sessionId: string, input: MissionAuthoringAdvanceInput | AdvanceAdaptiveSessionInput) {
+  async advance(
+    principal: Principal,
+    sessionId: string,
+    input: MissionAuthoringAdvanceInput | AdvanceAdaptiveSessionInput,
+  ) {
     await this.admission.assertAcceptingWork();
     this.requireWrite(principal);
-    if (!("kind" in input)) throw new ConflictException({ code: "MISSION_AUTHORING_INTENT_REQUIRED" });
+    if (!("kind" in input))
+      throw new ConflictException({ code: "MISSION_AUTHORING_INTENT_REQUIRED" });
     const missionInput: MissionAuthoringAdvanceInput = input;
     if (missionInput.kind === "intents") {
       const key = `${sessionId}:${missionInput.idempotencyKey}`;
@@ -66,7 +82,11 @@ export class MissionFlowAuthoringService {
     return this.advanceOwned(principal, sessionId, missionInput);
   }
 
-  private async advanceOwned(principal: Principal, sessionId: string, input: MissionAuthoringAdvanceInput) {
+  private async advanceOwned(
+    principal: Principal,
+    sessionId: string,
+    input: MissionAuthoringAdvanceInput,
+  ) {
     let turn: {
       turnId: string;
       replayed: boolean;
@@ -76,8 +96,12 @@ export class MissionFlowAuthoringService {
     };
     if (input.kind === "intents") {
       const created = await this.sessions.beginTurn({
-        workspaceId: workspaceId(principal), sessionId, idempotencyKey: input.idempotencyKey,
-        inputDigest: digest({ intents: input.intents, budgets: input.budgets }), budgets: input.budgets, intents: input.intents,
+        workspaceId: workspaceId(principal),
+        sessionId,
+        idempotencyKey: input.idempotencyKey,
+        inputDigest: digest({ intents: input.intents, budgets: input.budgets }),
+        budgets: input.budgets,
+        intents: input.intents,
       });
       turn = {
         turnId: created.turnId,
@@ -87,8 +111,11 @@ export class MissionFlowAuthoringService {
       };
     } else {
       const continued = await this.sessions.continueTurn({
-        workspaceId: workspaceId(principal), sessionId, turnId: input.turnId,
-        idempotencyKey: input.idempotencyKey, budgets: input.budgets,
+        workspaceId: workspaceId(principal),
+        sessionId,
+        turnId: input.turnId,
+        idempotencyKey: input.idempotencyKey,
+        budgets: input.budgets,
       });
       turn = {
         turnId: continued.id,
@@ -100,10 +127,14 @@ export class MissionFlowAuthoringService {
     }
     if (turn.replayed && turn.response) return turn.response;
     if (turn.replayed) {
-      throw new ConflictException({ code: "MISSION_AUTHORING_TURN_IN_PROGRESS", turnId: turn.turnId });
+      throw new ConflictException({
+        code: "MISSION_AUTHORING_TURN_IN_PROGRESS",
+        turnId: turn.turnId,
+      });
     }
     const intents = input.kind === "intents" ? input.intents : turn.safeInput?.intents;
-    if (!intents?.length) throw new ConflictException({ code: "MISSION_AUTHORING_TURN_INPUT_UNAVAILABLE" });
+    if (!intents?.length)
+      throw new ConflictException({ code: "MISSION_AUTHORING_TURN_INPUT_UNAVAILABLE" });
     return this.executeTurn(
       principal,
       sessionId,
@@ -155,15 +186,18 @@ export class MissionFlowAuthoringService {
     let handoffChanged = Boolean(
       priorResult?.stateDelta.activeObjectiveId && priorResult.stateDelta.activeFlowDraftId,
     );
-    let active = priorResult?.stateDelta.activeObjectiveId && priorResult.stateDelta.activeFlowDraftId
-      ? {
-          objectiveId: priorResult.stateDelta.activeObjectiveId,
-          flowDraftId: priorResult.stateDelta.activeFlowDraftId,
-        }
-      : undefined;
-    let safeState = priorResult?.stateDelta.url !== undefined && priorResult.stateDelta.documentEpoch !== undefined
-      ? { url: priorResult.stateDelta.url, documentEpoch: priorResult.stateDelta.documentEpoch }
-      : undefined;
+    let active =
+      priorResult?.stateDelta.activeObjectiveId && priorResult.stateDelta.activeFlowDraftId
+        ? {
+            objectiveId: priorResult.stateDelta.activeObjectiveId,
+            flowDraftId: priorResult.stateDelta.activeFlowDraftId,
+          }
+        : undefined;
+    let safeState =
+      priorResult?.stateDelta.url !== undefined &&
+      priorResult.stateDelta.documentEpoch !== undefined
+        ? { url: priorResult.stateDelta.url, documentEpoch: priorResult.stateDelta.documentEpoch }
+        : undefined;
     let operationsThisAttempt = 0;
     const priorTotalMs = priorResult?.timings.totalMs ?? 0;
     for (let intentIndex = nextIntentIndex; intentIndex < intents.length; intentIndex += 1) {
@@ -195,23 +229,29 @@ export class MissionFlowAuthoringService {
       const resolveStartedAt = performance.now();
       let operation: AdaptiveSessionOperationInput;
       let protectedReservation:
-        | ReturnType<typeof missionAuthoringProtectedOperationReservation>
-        | undefined;
+        ReturnType<typeof missionAuthoringProtectedOperationReservation> | undefined;
       let earlyProtectedOperationId: string | undefined;
       let replayedOperation: AdaptiveSessionOperationInput | null = null;
       try {
         await this.sessions.validateIntentAdmission({ sessionId, intent });
         const handoff = await this.sessions.handoff({
-          workspaceId: workspaceId(principal), sessionId, objectiveId: intent.objectiveId,
-          flowDraftId: intent.flowDraftId, idempotencyKey: `handoff:${turnId}:${intent.intentId}`,
+          workspaceId: workspaceId(principal),
+          sessionId,
+          objectiveId: intent.objectiveId,
+          flowDraftId: intent.flowDraftId,
+          idempotencyKey: `handoff:${turnId}:${intent.intentId}`,
           reason: "Intent Flow ownership changed",
         });
         handoffChanged ||= handoff.handedOff;
-        if (handoff.handedOff) active = { objectiveId: intent.objectiveId, flowDraftId: intent.flowDraftId };
+        if (handoff.handedOff)
+          active = { objectiveId: intent.objectiveId, flowDraftId: intent.flowDraftId };
         let protectedTransaction;
         if (intent.action.kind === "acquire_protected_outputs") {
           const identity = missionAuthoringOperationIdentity(turnId, intent.intentId);
-          replayedOperation = await this.sessions.replayMissionOperation({ sessionId, operationId: identity.operationId });
+          replayedOperation = await this.sessions.replayMissionOperation({
+            sessionId,
+            operationId: identity.operationId,
+          });
           if (!replayedOperation) {
             const reserved = await this.sessions.reserveMissionProtectedOperation({
               sessionId,
@@ -221,7 +261,10 @@ export class MissionFlowAuthoringService {
             earlyProtectedOperationId = reserved.protectedOperationId;
             const runtime = await this.sessions.runtimeContextFor(sessionId);
             const entryUrl = runtime.lastObservation?.url;
-            if (!entryUrl) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_ENTRY_UNAVAILABLE" });
+            if (!entryUrl)
+              throw new ConflictException({
+                code: "MISSION_AUTHORING_PROTECTED_ENTRY_UNAVAILABLE",
+              });
             const preparation = await this.sessions.protectedPreparationFor({
               sessionId,
               objectiveId: intent.objectiveId,
@@ -231,8 +274,15 @@ export class MissionFlowAuthoringService {
             });
             const resolvedSyntheticReferences: Record<string, string> = {};
             for (const preparationIntent of preparation) {
-              if (preparationIntent.action.kind !== "fill" || !preparationIntent.action.syntheticProtectedSource) continue;
-              if (!this.syntheticInputs) throw new ConflictException({ code: "SYNTHETIC_PROTECTED_INPUT_RUNTIME_UNAVAILABLE" });
+              if (
+                preparationIntent.action.kind !== "fill" ||
+                !preparationIntent.action.syntheticProtectedSource
+              )
+                continue;
+              if (!this.syntheticInputs)
+                throw new ConflictException({
+                  code: "SYNTHETIC_PROTECTED_INPUT_RUNTIME_UNAVAILABLE",
+                });
               const source = preparationIntent.action.syntheticProtectedSource;
               const materialized = await this.syntheticInputs.materialize({
                 protectedOperationId: earlyProtectedOperationId,
@@ -246,14 +296,21 @@ export class MissionFlowAuthoringService {
               resolvedSyntheticReferences[preparationIntent.intentId] = materialized.referenceId;
             }
             for (const source of intent.action.syntheticProtectedInputs ?? []) {
-              if (!this.syntheticInputs) throw new ConflictException({ code: "SYNTHETIC_PROTECTED_INPUT_RUNTIME_UNAVAILABLE" });
+              if (!this.syntheticInputs)
+                throw new ConflictException({
+                  code: "SYNTHETIC_PROTECTED_INPUT_RUNTIME_UNAVAILABLE",
+                });
               const materialized = await this.syntheticInputs.materialize({
-                protectedOperationId: earlyProtectedOperationId, projectId: runtime.projectId,
-                environmentId: runtime.environmentId, policy: runtime.policy,
-                resourceKind: source.resourceKind, operation: source.operation,
+                protectedOperationId: earlyProtectedOperationId,
+                projectId: runtime.projectId,
+                environmentId: runtime.environmentId,
+                policy: runtime.policy,
+                resourceKind: source.resourceKind,
+                operation: source.operation,
                 declaration: source,
               });
-              resolvedSyntheticReferences[`synthetic:${source.semantic}`] = materialized.referenceId;
+              resolvedSyntheticReferences[`synthetic:${source.semantic}`] =
+                materialized.referenceId;
             }
             protectedTransaction = compileMissionAuthoringProtectedTransaction({
               operationId: identity.operationId,
@@ -269,10 +326,19 @@ export class MissionFlowAuthoringService {
             );
           }
         }
-        const derived = replayedOperation ?? deriveMissionAuthoringOperation({ turnId, intent, ...(protectedTransaction ? { protectedTransaction } : {}) });
+        const derived =
+          replayedOperation ??
+          deriveMissionAuthoringOperation({
+            turnId,
+            intent,
+            ...(protectedTransaction ? { protectedTransaction } : {}),
+          });
         operation = {
-          operationId: derived.operationId, idempotencyKey: derived.idempotencyKey,
-          action: derived.action, expectedEffect: derived.expectedEffect, mode: derived.mode,
+          operationId: derived.operationId,
+          idempotencyKey: derived.idempotencyKey,
+          action: derived.action,
+          expectedEffect: derived.expectedEffect,
+          mode: derived.mode,
           protectedInputReferences: intent.protectedInputReferences,
         };
       } catch (error) {
@@ -284,17 +350,28 @@ export class MissionFlowAuthoringService {
         }
         timings.resolveMs += performance.now() - resolveStartedAt;
         const decision = turnResult({
-          turnId, state: "decision_required", completed, handoffChanged,
-          ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
-          startedAt, elapsedBaseMs: priorTotalMs, timings,
+          turnId,
+          state: "decision_required",
+          completed,
+          handoffChanged,
+          ...(active ? { active } : {}),
+          ...(safeState ? { safeState } : {}),
+          startedAt,
+          elapsedBaseMs: priorTotalMs,
+          timings,
           decisionBoundary: admissionDecisionBoundary(error),
         });
         return this.settleTurn(sessionId, turnId, decision, timings, startedAt);
       }
       const claim = await this.sessions.beginMissionOperation({
-        workspaceId: workspaceId(principal), sessionId, intent,
-        operationId: operation.operationId, idempotencyKey: operation.idempotencyKey,
-        action: operation.action, expectedEffect: operation.expectedEffect, mode: operation.mode,
+        workspaceId: workspaceId(principal),
+        sessionId,
+        intent,
+        operationId: operation.operationId,
+        idempotencyKey: operation.idempotencyKey,
+        action: operation.action,
+        expectedEffect: operation.expectedEffect,
+        mode: operation.mode,
         ...(protectedReservation ? { protectedReservation } : {}),
         ...(earlyProtectedOperationId ? { earlyProtectedOperationId } : {}),
       });
@@ -303,12 +380,23 @@ export class MissionFlowAuthoringService {
         if (!claim.replayed) {
           operationsThisAttempt += 1;
           const pending = turnResult({
-            turnId, state: "pending", completed, handoffChanged,
-            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
-            startedAt, elapsedBaseMs: priorTotalMs, phase: "protected_operation", timings,
+            turnId,
+            state: "pending",
+            completed,
+            handoffChanged,
+            ...(active ? { active } : {}),
+            ...(safeState ? { safeState } : {}),
+            startedAt,
+            elapsedBaseMs: priorTotalMs,
+            phase: "protected_operation",
+            timings,
           });
           const persisted = await this.sessions.persistPending({
-            sessionId, turnId, result: pending, phase: "protected_operation", nextIntentIndex: intentIndex,
+            sessionId,
+            turnId,
+            result: pending,
+            phase: "protected_operation",
+            nextIntentIndex: intentIndex,
           });
           this.launchProtectedExecution(sessionId, operation);
           return persisted;
@@ -325,12 +413,23 @@ export class MissionFlowAuthoringService {
             this.launchProtectedExecution(sessionId, operation);
           }
           const pending = turnResult({
-            turnId, state: "pending", completed, handoffChanged,
-            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
-            startedAt, elapsedBaseMs: priorTotalMs, phase: "protected_operation", timings,
+            turnId,
+            state: "pending",
+            completed,
+            handoffChanged,
+            ...(active ? { active } : {}),
+            ...(safeState ? { safeState } : {}),
+            startedAt,
+            elapsedBaseMs: priorTotalMs,
+            phase: "protected_operation",
+            timings,
           });
           return this.sessions.persistPending({
-            sessionId, turnId, result: pending, phase: "protected_operation", nextIntentIndex: intentIndex,
+            sessionId,
+            turnId,
+            result: pending,
+            phase: "protected_operation",
+            nextIntentIndex: intentIndex,
           });
         }
         completed.push(compactSemanticDelta(intent.intentId, projection.outcome, true));
@@ -340,27 +439,45 @@ export class MissionFlowAuthoringService {
           projection.decisionBoundary.type !== "objective_completed"
         ) {
           const decision = turnResult({
-            turnId, state: "decision_required", completed, handoffChanged,
-            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
-            startedAt, elapsedBaseMs: priorTotalMs,
-            decisionBoundary: projection.decisionBoundary, timings,
+            turnId,
+            state: "decision_required",
+            completed,
+            handoffChanged,
+            ...(active ? { active } : {}),
+            ...(safeState ? { safeState } : {}),
+            startedAt,
+            elapsedBaseMs: priorTotalMs,
+            decisionBoundary: projection.decisionBoundary,
+            timings,
           });
           return this.settleTurn(sessionId, turnId, decision, timings, startedAt);
         }
         continue;
       }
       if (claim.replayed && "outcome" in claim && claim.state !== "running" && claim.outcome) {
-        completed.push(compactSemanticDelta(intent.intentId, claim.outcome, requiresProtectedInterval(intent)));
-        if (claim.outcome.functionalResult !== "succeeded" || claim.outcome.mutationOutcome === "unknown") {
+        completed.push(
+          compactSemanticDelta(intent.intentId, claim.outcome, requiresProtectedInterval(intent)),
+        );
+        if (
+          claim.outcome.functionalResult !== "succeeded" ||
+          claim.outcome.mutationOutcome === "unknown"
+        ) {
           const decisionBoundary = claim.outcome.nextDecisionBoundary ?? {
             type: "environment_unavailable" as const,
             reasonCode: claim.outcome.reasonCode ?? "ADAPTIVE_SESSION_EXECUTION_FAILED",
             safeActions: ["get_flow_authoring"],
           };
           const decision = turnResult({
-            turnId, state: "decision_required", completed, handoffChanged,
-            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
-            startedAt, elapsedBaseMs: priorTotalMs, decisionBoundary, timings,
+            turnId,
+            state: "decision_required",
+            completed,
+            handoffChanged,
+            ...(active ? { active } : {}),
+            ...(safeState ? { safeState } : {}),
+            startedAt,
+            elapsedBaseMs: priorTotalMs,
+            decisionBoundary,
+            timings,
           });
           return this.settleTurn(sessionId, turnId, decision, timings, startedAt);
         }
@@ -375,45 +492,110 @@ export class MissionFlowAuthoringService {
         safeState = result.safeState;
         const journalStartedAt = performance.now();
         const settled = await this.sessions.settleMissionOperation({
-          sessionId, operationId: operation.operationId, intent, action: operation.action, ...result,
+          sessionId,
+          operationId: operation.operationId,
+          intent,
+          action: operation.action,
+          ...result,
         });
         timings.journalMs += performance.now() - journalStartedAt;
-        completed.push(compactSemanticDelta(intent.intentId, settled.outcome, requiresProtectedInterval(intent)));
-        if (settled.outcome.functionalResult !== "succeeded" || settled.outcome.mutationOutcome === "unknown" || settled.decisionBoundary.type !== "objective_completed") {
-          const decision = turnResult({ turnId, state: "decision_required", completed, handoffChanged, ...(active ? { active } : {}), ...(safeState ? { safeState } : {}), startedAt, elapsedBaseMs: priorTotalMs, decisionBoundary: settled.decisionBoundary, timings });
+        completed.push(
+          compactSemanticDelta(intent.intentId, settled.outcome, requiresProtectedInterval(intent)),
+        );
+        if (
+          settled.outcome.functionalResult !== "succeeded" ||
+          settled.outcome.mutationOutcome === "unknown" ||
+          settled.decisionBoundary.type !== "objective_completed"
+        ) {
+          const decision = turnResult({
+            turnId,
+            state: "decision_required",
+            completed,
+            handoffChanged,
+            ...(active ? { active } : {}),
+            ...(safeState ? { safeState } : {}),
+            startedAt,
+            elapsedBaseMs: priorTotalMs,
+            decisionBoundary: settled.decisionBoundary,
+            timings,
+          });
           return this.settleTurn(sessionId, turnId, decision, timings, startedAt);
         }
       } catch (error) {
         const code = errorCode(error, "ADAPTIVE_SESSION_EXECUTION_FAILED");
         await this.sessions.markOperationFailed(sessionId, operation.operationId, code);
-        const decision = turnResult({ turnId, state: "decision_required", completed, handoffChanged, ...(active ? { active } : {}), ...(safeState ? { safeState } : {}), startedAt, elapsedBaseMs: priorTotalMs, timings, decisionBoundary: {
-          type: "environment_unavailable", reasonCode: code, safeActions: ["get_flow_authoring"],
-        } });
+        const decision = turnResult({
+          turnId,
+          state: "decision_required",
+          completed,
+          handoffChanged,
+          ...(active ? { active } : {}),
+          ...(safeState ? { safeState } : {}),
+          startedAt,
+          elapsedBaseMs: priorTotalMs,
+          timings,
+          decisionBoundary:
+            code === "EXECUTION_MODE_POLICY_DENIED"
+              ? liveReadPolicyBoundary(intent)
+              : {
+                  type: "environment_unavailable",
+                  reasonCode: code,
+                  safeActions: ["get_flow_authoring"],
+                },
+        });
         return this.settleTurn(sessionId, turnId, decision, timings, startedAt);
       }
     }
-    return this.settleTurn(sessionId, turnId, turnResult({ turnId, state: "completed", completed, handoffChanged, ...(active ? { active } : {}), ...(safeState ? { safeState } : {}), startedAt, elapsedBaseMs: priorTotalMs, timings }), timings, startedAt);
+    return this.settleTurn(
+      sessionId,
+      turnId,
+      turnResult({
+        turnId,
+        state: "completed",
+        completed,
+        handoffChanged,
+        ...(active ? { active } : {}),
+        ...(safeState ? { safeState } : {}),
+        startedAt,
+        elapsedBaseMs: priorTotalMs,
+        timings,
+      }),
+      timings,
+      startedAt,
+    );
   }
 
-  private async settleTurn(sessionId: string, turnId: string, result: MissionAuthoringTurnResult, timings: { resolveMs: number; executeMs: number; verifyMs: number; journalMs: number }, startedAt: number) {
+  private async settleTurn(
+    sessionId: string,
+    turnId: string,
+    result: MissionAuthoringTurnResult,
+    timings: { resolveMs: number; executeMs: number; verifyMs: number; journalMs: number },
+    startedAt: number,
+  ) {
     void timings;
     void startedAt;
     return this.sessions.settleTurn({ sessionId, turnId, result });
   }
 
-  private async executeWithOnePreDispatchRetry(sessionId: string, operation: AdaptiveSessionOperationInput) {
+  private async executeWithOnePreDispatchRetry(
+    sessionId: string,
+    operation: AdaptiveSessionOperationInput,
+  ) {
     try {
       return await this.runner.execute(sessionId, operation);
     } catch (error) {
-      if (!(typeof error === "object" && error && "preDispatchTransient" in error && error.preDispatchTransient === true)) throw error;
+      if (!(
+        typeof error === "object" &&
+        error &&
+        "preDispatchTransient" in error &&
+        error.preDispatchTransient === true
+      ))
+        throw error;
       return this.runner.execute(sessionId, operation);
     }
   }
 
-  private launchProtectedExecution(
-    sessionId: string,
-    operation: AdaptiveSessionOperationInput,
-  ) {
+  private launchProtectedExecution(sessionId: string, operation: AdaptiveSessionOperationInput) {
     const key = `${sessionId}:${operation.operationId}`;
     if (this.inFlightProtectedOperations.has(key)) return;
     const work = (async () => {
@@ -461,6 +643,30 @@ export class MissionFlowAuthoringService {
   }
 }
 
+function liveReadPolicyBoundary(
+  intent: import("@scry/contracts").MissionAuthoringIntent,
+): NonNullable<MissionAuthoringTurnResult["decisionBoundary"]> {
+  const semanticEffect =
+    intent.action.kind === "activate" ? (intent.action.semanticEffect ?? "unknown") : "resource_mutation";
+  const readContext = semanticEffect === "read_context_transition";
+  return {
+    type: "policy_refused",
+    reasonCode: "EXECUTION_MODE_POLICY_DENIED",
+    safeActions: [],
+    policyContext: {
+      governingMode: "observe",
+      requestedSemanticEffect: semanticEffect,
+      gesture: intent.action.kind,
+      effectApplied: false,
+      strongerAuthorityCouldPermit: semanticEffect === "resource_mutation",
+      recoverable: false,
+      explanation: readContext
+        ? "The declared read-context transition was not admitted; no dispatch occurred."
+        : "Live-read authority does not permit resource mutations or interactions without a proven read-context-only effect.",
+    },
+  };
+}
+
 function workspaceId(principal: Principal) {
   return principal.kind === "user" ? principal.workspaceId : null;
 }
@@ -482,7 +688,9 @@ function errorCode(error: unknown, fallback: string) {
   return error instanceof Error && valid(error.message) ? error.message : fallback;
 }
 
-function admissionDecisionBoundary(error: unknown): NonNullable<MissionAuthoringTurnResult["decisionBoundary"]> {
+function admissionDecisionBoundary(
+  error: unknown,
+): NonNullable<MissionAuthoringTurnResult["decisionBoundary"]> {
   const code = errorCode(error, "MISSION_AUTHORING_ADMISSION_FAILED");
   if (code === "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED") {
     return {
@@ -494,7 +702,11 @@ function admissionDecisionBoundary(error: unknown): NonNullable<MissionAuthoring
   if (code.includes("ORIGIN_NOT_ALLOWED") || code.includes("AUTHORIZATION")) {
     return { type: "policy_refused", reasonCode: code, safeActions: [] };
   }
-  return { type: "environment_unavailable", reasonCode: code, safeActions: ["advance_flow_authoring"] };
+  return {
+    type: "environment_unavailable",
+    reasonCode: code,
+    safeActions: ["advance_flow_authoring"],
+  };
 }
 
 function compactSemanticDelta(
@@ -512,16 +724,30 @@ function compactSemanticDelta(
     privacyApplicable,
     privacyResult: outcome.privacyResult,
     evidence: {
-      state: outcome.evidenceResult.some((channel) => channel.state === "failed") ? "failed" :
-        outcome.evidenceResult.some((channel) => channel.state === "quarantined") ? "quarantined" :
-        outcome.evidenceResult.some((channel) => channel.state === "suppressed") ? "suppressed" : "available",
+      state: outcome.evidenceResult.some((channel) => channel.state === "failed")
+        ? "failed"
+        : outcome.evidenceResult.some((channel) => channel.state === "quarantined")
+          ? "quarantined"
+          : outcome.evidenceResult.some((channel) => channel.state === "suppressed")
+            ? "suppressed"
+            : "available",
       count: outcome.evidenceResult.length,
-      reasonCodes: outcome.evidenceResult.flatMap((channel) => channel.reasonCode ? [channel.reasonCode] : []).slice(0, 8),
+      reasonCodes: outcome.evidenceResult
+        .flatMap((channel) => (channel.reasonCode ? [channel.reasonCode] : []))
+        .slice(0, 8),
+    },
+    semanticEvidence: {
+      count: outcome.resolvedTarget ? 1 : 0,
+      ...(outcome.resolvedTarget ? { resolvedTarget: outcome.resolvedTarget } : {}),
     },
     quality: {
       findingCount: outcome.qualityFindings.length,
       reasonCodes: outcome.qualityFindings
-        .flatMap((finding) => typeof finding.code === "string" && /^[A-Z][A-Z0-9_]*$/.test(finding.code) ? [finding.code] : [])
+        .flatMap((finding) =>
+          typeof finding.code === "string" && /^[A-Z][A-Z0-9_]*$/.test(finding.code)
+            ? [finding.code]
+            : [],
+        )
         .slice(0, 8),
     },
     ...(outcome.generatedReferences ? { generatedReferences: outcome.generatedReferences } : {}),
@@ -543,30 +769,58 @@ function turnResult(input: {
 }): MissionAuthoringTurnResult {
   const failed = input.completed.some((delta) => delta.functionalResult !== "succeeded");
   const unknown = input.completed.some((delta) => delta.mutationOutcome === "unknown");
-  const evidenceFailed = input.completed.some((delta) => delta.evidence.state === "failed" || delta.evidence.state === "quarantined");
+  const evidenceFailed = input.completed.some(
+    (delta) => delta.evidence.state === "failed" || delta.evidence.state === "quarantined",
+  );
   return {
     turnId: input.turnId,
     state: input.state,
     completed: input.completed,
     stateDelta: {
-      ...(input.handoffChanged && input.active ? { activeObjectiveId: input.active.objectiveId, activeFlowDraftId: input.active.flowDraftId } : {}),
-      ...(input.safeState ? { url: input.safeState.url, documentEpoch: input.safeState.documentEpoch } : {}),
+      ...(input.handoffChanged && input.active
+        ? {
+            activeObjectiveId: input.active.objectiveId,
+            activeFlowDraftId: input.active.flowDraftId,
+          }
+        : {}),
+      ...(input.safeState
+        ? { url: input.safeState.url, documentEpoch: input.safeState.documentEpoch }
+        : {}),
     },
     channels: {
       functional: { state: input.state === "pending" ? "pending" : failed ? "failed" : "passed" },
       mutation: { state: unknown ? "failed" : "passed" },
       privacy: privacyChannel(input.completed),
-      evidence: { state: input.state === "pending" ? "pending" : evidenceFailed ? "failed" : "passed" },
-      quality: { state: "passed", ...(input.completed.some((delta) => delta.quality.findingCount > 0) ? { reasonCode: "QUALITY_FINDINGS_PRESENT" } : {}) },
+      evidence: {
+        state: input.state === "pending" ? "pending" : evidenceFailed ? "failed" : "passed",
+      },
+      quality: {
+        state: "passed",
+        ...(input.completed.some((delta) => delta.quality.findingCount > 0)
+          ? { reasonCode: "QUALITY_FINDINGS_PRESENT" }
+          : {}),
+      },
     },
-    timings: { resolveMs: Math.round(input.timings.resolveMs), executeMs: Math.round(input.timings.executeMs), verifyMs: Math.round(input.timings.verifyMs), journalMs: Math.round(input.timings.journalMs), totalMs: Math.round((input.elapsedBaseMs ?? 0) + performance.now() - input.startedAt) },
+    timings: {
+      resolveMs: Math.round(input.timings.resolveMs),
+      executeMs: Math.round(input.timings.executeMs),
+      verifyMs: Math.round(input.timings.verifyMs),
+      journalMs: Math.round(input.timings.journalMs),
+      totalMs: Math.round((input.elapsedBaseMs ?? 0) + performance.now() - input.startedAt),
+    },
     decisionBoundary: input.decisionBoundary ?? null,
-    ...(input.state === "pending" ? { continuation: { turnId: input.turnId, phase: input.phase ?? "resume" } } : {}),
+    ...(input.state === "pending"
+      ? { continuation: { turnId: input.turnId, phase: input.phase ?? "resume" } }
+      : {}),
   };
 }
 
-function privacyChannel(completed: MissionAuthoringTurnResult["completed"]): MissionAuthoringTurnResult["channels"]["privacy"] {
-  const privacy = completed.filter((delta) => delta.privacyApplicable).map((delta) => delta.privacyResult);
+function privacyChannel(
+  completed: MissionAuthoringTurnResult["completed"],
+): MissionAuthoringTurnResult["channels"]["privacy"] {
+  const privacy = completed
+    .filter((delta) => delta.privacyApplicable)
+    .map((delta) => delta.privacyResult);
   if (!privacy.length) return { state: "not_applicable" };
   if (privacy.includes("degraded")) return { state: "failed", reasonCode: "PRIVACY_DEGRADED" };
   if (privacy.includes("unverified")) return { state: "failed", reasonCode: "PRIVACY_UNVERIFIED" };
@@ -574,8 +828,10 @@ function privacyChannel(completed: MissionAuthoringTurnResult["completed"]): Mis
 }
 
 function requiresProtectedInterval(intent: MissionAuthoringIntent) {
-  return (intent.action.kind === "fill" && Boolean(intent.action.protectedReferenceId)) ||
-    intent.action.kind === "same_origin_request";
+  return (
+    (intent.action.kind === "fill" && Boolean(intent.action.protectedReferenceId)) ||
+    intent.action.kind === "same_origin_request"
+  );
 }
 
 function digest(value: unknown) {

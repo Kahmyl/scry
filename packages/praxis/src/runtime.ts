@@ -25,10 +25,7 @@ import {
   type PraxisProviderTiming,
 } from "./observation.js";
 import { PraxisAdapterError, type PraxisDispatchBoundary } from "./transaction.js";
-import {
-  PraxisExecutionEnvelope,
-  type PraxisPreDispatchDeadline,
-} from "./execution-envelope.js";
+import { PraxisExecutionEnvelope, type PraxisPreDispatchDeadline } from "./execution-envelope.js";
 import { PraxisStateObserver } from "./state-observer.js";
 import { validatePraxisVeilGrants } from "./veil-bridge.js";
 
@@ -123,13 +120,18 @@ export class PraxisGroundingEngine {
     checkAbort(signal);
     const started = performance.now();
     const observationDeadline = started + PraxisExecutionEnvelope.groundingWindow(request);
+    let stablePendingSince = started;
+    let pendingSignature = "";
     let grounded: GroundingResult;
     for (;;) {
       try {
         grounded = await resolveTarget(this.page, request.intent, {
           allowedOrigins: request.policy.allowedOrigins,
-          ...(request.operation.type === "wait_for_state" && isSetObservedState(request.operation.state)
-            ? { cardinality: { kind: "state_observation" as const, state: request.operation.state } }
+          ...(request.operation.type === "wait_for_state" &&
+          isSetObservedState(request.operation.state)
+            ? {
+                cardinality: { kind: "state_observation" as const, state: request.operation.state },
+              }
             : {}),
         });
         break;
@@ -143,6 +145,15 @@ export class PraxisGroundingEngine {
           request.operation.type === "wait_for_state" &&
           error instanceof GroundingError &&
           ["INSUFFICIENT_EVIDENCE", "TARGET_NOT_FOUND"].includes(error.code);
+        if (renderPending || waitEvidencePending) {
+          const nextSignature = groundingPendingSignature(error);
+          if (nextSignature !== pendingSignature) {
+            pendingSignature = nextSignature;
+            stablePendingSince = performance.now();
+          } else if (performance.now() - stablePendingSince >= 1_000) {
+            throw error;
+          }
+        }
         if ((!renderPending && !waitEvidencePending) || performance.now() >= observationDeadline)
           throw error;
         await abortableDelay(Math.min(50, observationDeadline - performance.now()), signal);
@@ -211,6 +222,20 @@ export class PraxisGroundingEngine {
       providerTimings,
     );
   }
+}
+
+function groundingPendingSignature(error: GroundingError) {
+  const diagnostic = error.diagnostic;
+  return JSON.stringify({
+    code: error.code,
+    candidateCount: diagnostic.candidateCount,
+    eligibleCount: diagnostic.eligibleCount,
+    confidence: diagnostic.confidence,
+    confidenceMargin: diagnostic.confidenceMargin,
+    selectedFingerprint: diagnostic.selectedFingerprint?.digest,
+    distinctions: diagnostic.candidateDistinctions,
+    rejectedConstraints: diagnostic.rejectedConstraints,
+  });
 }
 
 export function selectPraxisStrategy(
@@ -306,8 +331,9 @@ export class PraxisDispatcher {
           await assertActivationReady(locator, this.timeout(request.policy.actionTimeoutMs));
           await target.revalidate();
           activationTarget =
-            (await locator.elementHandle({ timeout: this.timeout(request.policy.actionTimeoutMs) })) ??
-            undefined;
+            (await locator.elementHandle({
+              timeout: this.timeout(request.policy.actionTimeoutMs),
+            })) ?? undefined;
           if (!activationTarget)
             throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
               provenance: "application",

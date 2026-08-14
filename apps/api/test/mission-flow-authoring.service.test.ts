@@ -403,7 +403,8 @@ describe("MissionFlowAuthoringService grouped turns", () => {
   });
 
   it("returns compact independent channels and runner phase timings", async () => {
-    const outcome = { operationId: "ignored", functionalResult: "succeeded" as const, mutationOutcome: "not_applied" as const, privacyResult: "unverified" as const, evidenceResult: [{ channel: "trace" as const, state: "available" as const }], qualityFindings: [{ code: "LOW_CONTRAST" }], durationMs: 5 };
+    const resolvedTarget = { fingerprint: "f".repeat(64), concept: "email", scopeKind: "page" as const, capabilityDigest: "c".repeat(64) };
+    const outcome = { operationId: "ignored", functionalResult: "succeeded" as const, mutationOutcome: "not_applied" as const, privacyResult: "unverified" as const, evidenceResult: [{ channel: "trace" as const, state: "available" as const }], qualityFindings: [{ code: "LOW_CONTRAST" }], resolvedTarget, durationMs: 5 };
     const repository = {
       beginTurn: vi.fn().mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
       validateIntentAdmission: vi.fn(), handoff: vi.fn().mockResolvedValue({ handedOff: false }),
@@ -415,7 +416,7 @@ describe("MissionFlowAuthoringService grouped turns", () => {
     const service = new MissionFlowAuthoringService(repository as never, runner as never, { assertAcceptingWork: vi.fn() } as never);
     const result = await service.advance(principal, randomUUID(), input());
     expect(result).toMatchObject({ state: "completed", channels: { functional: { state: "passed" }, privacy: { state: "not_applicable" }, quality: { state: "passed", reasonCode: "QUALITY_FINDINGS_PRESENT" } } });
-    expect(result.completed[0]).toMatchObject({ functionalResult: "succeeded", mutationOutcome: "not_applied", privacyApplicable: false, privacyResult: "unverified", evidence: { count: 1 }, quality: { findingCount: 1, reasonCodes: ["LOW_CONTRAST"] } });
+    expect(result.completed[0]).toMatchObject({ functionalResult: "succeeded", mutationOutcome: "not_applied", privacyApplicable: false, privacyResult: "unverified", evidence: { count: 1 }, semanticEvidence: { count: 1, resolvedTarget }, quality: { findingCount: 1, reasonCodes: ["LOW_CONTRAST"] } });
     expect(result.timings).toMatchObject({ resolveMs: expect.any(Number), executeMs: expect.any(Number), verifyMs: 13, journalMs: expect.any(Number) });
     expect(result.timings.executeMs).toBeGreaterThanOrEqual(11);
   });
@@ -487,6 +488,34 @@ describe("MissionFlowAuthoringService grouped turns", () => {
       expect.any(String),
       "ADAPTIVE_SESSION_EXECUTION_FAILED",
     );
+  });
+
+  it("returns a causal fail-closed boundary for an unknown-effect activate under live_read", async () => {
+    const repository = {
+      beginTurn: vi.fn().mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
+      validateIntentAdmission: vi.fn(), handoff: vi.fn().mockResolvedValue({ handedOff: false }),
+      beginMissionOperation: vi.fn().mockResolvedValue({ replayed: false, state: "running" }),
+      markOperationFailed: vi.fn(), settleTurn: vi.fn(async ({ result }) => result),
+    };
+    const denied = Object.assign(new Error("denied"), { code: "EXECUTION_MODE_POLICY_DENIED" });
+    const runner = { execute: vi.fn().mockRejectedValue(denied) };
+    const service = new MissionFlowAuthoringService(repository as never, runner as never, { assertAcceptingWork: vi.fn() } as never);
+    const intent = {
+      ...input().intents[0], intentId: "unknown-live-activate",
+      action: { kind: "activate" as const, target: { concept: "unclassified control", role: "button" as const } },
+      authorization: { kind: "live_read" as const },
+    };
+
+    await expect(service.advance(principal, randomUUID(), { ...input(), intents: [intent] } as never)).resolves.toMatchObject({
+      state: "decision_required",
+      decisionBoundary: {
+        type: "policy_refused", reasonCode: "EXECUTION_MODE_POLICY_DENIED", safeActions: [],
+        policyContext: {
+          governingMode: "observe", requestedSemanticEffect: "unknown", gesture: "activate",
+          effectApplied: false, strongerAuthorityCouldPermit: false, recoverable: false,
+        },
+      },
+    });
   });
 
   it("aggregates only protected actions into the privacy channel", async () => {

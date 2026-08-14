@@ -106,6 +106,7 @@ describe("Praxis strategy, dispatch, and verification", () => {
       ...base,
       policy: { ...base.policy, totalTimeoutMs: 500 },
     });
+    const started = performance.now();
     const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(
       input,
       new AbortController().signal,
@@ -115,6 +116,23 @@ describe("Praxis strategy, dispatch, and verification", () => {
       code: "PRAXIS_INSUFFICIENT_EVIDENCE",
       mutationOutcome: "not_started",
     });
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  it("keeps waiting while a delayed target produces new evidence", async () => {
+    await page.setContent(
+      "<main><label>Username <input /></label><script>setTimeout(()=>document.querySelector('main').insertAdjacentHTML('beforeend','<label>Email <input /></label>'),600)</script></main>",
+    );
+    const base = request({ type: "wait_for_state", state: "visible" }, intent("Email", "textbox"));
+    const input = authorizePraxisRequest(page, {
+      ...base,
+      policy: { ...base.policy, totalTimeoutMs: 2_000 },
+    });
+    const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(
+      input,
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({ status: "succeeded", mutationOutcome: "not_applied" });
   });
 
   it("selects typed least-invasive strategies", () => {

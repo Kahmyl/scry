@@ -41,34 +41,84 @@ describe("execution kernel admission", () => {
   it("admits protected input without full protected-operation machinery", () => {
     const correlationId = randomUUID();
     const manifest = createExecutionCapabilityManifest({
-      mode: "run", correlationId, states: { protected_operations: "unavailable" },
+      mode: "run",
+      correlationId,
+      states: { protected_operations: "unavailable" },
     });
     const request = {
-      sessionId: "session", operationId: "protected-fill", correlationId, mode: "run" as const,
-      plan: plan({ type: "fill" as const, target: target(), secretRef: "11111111-1111-4111-8111-111111111111" }),
-      policy, capabilityManifestDigest: manifest.digest, idempotencyKey: "protected-fill-admission",
+      sessionId: "session",
+      operationId: "protected-fill",
+      correlationId,
+      mode: "run" as const,
+      plan: plan({
+        type: "fill" as const,
+        target: target(),
+        secretRef: "11111111-1111-4111-8111-111111111111",
+      }),
+      policy,
+      capabilityManifestDigest: manifest.digest,
+      idempotencyKey: "protected-fill-admission",
       mutationIdentity: "protected-fill-mutation",
     };
-    expect(new ExecutionKernel().admitOnly({ request, capabilities: {
-      manifest, journal: { begin: vi.fn(), complete: vi.fn(), fail: vi.fn(), settle: vi.fn() }, options: { outputDirectory: "/tmp/unused" },
-    } })).toMatchObject({ operationId: "protected-fill" });
+    expect(
+      new ExecutionKernel().admitOnly({
+        request,
+        capabilities: {
+          manifest,
+          journal: { begin: vi.fn(), complete: vi.fn(), fail: vi.fn(), settle: vi.fn() },
+          options: { outputDirectory: "/tmp/unused" },
+        },
+      }),
+    ).toMatchObject({ operationId: "protected-fill" });
   });
 
   it("does not admit a full protected transaction with protected-input support alone", () => {
     const correlationId = randomUUID();
     const manifest = createExecutionCapabilityManifest({
-      mode: "run", correlationId, states: { protected_operations: "unavailable" },
+      mode: "run",
+      correlationId,
+      states: { protected_operations: "unavailable" },
     });
-    const protectedPlan = currentPlanSchema.parse({ ...plan({ type: "navigate", url: "https://example.test" }), steps: [{
-      id: "protected", title: "Protected", action: protectedAction(), assertions: [], onFailure: "stop", evidence: [],
-      captureIntent: "transient", transientJustification: "Admission-only isolation test.",
-    }] });
-    expect(() => new ExecutionKernel().admitOnly({ request: {
-      sessionId: "session", operationId: "protected-transaction", correlationId, mode: "run", plan: protectedPlan,
-      policy, capabilityManifestDigest: manifest.digest, idempotencyKey: "protected-transaction-admission",
-      mutationIdentity: "protected-transaction-mutation",
-    }, capabilities: { manifest, journal: { begin: vi.fn(), complete: vi.fn(), fail: vi.fn() }, options: { outputDirectory: "/tmp/unused" } } }))
-      .toThrow(expect.objectContaining({ code: "EXECUTION_CAPABILITY_INCOMPLETE", missingCapabilities: ["protected_operations"] }));
+    const protectedPlan = currentPlanSchema.parse({
+      ...plan({ type: "navigate", url: "https://example.test" }),
+      steps: [
+        {
+          id: "protected",
+          title: "Protected",
+          action: protectedAction(),
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "transient",
+          transientJustification: "Admission-only isolation test.",
+        },
+      ],
+    });
+    expect(() =>
+      new ExecutionKernel().admitOnly({
+        request: {
+          sessionId: "session",
+          operationId: "protected-transaction",
+          correlationId,
+          mode: "run",
+          plan: protectedPlan,
+          policy,
+          capabilityManifestDigest: manifest.digest,
+          idempotencyKey: "protected-transaction-admission",
+          mutationIdentity: "protected-transaction-mutation",
+        },
+        capabilities: {
+          manifest,
+          journal: { begin: vi.fn(), complete: vi.fn(), fail: vi.fn() },
+          options: { outputDirectory: "/tmp/unused" },
+        },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "EXECUTION_CAPABILITY_INCOMPLETE",
+        missingCapabilities: ["protected_operations"],
+      }),
+    );
   });
 
   it("rejects an incomplete bundle before journal admission or browser startup", async () => {
@@ -161,6 +211,50 @@ describe("execution kernel admission", () => {
     ).toMatchObject({ operationId: "observe-wait", mode: "observe" });
   });
 
+  it("admits only explicitly classified read-context gestures in observe mode", () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "observe", correlationId });
+    const admit = (action: Record<string, unknown>) =>
+      new ExecutionKernel().admitOnly({
+        request: {
+          sessionId: "session",
+          operationId: "observe-transition",
+          correlationId,
+          mode: "observe",
+          plan: plan(action),
+          policy,
+          capabilityManifestDigest: manifest.digest,
+          idempotencyKey: "observe-transition-admission",
+        },
+        capabilities: {
+          manifest,
+          journal: { begin: vi.fn(), complete: vi.fn(), fail: vi.fn() },
+          options: { outputDirectory: "/tmp/unused" },
+        },
+      });
+    expect(() =>
+      admit({
+        type: "click",
+        target: target("Live mode", "button", ["focusable", "pointer_activatable"]),
+        expectedEffect: { type: "none" },
+        dispatchSemantics: "read_only",
+        timeoutMs: 1_000,
+      }),
+    ).not.toThrow();
+    for (const action of [
+      {
+        type: "click",
+        target: target("Unknown", "button", ["focusable", "pointer_activatable"]),
+        expectedEffect: { type: "none" },
+        timeoutMs: 1_000,
+      },
+      { type: "fill", target: target(), value: "production change", timeoutMs: 1_000 },
+    ])
+      expect(() => admit(action)).toThrow(
+        expect.objectContaining({ code: "EXECUTION_MODE_POLICY_DENIED" }),
+      );
+  });
+
   it("uses the native expected-effect verifier without invoking Praxis for M2 native-only authoring", async () => {
     const correlationId = randomUUID();
     const manifest = createExecutionCapabilityManifest({ mode: "rehearse", correlationId });
@@ -168,8 +262,12 @@ describe("execution kernel admission", () => {
     const nativeControl = vi.fn(async () => undefined);
     const outcome = await new ExecutionKernel().interact({
       request: {
-        sessionId: "session", operationId: "native-effect", correlationId, mode: "rehearse",
-        policy, mutationIdentity: "native-effect-mutation",
+        sessionId: "session",
+        operationId: "native-effect",
+        correlationId,
+        mode: "rehearse",
+        policy,
+        mutationIdentity: "native-effect-mutation",
       },
       capabilities: {
         manifest,
@@ -179,14 +277,23 @@ describe("execution kernel admission", () => {
           transition: vi.fn(async () => true),
         },
         options: {
-          outputDirectory: "/tmp/native-effect", nativeResolutionPolicy: "native_only",
+          outputDirectory: "/tmp/native-effect",
+          nativeResolutionPolicy: "native_only",
           executeNativeControl: nativeControl,
           verifyNativeExpectedEffect: nativeEffect,
         },
       },
       page: { url: () => "https://example.test" } as never,
-      action: { type: "click", target: target("Save", "button", ["focusable", "pointer_activatable"]), expectedEffect: { type: "none" } },
-      expectedEffect: { type: "visibility_change", target: target("Saved", "region", ["readable_value"]), visible: true },
+      action: {
+        type: "click",
+        target: target("Save", "button", ["focusable", "pointer_activatable"]),
+        expectedEffect: { type: "none" },
+      },
+      expectedEffect: {
+        type: "visibility_change",
+        target: target("Saved", "region", ["readable_value"]),
+        visible: true,
+      },
       ordinal: 1,
     });
     expect(outcome.functionalResult).toBe("succeeded");
@@ -200,11 +307,17 @@ describe("execution kernel admission", () => {
     const dispatch = vi.fn(async (_page, _target, _operation, beforeDispatch) => {
       await beforeDispatch?.();
     });
-    const verify = vi.fn(async () => { throw new Error("EXPECTED_EFFECT_NOT_OBSERVED"); });
+    const verify = vi.fn(async () => {
+      throw new Error("EXPECTED_EFFECT_NOT_OBSERVED");
+    });
     const outcome = await new ExecutionKernel().interact({
       request: {
-        sessionId: "session", operationId: "unresolved-effect", correlationId,
-        mode: "rehearse", policy, mutationIdentity: "unresolved-effect-mutation",
+        sessionId: "session",
+        operationId: "unresolved-effect",
+        correlationId,
+        mode: "rehearse",
+        policy,
+        mutationIdentity: "unresolved-effect-mutation",
       },
       capabilities: {
         manifest,
@@ -214,17 +327,21 @@ describe("execution kernel admission", () => {
           transition: vi.fn(async () => true),
         },
         options: {
-          outputDirectory: "/tmp/unresolved-effect", nativeResolutionPolicy: "native_only",
-          executeNativeControl: dispatch, verifyNativeExpectedEffect: verify,
+          outputDirectory: "/tmp/unresolved-effect",
+          nativeResolutionPolicy: "native_only",
+          executeNativeControl: dispatch,
+          verifyNativeExpectedEffect: verify,
         },
       },
       page: { url: () => "https://example.test" } as never,
       action: {
-        type: "click", target: target("Save", "button", ["focusable", "pointer_activatable"]),
+        type: "click",
+        target: target("Save", "button", ["focusable", "pointer_activatable"]),
         expectedEffect: { type: "none" },
       },
       expectedEffect: {
-        type: "visibility_change", visible: true,
+        type: "visibility_change",
+        visible: true,
         target: target("Saved", "region", ["readable_value"]),
       },
       ordinal: 1,
@@ -250,23 +367,41 @@ describe("execution kernel admission", () => {
     const mutationDispatch = vi.fn(async () => undefined);
     const effectVerification = vi.fn();
     const unregister = registerPraxisVeilAuthority(opened.page, {
-      authority: new VeilAuthority(compileVeilPolicy({
-        profile: "balanced", allowedOrigins: ["https://example.test"],
-      })),
-      userId: "effect-owner-test", environmentId: "test",
+      authority: new VeilAuthority(
+        compileVeilPolicy({
+          profile: "balanced",
+          allowedOrigins: ["https://example.test"],
+        }),
+      ),
+      userId: "effect-owner-test",
+      environmentId: "test",
       browserContextId: "effect-owner-context",
     });
     try {
       for (const effect of [
-        { role: "link", name: "Credentials", markup: '<a href=&quot;#credentials&quot; aria-label=&quot;Credentials&quot;>Credentials</a>' },
-        { role: "button", name: "Add credential", markup: '<button aria-label=&quot;Add credential&quot;>Add credential</button>' },
+        {
+          role: "link",
+          name: "Credentials",
+          markup:
+            "<a href=&quot;#credentials&quot; aria-label=&quot;Credentials&quot;>Credentials</a>",
+        },
+        {
+          role: "button",
+          name: "Add credential",
+          markup: "<button aria-label=&quot;Add credential&quot;>Add credential</button>",
+        },
       ] as const) {
-        await opened.page.setContent(`<button aria-label="Launch" onclick="document.body.insertAdjacentHTML('beforeend',
+        await opened.page
+          .setContent(`<button aria-label="Launch" onclick="document.body.insertAdjacentHTML('beforeend',
           '${effect.markup}${effect.markup}')">Launch</button>`);
         const outcome = await new ExecutionKernel().interact({
           request: {
-            sessionId: "session", operationId: `praxis-effect-owner-${effect.role}`, correlationId,
-            mode: "rehearse", policy, mutationIdentity: `praxis-effect-owner-${effect.role}-mutation`,
+            sessionId: "session",
+            operationId: `praxis-effect-owner-${effect.role}`,
+            correlationId,
+            mode: "rehearse",
+            policy,
+            mutationIdentity: `praxis-effect-owner-${effect.role}-mutation`,
           },
           capabilities: {
             manifest,
@@ -277,8 +412,12 @@ describe("execution kernel admission", () => {
             },
             options: {
               outputDirectory: "/tmp/praxis-effect-owner",
-              executeNativeControl: vi.fn(async () => { throw new Error("NATIVE_TARGET_NOT_FOUND"); }),
-              onPraxisResult: async (result) => { praxisResults.push(result); },
+              executeNativeControl: vi.fn(async () => {
+                throw new Error("NATIVE_TARGET_NOT_FOUND");
+              }),
+              onPraxisResult: async (result) => {
+                praxisResults.push(result);
+              },
               onMutationDispatch: mutationDispatch,
               onExpectedEffectVerification: effectVerification,
             },
@@ -290,7 +429,8 @@ describe("execution kernel admission", () => {
             expectedEffect: { type: "none" },
           },
           expectedEffect: {
-            type: "visibility_change", visible: true,
+            type: "visibility_change",
+            visible: true,
             target: target(effect.name, effect.role, ["observable"]),
           },
           ordinal: 1,
@@ -301,7 +441,8 @@ describe("execution kernel admission", () => {
       expect(praxisResults).toHaveLength(2);
       for (const result of praxisResults) {
         expect(result).toMatchObject({
-          status: "succeeded", verification: { effect: "not_required", effectType: "none" },
+          status: "succeeded",
+          verification: { effect: "not_required", effectType: "none" },
         });
       }
       expect(mutationDispatch).toHaveBeenCalledTimes(2);
@@ -341,6 +482,21 @@ describe("execution kernel admission", () => {
       functionalResult: "succeeded",
       mutationOutcome: "applied",
     });
+  });
+
+  it("projects bounded semantic target evidence for native-resolved controls", async () => {
+    const outcome = await executeInteractionCompatibility({
+      sessionId: "session", operationId: "native-observation", page: {} as never,
+      action: { type: "waitFor", target: target("Account", "region", ["observable"]), state: "visible", timeoutMs: 1_000 },
+      ordinal: 1, policy,
+      options: { outputDirectory: "/tmp/unused", executeNativeControl: vi.fn(async () => undefined) },
+    });
+
+    expect(outcome.resolvedTarget).toMatchObject({
+      version: 2, concept: "Account", scopeKind: "page", structuralPath: [],
+    });
+    expect(outcome.mutationOutcome).toBe("not_applied");
+    expect(JSON.stringify(outcome.resolvedTarget).length).toBeLessThan(500);
   });
 
   it("classifies a Praxis scheduling refusal as proven pre-dispatch", () => {
@@ -514,25 +670,50 @@ describe("execution kernel admission", () => {
     const manifest = createExecutionCapabilityManifest({ mode: "transact", correlationId });
     const credentialId = randomUUID();
     const valueId = randomUUID();
-    const dispatch = vi.fn(async (options: {
-      onEvent?: (event: unknown) => Promise<void>;
-      onMutationDispatch?: () => Promise<void>;
-    }) => {
-      await options.onMutationDispatch?.();
-      await options.onEvent?.({ type: "privacy.operation_completed", payload: { result: {
-        mutation: { outcome: "confirmed_succeeded" },
-        credentialReferences: { clientSecret: credentialId },
-        publicValueReferences: { clientId: valueId },
-      } } });
-      return reportFixture();
-    });
-    const outcome = (await new ExecutionKernel(dispatch as never).execute({
-      request: { sessionId: "adaptive-session", operationId: "protected-output", correlationId, mode: "transact", plan: plan(protectedAction()), policy, capabilityManifestDigest: manifest.digest, idempotencyKey: "protected-output-idempotency", mutationIdentity: "protected-output-mutation" },
-      capabilities: { manifest, journal: { begin: vi.fn(), complete: vi.fn(), fail: vi.fn(), settle: vi.fn() }, options: { outputDirectory: "/tmp/unused" } },
-    })).outcome;
+    const dispatch = vi.fn(
+      async (options: {
+        onEvent?: (event: unknown) => Promise<void>;
+        onMutationDispatch?: () => Promise<void>;
+      }) => {
+        await options.onMutationDispatch?.();
+        await options.onEvent?.({
+          type: "privacy.operation_completed",
+          payload: {
+            result: {
+              mutation: { outcome: "confirmed_succeeded" },
+              credentialReferences: { clientSecret: credentialId },
+              publicValueReferences: { clientId: valueId },
+            },
+          },
+        });
+        return reportFixture();
+      },
+    );
+    const outcome = (
+      await new ExecutionKernel(dispatch as never).execute({
+        request: {
+          sessionId: "adaptive-session",
+          operationId: "protected-output",
+          correlationId,
+          mode: "transact",
+          plan: plan(protectedAction()),
+          policy,
+          capabilityManifestDigest: manifest.digest,
+          idempotencyKey: "protected-output-idempotency",
+          mutationIdentity: "protected-output-mutation",
+        },
+        capabilities: {
+          manifest,
+          journal: { begin: vi.fn(), complete: vi.fn(), fail: vi.fn(), settle: vi.fn() },
+          options: { outputDirectory: "/tmp/unused" },
+        },
+      })
+    ).outcome;
     expect(outcome.generatedReferences).toBeUndefined();
     expect(outcome.mutationOutcome).toBe("unknown");
-    expect(JSON.stringify(outcome)).not.toMatch(/plaintext|selector|runtimeId|fingerprint|handle|outerHTML/i);
+    expect(JSON.stringify(outcome)).not.toMatch(
+      /plaintext|selector|runtimeId|fingerprint|handle|outerHTML/i,
+    );
   });
 
   it.each([

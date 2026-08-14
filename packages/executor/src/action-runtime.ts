@@ -315,7 +315,7 @@ export async function executeAction(
         type: "waitFor", state: action.state,
         ...nativeTimeout(roleOnlyTarget(action.target)
           ? Math.min(action.timeoutMs ?? NATIVE_FAST_PATH_PROBE_MS, NATIVE_FAST_PATH_PROBE_MS)
-          : action.timeoutMs),
+          : Math.min(action.timeoutMs ?? NATIVE_OBSERVATION_PROBE_MS, NATIVE_OBSERVATION_PROBE_MS)),
         preDispatchDeadlineAt,
       }, options)) return;
       requirePraxisFallback(options);
@@ -382,6 +382,10 @@ function roleOnlyTarget(target: InteractionTargetIntent) {
 }
 
 const NATIVE_FAST_PATH_PROBE_MS = 100;
+// Native observation is a bounded readiness probe, not ownership of the whole
+// authored action deadline. Praxis retains the remaining deadline and stops
+// once its semantic diagnostic is stable.
+const NATIVE_OBSERVATION_PROBE_MS = 4_000;
 const DEFAULT_ACTION_TIMEOUT_MS = 5_000;
 
 function nativeActionTimeouts(timeoutMs: number | undefined, deadline: number): {
