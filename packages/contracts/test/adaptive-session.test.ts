@@ -89,6 +89,19 @@ describe("adaptive session contracts", () => {
     });
   });
 
+  it("accepts one absolute navigation URL through url or the host urlPattern alias", () => {
+    expect(missionAuthoringIntentSchema.parse(intent({ expectedEffect: {
+      kind: "navigation", urlPattern: "https://example.test/partner", match: "exact",
+    } })).expectedEffect).toMatchObject({ urlPattern: "https://example.test/partner" });
+    expect(() => missionAuthoringIntentSchema.parse(intent({ expectedEffect: {
+      kind: "navigation", urlPattern: "/partner", match: "exact",
+    } }))).toThrow();
+    expect(() => missionAuthoringIntentSchema.parse(intent({ expectedEffect: {
+      kind: "navigation", url: "https://example.test/partner",
+      urlPattern: "https://example.test/partner", match: "exact",
+    } }))).toThrow("navigation expected effect accepts url or urlPattern, not both");
+  });
+
   it("requires exact protected references and authorization for live mutation", () => {
     const protectedFill = intent({
       action: { kind: "fill", target, protectedReferenceId: ids.protectedReferenceId },

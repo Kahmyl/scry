@@ -77,6 +77,21 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       .toBe(false);
   });
 
+  it("evicts a cancelled runtime so a continuation cannot reuse the closed browser", async () => {
+    const sessionId = "88888888-8888-4888-8888-888888888888";
+    const cancelActiveOperation = vi.fn().mockResolvedValue(undefined);
+    const runner = new AdaptiveSessionKernelRunner({} as never, {} as never, {} as never, {} as never);
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
+      session: { cancelActiveOperation }, fencingToken: 3, tail: Promise.resolve(),
+    });
+
+    await runner.cancelActiveOperation(sessionId);
+
+    expect(cancelActiveOperation).toHaveBeenCalledOnce();
+    expect((runner as unknown as { runtimes: Map<string, unknown> }).runtimes.has(sessionId))
+      .toBe(false);
+  });
+
   it("retains the original fenced lease across resolution through mutation dispatch", async () => {
     vi.useFakeTimers();
     try {

@@ -396,9 +396,18 @@ export const missionAuthoringSemanticEffectSchema = z.discriminatedUnion("kind",
     .object({
       kind: z.literal("navigation"),
       url: z.string().url().optional(),
+      /** Host-compatible alias; normalized to url before kernel execution. */
+      urlPattern: z.string().url().optional(),
       match: z.enum(["exact", "path", "contains"]).default("path"),
     })
-    .strict(),
+    .strict()
+    .superRefine((effect, context) => {
+      if (effect.url && effect.urlPattern)
+        context.addIssue({
+          code: "custom",
+          message: "navigation expected effect accepts url or urlPattern, not both",
+        });
+    }),
   z
     .object({
       kind: z.literal("target_visibility"),

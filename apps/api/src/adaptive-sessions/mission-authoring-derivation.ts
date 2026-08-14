@@ -190,7 +190,7 @@ function deriveEffect(
     case "navigation":
       return {
         type: "navigation",
-        ...(effect.url ? { url: effect.url } : {}),
+        ...(effect.url || effect.urlPattern ? { url: effect.url ?? effect.urlPattern } : {}),
         match: effect.match,
       };
     case "target_visibility":

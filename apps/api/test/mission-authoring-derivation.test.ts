@@ -51,6 +51,19 @@ function deriveWithEffect(
 }
 
 describe("Mission authoring semantic derivation", () => {
+  it("normalizes the public navigation urlPattern alias into the kernel URL contract", () => {
+    const parsed = missionAuthoringIntentSchema.parse({
+      intentId: "navigate-with-host-alias", objectiveId: ids.objectiveId,
+      flowDraftId: ids.flowDraftId,
+      action: { kind: "navigate", url: "https://example.test/partner" },
+      expectedEffect: { kind: "navigation", urlPattern: "https://example.test/partner", match: "exact" },
+      constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "ordinary" }, protectedInputReferences: [],
+    });
+    expect(deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: parsed }).expectedEffect)
+      .toEqual({ type: "navigation", url: "https://example.test/partner", match: "exact" });
+  });
+
   it("derives action-specific capabilities and typed test-ID evidence", () => {
     expect(
       (derive({ kind: "fill", target, publicValue: "value" }).action as any).target

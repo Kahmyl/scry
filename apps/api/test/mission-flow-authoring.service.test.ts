@@ -771,4 +771,80 @@ describe("MissionFlowAuthoringService grouped turns", () => {
     const serializedRequests = JSON.stringify([firstInput, secondInput]);
     expect(serializedRequests).not.toMatch(/candidateId|fingerprint|resumeToken/);
   });
+
+  it("does not begin browser dispatch when admission consumes the turn deadline", async () => {
+    const repository = {
+      beginTurn: vi.fn().mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
+      validateIntentAdmission: vi.fn(async () => new Promise((resolve) => setTimeout(resolve, 120))),
+      handoff: vi.fn().mockResolvedValue({ handedOff: false }),
+      beginMissionOperation: vi.fn().mockResolvedValue({ replayed: false, state: "running" }),
+      persistPending: vi.fn(async ({ result }) => result), settleTurn: vi.fn(),
+    };
+    const runner = { execute: vi.fn(), cancelActiveOperation: vi.fn() };
+    const service = new MissionFlowAuthoringService(repository as never, runner as never,
+      { assertAcceptingWork: vi.fn() } as never);
+    const result = await service.advance(principal, randomUUID(), {
+      ...input(), budgets: { maxOperations: 1, maxDurationMs: 100 },
+    } as never);
+    expect(result).toMatchObject({ state: "pending", continuation: { phase: "budget" } });
+    expect(runner.execute).not.toHaveBeenCalled();
+  });
+
+  it("allows authoritative settlement to finish after budget and dispatches no later intent", async () => {
+    const succeeded = { operationId: "first", functionalResult: "succeeded" as const,
+      mutationOutcome: "not_applied" as const, privacyResult: "unverified" as const,
+      evidenceResult: [], qualityFindings: [], durationMs: 1 };
+    const intents = [input().intents[0]!, { ...input().intents[0]!, intentId: "later" }];
+    const repository = {
+      beginTurn: vi.fn().mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
+      validateIntentAdmission: vi.fn(), handoff: vi.fn().mockResolvedValue({ handedOff: false }),
+      beginMissionOperation: vi.fn().mockResolvedValue({ replayed: false, state: "running" }),
+      settleMissionOperation: vi.fn(async ({ outcome }) => {
+        await new Promise((resolve) => setTimeout(resolve, 130));
+        return { outcome, decisionBoundary: { type: "objective_completed", reasonCode: "DONE", safeActions: [] } };
+      }),
+      persistPending: vi.fn(async ({ result }) => result), settleTurn: vi.fn(async ({ result }) => result),
+      markOperationFailed: vi.fn(),
+    };
+    const runner = { execute: vi.fn().mockResolvedValue({ outcome: succeeded,
+      timings: { resolveMs: 0, executeMs: 1, verifyMs: 0 },
+      safeState: { url: "https://example.test", documentEpoch: 1 } }),
+      cancelActiveOperation: vi.fn() };
+    const service = new MissionFlowAuthoringService(repository as never, runner as never,
+      { assertAcceptingWork: vi.fn() } as never);
+    const result = await service.advance(principal, randomUUID(), {
+      ...input(), intents, budgets: { maxOperations: 2, maxDurationMs: 120 },
+    } as never);
+    expect(result).toMatchObject({ state: "pending", completed: [{ intentId: "inspect" }] });
+    expect(repository.settleMissionOperation).toHaveBeenCalledOnce();
+    expect(runner.execute).toHaveBeenCalledOnce();
+  });
+
+  it("cancels active work, preserves post-dispatch UNKNOWN, and skips later intents", async () => {
+    const intents = [input().intents[0]!, { ...input().intents[0]!, intentId: "must-not-run" }];
+    const unknownBoundary = { type: "mutation_reconciliation_required" as const,
+      reasonCode: "ADAPTIVE_OPERATION_OUTCOME_UNKNOWN", safeActions: ["get_flow_authoring"] };
+    const repository = {
+      beginTurn: vi.fn().mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
+      validateIntentAdmission: vi.fn(), handoff: vi.fn().mockResolvedValue({ handedOff: false }),
+      beginMissionOperation: vi.fn().mockResolvedValue({ replayed: false, state: "running" }),
+      markOperationFailed: vi.fn().mockResolvedValue({ decisionBoundary: unknownBoundary }),
+      settleTurn: vi.fn(async ({ result }) => result),
+    };
+    const runner = { execute: vi.fn(async (_sessionId, _operation, signal: AbortSignal) =>
+      new Promise((_resolve, reject) => signal.addEventListener("abort", () =>
+        reject(Object.assign(new Error("AUTHORING_TURN_BUDGET_EXHAUSTED"),
+          { code: "AUTHORING_TURN_BUDGET_EXHAUSTED" })), { once: true }))),
+      cancelActiveOperation: vi.fn() };
+    const service = new MissionFlowAuthoringService(repository as never, runner as never,
+      { assertAcceptingWork: vi.fn() } as never);
+    const result = await service.advance(principal, randomUUID(), {
+      ...input(), intents, budgets: { maxOperations: 2, maxDurationMs: 150 },
+    } as never);
+    expect(result).toMatchObject({ state: "decision_required", completed: [],
+      decisionBoundary: unknownBoundary });
+    expect(runner.cancelActiveOperation).toHaveBeenCalledOnce();
+    expect(runner.execute).toHaveBeenCalledOnce();
+    expect(repository.markOperationFailed).toHaveBeenCalledOnce();
+  });
 });

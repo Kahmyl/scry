@@ -186,6 +186,8 @@ describe("current Scry MCP surface", () => {
     expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
       .toContain("allowNonExact has no implicit default");
     expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("urlPattern is also accepted as a host-compatible alias");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
       .toContain("login/authentication submit");
     expect(tools.find(({ name }) => name === "set_mission_resume_pointer")?.description)
       .toContain("must exactly equal pointer.objectiveId");
@@ -284,7 +286,7 @@ describe("current Scry MCP surface", () => {
             action: { kind: "navigate", url: "https://example.test/details" },
             expectedEffect: {
               kind: "navigation",
-              url: "https://example.test/details",
+              urlPattern: "https://example.test/details",
               match: "path",
             },
             constraints: { timeoutMs: 5_000, allowNewPage: false, allowNonExact: false },
