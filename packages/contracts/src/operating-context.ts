@@ -80,6 +80,18 @@ export const operatingContextSchema = z.object({
       requiresPendingTurn: z.literal(false),
       recoveryBinding: agentDecisionBoundarySchema.shape.authoringRecovery,
     }).strict(), 5),
+    uncertain: boundedCollection(z.object({
+      sessionId: uuid,
+      missionId: uuid,
+      objectiveId: uuid,
+      flowDraftId: uuid,
+      environmentId: uuid,
+      operationId: z.string().trim().min(1).max(200),
+      originalMutationOutcome: z.literal("unknown"),
+      redispatchAllowed: z.literal(false),
+      inspectionTool: z.literal("get_flow_authoring"),
+      reconciliationAvailable: z.boolean(),
+    }).strict(), 5),
     ready: z.boolean(),
     missing: z.array(z.enum([
       "project", "mission", "objective", "environment", "flow_draft", "authoring_session",

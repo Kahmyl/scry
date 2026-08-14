@@ -88,6 +88,7 @@ export class ProjectConfigurationRepository {
       authoring: {
         reusable: { items: [], truncated: false }, ready: false,
         recoverable: { items: [], truncated: false },
+        uncertain: { items: [], truncated: false },
         missing: ["project", "mission", "objective", "environment", "flow_draft", "authoring_session"],
       },
       continuation: {
@@ -100,7 +101,7 @@ export class ProjectConfigurationRepository {
     if (!selected) return operatingContextSchema.parse(empty);
 
       const requiredCredentialReferences = input.requiredCredentialReferences;
-      const [missions, credentials, environments, authoring] = await Promise.all([
+      const [missions, credentials, environments, authoring, uncertainAuthoring] = await Promise.all([
         query.query<{ id: string; title: string; status: "planning" | "running" | "blocked" | "awaiting_user"; revision: number; currentObjectiveId: string | null; resumePointer: unknown }>(
           `SELECT id,title,status,revision,current_objective_id AS "currentObjectiveId",
                   resume_pointer AS "resumePointer"
@@ -183,8 +184,36 @@ export class ProjectConfigurationRepository {
                AND (operation.state='running' OR (operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id))))
            ) ranked WHERE "_categoryRank"<=6
            ORDER BY ("decisionBoundary" ? 'authoringRecovery') DESC,"_categoryRank"`, [selected.id, input.missionId ?? null]),
+        query.query<{ sessionId: string; missionId: string; objectiveId: string; flowDraftId: string;
+          environmentId: string; operationId: string }>(
+          `WITH candidate_missions AS (
+             SELECT candidate.id FROM missions candidate
+              WHERE candidate.project_id=$1
+                AND candidate.status IN ('planning','running','blocked','awaiting_user')
+                AND ($2::uuid IS NULL OR candidate.id=$2)
+              ORDER BY candidate.updated_at DESC LIMIT 6
+           ), ranked AS (
+           SELECT session.id AS "sessionId",session.mission_id AS "missionId",
+                  session.active_objective_id AS "objectiveId",session.active_flow_draft_id AS "flowDraftId",
+                  session.environment_id AS "environmentId",operation.operation_id AS "operationId",
+                  row_number() OVER (PARTITION BY session.mission_id ORDER BY session.updated_at DESC) AS rank
+             FROM adaptive_sessions session
+             JOIN candidate_missions mission ON mission.id=session.mission_id
+             JOIN mission_objectives objective ON objective.id=session.active_objective_id
+             JOIN agent_sessions agent ON agent.id=session.agent_session_id
+             JOIN flow_drafts draft ON draft.id=session.active_flow_draft_id
+             JOIN LATERAL (
+               SELECT candidate.operation_id FROM adaptive_operations candidate
+                WHERE candidate.session_id=session.id AND candidate.mutation_outcome='unknown'
+                  AND adaptive_operation_unknown_unresolved(candidate.session_id,candidate.operation_id)
+                ORDER BY candidate.sequence DESC LIMIT 1
+             ) operation ON true
+            WHERE session.project_id=$1 AND session.state='recovery_required'
+              AND ($2::uuid IS NULL OR session.mission_id=$2)
+           ) SELECT "sessionId","missionId","objectiveId","flowDraftId","environmentId","operationId"
+               FROM ranked WHERE rank<=6 ORDER BY "missionId",rank`, [selected.id, input.missionId ?? null]),
       ]);
-      const snapshot = { missions, credentials, environments, authoring };
+      const snapshot = { missions, credentials, environments, authoring, uncertainAuthoring };
     const missionItems = snapshot.missions.rows.slice(0, 5).map((mission) => ({
       ...mission,
       resumePointer: projectOperatingResumePointer(mission.resumePointer),
@@ -261,6 +290,15 @@ export class ProjectConfigurationRepository {
         requiresPendingTurn: false as const,
         recoveryBinding: recovery,
       }));
+    const uncertainCandidates = snapshot.uncertainAuthoring.rows.filter(({ missionId }) =>
+      missionId === selectedMissionId);
+    const uncertain = uncertainCandidates.slice(0, 5).map((item) => ({
+      ...item,
+      originalMutationOutcome: "unknown" as const,
+      redispatchAllowed: false as const,
+      inspectionTool: "get_flow_authoring" as const,
+      reconciliationAvailable: false,
+    }));
     const compatibleReusable = reusable.filter(({ missionId, environmentId }) =>
       missionId === selectedMissionId && compatibleEnvironmentIds.has(environmentId));
     const compatibleEnvironment = environmentItems.some(({ compatible }) => compatible);
@@ -284,13 +322,18 @@ export class ProjectConfigurationRepository {
       authoring: {
         reusable: { items: compatibleReusable, truncated: reusableCandidates.length > 5 },
         recoverable: { items: recoverable, truncated: compatibleRecoverableCandidates.length > 5 },
+        uncertain: { items: uncertain, truncated: uncertainCandidates.length > 5 },
         ready: compatibleReusable.length > 0 && missing.length === 0, missing,
       },
       continuation: {
-        deterministicPreparationAvailable: recoverable.length > 0 || compatibleReusable.length > 0
-          || (missionItems.length === 0 && compatibleEnvironment),
+        deterministicPreparationAvailable: uncertain.length === 0 && (
+          recoverable.length > 0 || compatibleReusable.length > 0
+          || (missionItems.length === 0 && compatibleEnvironment)
+        ),
         userAuthorityRequired: !selectedMissionId && missionItems.length > 1,
-        safeActions: recoverable.length > 0
+        safeActions: uncertain.length > 0
+          ? ["get_flow_authoring"]
+          : recoverable.length > 0
           ? ["get_flow_authoring", "advance_flow_authoring"]
           : missing.length === 0
           ? ["advance_flow_authoring"]

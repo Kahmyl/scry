@@ -54,6 +54,7 @@ describe("operating context repository", () => {
         { id: "88888888-8888-4888-8888-888888888888", name: "Other", baseOrigin: "https://other.test", secretRefs: [],
           policy: { allowedOrigins: ["https://other.test"] }, executionReadiness: "runtime_admitted" },
       ] };
+      if (text.includes("session.state='recovery_required'")) return { rowCount: 0, rows: [] };
       if (text.includes("FROM adaptive_sessions")) return { rowCount: 1, rows: [{ sessionId, missionId,
         objectiveId, flowDraftId, environmentId: "88888888-8888-4888-8888-888888888888", state: "active",
         _categoryRank: 1 }] };
@@ -98,6 +99,7 @@ describe("operating context repository", () => {
       if (text.includes("FROM environments")) return { rowCount: 1, rows: [{ id: environmentId,
         name: "Compatible", baseOrigin: "https://example.test", secretRefs: [objectiveId],
         policy: { allowedOrigins: ["https://example.test"] }, executionReadiness: "runtime_admitted" }] };
+      if (text.includes("session.state='recovery_required'")) return { rowCount: 0, rows: [] };
       if (text.includes("FROM adaptive_sessions")) return { rowCount: 1, rows: [{ sessionId, missionId,
         objectiveId, flowDraftId, environmentId, state: "active", decisionBoundary: null,
         turnId: null, turnState: null, operationId: null, mutationOutcome: null,
@@ -112,5 +114,37 @@ describe("operating context repository", () => {
       createdAt: createdAt.toISOString(), updatedAt: createdAt.toISOString(),
     });
     expect(JSON.stringify(result)).not.toMatch(/"_[^"]+"\s*:/);
+  });
+
+  it("projects the exact unresolved UNKNOWN inspection target without advertising redispatch", async () => {
+    const operationId = "uncertain-operation";
+    const query = vi.fn(async (text: string) => {
+      if (text.includes("FROM projects")) return { rowCount: 1, rows: [{ id: projectId, name: "One", description: "" }] };
+      if (text.includes("session.state='recovery_required'")) return { rowCount: 1, rows: [{
+        sessionId, missionId, objectiveId, flowDraftId, environmentId, operationId,
+      }] };
+      if (text.includes("FROM missions")) return { rowCount: 1, rows: [{ id: missionId, title: "Mission",
+        status: "running", revision: 1, currentObjectiveId: objectiveId, resumePointer: null }] };
+      if (text.includes("project_credentials")) return { rowCount: 0, rows: [] };
+      if (text.includes("FROM environments")) return { rowCount: 1, rows: [{ id: environmentId,
+        name: "Recovery", baseOrigin: "https://example.test", secretRefs: [],
+        policy: { allowedOrigins: ["https://example.test"] }, executionReadiness: "recovery_required" }] };
+      if (text.includes("FROM adaptive_sessions")) return { rowCount: 0, rows: [] };
+      return { rowCount: 0, rows: [] };
+    });
+    const repository = new ProjectConfigurationRepository({ transaction: (work: any) => work({ query }) } as never);
+    const result = await repository.operatingContext({ kind: "service", subject: "scry-service" }, {
+      projectId, missionId, requiredCredentialReferences: [],
+    });
+    expect(result.authoring.uncertain.items).toEqual([expect.objectContaining({
+      sessionId, operationId, originalMutationOutcome: "unknown", redispatchAllowed: false,
+      inspectionTool: "get_flow_authoring", reconciliationAvailable: false,
+    })]);
+    expect(result.continuation.safeActions).toEqual(["get_flow_authoring"]);
+    expect(result.continuation.deterministicPreparationAvailable).toBe(false);
+    const uncertainQuery = query.mock.calls.map(([text]) => String(text))
+      .find((text) => text.includes("session.state='recovery_required'"));
+    expect(uncertainQuery).toContain("PARTITION BY session.mission_id");
+    expect(uncertainQuery).toContain("JOIN candidate_missions mission");
   });
 });
