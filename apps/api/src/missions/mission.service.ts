@@ -1229,7 +1229,9 @@ function projectExternalInput(value: unknown) {
         agentExposure: path.agentExposure,
         result: bounded(path.result, 1_000),
         availableCapabilities: scalarList(path.availableCapabilities, 10),
-        dashboardPath: scalarList(path.dashboardPath, 10),
+        ...(Array.isArray(path.dashboardPath)
+          ? { dashboardPath: scalarList(path.dashboardPath, 10) }
+          : {}),
         continuation: {
           sameMission: pathContinuation.sameMission,
           sameObjective: pathContinuation.sameObjective,

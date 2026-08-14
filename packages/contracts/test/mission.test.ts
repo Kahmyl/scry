@@ -144,6 +144,7 @@ describe("Mission contracts", () => {
     const parsed = missionResumePointerSchema.parse(pointer);
     expect(parsed.externalInput?.fulfillmentPaths.map(({ agentExposure }) => agentExposure))
       .toEqual(["none", "protected_plaintext_before_encrypted_storage"]);
+    expect(parsed.externalInput?.fulfillmentPaths[1]).not.toHaveProperty("dashboardPath");
     const dashboard = pointer.externalInput.fulfillmentPaths[0];
     const assisted = pointer.externalInput.fulfillmentPaths[1];
     expect(missionResumePointerSchema.safeParse({ ...pointer, externalInput: {
