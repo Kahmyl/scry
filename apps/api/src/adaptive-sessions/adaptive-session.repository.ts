@@ -11,6 +11,7 @@ import type {
   ExecutionPolicy,
   MissionAuthoringIntent,
   MissionAuthoringTurnResult,
+  RecoverTrustedOriginsInput,
 } from "@scry/contracts";
 import {
   executionPolicySchema,
@@ -98,6 +99,144 @@ export class AdaptiveSessionRepository {
       await this.transitionLocked(q, id, "created", "provisioning", "provisioning_started", {});
       await this.transitionLocked(q, id, "provisioning", "active", "session_activated", {});
       return { id, replayed: false };
+    });
+  }
+
+  recoverTrustedOrigins(workspaceId: string | null, input: RecoverTrustedOriginsInput) {
+    return this.database.transaction(async (client) => {
+      const q = bind(client);
+      const replay = await q<{
+        sessionId: string; environmentId: string; flowDraftId: string;
+      }>(
+        `SELECT id AS "sessionId",environment_id AS "environmentId",flow_draft_id AS "flowDraftId"
+         FROM adaptive_sessions WHERE project_id=$1 AND idempotency_key=$2`,
+        [input.projectId, `trust-recovery:${input.idempotencyKey}`],
+      );
+      if (replay.rowCount)
+        return { recoveryApplied: true, replayed: true, ...replay.rows[0], approvedOrigins: input.approvedOrigins,
+          continuation: { navigationRequired: true, navigationAutomaticallyPerformed: false, nextSafeCapability: "advance_flow_authoring" } };
+
+      const source = await q<{
+        sessionId: string; state: string; projectId: string; missionId: string; objectiveId: string;
+        environmentId: string; flowDraftId: string; decisionBoundary: AgentDecisionBoundary | null;
+        objective: string; allowedOrigins: string[]; turnBudgets: unknown; protectedReferences: string[];
+        environmentName: string; baseOrigin: string; policy: ExecutionPolicy; secretRefs: string[];
+        draftName: string; draftState: string; description: string; purpose: string; content: unknown; plan: unknown;
+        flowId: string | null;
+      }>(
+        `SELECT s.id AS "sessionId",s.state,s.project_id AS "projectId",s.mission_id AS "missionId",
+                s.objective_id AS "objectiveId",s.environment_id AS "environmentId",s.flow_draft_id AS "flowDraftId",
+                s.decision_boundary AS "decisionBoundary",s.objective,s.allowed_origins AS "allowedOrigins",
+                s.authoring_turn_budgets AS "turnBudgets",s.protected_reference_allowlist AS "protectedReferences",
+                e.name AS "environmentName",e.base_origin AS "baseOrigin",e.policy,e.secret_refs AS "secretRefs",
+                d.name AS "draftName",d.state AS "draftState",d.description,d.purpose,d.content,d.plan,d.flow_id AS "flowId"
+         FROM adaptive_sessions s
+         JOIN environments e ON e.id=s.environment_id AND e.project_id=s.project_id
+         JOIN flow_drafts d ON d.id=s.flow_draft_id AND d.project_id=s.project_id
+         JOIN missions m ON m.id=s.mission_id AND m.project_id=s.project_id
+         JOIN mission_objectives o ON o.id=s.objective_id AND o.mission_id=m.id
+         JOIN agent_sessions a ON a.id=$7 AND a.mission_id=m.id AND a.status='active'
+         JOIN projects p ON p.id=s.project_id
+         WHERE s.id=$1 AND s.project_id=$2 AND s.mission_id=$3 AND s.objective_id=$4
+           AND s.environment_id=$5 AND s.flow_draft_id=$6
+           AND ($8::uuid IS NULL OR p.workspace_id=$8)
+         FOR UPDATE OF s,d`,
+        [input.sourceAuthoringSessionId, input.projectId, input.missionId, input.objectiveId,
+          input.sourceEnvironmentId, input.sourceFlowDraftId, input.agentSessionId, workspaceId],
+      );
+      if (!source.rowCount)
+        throw new ConflictException({ code: "TRUST_RECOVERY_CONTEXT_MISMATCH" });
+      const current = source.rows[0]!;
+      if (current.state !== "active")
+        throw new ConflictException({ code: "TRUST_RECOVERY_SOURCE_STALE" });
+      if (current.draftState !== "editing")
+        throw new ConflictException({ code: "TRUST_RECOVERY_DRAFT_STALE" });
+      const recovery = current.decisionBoundary?.environmentRecovery;
+      if (current.decisionBoundary?.reasonCode !== "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED" ||
+          !recovery || recovery.environmentId !== input.sourceEnvironmentId)
+        throw new ConflictException({ code: "TRUST_RECOVERY_CONDITION_UNAVAILABLE" });
+      const approved = [...new Set(input.approvedOrigins)].sort();
+      const disclosed = [...new Set(recovery.missingTrustedScriptOrigins)].sort();
+      if (JSON.stringify(approved) !== JSON.stringify(disclosed))
+        throw new ConflictException({ code: "TRUST_RECOVERY_ORIGIN_MISMATCH", disclosedOrigins: disclosed });
+
+      const environmentId = randomUUID();
+      const trusted = [...new Set([...(current.policy.trustedScriptOrigins ?? []), ...approved])].sort();
+      const policy = { ...current.policy, trustedScriptOrigins: trusted };
+      await q(
+        `INSERT INTO environments(id,project_id,name,base_origin,policy,secret_refs)
+         VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb)`,
+        [environmentId, input.projectId, `${current.environmentName} recovery`, current.baseOrigin,
+          JSON.stringify(policy), JSON.stringify(current.secretRefs)],
+      );
+      await this.requireActiveProtectedReferences(
+        q,
+        input.projectId,
+        environmentId,
+        current.protectedReferences,
+      );
+
+      const flowDraftId = randomUUID();
+      await q(
+        `INSERT INTO flow_drafts(id,project_id,mission_id,objective_id,environment_id,flow_id,name,
+          description,purpose,content,state,version,plan,created_by_agent_session_id)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,'editing',1,$11::jsonb,$12)`,
+        [flowDraftId, input.projectId, input.missionId, input.objectiveId, environmentId,
+          current.flowId, `${current.draftName} recovery`, current.description, current.purpose,
+          JSON.stringify(current.content), JSON.stringify(current.plan), input.agentSessionId],
+      );
+      await q(
+        `INSERT INTO flow_draft_events(draft_id,version,type,agent_session_id,summary,safe_metadata)
+         VALUES($1,1,'created',$2,'Flow draft cloned for trusted-origin recovery',$3::jsonb)`,
+        [flowDraftId, input.agentSessionId, JSON.stringify({ sourceFlowDraftId: input.sourceFlowDraftId, idempotencyKey: input.idempotencyKey })],
+      );
+
+      const sessionId = randomUUID();
+      await q(
+        `INSERT INTO adaptive_sessions(id,project_id,environment_id,correlation_id,state,objective,allowed_origins,
+          mission_id,objective_id,flow_draft_id,active_objective_id,active_flow_draft_id,agent_session_id,
+          idempotency_key,authoring_turn_budgets,protected_reference_allowlist)
+         VALUES($1,$2,$3,$4,'created',$5,$6::jsonb,$7,$8,$9,$8,$9,$10,$11,$12::jsonb,$13::jsonb)`,
+        [sessionId, input.projectId, environmentId, randomUUID(), current.objective,
+          JSON.stringify(current.allowedOrigins), input.missionId, input.objectiveId, flowDraftId,
+          input.agentSessionId, `trust-recovery:${input.idempotencyKey}`, JSON.stringify(current.turnBudgets),
+          JSON.stringify(current.protectedReferences)],
+      );
+      await q(
+        `INSERT INTO mission_authoring_session_flows(session_id,mission_id,objective_id,flow_draft_id,purpose,sequence)
+         VALUES($1,$2,$3,$4,$5,1)`,
+        [sessionId, input.missionId, input.objectiveId, flowDraftId, current.purpose],
+      );
+      await this.appendEvent(q, sessionId, "session_created", { sourceAuthoringSessionId: current.sessionId }, `trust-recovery:${input.idempotencyKey}`);
+      await this.transitionLocked(q, sessionId, "created", "provisioning", "provisioning_started", {});
+      await this.transitionLocked(q, sessionId, "provisioning", "active", "session_activated", {});
+      await this.transitionLocked(q, current.sessionId, "active", "recovery_required", "recovery_required", {
+        replacementEnvironmentId: environmentId, replacementFlowDraftId: flowDraftId,
+        replacementAuthoringSessionId: sessionId, approvedOrigins: approved,
+        approvalKind: input.approval.kind, approvalReason: input.approval.reason,
+      });
+      await q(
+        `UPDATE missions SET status=CASE WHEN status='awaiting_user' THEN 'running' ELSE status END,
+          resume_pointer=CASE WHEN resume_pointer->>'objectiveId'=$2 THEN NULL ELSE resume_pointer END,
+          updated_at=now(),revision=revision+1 WHERE id=$1`,
+        [input.missionId, input.objectiveId],
+      );
+      await q(
+        `INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata)
+         VALUES($1,$2,$3,'authoring','Trusted-script-origin recovery applied atomically',$4::jsonb)`,
+        [input.missionId, input.objectiveId, input.agentSessionId, JSON.stringify({
+          sourceEnvironmentId: input.sourceEnvironmentId,
+          replacementEnvironmentId: environmentId,
+          replacementFlowDraftId: flowDraftId,
+          replacementAuthoringSessionId: sessionId,
+          approvedOrigins: approved,
+          approvalKind: input.approval.kind,
+        })],
+      );
+      return { recoveryApplied: true, replayed: false, environmentId, flowDraftId, sessionId,
+        approvedOrigins: approved, remainingKnownBlockedOrigins: [],
+        continuation: { navigationRequired: true, navigationAutomaticallyPerformed: false,
+          nextSafeCapability: "advance_flow_authoring" } };
     });
   }
 

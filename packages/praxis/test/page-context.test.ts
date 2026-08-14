@@ -148,6 +148,25 @@ describe("bounded semantic page context", () => {
     await expect(resolveTarget(page, intent)).rejects.toThrow("NO_CAPABILITY_COMPATIBLE_CONTROL");
   });
 
+  it("revalidates a referenced sibling across unrelated DOM mutation and rejects target drift", async () => {
+    await page.setContent(`
+      <label>Email <input aria-label="Email"></label>
+      <label>Password <input id="password" type="password" aria-label="Password"></label>
+    `);
+    const context = await observeSemanticPageContext(page);
+    const reference = context.controls.find((control) => control.valueProtected)!.reference;
+    const intent = referenceIntent(reference);
+
+    await page.getByLabel("Email").fill("safe@example.test");
+    await expect(resolveTarget(page, intent)).resolves.toMatchObject({ adapter: "native_fill" });
+
+    await page.locator("#password").evaluate((element) => { element.setAttribute("disabled", ""); });
+    await expect(resolveTarget(page, intent)).rejects.toThrow("TARGET_CHANGED_BEFORE_ACTION");
+
+    await page.setContent('<label>Password <input id="password" type="password" aria-label="Password"></label>');
+    await expect(resolveTarget(page, intent)).rejects.toThrow("TARGET_CHANGED_BEFORE_ACTION");
+  });
+
   it("accepts the published activation capability for an ordinary button reference", async () => {
     await page.setContent('<button type="submit">Login</button>');
     const context = await observeSemanticPageContext(page);

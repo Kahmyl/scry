@@ -12,6 +12,7 @@ import type {
   MissionAuthoringIntent,
   MissionAuthoringTurnResult,
   StartAdaptiveSessionInput,
+  RecoverTrustedOriginsInput,
 } from "@scry/contracts";
 import { createHash } from "node:crypto";
 
@@ -51,6 +52,12 @@ export class MissionFlowAuthoringService {
       ...(await this.sessions.get(workspaceId(principal), result.id)),
       replayed: result.replayed,
     };
+  }
+
+  async recoverTrustedOrigins(principal: Principal, input: RecoverTrustedOriginsInput) {
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+    return this.sessions.recoverTrustedOrigins(workspaceId(principal), input);
   }
 
   get(principal: Principal, sessionId: string) {

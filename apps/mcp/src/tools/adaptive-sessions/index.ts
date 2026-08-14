@@ -4,6 +4,7 @@ import {
   closeAdaptiveSessionSchema,
   missionAuthoringIntentSchema,
   missionAuthoringTurnBudgetsSchema,
+  recoverTrustedOriginsSchema,
   startAdaptiveSessionSchema,
 } from "@scry/contracts";
 import { z } from "zod";
@@ -42,7 +43,7 @@ export function registerAdaptiveSessionTools(server: McpServer, client: ScryApiC
     {
       title: "Advance Flow Authoring",
       description:
-        "Execute 1-20 semantic Mission authoring intents within budgets.maxOperations (1-20) and budgets.maxDurationMs (1000-60000), or continue one stable pending turn. For kind=intents provide intents and omit turnId; for kind=continue provide turnId and omit intents. Action kinds are navigate, activate, fill, select, set_checked, press, wait_for, inspect, acquire_protected_outputs, and same_origin_request. Authorization kinds are ordinary, authentication, reversible, live_read, live_mutation, and protected_mutation. Every target requires concept plus either reference from the latest semanticPageContext or an observable role/name/label/placeholder/text/testId fact; the public field is reference, never authoritativeReference. Valid roles: button, checkbox, combobox, dialog, field, form, heading, link, listbox, menuitem, option, radio, region, row, tab, table, textbox, text, value. Inspect example: {kind:'inspect',target:{concept:'email',role:'textbox',placeholder:'Email'}}. Fresh-reference example: {kind:'inspect',target:{concept:'observed control',reference:'context-control-<32 lowercase hex>'}}. wait_for requires state, one of visible, hidden, attached, detached; example: {kind:'wait_for',target:{concept:'login form',role:'form'},state:'visible'}. An activate action must declare semanticEffect: read_context_transition only when its intended effect is proven to be read-only navigation or UI context selection; declare resource_mutation for a product/resource change, or unknown when the effect is not established. Missing or unknown effects fail closed under live_read. A read-context transition may use a click but never authorizes production mutation. Protected fill example action: {kind:'fill',target:{concept:'password',role:'textbox'},protectedReferenceId:'<credential-uuid>'}; pair it with authorization:{kind:'authentication'}, constraints:{timeoutMs:30000,allowNewPage:false,allowNonExact:true}, expectedEffect:{kind:'none'}, and protectedInputReferences:['<same-credential-uuid>']. Read completed[*].mutationOutcome before acting: not_applied permits only the reported prerequisite/revision path, applied may require effect observation, and unknown forbids blind retry. decisionBoundary.safeActions names the permitted continuation; pending returns the only stable turnId to continue. TARGET_NOT_FOUND means the observed target was absent; TARGET_NOT_ACTIONABLE or INSUFFICIENT_EVIDENCE is inconclusive and calls for fresh observation or a revised semantic target. Scry owns resolution, readiness, effect verification, journaling, and safe waiting; do not poll.",
+        "Execute 1-20 semantic Mission authoring intents within budgets.maxOperations (1-20) and budgets.maxDurationMs (1000-60000), or continue one stable pending turn. For kind=intents provide intents and omit turnId; for kind=continue provide turnId and omit intents. Action kinds are navigate, activate, fill, select, set_checked, press, wait_for, inspect, acquire_protected_outputs, and same_origin_request. Authorization kinds are ordinary, authentication, reversible, live_read, live_mutation, and protected_mutation. Every target requires concept plus either reference from the latest semanticPageContext or an observable role/name/label/placeholder/text/testId fact; the public field is reference, never authoritativeReference. Valid roles: button, checkbox, combobox, dialog, field, form, heading, link, listbox, menuitem, option, radio, region, row, tab, table, textbox, text, value. Inspect example: {kind:'inspect',target:{concept:'email',role:'textbox',placeholder:'Email'}}. Fresh-reference example: {kind:'inspect',target:{concept:'observed control',reference:'context-control-<32 lowercase hex>'}}. wait_for requires state, one of visible, hidden, attached, detached; example: {kind:'wait_for',target:{concept:'login form',role:'form'},state:'visible'}. An activate action must declare semanticEffect: read_context_transition only when its intended effect is proven to be read-only navigation or UI context selection; declare resource_mutation for a product/resource change, or unknown when the effect is not established. Missing or unknown effects fail closed under live_read. A login/authentication submit that only transitions into an authenticated read context uses semanticEffect:'read_context_transition' with authorization:{kind:'live_read'}; authentication authority is for protected input, not admission of that activation. A read-context transition may use a click but never authorizes production mutation. Protected fill example action: {kind:'fill',target:{concept:'password',role:'textbox'},protectedReferenceId:'<credential-uuid>'}; pair it with authorization:{kind:'authentication'}, constraints:{timeoutMs:30000,allowNewPage:false,allowNonExact:true}, expectedEffect:{kind:'none'}, and protectedInputReferences:['<same-credential-uuid>']. Read completed[*].mutationOutcome before acting: not_applied permits only the reported prerequisite/revision path, applied may require effect observation, and unknown forbids blind retry. decisionBoundary.safeActions names the permitted continuation; pending returns the only stable turnId to continue. TARGET_NOT_FOUND means the observed target was absent; TARGET_NOT_ACTIONABLE or INSUFFICIENT_EVIDENCE is inconclusive and calls for fresh observation or a revised semantic target. Scry owns resolution, readiness, effect verification, journaling, and safe waiting; do not poll.",
       inputSchema: {
         sessionId: uuid,
         kind: z.enum(["intents", "continue"]),
@@ -80,6 +81,32 @@ export function registerAdaptiveSessionTools(server: McpServer, client: ScryApiC
             : "Mission authoring turn reached a durable boundary.",
         );
       }, "Flow authoring advance was rejected."),
+  );
+
+  server.registerTool(
+    "recover_trusted_script_origins",
+    {
+      title: "Recover trusted script origins",
+      description:
+        "Atomically recover an ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED boundary. approvedOrigins must exactly match the safely disclosed missingTrustedScriptOrigins on the source authoring session; this call records explicit approval but never chooses or guesses origins. It creates an immutable replacement environment, cloned Mission-owned Flow draft, and replacement authoring session. Navigation is not performed and remains a separate advance_flow_authoring action.",
+      inputSchema: {
+        ...recoverTrustedOriginsSchema.omit({ idempotencyKey: true }).shape,
+        idempotencyKey: recoverTrustedOriginsSchema.shape.idempotencyKey.optional(),
+      },
+      annotations: writes,
+    },
+    async ({ idempotencyKey, ...input }) =>
+      withAdaptiveSessionError(async () => {
+        await client.requireCurrentRelease();
+        const body = recoverTrustedOriginsSchema.parse({
+          ...input,
+          idempotencyKey: idempotencyKey ?? stableKey("trusted-origin-recovery", input),
+        });
+        return toolResult(
+          { recovery: await client.post("/mission-flow-authoring/recover-trusted-origins", body) },
+          "Trusted-origin recovery lifecycle created atomically; navigation remains pending.",
+        );
+      }, "Trusted-origin recovery was rejected."),
   );
 
   server.registerTool(

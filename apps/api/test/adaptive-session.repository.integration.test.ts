@@ -159,7 +159,7 @@ integration("adaptive session repository integration", () => {
     const created = await repository.create(workspaceId, startInput("missionless-start"));
     sessionIds.push(created.id);
     const after = await controlPlaneCounts();
-    expect(after).toEqual(before);
+    expect(after).toEqual({ ...before, sessions: before.sessions + 1 });
     const session = await repository.get(workspaceId, created.id);
     expect(session).toMatchObject({ state: "active", version: 3 });
     expect((session.events as Array<{ type: string }>).map((event) => event.type)).toEqual([
@@ -178,6 +178,67 @@ integration("adaptive session repository integration", () => {
     ).rejects.toMatchObject({
       response: { code: "MISSION_FLOW_AUTHORING_OWNERSHIP_INVALID" },
     });
+  });
+
+  it("atomically replaces environment, draft, and session only for the disclosed approved origins", async () => {
+    const created = await repository.create(workspaceId, startInput("trusted-recovery-source"));
+    sessionIds.push(created.id);
+    await database.query(
+      `UPDATE adaptive_sessions SET decision_boundary=$2::jsonb WHERE id=$1`,
+      [created.id, JSON.stringify({
+        type: "environment_unavailable",
+        reasonCode: "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED",
+        safeActions: ["recover_trusted_script_origins"],
+        environmentRecovery: {
+          environmentId,
+          missingTrustedScriptOrigins: ["https://scripts.example.com", "https://maps.example.com"],
+          missingOriginClassification: "public",
+          currentTrustedScriptOrigins: [],
+          recoveryTool: "recover_trusted_script_origins",
+          requiresNewFlowDraftAndAuthoringSession: true,
+        },
+      })],
+    );
+    const before = await controlPlaneCounts();
+    const input = {
+      projectId, missionId, objectiveId, agentSessionId,
+      sourceEnvironmentId: environmentId,
+      sourceFlowDraftId: flowDraftId,
+      sourceAuthoringSessionId: created.id,
+      approvedOrigins: ["https://maps.example.com", "https://scripts.example.com"],
+      approval: { kind: "explicit" as const, reason: "Approved for this disclosed boundary" },
+      idempotencyKey: "trusted-recovery-atomic",
+    };
+    const recovered = await repository.recoverTrustedOrigins(workspaceId, input);
+    sessionIds.push(recovered.sessionId!);
+    expect(recovered).toMatchObject({
+      recoveryApplied: true,
+      replayed: false,
+      continuation: { navigationRequired: true, navigationAutomaticallyPerformed: false },
+    });
+    expect(await repository.recoverTrustedOrigins(workspaceId, input)).toMatchObject({
+      recoveryApplied: true,
+      replayed: true,
+      sessionId: recovered.sessionId,
+    });
+    const after = await controlPlaneCounts();
+    expect(after.environments).toBe(before.environments + 1);
+    expect(after.drafts).toBe(before.drafts + 1);
+    expect(after.sessions).toBe(before.sessions + 1);
+    const environment = await database.query<{ policy: { trustedScriptOrigins: string[] } }>(
+      `SELECT policy FROM environments WHERE id=$1`, [recovered.environmentId!],
+    );
+    expect(environment.rows[0]!.policy.trustedScriptOrigins).toEqual([
+      "https://maps.example.com", "https://scripts.example.com",
+    ]);
+    await expect(repository.recoverTrustedOrigins(workspaceId, {
+      ...input,
+      sourceAuthoringSessionId: recovered.sessionId!,
+      sourceEnvironmentId: recovered.environmentId!,
+      sourceFlowDraftId: recovered.flowDraftId!,
+      approvedOrigins: ["https://unapproved.example.com"],
+      idempotencyKey: "trusted-recovery-unapproved",
+    })).rejects.toMatchObject({ response: { code: "TRUST_RECOVERY_CONDITION_UNAVAILABLE" } });
   });
 
   it("loads an authorized protected execution context from PostgreSQL", async () => {
@@ -1006,14 +1067,20 @@ integration("adaptive session repository integration", () => {
       objectives: string;
       flows: string;
       probes: string;
+      environments: number;
+      drafts: number;
+      sessions: number;
     }>(
       `SELECT (SELECT count(*) FROM missions WHERE project_id=$1)::text AS missions,
               (SELECT count(*) FROM mission_objectives WHERE mission_id=$2)::text AS objectives,
               (SELECT count(*) FROM flows WHERE project_id=$1)::text AS flows,
               (SELECT count(*) FROM probe_sessions p JOIN flow_drafts d ON d.id=p.draft_id
-                WHERE d.project_id=$1)::text AS probes`,
+                WHERE d.project_id=$1)::text AS probes,
+              (SELECT count(*)::int FROM environments WHERE project_id=$1) AS environments,
+              (SELECT count(*)::int FROM flow_drafts WHERE project_id=$1) AS drafts,
+              (SELECT count(*)::int FROM adaptive_sessions WHERE project_id=$1) AS sessions`,
       [projectId, missionId],
     );
-    return result.rows[0];
+    return result.rows[0]!;
   }
 });

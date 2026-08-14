@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { OperationOutcome } from "@scry/contracts";
 import type { Locator, Page } from "playwright";
 
-import { observationIdentity, PraxisDocumentEpoch } from "./observation.js";
+import { observationIdentity, PraxisDocumentEpoch, PraxisDocumentIdentity } from "./observation.js";
 import { PraxisTargetHandle } from "./observation.js";
 
 type SemanticPageContext = NonNullable<OperationOutcome["semanticPageContext"]>;
@@ -37,6 +37,7 @@ export function resolveSemanticPageContextControl(page: Page, reference: string)
 export async function observeSemanticPageContext(page: Page): Promise<SemanticPageContext> {
   const frame = page.mainFrame();
   const documentEpoch = await PraxisDocumentEpoch.stable(page, frame, new AbortController().signal);
+  const documentIdentity = await PraxisDocumentIdentity.current(page, frame);
   const observed = await page.evaluate(({ limit, selector }) => {
     const candidates = Array.from(document.querySelectorAll(selector));
     const projected: Array<{
@@ -204,7 +205,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
     const locator = page.locator(CONTEXT_CONTROL_SELECTOR).nth(control.candidateIndex);
     const reference = `context-control-${randomBytes(16).toString("hex")}`;
     registered.set(reference, {
-      handle: new PraxisTargetHandle(page, frame, locator, documentEpoch),
+      handle: new PraxisTargetHandle(page, frame, locator, documentEpoch, documentIdentity),
       locator,
       runtimeId: control.runtimeId,
       capabilities: control.capabilities as SemanticPageContext["controls"][number]["capabilities"],

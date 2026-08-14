@@ -2,10 +2,12 @@ import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common";
 import {
   advanceAdaptiveSessionSchema,
   closeAdaptiveSessionSchema,
+  recoverTrustedOriginsSchema,
   startAdaptiveSessionSchema,
   type CloseAdaptiveSessionInput,
   type MissionAuthoringAdvanceInput,
   type StartAdaptiveSessionInput,
+  type RecoverTrustedOriginsInput,
 } from "@scry/contracts";
 
 import { CurrentPrincipal, type Principal } from "../auth/index.js";
@@ -22,6 +24,14 @@ export class AdaptiveSessionController {
     @Body(new ZodValidationPipe(startAdaptiveSessionSchema)) input: StartAdaptiveSessionInput,
   ) {
     return this.sessions.start(principal, input);
+  }
+
+  @Post("recover-trusted-origins")
+  recoverTrustedOrigins(
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodValidationPipe(recoverTrustedOriginsSchema)) input: RecoverTrustedOriginsInput,
+  ) {
+    return this.sessions.recoverTrustedOrigins(principal, input);
   }
 
   @Get(":sessionId")

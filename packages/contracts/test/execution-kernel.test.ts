@@ -39,13 +39,13 @@ describe("execution kernel contracts", () => {
       agentDecisionBoundarySchema.parse({
         type: "environment_unavailable",
         reasonCode: "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED",
-        safeActions: ["create_test_environment", "create_flow_draft", "start_flow_authoring"],
+        safeActions: ["recover_trusted_script_origins"],
         environmentRecovery: {
           environmentId: "11111111-1111-4111-8111-111111111111",
           missingTrustedScriptOrigins: ["https://scripts.example.test"],
           missingOriginClassification: "public",
           currentTrustedScriptOrigins: [],
-          recoveryTool: "create_test_environment",
+          recoveryTool: "recover_trusted_script_origins",
           requiresNewFlowDraftAndAuthoringSession: true,
         },
       }),

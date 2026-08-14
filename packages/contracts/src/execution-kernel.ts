@@ -105,7 +105,7 @@ export const agentDecisionBoundarySchema = z
         missingTrustedScriptOrigins: z.array(z.string().url()).max(20).default([]),
         missingOriginClassification: z.enum(["public", "redacted"]),
         currentTrustedScriptOrigins: z.array(z.string().url()).max(20).default([]),
-        recoveryTool: z.literal("create_test_environment"),
+        recoveryTool: z.enum(["recover_trusted_script_origins", "create_test_environment"]),
         requiresNewFlowDraftAndAuthoringSession: z.literal(true),
       })
       .strict()

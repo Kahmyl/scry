@@ -520,14 +520,14 @@ function decisionBoundary(outcome: OperationOutcome, environment?: {
     return {
       type: "environment_unavailable",
       reasonCode: outcome.reasonCode,
-      safeActions: ["list_environments", "create_test_environment", "create_flow_draft", "start_flow_authoring"],
+      safeActions: ["recover_trusted_script_origins"],
       ...(environment && outcome.environmentFailure ? {
         environmentRecovery: {
           environmentId: environment.environmentId,
           missingTrustedScriptOrigins: outcome.environmentFailure.missingTrustedScriptOrigins,
           missingOriginClassification: outcome.environmentFailure.missingOriginClassification,
           currentTrustedScriptOrigins: environment.trustedScriptOrigins,
-          recoveryTool: "create_test_environment" as const,
+          recoveryTool: "recover_trusted_script_origins" as const,
           requiresNewFlowDraftAndAuthoringSession: true as const,
         },
       } : {}),

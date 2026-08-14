@@ -37,7 +37,7 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       expectedEffect: { type: "none" }, protectedInputReferences: [] } as never);
 
     expect(result.decisionBoundary).toMatchObject({
-      safeActions: ["list_environments", "create_test_environment", "create_flow_draft", "start_flow_authoring"],
+      safeActions: ["recover_trusted_script_origins"],
       environmentRecovery: {
         environmentId,
         missingTrustedScriptOrigins: ["https://scripts.example.test"],

@@ -18,6 +18,7 @@ import {
 import {
   PRAXIS_PROVIDER_CATALOG,
   PraxisDocumentEpoch,
+  PraxisDocumentIdentity,
   PraxisObservationCache,
   PraxisStaleTargetError,
   PraxisTargetHandle,
@@ -60,11 +61,12 @@ export class PraxisGroundedTarget {
     page: Page,
     grounded: GroundingResult,
     epoch: number,
+    documentIdentity: string,
     resolution: PraxisResolution,
     strategy: PraxisStrategy,
     providerTimings: readonly PraxisProviderTiming[],
   ) {
-    this.handle = new PraxisTargetHandle(page, grounded.frame, grounded.locator, epoch);
+    this.handle = new PraxisTargetHandle(page, grounded.frame, grounded.locator, epoch, documentIdentity);
     this.resolution = resolution;
     this.strategy = strategy;
     this.beforeUrl = page.url();
@@ -171,6 +173,7 @@ export class PraxisGroundingEngine {
     }
     checkAbort(signal);
     const epoch = await PraxisDocumentEpoch.current(this.page, grounded.frame);
+    const documentIdentity = await PraxisDocumentIdentity.current(this.page, grounded.frame);
     const fingerprint = grounded.diagnostic.selectedFingerprint!;
     const strategy = selectPraxisStrategy(request.operation, grounded.adapter);
     const resolution: PraxisResolution = {
@@ -227,6 +230,7 @@ export class PraxisGroundingEngine {
       this.page,
       grounded,
       epoch,
+      documentIdentity,
       resolution,
       strategy,
       providerTimings,

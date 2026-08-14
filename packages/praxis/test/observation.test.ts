@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { CandidateEvidence } from "@scry/contracts";
 import {
   PraxisDocumentEpoch,
+  PraxisDocumentIdentity,
   PraxisGroundingPolicyV1,
   PraxisObservationCache,
   PraxisTargetHandle,
@@ -63,14 +64,17 @@ describe("Praxis observation and grounding foundation", () => {
     expect(observed).toBe(false);
   });
 
-  it("serializes only opaque handle identity and rejects a stale handle", async () => {
+  it("serializes only opaque handle identity, permits unrelated mutation, and rejects navigation", async () => {
     await page.setContent("<button>Save</button>");
     const epoch = await PraxisDocumentEpoch.current(page);
-    const handle = new PraxisTargetHandle(page, page.mainFrame(), page.locator("button"), epoch);
+    const identity = await PraxisDocumentIdentity.current(page, page.mainFrame());
+    const handle = new PraxisTargetHandle(page, page.mainFrame(), page.locator("button"), epoch, identity);
     expect(JSON.stringify(handle)).not.toContain("locator");
     expect(JSON.stringify(handle)).not.toContain("button");
     await page.locator("body").evaluate((body) => body.append(document.createElement("span")));
     await page.waitForTimeout(0);
+    await expect(handle.use((locator) => locator.click())).resolves.toBeUndefined();
+    await page.goto("data:text/html,<button>Replacement</button>");
     await expect(handle.use((locator) => locator.click())).rejects.toThrow(
       "PRAXIS_TARGET_CHANGED_BEFORE_ACTION",
     );

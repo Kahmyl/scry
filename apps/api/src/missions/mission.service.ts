@@ -31,6 +31,9 @@ type Query = <T extends QueryResultRow = QueryResultRow>(
   values?: unknown[],
 ) => Promise<{ rowCount: number | null; rows: T[] }>;
 
+const reportableObjectivePredicate = (alias: string) =>
+  `(${alias}.status IN ('passed','failed') OR (${alias}.status IN ('blocked','skipped') AND ${alias}.conclusion IS NOT NULL))`;
+
 @Injectable()
 export class MissionService {
   constructor(@Inject(Database) private readonly database: Database) {}
@@ -45,7 +48,7 @@ export class MissionService {
         `mission:create:${projectId}`,
         input.idempotencyKey,
         input,
-      );
+);
       if (replay) return replay;
       if (!input.distinctReason) {
         const candidates = await query<{
@@ -119,7 +122,7 @@ export class MissionService {
       await this.database.query(
         `SELECT m.id,m.project_id AS "projectId",m.title,m.original_instruction AS "originalInstruction",m.status,
               m.resume_pointer AS "resumePointer",m.revision,m.created_at AS "createdAt",m.updated_at AS "updatedAt",
-              COUNT(DISTINCT o.id)::int AS "objectiveCount",COUNT(DISTINCT o.id) FILTER (WHERE o.status IN ('passed','failed','blocked','skipped'))::int AS "terminalObjectiveCount",
+              COUNT(DISTINCT o.id)::int AS "objectiveCount",COUNT(DISTINCT o.id) FILTER (WHERE ${reportableObjectivePredicate("o")})::int AS "terminalObjectiveCount",
               COUNT(DISTINCT e.id) FILTER (WHERE e.superseded_at IS NULL AND e.invalidated_at IS NULL)::int AS "acceptedEvidenceCount",
               (SELECT summary FROM mission_activities WHERE mission_id=m.id AND technical=false ORDER BY occurred_at DESC LIMIT 1) AS "lastMeaningfulActivity",
               (SELECT id FROM mission_reports WHERE mission_id=m.id AND status='published' ORDER BY revision DESC LIMIT 1) AS "latestReportId"
@@ -168,7 +171,7 @@ export class MissionService {
       false,
     );
     const missionResult = await this.database.query(
-      `SELECT m.id,m.project_id AS "projectId",m.title,m.original_instruction AS "originalInstruction",m.status,m.current_objective_id AS "currentObjectiveId",m.resume_pointer AS "resumePointer",m.final_report_id AS "finalReportId",m.final_report_id AS "latestReportId",m.revision,m.created_at AS "createdAt",m.updated_at AS "updatedAt",m.completed_at AS "completedAt",(SELECT COUNT(*)::int FROM mission_objectives WHERE mission_id=m.id) AS "objectiveCount",(SELECT COUNT(*)::int FROM mission_objectives WHERE mission_id=m.id AND status IN ('passed','failed','blocked','skipped')) AS "terminalObjectiveCount",(SELECT COUNT(*)::int FROM accepted_evidence WHERE mission_id=m.id AND superseded_at IS NULL AND invalidated_at IS NULL) AS "acceptedEvidenceCount" FROM missions m WHERE m.id=$1`,
+      `SELECT m.id,m.project_id AS "projectId",m.title,m.original_instruction AS "originalInstruction",m.status,m.current_objective_id AS "currentObjectiveId",m.resume_pointer AS "resumePointer",m.final_report_id AS "finalReportId",m.final_report_id AS "latestReportId",m.revision,m.created_at AS "createdAt",m.updated_at AS "updatedAt",m.completed_at AS "completedAt",(SELECT COUNT(*)::int FROM mission_objectives WHERE mission_id=m.id) AS "objectiveCount",(SELECT COUNT(*)::int FROM mission_objectives o WHERE o.mission_id=m.id AND ${reportableObjectivePredicate("o")}) AS "terminalObjectiveCount",(SELECT COUNT(*)::int FROM accepted_evidence WHERE mission_id=m.id AND superseded_at IS NULL AND invalidated_at IS NULL) AS "acceptedEvidenceCount" FROM missions m WHERE m.id=$1`,
       [missionId],
     );
     const mission = missionResult.rows[0]!;
@@ -698,7 +701,7 @@ export class MissionService {
           actualRevision: mission.revision,
         });
       const incomplete = await q(
-        `SELECT o.id,o.status,o.conclusion FROM mission_objectives o WHERE o.mission_id=$1 AND (o.status NOT IN ('passed','failed','blocked','skipped') OR (o.status IN ('blocked','skipped') AND o.conclusion IS NULL) OR (o.status='passed' AND NOT EXISTS(SELECT 1 FROM accepted_evidence e WHERE e.objective_id=o.id AND e.superseded_at IS NULL AND e.invalidated_at IS NULL)))`,
+        `SELECT o.id,o.status,o.conclusion FROM mission_objectives o WHERE o.mission_id=$1 AND NOT ${reportableObjectivePredicate("o")}`,
         [missionId],
       );
       if (incomplete.rowCount)

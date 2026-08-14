@@ -105,6 +105,7 @@ describe("current Scry MCP surface", () => {
       "list_projects",
       "start_flow_authoring",
       "advance_flow_authoring",
+      "recover_trusted_script_origins",
       "get_flow_authoring",
       "close_flow_authoring",
       "start_mission",
@@ -182,6 +183,12 @@ describe("current Scry MCP surface", () => {
       .toContain("wait_for requires state, one of visible, hidden, attached, detached");
     expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
       .toContain("Valid roles: button, checkbox, combobox");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("login/authentication submit");
+    expect(tools.find(({ name }) => name === "set_mission_resume_pointer")?.description)
+      .toContain("must exactly equal pointer.objectiveId");
+    expect(tools.find(({ name }) => name === "recover_trusted_script_origins")?.description)
+      .toContain("Navigation is not performed");
     const draftSchema = tools.find(({ name }) => name === "create_flow_draft")!
       .inputSchema as any;
     const stepsSchema = draftSchema.properties.plan.properties.steps;

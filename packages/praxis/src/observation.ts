@@ -219,6 +219,23 @@ export class PraxisDocumentEpoch {
   }
 }
 
+export class PraxisDocumentIdentity {
+  static async current(page: Page, frame: Frame = page.mainFrame()): Promise<string> {
+    if (page.isClosed() || frame.isDetached()) throw new PraxisStaleTargetError();
+    return frame.evaluate(() => {
+      const state = globalThis as typeof globalThis & { __scryPraxisDocumentId?: string };
+      if (!state.__scryPraxisDocumentId) {
+        const values = new Uint32Array(4);
+        globalThis.crypto.getRandomValues(values);
+        state.__scryPraxisDocumentId = [...values]
+          .map((value) => value.toString(16).padStart(8, "0"))
+          .join("");
+      }
+      return state.__scryPraxisDocumentId;
+    });
+  }
+}
+
 function epochRuntime() {
   const state = globalThis as typeof globalThis & {
     __scryPraxisEpoch?: number;
@@ -247,18 +264,26 @@ export class PraxisTargetHandle {
   readonly pageId: string;
   readonly frameId: string;
   readonly documentEpoch: number;
+  readonly documentIdentity: string;
   readonly runtimeVersion = PRAXIS_OBSERVATION_RUNTIME_VERSION;
   #page: Page;
   #frame: Frame;
   #locator: Locator;
 
-  constructor(page: Page, frame: Frame, locator: Locator, documentEpoch: number) {
+  constructor(
+    page: Page,
+    frame: Frame,
+    locator: Locator,
+    documentEpoch: number,
+    documentIdentity: string,
+  ) {
     this.#page = page;
     this.#frame = frame;
     this.#locator = locator;
     this.pageId = pageId(page);
     this.frameId = frameId(frame);
     this.documentEpoch = documentEpoch;
+    this.documentIdentity = documentIdentity;
   }
 
   async use<T>(work: (locator: Locator) => Promise<T>): Promise<T> {
@@ -267,16 +292,17 @@ export class PraxisTargetHandle {
   }
 
   async reconcile<T>(work: (locator: Locator) => Promise<T>): Promise<T> {
-    if (this.#page.isClosed() || this.#frame.isDetached()) throw new PraxisStaleTargetError();
+    await this.assertDocumentCurrent();
     return work(this.#locator);
   }
 
   async assertCurrent() {
-    if (
-      this.#page.isClosed() ||
-      this.#frame.isDetached() ||
-      (await PraxisDocumentEpoch.current(this.#page, this.#frame)) !== this.documentEpoch
-    )
+    await this.assertDocumentCurrent();
+  }
+
+  private async assertDocumentCurrent() {
+    if (this.#page.isClosed() || this.#frame.isDetached()) throw new PraxisStaleTargetError();
+    if ((await PraxisDocumentIdentity.current(this.#page, this.#frame)) !== this.documentIdentity)
       throw new PraxisStaleTargetError();
   }
 
@@ -293,6 +319,7 @@ export class PraxisTargetHandle {
       pageId: this.pageId,
       frameId: this.frameId,
       documentEpoch: this.documentEpoch,
+      documentIdentity: this.documentIdentity,
       runtimeVersion: this.runtimeVersion,
     };
   }

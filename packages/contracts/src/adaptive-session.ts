@@ -292,6 +292,21 @@ export const closeAdaptiveSessionSchema = z
   })
   .strict();
 
+export const recoverTrustedOriginsSchema = z
+  .object({
+    projectId: uuid,
+    missionId: uuid,
+    objectiveId: uuid,
+    agentSessionId: uuid,
+    sourceEnvironmentId: uuid,
+    sourceFlowDraftId: uuid,
+    sourceAuthoringSessionId: uuid,
+    approvedOrigins: z.array(z.string().url()).min(1).max(20),
+    approval: z.object({ kind: z.literal("explicit"), reason: z.string().trim().min(1).max(2_000) }).strict(),
+    idempotencyKey: z.string().trim().min(8).max(200),
+  })
+  .strict();
+
 export const adaptiveSessionOperationSchema = z
   .object({
     operationId: z.string(),
@@ -375,4 +390,5 @@ export type AdvanceAdaptiveSessionInput =
   AdaptiveSessionOperationInput | z.infer<typeof internalAdaptiveSessionTurnSchema>;
 export type AdaptiveSessionTransitionInput = z.infer<typeof adaptiveSessionTransitionSchema>;
 export type CloseAdaptiveSessionInput = z.infer<typeof closeAdaptiveSessionSchema>;
+export type RecoverTrustedOriginsInput = z.infer<typeof recoverTrustedOriginsSchema>;
 export type AdaptiveSession = z.infer<typeof adaptiveSessionSchema>;
