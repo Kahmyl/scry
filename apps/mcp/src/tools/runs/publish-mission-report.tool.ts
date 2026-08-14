@@ -33,7 +33,7 @@ export function registerPublishMissionReportTool(server: McpServer, client: Scry
     {
       title: "Publish Mission report",
       description:
-        "Publish an immutable consolidated report after all required objectives are terminal. The response includes agentSessionFinalization naming the required end_agent_session call.",
+        "Publish an immutable consolidated FINAL report only after all required Objectives are terminal. awaiting_user is non-terminal and is rejected; communicate it as an intermediate user message, fulfill the prerequisite, and resume the same Mission instead.",
       inputSchema: {
         ...missionContext,
         overallConclusion: z.string().trim().min(1).max(20_000),

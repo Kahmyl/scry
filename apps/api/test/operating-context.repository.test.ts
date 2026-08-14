@@ -32,8 +32,16 @@ describe("operating context repository", () => {
     const query = vi.fn(async (text: string) => {
       if (text.includes("FROM projects")) return { rowCount: 1, rows: [{ id: projectId, name: "One", description: "" }] };
       if (text.includes("FROM missions")) return { rowCount: 1, rows: [{ id: missionId, title: "Mission",
-        status: "running", revision: 1, currentObjectiveId: objectiveId,
-        resumePointer: { objectiveId, recommendedAction: "await_user", explanation: "ok", secret: "must-not-project" } }] };
+        status: "awaiting_user", revision: 1, currentObjectiveId: objectiveId,
+        resumePointer: { objectiveId, recommendedAction: "await_user", explanation: "ok",
+          secret: "must-not-project", externalInput: {
+            condition: "USER_INPUT_REQUIRED", cause: "A credential is required.", effectState: "not_applied",
+            authority: { required: true, type: "user", reason: "Only the user can supply it." },
+            availableCapabilities: ["resume_mission"], constraints: ["Do not guess."], consequences: [],
+            continuation: { retryCurrentOperation: false, freshObservationRequired: true,
+              newOperationRequired: true, newDraftRequired: false, newSessionRequired: false },
+            waiting: true, terminal: false, resumeRef: objectiveId,
+          } } }] };
       if (text.includes("project_credentials")) return { rowCount: 1, rows: [{ referenceId: objectiveId, name: "Credential" }] };
       if (text.includes("FROM environments")) return { rowCount: 2, rows: [
         { id: environmentId, name: "Compatible", baseOrigin: "https://example.test", secretRefs: [objectiveId],
@@ -52,6 +60,13 @@ describe("operating context repository", () => {
     });
     expect(result.authoring).toMatchObject({ ready: false, reusable: { items: [] } });
     expect(result.continuation.deterministicPreparationAvailable).toBe(false);
+    expect(result.missions.candidates.items[0]?.resumePointer?.externalInput).toMatchObject({
+      fulfillmentPaths: [],
+      lifecycle: { terminal: false, taskStillActive: true, sameMissionResumable: true,
+        sameObjectiveResumable: true, shouldFinalize: false, shouldPublishFinalReport: false,
+        shouldCreateReplacementMission: false,
+        requiredNextStep: "fulfill_human_prerequisite_then_resume" },
+    });
     expect(JSON.stringify(result)).not.toContain("must-not-project");
   });
 });

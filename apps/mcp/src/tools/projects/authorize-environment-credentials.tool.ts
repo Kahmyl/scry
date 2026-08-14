@@ -35,7 +35,7 @@ export function registerAuthorizeEnvironmentCredentialsTool(
     {
       title: "Authorize environment credentials",
       description:
-        "Explicitly add opaque credential references to an existing environment allowlist. This never exposes credential values and never infers authorization from credential names or Flow contents.",
+        "After a user-managed or agent-assisted credential exists, explicitly authorize its opaque reference for an environment, then clear/advance the durable prerequisite and resume the same Mission. This never exposes credential values and never infers authorization from names or Flow contents.",
       inputSchema: {
         ...objectiveContext,
         projectId: uuid,

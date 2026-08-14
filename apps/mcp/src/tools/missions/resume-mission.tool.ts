@@ -32,7 +32,7 @@ export function registerResumeMissionTool(server: McpServer, client: ScryApiClie
     {
       title: "Resume Mission",
       description:
-        "Start a new agent session for an existing Mission and load its durable continuation context.",
+        "Resume the same existing Mission and Objective after a durable interruption such as awaiting_user. This does not create replacement task state. Read externalInput.lifecycle and fulfillmentPaths before acting; if the prerequisite is still missing, remain non-terminal and ask or guide the human instead of failing.",
       annotations: writes,
       inputSchema: {
         missionId: uuid,

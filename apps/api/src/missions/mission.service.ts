@@ -358,6 +358,17 @@ export class MissionService {
         throw new ConflictException({ code: "MISSION_TERMINAL" });
       if (mission.rows[0]!.revision !== input.expectedMissionRevision)
         throw new ConflictException({ code: "MISSION_REVISION_CONFLICT", actualRevision: mission.rows[0]!.revision });
+      if (mission.rows[0]!.status === "awaiting_user" && input.kind === "terminal_objective")
+        throw new ConflictException({
+          code: "AWAITING_USER_IS_NON_TERMINAL",
+          terminal: false,
+          sameMissionResumable: true,
+          sameObjectiveResumable: true,
+          shouldPublishFinalReport: false,
+          safeActions: ["get_operating_context", "resume_mission", "cancel_mission_orchestration"],
+        });
+      if (input.kind === "await_user" && !input.pointer.externalInput?.fulfillmentPaths.length)
+        throw new ConflictException({ code: "HUMAN_FULFILLMENT_PATH_REQUIRED" });
       const session = await q(`SELECT id FROM agent_sessions WHERE id=$1 AND mission_id=$2 AND status='active' FOR UPDATE`,
         [input.agentSessionId,input.missionId]);
       if (!session.rowCount) throw new ConflictException({ code: "ACTIVE_AGENT_SESSION_NOT_FOUND" });
@@ -426,7 +437,12 @@ export class MissionService {
           input.kind === "await_user" ? "Mission awaiting user input" : `Objective updated: ${objectiveStatus}`,
           JSON.stringify({ status: objectiveStatus }),`Agent session ${agentSessionStatus}`]);
       const response: FinalizedAgentWork = { replayed:false,missionId:input.missionId,objectiveId:input.objectiveId,
-        missionStatus,objectiveStatus,agentSessionStatus };
+        missionStatus,objectiveStatus,agentSessionStatus,
+        ...(input.kind === "await_user" ? { awaitingUser: {
+          terminal:false,taskStillActive:true,sameMissionResumable:true,sameObjectiveResumable:true,
+          shouldFinalize:false,shouldPublishFinalReport:false,shouldCreateReplacementMission:false,
+          requiredNextStep:"fulfill_human_prerequisite_then_resume" as const,
+        } } : {}) };
       await q(`UPDATE idempotency_records SET response=$3::jsonb,completed_at=now() WHERE scope=$1 AND key=$2`,
         [scope,input.idempotencyKey,JSON.stringify(response)]);
       return response;
@@ -475,7 +491,15 @@ export class MissionService {
     this.requireWrite(principal);
     return this.database.transaction(async (client) => {
       const q = bindQuery(client);
-      await this.requireContext(q, principal, input.missionId, input.agentSessionId, objectiveId);
+      const mission = await this.requireContext(q, principal, input.missionId, input.agentSessionId, objectiveId);
+      if (mission.status === "awaiting_user" && input.status
+        && ["passed", "failed", "blocked", "skipped"].includes(input.status))
+        throw new ConflictException({
+          code: "AWAITING_USER_IS_NON_TERMINAL", terminal: false,
+          sameMissionResumable: true, sameObjectiveResumable: true,
+          shouldPublishFinalReport: false,
+          safeActions: ["get_operating_context", "resume_mission", "cancel_mission_orchestration"],
+        });
       const orchestration = await q<{ mode: string; state: string }>(
         `SELECT b.mode,x.state FROM mission_objective_orchestration x JOIN mission_execution_plans ep ON ep.id=x.plan_id AND ep.status IN ('active','paused') JOIN mission_execution_bindings b ON b.plan_id=x.plan_id AND b.objective_id=x.objective_id WHERE x.objective_id=$1`,
         [objectiveId],
@@ -713,6 +737,18 @@ export class MissionService {
       );
       if (input.missionId !== missionId)
         throw new ConflictException({ code: "MISSION_CONTEXT_MISMATCH" });
+      if (input.pointer?.recommendedAction === "await_user"
+        && !input.pointer.externalInput?.fulfillmentPaths.length)
+        throw new ConflictException({ code: "HUMAN_FULFILLMENT_PATH_REQUIRED" });
+      if (input.pointer?.recommendedAction === "await_user") {
+        const objective = await q<{ status: string }>(
+          `SELECT status FROM mission_objectives WHERE id=$1 AND mission_id=$2 FOR UPDATE`,
+          [input.pointer.objectiveId, missionId],
+        );
+        if (!objective.rowCount) throw new ConflictException({ code: "OBJECTIVE_NOT_FOUND" });
+        if (["passed", "failed", "blocked", "skipped"].includes(objective.rows[0]!.status))
+          throw new ConflictException({ code: "TERMINAL_OBJECTIVE_CANNOT_AWAIT_USER" });
+      }
       if (input.pointer?.flowId) {
         const found = await q(
           `SELECT 1 FROM mission_flow_links WHERE mission_id=$1 AND flow_id=$2`,
@@ -818,6 +854,13 @@ export class MissionService {
         throw new ConflictException({
           code: "MISSION_REVISION_CONFLICT",
           actualRevision: mission.revision,
+        });
+      if (mission.status === "awaiting_user")
+        throw new ConflictException({
+          code: "AWAITING_USER_REPORT_NOT_FINAL", terminal: false,
+          sameMissionResumable: true, sameObjectiveResumable: true,
+          shouldPublishFinalReport: false,
+          safeActions: ["get_operating_context", "resume_mission", "cancel_mission_orchestration"],
         });
       const incomplete = await q(
         `SELECT o.id,o.status,o.conclusion FROM mission_objectives o WHERE o.mission_id=$1 AND NOT ${reportableObjectivePredicate("o")}`,
@@ -1165,6 +1208,7 @@ function projectExternalInput(value: unknown) {
   const input = asRow(value);
   const authority = asRow(input.authority);
   const continuation = asRow(input.continuation);
+  const fulfillmentPaths = rows(input.fulfillmentPaths, 10);
   return compact({
     condition: input.condition,
     cause: bounded(input.cause, 2_000),
@@ -1177,6 +1221,23 @@ function projectExternalInput(value: unknown) {
       reason: bounded(authority.reason, 2_000),
     }),
     availableCapabilities: scalarList(input.availableCapabilities, 20),
+    fulfillmentPaths: fulfillmentPaths.map((path) => {
+      const pathContinuation = asRow(path.continuation);
+      return compact({
+        kind: path.kind,
+        humanAction: bounded(path.humanAction, 1_000),
+        agentExposure: path.agentExposure,
+        result: bounded(path.result, 1_000),
+        availableCapabilities: scalarList(path.availableCapabilities, 10),
+        dashboardPath: scalarList(path.dashboardPath, 10),
+        continuation: {
+          sameMission: pathContinuation.sameMission,
+          sameObjective: pathContinuation.sameObjective,
+          replacementMissionRequired: pathContinuation.replacementMissionRequired,
+          resumeWith: pathContinuation.resumeWith,
+        },
+      });
+    }),
     constraints: scalarList(input.constraints, 50),
     consequences: scalarList(input.consequences, 50),
     continuation: compact({
@@ -1188,6 +1249,16 @@ function projectExternalInput(value: unknown) {
     }),
     waiting: input.waiting,
     terminal: input.terminal,
+    lifecycle: {
+      terminal: false,
+      taskStillActive: true,
+      sameMissionResumable: true,
+      sameObjectiveResumable: true,
+      shouldFinalize: false,
+      shouldPublishFinalReport: false,
+      shouldCreateReplacementMission: false,
+      requiredNextStep: "fulfill_human_prerequisite_then_resume",
+    },
     resumeRef: input.resumeRef,
   });
 }

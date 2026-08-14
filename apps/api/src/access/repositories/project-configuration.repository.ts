@@ -544,6 +544,9 @@ function projectOperatingResumePointer(value: unknown) {
     && !Array.isArray(external.authority) ? external.authority as Record<string, unknown> : undefined;
   const continuation = external?.continuation && typeof external.continuation === "object"
     && !Array.isArray(external.continuation) ? external.continuation as Record<string, unknown> : undefined;
+  const fulfillmentPaths = Array.isArray(external?.fulfillmentPaths)
+    ? external.fulfillmentPaths.slice(0, 10)
+    : [];
   const projected = {
     objectiveId: pointer.objectiveId,
     recommendedAction: pointer.recommendedAction,
@@ -562,6 +565,7 @@ function projectOperatingResumePointer(value: unknown) {
         ...(typeof authority?.reason === "string" ? { reason: authority.reason.slice(0, 2_000) } : {}),
       },
       availableCapabilities: Array.isArray(external.availableCapabilities) ? external.availableCapabilities.slice(0, 20) : [],
+      fulfillmentPaths,
       constraints: Array.isArray(external.constraints) ? external.constraints.slice(0, 50) : [],
       consequences: Array.isArray(external.consequences) ? external.consequences.slice(0, 50) : [],
       continuation: {
@@ -571,7 +575,14 @@ function projectOperatingResumePointer(value: unknown) {
         newDraftRequired: continuation?.newDraftRequired,
         newSessionRequired: continuation?.newSessionRequired,
       },
-      waiting: external.waiting, terminal: external.terminal, resumeRef: external.resumeRef,
+      waiting: external.waiting, terminal: external.terminal,
+      lifecycle: {
+        terminal: false, taskStillActive: true, sameMissionResumable: true,
+        sameObjectiveResumable: true, shouldFinalize: false,
+        shouldPublishFinalReport: false, shouldCreateReplacementMission: false,
+        requiredNextStep: "fulfill_human_prerequisite_then_resume",
+      },
+      resumeRef: external.resumeRef,
     } } : {}),
   };
   const parsed = missionResumePointerSchema.safeParse(projected);

@@ -58,12 +58,58 @@ export const externalInputConditionSchema = z.enum([
   "USER_DECISION_REQUIRED",
 ]);
 export const missionContinuationCapabilitySchema = z.enum([
+  "get_operating_context",
+  "list_project_credentials",
+  "create_project_credential",
+  "authorize_environment_credentials",
   "grant_mission_execution_authorization",
   "resume_mission",
   "update_mission_objective",
   "set_mission_resume_pointer",
   "cancel_mission_orchestration",
 ]);
+const humanFulfillmentPathBase = {
+  humanAction: z.string().trim().min(1).max(1_000),
+  result: z.string().trim().min(1).max(1_000),
+  availableCapabilities: z.array(missionContinuationCapabilitySchema).min(1).max(10),
+  continuation: z.object({
+    sameMission: z.literal(true),
+    sameObjective: z.literal(true),
+    replacementMissionRequired: z.literal(false),
+    resumeWith: z.literal("resume_mission"),
+  }).strict(),
+};
+export const humanFulfillmentPathSchema = z.discriminatedUnion("kind", [
+  z.object({ ...humanFulfillmentPathBase, kind: z.literal("dashboard_managed"),
+    agentExposure: z.literal("none"),
+    dashboardPath: z.array(z.string().trim().min(1).max(100)).min(1).max(10),
+  }).strict(),
+  z.object({ ...humanFulfillmentPathBase, kind: z.literal("agent_assisted"),
+    agentExposure: z.literal("protected_plaintext_before_encrypted_storage"),
+    availableCapabilities: z.array(missionContinuationCapabilitySchema).min(1).max(10)
+      .refine((items) => items.includes("create_project_credential"),
+        "Agent-assisted credential input requires create_project_credential"),
+  }).strict(),
+  z.object({ ...humanFulfillmentPathBase, kind: z.literal("approval"),
+    agentExposure: z.literal("authorization_only"),
+  }).strict(),
+  z.object({ ...humanFulfillmentPathBase, kind: z.literal("selection"),
+    agentExposure: z.literal("public_input"),
+  }).strict(),
+  z.object({ ...humanFulfillmentPathBase, kind: z.literal("public_input"),
+    agentExposure: z.literal("public_input"),
+  }).strict(),
+]);
+export const awaitingUserLifecycleSchema = z.object({
+  terminal: z.literal(false),
+  taskStillActive: z.literal(true),
+  sameMissionResumable: z.literal(true),
+  sameObjectiveResumable: z.literal(true),
+  shouldFinalize: z.literal(false),
+  shouldPublishFinalReport: z.literal(false),
+  shouldCreateReplacementMission: z.literal(false),
+  requiredNextStep: z.literal("fulfill_human_prerequisite_then_resume"),
+}).strict();
 export const missionExternalInputSchema = z
   .object({
     condition: externalInputConditionSchema,
@@ -79,6 +125,7 @@ export const missionExternalInputSchema = z
       })
       .strict(),
     availableCapabilities: z.array(missionContinuationCapabilitySchema).max(20),
+    fulfillmentPaths: z.array(humanFulfillmentPathSchema).max(10),
     constraints: z.array(z.string().trim().min(1).max(1_000)).max(50),
     consequences: z.array(z.string().trim().min(1).max(1_000)).max(50),
     continuation: z
@@ -92,6 +139,7 @@ export const missionExternalInputSchema = z
       .strict(),
     waiting: z.literal(true),
     terminal: z.literal(false),
+    lifecycle: awaitingUserLifecycleSchema,
     resumeRef: uuidSchema,
   })
   .strict();
@@ -249,6 +297,7 @@ export const finalizedAgentWorkSchema = z.object({
   missionStatus: missionStatusSchema,
   objectiveStatus: objectiveStatusSchema,
   agentSessionStatus: agentSessionStatusSchema.exclude(["active"]),
+  awaitingUser: awaitingUserLifecycleSchema.optional(),
 }).strict();
 
 export const createObjectiveSchema = missionContextSchema

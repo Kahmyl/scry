@@ -31,7 +31,7 @@ export function registerListProjectCredentialsTool(server: McpServer, client: Sc
     "list_project_credentials",
     {
       title: "List project credentials",
-      description: "List credential references without exposing values.",
+      description: "List Project-scoped credential names and opaque references without values. Use after the human adds a credential through Project settings → Test credentials → Add credential; select only an unambiguous intended reference and otherwise ask the human to identify it.",
       inputSchema: { projectId: uuid },
       annotations: readOnly,
     },

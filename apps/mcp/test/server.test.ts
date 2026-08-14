@@ -71,6 +71,15 @@ describe("current Scry MCP surface", () => {
             reason: "Only the user can supply this decision.",
           },
           availableCapabilities: ["resume_mission", "update_mission_objective"],
+          fulfillmentPaths: [{
+            kind: "selection",
+            humanAction: "Choose the authoritative option.",
+            agentExposure: "public_input",
+            result: "The same task can resume.",
+            availableCapabilities: ["resume_mission"],
+            continuation: { sameMission: true, sameObjective: true,
+              replacementMissionRequired: false, resumeWith: "resume_mission" },
+          }],
           constraints: ["Do not retry while the effect remains unknown."],
           consequences: ["Continuation requires authoritative re-observation."],
           continuation: {
@@ -82,6 +91,10 @@ describe("current Scry MCP surface", () => {
           },
           waiting: true,
           terminal: false,
+          lifecycle: { terminal: false, taskStillActive: true, sameMissionResumable: true,
+            sameObjectiveResumable: true, shouldFinalize: false,
+            shouldPublishFinalReport: false, shouldCreateReplacementMission: false,
+            requiredNextStep: "fulfill_human_prerequisite_then_resume" },
           resumeRef: context.objectiveId,
         },
       },
@@ -277,6 +290,24 @@ describe("current Scry MCP surface", () => {
       .toContain("Required final lifecycle write");
     expect(tools.find(({ name }) => name === "finalize_agent_work")?.description)
       .toContain("cannot terminalize an UNKNOWN");
+    expect(tools.find(({ name }) => name === "finalize_agent_work")?.description)
+      .toContain("NON-TERMINAL");
+    expect(tools.find(({ name }) => name === "create_project_credential")?.description)
+      .toContain("agent/model sees that source plaintext");
+    expect(tools.find(({ name }) => name === "list_project_credentials")?.description)
+      .toContain("Project settings → Test credentials → Add credential");
+    expect(tools.find(({ name }) => name === "cancel_mission_orchestration")?.description)
+      .toContain("explicit user cancellation");
+    const externalInputSchema = resumePointerSchema.properties.pointer.anyOf[0]
+      .properties.externalInput.properties;
+    expect(externalInputSchema.lifecycle.required).toEqual(expect.arrayContaining([
+      "terminal", "taskStillActive", "sameMissionResumable", "sameObjectiveResumable",
+      "shouldFinalize", "shouldPublishFinalReport", "shouldCreateReplacementMission",
+      "requiredNextStep",
+    ]));
+    const fulfillmentSchema = JSON.stringify(externalInputSchema.fulfillmentPaths.items);
+    expect(fulfillmentSchema).toContain("protected_plaintext_before_encrypted_storage");
+    expect(fulfillmentSchema).toContain("dashboard_managed");
     await client.close();
     await server.close();
   });
