@@ -145,6 +145,7 @@ export function deriveMissionAuthoringTarget(
   const text = target.text;
   return {
     concept: target.concept,
+    ...(target.reference ? { authoritativeReference: target.reference } : {}),
     requiredCapabilities,
     preferredEvidence: {
       roles: role,

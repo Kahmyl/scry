@@ -18,7 +18,16 @@ beforeAll(async () => {
         : request.url === "/docs"
           ? "API Documentation"
           : "First page";
-    const body = `
+    const body = request.url === "/protected-controls" ? `
+      <main>
+        <h1>Protected controls</h1>
+        <form aria-label="Change password">
+          <label>Current password <input type="password" autocomplete="current-password" /></label>
+          <label>New password <input type="password" autocomplete="new-password" /></label>
+          <label>Confirm password <input type="password" autocomplete="new-password" /></label>
+        </form>
+      </main>
+    ` : `
       <main>
         <h1>${heading}</h1>
         <a href="/second">Continue</a>
@@ -317,6 +326,86 @@ describe("persistent authoring browser session", () => {
       await session.close();
     }
   }, 20_000);
+
+  it("fills the exact protected control returned by fresh semantic page context", async () => {
+    const policy = executionPolicySchema.parse({ allowedOrigins: [origin], allowPrivateNetwork: true });
+    const session = await createAuthoringBrowserSession({
+      sessionId: "44444444-4444-4444-8444-444444444444",
+      environmentId: "authoring-test-environment",
+      veilAdmissionKey: "authoring-test-only-veil-admission-key-32-bytes",
+      browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+      policy,
+      openBrowser: openTestBrowser,
+      executeInteraction: kernelInteractionExecutor({
+        sessionId: "44444444-4444-4444-8444-444444444444",
+        environmentId: "authoring-test-environment",
+        policy,
+        secretResolver: async () => "protected-reference-value",
+      }),
+    });
+
+    try {
+      await session.page.goto(`${origin}/protected-controls`, { waitUntil: "domcontentloaded" });
+      const observed = await session.interact({
+        type: "waitFor",
+        target: target("protected controls", "heading", "Protected controls"),
+        state: "visible",
+      });
+      const protectedControls = observed.outcome.semanticPageContext!.controls.filter(
+        (control) => control.valueProtected,
+      );
+      expect(protectedControls).toHaveLength(3);
+      const selected = protectedControls.find((control) => control.semanticPurpose === "current_password")!;
+
+      const started = performance.now();
+      const result = await session.interact({
+        type: "fill",
+        target: {
+          concept: "current password",
+          authoritativeReference: selected.reference,
+          requiredCapabilities: ["focusable", "accepts_text", "editable"],
+          preferredEvidence: {
+            roles: [], names: [], labels: [], descriptions: [], placeholders: [], inputTypes: [],
+          },
+          scope: { kind: "page" },
+          relations: [],
+          prohibited: ["hidden", "disabled"],
+          risk: "authentication",
+          confidence: { requiredFamilies: [] },
+          matching: "exact",
+        },
+        secretRef: "55555555-5555-4555-8555-555555555555",
+        timeoutMs: 2_000,
+      });
+
+      expect(result.outcome).toMatchObject({ functionalResult: "succeeded", privacyResult: "verified" });
+      expect(performance.now() - started).toBeLessThan(2_000);
+      expect(await session.page.locator('input[autocomplete="current-password"]').inputValue()).toBe(
+        "protected-reference-value",
+      );
+      expect(await session.page.locator('input[autocomplete="new-password"]').first().inputValue()).toBe("");
+      expect(JSON.stringify(result)).not.toContain("protected-reference-value");
+
+      const freshProtectedReference = result.outcome.semanticPageContext!.controls.find(
+        (control) => control.semanticPurpose === "current_password",
+      )!.reference;
+      const publicFill = await session.interact({
+        type: "fill",
+        target: {
+          ...referenceTarget(freshProtectedReference),
+          concept: "current password as public input",
+        },
+        value: "must-not-dispatch",
+        timeoutMs: 1_000,
+      });
+      expect(publicFill.outcome).toMatchObject({ functionalResult: "failed", mutationOutcome: "not_applied" });
+      expect(await session.page.locator('input[autocomplete="current-password"]').inputValue()).toBe(
+        "protected-reference-value",
+      );
+    } finally {
+      await session.close();
+    }
+  }, 20_000);
 });
 
 function outcomeOf(
@@ -330,6 +419,23 @@ function outcomeOf(
 function documentationContext(outcome: ReturnType<typeof outcomeOf>) {
   expect(JSON.stringify(outcome.semanticPageContext).length).toBeLessThan(16_000);
   return outcome.semanticPageContext;
+}
+
+function referenceTarget(reference: string): InteractionTargetIntent {
+  return {
+    concept: "protected input",
+    authoritativeReference: reference,
+    requiredCapabilities: ["focusable", "accepts_text", "editable"],
+    preferredEvidence: {
+      roles: [], names: [], labels: [], descriptions: [], placeholders: [], inputTypes: [],
+    },
+    scope: { kind: "page" },
+    relations: [],
+    prohibited: ["hidden", "disabled"],
+    risk: "authentication",
+    confidence: { requiredFamilies: [] },
+    matching: "exact",
+  };
 }
 
 function target(

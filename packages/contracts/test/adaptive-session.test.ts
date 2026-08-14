@@ -72,6 +72,21 @@ describe("adaptive session contracts", () => {
     expect(() => missionAuthoringIntentSchema.parse(intent({ action: { kind: "inspect", target: { concept: "account" } } }))).toThrow();
     expect(() => missionAuthoringIntentSchema.parse(intent({ action: { kind: "activate", target, selector: "#account" } }))).toThrow();
     expect(() => missionAuthoringIntentSchema.parse(intent({ javascript: "alert(1)" }))).toThrow();
+    expect(
+      missionAuthoringIntentSchema.parse(
+        intent({
+          action: {
+            kind: "inspect",
+            target: {
+              concept: "fresh observed protected control",
+              reference: "context-control-0123456789abcdef0123456789abcdef",
+            },
+          },
+        }),
+      ).action,
+    ).toMatchObject({
+      target: { reference: "context-control-0123456789abcdef0123456789abcdef" },
+    });
   });
 
   it("requires exact protected references and authorization for live mutation", () => {

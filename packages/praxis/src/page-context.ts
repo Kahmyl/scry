@@ -1,13 +1,33 @@
-import { createHash } from "node:crypto";
+import { randomBytes } from "node:crypto";
 
 import type { OperationOutcome } from "@scry/contracts";
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
 
 import { observationIdentity, PraxisDocumentEpoch } from "./observation.js";
+import { PraxisTargetHandle } from "./observation.js";
 
 type SemanticPageContext = NonNullable<OperationOutcome["semanticPageContext"]>;
 
 const MAX_CONTEXT_CONTROLS = 48;
+const CONTEXT_CONTROL_SELECTOR = [
+  "a[href]", "button", "input:not([type=hidden])", "textarea", "select", "[role=button]",
+  "[role=link]", "[role=tab]", "[role=menuitem]", "[role=switch]", "[role=checkbox]",
+  "[role=radio]", "[role=combobox]", "[role=dialog]", "[role=status]", "[role=alert]",
+  "[contenteditable=true]", "h1", "h2", "h3", "[role=heading]", "[role=region][aria-label]",
+].join(",");
+
+type ContextControlEntry = {
+  handle: PraxisTargetHandle;
+  locator: Locator;
+  runtimeId: string;
+  capabilities: SemanticPageContext["controls"][number]["capabilities"];
+  valueProtected: boolean;
+};
+const contextControls = new WeakMap<Page, Map<string, ContextControlEntry>>();
+
+export function resolveSemanticPageContextControl(page: Page, reference: string) {
+  return contextControls.get(page)?.get(reference);
+}
 
 /**
  * Projects one bounded, public semantic interaction surface. This deliberately
@@ -17,31 +37,7 @@ const MAX_CONTEXT_CONTROLS = 48;
 export async function observeSemanticPageContext(page: Page): Promise<SemanticPageContext> {
   const frame = page.mainFrame();
   const documentEpoch = await PraxisDocumentEpoch.stable(page, frame, new AbortController().signal);
-  const observed = await page.evaluate((limit) => {
-    const selector = [
-      "a[href]",
-      "button",
-      "input:not([type=hidden])",
-      "textarea",
-      "select",
-      "[role=button]",
-      "[role=link]",
-      "[role=tab]",
-      "[role=menuitem]",
-      "[role=switch]",
-      "[role=checkbox]",
-      "[role=radio]",
-      "[role=combobox]",
-      "[role=dialog]",
-      "[role=status]",
-      "[role=alert]",
-      "[contenteditable=true]",
-      "h1",
-      "h2",
-      "h3",
-      "[role=heading]",
-      "[role=region][aria-label]",
-    ].join(",");
+  const observed = await page.evaluate(({ limit, selector }) => {
     const candidates = Array.from(document.querySelectorAll(selector));
     const projected: Array<{
       role: string;
@@ -53,9 +49,19 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       checked?: boolean;
       disabled?: boolean;
       current?: boolean;
+      candidateIndex: number;
+      runtimeId: string;
+      semanticPurpose?: string;
+      valueProtected?: boolean;
     }> = [];
-    const seen = new Set<string>();
-    for (const element of candidates) {
+    const state = globalThis as typeof globalThis & {
+      __scryGroundingIds?: WeakMap<Element, string>;
+      __scryGroundingSequence?: number;
+    };
+    state.__scryGroundingIds ??= new WeakMap();
+    state.__scryGroundingSequence ??= 0;
+    for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+      const element = candidates[candidateIndex]!;
       if (projected.length >= limit) break;
       const html = element as HTMLElement;
       const input = element as HTMLInputElement;
@@ -72,7 +78,14 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       const sensitive =
         Boolean(element.closest('[data-scry-redacted="true"]')) ||
         (element.tagName.toLowerCase() === "input" && input.type === "password");
+      const redactedBoundary = Boolean(element.closest('[data-scry-redacted="true"]'));
       const tag = element.tagName.toLowerCase();
+      let runtimeId = state.__scryGroundingIds.get(element);
+      if (!runtimeId) {
+        state.__scryGroundingSequence += 1;
+        runtimeId = `control-${state.__scryGroundingSequence}`;
+        state.__scryGroundingIds.set(element, runtimeId);
+      }
       const label = "labels" in input && input.labels ? input.labels[0]?.textContent : undefined;
       const role =
         element.getAttribute("role")?.slice(0, 100) ||
@@ -93,8 +106,11 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
                   : html.isContentEditable
                     ? "textbox"
                     : "control");
+      const safeProtectedLabel = redactedBoundary
+        ? ""
+        : element.getAttribute("aria-label") || label || "";
       const name = sensitive
-        ? "identity suppressed"
+        ? safeProtectedLabel || "identity suppressed"
         : (
             element.getAttribute("aria-label") ||
             label ||
@@ -113,9 +129,20 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       const group = groupSensitive
         ? ""
         : (boundary?.getAttribute("aria-label") || heading?.textContent || "").slice(0, 500);
-      const key = `${role}\u0000${name}\u0000${group}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      const autocomplete = tag === "input" ? input.autocomplete.toLowerCase() : "";
+      const semanticPurpose = sensitive
+        ? autocomplete === "one-time-code"
+          ? "one_time_code"
+          : autocomplete === "current-password"
+            ? "current_password"
+            : autocomplete === "new-password"
+              ? "new_password"
+              : input.inputMode === "numeric"
+                ? "pin"
+                : input.type === "password"
+                  ? "password"
+                  : "protected_input"
+        : undefined;
       const capabilities = [
         "observe",
         ...(tag === "a" || tag === "button" || ["button", "link", "tab", "menuitem"].includes(role)
@@ -136,8 +163,11 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       const expanded = expandedAttribute === null ? undefined : expandedAttribute === "true";
       const ariaChecked = checkedAttribute === null ? undefined : checkedAttribute === "true";
       projected.push({
+        candidateIndex,
+        runtimeId,
         role,
         name,
+        ...(semanticPurpose ? { semanticPurpose, valueProtected: true } : {}),
         ...(group ? { group } : {}),
         capabilities,
         ...(selected === undefined ? {} : { selected }),
@@ -163,19 +193,26 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       truncated: projected.length >= limit && candidates.length > projected.length,
       controls: projected,
     };
-  }, MAX_CONTEXT_CONTROLS);
+  }, { limit: MAX_CONTEXT_CONTROLS, selector: CONTEXT_CONTROL_SELECTOR });
   const controls: SemanticPageContext["controls"] = [];
-  const seen = new Set<string>();
+  const registered = new Map<string, ContextControlEntry>();
   for (const control of observed.controls) {
     const role = cleanContextText(control.role, 40);
     const name = cleanContextText(control.name, 160);
     const group = cleanContextText(control.group, 120);
     if (!role || !name) continue;
-    const key = `${role}\u0000${name}\u0000${group}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const locator = page.locator(CONTEXT_CONTROL_SELECTOR).nth(control.candidateIndex);
+    const reference = `context-control-${randomBytes(16).toString("hex")}`;
+    registered.set(reference, {
+      handle: new PraxisTargetHandle(page, frame, locator, documentEpoch),
+      locator,
+      runtimeId: control.runtimeId,
+      capabilities: control.capabilities as SemanticPageContext["controls"][number]["capabilities"],
+      valueProtected: Boolean(control.valueProtected),
+    });
+    const { candidateIndex: _candidateIndex, runtimeId: _runtimeId, ...publicControl } = control;
     const projected = {
-      ...control,
+      ...publicControl,
       role,
       name,
       ...(group ? { group } : {}),
@@ -183,12 +220,10 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
     };
     controls.push({
       ...projected,
-      reference: `context-control-${createHash("sha256")
-        .update(JSON.stringify({ documentEpoch, ...projected }))
-        .digest("hex")
-        .slice(0, 16)}`,
+      reference,
     });
   }
+  contextControls.set(page, registered);
   const pageId = observationIdentity(page, { kind: "page" }, "public", documentEpoch, frame).pageId;
   return {
     schemaVersion: 1,

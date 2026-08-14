@@ -67,9 +67,11 @@ describe("execution kernel contracts", () => {
       completeness: { kind: "bounded" as const, observed: 2, returned: 2, truncated: false },
       controls: [
         {
-          reference: "context-control-0123456789abcdef",
+          reference: "context-control-0123456789abcdef0123456789abcdef",
           role: "tab",
           name: "Test mode",
+          semanticPurpose: "password",
+          valueProtected: true,
           capabilities: ["observe", "activate"] as const,
           selected: true,
         },

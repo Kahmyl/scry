@@ -21,6 +21,7 @@ import { PraxisDocumentEpoch, PraxisGroundingPolicyV1 } from "./observation.js";
 import { collectPraxisEvidence } from "./evidence.js";
 import { escalationLevel } from "./latency.js";
 import { interactionRiskPolicy } from "./risk-policy.js";
+import { resolveSemanticPageContextControl } from "./page-context.js";
 
 type SafeAction =
   | "narrow_scope"
@@ -149,6 +150,15 @@ export async function resolveTarget(
   } = {},
 ): Promise<GroundingResult> {
   const intentDigest = createHash("sha256").update(stableJson(intent)).digest("hex");
+  if (intent.authoritativeReference) {
+    const resolved = await resolveAuthoritativeContextReference(page, intent, boundary);
+    await observers.get(page)?.({
+      ...resolved.diagnostic,
+      intentDigest,
+      outcome: "resolved",
+    });
+    return resolved;
+  }
   const history = await historyProviders.get(page)?.(intentDigest);
   let count = 0;
   let visualCandidateCount = 0;
@@ -404,6 +414,96 @@ export async function resolveTarget(
           ...diagnostic,
           safeActions: ["retry_after_render", "request_calibration"],
         });
+    },
+  };
+}
+
+async function resolveAuthoritativeContextReference(
+  page: Page,
+  intent: InteractionTargetIntent,
+  boundary: { allowedOrigins?: readonly string[] },
+): Promise<GroundingResult> {
+  const entry = resolveSemanticPageContextControl(page, intent.authoritativeReference!);
+  const frame = page.mainFrame();
+  if (!entry || !authorizedDocuments(page, boundary.allowedOrigins).includes(frame))
+    throw new GroundingError("TARGET_CHANGED_BEFORE_ACTION", {
+      ...emptyDiagnostic(intent.scope, 0),
+      safeActions: ["retry_after_render"],
+    });
+  const requested = new Set(intent.requiredCapabilities);
+  const requiredContextCapabilities = new Set<string>();
+  if (requested.has("accepts_text") || requested.has("editable"))
+    requiredContextCapabilities.add("enter_text");
+  if (
+    requested.has("pointer_activatable") ||
+    requested.has("keyboard_activatable") ||
+    requested.has("submittable")
+  )
+    requiredContextCapabilities.add("activate");
+  if (requested.has("toggleable")) requiredContextCapabilities.add("toggle");
+  if (requested.has("selects_option")) requiredContextCapabilities.add("select_option");
+  if (requiredContextCapabilities.size === 0) requiredContextCapabilities.add("observe");
+  if ([...requiredContextCapabilities].some((capability) => !entry.capabilities.includes(capability as never)))
+    throw new GroundingError("NO_CAPABILITY_COMPATIBLE_CONTROL", {
+      ...emptyDiagnostic(intent.scope, 1),
+      rejectedConstraints: ["authoritative_reference_capability"],
+      safeActions: ["use_supported_capability"],
+    });
+
+  const observe = async () => {
+    let meta: ObservedControl;
+    try {
+      meta = await entry.handle.use(async (locator) => {
+        if ((await locator.count()) !== 1) throw new Error("CONTEXT_CONTROL_MISSING");
+        return locator.evaluate(observeControlInPage, intent.relations);
+      });
+      meta.path = [documentIdentity(frame, 0), ...meta.path];
+    } catch {
+      throw new GroundingError("TARGET_CHANGED_BEFORE_ACTION", {
+        ...emptyDiagnostic(intent.scope, 1),
+        safeActions: ["retry_after_render"],
+      });
+    }
+    const violations = capabilityViolations(intent, meta, false);
+    if (meta.runtimeId !== entry.runtimeId || violations.length)
+      throw new GroundingError("TARGET_CHANGED_BEFORE_ACTION", {
+        ...emptyDiagnostic(intent.scope, 1),
+        rejectedConstraints: violations,
+        safeActions: ["retry_after_render"],
+      });
+    return meta;
+  };
+
+  const meta = await observe();
+  const selectedFingerprint = fingerprint(intent, meta);
+  const adapter = selectAdapter(intent, meta);
+  const diagnostic: GroundingDiagnostic = {
+    candidateCount: 1,
+    eligibleCount: 1,
+    confidence: 1,
+    confidenceMargin: 1,
+    scope: intent.scope,
+    selectedFingerprint,
+    score: { families: { runtime: 1 }, familyCount: 1, total: 1 },
+    rejectedConstraints: [],
+    rejectedCapabilitySignatures: [],
+    drift: "unchanged",
+    safeActions: [],
+    resolutionSource: "unified",
+    visualCandidateCount: 0,
+    escalationLevel: 0,
+    observation: { status: "succeeded" },
+    evidenceFamilies: ["runtime"],
+    correlationGroups: ["authoritative_context_reference"],
+    selectedAdapter: adapter,
+  };
+  return {
+    frame,
+    locator: entry.locator,
+    diagnostic,
+    adapter,
+    async revalidate() {
+      await observe();
     },
   };
 }

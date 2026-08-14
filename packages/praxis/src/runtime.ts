@@ -28,6 +28,7 @@ import { PraxisAdapterError, type PraxisDispatchBoundary } from "./transaction.j
 import { PraxisExecutionEnvelope, type PraxisPreDispatchDeadline } from "./execution-envelope.js";
 import { PraxisStateObserver } from "./state-observer.js";
 import { validatePraxisVeilGrants } from "./veil-bridge.js";
+import { resolveSemanticPageContextControl } from "./page-context.js";
 
 const stateObserver = new PraxisStateObserver();
 
@@ -118,6 +119,15 @@ export class PraxisGroundingEngine {
   async resolve(request: PraxisRequest, signal: AbortSignal) {
     validatePraxisVeilGrants(request);
     checkAbort(signal);
+    const contextControl = request.intent.authoritativeReference
+      ? resolveSemanticPageContextControl(this.page, request.intent.authoritativeReference)
+      : undefined;
+    if (
+      contextControl?.valueProtected &&
+      request.operation.type === "enter_text" &&
+      !["known_secret", "captured_secret"].includes(request.operation.input.classification)
+    )
+      throw new Error("PROTECTED_INPUT_REFERENCE_REQUIRED");
     const started = performance.now();
     const observationDeadline = started + PraxisExecutionEnvelope.groundingWindow(request);
     let stablePendingSince = started;

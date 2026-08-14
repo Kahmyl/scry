@@ -146,6 +146,7 @@ export const visualEvidenceSchema = z
 export const interactionTargetIntentSchema = z
   .object({
     concept: semanticText,
+    authoritativeReference: z.string().regex(/^context-control-[a-f0-9]{32}$/).optional(),
     requiredCapabilities: z.array(capabilitySchema).min(1).max(10),
     preferredEvidence: z
       .object({
@@ -183,6 +184,7 @@ export const interactionTargetIntentSchema = z
   .superRefine((intent, context) => {
     const identity = intent.preferredEvidence;
     if (
+      !intent.authoritativeReference &&
       ![
         identity.roles,
         identity.names,

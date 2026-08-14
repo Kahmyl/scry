@@ -73,6 +73,20 @@ describe("Mission authoring semantic derivation", () => {
     ).toEqual(["control-id"]);
   });
 
+  it("preserves an authoritative semantic-context reference without rediscovery evidence", () => {
+    const reference = "context-control-0123456789abcdef0123456789abcdef";
+    const operation = derive({
+      kind: "fill",
+      target: { concept: "observed password", reference },
+      publicValue: "fixture",
+    });
+    expect((operation.action as any).target).toMatchObject({
+      authoritativeReference: reference,
+      preferredEvidence: { roles: [], names: [], labels: [], placeholders: [] },
+    });
+    expect(() => currentActionSchema.parse(operation.action)).not.toThrow();
+  });
+
   it("carries explicit semantic effect into fail-closed dispatch semantics", () => {
     const base = {
       intentId: "live-context",

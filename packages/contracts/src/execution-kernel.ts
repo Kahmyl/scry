@@ -171,9 +171,11 @@ export const operationOutcomeSchema = z
           .array(
             z
               .object({
-                reference: z.string().regex(/^context-control-[a-f0-9]{16}$/),
+                reference: z.string().regex(/^context-control-[a-f0-9]{32}$/),
                 role: z.string().trim().min(1).max(40),
                 name: z.string().trim().min(1).max(160),
+                semanticPurpose: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/).optional(),
+                valueProtected: z.boolean().optional(),
                 group: z.string().trim().min(1).max(120).optional(),
                 capabilities: z
                   .array(z.enum(["observe", "activate", "enter_text", "toggle", "select_option"]))

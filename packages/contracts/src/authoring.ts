@@ -87,6 +87,7 @@ const semanticText = z.string().trim().min(1).max(500);
 export const missionAuthoringSemanticTargetSchema = z
   .object({
     concept: semanticText,
+    reference: z.string().regex(/^context-control-[a-f0-9]{32}$/).optional(),
     role: semanticRoleSchema.optional(),
     name: semanticText.optional(),
     label: semanticText.optional(),
@@ -113,6 +114,7 @@ export const missionAuthoringSemanticTargetSchema = z
   .strict()
   .superRefine((target, context) => {
     if (
+      !target.reference &&
       !target.role &&
       !target.name &&
       !target.label &&
