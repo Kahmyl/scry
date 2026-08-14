@@ -301,7 +301,8 @@ export class ProjectConfigurationRepository {
       redispatchAllowed: false as const,
       inspectionTool: "get_flow_authoring" as const,
       reconciliationAvailable: false,
-      ...(dispatchSemantics === "read_only" ? { distinctMissionAlternative: {
+      ...(dispatchSemantics === "read_only" && input.authorizeDistinctMissionForReadOnlyUnknown
+        ? { distinctMissionAlternative: {
         available: true as const,
         tool: "start_mission" as const,
         requiresExplicitUserAuthority: true as const,
@@ -340,7 +341,9 @@ export class ProjectConfigurationRepository {
           recoverable.length > 0 || compatibleReusable.length > 0
           || (missionItems.length === 0 && compatibleEnvironment)
         ),
-        userAuthorityRequired: !selectedMissionId && missionItems.length > 1,
+        userAuthorityRequired: (!selectedMissionId && missionItems.length > 1)
+          || (uncertainCandidates.some(({ dispatchSemantics }) => dispatchSemantics === "read_only")
+            && !input.authorizeDistinctMissionForReadOnlyUnknown),
         safeActions: uncertain.length > 0
           ? ["get_flow_authoring", ...(uncertain.some((item) => item.distinctMissionAlternative)
             ? ["start_mission"] : [])]

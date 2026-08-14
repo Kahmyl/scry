@@ -9,6 +9,7 @@ export const getOperatingContextSchema = z.object({
   missionId: uuid.optional(),
   requiredOrigin: z.string().url().transform((value) => new URL(value).origin).optional(),
   requiredCredentialReferences: z.array(uuid).max(20).default([]),
+  authorizeDistinctMissionForReadOnlyUnknown: z.boolean().default(false),
 }).strict();
 
 const boundedCollection = <T extends z.ZodTypeAny>(item: T, maximum: number) => z.object({

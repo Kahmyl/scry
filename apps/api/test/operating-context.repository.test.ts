@@ -21,7 +21,7 @@ describe("operating context repository", () => {
       transaction: (work: any) => work({ query }),
     } as never);
     const result = await repository.operatingContext({ kind: "service", subject: "scry-service" }, {
-      requiredCredentialReferences: [],
+      requiredCredentialReferences: [], authorizeDistinctMissionForReadOnlyUnknown: false,
     });
     expect(result).toMatchObject({ selection: { project: null, requiresProjectSelection: true },
       credentials: { items: [] }, continuation: { blockerCode: "PROJECT_SELECTION_REQUIRED" } });
@@ -64,6 +64,7 @@ describe("operating context repository", () => {
     const result = await repository.operatingContext({ kind: "service", subject: "scry-service" }, {
       projectId, missionId, requiredOrigin: "https://example.test",
       requiredCredentialReferences: [objectiveId],
+      authorizeDistinctMissionForReadOnlyUnknown: false,
     });
     expect(result.authoring).toMatchObject({ ready: false, reusable: { items: [] } });
     expect(result.environments.items[0]).toMatchObject({
@@ -108,7 +109,7 @@ describe("operating context repository", () => {
     });
     const repository = new ProjectConfigurationRepository({ transaction: (work: any) => work({ query }) } as never);
     const result = await repository.operatingContext({ kind: "service", subject: "scry-service" }, {
-      projectId, missionId, requiredCredentialReferences: [],
+      projectId, missionId, requiredCredentialReferences: [], authorizeDistinctMissionForReadOnlyUnknown: false,
     });
     expect(result.credentials.items[0]).toMatchObject({
       createdAt: createdAt.toISOString(), updatedAt: createdAt.toISOString(),
@@ -136,6 +137,7 @@ describe("operating context repository", () => {
     const repository = new ProjectConfigurationRepository({ transaction: (work: any) => work({ query }) } as never);
     const result = await repository.operatingContext({ kind: "service", subject: "scry-service" }, {
       projectId, missionId, requiredCredentialReferences: [],
+      authorizeDistinctMissionForReadOnlyUnknown: true,
     });
     expect(result.authoring.uncertain.items).toEqual([expect.objectContaining({
       sessionId, operationId, originalMutationOutcome: "unknown", redispatchAllowed: false,
@@ -151,5 +153,13 @@ describe("operating context repository", () => {
       .find((text) => text.includes("session.state='recovery_required'"));
     expect(uncertainQuery).toContain("PARTITION BY session.mission_id");
     expect(uncertainQuery).toContain("JOIN candidate_missions mission");
+
+    const withoutAuthority = await repository.operatingContext(
+      { kind: "service", subject: "scry-service" },
+      { projectId, missionId, requiredCredentialReferences: [], authorizeDistinctMissionForReadOnlyUnknown: false },
+    );
+    expect(withoutAuthority.authoring.uncertain.items[0]?.distinctMissionAlternative).toBeUndefined();
+    expect(withoutAuthority.continuation.safeActions).toEqual(["get_flow_authoring"]);
+    expect(withoutAuthority.continuation.userAuthorityRequired).toBe(true);
   });
 });
