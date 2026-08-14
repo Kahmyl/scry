@@ -18,6 +18,7 @@ import {
   orchestrationControlSchema,
   startReadyObjectivesSchema,
   grantMissionAuthorizationSchema,
+  finalizeAgentWorkSchema,
   type AcceptEvidenceInput,
   type AttachFlowInput,
   type ClassifyRunInput,
@@ -31,6 +32,7 @@ import {
   type UpdateMissionInput,
   type UpdateObjectiveInput,
   type UpdateResumePointerInput,
+  type FinalizeAgentWorkInput,
 } from "@scry/contracts";
 import type {
   CreateExecutionPlanInput,
@@ -105,6 +107,14 @@ export class MissionController {
     @Body(new ZodValidationPipe(endAgentSessionSchema)) input: EndAgentSessionInput,
   ) {
     return this.missions.endSession(principal, sessionId, input);
+  }
+  @Post("missions/:missionId/finalize-agent-work") finalizeAgentWork(
+    @Param("missionId") missionId: string,
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodValidationPipe(finalizeAgentWorkSchema)) input: FinalizeAgentWorkInput,
+  ) {
+    if (input.missionId !== missionId) throw new Error("MISSION_CONTEXT_MISMATCH");
+    return this.missions.finalizeAgentWork(principal, input);
   }
   @Post("missions/:missionId/objectives") objective(
     @Param("missionId") missionId: string,

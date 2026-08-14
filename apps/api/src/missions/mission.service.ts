@@ -21,6 +21,8 @@ import type {
   UpdateMissionInput,
   UpdateObjectiveInput,
   UpdateResumePointerInput,
+  FinalizeAgentWorkInput,
+  FinalizedAgentWork,
 } from "@scry/contracts";
 
 import type { Principal } from "../auth/index.js";
@@ -312,6 +314,107 @@ export class MissionService {
       [result.rows[0]!.missionId, sessionId, `Agent session ${input.status}`],
     );
     return { id: sessionId, status: input.status };
+  }
+
+  async finalizeAgentWork(
+    principal: Principal,
+    input: FinalizeAgentWorkInput,
+  ): Promise<FinalizedAgentWork> {
+    this.requireWrite(principal);
+    return this.database.transaction(async (client) => {
+      const q = bindQuery(client);
+      const scope = `mission:finalize-agent-work:${input.missionId}`;
+      const requestHash = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+      await q(`INSERT INTO idempotency_records(scope,key,request_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+        [scope,input.idempotencyKey,requestHash]);
+      const replay = await q<{ requestHash: string; response: FinalizedAgentWork | null }>(
+        `SELECT request_hash AS "requestHash",response FROM idempotency_records WHERE scope=$1 AND key=$2 FOR UPDATE`,
+        [scope,input.idempotencyKey]);
+      if (replay.rows[0]!.requestHash !== requestHash)
+        throw new ConflictException({ code: "AGENT_WORK_FINALIZATION_IDEMPOTENCY_CONFLICT" });
+      if (replay.rows[0]!.response) return { ...replay.rows[0]!.response, replayed: true };
+      const mission = await q<{ status: string; revision: number }>(
+        `SELECT m.status,m.revision FROM missions m JOIN projects p ON p.id=m.project_id
+         WHERE m.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2) FOR UPDATE OF m`,
+        [input.missionId,workspaceId(principal)]);
+      if (!mission.rowCount) throw new NotFoundException("Mission not found");
+      if (["completed","failed","cancelled"].includes(mission.rows[0]!.status))
+        throw new ConflictException({ code: "MISSION_TERMINAL" });
+      if (mission.rows[0]!.revision !== input.expectedMissionRevision)
+        throw new ConflictException({ code: "MISSION_REVISION_CONFLICT", actualRevision: mission.rows[0]!.revision });
+      const session = await q(`SELECT id FROM agent_sessions WHERE id=$1 AND mission_id=$2 AND status='active' FOR UPDATE`,
+        [input.agentSessionId,input.missionId]);
+      if (!session.rowCount) throw new ConflictException({ code: "ACTIVE_AGENT_SESSION_NOT_FOUND" });
+      const objective = await q<{ status: string }>(
+        `SELECT status FROM mission_objectives WHERE id=$1 AND mission_id=$2 FOR UPDATE`,
+        [input.objectiveId,input.missionId]);
+      if (!objective.rowCount) throw new ConflictException({ code: "OBJECTIVE_NOT_FOUND" });
+      const authoring = await q<{ state: string; decisionBoundary: { reasonCode?: string } | null }>(
+        `SELECT state,decision_boundary AS "decisionBoundary" FROM adaptive_sessions WHERE mission_id=$1
+          AND (objective_id=$2 OR active_objective_id=$2) FOR UPDATE`,
+        [input.missionId,input.objectiveId]);
+      if (authoring.rows.some(({ state, decisionBoundary }) =>
+        !["completed","failed","cancelled"].includes(state)
+        && !(state === "recovery_required"
+          && decisionBoundary?.reasonCode === "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED")))
+        throw new ConflictException({ code: "MISSION_AUTHORING_CLOSE_REQUIRED" });
+      const unsafe = await q(`SELECT 1 FROM adaptive_operations o
+        WHERE o.mission_id=$1 AND o.objective_id=$2
+          AND (o.state='running' OR o.mutation_outcome='unknown') LIMIT 1 FOR UPDATE`,
+        [input.missionId,input.objectiveId]);
+      if (unsafe.rowCount) throw new ConflictException({
+        code: "MISSION_AUTHORING_CLOSE_RECONCILIATION_REQUIRED",
+        mutationOutcome: "unknown", retry: "reconciliation_required",
+      });
+      let missionStatus: "planning" | "running" | "blocked" | "awaiting_user";
+      let objectiveStatus: FinalizedAgentWork["objectiveStatus"];
+      let agentSessionStatus: FinalizedAgentWork["agentSessionStatus"];
+      if (input.kind === "await_user") {
+        if (input.pointer.objectiveId !== input.objectiveId || input.pointer.externalInput?.resumeRef !== input.objectiveId)
+          throw new ConflictException({ code: "MISSION_RESUME_POINTER_OBJECTIVE_MISMATCH" });
+        if (["passed","failed","blocked","skipped"].includes(objective.rows[0]!.status))
+          throw new ConflictException({ code: "TERMINAL_OBJECTIVE_CANNOT_AWAIT_USER" });
+        await q(`UPDATE missions SET status='awaiting_user',resume_pointer=$2::jsonb,revision=revision+1,updated_at=now() WHERE id=$1`,
+          [input.missionId,JSON.stringify(input.pointer)]);
+        missionStatus = "awaiting_user";
+        objectiveStatus = objective.rows[0]!.status as FinalizedAgentWork["objectiveStatus"];
+        agentSessionStatus = "interrupted";
+      } else {
+        const orchestration = await q<{ mode: string }>(
+          `SELECT b.mode FROM mission_objective_orchestration x
+           JOIN mission_execution_plans ep ON ep.id=x.plan_id AND ep.status IN ('active','paused')
+           JOIN mission_execution_bindings b ON b.plan_id=x.plan_id AND b.objective_id=x.objective_id
+           WHERE x.objective_id=$1`, [input.objectiveId]);
+        if (input.objectiveStatus === "passed" && orchestration.rowCount && orchestration.rows[0]!.mode !== "manual")
+          throw new ConflictException({ code: "AUTOMATED_OBJECTIVE_REQUIRES_ACCEPTED_EVIDENCE" });
+        await q(`UPDATE mission_objectives SET status=$3,conclusion=$4,updated_at=now() WHERE id=$1 AND mission_id=$2`,
+          [input.objectiveId,input.missionId,input.objectiveStatus,input.conclusion]);
+        await q(`UPDATE missions SET status=CASE WHEN status='awaiting_user' THEN 'running' ELSE status END,
+          resume_pointer=CASE WHEN resume_pointer->>'objectiveId'=$2 THEN NULL ELSE resume_pointer END,
+          revision=revision+1,updated_at=now() WHERE id=$1`, [input.missionId,input.objectiveId]);
+        if (orchestration.rowCount)
+          await q(`UPDATE mission_objective_orchestration SET
+            state=CASE WHEN $2='passed' THEN 'passed' WHEN $2='failed' THEN 'failed' ELSE 'blocked' END,
+            blocker_code=CASE WHEN $2='passed' THEN NULL ELSE blocker_code END,updated_at=now()
+            WHERE objective_id=$1`, [input.objectiveId,input.objectiveStatus]);
+        missionStatus = mission.rows[0]!.status === "awaiting_user" ? "running" : mission.rows[0]!.status as typeof missionStatus;
+        objectiveStatus = input.objectiveStatus;
+        agentSessionStatus = input.sessionStatus;
+      }
+      await q(`UPDATE agent_sessions SET status=$2,ended_at=now() WHERE id=$1`,
+        [input.agentSessionId,agentSessionStatus]);
+      await q(`INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata) VALUES
+        ($1,$2,$3,$4,$5,$6::jsonb),($1,$2,$3,'agent_session_ended',$7,'{}'::jsonb)`,
+        [input.missionId,input.objectiveId,input.agentSessionId,
+          input.kind === "await_user" ? "mission_awaiting_user" : "objective_updated",
+          input.kind === "await_user" ? "Mission awaiting user input" : `Objective updated: ${objectiveStatus}`,
+          JSON.stringify({ status: objectiveStatus }),`Agent session ${agentSessionStatus}`]);
+      const response: FinalizedAgentWork = { replayed:false,missionId:input.missionId,objectiveId:input.objectiveId,
+        missionStatus,objectiveStatus,agentSessionStatus };
+      await q(`UPDATE idempotency_records SET response=$3::jsonb,completed_at=now() WHERE scope=$1 AND key=$2`,
+        [scope,input.idempotencyKey,JSON.stringify(response)]);
+      return response;
+    });
   }
 
   async createObjective(principal: Principal, missionId: string, input: CreateObjectiveInput) {

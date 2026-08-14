@@ -3,6 +3,8 @@ export * from "./current.js";
 export * from "./flow.js";
 export * from "./mission.js";
 export * from "./orchestration.js";
+export * from "./operating-context.js";
+export * from "./authoring-preparation.js";
 export * from "./authoring.js";
 export * from "./authentication-authoring.js";
 export * from "./authoring-runtime-command.js";

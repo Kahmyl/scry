@@ -6,6 +6,8 @@ import {
   missionAuthoringTurnBudgetsSchema,
   recoverTrustedOriginsSchema,
   startAdaptiveSessionSchema,
+  prepareFlowAuthoringSchema,
+  preparedFlowAuthoringSchema,
 } from "@scry/contracts";
 import { z } from "zod";
 
@@ -16,6 +18,18 @@ const navigationExpectedEffectGuidance =
   "Expected same-page navigation accepts {kind:'navigation',url:'https://example.test/path',match:'exact'}; urlPattern is also accepted as a host-compatible alias for the same absolute URL, but never provide both url and urlPattern. ";
 
 export function registerAdaptiveSessionTools(server: McpServer, client: ScryApiClient) {
+  server.registerTool("prepare_flow_authoring", {
+    title: "Prepare Flow Authoring",
+    description: "Atomically create the explicitly supplied Mission, agent session, first Objective (dependencies must be []), complete Flow draft content/current plan, and active authoring session, or explicitly reuse one exact active authoringSessionId returned by get_operating_context. kind=create requires projectId, environmentId, mission, objective, draft, and authoring. kind=reuse requires projectId and authoringSessionId. idempotencyKey is optional and deterministically synthesized when omitted. This performs no browser navigation or product action and never infers equivalence between Missions or Objectives.",
+    inputSchema: prepareFlowAuthoringSchema,
+    outputSchema: preparedFlowAuthoringSchema,
+    annotations: writes,
+  }, async (input) => withAdaptiveSessionError(async () => {
+    await client.requireCurrentRelease();
+    const prepared = preparedFlowAuthoringSchema.parse(await client.post("/mission-flow-authoring/prepare", input));
+    return toolResult(prepared, prepared.reused ? "Existing authoring session is ready." : "Flow authoring lifecycle prepared atomically.");
+  }, "Flow authoring preparation was rejected."));
+
   server.registerTool(
     "start_flow_authoring",
     {

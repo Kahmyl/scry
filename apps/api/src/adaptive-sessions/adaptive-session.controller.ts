@@ -3,11 +3,13 @@ import {
   advanceAdaptiveSessionSchema,
   closeAdaptiveSessionSchema,
   recoverTrustedOriginsSchema,
+  prepareFlowAuthoringSchema,
   startAdaptiveSessionSchema,
   type CloseAdaptiveSessionInput,
   type MissionAuthoringAdvanceInput,
   type StartAdaptiveSessionInput,
   type RecoverTrustedOriginsInput,
+  type PrepareFlowAuthoringInput,
 } from "@scry/contracts";
 
 import { CurrentPrincipal, type Principal } from "../auth/index.js";
@@ -24,6 +26,14 @@ export class AdaptiveSessionController {
     @Body(new ZodValidationPipe(startAdaptiveSessionSchema)) input: StartAdaptiveSessionInput,
   ) {
     return this.sessions.start(principal, input);
+  }
+
+  @Post("prepare")
+  prepare(
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodValidationPipe(prepareFlowAuthoringSchema)) input: PrepareFlowAuthoringInput,
+  ) {
+    return this.sessions.prepare(principal, input);
   }
 
   @Post("recover-trusted-origins")

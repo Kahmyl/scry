@@ -3,9 +3,11 @@ import {
   createCredentialSchema,
   createEnvironmentSchema,
   createProjectSchema,
+  getOperatingContextSchema,
   type CreateCredentialInput,
   type CreateEnvironmentInput,
   type CreateProjectInput,
+  type GetOperatingContextInput,
 } from "@scry/contracts";
 
 import { CurrentPrincipal, type Principal } from "../../auth/index.js";
@@ -27,6 +29,14 @@ export class ProjectsController {
   @Get()
   list(@CurrentPrincipal() principal: Principal) {
     return this.repository.listProjects(principal);
+  }
+
+  @Post("operating-context")
+  operatingContext(
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodValidationPipe(getOperatingContextSchema)) input: GetOperatingContextInput,
+  ) {
+    return this.repository.operatingContext(principal, input);
   }
 
   @Post(":projectId/environments")

@@ -35,6 +35,9 @@ export class ScryRepository {
   listProjects(...args: Parameters<ProjectConfigurationRepository["listProjects"]>) {
     return this.configuration.listProjects(...args);
   }
+  operatingContext(...args: Parameters<ProjectConfigurationRepository["operatingContext"]>) {
+    return this.configuration.operatingContext(...args);
+  }
   listEnvironments(...args: Parameters<ProjectConfigurationRepository["listEnvironments"]>) {
     return this.configuration.listEnvironments(...args);
   }

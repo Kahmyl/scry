@@ -14,6 +14,7 @@ import type {
   StartAdaptiveSessionInput,
   RecoverTrustedOriginsInput,
   CurrentAction,
+  PrepareFlowAuthoringInput,
 } from "@scry/contracts";
 import { createHash } from "node:crypto";
 
@@ -53,6 +54,12 @@ export class MissionFlowAuthoringService {
       ...(await this.sessions.get(workspaceId(principal), result.id)),
       replayed: result.replayed,
     };
+  }
+
+  async prepare(principal: Principal, input: PrepareFlowAuthoringInput) {
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+    return this.sessions.prepare(workspaceId(principal), input);
   }
 
   async recoverTrustedOrigins(principal: Principal, input: RecoverTrustedOriginsInput) {

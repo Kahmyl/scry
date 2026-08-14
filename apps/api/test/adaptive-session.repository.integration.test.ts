@@ -169,6 +169,58 @@ integration("adaptive session repository integration", () => {
     ]);
   });
 
+  it("prepares one coherent lifecycle atomically and replays the durable ID tuple", async () => {
+    const input = preparationInput(`prepare-${randomUUID()}`);
+    const prepared = await repository.prepare(workspaceId, input);
+    sessionIds.push(prepared.authoringSessionId);
+    expect(prepared).toMatchObject({ replayed: false, reused: false, authoringReady: true });
+    const durable = await database.query(
+      `SELECT m.status,m.revision,o.status AS "objectiveStatus",a.status AS "agentStatus",
+              s.state,s.version,(SELECT count(*)::int FROM adaptive_session_events WHERE session_id=s.id) AS events
+       FROM missions m JOIN mission_objectives o ON o.mission_id=m.id
+       JOIN agent_sessions a ON a.mission_id=m.id JOIN adaptive_sessions s ON s.mission_id=m.id
+       WHERE m.id=$1`, [prepared.missionId]);
+    expect(durable.rows[0]).toMatchObject({ status: "planning", revision: 1,
+      objectiveStatus: "pending", agentStatus: "active", state: "active", version: 3, events: 3 });
+    expect(await repository.prepare(workspaceId, input)).toEqual({ ...prepared, replayed: true });
+    await database.query(`UPDATE adaptive_sessions SET decision_boundary=$2::jsonb WHERE id=$1`, [
+      prepared.authoringSessionId,
+      JSON.stringify({ type: "objective_completed", reasonCode: "MISSION_AUTHORING_TURN_COMPLETED", safeActions: [] }),
+    ]);
+    expect(await repository.prepare(workspaceId, {
+      kind: "reuse", projectId, authoringSessionId: prepared.authoringSessionId,
+      idempotencyKey: `reuse-after-turn-${randomUUID()}`,
+    })).toMatchObject({ reused: true, authoringSessionId: prepared.authoringSessionId });
+    await expect(repository.prepare(workspaceId, { ...input, environmentId: randomUUID() }))
+      .rejects.toMatchObject({ response: { code: "AUTHORING_PREPARATION_IDEMPOTENCY_CONFLICT" } });
+  });
+
+  it("rolls back preparation before creating any resource when prerequisites fail", async () => {
+    const before = await controlPlaneCounts();
+    await expect(repository.prepare(workspaceId, {
+      kind: "reuse", projectId, authoringSessionId: randomUUID(),
+      idempotencyKey: `missing-reuse-${randomUUID()}`,
+    })).rejects.toMatchObject({ response: { code: "AUTHORING_PREPARATION_REUSE_UNAVAILABLE" } });
+    expect(await controlPlaneCounts()).toEqual(before);
+  });
+
+  it("rolls back Mission, Objective, draft, and idempotency after a late insert failure", async () => {
+    const conflictingSessionId = sessionIds[0]!;
+    const key = `late-failure-${randomUUID()}`;
+    const prior = await database.query<{ idempotencyKey: string }>(
+      `UPDATE adaptive_sessions SET idempotency_key=$2 WHERE id=$1
+       RETURNING idempotency_key AS "idempotencyKey"`, [conflictingSessionId, `prepare:${key}`]);
+    const before = await controlPlaneCounts();
+    await expect(repository.prepare(workspaceId, preparationInput(key))).rejects.toMatchObject({ code: "23505" });
+    expect(await controlPlaneCounts()).toEqual(before);
+    const record = await database.query(`SELECT 1 FROM idempotency_records WHERE scope=$1 AND key=$2`,
+      [`authoring:prepare:${projectId}`, key]);
+    expect(record.rowCount).toBe(0);
+    await database.query(`UPDATE adaptive_sessions SET idempotency_key=$2 WHERE id=$1`,
+      [conflictingSessionId, `restored-${randomUUID()}`]);
+    expect(prior.rowCount).toBe(1);
+  });
+
   it("rejects a Flow draft outside the supplied Mission and Objective chain", async () => {
     await expect(
       repository.create(workspaceId, {
@@ -960,6 +1012,26 @@ integration("adaptive session repository integration", () => {
       environmentId,
       objective: "Inspect account details",
       allowedOrigins: ["https://example.test"],
+      idempotencyKey,
+    };
+  }
+
+  function preparationInput(idempotencyKey: string) {
+    return {
+      kind: "create" as const, projectId, environmentId,
+      mission: { title: `Prepared ${randomUUID()}`, originalInstruction: "Prepare only",
+        provider: "codex" as const, instructionSnapshot: "Prepare only", distinctReason: "Integration fixture" },
+      objective: { title: "Prepared objective", description: "No browser work", dependencies: [],
+        completionCriteria: [{ description: "Lifecycle is coherent", required: true }], order: 0 },
+      draft: { name: "Prepared draft", description: "No execution", purpose: "diagnostic" as const,
+        content: { objective: "Prepare", preconditions: [], expectedOutcomes: ["Ready"], prohibitedSideEffects: ["No navigation"] },
+        plan: { name: "Unexecuted", objective: "Prepare", preconditions: [], allowedOrigins: ["https://example.test"],
+          budgets: { maxActions: 1, maxDurationMs: 10_000, maxNavigations: 1 }, checkpoints: [],
+          steps: [{ id: "not-executed", title: "Reserved",
+            action: { type: "navigate" as const, url: "https://example.test" }, assertions: [],
+            onFailure: "stop" as const, evidence: [], captureIntent: "final" as const }] } },
+      authoring: { objective: "Prepare", allowedOrigins: ["https://example.test"],
+        turnBudgets: { maxOperations: 1, maxDurationMs: 10_000 }, initialProtectedReferenceIds: [] },
       idempotencyKey,
     };
   }

@@ -14,6 +14,10 @@ const service = {
   relateActivities: vi.fn(),
   startSession: vi.fn(async () => ({ agentSessionId: ids.session })),
   endSession: vi.fn(),
+  finalizeAgentWork: vi.fn(async () => ({
+    replayed: false, missionId: ids.mission, objectiveId: ids.objective,
+    missionStatus: "running", objectiveStatus: "passed", agentSessionStatus: "completed",
+  })),
   createObjective: vi.fn(async () => ({ id: ids.objective })),
   updateObjective: vi.fn(),
   attachFlow: vi.fn(),
@@ -123,5 +127,16 @@ describe("Mission HTTP contract", () => {
       ids.mission,
       expect.objectContaining({ title: "Corrected" }),
     );
+  });
+  it("routes one strict transactional finalization branch", async () => {
+    const response = await call("POST", `/api/missions/${ids.mission}/finalize-agent-work`, {
+      kind: "terminal_objective", missionId: ids.mission, objectiveId: ids.objective,
+      agentSessionId: ids.session, objectiveStatus: "passed", conclusion: "Verified",
+      sessionStatus: "completed", expectedMissionRevision: 2,
+      idempotencyKey: "finalize-agent-work-1",
+    });
+    expect(response.statusCode).toBe(201);
+    expect(service.finalizeAgentWork).toHaveBeenCalledWith(expect.anything(),
+      expect.objectContaining({ kind: "terminal_objective", objectiveStatus: "passed" }));
   });
 });

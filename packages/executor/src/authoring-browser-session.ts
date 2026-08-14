@@ -288,7 +288,16 @@ export async function createAuthoringBrowserSession(input: {
         const observation = await observe();
         // Context enrichment is informational. Its failure must never erase a
         // completed interaction outcome or manufacture mutation uncertainty.
-        const semanticPageContext = await observeSemanticPageContext(page!).catch(
+        const semanticPageContext = await observeSettledSemanticPageContext({
+          page: page!,
+          settle: action.type === "navigate" || expectedEffect.type === "navigation"
+            || expectedEffect.type === "new_page",
+          ...(interactionContext.signal ? { signal: interactionContext.signal } : {}),
+          maximumWaitMs: Math.min(
+            1_500,
+            "timeoutMs" in action && typeof action.timeoutMs === "number" ? action.timeoutMs : 1_500,
+          ),
+        }).catch(
           (error: unknown) => {
             console.warn(
               "SEMANTIC_PAGE_CONTEXT_UNAVAILABLE",
@@ -367,6 +376,51 @@ export async function createAuthoringBrowserSession(input: {
     await browser.close().catch(() => undefined);
     throw error;
   }
+}
+
+async function observeSettledSemanticPageContext(input: {
+  page: Page;
+  settle: boolean;
+  signal?: AbortSignal;
+  maximumWaitMs: number;
+}) {
+  if (!input.settle) return observeSemanticPageContext(input.page);
+  const deadline = performance.now() + input.maximumWaitMs;
+  let priorSignature: string | undefined;
+  while (!input.signal?.aborted && performance.now() <= deadline) {
+    const context = await observeSemanticPageContext(input.page);
+    if (context.controls.length > 0) {
+      const signature = JSON.stringify({
+        authority: {
+          pageId: context.authority.pageId,
+          documentEpoch: context.authority.documentEpoch,
+          url: context.authority.url,
+        },
+        controls: context.controls.map(({ reference: _reference, ...control }) => control),
+      });
+      if (signature === priorSignature) return context;
+      priorSignature = signature;
+    } else {
+      priorSignature = undefined;
+    }
+    await boundedDelay(Math.min(75, Math.max(0, deadline - performance.now())), input.signal);
+  }
+  // An empty or still-changing snapshot is not stable evidence. The completed
+  // interaction remains authoritative; callers may make a fresh observation.
+  return undefined;
+}
+
+function boundedDelay(milliseconds: number, signal?: AbortSignal) {
+  if (milliseconds <= 0 || signal?.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(done, milliseconds);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }
 
 function boundedAuthoringClose(stage: string, work: () => Promise<unknown>) {

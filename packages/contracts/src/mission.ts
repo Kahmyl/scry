@@ -219,6 +219,38 @@ export const endAgentSessionSchema = z
   .object({ status: agentSessionStatusSchema.exclude(["active"]) })
   .strict();
 
+export const finalizeAgentWorkSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("terminal_objective"),
+    missionId: uuidSchema,
+    objectiveId: uuidSchema,
+    agentSessionId: uuidSchema,
+    objectiveStatus: objectiveStatusSchema.extract(["passed", "failed", "blocked", "skipped"]),
+    conclusion: z.string().trim().min(1).max(5_000),
+    sessionStatus: agentSessionStatusSchema.extract(["completed", "failed"]),
+    expectedMissionRevision: z.number().int().nonnegative(),
+    idempotencyKey: missionIdempotencyKeySchema,
+  }).strict(),
+  z.object({
+    kind: z.literal("await_user"),
+    missionId: uuidSchema,
+    objectiveId: uuidSchema,
+    agentSessionId: uuidSchema,
+    pointer: missionResumePointerSchema,
+    expectedMissionRevision: z.number().int().nonnegative(),
+    idempotencyKey: missionIdempotencyKeySchema,
+  }).strict(),
+]);
+
+export const finalizedAgentWorkSchema = z.object({
+  replayed: z.boolean(),
+  missionId: uuidSchema,
+  objectiveId: uuidSchema,
+  missionStatus: missionStatusSchema,
+  objectiveStatus: objectiveStatusSchema,
+  agentSessionStatus: agentSessionStatusSchema.exclude(["active"]),
+}).strict();
+
 export const createObjectiveSchema = missionContextSchema
   .extend({
     title: nameSchema,
@@ -304,6 +336,8 @@ export type CreateMissionInput = z.infer<typeof createMissionSchema>;
 export type UpdateMissionInput = z.infer<typeof updateMissionSchema>;
 export type StartAgentSessionInput = z.infer<typeof startAgentSessionSchema>;
 export type EndAgentSessionInput = z.infer<typeof endAgentSessionSchema>;
+export type FinalizeAgentWorkInput = z.infer<typeof finalizeAgentWorkSchema>;
+export type FinalizedAgentWork = z.infer<typeof finalizedAgentWorkSchema>;
 export type CreateObjectiveInput = z.infer<typeof createObjectiveSchema>;
 export type UpdateObjectiveInput = z.infer<typeof updateObjectiveSchema>;
 export type UpdateResumePointerInput = z.infer<typeof updateResumePointerSchema>;

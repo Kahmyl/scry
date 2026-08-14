@@ -8,6 +8,8 @@ import type {
   AgentDecisionBoundary,
   OperationOutcome,
   StartAdaptiveSessionInput,
+  PrepareFlowAuthoringInput,
+  PreparedFlowAuthoring,
   ExecutionPolicy,
   MissionAuthoringIntent,
   MissionAuthoringTurnResult,
@@ -43,9 +45,128 @@ const transitions: Readonly<Record<AdaptiveSessionState, readonly AdaptiveSessio
 export class AdaptiveSessionRepository {
   constructor(@Inject(Database) private readonly database: Database) {}
 
+  prepare(workspaceId: string | null, input: PrepareFlowAuthoringInput): Promise<PreparedFlowAuthoring> {
+    return this.database.transaction(async (client) => {
+      const q = bind(client);
+      const digest = stableDigest(input);
+      const idempotencyKey = input.idempotencyKey ?? `prepare-${digest}`;
+      const scope = `authoring:prepare:${input.projectId}`;
+      await q(`INSERT INTO idempotency_records(scope,key,request_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+        [scope, idempotencyKey, digest]);
+      const record = await q<{ requestHash: string; response: PreparedFlowAuthoring | null }>(
+        `SELECT request_hash AS "requestHash",response FROM idempotency_records WHERE scope=$1 AND key=$2 FOR UPDATE`,
+        [scope, idempotencyKey]);
+      if (record.rows[0]!.requestHash !== digest)
+        throw new ConflictException({ code: "AUTHORING_PREPARATION_IDEMPOTENCY_CONFLICT" });
+      if (record.rows[0]!.response) return { ...record.rows[0]!.response, replayed: true };
+
+      const project = await q(`SELECT id FROM projects WHERE id=$1 AND ($2::uuid IS NULL OR workspace_id=$2) FOR UPDATE`,
+        [input.projectId, workspaceId]);
+      if (!project.rowCount) throw new ConflictException({ code: "PROJECT_NOT_FOUND" });
+      if (input.kind === "reuse") {
+        const reusable = await q<Omit<PreparedFlowAuthoring, "replayed" | "reused" | "authoringReady" | "continuation">>(
+          `SELECT s.mission_id AS "missionId",s.agent_session_id AS "agentSessionId",
+                  s.active_objective_id AS "objectiveId",s.environment_id AS "environmentId",
+                  s.active_flow_draft_id AS "flowDraftId",s.id AS "authoringSessionId"
+           FROM adaptive_sessions s JOIN agent_sessions a ON a.id=s.agent_session_id AND a.status='active'
+           JOIN flow_drafts d ON d.id=s.active_flow_draft_id AND d.state='editing'
+           JOIN missions m ON m.id=s.mission_id AND m.status IN ('planning','running')
+           JOIN mission_objectives o ON o.id=s.active_objective_id AND o.mission_id=m.id
+             AND o.status IN ('pending','running')
+           WHERE s.id=$1 AND s.project_id=$2 AND s.state='active'
+             AND (s.decision_boundary IS NULL OR s.decision_boundary->>'type'='objective_completed')
+             AND NOT EXISTS (SELECT 1 FROM adaptive_operations operation WHERE operation.session_id=s.id
+               AND (operation.state='running' OR operation.mutation_outcome='unknown'))
+           FOR UPDATE OF s`,
+          [input.authoringSessionId, input.projectId]);
+        if (!reusable.rowCount) throw new ConflictException({ code: "AUTHORING_PREPARATION_REUSE_UNAVAILABLE" });
+        const response: PreparedFlowAuthoring = { ...reusable.rows[0]!, replayed: false, reused: true,
+          authoringReady: true, continuation: { nextSafeCapability: "advance_flow_authoring" } };
+        await q(`UPDATE idempotency_records SET response=$3::jsonb,completed_at=now() WHERE scope=$1 AND key=$2`,
+          [scope, idempotencyKey, JSON.stringify(response)]);
+        return response;
+      }
+
+      const environment = await q<{ policy: unknown; secretRefs: unknown }>(
+        `SELECT policy,secret_refs AS "secretRefs" FROM environments WHERE id=$1 AND project_id=$2`,
+        [input.environmentId, input.projectId]);
+      if (!environment.rowCount) throw new ConflictException({ code: "ENVIRONMENT_NOT_FOUND" });
+      const allowedOrigins = requireEnvironmentCapabilities(environment.rows[0]!, {
+        allowedOrigins: input.authoring.allowedOrigins,
+        initialProtectedReferenceIds: input.authoring.initialProtectedReferenceIds,
+      });
+      await this.requireActiveProtectedReferences(q, input.projectId, input.environmentId,
+        input.authoring.initialProtectedReferenceIds);
+      if (!input.mission.distinctReason) {
+        const duplicate = await q(`SELECT id FROM missions WHERE project_id=$1
+          AND status NOT IN ('completed','failed','cancelled')
+          AND (lower(title)=lower($2) OR lower(original_instruction)=lower($3))`,
+          [input.projectId, input.mission.title, input.mission.originalInstruction]);
+        if (duplicate.rowCount) throw new ConflictException({ code: "MISSION_CONTINUATION_REQUIRED" });
+      }
+      const missionId = randomUUID();
+      const agentSessionId = randomUUID();
+      const objectiveId = randomUUID();
+      const flowDraftId = randomUUID();
+      const authoringSessionId = randomUUID();
+      await q(`INSERT INTO missions(id,project_id,title,original_instruction,status,current_objective_id,revision)
+        VALUES($1,$2,$3,$4,'planning',$5,1)`, [missionId,input.projectId,input.mission.title,input.mission.originalInstruction,objectiveId]);
+      await q(`INSERT INTO agent_sessions(id,mission_id,provider,connection_id,instruction_snapshot,idempotency_key)
+        VALUES($1,$2,$3,$4,$5,$6)`, [agentSessionId,missionId,input.mission.provider,input.mission.connectionId ?? null,
+        input.mission.instructionSnapshot,`prepare:${idempotencyKey}`]);
+      await q(`INSERT INTO mission_objectives(id,mission_id,title,description,dependencies,completion_criteria,objective_order)
+        VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7)`, [objectiveId,missionId,input.objective.title,input.objective.description,
+        JSON.stringify(input.objective.dependencies),JSON.stringify(input.objective.completionCriteria),input.objective.order]);
+      await q(`INSERT INTO flow_drafts(id,project_id,mission_id,objective_id,environment_id,name,description,purpose,content,state,version,plan,created_by_agent_session_id)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,'editing',1,$10::jsonb,$11)`,
+        [flowDraftId,input.projectId,missionId,objectiveId,input.environmentId,input.draft.name,input.draft.description,input.draft.purpose,
+          JSON.stringify(input.draft.content),JSON.stringify(input.draft.plan),agentSessionId]);
+      await q(`INSERT INTO flow_draft_events(draft_id,version,type,agent_session_id,summary,safe_metadata)
+        VALUES($1,1,'created',$2,'Flow draft created by deterministic preparation',$3::jsonb)`,
+        [flowDraftId,agentSessionId,JSON.stringify({ idempotencyKey })]);
+      await q(`INSERT INTO adaptive_sessions(id,project_id,environment_id,correlation_id,state,objective,allowed_origins,
+        mission_id,objective_id,flow_draft_id,active_objective_id,active_flow_draft_id,agent_session_id,idempotency_key,
+        authoring_turn_budgets,protected_reference_allowlist)
+        VALUES($1,$2,$3,$4,'active',$5,$6::jsonb,$7,$8,$9,$8,$9,$10,$11,$12::jsonb,$13::jsonb)`,
+        [authoringSessionId,input.projectId,input.environmentId,randomUUID(),input.authoring.objective,JSON.stringify(allowedOrigins),
+          missionId,objectiveId,flowDraftId,agentSessionId,`prepare:${idempotencyKey}`,
+          JSON.stringify(input.authoring.turnBudgets),JSON.stringify(input.authoring.initialProtectedReferenceIds)]);
+      await q(`INSERT INTO mission_authoring_session_flows(session_id,mission_id,objective_id,flow_draft_id,purpose,sequence)
+        VALUES($1,$2,$3,$4,$5,1)`, [authoringSessionId,missionId,objectiveId,flowDraftId,input.draft.purpose]);
+      await q(`INSERT INTO adaptive_session_events(session_id,sequence,type,safe_facts,idempotency_key) VALUES
+        ($1,1,'session_created','{}'::jsonb,$2),($1,2,'provisioning_started','{}'::jsonb,NULL),($1,3,'session_activated','{}'::jsonb,NULL)`,
+        [authoringSessionId,`prepare:${idempotencyKey}`]);
+      await q(`UPDATE adaptive_sessions SET version=3 WHERE id=$1`, [authoringSessionId]);
+      await q(`INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata) VALUES
+        ($1,NULL,$2,'mission_created',$3,$4::jsonb),
+        ($1,$5,$2,'objective_created',$6,'{}'::jsonb),
+        ($1,$5,$2,'authoring','Flow authoring prepared atomically',$7::jsonb)`,
+        [missionId,agentSessionId,`Mission created: ${input.mission.title}`,JSON.stringify({ projectId: input.projectId }),
+          objectiveId,`Objective created: ${input.objective.title}`,JSON.stringify({ flowDraftId, authoringSessionId })]);
+      const response: PreparedFlowAuthoring = { replayed:false,reused:false,missionId,agentSessionId,objectiveId,
+        environmentId:input.environmentId,flowDraftId,authoringSessionId,authoringReady:true,
+        continuation:{nextSafeCapability:"advance_flow_authoring"} };
+      await q(`UPDATE idempotency_records SET response=$3::jsonb,completed_at=now() WHERE scope=$1 AND key=$2`,
+        [scope,idempotencyKey,JSON.stringify(response)]);
+      return response;
+    });
+  }
+
   create(workspaceId: string | null, input: StartAdaptiveSessionInput) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
+      const lifecycle = await q<{ missionStatus: string; objectiveStatus: string; agentStatus: string }>(
+        `SELECT m.status AS "missionStatus",o.status AS "objectiveStatus",a.status AS "agentStatus"
+         FROM missions m JOIN mission_objectives o ON o.mission_id=m.id AND o.id=$2
+         JOIN agent_sessions a ON a.mission_id=m.id AND a.id=$3
+         WHERE m.id=$1 AND m.project_id=$4 FOR UPDATE OF m,o,a`,
+        [input.missionId,input.objectiveId,input.agentSessionId,input.projectId]);
+      if (!lifecycle.rowCount)
+        throw new ConflictException({ code: "MISSION_FLOW_AUTHORING_OWNERSHIP_INVALID" });
+      if (!["planning","running"].includes(lifecycle.rows[0]!.missionStatus)
+          || !["pending","running"].includes(lifecycle.rows[0]!.objectiveStatus)
+          || lifecycle.rows[0]!.agentStatus !== "active")
+        throw new ConflictException({ code: "MISSION_FLOW_AUTHORING_LIFECYCLE_CLOSED" });
       const environment = await this.requireProjectEnvironment(
         q,
         workspaceId,

@@ -103,6 +103,8 @@ describe("current Scry MCP surface", () => {
     expect(tools.map(({ name }) => name)).toEqual([
       "get_capabilities",
       "list_projects",
+      "get_operating_context",
+      "prepare_flow_authoring",
       "start_flow_authoring",
       "advance_flow_authoring",
       "recover_trusted_script_origins",
@@ -129,6 +131,7 @@ describe("current Scry MCP surface", () => {
       "create_mission_objective",
       "update_mission_objective",
       "attach_flow_to_mission",
+      "finalize_agent_work",
       "list_environments",
       "create_test_environment",
       "list_project_credentials",
@@ -228,6 +231,13 @@ describe("current Scry MCP surface", () => {
       .toBe("^context-control-[a-f0-9]{32}$");
     expect(tools.find(({ name }) => name === "list_projects")?.description)
       .toContain("MCP has no project-creation capability");
+    expect(tools.find(({ name }) => name === "get_operating_context")?.description)
+      .toContain("never returns protected values");
+    expect(tools.find(({ name }) => name === "prepare_flow_authoring")?.description)
+      .toContain("performs no browser navigation");
+    const operatingContextInput = tools.find(({ name }) => name === "get_operating_context")!
+      .inputSchema as any;
+    expect(operatingContextInput.properties.requiredCredentialReferences.maxItems).toBe(20);
     expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
       .toContain("unknown forbids blind retry");
     expect(tools.find(({ name }) => name === "start_flow_authoring")?.description)
@@ -236,6 +246,8 @@ describe("current Scry MCP surface", () => {
       .toContain("observable role/name/label/placeholder/text/testId fact");
     expect(tools.find(({ name }) => name === "end_agent_session")?.description)
       .toContain("Required final lifecycle write");
+    expect(tools.find(({ name }) => name === "finalize_agent_work")?.description)
+      .toContain("cannot terminalize an UNKNOWN");
     await client.close();
     await server.close();
   });

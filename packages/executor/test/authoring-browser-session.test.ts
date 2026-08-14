@@ -18,7 +18,10 @@ beforeAll(async () => {
         : request.url === "/docs"
           ? "API Documentation"
           : "First page";
-    const body = request.url === "/protected-controls" ? `
+    const body = request.url === "/delayed-app" ? `
+      <main id="app"></main>
+      <script>setTimeout(() => { document.querySelector('#app').innerHTML = '<h1>Ready application</h1><button>Continue</button>'; }, 300)</script>
+    ` : request.url === "/protected-controls" ? `
       <main>
         <h1>Protected controls</h1>
         <form aria-label="Change password">
@@ -64,6 +67,37 @@ afterAll(async () => {
 });
 
 describe("persistent authoring browser session", () => {
+  it("returns a bounded meaningful semantic context from one SPA navigation", async () => {
+    const policy = executionPolicySchema.parse({
+      allowedOrigins: [origin], trustedScriptOrigins: [origin], allowPrivateNetwork: true,
+    });
+    const session = await createAuthoringBrowserSession({
+      sessionId: "99999999-9999-4999-8999-999999999999",
+      environmentId: "authoring-test-environment",
+      veilAdmissionKey: "authoring-test-only-veil-admission-key-32-bytes",
+      browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+      policy,
+      openBrowser: openTestBrowser,
+      executeInteraction: kernelInteractionExecutor({
+        sessionId: "99999999-9999-4999-8999-999999999999",
+        environmentId: "authoring-test-environment",
+        policy,
+      }),
+    });
+    try {
+      const result = await session.interact({
+        type: "navigate", url: `${origin}/delayed-app`, timeoutMs: 2_000,
+      });
+      expect(result.outcome).toMatchObject({ functionalResult: "succeeded" });
+      expect(result.outcome.semanticPageContext?.controls).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "heading", name: "Ready application" }),
+        expect.objectContaining({ role: "button", name: "Continue" }),
+      ]));
+    } finally {
+      await session.close();
+    }
+  }, 20_000);
+
   it("keeps one Veil-authorized page alive across observations and interactions", async () => {
     const policy = executionPolicySchema.parse({
       allowedOrigins: [origin],

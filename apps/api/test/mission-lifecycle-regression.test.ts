@@ -3,6 +3,31 @@ import { OrchestrationService } from "../src/orchestration/index.js";
 import { MissionService } from "../src/missions/index.js";
 
 describe("Mission lifecycle regression", () => {
+  it("refuses finalization while authoring can still dispatch", async () => {
+    let requestHash = "";
+    const query = vi.fn(async (text: string, values: unknown[] = []) => {
+      if (text.includes("INSERT INTO idempotency_records")) requestHash = String(values[2]);
+      if (text.includes("idempotency_records") && text.includes("SELECT"))
+        return { rowCount: 1, rows: [{ requestHash, response: null }] };
+      if (text.includes("FROM missions m JOIN projects"))
+        return { rowCount: 1, rows: [{ status: "running", revision: 1 }] };
+      if (text.includes("FROM agent_sessions") || text.includes("FROM mission_objectives"))
+        return { rowCount: 1, rows: [{ status: "running" }] };
+      if (text.includes("FROM adaptive_sessions"))
+        return { rowCount: 1, rows: [{ state: "active" }] };
+      return { rowCount: 1, rows: [] };
+    });
+    const service = new MissionService({ transaction: (work: any) => work({ query }) } as never);
+    await expect(service.finalizeAgentWork({ kind: "service", subject: "scry-service" }, {
+      kind: "terminal_objective", missionId: "11111111-1111-4111-8111-111111111111",
+      objectiveId: "22222222-2222-4222-8222-222222222222",
+      agentSessionId: "33333333-3333-4333-8333-333333333333",
+      objectiveStatus: "passed", conclusion: "Verified", sessionStatus: "completed",
+      expectedMissionRevision: 1, idempotencyKey: "finalize-active-authoring",
+    })).rejects.toMatchObject({ response: expect.objectContaining({ code: "MISSION_AUTHORING_CLOSE_REQUIRED" }) });
+    expect(query.mock.calls.some(([text]) => String(text).includes("UPDATE mission_objectives"))).toBe(false);
+  });
+
   it("atomically enters and leaves durable non-terminal user waiting", async () => {
     const objectiveId = "33333333-3333-4333-8333-333333333333";
     const missionId = "11111111-1111-4111-8111-111111111111";

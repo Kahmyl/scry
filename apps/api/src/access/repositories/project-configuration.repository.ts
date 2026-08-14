@@ -9,11 +9,13 @@ import type {
   CreateCredentialInput,
   CreateEnvironmentInput,
   CreateProjectInput,
+  GetOperatingContextInput,
+  OperatingContext,
   UpdateCredentialInput,
   UpdateEnvironmentInput,
   ValidateCredentialReferencesInput,
 } from "@scry/contracts";
-import { executionPolicySchema } from "@scry/contracts";
+import { executionPolicySchema, missionResumePointerSchema } from "@scry/contracts";
 
 import type { Principal } from "../../auth/index.js";
 import { Database } from "../../infrastructure/index.js";
@@ -44,6 +46,161 @@ export class ProjectConfigurationRepository {
         [workspaceId],
       )
     ).rows;
+  }
+
+  async operatingContext(
+    principal: Principal,
+    input: GetOperatingContextInput,
+  ): Promise<OperatingContext> {
+    return this.database.transaction(async (query) => {
+      await query.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const workspaceId = principal.kind === "user" ? principal.workspaceId : null;
+      const projects = await query.query<{ id: string; name: string; description: string }>(
+      `SELECT id,name,description FROM projects
+       WHERE ($1::uuid IS NULL OR workspace_id=$1)
+         AND ($2::uuid IS NULL OR id=$2)
+       ORDER BY created_at DESC LIMIT 6`,
+      [workspaceId, input.projectId ?? null],
+    );
+    const projectCount = projects.rowCount ?? projects.rows.length;
+    if (input.projectId && projectCount === 0) {
+      throw new NotFoundException({ code: "PROJECT_NOT_FOUND" });
+    }
+    const selected = input.projectId
+      ? projects.rows[0]
+      : projectCount === 1 ? projects.rows[0] : undefined;
+    const projectCandidates = projects.rows.slice(0, 5);
+    const empty: OperatingContext = {
+      selection: {
+        project: null,
+        requiresProjectSelection: projectCount > 1,
+        projectCandidates: { items: projectCandidates, truncated: projectCount > 5 },
+      },
+      missions: { candidates: { items: [], truncated: false } },
+      credentials: { items: [], truncated: false },
+      environments: { items: [], truncated: false },
+      authoring: {
+        reusable: { items: [], truncated: false }, ready: false,
+        missing: ["project", "mission", "objective", "environment", "flow_draft", "authoring_session"],
+      },
+      continuation: {
+        deterministicPreparationAvailable: false,
+        userAuthorityRequired: projectCount > 1,
+        safeActions: projectCount > 1 ? ["get_operating_context_with_project"] : ["create_project_in_dashboard"],
+        blockerCode: projectCount > 1 ? "PROJECT_SELECTION_REQUIRED" : "NO_PROJECT",
+      },
+    };
+    if (!selected) return empty;
+
+      const requiredCredentialReferences = input.requiredCredentialReferences;
+      const [missions, credentials, environments, authoring] = await Promise.all([
+        query.query<{ id: string; title: string; status: "planning" | "running" | "blocked" | "awaiting_user"; revision: number; currentObjectiveId: string | null; resumePointer: unknown }>(
+          `SELECT id,title,status,revision,current_objective_id AS "currentObjectiveId",
+                  resume_pointer AS "resumePointer"
+           FROM missions WHERE project_id=$1
+             AND status IN ('planning','running','blocked','awaiting_user')
+             AND ($2::uuid IS NULL OR id=$2)
+           ORDER BY updated_at DESC LIMIT 6`, [selected.id, input.missionId ?? null]),
+        query.query<{ referenceId: string; name: string }>(
+          `SELECT id AS "referenceId",name FROM project_credentials
+           WHERE project_id=$1 AND deleted_at IS NULL ORDER BY name LIMIT 21`, [selected.id]),
+        query.query<{ id: string; name: string; baseOrigin: string; secretRefs: string[]; policy: Record<string, unknown> }>(
+          `SELECT id,name,base_origin AS "baseOrigin",secret_refs AS "secretRefs",policy
+           FROM environments WHERE project_id=$1
+           ORDER BY (
+             ($2::text IS NULL OR base_origin=$2 OR policy->'allowedOrigins' ? $2)
+             AND (secret_refs @> $3::jsonb)
+           ) DESC,created_at LIMIT 11`,
+          [selected.id, input.requiredOrigin ?? null, JSON.stringify(requiredCredentialReferences)]),
+        query.query<{ sessionId: string; missionId: string; objectiveId: string; flowDraftId: string; environmentId: string; state: "active" }>(
+          `SELECT s.id AS "sessionId",s.mission_id AS "missionId",
+                  s.active_objective_id AS "objectiveId",s.active_flow_draft_id AS "flowDraftId",
+                  s.environment_id AS "environmentId",s.state
+           FROM adaptive_sessions s
+           JOIN missions m ON m.id=s.mission_id AND m.status IN ('planning','running')
+           JOIN mission_objectives o ON o.id=s.active_objective_id AND o.status IN ('pending','running')
+           JOIN agent_sessions a ON a.id=s.agent_session_id AND a.status='active'
+           JOIN flow_drafts d ON d.id=s.active_flow_draft_id AND d.state='editing'
+           WHERE s.project_id=$1 AND s.state='active'
+             AND (s.decision_boundary IS NULL OR s.decision_boundary->>'type'='objective_completed')
+             AND ($2::uuid IS NULL OR s.mission_id=$2)
+             AND NOT EXISTS (SELECT 1 FROM adaptive_operations operation WHERE operation.session_id=s.id
+               AND (operation.state='running' OR operation.mutation_outcome='unknown'))
+           ORDER BY s.updated_at DESC LIMIT 6`, [selected.id, input.missionId ?? null]),
+      ]);
+      const snapshot = { missions, credentials, environments, authoring };
+    const missionItems = snapshot.missions.rows.slice(0, 5).map((mission) => ({
+      ...mission,
+      resumePointer: projectOperatingResumePointer(mission.resumePointer),
+    }));
+    if (input.missionId && missionItems.length === 0)
+      throw new NotFoundException({ code: "MISSION_NOT_FOUND" });
+    const selectedMissionId = input.missionId
+      ? missionItems[0]!.id
+      : missionItems.length === 1 ? missionItems[0]?.id : undefined;
+    const environmentItems = snapshot.environments.rows.slice(0, 10).map((environment) => {
+      const allowedOrigins = Array.isArray(environment.policy.allowedOrigins)
+        ? environment.policy.allowedOrigins.filter((value): value is string => typeof value === "string") : [];
+      const originCompatible = !input.requiredOrigin || environment.baseOrigin === input.requiredOrigin
+        || allowedOrigins.includes(input.requiredOrigin);
+      const credentialsCompatible = requiredCredentialReferences.every((reference) =>
+        environment.secretRefs.includes(reference));
+      return {
+        id: environment.id, name: environment.name, baseOrigin: environment.baseOrigin,
+        compatible: originCompatible && credentialsCompatible,
+        incompatibilities: [
+          ...(!originCompatible ? ["origin_not_allowed" as const] : []),
+          ...(!credentialsCompatible ? ["credential_not_authorized" as const] : []),
+        ],
+        credentialReferenceIds: environment.secretRefs.slice(0, 20),
+      };
+    });
+    const compatibleEnvironmentIds = new Set(environmentItems
+      .filter(({ compatible }) => compatible).map(({ id }) => id));
+    const reusable = snapshot.authoring.rows.slice(0, 5);
+    const compatibleReusable = reusable.filter(({ missionId, environmentId }) =>
+      missionId === selectedMissionId && compatibleEnvironmentIds.has(environmentId));
+    const compatibleEnvironment = environmentItems.some(({ compatible }) => compatible);
+    const missing: OperatingContext["authoring"]["missing"] = [];
+    if (!selectedMissionId) missing.push("mission");
+    if (!missionItems.some(({ id, currentObjectiveId }) => id === selectedMissionId && currentObjectiveId)) missing.push("objective");
+    if (!compatibleEnvironment) missing.push("environment");
+    if (compatibleReusable.length === 0) missing.push("flow_draft", "authoring_session");
+    const requirementBlocked = Boolean(input.requiredOrigin || requiredCredentialReferences.length) && !compatibleEnvironment;
+      return {
+      selection: {
+        project: { id: selected.id, name: selected.name }, requiresProjectSelection: false,
+        projectCandidates: { items: projectCandidates, truncated: projectCount > 5 },
+      },
+      missions: {
+        ...(selectedMissionId ? { selectedMissionId } : {}),
+        candidates: { items: missionItems, truncated: (snapshot.missions.rowCount ?? snapshot.missions.rows.length) > 5 },
+      },
+      credentials: { items: snapshot.credentials.rows.slice(0, 20), truncated: (snapshot.credentials.rowCount ?? snapshot.credentials.rows.length) > 20 },
+      environments: { items: environmentItems, truncated: (snapshot.environments.rowCount ?? snapshot.environments.rows.length) > 10 },
+      authoring: {
+        reusable: { items: compatibleReusable, truncated: (snapshot.authoring.rowCount ?? snapshot.authoring.rows.length) > 5 },
+        ready: compatibleReusable.length > 0 && missing.length === 0, missing,
+      },
+      continuation: {
+        deterministicPreparationAvailable: compatibleReusable.length > 0
+          || (missionItems.length === 0 && compatibleEnvironment),
+        userAuthorityRequired: !selectedMissionId && missionItems.length > 1,
+        safeActions: missing.length === 0
+          ? ["advance_flow_authoring"]
+          : !selectedMissionId && missionItems.length > 1
+            ? ["get_operating_context_with_mission"]
+            : requirementBlocked
+              ? ["create_test_environment_or_authorize_credentials"]
+              : missionItems.length === 0
+                ? ["prepare_flow_authoring"]
+                : ["resume_or_start_distinct_mission"],
+        ...(!selectedMissionId && missionItems.length > 1
+          ? { blockerCode: "MISSION_SELECTION_REQUIRED" as const }
+          : requirementBlocked ? { blockerCode: "REQUIREMENTS_UNSATISFIED" as const } : {}),
+      },
+      };
+    });
   }
 
   async listEnvironments(principal: Principal, projectId: string) {
@@ -375,6 +532,50 @@ export class ProjectConfigurationRepository {
     if (principal.kind === "user" && principal.role === "viewer")
       throw new ForbiddenException("Workspace viewers have read-only access");
   }
+}
+
+function projectOperatingResumePointer(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const pointer = value as Record<string, unknown>;
+  const external = pointer.externalInput && typeof pointer.externalInput === "object"
+    && !Array.isArray(pointer.externalInput)
+    ? pointer.externalInput as Record<string, unknown> : undefined;
+  const authority = external?.authority && typeof external.authority === "object"
+    && !Array.isArray(external.authority) ? external.authority as Record<string, unknown> : undefined;
+  const continuation = external?.continuation && typeof external.continuation === "object"
+    && !Array.isArray(external.continuation) ? external.continuation as Record<string, unknown> : undefined;
+  const projected = {
+    objectiveId: pointer.objectiveId,
+    recommendedAction: pointer.recommendedAction,
+    ...(typeof pointer.flowId === "string" ? { flowId: pointer.flowId } : {}),
+    ...(typeof pointer.revisionId === "string" ? { revisionId: pointer.revisionId } : {}),
+    ...(typeof pointer.runId === "string" ? { runId: pointer.runId } : {}),
+    ...(typeof pointer.explanation === "string" ? { explanation: pointer.explanation.slice(0, 2_000) } : {}),
+    ...(external ? { externalInput: {
+      condition: external.condition,
+      ...(typeof external.cause === "string" ? { cause: external.cause.slice(0, 2_000) } : {}),
+      ...(typeof external.affectedOperation === "string" ? { affectedOperation: external.affectedOperation.slice(0, 500) } : {}),
+      ...(typeof external.affectedResource === "string" ? { affectedResource: external.affectedResource.slice(0, 500) } : {}),
+      effectState: external.effectState,
+      authority: {
+        required: authority?.required, type: authority?.type,
+        ...(typeof authority?.reason === "string" ? { reason: authority.reason.slice(0, 2_000) } : {}),
+      },
+      availableCapabilities: Array.isArray(external.availableCapabilities) ? external.availableCapabilities.slice(0, 20) : [],
+      constraints: Array.isArray(external.constraints) ? external.constraints.slice(0, 50) : [],
+      consequences: Array.isArray(external.consequences) ? external.consequences.slice(0, 50) : [],
+      continuation: {
+        retryCurrentOperation: continuation?.retryCurrentOperation,
+        freshObservationRequired: continuation?.freshObservationRequired,
+        newOperationRequired: continuation?.newOperationRequired,
+        newDraftRequired: continuation?.newDraftRequired,
+        newSessionRequired: continuation?.newSessionRequired,
+      },
+      waiting: external.waiting, terminal: external.terminal, resumeRef: external.resumeRef,
+    } } : {}),
+  };
+  const parsed = missionResumePointerSchema.safeParse(projected);
+  return parsed.success ? parsed.data : null;
 }
 
 function isPostgresUniqueViolation(error: unknown): error is { code: "23505" } {
