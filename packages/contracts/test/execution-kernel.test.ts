@@ -54,6 +54,26 @@ describe("execution kernel contracts", () => {
     });
   });
 
+  it("binds pre-dispatch authoring recovery to a fresh intent turn, never pending continuation", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(agentDecisionBoundarySchema.parse({
+      type: "environment_unavailable",
+      reasonCode: "BROWSER_RUNTIME_UNAVAILABLE",
+      safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+      authoringRecovery: {
+        sessionId: id, missionId: id, objectiveId: id, flowDraftId: id,
+        environmentId: id, failedOperationId: "open", sourceTurnId: id,
+        environmentResourceExists: true,
+        executionReadiness: "runtime_reprovision_required",
+        preservesCurrentFlow: true,
+        recoveryTool: "advance_flow_authoring", recoveryKind: "intents",
+        requiresPendingTurn: false, requiresFreshIdempotencyKey: true,
+      },
+    })).toMatchObject({ authoringRecovery: {
+      recoveryKind: "intents", requiresPendingTurn: false, preservesCurrentFlow: true,
+    } });
+  });
+
   it("admits only bounded authoritative semantic page context", () => {
     const context = {
       schemaVersion: 1 as const,

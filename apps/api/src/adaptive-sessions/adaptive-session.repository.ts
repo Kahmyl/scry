@@ -16,6 +16,7 @@ import type {
   RecoverTrustedOriginsInput,
 } from "@scry/contracts";
 import {
+  agentDecisionBoundarySchema,
   executionPolicySchema,
   missionAuthoringIntentSchema,
   missionAuthoringTurnResultSchema,
@@ -150,16 +151,16 @@ export class AdaptiveSessionRepository {
       await q(`INSERT INTO adaptive_sessions(id,project_id,environment_id,correlation_id,state,objective,allowed_origins,
         mission_id,objective_id,flow_draft_id,active_objective_id,active_flow_draft_id,agent_session_id,idempotency_key,
         authoring_turn_budgets,protected_reference_allowlist)
-        VALUES($1,$2,$3,$4,'active',$5,$6::jsonb,$7,$8,$9,$8,$9,$10,$11,$12::jsonb,$13::jsonb)`,
+        VALUES($1,$2,$3,$4,'provisioning',$5,$6::jsonb,$7,$8,$9,$8,$9,$10,$11,$12::jsonb,$13::jsonb)`,
         [authoringSessionId,input.projectId,input.environmentId,randomUUID(),input.authoring.objective,JSON.stringify(allowedOrigins),
           missionId,objectiveId,flowDraftId,agentSessionId,`prepare:${idempotencyKey}`,
           JSON.stringify(input.authoring.turnBudgets),JSON.stringify(input.authoring.initialProtectedReferenceIds)]);
       await q(`INSERT INTO mission_authoring_session_flows(session_id,mission_id,objective_id,flow_draft_id,purpose,sequence)
         VALUES($1,$2,$3,$4,$5,1)`, [authoringSessionId,missionId,objectiveId,flowDraftId,input.draft.purpose]);
       await q(`INSERT INTO adaptive_session_events(session_id,sequence,type,safe_facts,idempotency_key) VALUES
-        ($1,1,'session_created','{}'::jsonb,$2),($1,2,'provisioning_started','{}'::jsonb,NULL),($1,3,'session_activated','{}'::jsonb,NULL)`,
+        ($1,1,'session_created','{}'::jsonb,$2),($1,2,'provisioning_started','{}'::jsonb,NULL)`,
         [authoringSessionId,`prepare:${idempotencyKey}`]);
-      await q(`UPDATE adaptive_sessions SET version=3 WHERE id=$1`, [authoringSessionId]);
+      await q(`UPDATE adaptive_sessions SET version=2 WHERE id=$1`, [authoringSessionId]);
       await q(`INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata) VALUES
         ($1,NULL,$2,'mission_created',$3,$4::jsonb),
         ($1,$5,$2,'objective_created',$6,'{}'::jsonb),
@@ -250,8 +251,6 @@ export class AdaptiveSessionRepository {
       );
       await this.appendEvent(q, id, "session_created", {}, input.idempotencyKey);
       await this.transitionLocked(q, id, "created", "provisioning", "provisioning_started", {});
-      if (!initialFlow.predecessorRunId)
-        await this.transitionLocked(q, id, "provisioning", "active", "session_activated", {});
       return { id, replayed: false };
     });
   }
@@ -453,11 +452,60 @@ export class AdaptiveSessionRepository {
     inputDigest: string;
     budgets: { maxOperations: number; maxDurationMs: number };
     intents: MissionAuthoringIntent[];
+    recoveryBinding?: NonNullable<AgentDecisionBoundary["authoringRecovery"]>;
   }) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
       const session = await this.requireSession(q, input.workspaceId, input.sessionId, true);
       if (session.state !== "active") throw new ConflictException({ code: "ADAPTIVE_SESSION_NOT_ACTIVE" });
+      const durableBoundary = agentDecisionBoundarySchema.safeParse(session.decisionBoundary);
+      const requiredRecovery = durableBoundary.success ? durableBoundary.data.authoringRecovery : undefined;
+      if (requiredRecovery && !input.recoveryBinding) throw new ConflictException({
+        code: "MISSION_AUTHORING_RECOVERY_BINDING_REQUIRED",
+        refreshedDecisionBoundary: durableBoundary.data,
+        safeActions: ["get_flow_authoring"],
+      });
+      if (input.recoveryBinding) {
+        const boundary = durableBoundary;
+        const current = requiredRecovery;
+        if (!current || stableDigest(current) !== stableDigest(input.recoveryBinding)) {
+          throw new ConflictException({
+            code: "MISSION_AUTHORING_RECOVERY_STALE",
+            refreshedDecisionBoundary: boundary.success ? boundary.data : null,
+            safeActions: ["get_flow_authoring"],
+          });
+        }
+        const bound = await q<{ sourceIntent: unknown }>(
+          `SELECT operation.authoring_intent AS "sourceIntent" FROM adaptive_operations operation
+             JOIN mission_authoring_turns turn ON turn.id=$3 AND turn.session_id=operation.session_id
+             JOIN adaptive_sessions session ON session.id=operation.session_id
+             JOIN missions mission ON mission.id=session.mission_id AND mission.status IN ('planning','running')
+             JOIN mission_objectives objective ON objective.id=session.active_objective_id
+               AND objective.mission_id=mission.id AND objective.status IN ('pending','running')
+             JOIN flow_drafts draft ON draft.id=session.active_flow_draft_id
+               AND draft.mission_id=mission.id AND draft.state='editing'
+             JOIN environments environment ON environment.id=session.environment_id
+               AND environment.project_id=session.project_id
+             WHERE operation.session_id=$1 AND operation.operation_id=$2
+               AND operation.mutation_outcome='not_applied' AND turn.state='decision_required'
+               AND session.mission_id=$4 AND session.active_objective_id=$5
+               AND session.active_flow_draft_id=$6 AND session.environment_id=$7
+               AND operation.objective_id=$5 AND operation.flow_draft_id=$6`,
+          [input.sessionId, current.failedOperationId, current.sourceTurnId ?? null,
+            current.missionId, current.objectiveId, current.flowDraftId, current.environmentId],
+        );
+        const sourceIntent = bound.rowCount
+          ? missionAuthoringIntentSchema.safeParse(bound.rows[0]!.sourceIntent) : null;
+        const requestedIntents = input.intents.map((intent) => missionAuthoringIntentSchema.parse(intent));
+        if (!sourceIntent?.success || stableDigest(requestedIntents) !== stableDigest([sourceIntent.data]))
+          throw new ConflictException({
+          code: "MISSION_AUTHORING_RECOVERY_STALE",
+          refreshedDecisionBoundary: boundary.success ? boundary.data : null,
+          safeActions: ["get_flow_authoring"],
+        });
+        await q(`UPDATE adaptive_sessions SET decision_boundary=NULL,version=version+1,updated_at=now()
+          WHERE id=$1`, [input.sessionId]);
+      }
       const existing = await q<{ id: string; inputDigest: string; state: string; safeResponse: MissionAuthoringTurnResult | null; currentPhase: string; stale: boolean }>(
         `SELECT id,input_digest AS "inputDigest",state,safe_response AS "safeResponse",current_phase AS "currentPhase",
                 updated_at < now()-(($3::int+5000)*interval '1 millisecond') AS stale
@@ -534,7 +582,15 @@ export class AdaptiveSessionRepository {
           throw new ConflictException({ code: "MISSION_AUTHORING_CONTINUATION_IDEMPOTENCY_CONFLICT" });
         return { ...stored, replayed: true };
       }
-      if (current.state !== "pending") throw new ConflictException({ code: "MISSION_AUTHORING_TURN_NOT_PENDING" });
+      if (current.state !== "pending") {
+        throw new ConflictException({
+          code: "MISSION_AUTHORING_RECOVERY_STALE",
+          requestedTurnId: input.turnId,
+          currentTurnState: current.state,
+          refreshedDecisionBoundary: current.safeResponse?.decisionBoundary ?? null,
+          safeActions: current.safeResponse?.decisionBoundary?.safeActions ?? ["get_flow_authoring"],
+        });
+      }
       await q(
         `UPDATE mission_authoring_turns SET state='running',budgets=$3::jsonb,current_phase='resume',updated_at=now(),safe_response=NULL,
            continuation_idempotency_key=$4,continuation_input_digest=$5 WHERE id=$1 AND session_id=$2`,
@@ -1324,6 +1380,7 @@ export class AdaptiveSessionRepository {
 
   settleMissionOperation(input: {
     sessionId: string;
+    turnId?: string;
     operationId: string;
     intent: MissionAuthoringIntent;
     action: AdaptiveSessionOperationInput["action"];
@@ -1359,6 +1416,20 @@ export class AdaptiveSessionRepository {
       const state = input.outcome.functionalResult === "succeeded" && input.outcome.mutationOutcome !== "unknown"
         ? "completed"
         : "failed";
+      const owner = operation.rows[0]!;
+      const decisionBoundary = input.outcome.mutationOutcome === "not_applied"
+          && input.decisionBoundary.type === "environment_unavailable"
+          && isRuntimeReprovisionReason(input.decisionBoundary.reasonCode)
+        ? withAuthoringRecovery(input.decisionBoundary, {
+            sessionId: input.sessionId,
+            missionId: owner.missionId,
+            objectiveId: owner.objectiveId,
+            flowDraftId: owner.flowDraftId,
+            environmentId: owner.environmentId,
+            failedOperationId: input.operationId,
+            ...(input.turnId ? { sourceTurnId: input.turnId } : {}),
+          })
+        : input.decisionBoundary;
       await q(
         `UPDATE adaptive_operations SET state=$3,capability_manifest_digest=$4,
            dispatch_boundary=CASE WHEN dispatch_boundary='dispatching' THEN 'acknowledged' ELSE dispatch_boundary END,
@@ -1367,9 +1438,8 @@ export class AdaptiveSessionRepository {
          WHERE session_id=$1 AND operation_id=$2 AND state='running'`,
         [input.sessionId, input.operationId, state, input.capabilityManifestDigest, input.outcome.mutationOutcome,
           input.outcome.functionalResult, input.outcome.privacyResult, JSON.stringify(input.outcome.evidenceResult),
-          JSON.stringify(input.outcome.qualityFindings), JSON.stringify(input.outcome), JSON.stringify(input.decisionBoundary)],
+          JSON.stringify(input.outcome.qualityFindings), JSON.stringify(input.outcome), JSON.stringify(decisionBoundary)],
       );
-      const owner = operation.rows[0]!;
       await this.projectCredentialLifecycle(q, {
         projectId: owner.projectId,
         environmentId: owner.environmentId,
@@ -1415,11 +1485,11 @@ export class AdaptiveSessionRepository {
         await q(
           `UPDATE adaptive_sessions SET state='recovery_required',decision_boundary=$2::jsonb,
              version=version+1,updated_at=now() WHERE id=$1 AND state='active'`,
-          [input.sessionId, JSON.stringify(input.decisionBoundary)],
+          [input.sessionId, JSON.stringify(decisionBoundary)],
         );
         await this.appendEvent(q, input.sessionId, "recovery_required", {
           operationId: input.operationId,
-          reasonCode: input.decisionBoundary.reasonCode,
+          reasonCode: decisionBoundary.reasonCode,
         });
       }
       await q(
@@ -1427,7 +1497,7 @@ export class AdaptiveSessionRepository {
          VALUES($1,$2,'authoring','Server-owned authoring operation settled',$3::jsonb,true)`,
         [owner.missionId, owner.objectiveId, JSON.stringify({ flowDraftId: owner.flowDraftId, operationId: input.operationId, outcome: state })],
       );
-      return { state, outcome: input.outcome, decisionBoundary: input.decisionBoundary };
+      return { state, outcome: input.outcome, decisionBoundary };
     });
   }
 
@@ -1688,7 +1758,8 @@ export class AdaptiveSessionRepository {
   async failProvisionedSession(sessionId: string, reasonCode: string) {
     await this.database.transaction(async (client) => {
       await client.query(
-        `UPDATE adaptive_sessions SET state='failed',failure_code=$2,updated_at=now(),version=version+1
+        `UPDATE adaptive_sessions SET state='failed',updated_at=now(),version=version+1,
+           decision_boundary=jsonb_build_object('type','environment_unavailable','reasonCode',$2::text,'safeActions','[]'::jsonb)
          WHERE id=$1 AND state='provisioning'`,
         [sessionId, reasonCode],
       );
@@ -1722,7 +1793,7 @@ export class AdaptiveSessionRepository {
          WHERE checkpoint.claimed_by_authoring_session_id=session.id
            AND checkpoint.state='restoring' AND checkpoint.expires_at>now()
            AND (lease.session_id IS NULL OR lease.lease_expires_at<=now()
-             OR checkpoint.restore_owner_id<>lease.owner_id
+             OR checkpoint.restore_owner_id<>lease.owner_id::text
              OR checkpoint.restore_fencing_token<>lease.fencing_token)`,
       );
       const result = await client.query<{
@@ -2108,27 +2179,38 @@ export class AdaptiveSessionRepository {
     });
   }
 
-  async markOperationFailed(sessionId: string, operationId: string, reasonCode: string) {
+  async markOperationFailed(
+    sessionId: string,
+    operationId: string,
+    reasonCode: string,
+    sourceTurnId?: string,
+  ) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
-      const operation = await q<{ dispatchBoundary: string; actionType: string; method: string | null }>(
+      const operation = await q<{
+        dispatchBoundary: string;
+        actionType: string;
+        method: string | null;
+        missionId: string;
+        objectiveId: string;
+        flowDraftId: string;
+        environmentId: string;
+      }>(
         `SELECT dispatch_boundary AS "dispatchBoundary",
-                semantic_intent->>'type' AS "actionType",semantic_intent->>'method' AS method
-         FROM adaptive_operations
-         WHERE session_id=$1 AND operation_id=$2 AND state='running' FOR UPDATE`,
+                semantic_intent->>'type' AS "actionType",semantic_intent->>'method' AS method,
+                operation.mission_id AS "missionId",operation.objective_id AS "objectiveId",
+                operation.flow_draft_id AS "flowDraftId",session.environment_id AS "environmentId"
+         FROM adaptive_operations operation
+         JOIN adaptive_sessions session ON session.id=operation.session_id
+         JOIN environments environment ON environment.id=session.environment_id
+           AND environment.project_id=session.project_id
+         WHERE operation.session_id=$1 AND operation.operation_id=$2
+           AND operation.state='running' FOR UPDATE OF operation,session`,
         [sessionId, operationId],
       );
       if (!operation.rowCount) return null;
-      const mutating = [
-        "click",
-        "fill",
-        "select",
-        "check",
-        "press",
-        "protectedTransaction",
-      ].includes(operation.rows[0]!.actionType) ||
-        (operation.rows[0]!.actionType === "sameOriginRequest" && operation.rows[0]!.method !== "GET");
-      const crossedDispatch = mutating && operation.rows[0]!.dispatchBoundary !== "not_dispatched";
+      const crossedDispatch = operation.rows[0]!.dispatchBoundary !== "not_dispatched";
+      const current = operation.rows[0]!;
       const policyRefused = reasonCode === "EXECUTION_MODE_POLICY_DENIED";
       const boundary: AgentDecisionBoundary = crossedDispatch
         ? {
@@ -2139,7 +2221,27 @@ export class AdaptiveSessionRepository {
         : {
             type: policyRefused ? "policy_refused" : "environment_unavailable",
             reasonCode,
-            safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+            safeActions: policyRefused ? [] : sourceTurnId
+              ? ["get_flow_authoring", "advance_flow_authoring"]
+              : ["get_flow_authoring"],
+            ...(!policyRefused && sourceTurnId ? {
+              authoringRecovery: {
+                sessionId,
+                missionId: current.missionId,
+                objectiveId: current.objectiveId,
+                flowDraftId: current.flowDraftId,
+                environmentId: current.environmentId,
+                failedOperationId: operationId,
+                ...(sourceTurnId ? { sourceTurnId } : {}),
+                environmentResourceExists: true as const,
+                executionReadiness: "runtime_reprovision_required" as const,
+                preservesCurrentFlow: true as const,
+                recoveryTool: "advance_flow_authoring" as const,
+                recoveryKind: "intents" as const,
+                requiresPendingTurn: false as const,
+                requiresFreshIdempotencyKey: true as const,
+              },
+            } : {}),
           };
       const failed = await q(
         `UPDATE adaptive_operations SET state='failed',functional_result='failed',
@@ -2583,6 +2685,40 @@ export function selectProtectedReplayPreparation(
 
 function bind(client: PoolClient): Query {
   return (text, values = []) => client.query(text, values);
+}
+
+function withAuthoringRecovery(
+  boundary: AgentDecisionBoundary,
+  binding: {
+    sessionId: string;
+    missionId: string;
+    objectiveId: string;
+    flowDraftId: string;
+    environmentId: string;
+    failedOperationId: string;
+    sourceTurnId?: string;
+  },
+): AgentDecisionBoundary {
+  return {
+    ...boundary,
+    safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+    authoringRecovery: {
+      ...binding,
+      environmentResourceExists: true,
+      executionReadiness: "runtime_reprovision_required",
+      preservesCurrentFlow: true,
+      recoveryTool: "advance_flow_authoring",
+      recoveryKind: "intents",
+      requiresPendingTurn: false,
+      requiresFreshIdempotencyKey: true,
+    },
+  };
+}
+
+function isRuntimeReprovisionReason(reasonCode: string) {
+  return reasonCode === "ADAPTIVE_SESSION_EXECUTION_FAILED"
+    || reasonCode === "ADAPTIVE_RUNTIME_UNAVAILABLE"
+    || reasonCode === "ADAPTIVE_RUNTIME_LEASE_LOST";
 }
 
 const forbiddenKeys =

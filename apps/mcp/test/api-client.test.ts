@@ -123,6 +123,31 @@ describe("ScryApiClient", () => {
     expect(error.message).not.toContain("must-not-escape");
   });
 
+  it("preserves the bounded factual recovery binding for stale authoring recovery", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      statusCode: 409, message: {
+        code: "MISSION_AUTHORING_RECOVERY_STALE", safeActions: ["get_flow_authoring"],
+        currentTurnState: "decision_required", refreshedDecisionBoundary: {
+          type: "environment_unavailable", reasonCode: "ADAPTIVE_RUNTIME_UNAVAILABLE",
+          safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+          authoringRecovery: {
+            sessionId: id, missionId: id, objectiveId: id, flowDraftId: id,
+            environmentId: id, failedOperationId: "failed-operation", sourceTurnId: id,
+            environmentResourceExists: true, executionReadiness: "runtime_reprovision_required",
+            preservesCurrentFlow: true, recoveryTool: "advance_flow_authoring",
+            recoveryKind: "intents", requiresPendingTurn: false, requiresFreshIdempotencyKey: true,
+          },
+        },
+      },
+    }), { status: 409 })));
+    const error = await new ScryApiClient("http://scry.test/api").post("/fixture")
+      .catch((cause: unknown) => cause) as ScryApiError;
+    expect(error.context).toMatchObject({ refreshedDecisionBoundary: {
+      authoringRecovery: { sessionId: id, recoveryKind: "intents" },
+    } });
+  });
+
   it("updates API resources with PATCH", async () => {
     const fetchMock = vi
       .fn()

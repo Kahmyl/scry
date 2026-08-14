@@ -142,6 +142,7 @@ export const advanceAdaptiveSessionIntentsSchema = z
     idempotencyKey: z.string().trim().min(8).max(200),
     intents: z.array(missionAuthoringIntentSchema).min(1).max(20),
     budgets: missionAuthoringTurnBudgetsSchema,
+    recoveryBinding: agentDecisionBoundarySchema.shape.authoringRecovery.optional(),
   })
   .strict()
   .superRefine((input, context) => {

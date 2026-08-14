@@ -17,6 +17,60 @@ function input() {
 }
 
 describe("MissionFlowAuthoringService grouped turns", () => {
+  it("provisions the runtime before admitting a first authoring session as active", async () => {
+    const sessionId = randomUUID();
+    const repository = {
+      create: vi.fn().mockResolvedValue({ id: sessionId, replayed: false }),
+      get: vi.fn()
+        .mockResolvedValueOnce({ id: sessionId, state: "provisioning" })
+        .mockResolvedValueOnce({ id: sessionId, state: "active" }),
+      activateProvisionedSession: vi.fn().mockResolvedValue(undefined),
+    };
+    const runner = { initialize: vi.fn().mockResolvedValue(undefined) };
+    const service = new MissionFlowAuthoringService(repository as never, runner as never,
+      { assertAcceptingWork: vi.fn() } as never);
+    const start = {
+      projectId: randomUUID(), missionId: randomUUID(), objectiveId: randomUUID(),
+      agentSessionId: randomUUID(), flowDraftId: randomUUID(), environmentId: randomUUID(),
+      objective: "Open test application", allowedOrigins: ["https://example.test"],
+      idempotencyKey: "runtime-admission",
+    };
+
+    await expect(service.start(principal, start)).resolves.toMatchObject({ state: "active" });
+    expect(runner.initialize).toHaveBeenCalledWith(sessionId);
+    expect(runner.initialize.mock.invocationCallOrder[0])
+      .toBeLessThan(repository.activateProvisionedSession.mock.invocationCallOrder[0]!);
+  });
+
+  it("classifies runtime provisioning failure as not applied with exact lifecycle recovery", async () => {
+    const sessionId = randomUUID();
+    const repository = {
+      create: vi.fn().mockResolvedValue({ id: sessionId, replayed: false }),
+      get: vi.fn().mockResolvedValue({ id: sessionId, state: "provisioning" }),
+      failProvisionedSession: vi.fn().mockResolvedValue(undefined),
+    };
+    const runner = {
+      initialize: vi.fn().mockRejectedValue(Object.assign(new Error("unavailable"), { code: "BROWSER_RUNTIME_UNAVAILABLE" })),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = new MissionFlowAuthoringService(repository as never, runner as never,
+      { assertAcceptingWork: vi.fn() } as never);
+    const start = {
+      projectId: randomUUID(), missionId: randomUUID(), objectiveId: randomUUID(),
+      agentSessionId: randomUUID(), flowDraftId: randomUUID(), environmentId: randomUUID(),
+      objective: "Open test application", allowedOrigins: ["https://example.test"],
+      idempotencyKey: "runtime-failure",
+    };
+
+    await expect(service.start(principal, start)).rejects.toMatchObject({ response: {
+      code: "BROWSER_RUNTIME_UNAVAILABLE", mutationOutcome: "not_applied",
+      environment: { environmentId: start.environmentId, resourceExists: true,
+        executionReadiness: "unavailable" },
+      recovery: { recoveryTool: "start_flow_authoring", requiresFreshIdempotencyKey: true,
+        preservesFlowDraftId: start.flowDraftId },
+    } });
+  });
+
   it("releases the local runtime when durable safe closure requires reconciliation", async () => {
     const sessionId = randomUUID();
     const conflict = new ConflictException({
@@ -188,7 +242,7 @@ describe("MissionFlowAuthoringService grouped turns", () => {
       decisionBoundary: {
         type: "environment_unavailable",
         reasonCode: "MISSION_AUTHORING_PREPARATION_INVALID",
-        safeActions: ["advance_flow_authoring"],
+        safeActions: ["get_flow_authoring"],
       },
     });
     expect(repository.settleTurn).toHaveBeenCalledOnce();
@@ -522,6 +576,7 @@ describe("MissionFlowAuthoringService grouped turns", () => {
       expect.any(String),
       expect.any(String),
       "ADAPTIVE_SESSION_EXECUTION_FAILED",
+      expect.any(String),
     );
   });
 

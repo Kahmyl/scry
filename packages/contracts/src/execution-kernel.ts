@@ -124,6 +124,25 @@ export const agentDecisionBoundarySchema = z
       })
       .strict()
       .optional(),
+    authoringRecovery: z
+      .object({
+        sessionId: z.string().uuid(),
+        missionId: z.string().uuid(),
+        objectiveId: z.string().uuid(),
+        flowDraftId: z.string().uuid(),
+        environmentId: z.string().uuid(),
+        failedOperationId: z.string().trim().min(1).max(200),
+        sourceTurnId: z.string().uuid().optional(),
+        environmentResourceExists: z.literal(true),
+        executionReadiness: z.literal("runtime_reprovision_required"),
+        preservesCurrentFlow: z.literal(true),
+        recoveryTool: z.literal("advance_flow_authoring"),
+        recoveryKind: z.literal("intents"),
+        requiresPendingTurn: z.literal(false),
+        requiresFreshIdempotencyKey: z.literal(true),
+      })
+      .strict()
+      .optional(),
     policyContext: z
       .object({
         governingMode: executionKernelModeSchema,

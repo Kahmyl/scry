@@ -16,7 +16,7 @@ import type {
   UpdateEnvironmentInput,
   ValidateCredentialReferencesInput,
 } from "@scry/contracts";
-import { executionPolicySchema, missionResumePointerSchema } from "@scry/contracts";
+import { agentDecisionBoundarySchema, executionPolicySchema, missionResumePointerSchema } from "@scry/contracts";
 
 import type { Principal } from "../../auth/index.js";
 import { Database } from "../../infrastructure/index.js";
@@ -82,6 +82,7 @@ export class ProjectConfigurationRepository {
       environments: { items: [], truncated: false },
       authoring: {
         reusable: { items: [], truncated: false }, ready: false,
+        recoverable: { items: [], truncated: false },
         missing: ["project", "mission", "objective", "environment", "flow_draft", "authoring_session"],
       },
       continuation: {
@@ -120,29 +121,62 @@ export class ProjectConfigurationRepository {
            FROM project_credentials credential
            WHERE credential.project_id=$1 AND credential.deleted_at IS NULL
            ORDER BY credential.name,credential.created_at LIMIT 21`, [selected.id]),
-        query.query<{ id: string; name: string; baseOrigin: string; secretRefs: string[]; policy: Record<string, unknown> }>(
-          `SELECT id,name,base_origin AS "baseOrigin",secret_refs AS "secretRefs",policy
-           FROM environments WHERE project_id=$1
+        query.query<{ id: string; name: string; baseOrigin: string; secretRefs: string[]; policy: Record<string, unknown>;
+          executionReadiness: "runtime_required" | "runtime_admitted" | "recovery_required" }>(
+          `SELECT environment.id,environment.name,environment.base_origin AS "baseOrigin",
+                  environment.secret_refs AS "secretRefs",environment.policy,
+                  CASE
+                    WHEN EXISTS (
+                      SELECT 1 FROM adaptive_sessions session
+                      WHERE session.environment_id=environment.id AND session.state='active'
+                        AND session.decision_boundary->>'type'='environment_unavailable'
+                    ) THEN 'recovery_required'
+                    WHEN EXISTS (
+                      SELECT 1 FROM adaptive_sessions session
+                      WHERE session.environment_id=environment.id AND session.state='active'
+                    ) THEN 'runtime_admitted'
+                    ELSE 'runtime_required'
+                  END AS "executionReadiness"
+           FROM environments environment WHERE environment.project_id=$1
            ORDER BY (
-             ($2::text IS NULL OR base_origin=$2 OR policy->'allowedOrigins' ? $2)
-             AND (secret_refs @> $3::jsonb)
-           ) DESC,created_at LIMIT 11`,
+             ($2::text IS NULL OR environment.base_origin=$2 OR environment.policy->'allowedOrigins' ? $2)
+             AND (environment.secret_refs @> $3::jsonb)
+           ) DESC,environment.created_at LIMIT 11`,
           [selected.id, input.requiredOrigin ?? null, JSON.stringify(requiredCredentialReferences)]),
-        query.query<{ sessionId: string; missionId: string; objectiveId: string; flowDraftId: string; environmentId: string; state: "active" }>(
-          `SELECT s.id AS "sessionId",s.mission_id AS "missionId",
+        query.query<{ sessionId: string; missionId: string; objectiveId: string; flowDraftId: string;
+          environmentId: string; state: "active"; decisionBoundary: unknown; turnId: string | null;
+          turnState: string | null; operationId: string | null; mutationOutcome: string | null;
+          operationObjectiveId: string | null; operationFlowDraftId: string | null }>(
+          `SELECT * FROM (SELECT s.id AS "sessionId",s.mission_id AS "missionId",
                   s.active_objective_id AS "objectiveId",s.active_flow_draft_id AS "flowDraftId",
-                  s.environment_id AS "environmentId",s.state
+                  s.environment_id AS "environmentId",s.state,
+                  s.decision_boundary AS "decisionBoundary",
+                  turn.id AS "turnId",turn.state AS "turnState",
+                  operation.operation_id AS "operationId",operation.mutation_outcome AS "mutationOutcome",
+                  operation.objective_id AS "operationObjectiveId",operation.flow_draft_id AS "operationFlowDraftId",
+                  row_number() OVER (
+                    PARTITION BY (s.decision_boundary ? 'authoringRecovery')
+                    ORDER BY s.updated_at DESC
+                  ) AS "_categoryRank"
            FROM adaptive_sessions s
            JOIN missions m ON m.id=s.mission_id AND m.status IN ('planning','running')
            JOIN mission_objectives o ON o.id=s.active_objective_id AND o.status IN ('pending','running')
            JOIN agent_sessions a ON a.id=s.agent_session_id AND a.status='active'
            JOIN flow_drafts d ON d.id=s.active_flow_draft_id AND d.state='editing'
+           LEFT JOIN LATERAL (
+             SELECT id,state FROM mission_authoring_turns
+             WHERE session_id=s.id ORDER BY updated_at DESC LIMIT 1
+           ) turn ON true
+           LEFT JOIN LATERAL (
+             SELECT operation_id,mutation_outcome,objective_id,flow_draft_id FROM adaptive_operations
+             WHERE session_id=s.id ORDER BY sequence DESC LIMIT 1
+           ) operation ON true
            WHERE s.project_id=$1 AND s.state='active'
-             AND (s.decision_boundary IS NULL OR s.decision_boundary->>'type'='objective_completed')
              AND ($2::uuid IS NULL OR s.mission_id=$2)
              AND NOT EXISTS (SELECT 1 FROM adaptive_operations operation WHERE operation.session_id=s.id
                AND (operation.state='running' OR operation.mutation_outcome='unknown'))
-           ORDER BY s.updated_at DESC LIMIT 6`, [selected.id, input.missionId ?? null]),
+           ) ranked WHERE "_categoryRank"<=6
+           ORDER BY ("decisionBoundary" ? 'authoringRecovery') DESC,"_categoryRank"`, [selected.id, input.missionId ?? null]),
       ]);
       const snapshot = { missions, credentials, environments, authoring };
     const missionItems = snapshot.missions.rows.slice(0, 5).map((mission) => ({
@@ -163,6 +197,9 @@ export class ProjectConfigurationRepository {
         environment.secretRefs.includes(reference));
       return {
         id: environment.id, name: environment.name, baseOrigin: environment.baseOrigin,
+        resourceExists: true as const,
+        policyValid: allowedOrigins.length > 0 && allowedOrigins.includes(environment.baseOrigin),
+        executionReadiness: environment.executionReadiness,
         compatible: originCompatible && credentialsCompatible,
         incompatibilities: [
           ...(!originCompatible ? ["origin_not_allowed" as const] : []),
@@ -173,7 +210,43 @@ export class ProjectConfigurationRepository {
     });
     const compatibleEnvironmentIds = new Set(environmentItems
       .filter(({ compatible }) => compatible).map(({ id }) => id));
-    const reusable = snapshot.authoring.rows.slice(0, 5);
+    const reusableCandidates = snapshot.authoring.rows
+      .filter(({ decisionBoundary }) => {
+        const parsed = agentDecisionBoundarySchema.safeParse(decisionBoundary);
+        return decisionBoundary === null || (parsed.success && parsed.data.type === "objective_completed");
+      });
+    const reusable = reusableCandidates
+      .slice(0, 5)
+      .map(({ decisionBoundary: _decisionBoundary, turnId: _turnId, turnState: _turnState,
+        operationId: _operationId, mutationOutcome: _mutationOutcome,
+        operationObjectiveId: _operationObjectiveId, operationFlowDraftId: _operationFlowDraftId,
+        ...session }) => session);
+    const recoverableCandidates = snapshot.authoring.rows.flatMap((session) => {
+      const parsed = agentDecisionBoundarySchema.safeParse(session.decisionBoundary);
+      const boundary = parsed.success ? parsed.data : undefined;
+      const recovery = boundary?.authoringRecovery;
+      return recovery && boundary?.type === "environment_unavailable"
+        && recovery.sessionId === session.sessionId && recovery.missionId === session.missionId
+        && recovery.objectiveId === session.objectiveId && recovery.flowDraftId === session.flowDraftId
+        && recovery.environmentId === session.environmentId
+        && recovery.sourceTurnId === session.turnId && session.turnState === "decision_required"
+        && recovery.failedOperationId === session.operationId && session.mutationOutcome === "not_applied"
+        && session.operationObjectiveId === session.objectiveId
+        && session.operationFlowDraftId === session.flowDraftId ? [{ session, recovery }] : [];
+    });
+    const compatibleRecoverableCandidates = recoverableCandidates.filter(({ session }) =>
+      session.missionId === selectedMissionId && compatibleEnvironmentIds.has(session.environmentId));
+    const recoverable = compatibleRecoverableCandidates
+      .slice(0, 5)
+      .map(({ session, recovery }) => ({
+        sessionId: recovery.sessionId, missionId: recovery.missionId,
+        objectiveId: recovery.objectiveId, flowDraftId: recovery.flowDraftId,
+        environmentId: recovery.environmentId, turnId: recovery.sourceTurnId!,
+        turnState: "decision_required" as const, mutationOutcome: "not_applied" as const,
+        recoveryTool: "advance_flow_authoring" as const, recoveryKind: "intents" as const,
+        requiresPendingTurn: false as const,
+        recoveryBinding: recovery,
+      }));
     const compatibleReusable = reusable.filter(({ missionId, environmentId }) =>
       missionId === selectedMissionId && compatibleEnvironmentIds.has(environmentId));
     const compatibleEnvironment = environmentItems.some(({ compatible }) => compatible);
@@ -195,14 +268,17 @@ export class ProjectConfigurationRepository {
       credentials: { items: snapshot.credentials.rows.slice(0, 20), truncated: (snapshot.credentials.rowCount ?? snapshot.credentials.rows.length) > 20 },
       environments: { items: environmentItems, truncated: (snapshot.environments.rowCount ?? snapshot.environments.rows.length) > 10 },
       authoring: {
-        reusable: { items: compatibleReusable, truncated: (snapshot.authoring.rowCount ?? snapshot.authoring.rows.length) > 5 },
+        reusable: { items: compatibleReusable, truncated: reusableCandidates.length > 5 },
+        recoverable: { items: recoverable, truncated: compatibleRecoverableCandidates.length > 5 },
         ready: compatibleReusable.length > 0 && missing.length === 0, missing,
       },
       continuation: {
-        deterministicPreparationAvailable: compatibleReusable.length > 0
+        deterministicPreparationAvailable: recoverable.length > 0 || compatibleReusable.length > 0
           || (missionItems.length === 0 && compatibleEnvironment),
         userAuthorityRequired: !selectedMissionId && missionItems.length > 1,
-        safeActions: missing.length === 0
+        safeActions: recoverable.length > 0
+          ? ["get_flow_authoring", "advance_flow_authoring"]
+          : missing.length === 0
           ? ["advance_flow_authoring"]
           : !selectedMissionId && missionItems.length > 1
             ? ["get_operating_context_with_mission"]

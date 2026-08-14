@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { missionResumePointerSchema } from "./mission.js";
+import { agentDecisionBoundarySchema } from "./execution-kernel.js";
 
 const uuid = z.string().uuid();
 
@@ -49,6 +50,9 @@ export const operatingContextSchema = z.object({
     id: uuid,
     name: z.string(),
     baseOrigin: z.string().url(),
+    resourceExists: z.literal(true),
+    policyValid: z.boolean(),
+    executionReadiness: z.enum(["runtime_required", "runtime_admitted", "recovery_required"]),
     compatible: z.boolean(),
     incompatibilities: z.array(z.enum(["origin_not_allowed", "credential_not_authorized"])),
     credentialReferenceIds: z.array(uuid).max(20),
@@ -61,6 +65,20 @@ export const operatingContextSchema = z.object({
       flowDraftId: uuid,
       environmentId: uuid,
       state: z.literal("active"),
+    }).strict(), 5),
+    recoverable: boundedCollection(z.object({
+      sessionId: uuid,
+      missionId: uuid,
+      objectiveId: uuid,
+      flowDraftId: uuid,
+      environmentId: uuid,
+      turnId: uuid,
+      turnState: z.literal("decision_required"),
+      mutationOutcome: z.literal("not_applied"),
+      recoveryTool: z.literal("advance_flow_authoring"),
+      recoveryKind: z.literal("intents"),
+      requiresPendingTurn: z.literal(false),
+      recoveryBinding: agentDecisionBoundarySchema.shape.authoringRecovery,
     }).strict(), 5),
     ready: z.boolean(),
     missing: z.array(z.enum([

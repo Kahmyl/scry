@@ -150,6 +150,13 @@ integration("adaptive session repository integration", () => {
     );
   });
 
+  async function createActive(input: Parameters<AdaptiveSessionRepository["create"]>[1]) {
+    const created = await repository.create(workspaceId, input);
+    const session = await repository.get(workspaceId, created.id);
+    if (session.state === "provisioning") await repository.activateProvisionedSession(created.id);
+    return created;
+  }
+
   afterAll(async () => {
     await database?.onModuleDestroy();
   });
@@ -161,11 +168,10 @@ integration("adaptive session repository integration", () => {
     const after = await controlPlaneCounts();
     expect(after).toEqual({ ...before, sessions: before.sessions + 1 });
     const session = await repository.get(workspaceId, created.id);
-    expect(session).toMatchObject({ state: "active", version: 3 });
+    expect(session).toMatchObject({ state: "provisioning", version: 2 });
     expect((session.events as Array<{ type: string }>).map((event) => event.type)).toEqual([
       "session_created",
       "provisioning_started",
-      "session_activated",
     ]);
   });
 
@@ -181,8 +187,9 @@ integration("adaptive session repository integration", () => {
        JOIN agent_sessions a ON a.mission_id=m.id JOIN adaptive_sessions s ON s.mission_id=m.id
        WHERE m.id=$1`, [prepared.missionId]);
     expect(durable.rows[0]).toMatchObject({ status: "planning", revision: 1,
-      objectiveStatus: "pending", agentStatus: "active", state: "active", version: 3, events: 3 });
+      objectiveStatus: "pending", agentStatus: "active", state: "provisioning", version: 2, events: 2 });
     expect(await repository.prepare(workspaceId, input)).toEqual({ ...prepared, replayed: true });
+    await repository.activateProvisionedSession(prepared.authoringSessionId);
     await database.query(`UPDATE adaptive_sessions SET decision_boundary=$2::jsonb WHERE id=$1`, [
       prepared.authoringSessionId,
       JSON.stringify({ type: "objective_completed", reasonCode: "MISSION_AUTHORING_TURN_COMPLETED", safeActions: [] }),
@@ -193,6 +200,73 @@ integration("adaptive session repository integration", () => {
     })).toMatchObject({ reused: true, authoringSessionId: prepared.authoringSessionId });
     await expect(repository.prepare(workspaceId, { ...input, environmentId: randomUUID() }))
       .rejects.toMatchObject({ response: { code: "AUTHORING_PREPARATION_IDEMPOTENCY_CONFLICT" } });
+  });
+
+  it("binds a pre-dispatch failure to fresh-intents recovery and factually refreshes stale continue", async () => {
+    const created = await createActive(startInput(`runtime-recovery-${randomUUID()}`));
+    sessionIds.push(created.id);
+    const operationId = `runtime-failure-${randomUUID()}`;
+    const failedIntent = missionIntent(operationId);
+    await repository.beginMissionOperation({
+      workspaceId, sessionId: created.id, operationId,
+      idempotencyKey: `idempotency-${operationId}`, intent: failedIntent,
+      action: operation(operationId).action, expectedEffect: operation(operationId).expectedEffect,
+      mode: "rehearse",
+    });
+    const turnId = randomUUID();
+    const failure = await repository.markOperationFailed(
+      created.id, operationId, "BROWSER_RUNTIME_UNAVAILABLE", turnId,
+    );
+    expect(failure).toMatchObject({
+      outcome: { mutationOutcome: "not_applied" },
+      decisionBoundary: { authoringRecovery: {
+        sessionId: created.id, environmentId, sourceTurnId: turnId,
+        recoveryKind: "intents", requiresPendingTurn: false,
+        preservesCurrentFlow: true,
+      } },
+    });
+    const response = {
+      turnId, state: "decision_required", completed: [], stateDelta: {},
+      channels: {
+        functional: { state: "failed", reasonCode: "BROWSER_RUNTIME_UNAVAILABLE" },
+        mutation: { state: "passed" }, privacy: { state: "not_applicable" },
+        evidence: { state: "passed" }, quality: { state: "passed" },
+      },
+      timings: { resolveMs: 0, executeMs: 0, verifyMs: 0, journalMs: 0, totalMs: 0 },
+      decisionBoundary: failure!.decisionBoundary,
+    };
+    await database.query(
+      `INSERT INTO mission_authoring_turns(
+         id,session_id,idempotency_key,input_digest,safe_input,state,budgets,current_phase,safe_response,completed_at
+       ) VALUES($1,$2,$3,$4,'{}'::jsonb,'decision_required',$5::jsonb,'resolve',$6::jsonb,now())`,
+      [turnId, created.id, `failed-${randomUUID()}`, "a".repeat(64),
+        JSON.stringify({ maxOperations: 1, maxDurationMs: 1_000 }), JSON.stringify(response)],
+    );
+    await expect(repository.continueTurn({
+      workspaceId, sessionId: created.id, turnId,
+      idempotencyKey: `stale-${randomUUID()}`,
+      budgets: { maxOperations: 1, maxDurationMs: 1_000 },
+    })).rejects.toMatchObject({ response: {
+      code: "MISSION_AUTHORING_RECOVERY_STALE",
+      currentTurnState: "decision_required",
+      refreshedDecisionBoundary: { authoringRecovery: { recoveryKind: "intents" } },
+    } });
+    const recoveryBinding = failure!.decisionBoundary.authoringRecovery!;
+    await expect(repository.beginTurn({
+      workspaceId, sessionId: created.id, idempotencyKey: `wrong-recovery-${randomUUID()}`,
+      inputDigest: "d".repeat(64), budgets: { maxOperations: 1, maxDurationMs: 1_000 },
+      intents: [missionIntent(`${operationId}-different`)], recoveryBinding,
+    })).rejects.toMatchObject({ response: { code: "MISSION_AUTHORING_RECOVERY_STALE" } });
+    await expect(repository.beginTurn({
+      workspaceId, sessionId: created.id, idempotencyKey: `recover-${randomUUID()}`,
+      inputDigest: "b".repeat(64), budgets: { maxOperations: 1, maxDurationMs: 1_000 },
+      intents: [failedIntent], recoveryBinding,
+    })).resolves.toMatchObject({ state: "running", replayed: false });
+    await expect(repository.beginTurn({
+      workspaceId, sessionId: created.id, idempotencyKey: `repeat-${randomUUID()}`,
+      inputDigest: "c".repeat(64), budgets: { maxOperations: 1, maxDurationMs: 1_000 },
+      intents: [missionIntent(`${operationId}-repeat`)], recoveryBinding,
+    })).rejects.toMatchObject({ response: { code: "MISSION_AUTHORING_RECOVERY_STALE" } });
   });
 
   it("rolls back preparation before creating any resource when prerequisites fail", async () => {
@@ -233,7 +307,7 @@ integration("adaptive session repository integration", () => {
   });
 
   it("atomically replaces environment, draft, and session only for the disclosed approved origins", async () => {
-    const created = await repository.create(workspaceId, startInput("trusted-recovery-source"));
+    const created = await createActive(startInput("trusted-recovery-source"));
     sessionIds.push(created.id);
     await database.query(
       `INSERT INTO environments(id,project_id,name,base_origin,policy)
@@ -306,7 +380,7 @@ integration("adaptive session repository integration", () => {
   });
 
   it("loads an authorized protected execution context from PostgreSQL", async () => {
-    const created = await repository.create(workspaceId, startInput("protected-context-start"));
+    const created = await createActive(startInput("protected-context-start"));
     sessionIds.push(created.id);
     const authorizationId = randomUUID();
     await database.query(
@@ -380,7 +454,7 @@ integration("adaptive session repository integration", () => {
   });
 
   it("stores a functionally successful unknown mutation as reconciliation-required", async () => {
-    const created = await repository.create(workspaceId, startInput("unknown-mutation-start"));
+    const created = await createActive(startInput("unknown-mutation-start"));
     sessionIds.push(created.id);
     const intent = {
       intentId: "unknown-activate",
@@ -480,7 +554,7 @@ integration("adaptive session repository integration", () => {
   });
 
   it("recovers the exact stale running turn only before a safe dispatch", async () => {
-    const created = await repository.create(workspaceId, startInput("stale-turn-recovery-start"));
+    const created = await createActive(startInput("stale-turn-recovery-start"));
     sessionIds.push(created.id);
     const intent = {
       intentId: "stale-navigation",
@@ -534,7 +608,7 @@ integration("adaptive session repository integration", () => {
   });
 
   it("reclaims a stale post-dispatch turn without authorizing redispatch", async () => {
-    const created = await repository.create(workspaceId, startInput("unsafe-turn-recovery-start"));
+    const created = await createActive(startInput("unsafe-turn-recovery-start"));
     sessionIds.push(created.id);
     const intent = {
       intentId: "stale-submit",
@@ -614,7 +688,7 @@ integration("adaptive session repository integration", () => {
       `UPDATE environments SET secret_refs=secret_refs || $2::jsonb WHERE id=$1`,
       [environmentId, JSON.stringify(credentialIds)],
     );
-    const created = await repository.create(workspaceId, {
+    const created = await createActive({
       ...startInput("credential-revocation-start"),
       initialProtectedReferenceIds: credentialIds,
     });
@@ -686,7 +760,7 @@ integration("adaptive session repository integration", () => {
         `UPDATE environments SET secret_refs=secret_refs || to_jsonb($2::text) WHERE id=$1`,
         [environmentId, credentialId],
       );
-      const existing = await repository.create(workspaceId, {
+      const existing = await createActive({
         ...startInput(`lifecycle-${securityStatus}-existing`),
         initialProtectedReferenceIds: [credentialId],
       });
@@ -729,7 +803,7 @@ integration("adaptive session repository integration", () => {
     );
     await database.query(`UPDATE environments SET secret_refs=secret_refs || to_jsonb($2::text) WHERE id=$1`,
       [environmentId, credentialId]);
-    const created = await repository.create(workspaceId, {
+    const created = await createActive({
       ...startInput("credential-pair-atomicity-start"), initialProtectedReferenceIds: [credentialId],
     });
     sessionIds.push(created.id);
@@ -779,7 +853,7 @@ integration("adaptive session repository integration", () => {
       await database.query(`UPDATE environments SET secret_refs=secret_refs || to_jsonb($2::text) WHERE id=$1`,
         [environmentId, credentialId]);
       const operationId = `credential-revocation-${mutationOutcome}`;
-      const created = await repository.create(workspaceId, {
+      const created = await createActive({
         ...startInput(`${operationId}-start`), initialProtectedReferenceIds: [credentialId],
       });
       sessionIds.push(created.id);
@@ -810,7 +884,7 @@ integration("adaptive session repository integration", () => {
   });
 
   it("enforces ordered append-only journal and transition versions", async () => {
-    const created = await repository.create(workspaceId, startInput("journal-start"));
+    const created = await createActive(startInput("journal-start"));
     sessionIds.push(created.id);
     const claim = await repository.beginOperation(
       workspaceId,
@@ -866,7 +940,7 @@ integration("adaptive session repository integration", () => {
   });
 
   it("supports suspend, resume, and cancel without losing journal history", async () => {
-    const created = await repository.create(workspaceId, startInput("transition-start"));
+    const created = await createActive(startInput("transition-start"));
     sessionIds.push(created.id);
     const suspended = await repository.transition({
       workspaceId,
@@ -910,7 +984,7 @@ integration("adaptive session repository integration", () => {
   });
 
   it("derives acknowledgement only from the durable mutation fence", async () => {
-    const created = await repository.create(workspaceId, startInput("dispatch-truth-start"));
+    const created = await createActive(startInput("dispatch-truth-start"));
     sessionIds.push(created.id);
     const ownerId = randomUUID();
     const lease = await repository.claimRuntimeLease({
@@ -987,7 +1061,7 @@ integration("adaptive session repository integration", () => {
   });
 
   it("fences a stale runtime owner and resumes with a new owner", async () => {
-    const created = await repository.create(workspaceId, startInput("lease-restart-start"));
+    const created = await createActive(startInput("lease-restart-start"));
     sessionIds.push(created.id);
     const firstOwner = randomUUID();
     const secondOwner = randomUUID();
@@ -1086,32 +1160,8 @@ integration("adaptive session repository integration", () => {
     });
     await repository.markOperationFailed(created.id, "concurrent-0", "BROWSER_DISCONNECTED");
     const readOnlyFailure = await repository.get(workspaceId, created.id);
-    expect(readOnlyFailure).toMatchObject({ state: "active" });
+    expect(readOnlyFailure).toMatchObject({ state: "recovery_required" });
     expect(readOnlyFailure.operations[0]).toMatchObject({
-      state: "failed",
-      dispatchBoundary: "dispatching",
-      decisionBoundary: {
-        type: "environment_unavailable",
-        reasonCode: "BROWSER_DISCONNECTED",
-      },
-      outcome: {
-        functionalResult: "failed",
-        mutationOutcome: "not_applied",
-        reasonCode: "BROWSER_DISCONNECTED",
-      },
-    });
-
-    await repository.beginOperation(workspaceId, created.id, mutatingOperation("mutation-0"));
-    await repository.markOperationDispatching({
-      sessionId: created.id,
-      operationId: "mutation-0",
-      ownerId: secondOwner,
-      fencingToken: replacement.fencingToken,
-    });
-    await repository.markOperationFailed(created.id, "mutation-0", "BROWSER_DISCONNECTED");
-    const recovered = await repository.get(workspaceId, created.id);
-    expect(recovered).toMatchObject({ state: "recovery_required" });
-    expect(recovered.operations[8]).toMatchObject({
       state: "failed",
       dispatchBoundary: "dispatching",
       decisionBoundary: {
@@ -1176,6 +1226,16 @@ integration("adaptive session repository integration", () => {
       },
       mode: "rehearse" as const,
       protectedInputReferences: [],
+    };
+  }
+
+  function missionIntent(intentId: string) {
+    return {
+      intentId, objectiveId, flowDraftId,
+      action: { kind: "navigate" as const, url: "https://example.test/details" },
+      expectedEffect: { kind: "navigation" as const, url: "https://example.test/details", match: "exact" as const },
+      constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "live_read" as const }, protectedInputReferences: [],
     };
   }
 

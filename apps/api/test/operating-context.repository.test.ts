@@ -50,9 +50,9 @@ describe("operating context repository", () => {
       }] };
       if (text.includes("FROM environments")) return { rowCount: 2, rows: [
         { id: environmentId, name: "Compatible", baseOrigin: "https://example.test", secretRefs: [objectiveId],
-          policy: { allowedOrigins: ["https://example.test"] } },
+          policy: { allowedOrigins: ["https://example.test"] }, executionReadiness: "runtime_required" },
         { id: "88888888-8888-4888-8888-888888888888", name: "Other", baseOrigin: "https://other.test", secretRefs: [],
-          policy: { allowedOrigins: ["https://other.test"] } },
+          policy: { allowedOrigins: ["https://other.test"] }, executionReadiness: "runtime_admitted" },
       ] };
       if (text.includes("FROM adaptive_sessions")) return { rowCount: 1, rows: [{ sessionId, missionId,
         objectiveId, flowDraftId, environmentId: "88888888-8888-4888-8888-888888888888", state: "active" }] };
@@ -64,6 +64,9 @@ describe("operating context repository", () => {
       requiredCredentialReferences: [objectiveId],
     });
     expect(result.authoring).toMatchObject({ ready: false, reusable: { items: [] } });
+    expect(result.environments.items[0]).toMatchObject({
+      resourceExists: true, policyValid: true, executionReadiness: "runtime_required",
+    });
     expect(result.continuation.deterministicPreparationAvailable).toBe(false);
     expect(result.credentials.items[0]).toMatchObject({
       name: "Credential", securityStatus: "active", eligibleForAuthorization: true,

@@ -76,7 +76,7 @@ describe("MissionFlowAuthoringService current semantic contract", () => {
       },
     });
     expect(repo.markOperationFailed).toHaveBeenCalledWith(expect.any(String), expect.any(String),
-      "ADAPTIVE_SESSION_RUNTIME_NOT_BOUND");
+      "ADAPTIVE_SESSION_RUNTIME_NOT_BOUND", expect.any(String));
   });
 
   it("preserves a kernel policy-admission code", async () => {
@@ -90,7 +90,7 @@ describe("MissionFlowAuthoringService current semantic contract", () => {
         reasonCode: "EXECUTION_MODE_POLICY_DENIED" },
     });
     expect(repo.markOperationFailed).toHaveBeenCalledWith(expect.any(String), expect.any(String),
-      "EXECUTION_MODE_POLICY_DENIED");
+      "EXECUTION_MODE_POLICY_DENIED", expect.any(String));
   });
 
   it("returns authoritative UNKNOWN reconciliation after a post-dispatch failure", async () => {

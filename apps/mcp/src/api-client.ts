@@ -23,6 +23,15 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "mutationOutcome", "retry", "retryClass", "continuation", "recoveryTool",
   "requiresNewFlowDraftAndAuthoringSession", "idempotencyReuse",
   "disclosedOrigins", "missingTrustedScriptOrigins", "missingAllowedOrigin",
+  "environment", "environmentId", "resourceExists", "executionReadiness",
+  "recovery", "recoveryBinding", "recoveryKind", "requiresFreshIdempotencyKey",
+  "requiresPendingTurn", "failedAuthoringSessionId", "failedOperationId", "sourceTurnId",
+  "preservesMissionId", "preservesObjectiveId", "preservesFlowDraftId",
+  "preservesCurrentFlow", "missionId", "flowDraftId", "sessionId",
+  "environmentResourceExists", "refreshedDecisionBoundary", "requestedTurnId",
+  "currentTurnState", "type", "reasonCode", "authoringRecovery",
+  "idempotencyKey",
+  "safeActions",
 ]);
 
 export function apiRejection(error: ScryApiError) {
@@ -134,7 +143,8 @@ export class ScryApiClient {
         `HTTP_${response.status}`;
       const safeActions =
         stringArrayField(detail, "safeActions") ?? stringArrayField(envelope, "safeActions") ?? [];
-      throw new ScryApiError(code, response.status, safeActions, safeRejectionContext(detail));
+      const { safeActions: _safeActions, code: _code, ...safeDetail } = detail ?? {};
+      throw new ScryApiError(code, response.status, safeActions, safeRejectionContext(safeDetail));
     }
     return body as T;
   }

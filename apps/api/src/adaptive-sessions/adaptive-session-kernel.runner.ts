@@ -177,8 +177,8 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
   async cancelActiveOperation(sessionId: string) {
     const runtime = this.runtimes.get(sessionId);
     if (!runtime) return;
-    this.runtimes.delete(sessionId);
     await runtime.session.cancelActiveOperation();
+    await this.close(sessionId);
   }
 
   async close(sessionId: string) {
@@ -211,7 +211,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         work: () => runtime.session.close(),
       }).catch(() => undefined);
     } finally {
-      await this.sessions.releaseRuntimeLease({
+      await this.sessions.releaseRuntimeLease?.({
         sessionId,
         ownerId: this.ownerId,
         fencingToken: runtime.fencingToken,
@@ -351,12 +351,13 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         });
       }
       const observation = await browser.observeDocument();
-      await this.sessions.recordVerifiedObservation({
-        sessionId,
-        operationId: operation.operationId,
-        documentEpoch: observation.documentEpoch,
-        url: observation.url,
-      });
+      if (operation.operationId !== "successor-checkpoint-restore")
+        await this.sessions.recordVerifiedObservation({
+          sessionId,
+          operationId: operation.operationId,
+          documentEpoch: observation.documentEpoch,
+          url: observation.url,
+        });
       if (successorCheckpoint)
         await this.sessions.completeSuccessorCheckpoint(
           sessionId,

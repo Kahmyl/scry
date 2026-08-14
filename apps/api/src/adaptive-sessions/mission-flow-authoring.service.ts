@@ -16,7 +16,7 @@ import type {
   CurrentAction,
   PrepareFlowAuthoringInput,
 } from "@scry/contracts";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type { Principal } from "../auth/index.js";
 import { ReleaseAdmissionService } from "../runtime/index.js";
@@ -57,14 +57,27 @@ export class MissionFlowAuthoringService {
         await this.sessions.activateProvisionedSession(result.id);
       } catch (error) {
         await this.runner.close(result.id).catch(() => undefined);
+        const concurrent = await this.sessions.get(workspaceId(principal), result.id);
+        if (concurrent.state === "active") return { ...concurrent, replayed: true };
+        if (result.replayed && concurrent.state === "provisioning") {
+          throw new ConflictException({
+            code: "AUTHORING_PROVISIONING_IN_PROGRESS",
+            mutationOutcome: "not_applied",
+            sessionId: result.id,
+            safeActions: ["get_flow_authoring"],
+          });
+        }
         await this.sessions.failProvisionedSession(
           result.id,
           error instanceof Error && error.message.startsWith("SUCCESSOR_CHECKPOINT_")
             ? error.message
             : "AUTHORING_PROVISIONING_FAILED",
         );
-        throw error;
+        throw authoringProvisioningFailure(input, result.id, error);
       }
+    }
+    if (created.state === "failed") {
+      throw authoringProvisioningFailure(input, result.id);
     }
     return {
       ...(await this.sessions.get(workspaceId(principal), result.id)),
@@ -75,7 +88,36 @@ export class MissionFlowAuthoringService {
   async prepare(principal: Principal, input: PrepareFlowAuthoringInput) {
     await this.admission.assertAcceptingWork();
     this.requireWrite(principal);
-    return this.sessions.prepare(workspaceId(principal), input);
+    const prepared = await this.sessions.prepare(workspaceId(principal), input);
+    const session = await this.sessions.get(workspaceId(principal), prepared.authoringSessionId);
+    if (session.state === "provisioning") {
+      try {
+        await this.runner.initialize(prepared.authoringSessionId);
+        await this.sessions.activateProvisionedSession(prepared.authoringSessionId);
+      } catch (error) {
+        await this.runner.close(prepared.authoringSessionId).catch(() => undefined);
+        const concurrent = await this.sessions.get(workspaceId(principal), prepared.authoringSessionId);
+        if (concurrent.state === "active") return { ...prepared, reused: true };
+        if (prepared.reused && concurrent.state === "provisioning") {
+          throw new ConflictException({
+            code: "AUTHORING_PROVISIONING_IN_PROGRESS",
+            mutationOutcome: "not_applied",
+            sessionId: prepared.authoringSessionId,
+            safeActions: ["get_flow_authoring"],
+          });
+        }
+        await this.sessions.failProvisionedSession(
+          prepared.authoringSessionId,
+          error instanceof Error && error.message.startsWith("SUCCESSOR_CHECKPOINT_")
+            ? error.message
+            : "AUTHORING_PROVISIONING_FAILED",
+        );
+        throw authoringPreparationFailure(prepared, error);
+      }
+    }
+    const current = await this.sessions.get(workspaceId(principal), prepared.authoringSessionId);
+    if (current.state !== "active") throw authoringPreparationFailure(prepared);
+    return prepared;
   }
 
   async recoverTrustedOrigins(principal: Principal, input: RecoverTrustedOriginsInput) {
@@ -133,6 +175,7 @@ export class MissionFlowAuthoringService {
         inputDigest: digest({ intents: input.intents, budgets: input.budgets }),
         budgets: input.budgets,
         intents: input.intents,
+        ...(input.recoveryBinding ? { recoveryBinding: input.recoveryBinding } : {}),
       });
       turn = {
         turnId: created.turnId,
@@ -573,6 +616,7 @@ export class MissionFlowAuthoringService {
         const journalStartedAt = performance.now();
         const settled = await this.sessions.settleMissionOperation({
           sessionId,
+          turnId,
           operationId: operation.operationId,
           intent,
           action: operation.action,
@@ -603,10 +647,12 @@ export class MissionFlowAuthoringService {
         }
       } catch (error) {
         const code = errorCode(error, "ADAPTIVE_SESSION_EXECUTION_FAILED");
+        await this.runner.close?.(sessionId).catch(() => undefined);
         const failure = await this.sessions.markOperationFailed(
           sessionId,
           operation.operationId,
           code,
+          turnId,
         );
         const decision = turnResult({
           turnId,
@@ -803,6 +849,59 @@ function errorCode(error: unknown, fallback: string) {
   return error instanceof Error && valid(error.message) ? error.message : fallback;
 }
 
+function authoringProvisioningFailure(
+  input: StartAdaptiveSessionInput,
+  sessionId: string,
+  error?: unknown,
+) {
+  const checkpointFailure = errorCode(error, "AUTHORING_PROVISIONING_FAILED").startsWith("SUCCESSOR_CHECKPOINT_");
+  return new ConflictException({
+    code: errorCode(error, "AUTHORING_PROVISIONING_FAILED"),
+    mutationOutcome: "not_applied",
+    environment: {
+      environmentId: input.environmentId,
+      resourceExists: true,
+      executionReadiness: "unavailable",
+    },
+    ...(!checkpointFailure ? { recovery: {
+      recoveryTool: "start_flow_authoring",
+      requiresFreshIdempotencyKey: true,
+      idempotencyKey: `authoring-recovery-${randomUUID()}`,
+      failedAuthoringSessionId: sessionId,
+      preservesMissionId: input.missionId,
+      preservesObjectiveId: input.objectiveId,
+      preservesFlowDraftId: input.flowDraftId,
+    }} : {}),
+    safeActions: checkpointFailure ? ["get_operating_context"] : ["get_operating_context", "start_flow_authoring"],
+  });
+}
+
+function authoringPreparationFailure(
+  prepared: Awaited<ReturnType<AdaptiveSessionRepository["prepare"]>>,
+  error?: unknown,
+) {
+  const checkpointFailure = errorCode(error, "AUTHORING_PROVISIONING_FAILED").startsWith("SUCCESSOR_CHECKPOINT_");
+  return new ConflictException({
+    code: errorCode(error, "AUTHORING_PROVISIONING_FAILED"),
+    mutationOutcome: "not_applied",
+    environment: {
+      environmentId: prepared.environmentId,
+      resourceExists: true,
+      executionReadiness: "unavailable",
+    },
+    ...(!checkpointFailure ? { recovery: {
+      recoveryTool: "start_flow_authoring",
+      requiresFreshIdempotencyKey: true,
+      idempotencyKey: `authoring-recovery-${randomUUID()}`,
+      failedAuthoringSessionId: prepared.authoringSessionId,
+      preservesMissionId: prepared.missionId,
+      preservesObjectiveId: prepared.objectiveId,
+      preservesFlowDraftId: prepared.flowDraftId,
+    }} : {}),
+    safeActions: checkpointFailure ? ["get_operating_context"] : ["get_operating_context", "start_flow_authoring"],
+  });
+}
+
 function admissionDecisionBoundary(
   error: unknown,
 ): NonNullable<MissionAuthoringTurnResult["decisionBoundary"]> {
@@ -820,7 +919,7 @@ function admissionDecisionBoundary(
   return {
     type: "environment_unavailable",
     reasonCode: code,
-    safeActions: ["advance_flow_authoring"],
+    safeActions: ["get_flow_authoring"],
   };
 }
 

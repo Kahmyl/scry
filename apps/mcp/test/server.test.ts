@@ -39,7 +39,7 @@ describe("current Scry MCP surface", () => {
         projectCandidates: { items: [], truncated: false } },
       missions: { candidates: { items: [], truncated: false } },
       credentials: { items: [], truncated: false }, environments: { items: [], truncated: false },
-      authoring: { reusable: { items: [], truncated: false }, ready: false,
+      authoring: { reusable: { items: [], truncated: false }, recoverable: { items: [], truncated: false }, ready: false,
         missing: ["project", "mission", "objective", "environment", "flow_draft", "authoring_session"] },
       continuation: { deterministicPreparationAvailable: false, userAuthorityRequired: false,
         safeActions: ["create_project_in_dashboard"], blockerCode: "NO_PROJECT" },
@@ -270,7 +270,7 @@ describe("current Scry MCP surface", () => {
     expect(tools.find(({ name }) => name === "get_operating_context")?.description)
       .toContain("never returns protected values");
     expect(tools.find(({ name }) => name === "prepare_flow_authoring")?.description)
-      .toContain("performs no browser navigation");
+      .toContain("performs no authored browser navigation");
     expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
       .toContain("allowNewPage alone grants permission but does not arm safe new-page adoption");
     const preparationSchema = tools.find(({ name }) => name === "prepare_flow_authoring")!
