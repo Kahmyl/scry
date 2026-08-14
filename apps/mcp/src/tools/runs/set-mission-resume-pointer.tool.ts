@@ -32,7 +32,7 @@ export function registerSetMissionResumePointerTool(server: McpServer, client: S
     {
       title: "Set Mission resume pointer",
       description:
-        "Persist the single authoritative next action for later agents and users. For await_user, store factual external-input context and leave the Objective non-terminal: do not publish failure, blindly retry, continue background mutation, or manufacture human choices. externalInput.resumeRef is the durable Objective UUID and must exactly equal pointer.objectiveId; it is not an arbitrary string, operation reference, or session reference. Ask conversationally when human input is truly needed; later agents recover the same context with resume_mission.",
+        "Persist the single authoritative next action for later agents and users. For await_user, store factual external-input context and leave the Objective non-terminal: do not publish failure, blindly retry, continue background mutation, or manufacture human choices. externalInput.resumeRef is the bare durable Objective UUID string and must exactly equal pointer.objectiveId (for example, resumeRef:'42b57154-be94-4295-9c1c-5fc0d736c0c9'); never prefix it with 'objective:' and do not use an operation or session reference. Ask conversationally when human input is truly needed; later agents recover the same context with resume_mission.",
       inputSchema: {
         ...missionContext,
         pointer: missionResumePointerSchema.nullable(),

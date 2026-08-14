@@ -184,9 +184,17 @@ describe("current Scry MCP surface", () => {
     expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
       .toContain("Valid roles: button, checkbox, combobox");
     expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
+      .toContain("allowNonExact has no implicit default");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
       .toContain("login/authentication submit");
     expect(tools.find(({ name }) => name === "set_mission_resume_pointer")?.description)
       .toContain("must exactly equal pointer.objectiveId");
+    expect(tools.find(({ name }) => name === "set_mission_resume_pointer")?.description)
+      .toContain("never prefix it with 'objective:'");
+    const resumePointerSchema = tools.find(({ name }) => name === "set_mission_resume_pointer")!
+      .inputSchema as any;
+    expect(resumePointerSchema.properties.pointer.anyOf[0].properties.externalInput.properties.resumeRef)
+      .toMatchObject({ type: "string", format: "uuid" });
     expect(tools.find(({ name }) => name === "recover_trusted_script_origins")?.description)
       .toContain("Navigation is not performed");
     const draftSchema = tools.find(({ name }) => name === "create_flow_draft")!
@@ -196,8 +204,18 @@ describe("current Scry MCP surface", () => {
     expect(stepsSchema.items.required).toEqual(
       expect.arrayContaining(["id", "title", "action"]),
     );
-    expect(stepsSchema.items.properties.action.anyOf.map((item: any) => item.properties.type.const))
+    expect(stepsSchema.items.properties.action.properties.type.enum)
       .toEqual(expect.arrayContaining(["navigate", "waitFor", "fill", "click"]));
+    expect(stepsSchema.items.properties.action.properties).toEqual(expect.objectContaining({
+      url: expect.any(Object), target: expect.any(Object), state: expect.any(Object),
+      secretRef: expect.any(Object), expectedStatus: expect.any(Object),
+    }));
+    expect(draftSchema.properties.plan.properties.checkpoints.items.required).toEqual(
+      expect.arrayContaining([
+        "id", "beforeStepId", "restorationUrl", "verificationAssertions",
+        "continueAtStepId", "maxRestorations", "state",
+      ]),
+    );
     const authoringSchema = tools.find(({ name }) => name === "advance_flow_authoring")!
       .inputSchema as any;
     const intentActionUnion = authoringSchema.properties.intents.items.properties.action.oneOf;

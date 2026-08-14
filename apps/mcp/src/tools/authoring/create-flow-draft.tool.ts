@@ -12,6 +12,8 @@ import {
   authorizationKindSchema,
   protectedRecoveryCommandSchema,
   veilPreferenceUpdateSchema,
+  interactionTargetIntentSchema,
+  budgetsSchema,
 } from "@scry/contracts";
 import { z } from "zod";
 
@@ -25,6 +27,49 @@ import {
   uuid,
   writes,
 } from "../../tool-registry.js";
+
+const publicActionType = z.enum([
+  "navigate", "sameOriginRequest", "click", "fill", "select", "check", "press", "scroll",
+  "waitFor", "screenshot", "protectedTransaction", "capturePublicValue",
+]);
+const publicPlanActionSchema = z.object({
+  type: publicActionType,
+  url: z.string().optional(),
+  target: interactionTargetIntentSchema.optional(),
+  value: z.string().optional(),
+  secretRef: uuid.optional(),
+  method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional(),
+  path: z.string().optional(),
+  expectedStatus: z.object({ min: z.number().int(), max: z.number().int() }).optional(),
+  authentication: z.literal("current_browser_session").optional(),
+  checked: z.boolean().optional(),
+  key: z.enum(["Enter", "Escape", "Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]).optional(),
+  deltaY: z.number().int().optional(),
+  state: z.enum(["visible", "hidden", "attached", "detached"]).optional(),
+  name: z.string().optional(),
+  timeoutMs: z.number().int().optional(),
+}).passthrough();
+const publicPlanSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  objective: z.string().trim().min(1),
+  preconditions: z.array(z.string().trim().min(1)).max(20).default([]),
+  allowedOrigins: z.array(z.string().url()).min(1).max(5),
+  budgets: budgetsSchema,
+  checkpoints: z.array(z.object({
+    id: z.string(), beforeStepId: z.string(), restorationUrl: z.string().url(),
+    verificationAssertions: z.array(z.unknown()).min(1), continueAtStepId: z.string(),
+    maxRestorations: z.literal(1),
+    state: z.object({ cookies: z.literal(true), localStorage: z.literal(true), indexedDb: z.boolean().optional() }),
+  }).strict()).max(20).default([]),
+  steps: z.array(z.object({
+    id: z.string(), title: z.string(), action: publicPlanActionSchema,
+    after: z.unknown().optional(), assertions: z.array(z.unknown()).optional(),
+    onFailure: z.enum(["stop", "continue"]).optional(),
+    evidence: z.array(z.enum(["screenshot", "dom", "network"])).optional(),
+    captureIntent: z.enum(["final", "transient"]).optional(),
+    transientJustification: z.string().optional(),
+  }).strict()).min(1).max(500),
+}).strict();
 
 export function registerCreateFlowDraftTool(server: McpServer, client: ScryApiClient) {
   server.registerTool(
@@ -41,7 +86,7 @@ export function registerCreateFlowDraftTool(server: McpServer, client: ScryApiCl
         description: z.string().trim().max(2000).default(""),
         purpose: flowPurposeSchema.default("primary"),
         content: flowRevisionContentSchema,
-        plan: currentPlanSchema,
+        plan: publicPlanSchema,
         idempotencyKey: z.string().min(8).max(200).optional(),
       },
       annotations: writes,
@@ -51,6 +96,7 @@ export function registerCreateFlowDraftTool(server: McpServer, client: ScryApiCl
         {
           draft: await client.post("/flow-drafts", {
             ...body,
+            plan: currentPlanSchema.parse(body.plan),
             idempotencyKey: idempotencyKey ?? stableKey("draft", body),
           }),
         },
