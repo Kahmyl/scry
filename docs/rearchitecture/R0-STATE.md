@@ -179,17 +179,41 @@ Full commit:
 861d5439d202313dc29a29f5945915e97a2807fd
 ```
 
-### Current active slice
+### Remaining public text-entry slice — COMPLETE
 
-Continue R0.3 with remaining public text-entry mechanics where active:
+Checkpoint:
 
 ```text
-contenteditable
-focus_keyboard
-non-native textbox mechanics
+7dfe2e2 refactor: pin remaining public text entry
 ```
 
-Then cut protected fill over to the same Praxis-owned browser mechanics while keeping Veil as the narrow trust/privacy authority.
+Established:
+
+```text
+public contenteditable/focus-keyboard entry
+→ exact pinned browser entity
+→ exact-handle focus and bounded actionability
+→ no locator fallback when reference capture fails
+→ replacement during focus refuses before keyboard input
+→ replacement during contenteditable select-all refuses without retargeting
+→ keyboard-phase failures remain unknown/unsafe/do_not_retry
+```
+
+Qualification at closure:
+
+```text
+Praxis targeted text-entry/runtime tests: 42/42 GREEN
+full Praxis suite: 161/161 GREEN
+Assurance truth: 23/23 GREEN
+affected Executor runtime: 14/14 GREEN
+Praxis/Executor/API/repository typechecks: GREEN
+subsystem boundaries: GREEN
+```
+
+### Current active slice
+
+Continue R0.3 by cutting protected fill over to the same Praxis-owned pinned
+text-entry mechanics while keeping Veil as the narrow trust/privacy authority.
 
 Before doing anything:
 
