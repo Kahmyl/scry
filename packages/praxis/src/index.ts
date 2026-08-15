@@ -15,3 +15,4 @@ export * from "./veil-bridge.js";
 export * from "./page-context.js";
 export * from "./references/target-reference.js";
 export * from "./interaction/click.js";
+export * from "./interaction/fill.js";

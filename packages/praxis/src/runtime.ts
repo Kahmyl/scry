@@ -27,6 +27,8 @@ import {
 } from "./observation.js";
 import { PraxisAdapterError, type PraxisDispatchBoundary } from "./transaction.js";
 import { clickPinnedElement } from "./interaction/click.js";
+import { fillReferencedTarget, PraxisFillDispatchError } from "./interaction/fill.js";
+import { observeTargetReference, type PraxisTargetReference } from "./references/target-reference.js";
 import { PraxisExecutionEnvelope, type PraxisPreDispatchDeadline } from "./execution-envelope.js";
 import { PraxisStateObserver } from "./state-observer.js";
 import { validatePraxisVeilGrants } from "./veil-bridge.js";
@@ -55,6 +57,7 @@ export class PraxisGroundedTarget {
   readonly beforeUrl: string;
   readonly providerTimings: readonly PraxisProviderTiming[];
   readonly escalationLevel: number;
+  readonly pinnedReference: PraxisTargetReference | undefined;
   #grounded: GroundingResult;
   #armed: Promise<void> | undefined;
 
@@ -65,11 +68,13 @@ export class PraxisGroundedTarget {
     documentIdentity: string,
     resolution: PraxisResolution,
     strategy: PraxisStrategy,
+    pinnedReference: PraxisTargetReference | undefined,
     providerTimings: readonly PraxisProviderTiming[],
   ) {
     this.handle = new PraxisTargetHandle(page, grounded.frame, grounded.locator, epoch, documentIdentity);
     this.resolution = resolution;
     this.strategy = strategy;
+    this.pinnedReference = pinnedReference;
     this.beforeUrl = page.url();
     this.providerTimings = providerTimings;
     this.escalationLevel = grounded.diagnostic.escalationLevel ?? 1;
@@ -205,6 +210,11 @@ export class PraxisGroundingEngine {
     const providerIds = PRAXIS_PROVIDER_CATALOG.map(
       (provider) => `${provider.id}@${provider.version}`,
     );
+    const pinnedReference = strategy === "native_fill"
+      ? await observeTargetReference(this.page, grounded.locator, {
+          timeoutMs: request.policy.actionTimeoutMs,
+        }).catch(() => undefined)
+      : undefined;
     const cacheKey = PraxisObservationCache.key({
       scope: request.intent.scope,
       privacyState: request.privacy.state,
@@ -239,6 +249,7 @@ export class PraxisGroundingEngine {
       documentIdentity,
       resolution,
       strategy,
+      pinnedReference,
       providerTimings,
     );
   }
@@ -566,8 +577,22 @@ async function dispatchOperation(
     }
     case "enter_text": {
       const value = preparedInput!;
-      if (target.strategy === "native_fill") await locator.fill(value, options);
-      else {
+      if (target.strategy === "native_fill") {
+        if (!target.pinnedReference)
+          throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+            provenance: "application",
+            mutationOutcome: "unknown",
+            retry: "unsafe",
+            safeActions: ["do_not_retry"],
+          });
+        try {
+          await fillReferencedTarget(target.pinnedReference, value, { timeoutMs: options.timeout });
+        } catch (error) {
+          if (error instanceof PraxisFillDispatchError)
+            throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+          throw error;
+        }
+      } else {
         await locator.focus(options);
         if (target.strategy === "content_editable")
           await locator.press(process.platform === "darwin" ? "Meta+A" : "Control+A", options);

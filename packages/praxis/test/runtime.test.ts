@@ -272,6 +272,35 @@ describe("Praxis strategy, dispatch, and verification", () => {
     expect(await page.locator("input").inputValue()).toBe("Ada");
   });
 
+  it("keeps an unexpected adapter failure after native fill unknown and unsafe", async () => {
+    await page.setContent("<input aria-label=Name>");
+
+    class FailingFillAdapter extends PraxisAdapter {
+      override async dispatch(...args: Parameters<PraxisAdapter["dispatch"]>): ReturnType<
+        PraxisAdapter["dispatch"]
+      > {
+        await super.dispatch(...args);
+        throw new Error("forced adapter failure after successful fill dispatch");
+      }
+    }
+
+    const result = await new PraxisTransactionCoordinator(
+      new FailingFillAdapter(page, async () => "Ada"),
+    ).execute(
+      request({ type: "enter_text", input: { reference: "name", classification: "public" } }, intent("Name", "textbox")),
+      new AbortController().signal,
+    );
+
+    expect(await page.locator("input").inputValue()).toBe("Ada");
+    expect(result).toMatchObject({
+      status: "inconclusive",
+      code: "PRAXIS_INTERNAL_ERROR",
+      mutationOutcome: "unknown",
+      retry: "unsafe",
+      safeActions: ["do_not_retry"],
+    });
+  });
+
   it("denies public literal text at the freshly resolved protected target before dispatch", async () => {
     await page.setContent('<label>Password <input type="password" value="unchanged"></label>');
     const result = await new PraxisTransactionCoordinator(

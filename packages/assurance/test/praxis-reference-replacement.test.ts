@@ -3,13 +3,16 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   clickReferencedTarget,
+  fillReferencedTarget,
   observeTargetReference,
   PraxisStaleTargetError,
 } from "@scry/praxis";
 
 import {
   referenceReplacementFixture,
+  referenceReplacementFillFixture,
   verifyStaleReferenceDidNotDispatch,
+  verifyFillReferenceDidNotDispatch,
   withFixture,
 } from "../src/index.js";
 
@@ -98,6 +101,82 @@ describe("Praxis pinned reference against the reference-replacement fixture", ()
           const truth = await session.readGroundTruth();
           const observation = verifyStaleReferenceDidNotDispatch(truth);
 
+          expect(observation.status).toBe("fail");
+          expect(observation.reasonCode).toBe("STALE_REFERENCE_DISPATCH_OBSERVED");
+        } finally {
+          await context.close();
+        }
+      });
+    },
+  );
+
+  it(
+    "safe Praxis pinned fill path refuses stale fill after replacement and does not fill semantic replacement",
+    { timeout: 30_000 },
+    async () => {
+      await withFixture(referenceReplacementFillFixture, undefined, async (session) => {
+        const context = await browser.newContext();
+        try {
+          const page = await context.newPage();
+          await page.goto(session.value.scenarioUrl);
+
+          const reference =
+            await observeTargetReference(page, page.getByPlaceholder("Email"));
+
+          await page.evaluate(() => {
+            (window as unknown as { __replaceInputTarget?: () => void }).__replaceInputTarget?.();
+          });
+
+          let refusal: unknown;
+          try {
+            await fillReferencedTarget(reference, "replacement-value", { timeoutMs: 1_500 });
+          } catch (error) {
+            refusal = error;
+          }
+          expect(refusal).toBeInstanceOf(PraxisStaleTargetError);
+
+          await expect
+            .poll(async () => (await session.readGroundTruth()).mutationCount, { timeout: 5_000 })
+            .toBeGreaterThanOrEqual(1);
+
+          const truth = await session.readGroundTruth();
+          const observation = verifyFillReferenceDidNotDispatch(truth);
+          expect(truth.originalDispatches).toBe(0);
+          expect(truth.replacementDispatches).toBe(0);
+          expect(observation.status).toBe("pass");
+        } finally {
+          await context.close();
+        }
+      });
+    },
+  );
+
+  it(
+    "negative control: semantic re-fill fills the replacement and the oracle fails",
+    { timeout: 30_000 },
+    async () => {
+          await withFixture(referenceReplacementFillFixture, undefined, async (session) => {
+            const context = await browser.newContext();
+            try {
+              const page = await context.newPage();
+              await page.goto(session.value.scenarioUrl);
+
+              await page.evaluate(() => {
+                (window as unknown as { __replaceInputTarget?: () => void }).__replaceInputTarget?.();
+              });
+          await page.getByPlaceholder("Email").fill("replacement-value");
+
+          await expect
+            .poll(async () => (await session.readGroundTruth()).mutationCount, { timeout: 5_000 })
+            .toBeGreaterThanOrEqual(1);
+
+          const truth = await session.readGroundTruth();
+        await expect
+          .poll(async () => (await session.readGroundTruth()).replacementDispatches, { timeout: 5_000 })
+          .toBeGreaterThanOrEqual(1);
+
+          const finalTruth = await session.readGroundTruth();
+          const observation = verifyFillReferenceDidNotDispatch(finalTruth);
           expect(observation.status).toBe("fail");
           expect(observation.reasonCode).toBe("STALE_REFERENCE_DISPATCH_OBSERVED");
         } finally {

@@ -224,15 +224,8 @@ export async function executeAction(
               .catch(() => undefined);
           }
           throw error;
-        }
+      }
       } else {
-        if (await executeNative(
-          page,
-          action.target,
-          { type: "fill", value, protected: false, ...nativeActionTimeouts(action.timeoutMs, preDispatchDeadlineAt) },
-          options,
-        )) return;
-        requirePraxisFallback(options);
         await requirePraxisWithNoCapabilityRetry({
           page,
           intent: action.target,

@@ -10,6 +10,9 @@ import {
   clickReferencedTarget,
   PraxisClickDispatchError,
 } from "../src/interaction/click.js";
+import {
+  fillReferencedTarget,
+} from "../src/interaction/fill.js";
 
 let browser: Browser;
 let page: Page;
@@ -410,6 +413,124 @@ describe("Praxis target reference and pinned click", () => {
     expect(serialized).toContain("documentIdentity");
     expect(serialized).not.toContain("#target");
     expect(serialized).not.toContain("Save");
+    await reference.dispose();
+  });
+
+  it("fills a native input exactly once", { timeout: 30_000 }, async () => {
+    await resetPage(`
+      <label for="target">Email</label>
+      <input id="target" type="text" />
+      <script>
+        window.__filledValues = [];
+        document.querySelector("#target").addEventListener("input", (event) => {
+          window.__filledValues.push(event.target.value);
+        });
+      </script>
+    `);
+
+    const reference = await observeTargetReference(page, page.getByLabel("Email"));
+    await expect(fillReferencedTarget(reference, "alice@example.test", { timeoutMs: 2_000 })).resolves.toEqual(
+      {
+        dispatched: true,
+      },
+    );
+    expect(await page.locator("#target").inputValue()).toBe("alice@example.test");
+    expect(await page.evaluate(() => (globalThis as unknown as { __filledValues: string[] }).__filledValues)).toEqual([
+      "alice@example.test",
+    ]);
+    await reference.dispose();
+  });
+
+  it("fills a textarea exactly once", { timeout: 30_000 }, async () => {
+    await resetPage(`
+      <textarea id="target">starting</textarea>
+      <script>
+        window.__filledValues = [];
+        document.querySelector("#target").addEventListener("input", (event) => {
+          window.__filledValues.push(event.target.value);
+        });
+      </script>
+    `);
+
+    const reference = await observeTargetReference(page, page.locator("#target"));
+    await expect(fillReferencedTarget(reference, "line one\nline two", { timeoutMs: 2_000 })).resolves.toEqual(
+      {
+        dispatched: true,
+      },
+    );
+    expect(await page.locator("#target").inputValue()).toBe("line one\nline two");
+    expect(
+      await page.evaluate(() => (globalThis as unknown as { __filledValues: string[] }).__filledValues),
+    ).toEqual(
+      expect.arrayContaining(["line one\nline two"]),
+    );
+    await reference.dispose();
+  });
+
+  it("refuses a stale replace-before-fill replacement for native inputs", { timeout: 30_000 }, async () => {
+    await resetPage(`
+      <input id="target" placeholder="Email" />
+      <script>
+        window.__fills = [];
+        const original = document.querySelector("#target");
+        original.addEventListener("input", (event) => {
+          window.__fills.push({ kind: "original", value: event.target.value });
+        });
+
+        window.__replaceInputTarget = () => {
+          const replacement = document.createElement("input");
+          replacement.id = "replacement";
+          replacement.setAttribute("placeholder", "Email");
+          replacement.addEventListener("input", (event) => {
+            window.__fills.push({ kind: "replacement", value: event.target.value });
+          });
+          original.replaceWith(replacement);
+        };
+      </script>
+    `);
+
+    const reference = await observeTargetReference(page, page.getByPlaceholder("Email"));
+
+    await page.evaluate(() => {
+      const replace = (window as unknown as { __replaceInputTarget?: () => void }).__replaceInputTarget;
+      if (typeof replace !== "function") {
+        throw new Error("TEST_FIXTURE_REPLACEMENT_HELPER_MISSING");
+      }
+      replace();
+    });
+    expect(
+      await page.evaluate(() => ({
+        replacement: !!document.querySelector("#replacement"),
+        original: !!document.querySelector("#target"),
+      })),
+    ).toMatchObject({ replacement: true, original: false });
+    expect(await reference.element().evaluate((node) => node.isConnected)).toBe(false);
+
+    await expect(fillReferencedTarget(reference, "should-never-fill", { timeoutMs: 1_500 })).rejects.toBeInstanceOf(
+      PraxisStaleTargetError,
+    );
+    expect(await page.evaluate(() => (globalThis as unknown as { __fills: Array<{ kind: string; value: string }> }).__fills)).toEqual([]);
+    await reference.dispose();
+  });
+
+  it("refuses when the document changes before native fill", { timeout: 30_000 }, async () => {
+    await resetPage(`<input id="target" placeholder="Email" />`);
+    const reference = await observeTargetReference(page, page.locator("#target"));
+    await page.goto("data:text/html,<input id=\"replacement\" placeholder=\"Other\" />");
+    await expect(fillReferencedTarget(reference, "late", { timeoutMs: 1_500 })).rejects.toBeInstanceOf(
+      PraxisStaleTargetError,
+    );
+    await reference.dispose();
+  });
+
+  it("refuses when the original input is detached", { timeout: 30_000 }, async () => {
+    await resetPage(`<input id="target" />`);
+    const reference = await observeTargetReference(page, page.locator("#target"));
+    await page.locator("#target").evaluate((element) => element.remove());
+    await expect(reference.assertCurrent()).rejects.toBeInstanceOf(PraxisStaleTargetError);
+    await expect(fillReferencedTarget(reference, "late", { timeoutMs: 1_500 })).rejects.toBeInstanceOf(
+      PraxisStaleTargetError,
+    );
     await reference.dispose();
   });
 
