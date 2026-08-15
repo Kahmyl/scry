@@ -61,6 +61,7 @@ describe("execution capability factory", () => {
   });
 
   it("preserves lazy reservation for synchronous run-owned protected execution", async () => {
+    const authorizationId = randomUUID();
     const executions = { resolveCredential: vi.fn(), captureCredential: vi.fn(), persistCapturedSecret: vi.fn(), persistGeneratedPublicValue: vi.fn(), resolveGeneratedPublicValue: vi.fn(), establishCheckpoint: vi.fn(), claimCheckpoint: vi.fn(), completeCheckpoint: vi.fn(), verifyCalibrationAttestation: vi.fn() };
     const kernelRepository = { appendEvent: vi.fn(), establishCheckpoint: vi.fn(), claimCheckpoint: vi.fn(), completeCheckpoint: vi.fn(), recordContextProvenance: vi.fn() };
     const protectedOperations = {
@@ -74,6 +75,7 @@ describe("execution capability factory", () => {
       sessionId: randomUUID(), operationId: "run-parent", correlationId: randomUUID(), mode: "transact",
       runId: randomUUID(), attemptId: randomUUID(), claimToken: "run-owner", flowRevisionId: randomUUID(),
       environmentId: randomUUID(), projectId: randomUUID(), missionId: randomUUID(), objectiveId: randomUUID(), agentSessionId: randomUUID(),
+      protectedAuthorizations: { "run-generate": authorizationId },
       options: { outputDirectory: "/tmp/run", browserChannel: "chrome", environmentId: "environment", veilAdmissionKey: "test-key", veilPolicySnapshot: {} as never },
     });
     await capabilities.options.protectedTransactionStore!.claim({
@@ -82,7 +84,29 @@ describe("execution capability factory", () => {
       safeOutputManifest: [{ reference: "secret", classification: "protected", storageName: "Secret" }],
     });
     expect(protectedOperations.create).toHaveBeenCalledOnce();
+    expect(protectedOperations.create).toHaveBeenCalledWith(expect.objectContaining({ authorizationId }));
     expect(protectedOperations.claim).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a run-owned protected operation without an exact authorization binding", async () => {
+    const factory = new ExecutionCapabilityFactory(
+      {} as never,
+      { appendEvent: vi.fn(), recordContextProvenance: vi.fn() } as never,
+      { openBrowser: vi.fn() } as never,
+      { create: vi.fn(), claim: vi.fn() } as never,
+      {} as never,
+    );
+    const capabilities = factory.createRun({
+      sessionId: randomUUID(), operationId: "run-parent", correlationId: randomUUID(), mode: "transact",
+      runId: randomUUID(), attemptId: randomUUID(), claimToken: "run-owner", flowRevisionId: randomUUID(),
+      environmentId: randomUUID(), projectId: randomUUID(), missionId: randomUUID(), objectiveId: randomUUID(), agentSessionId: randomUUID(),
+      protectedAuthorizations: {},
+      options: { outputDirectory: "/tmp/run", browserChannel: "chrome", environmentId: "environment", veilAdmissionKey: "test-key", veilPolicySnapshot: {} as never },
+    });
+    await expect(capabilities.options.protectedTransactionStore!.claim({
+      operationId: "run-generate", mutationKind: "one_time", mutationIdentity: "run-generate-once",
+      programDigest: "a".repeat(64), inputSchemaDigest: "b".repeat(64), inputDigest: "c".repeat(64), safeOutputManifest: [],
+    })).rejects.toThrow("PROTECTED_OPERATION_AUTHORIZATION_REQUIRED");
   });
 
   it("keeps project protected-output authority out of generic sessions", () => {

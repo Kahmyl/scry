@@ -59,11 +59,20 @@ export const grantMissionAuthorizationSchema = missionContextSchema
     objectiveId: uuidSchema,
     environmentId: uuidSchema,
     kind: authorizationKindSchema,
+    operationId: z.string().trim().min(1).max(200).optional(),
     reason: z.string().trim().min(1).max(2000),
     expiresAt: z.string().datetime().optional(),
     confirmedUserAuthorized: z.literal(true),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.kind === "protected_mutation" && !value.operationId)
+      context.addIssue({
+        code: "custom",
+        path: ["operationId"],
+        message: "Protected mutation authorization must name the exact operation",
+      });
+  });
 export type GrantMissionAuthorizationInput = z.infer<typeof grantMissionAuthorizationSchema>;
 export const createExecutionPlanSchema = missionContextSchema
   .extend({

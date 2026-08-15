@@ -169,6 +169,7 @@ export class ExecutionCapabilityFactory {
       missionId: string;
       objectiveId: string;
       agentSessionId: string;
+      protectedAuthorizations?: Record<string, string>;
     },
   ): RuntimeExecutionCapabilities {
     return this.createSession({
@@ -193,6 +194,7 @@ export class ExecutionCapabilityFactory {
           projectId: input.projectId, environmentId: input.environmentId,
           missionId: input.missionId, objectiveId: input.objectiveId,
           agentSessionId: input.agentSessionId, flowRevisionId: input.flowRevisionId,
+          protectedAuthorizations: input.protectedAuthorizations ?? {},
         }),
         checkpointStore: {
           establish: (checkpoint) => this.executions.establishCheckpoint(input.runId, checkpoint),
@@ -289,6 +291,7 @@ export class ExecutionCapabilityFactory {
     ownerKind: "authoring_session" | "run"; ownerId: string; leaseOwner: string;
     projectId: string; environmentId: string; missionId: string; objectiveId: string;
     agentSessionId: string; flowDraftId?: string; flowRevisionId?: string; authorizationId?: string;
+    protectedAuthorizations?: Record<string, string>;
   }): Pick<ExecuteOptions, "protectedTransactionStore" | "atomicOutputCapture" | "stageProtectedResponseOutputs" | "recoverStagedProtectedResponseOutputs" | "markCredentialCompromised"> {
     let current: import("@scry/executor").ProtectedOperationClaim | undefined;
     let phaseStartedAt = performance.now();
@@ -300,13 +303,15 @@ export class ExecutionCapabilityFactory {
     return {
       protectedTransactionStore: {
         claim: async (claim) => {
+          const runAuthorizationId = context.protectedAuthorizations?.[claim.operationId];
           if (context.ownerKind === "run") {
+            if (!runAuthorizationId) throw new Error("PROTECTED_OPERATION_AUTHORIZATION_REQUIRED");
             try {
               await operations.create({
                 ownerKind: "run",
                 ownerId: context.ownerId,
                 flowRevisionId: context.flowRevisionId!,
-                ...(context.authorizationId ? { authorizationId: context.authorizationId } : {}),
+                authorizationId: runAuthorizationId,
                 operationId: claim.operationId, mutationIdentity: claim.mutationIdentity,
                 dispatchSemantics: claim.dispatchSemantics ?? "mutation",
                 projectId: context.projectId, environmentId: context.environmentId,
@@ -329,7 +334,7 @@ export class ExecutionCapabilityFactory {
               programDigest: claim.programDigest, safeOutputManifest: claim.safeOutputManifest,
               ...(context.ownerKind === "authoring_session"
                 ? { flowDraftId: context.flowDraftId!, authorizationId: context.authorizationId! }
-                : { flowRevisionId: context.flowRevisionId!, ...(context.authorizationId ? { authorizationId: context.authorizationId } : {}) }),
+                : { flowRevisionId: context.flowRevisionId!, authorizationId: runAuthorizationId! }),
             },
           });
           return current!;

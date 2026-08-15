@@ -117,7 +117,7 @@ CREATE TABLE environments (
   created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (project_id, name)
 );
 CREATE TABLE mission_authorizations (
- id uuid PRIMARY KEY DEFAULT gen_random_uuid(),mission_id uuid NOT NULL,objective_id uuid NOT NULL,environment_id uuid NOT NULL REFERENCES environments(id),kind text NOT NULL CHECK(kind IN ('live_read','live_mutation','protected_mutation')),reason text NOT NULL,status text NOT NULL DEFAULT 'approved' CHECK(status IN ('approved','revoked')),granted_by_agent_session_id uuid NOT NULL,granted_by_user_id uuid,expires_at timestamptz,created_at timestamptz NOT NULL DEFAULT now(),revoked_at timestamptz,
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),mission_id uuid NOT NULL,objective_id uuid NOT NULL,environment_id uuid NOT NULL REFERENCES environments(id),kind text NOT NULL CHECK(kind IN ('live_read','live_mutation','protected_mutation')),operation_id text,reason text NOT NULL,status text NOT NULL DEFAULT 'approved' CHECK(status IN ('approved','revoked')),granted_by_agent_session_id uuid NOT NULL,granted_by_user_id uuid,expires_at timestamptz,created_at timestamptz NOT NULL DEFAULT now(),revoked_at timestamptz,
  FOREIGN KEY(objective_id,mission_id) REFERENCES mission_objectives(id,mission_id),FOREIGN KEY(granted_by_agent_session_id,mission_id) REFERENCES agent_sessions(id,mission_id)
 );
 CREATE TABLE project_credentials (

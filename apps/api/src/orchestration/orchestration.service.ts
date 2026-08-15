@@ -304,12 +304,13 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
       );
       if (!valid.rowCount) throw new ConflictException({ code: "AUTHORIZATION_SCOPE_MISMATCH" });
       const result = await c.query<{ id: string }>(
-        `INSERT INTO mission_authorizations(mission_id,objective_id,environment_id,kind,reason,granted_by_agent_session_id,granted_by_user_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+        `INSERT INTO mission_authorizations(mission_id,objective_id,environment_id,kind,operation_id,reason,granted_by_agent_session_id,granted_by_user_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
         [
           missionId,
           input.objectiveId,
           input.environmentId,
           input.kind,
+          input.operationId ?? null,
           input.reason,
           input.agentSessionId,
           p.userId,
@@ -325,6 +326,7 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
         {
           authorizationId: result.rows[0]!.id,
           kind: input.kind,
+          operationId: input.operationId ?? null,
           environmentId: input.environmentId,
         },
       );

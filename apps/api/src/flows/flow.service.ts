@@ -542,6 +542,26 @@ export class FlowService {
         [input.flowRevisionId, projectId, workspaceId(principal)],
       );
       if (!revision.rowCount) throw new NotFoundException("Flow revision not found");
+      const protectedOperations = revision.rows[0]!.plan.steps.flatMap((step) =>
+        step.action.type === "protectedTransaction" ? [step.action.operationId] : [],
+      );
+      const authorizationByOperation = new Map(
+        input.protectedAuthorizations.map((binding) => [binding.operationId, binding.authorizationId]),
+      );
+      for (const operationId of protectedOperations) {
+        const authorizationId = authorizationByOperation.get(operationId);
+        if (!authorizationId)
+          throw new ConflictException({ code: "PROTECTED_OPERATION_AUTHORIZATION_REQUIRED", operationId });
+        const authorized = await query(
+          `SELECT 1 FROM mission_authorizations
+           WHERE id=$1 AND mission_id=$2 AND objective_id=$3 AND environment_id=$4
+             AND kind='protected_mutation' AND operation_id=$5 AND status='approved'
+             AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now())`,
+          [authorizationId, input.missionId, input.objectiveId, input.environmentId, operationId],
+        );
+        if (!authorized.rowCount)
+          throw new ConflictException({ code: "PROTECTED_OPERATION_AUTHORIZATION_INVALID", operationId });
+      }
       const runtime = browserObservationRuntimeHealth();
       if (!runtime.healthy)
         throw new ServiceUnavailableException({
@@ -603,6 +623,7 @@ export class FlowService {
             viewport: input.viewport,
             seed: input.seed,
             executionModel: input.executionModel,
+            protectedAuthorizations: Object.fromEntries(authorizationByOperation),
           }),
           input.idempotencyKey,
         ],

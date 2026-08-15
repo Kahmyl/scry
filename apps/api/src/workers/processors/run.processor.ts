@@ -65,6 +65,7 @@ export function createRunProcessor(options: RunProcessorOptions) {
         viewport: { width: number; height: number };
         readinessTimeoutMultiplier?: number;
         certificationCandidate?: boolean;
+        protectedAuthorizations?: Record<string, string>;
       };
       await options.executions.markRunning(job.data.runId, attempt.id, claimToken);
       await options.executions.setRunPhase(job.data.runId, "executing_action");
@@ -104,6 +105,7 @@ export function createRunProcessor(options: RunProcessorOptions) {
         missionId: String(snapshot.missionId),
         objectiveId: String(snapshot.objectiveId),
         agentSessionId: String(snapshot.agentSessionId),
+        protectedAuthorizations: execution.protectedAuthorizations ?? {},
         options: {
           veilPolicySnapshot,
           outputDirectory,

@@ -167,6 +167,17 @@ export class ProtectedOperationRepository {
       const current = result.rows[0]!;
       if (!bindingMatches(current, input.binding))
         throw new ConflictException("PROTECTED_OPERATION_BINDING_MISMATCH");
+      if (input.ownerKind === "run") {
+        const authorization = await client.query(
+          `SELECT 1 FROM mission_authorizations
+           WHERE id=$1 AND mission_id=$2 AND objective_id=$3 AND environment_id=$4
+             AND kind='protected_mutation' AND operation_id=$5 AND status='approved'
+             AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now())`,
+          [current.authorizationId,current.missionId,current.objectiveId,current.environmentId,input.operationId],
+        );
+        if (!authorization.rowCount)
+          throw new ConflictException("PROTECTED_OPERATION_AUTHORIZATION_INVALID");
+      }
       const leaseLive = current.leaseExpiresAt && current.leaseExpiresAt.getTime() > Date.now();
       if (leaseLive && current.leaseOwner !== input.leaseOwner)
         throw new ConflictException("PROTECTED_OPERATION_LEASE_HELD");

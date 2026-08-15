@@ -14,6 +14,11 @@ const binding = {
   programDigest: "a".repeat(64),
   safeOutputManifest: [{ reference: "clientSecret", classification: "protected" as const, storageName: "Client secret" }],
 };
+const { flowDraftId: _flowDraftId, ...bindingWithoutDraft } = binding;
+const runBinding = {
+  ...bindingWithoutDraft,
+  flowRevisionId: "99999999-9999-4999-8999-999999999999",
+};
 
 function harness() {
   const row = {
@@ -24,6 +29,22 @@ function harness() {
     dispatchSemantics: "mutation", flowRevisionId: null,
   };
   const client = { query: vi.fn(async () => ({ rowCount: 1, rows: [row] })) };
+  const database = { transaction: vi.fn((work: (value: typeof client) => unknown) => work(client)) };
+  return { repository: new ProtectedOperationRepository(database as never), client };
+}
+
+function runHarness(authorized: boolean) {
+  const row = {
+    id: "88888888-8888-4888-8888-888888888888", state: "planned", phase: "planned",
+    version: "1", fencingToken: "0", leaseOwner: null, leaseExpiresAt: null,
+    dispatchState: "not_started", mutationOutcome: "not_attempted", persistedReferences: {},
+    ...binding, flowDraftId: null, flowRevisionId: "99999999-9999-4999-8999-999999999999",
+    dispatchSemantics: "mutation",
+  };
+  const client = { query: vi.fn(async (sql: string) =>
+    sql.includes("FROM mission_authorizations")
+      ? { rowCount: authorized ? 1 : 0, rows: authorized ? [{}] : [] }
+      : { rowCount: 1, rows: [row] }) };
   const database = { transaction: vi.fn((work: (value: typeof client) => unknown) => work(client)) };
   return { repository: new ProtectedOperationRepository(database as never), client };
 }
@@ -48,4 +69,27 @@ describe("protected operation immutable claims", () => {
     })).rejects.toThrow("PROTECTED_OPERATION_BINDING_MISMATCH");
     expect(client.query).toHaveBeenCalledOnce();
   });
+
+  it("revalidates a run authorization in the claim transaction", async () => {
+    const { repository, client } = runHarness(true);
+    await repository.claim({
+      ownerKind: "run", ownerId: randomRunId, operationId: "generate",
+      leaseOwner: "worker-a", leaseDurationMs: 30_000,
+      binding: runBinding,
+    });
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining("operation_id=$5"), [
+      binding.authorizationId, binding.missionId, binding.objectiveId, binding.environmentId, "generate",
+    ]);
+  });
+
+  it("refuses an expired, revoked, or cross-scope run authorization before dispatch", async () => {
+    const { repository } = runHarness(false);
+    await expect(repository.claim({
+      ownerKind: "run", ownerId: randomRunId, operationId: "generate",
+      leaseOwner: "worker-a", leaseDurationMs: 30_000,
+      binding: runBinding,
+    })).rejects.toThrow("PROTECTED_OPERATION_AUTHORIZATION_INVALID");
+  });
 });
+
+const randomRunId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
