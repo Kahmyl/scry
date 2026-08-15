@@ -229,13 +229,90 @@ export class FlowService {
   }
 
   async createFlow(principal: Principal, projectId: string, input: CreateFlowInput) {
-    void principal;
-    void projectId;
-    void input;
-    throw new ConflictException({
-      code: "AUTHORING_DRAFT_REQUIRED",
-      message:
-        "Create a mutable Flow draft, probe and compile it, then publish an immutable revision.",
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+    return this.database.transaction(async (client) => {
+      const query = bindQuery(client);
+      await this.requireMissionContext(
+        query,
+        principal,
+        projectId,
+        input.missionId,
+        input.objectiveId,
+        input.agentSessionId,
+      );
+      const replay = await this.claimIdempotency(
+        query,
+        `flow:create:${projectId}`,
+        input.idempotencyKey,
+        hash(input),
+      );
+      if (replay) return replay;
+      const validation = await this.validateWith(
+        query,
+        principal,
+        { projectId, environmentId: input.environmentId, plan: input.plan },
+        false,
+      );
+      this.requireValid(validation);
+      const flowId = randomUUID();
+      const revisionId = randomUUID();
+      await query(
+        `INSERT INTO flows(
+           id,project_id,name,description,latest_revision_id,visibility,purpose,
+           origin_mission_id,origin_objective_id,owner_mission_id,owner_objective_id,
+           created_by_agent_session_id,publication_state
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$8,$9,$10,'published')`,
+        [
+          flowId,
+          projectId,
+          input.name,
+          input.description,
+          revisionId,
+          input.visibility,
+          input.purpose,
+          input.missionId,
+          input.objectiveId,
+          input.agentSessionId,
+        ],
+      );
+      await query(
+        `INSERT INTO flow_revisions(
+           id,flow_id,revision,content,plan,validation,created_by_agent_session_id,reason,
+           publication_state
+         ) VALUES($1,$2,1,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7,'published')`,
+        [
+          revisionId,
+          flowId,
+          JSON.stringify(input.content),
+          JSON.stringify(input.plan),
+          JSON.stringify(validation),
+          input.agentSessionId,
+          input.reason,
+        ],
+      );
+      await query(
+        `INSERT INTO mission_flow_links(
+           mission_id,objective_id,flow_id,visibility,purpose,reason,created_by_agent_session_id
+         ) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+        [
+          input.missionId,
+          input.objectiveId,
+          flowId,
+          input.visibility,
+          input.purpose,
+          input.reason,
+          input.agentSessionId,
+        ],
+      );
+      const response = { flowId, revisionId, revision: 1, validation, replayed: false };
+      await this.completeIdempotency(
+        query,
+        `flow:create:${projectId}`,
+        input.idempotencyKey,
+        response,
+      );
+      return response;
     });
   }
 
@@ -252,12 +329,72 @@ export class FlowService {
   }
 
   async reviseFlow(principal: Principal, flowId: string, input: CreateFlowRevisionInput) {
-    void principal;
-    void flowId;
-    void input;
-    throw new ConflictException({
-      code: "AUTHORING_DRAFT_REQUIRED",
-      message: "Edit a mutable Flow draft and publish it only after execution-ready compilation.",
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+    return this.database.transaction(async (client) => {
+      const query = bindQuery(client);
+      const flow = await this.requireFlow(query, principal, flowId, true);
+      await this.requireMissionContext(
+        query,
+        principal,
+        flow.projectId,
+        input.missionId,
+        input.objectiveId,
+        input.agentSessionId,
+        flowId,
+      );
+      const replay = await this.claimIdempotency(
+        query,
+        `flow:revise:${flowId}`,
+        input.idempotencyKey,
+        hash(input),
+      );
+      if (replay) return replay;
+      if (flow.latestRevisionId !== input.expectedRevisionId)
+        throw new ConflictException({
+          code: "FLOW_REVISION_CONFLICT",
+          message: "The Flow changed after it was read.",
+          actualRevisionId: flow.latestRevisionId,
+        });
+      const validation = await this.validateWith(
+        query,
+        principal,
+        { projectId: flow.projectId, environmentId: input.environmentId, plan: input.plan },
+        false,
+      );
+      this.requireValid(validation);
+      const revisionId = randomUUID();
+      const revision = flow.revision + 1;
+      await query(
+        `INSERT INTO flow_revisions(
+           id,flow_id,revision,content,plan,validation,created_by_agent_session_id,reason,
+           publication_state
+         ) VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,$8,'published')`,
+        [
+          revisionId,
+          flowId,
+          revision,
+          JSON.stringify(input.content),
+          JSON.stringify(input.plan),
+          JSON.stringify(validation),
+          input.agentSessionId,
+          input.reason,
+        ],
+      );
+      await query(
+        `UPDATE flows SET latest_revision_id=$2,name=COALESCE($3,name),
+           description=COALESCE($4,description),publication_state='published',updated_at=now()
+         WHERE id=$1`,
+        [flowId, revisionId, input.name ?? null, input.description ?? null],
+      );
+      const response = { flowId, revisionId, revision, validation, replayed: false };
+      await this.completeIdempotency(
+        query,
+        `flow:revise:${flowId}`,
+        input.idempotencyKey,
+        response,
+      );
+      return response;
     });
   }
 
@@ -384,8 +521,11 @@ export class FlowService {
         [input.missionId],
       );
       if (unknownMutation.rowCount)
-        throw new ConflictException({ code: "MISSION_RECONCILIATION_REQUIRED",
-          mutationOutcome: "unknown", safeActions: ["get_flow_authoring"] });
+        throw new ConflictException({
+          code: "MISSION_RECONCILIATION_REQUIRED",
+          mutationOutcome: "unknown",
+          safeActions: ["get_flow_authoring"],
+        });
       await query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [projectId]);
       const active = await query<{ count: string }>(
         `SELECT count(*)::text count FROM mission_objective_orchestration x JOIN missions m ON m.id=x.mission_id WHERE m.project_id=$1 AND x.state IN ('queued','running')`,
@@ -756,7 +896,10 @@ export class FlowService {
   }
 }
 
-export function readImmutableFlowContractVersion(contractVersion: string, flowRevisionId: string | null) {
+export function readImmutableFlowContractVersion(
+  contractVersion: string,
+  flowRevisionId: string | null,
+) {
   if (contractVersion === "v2-learned-interactions") return contractVersion;
   if (contractVersion === "v1-existing" && flowRevisionId) return contractVersion;
   throw new ConflictException({ code: "UNSUPPORTED_FLOW_CONTRACT_VERSION" });

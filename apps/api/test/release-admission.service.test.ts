@@ -125,7 +125,7 @@ describe("release admission", () => {
     });
   });
 
-  it("rejects legacy direct Flow publication before opening a transaction", async () => {
+  it("applies release admission before direct Flow representation writes", async () => {
     const database = { transaction: vi.fn() };
     const admission = {
       assertAcceptingWork: vi.fn(async () => {
@@ -135,9 +135,7 @@ describe("release admission", () => {
     const service = new FlowService(database as never, admission as never);
     await expect(
       service.createFlow({ kind: "service", subject: "scry-service" }, "project", {} as never),
-    ).rejects.toMatchObject({
-      response: expect.objectContaining({ code: "AUTHORING_DRAFT_REQUIRED" }),
-    });
+    ).rejects.toThrow("blocked");
     expect(database.transaction).not.toHaveBeenCalled();
   });
 

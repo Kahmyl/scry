@@ -1045,7 +1045,20 @@ Note:
 
 Open before next checkpoint:
 
-- Slice 4+ compatibility migration and wider authority transfer remain outstanding.
+- Slice 4 direct Flow representation is implemented: `createFlow` and
+  `reviseFlow` now create immutable published revisions directly with mission
+  scope, release admission, idempotency, mechanical validation, and optimistic
+  revision checks. The mutable draft lifecycle remains available but is no
+  longer mandatory for ordinary Flow creation/revision.
+- Slice 5+ compatibility migration and wider authority transfer remain outstanding.
+
+Slice 4 focused qualification:
+
+```text
+API release-admission and Flow contract tests: 8/8 GREEN
+API typecheck: GREEN
+git diff --check: GREEN
+```
 
 Objective:
 
