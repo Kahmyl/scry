@@ -248,11 +248,44 @@ persistence-failure journey passes in isolation, and the deterministic changed-p
 suites above are green. Treat these broad-suite timing failures as an explicit
 verification debt; do not reinterpret them as proof of a protected-fill redispatch.
 
+### Select/check interaction family — COMPLETE
+
+Checkpoint:
+
+```text
+7fc66a5 refactor: pin select and check interactions
+```
+
+Established:
+
+```text
+select option and check/set-checked
+→ exact PraxisTargetReference captured during grounding
+→ ElementHandle-owned browser mutation in Praxis
+→ no Executor/application native-control bypass
+→ mechanical pre-dispatch replacement/document refusal
+→ exact pinned-entity post-dispatch verification
+→ semantically identical replacement cannot satisfy verification
+→ post-dispatch uncertainty remains truthful and non-retriable as a fresh mutation
+```
+
+Qualification at closure:
+
+```text
+Praxis targeted reference/runtime tests: 46/46 GREEN
+full Praxis suite: 165/165 GREEN
+Executor select/check ownership regression: 15/15 GREEN
+protected Create Order check preparation: 5/5 GREEN
+Assurance truth: 23/23 GREEN
+repository typecheck: GREEN
+subsystem, execution-kernel, and direct-browser boundaries: GREEN
+```
+
 ### Current active slice
 
-Continue R0.3.5 by inventorying actual remaining interaction primitives and
-migrating one small used family at a time. Start with read-only call-site tracing;
-do not invent unused capability.
+Continue the R0.3.5 inventory with press/keyboard as the next distinct active
+mechanic. Keep hover, scroll, drag/drop, upload/download, dialog, and page
+switching separate and migrate only proven active usage.
 
 Before doing anything:
 
