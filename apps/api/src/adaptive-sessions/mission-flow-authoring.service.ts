@@ -144,6 +144,13 @@ export class MissionFlowAuthoringService {
     })) };
   }
 
+  async observe(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.observe(sessionId);
+  }
+
   async reconcileUnknown(
     principal: Principal,
     sessionId: string,

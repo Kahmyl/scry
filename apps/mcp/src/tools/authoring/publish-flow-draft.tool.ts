@@ -53,7 +53,7 @@ export function registerPublishFlowDraftTool(server: McpServer, client: ScryApiC
         });
         return result(
           { publication },
-          "Execution-ready Flow revision published with its exact compiled contract identity.",
+          "Immutable representation-only Flow revision published; no compilation or certification admits execution.",
         );
       } catch (error) {
         if (!(error instanceof ScryApiError)) throw error;

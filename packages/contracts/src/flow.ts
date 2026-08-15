@@ -85,10 +85,18 @@ export type CreateFlowRevisionInput = z.infer<typeof createFlowRevisionSchema>;
 export type ValidatePlanInput = z.infer<typeof validatePlanSchema>;
 export type CreateFlowRunInput = z.infer<typeof createFlowRunSchema>;
 
+const agentDirectedIntentSchema = z
+  .object({
+    ...missionAuthoringIntentSchema.shape,
+    expectedEffect: missionAuthoringIntentSchema.shape.expectedEffect.default({ kind: "none" }),
+  })
+  .strict()
+  .transform((value) => missionAuthoringIntentSchema.parse(value));
+
 export const dispatchRunOperationBaseSchema = z
   .object({
     praxisSessionId: uuidSchema,
-    intent: missionAuthoringIntentSchema,
+    intent: agentDirectedIntentSchema,
   })
   .strict();
 

@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ScryApiClient } from "../src/api-client.js";
 import { createScryMcpServer } from "../src/server.js";
@@ -9,6 +9,9 @@ import { SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS } from "../src/server-composition.
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+});
+beforeEach(() => {
+  vi.stubEnv("SCRY_LEGACY_MCP_FIXTURES", "true");
 });
 const context = {
   missionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -34,11 +37,36 @@ const admittedCapabilities = {
 };
 
 describe("current Scry MCP surface", () => {
+  it("exposes the agent-first public surface without legacy admission or progression tools", async () => {
+    vi.stubEnv("SCRY_LEGACY_MCP_FIXTURES", "");
+    const { client, server } = await connected();
+    const tools = (await client.listTools()).tools;
+    const names = tools.map(({ name }) => name);
+    expect(names).toEqual(expect.arrayContaining([
+      "start_praxis_session", "observe_praxis_session", "get_praxis_session",
+      "close_praxis_session", "start_run", "dispatch_run_operation",
+      "attach_run_praxis_session", "finalize_run",
+    ]));
+    expect(names).not.toEqual(expect.arrayContaining([
+      "advance_flow_authoring", "prepare_flow_authoring", "start_flow_authoring",
+      "ensure_calibration", "bind_calibration", "create_execution_plan",
+      "activate_execution_plan", "start_ready_objectives",
+      "pause_mission_orchestration", "resume_mission_orchestration",
+    ]));
+    const observe = tools.find(({ name }) => name === "observe_praxis_session")!;
+    expect(observe.description).toContain("opaque context-control references");
+    const dispatch = tools.find(({ name }) => name === "dispatch_run_operation")!;
+    expect(dispatch.description).toContain("semantic-only targets");
+    expect(dispatch.description).toContain("no selector fallback");
+    await client.close();
+    await server.close();
+  });
+
   it("exposes privacy-safe structural grouping through the negotiated MCP instructions", async () => {
     expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("containerReferences");
-    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("without revealing suppressed row text");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("privacy-safe grouping");
     expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("not action targets or resource identity");
-    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("Never select the first container");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("Never select by list order");
     expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("request clarification");
     const { client, server } = await connected();
     expect(client.getInstructions()).toContain(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS);

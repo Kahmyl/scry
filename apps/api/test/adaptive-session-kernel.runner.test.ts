@@ -4,6 +4,30 @@ import { compileDefaultVeilPolicy } from "@scry/veil";
 import { AdaptiveSessionKernelRunner } from "../src/adaptive-sessions/adaptive-session-kernel.runner.js";
 
 describe("AdaptiveSessionKernelRunner timing propagation", () => {
+  it("observes the existing live Praxis session without provisioning or dispatch", async () => {
+    const runner = new AdaptiveSessionKernelRunner({} as never, {} as never, {} as never, {} as never);
+    const observeDocument = vi.fn(async () => ({
+      url: "https://example.test/current",
+      documentEpoch: 4,
+      semanticPageContext: { controls: [{ reference: "context-control-0123456789abcdef0123456789abcdef" }] },
+    }));
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set("live-session", {
+      session: { observeDocument }, fencingToken: 1, tail: Promise.resolve(),
+    });
+
+    await expect(runner.observe("live-session")).resolves.toMatchObject({
+      url: "https://example.test/current",
+      documentEpoch: 4,
+      semanticPageContext: { controls: [expect.objectContaining({
+        reference: "context-control-0123456789abcdef0123456789abcdef",
+      })] },
+    });
+    expect(observeDocument).toHaveBeenCalledOnce();
+    await expect(runner.observe("dead-session")).rejects.toMatchObject({
+      response: { code: "PRAXIS_SESSION_NOT_LIVE" },
+    });
+  });
+
   it("projects the exact safe missing origin and replacement-session recovery", async () => {
     const sessionId = "11111111-1111-4111-8111-111111111111";
     const environmentId = "22222222-2222-4222-8222-222222222222";

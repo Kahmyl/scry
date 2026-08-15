@@ -33,14 +33,16 @@ export function registerMissionsTools(server: McpServer, client: ScryApiClient) 
   registerUpdateMissionTool(server, client);
   registerEndAgentSessionTool(server, client);
   registerGetMissionActivityTool(server, client);
-  registerCreateExecutionPlanTool(server, client);
-  registerValidateExecutionPlanTool(server, client);
-  registerActivateExecutionPlanTool(server, client);
-  registerGetOrchestrationStatusTool(server, client);
-  registerStartReadyObjectivesTool(server, client);
-  registerPauseMissionOrchestrationTool(server, client);
-  registerResumeMissionOrchestrationTool(server, client);
-  registerCancelMissionOrchestrationTool(server, client);
+  if (process.env.NODE_ENV === "test" && process.env.SCRY_LEGACY_MCP_FIXTURES === "true") {
+    registerCreateExecutionPlanTool(server, client);
+    registerValidateExecutionPlanTool(server, client);
+    registerActivateExecutionPlanTool(server, client);
+    registerGetOrchestrationStatusTool(server, client);
+    registerStartReadyObjectivesTool(server, client);
+    registerPauseMissionOrchestrationTool(server, client);
+    registerResumeMissionOrchestrationTool(server, client);
+    registerCancelMissionOrchestrationTool(server, client);
+  }
   registerGrantMissionExecutionAuthorizationTool(server, client);
   registerRelateMissionActivityTool(server, client);
   registerCreateMissionObjectiveTool(server, client);

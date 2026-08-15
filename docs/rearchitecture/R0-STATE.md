@@ -1832,6 +1832,75 @@ Do not reset work left by another agent.
 
 ---
 
+## R0.6 — API/MCP composition and legacy retirement — COMPLETE
+
+Starting checkpoint: `8c026982c3d17291f8ee23477f8e0f66843b7720`.
+
+### Active public-surface inventory and disposition
+
+| Surface | Classification | Final public ownership/contract |
+|---|---|---|
+| capabilities/readiness | **CUT OVER** | advertises live Praxis session, factual observation, exact references, durable Run ledger, explicit finalization; explicitly denies automatic progression and compile/calibration prerequisites |
+| Project/Mission/Objective/Flow representation and reports | **KEEP** | durable application representation and factual history |
+| Flow drafts/publication | **KEEP** | optional representation authoring; publication copy is representation-only, never execution certification |
+| live browser session start/get/observe/close | **CUT OVER** | `/api/praxis-sessions` and `start/observe/get/close_praxis_session`; Praxis owns Page/document/reference lifetime |
+| Run create/get/dispatch/attach/finalize | **KEEP** | durable externally progressed ledger bound to an existing live Praxis session |
+| protected authorization and Veil findings/preferences/recovery | **KEEP** | explicit factual authorization plus independent privacy/trust authority |
+| artifacts and historical calibration reads | **COMPATIBILITY ONLY** | factual Chronicle/Assurance-era records remain readable; no runtime admission power |
+| calibration request/decision/retry/cancel/bind | **DELETE from public surface** | no active API route or production MCP registration |
+| execution-plan activation and Mission orchestration controls | **DELETE from public surface** | no active API route or production MCP registration; external agent creates, dispatches, and finalizes Runs explicitly |
+| semantic authoring turns, preparation/recovery progression tools | **COMPATIBILITY ONLY** | unavailable in production MCP and legacy API controller unregistered; retained only when both `NODE_ENV=test` and `SCRY_LEGACY_MCP_FIXTURES=true` for historical fixtures |
+| compiled/certified publication wording and certify capability | **DELETE** | removed from production guidance/capability discovery |
+
+### Public contract now exposed
+
+```text
+get_capabilities
+→ start_praxis_session
+→ observe_praxis_session (bounded facts + context-control references)
+→ start_run (bind existing session)
+→ dispatch_run_operation (one exact external-agent-selected operation)
+→ inspect factual functional/mutation/privacy/evidence result
+→ external agent explicitly chooses another operation or finalize_run
+→ close_praxis_session when browser work is finished
+```
+
+Session loss permanently stales its references. `attach_run_praxis_session`
+records a new epoch, after which the agent must call `observe_praxis_session`
+and select a new reference. Neither API nor MCP translates or semantically
+re-resolves the old reference. Omitted expected effects default to `none`; an
+expected effect remains only a mechanical assertion and never progression.
+
+### Closure audit
+
+```text
+MCP/API express the agent-first authority model: PASS
+no production public semantic-admission or confidence gate: PASS
+no production public automatic Mission/Run progression command: PASS
+live Praxis session ownership and factual observation explicit: PASS
+Run remains a durable ledger and never creates a browser: PASS
+protected authorization and Veil permission remain independent: PASS
+expected effects optional/mechanical; omitted value defaults to none: PASS
+calibration mutation/admission public surfaces retired; history readable: PASS
+legacy fixture registration cannot activate without explicit test-only flag: PASS
+fresh-agent tool discovery test covers the complete operating sequence: PASS
+```
+
+Qualification:
+
+```text
+API executable suite: 455/455 GREEN (62 skipped; Docker M1 snapshot fixture unavailable)
+MCP: 31/31 GREEN, including production-surface discovery
+Praxis: 174/174 GREEN
+Veil: 37/37 GREEN
+Contracts/API/MCP typecheck: GREEN
+subsystem/direct-browser/execution-kernel/production-operation boundaries: GREEN
+git diff --check: GREEN
+repository topology delta: ZERO; the same six pre-existing topology findings remain
+```
+
+R0.6 is complete. R0.7 has not begun.
+
 # Important current architectural facts
 
 ## Executor

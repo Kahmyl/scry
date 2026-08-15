@@ -186,6 +186,13 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
 
   hasRuntime(sessionId: string) { return this.runtimes.has(sessionId); }
 
+  /** Factual observation of the already-owned live session. Never provisions or dispatches. */
+  async observe(sessionId: string) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, () => runtime.session.observeDocument());
+  }
+
   async reconcileUnknownEffect(sessionId: string, expectedEffect: ExpectedEffect,
     baseline: { url: string; documentEpoch: number; effectState: Record<string, unknown> } | null) {
     const runtime = this.runtimes.get(sessionId);

@@ -271,7 +271,7 @@ Closure condition:
 
 # R0.6 — API/MCP composition and legacy retirement
 
-Status: **NEXT — NOT STARTED**
+Status: **COMPLETE**
 
 ## Objective
 

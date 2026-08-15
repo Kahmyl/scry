@@ -339,6 +339,61 @@ export function registerAdaptiveSessionTools(server: McpServer, client: ScryApiC
   );
 }
 
+export function registerPraxisSessionTools(server: McpServer, client: ScryApiClient) {
+  server.registerTool("start_praxis_session", {
+    title: "Start live Praxis session",
+    description: "Start an agent-owned live Praxis browser session. It owns Page/document identity and opaque references; it does not create a Run or choose an operation.",
+    inputSchema: { ...startAdaptiveSessionSchema.omit({ idempotencyKey: true }).shape,
+      idempotencyKey: startAdaptiveSessionSchema.shape.idempotencyKey.optional() }, annotations: writes,
+  }, async ({ idempotencyKey, ...input }) => withAdaptiveSessionError(async () => {
+    await client.requireCurrentRelease();
+    const body = startAdaptiveSessionSchema.parse({ ...input,
+      idempotencyKey: idempotencyKey ?? stableKey("praxis-session-start", input) });
+    return toolResult({ session: await client.post("/praxis-sessions", body) },
+      "Live Praxis session started; observe before selecting a target.");
+  }, "Praxis session start refused."));
+  server.registerTool("observe_praxis_session", {
+    title: "Observe live Praxis session",
+    description: "Return bounded factual browser state and opaque context-control references from the current Page/document. References are session/document scoped and the external agent selects one explicitly.",
+    inputSchema: { praxisSessionId: uuid }, annotations: readOnly,
+  }, async ({ praxisSessionId }) => withAdaptiveSessionError(async () => toolResult({
+    observation: await client.get(`/praxis-sessions/${praxisSessionId}/observation`),
+  }, "Current factual observation loaded; choose an exact reference explicitly."), "Observation refused."));
+  server.registerTool("get_praxis_session", {
+    title: "Get Praxis session facts",
+    description: "Read durable lifecycle facts. This does not observe, dispatch, resume, or choose progression.",
+    inputSchema: { praxisSessionId: uuid }, annotations: readOnly,
+  }, async ({ praxisSessionId }) => withAdaptiveSessionError(async () => toolResult({
+    session: await client.get(`/praxis-sessions/${praxisSessionId}`),
+  }, "Praxis session lifecycle facts loaded."), "Session read refused."));
+  server.registerTool("reconcile_unknown_operation", {
+    title: "Reconcile unknown operation",
+    description: "Perform observation-only reconciliation of one UNKNOWN operation. This never redispatches it; still_unknown remains fenced.",
+    inputSchema: { praxisSessionId: uuid, missionId: reconcileAdaptiveOperationSchema.shape.missionId,
+      operationId: reconcileAdaptiveOperationSchema.shape.operationId,
+      idempotencyKey: reconcileAdaptiveOperationSchema.shape.idempotencyKey.optional() }, annotations: writes,
+  }, async ({ praxisSessionId, missionId, operationId, idempotencyKey }) => withAdaptiveSessionError(async () => {
+    await client.requireCurrentRelease();
+    const body = reconcileAdaptiveOperationSchema.parse({ missionId, operationId,
+      idempotencyKey: idempotencyKey ?? `praxis-reconciliation-${randomUUID()}` });
+    return toolResult({ reconciliation: await client.post(
+      `/praxis-sessions/${praxisSessionId}/reconcile-unknown`, body,
+    ) }, "Observation-only reconciliation recorded; no operation was redispatched.");
+  }, "Reconciliation refused."));
+  server.registerTool("close_praxis_session", {
+    title: "Close Praxis session",
+    description: "Close the live session. Its references become permanently stale; continuation requires a new session, re-observation, and new references.",
+    inputSchema: { praxisSessionId: uuid,
+      idempotencyKey: closeAdaptiveSessionSchema.shape.idempotencyKey.optional() }, annotations: writes,
+  }, async ({ praxisSessionId, idempotencyKey }) => withAdaptiveSessionError(async () => {
+    await client.requireCurrentRelease();
+    const body = closeAdaptiveSessionSchema.parse({ idempotencyKey:
+      idempotencyKey ?? stableKey("praxis-session-close", { praxisSessionId }) });
+    return toolResult({ session: await client.post(`/praxis-sessions/${praxisSessionId}/close`, body) },
+      "Praxis session closed; all references from it are stale.");
+  }, "Session close refused."));
+}
+
 async function withAdaptiveSessionError<T>(operation: () => Promise<T>, rejectionMessage: string) {
   try {
     return await operation();

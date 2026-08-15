@@ -198,7 +198,17 @@ export type ScryCapabilities = {
   adaptiveExecution?: {
     kernel: boolean;
     authoringTurn: boolean;
-    modes: Array<"observe" | "rehearse" | "transact" | "certify" | "run">;
+    modes: Array<"observe" | "transact" | "run">;
+  };
+  agentDirectedExecution?: {
+    livePraxisSession: boolean;
+    factualObservation: boolean;
+    exactReferenceRequired: boolean;
+    durableRunLedger: boolean;
+    explicitRunFinalization: boolean;
+    automaticProgression: boolean;
+    compileCertificationRequired: boolean;
+    calibrationRequired: boolean;
   };
   directBrowser?: { enabled: boolean; maxActionsPerTurn: number; sessionIdleTtlMs: number };
   groundingCapabilities?: string[];

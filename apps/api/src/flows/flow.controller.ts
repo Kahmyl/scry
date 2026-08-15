@@ -8,8 +8,6 @@ import {
   type CreateFlowInput,
   type CreateFlowRunInput,
   type ValidatePlanInput,
-  bindCalibrationSchema,
-  type BindCalibrationInput,
 } from "@scry/contracts";
 
 import { CurrentPrincipal, Public, type Principal } from "../auth/index.js";
@@ -77,15 +75,6 @@ export class FlowController {
     @Body(new ZodValidationPipe(createFlowRevisionSchema)) input: CreateFlowRevisionInput,
   ) {
     return this.core.reviseFlow(principal, flowId, input);
-  }
-
-  @Post("flows/:flowId/calibration-bindings")
-  bindCalibration(
-    @Param("flowId") flowId: string,
-    @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(bindCalibrationSchema)) input: BindCalibrationInput,
-  ) {
-    return this.core.bindCalibration(principal, flowId, input);
   }
 
   @Post("projects/:projectId/runs")

@@ -37,4 +37,10 @@ describe("agent-directed Run live Praxis binding", () => {
     );
     expect(parsed.praxisSessionId).toBe(id("4"));
   });
+
+  it("defaults an omitted expected effect to a non-authoritative mechanical assertion", () => {
+    const input = command(`context-control-${"c".repeat(32)}`);
+    delete (input.intent as { expectedEffect?: unknown }).expectedEffect;
+    expect(dispatchRunOperationSchema.parse(input).intent.expectedEffect).toEqual({ kind: "none" });
+  });
 });
