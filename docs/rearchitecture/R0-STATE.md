@@ -755,6 +755,35 @@ Next: classify and migrate remaining protected extraction/clipboard browser
 mechanics without moving protected workflow orchestration or Veil trust policy
 into Praxis.
 
+### Protected read and clipboard mechanics — COMPLETE
+
+Checkpoint:
+
+```text
+3816222 refactor: move protected read mechanics to praxis
+```
+
+Ownership classification and result:
+
+```text
+element value/selection and clipboard/copy-event browser mechanics → Praxis
+protected acquisition method admission and workflow → temporary Executor application composition
+clipboard lifecycle disclosure/suppression authority → Veil unchanged
+protected value persistence → application repositories pending Chronicle consolidation
+```
+
+Qualification:
+
+```text
+protected extraction/acquisition cohort: 17/17 GREEN
+full Praxis suite: 174/174 GREEN
+repository typecheck and direct-browser boundary: GREEN
+```
+
+Next: inventory remaining direct Executor browser runtime calls (checkpoint
+state capture, diagnostics, policy listeners, and response observation),
+separating factual observation from product orchestration before migration.
+
 Before doing anything:
 
 ```bash
