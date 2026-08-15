@@ -452,12 +452,39 @@ The API browser-server driver and protected capsule factory remain explicit
 sibling lifecycle owners pending migration; popup adoption remains with the
 authoring session until the shared page-adoption lifecycle is established.
 
+### API browser-server lifecycle — COMPLETE
+
+Checkpoint:
+
+```text
+c0b1980 refactor: move browser server lifecycle to praxis
+```
+
+Established:
+
+```text
+launchServer/connect/context/page mechanics → Praxis lifecycle
+ownership timeline and identifiers → Praxis lifecycle
+graceful close with server fallback → Praxis lifecycle
+force-kill fallback and process identifier → preserved
+API NativeBrowserDriver → application adapter, not launch owner
+```
+
+Qualification at closure:
+
+```text
+Praxis lifecycle tests: 3/3 GREEN
+full Praxis suite: 173/173 GREEN
+Assurance truth: 23/23 GREEN
+repository typecheck and boundary gates: GREEN
+direct-browser boundary admits only Praxis browser creation
+```
+
 ### Current active slice
 
-Continue R0.3.6 by moving the API native browser-server creation/connection and
-close fallback behind the Praxis lifecycle boundary while preserving its
-ownership timeline and force-kill semantics. Then migrate protected capsule
-creation/destruction before popup/page adoption.
+Continue R0.3.6 with protected capsule creation/destruction. Preserve isolation,
+tainted provenance, bounded destruction, and force-close semantics. After that,
+consolidate popup/page adoption and navigation lifecycle.
 
 Before doing anything:
 
