@@ -668,6 +668,35 @@ Next: migrate active qualification scripts from the qualification-only
 NativeBrowserDriver semantic delegates to direct Praxis composition, then
 delete those delegates and their retired native-driver regression corpus.
 
+### Native semantic compatibility retirement — COMPLETE
+
+Checkpoint:
+
+```text
+83ddd49 refactor: retire native semantic compatibility
+```
+
+Established:
+
+```text
+active qualification semantic grounding → direct Praxis composition
+protected certification control dispatch → Praxis transaction
+NativeBrowserDriver semantic resolution/control/effect delegates → removed
+NativeBrowserDriver retained surface → browser ownership, navigation, typed same-origin request
+obsolete native semantic regression corpus → replaced by focused adapter proofs
+```
+
+Qualification:
+
+```text
+NativeBrowserDriver adapter cohort: 3/3 GREEN
+repository typecheck and direct-browser boundary: GREEN
+no executeSemanticControl/resolveSemanticTarget call sites remain
+```
+
+Next: continue the R0.3.7 Executor responsibility inventory from this clean
+checkpoint, preserving product orchestration and Veil/Chronicle ownership.
+
 Before doing anything:
 
 ```bash
