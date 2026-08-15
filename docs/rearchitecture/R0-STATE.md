@@ -508,12 +508,40 @@ Assurance truth: 23/23 GREEN
 repository typecheck and boundary gates: GREEN
 ```
 
+### Popup/page ownership lifecycle — COMPLETE
+
+Checkpoint:
+
+```text
+44194a5 refactor: move popup ownership to praxis
+```
+
+Established:
+
+```text
+expected-page candidate capture/cardinality → Praxis lifecycle
+unarmed popup closure → Praxis lifecycle
+candidate settle and load readiness → Praxis lifecycle
+candidate adoption/disposal and old-page closure → Praxis lifecycle
+allowed-origin decision and expected-origin policy → application composition
+Veil authority registration on adopted page → preserved
+```
+
+Qualification at closure:
+
+```text
+authoring popup/page lifecycle regressions: 4/4 GREEN
+full Praxis suite: 174/174 GREEN
+Assurance truth: 23/23 GREEN
+repository typecheck and boundary gates: GREEN
+```
+
 ### Current active slice
 
-Continue R0.3.6 with popup/page adoption and navigation lifecycle. Preserve
-single-popup cardinality, origin admission, old-page retirement, Veil
-registration, and failure cleanup. Then audit frame/tab/dialog ownership before
-closing browser lifecycle consolidation.
+Finish the R0.3.6 audit for navigation, frame/tab, dialog, download policy, and
+teardown call sites. Move remaining mechanical ownership to Praxis, keep
+application policy decisions outside, and close R0.3.6 only when no duplicate
+production lifecycle model remains.
 
 Before doing anything:
 
