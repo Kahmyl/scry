@@ -11,6 +11,7 @@ import {
 import {
   executionPolicySchema,
   validatePlanAgainstPolicy,
+  analyzePlanRisks,
   type CreateFlowRevisionInput,
   type CreateFlowInput,
   type CreateFlowRunInput,
@@ -201,8 +202,8 @@ export class FlowService {
       authoring: {
         drafts: true,
         probeLevels: ["inspection", "reversible", "calibration_transaction"],
-        compilationRequiredForRuns: true,
-        candidateRunBudget: 1,
+        compilationRequiredForRuns: false,
+        candidateRunBudget: 0,
         encryptedSessionReuse: "project-policy-opt-in",
       },
       orchestration: {
@@ -386,45 +387,6 @@ export class FlowService {
         throw new ConflictException({ code: "MISSION_RECONCILIATION_REQUIRED",
           mutationOutcome: "unknown", safeActions: ["get_flow_authoring"] });
       await query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [projectId]);
-      const authority = await query<{
-        state: string;
-        mode: string;
-        flowRevisionId: string | null;
-        compiledContractId: string | null;
-        environmentId: string | null;
-        executionSettings: {
-          browser: string;
-          viewport: { width: number; height: number };
-          seed?: number;
-        };
-      }>(
-        `SELECT x.state,b.mode,b.flow_revision_id AS "flowRevisionId",b.compiled_contract_id AS "compiledContractId",b.environment_id AS "environmentId",b.execution_settings AS "executionSettings" FROM mission_objective_orchestration x JOIN mission_execution_plans ep ON ep.id=x.plan_id AND ep.status='active' JOIN mission_execution_bindings b ON b.plan_id=x.plan_id AND b.objective_id=x.objective_id WHERE x.mission_id=$1 AND x.objective_id=$2 FOR UPDATE`,
-        [input.missionId, input.objectiveId],
-      );
-      if (!authority.rowCount)
-        throw new ConflictException({
-          code: "ORCHESTRATION_PLAN_REQUIRED",
-          message: "Activate an approved Mission execution plan before starting Runs.",
-        });
-      const binding = authority.rows[0]!;
-      if (binding.state !== "ready")
-        throw new ConflictException({
-          code: "OBJECTIVE_NOT_READY",
-          message: "Scry readiness is authoritative.",
-          state: binding.state,
-        });
-      if (
-        (binding.flowRevisionId && binding.flowRevisionId !== input.flowRevisionId) ||
-        (binding.compiledContractId && binding.compiledContractId !== input.compiledContractId) ||
-        (binding.environmentId && binding.environmentId !== input.environmentId)
-      )
-        throw new ConflictException({ code: "EXECUTION_BINDING_MISMATCH" });
-      if (
-        binding.mode === "automatic" &&
-        hash(binding.executionSettings) !==
-          hash({ browser: input.browser, viewport: input.viewport, seed: input.seed })
-      )
-        throw new ConflictException({ code: "EXECUTION_SETTINGS_MISMATCH" });
       const active = await query<{ count: string }>(
         `SELECT count(*)::text count FROM mission_objective_orchestration x JOIN missions m ON m.id=x.mission_id WHERE m.project_id=$1 AND x.state IN ('queued','running')`,
         [projectId],
@@ -441,60 +403,10 @@ export class FlowService {
       );
       if (!revision.rowCount) throw new NotFoundException("Flow revision not found");
       const runtime = browserObservationRuntimeHealth();
-      const compilation = await query<{
-        id: string;
-        compiledContractDigest: string;
-        runtimeHash: string;
-        capabilityManifestHash: string;
-        contractVersion: string;
-      }>(
-        `SELECT id,compiled_contract_digest AS "compiledContractDigest",runtime_hash AS "runtimeHash",
-                capability_manifest_hash AS "capabilityManifestHash",contract_version AS "contractVersion"
-         FROM flow_compilations WHERE id=$1 AND flow_revision_id=$2 AND environment_id=$3
-           AND mission_id=$4 AND objective_id=$5 AND status='execution_ready'`,
-        [
-          input.compiledContractId,
-          input.flowRevisionId,
-          input.environmentId,
-          input.missionId,
-          input.objectiveId,
-        ],
-      );
       if (!runtime.healthy)
         throw new ServiceUnavailableException({
           code: "BROWSER_RUNTIME_UNHEALTHY",
           diagnostics: runtime.diagnostics,
-        });
-      if (!compilation.rowCount)
-        throw new ConflictException({
-          code: "EXECUTION_READY_COMPILATION_REQUIRED",
-          safeActions: ["get_flow_authoring", "advance_flow_authoring", "compile_and_certify_flow"],
-        });
-      readImmutableFlowContractVersion(
-        compilation.rows[0]!.contractVersion,
-        input.flowRevisionId,
-      );
-      if (
-        compilation.rows[0]!.runtimeHash !== runtime.runtimeHash ||
-        compilation.rows[0]!.capabilityManifestHash !== runtime.capabilityManifestHash
-      ) {
-        await query(
-          `UPDATE flow_compilations SET status='stale',invalidated_at=now() WHERE id=$1`,
-          [input.compiledContractId],
-        );
-        throw new ConflictException({
-          code: "COMPILED_CONTRACT_STALE",
-          safeActions: ["advance_flow_authoring", "compile_and_certify_flow"],
-        });
-      }
-      const existingCandidate = await query(
-        `SELECT 1 FROM runs WHERE mission_id=$1 AND objective_id=$2 AND compiled_contract_id=$3 AND reliability_eligible AND state IN ('queued','preparing','running','finalizing','failed','timed_out','infrastructure_error')`,
-        [input.missionId, input.objectiveId, input.compiledContractId],
-      );
-      if (existingCandidate.rowCount)
-        throw new ConflictException({
-          code: "CANDIDATE_RUN_BUDGET_EXHAUSTED",
-          safeActions: ["accept_evidence", "return_to_calibration", "publish_new_revision"],
         });
       const validation = await this.validateWith(
         query,
@@ -537,7 +449,7 @@ export class FlowService {
           input.environmentId,
           input.flowRevisionId,
           input.compiledContractId,
-          compilation.rows[0]!.compiledContractDigest,
+          null,
           JSON.stringify(revision.rows[0]!.plan),
           JSON.stringify({
             id: input.environmentId,
@@ -546,7 +458,12 @@ export class FlowService {
           }),
           JSON.stringify(executionPolicy),
           JSON.stringify(veilPolicySnapshot),
-          JSON.stringify({ browser: input.browser, viewport: input.viewport, seed: input.seed }),
+          JSON.stringify({
+            browser: input.browser,
+            viewport: input.viewport,
+            seed: input.seed,
+            executionModel: input.executionModel,
+          }),
           input.idempotencyKey,
         ],
       );
@@ -615,17 +532,19 @@ export class FlowService {
       [input.environmentId, input.projectId],
     );
     if (!environment.rowCount) throw new NotFoundException("Environment not found");
-    const diagnostics: Diagnostic[] = [];
+    const mechanical: Diagnostic[] = [];
+    const quality: Diagnostic[] = [];
     const observer = browserObservationRuntimeHealth();
-    if (!observer.healthy)
-      diagnostics.push({
+    if (!observer.healthy) {
+      mechanical.push({
         severity: "error",
         code: "FLOW_CAPABILITY_UNAVAILABLE",
         message: "The Browser Observation Runtime failed its self-contained artifact check.",
         suggestion: "Deploy a healthy capability-grounding worker before accepting Flows.",
       });
+    }
     const policy = executionPolicySchema.parse(environment.rows[0]!.policy);
-    diagnostics.push(
+    mechanical.push(
       ...validatePlanAgainstPolicy(input.plan, policy).map((item) => ({
         severity: "error" as const,
         ...item,
@@ -644,7 +563,7 @@ export class FlowService {
           !adapter ||
           input.plan.allowedOrigins.some((origin) => !adapter.permittedOrigins.includes(origin))
         )
-          diagnostics.push({
+          mechanical.push({
             severity: "error",
             code: "FLOW_CAPABILITY_UNAVAILABLE",
             message: `Reviewed adapter ${id} is unavailable for every allowed origin.`,
@@ -655,15 +574,18 @@ export class FlowService {
     for (const step of input.plan.steps) {
       if (step.action.type !== "protectedTransaction") continue;
       if (!step.action.calibrationAttestationId) {
-        diagnostics.push({
-          severity: requireCalibration ? "error" : "warning",
+        const diagnostic = {
           code: requireCalibration ? "CALIBRATION_REQUIRED" : "CALIBRATION_PENDING",
           message: `Protected operation ${step.action.operationId} must be calibrated and bound before execution.`,
           stepId: step.id,
           suggestion:
             "Create an authenticated calibration from this Flow revision, approve the attested revision, then bind its revision ID.",
+        };
+        (requireCalibration ? mechanical : quality).push({
+          ...diagnostic,
+          severity: requireCalibration ? "error" : "warning",
         });
-        continue;
+        if (!requireCalibration) continue;
       }
       const calibrated = await query(
         `SELECT 1 FROM calibration_attestations attestation
@@ -684,17 +606,25 @@ export class FlowService {
         ],
       );
       if (!calibrated.rowCount)
-        diagnostics.push({
+        (requireCalibration ? mechanical : quality).push({
           severity: "error",
-          code: "CALIBRATION_REQUIRED",
+          code: requireCalibration ? "CALIBRATION_REQUIRED" : "CALIBRATION_PENDING",
           message: `Protected operation ${step.action.operationId} requires an approved calibration contract revision.`,
           stepId: step.id,
         });
     }
     const refs = secretReferences(input.plan);
+    quality.push(
+      ...analyzePlanRisks(input.plan).errors.map((item) => ({
+        ...item,
+      })),
+      ...analyzePlanRisks(input.plan).warnings.map((item) => ({
+        ...item,
+      })),
+    );
     const allowed = new Set(environment.rows[0]!.secretRefs);
     for (const reference of refs.filter((item) => !allowed.has(item))) {
-      diagnostics.push({
+      mechanical.push({
         severity: "error",
         code: "CREDENTIAL_NOT_AUTHORIZED",
         message: `Credential ${reference} is not authorized in this environment.`,
@@ -713,7 +643,7 @@ export class FlowService {
       });
       const ids = new Set(active.rows.map(({ id }) => String(id)));
       for (const reference of refs.filter((item) => !ids.has(item))) {
-        diagnostics.push({
+        mechanical.push({
           severity: "error",
           code: "CREDENTIAL_UNAVAILABLE",
           message: `Credential ${reference} is missing or deleted.`,
@@ -722,9 +652,11 @@ export class FlowService {
     }
     return {
       correlationId: randomUUID(),
-      valid: !diagnostics.some(({ severity }) => severity === "error"),
-      errors: diagnostics.filter(({ severity }) => severity === "error"),
-      warnings: diagnostics.filter(({ severity }) => severity === "warning"),
+      valid: !mechanical.some(({ severity }) => severity === "error"),
+      mechanical,
+      quality,
+      errors: mechanical.concat(quality).filter(({ severity }) => severity === "error"),
+      warnings: mechanical.concat(quality).filter(({ severity }) => severity === "warning"),
       validatedAt: new Date().toISOString(),
     };
   }

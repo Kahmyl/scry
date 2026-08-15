@@ -45,7 +45,8 @@ export const createFlowRunSchema = objectiveContextSchema
   .extend({
     environmentId: uuidSchema,
     flowRevisionId: uuidSchema,
-    compiledContractId: uuidSchema,
+    compiledContractId: uuidSchema.optional(),
+    executionModel: z.literal("agent_directed_v1").default("agent_directed_v1"),
     idempotencyKey: idempotencyKeySchema,
     browser: z.literal("chromium").default("chromium"),
     viewport: z

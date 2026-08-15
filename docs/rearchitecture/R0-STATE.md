@@ -1010,7 +1010,42 @@ browser-backed qualification: GREEN
 
 R0.4 is closed. Stop at this checkpoint; do not begin R0.5 in this slice.
 
-## R0.5 — external reasoning authority — DECISIONS RESOLVED / IMPLEMENTATION NOT STARTED
+## R0.5 — external reasoning authority — IMPLEMENTATION IN PROGRESS (current)
+
+### Current checkpoint (batch 1)
+
+Completed this batch:
+
+- Slice 1 (ownership/static gates) characterization has been completed for the
+  explicit run path: createRun no longer requires compiled-certification status,
+  mission-plan readiness, or candidate budget to enter ordinary execution, and the
+  mechanical/quality validation split in `apps/api/src/flows/flow.service.ts:validateWith`
+  remains authoritative for mechanical refusal.
+- Slice 2 (separate mechanical validation from quality findings) repairs are in place in `apps/api/src/flows/flow.service.ts:validateWith`.
+- Slice 3 (open direct flow-revision → run creation) removal of compile/certification and objective-ready prerequisites is in place in `apps/api/src/flows/flow.service.ts` and `packages/contracts/src/flow.ts`.
+
+Validation completed:
+
+- `pnpm verify:subsystem-boundaries`
+- `pnpm verify:direct-browser-boundary`
+- `pnpm verify:execution-kernel-boundary`
+- `pnpm verify:production-operations`
+- `pnpm --filter @scry/contracts typecheck`
+- `pnpm --filter @scry/api typecheck`
+- `pnpm --filter @scry/api exec vitest run test/flow-contract-version-reader.test.ts --maxWorkers=1`
+- `pnpm --filter @scry/api exec vitest run test/execution-capability-factory.test.ts --maxWorkers=1`
+- `pnpm --filter @scry/api exec vitest run test/flow-contract-version-reader.test.ts test/execution-capability-factory.test.ts test/release-admission.service.test.ts test/worker-processors.test.ts --maxWorkers=1`
+- `pnpm --filter @scry/contracts exec vitest run --maxWorkers=1`
+- `pnpm --filter @scry/api exec vitest run test/orchestration.service.test.ts --maxWorkers=1`
+
+Note:
+
+- `pnpm verify:repository-topology` is currently failing on pre-existing topology
+  classification findings unrelated to this batch.
+
+Open before next checkpoint:
+
+- Slice 4+ compatibility migration and wider authority transfer remain outstanding.
 
 Objective:
 
