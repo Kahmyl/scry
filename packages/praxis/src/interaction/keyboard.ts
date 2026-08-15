@@ -1,4 +1,4 @@
-import type { ElementHandle } from "playwright";
+import type { ElementHandle, Page } from "playwright";
 
 import { PraxisStaleTargetError } from "../observation.js";
 import type { PraxisTargetReference } from "../references/target-reference.js";
@@ -25,6 +25,15 @@ export async function pressReferencedTarget(
     await element.press(key, options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs });
   } catch (error) {
     if (error instanceof PraxisStaleTargetError) throw error;
+    throw new PraxisKeyDispatchError({ cause: error });
+  }
+  return { dispatched: true };
+}
+
+export async function pressPageKey(page: Page, key: string): Promise<{ dispatched: true }> {
+  try {
+    await page.keyboard.press(key);
+  } catch (error) {
     throw new PraxisKeyDispatchError({ cause: error });
   }
   return { dispatched: true };

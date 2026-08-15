@@ -19,8 +19,8 @@ import {
   selectReferencedTarget,
   setCheckedReferencedTarget,
 } from "../src/interaction/form-control.js";
-import { pressReferencedTarget } from "../src/interaction/keyboard.js";
-import { scrollReferencedTarget } from "../src/interaction/scroll.js";
+import { pressPageKey, pressReferencedTarget } from "../src/interaction/keyboard.js";
+import { scrollReferencedTarget, wheelPage } from "../src/interaction/scroll.js";
 
 let browser: Browser;
 let page: Page;
@@ -700,6 +700,19 @@ describe("Praxis target reference and pinned click", () => {
     await expect(scrollReferencedTarget(stale, "down")).rejects.toBeInstanceOf(PraxisStaleTargetError);
     expect(await page.locator("#target").evaluate((node) => node.scrollTop)).toBe(0);
     await stale.dispose();
+  });
+
+  it("owns targetless page keyboard and wheel mechanics without inventing an element target", { timeout: 30_000 }, async () => {
+    await resetPage(`
+      <input autofocus>
+      <div style="height:2000px"></div>
+      <script>globalThis.__pageKeys = []; document.querySelector("input").addEventListener("keydown", event => globalThis.__pageKeys.push(event.key));</script>
+    `);
+    await page.locator("input").focus();
+    await expect(pressPageKey(page, "Escape")).resolves.toEqual({ dispatched: true });
+    await expect(wheelPage(page, 500)).resolves.toEqual({ dispatched: true });
+    expect(await page.evaluate(() => (globalThis as unknown as { __pageKeys: string[] }).__pageKeys)).toEqual(["Escape"]);
+    await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0);
   });
 
   it("permits unrelated document mutation", { timeout: 30_000 }, async () => {

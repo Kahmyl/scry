@@ -3,7 +3,9 @@ import { randomUUID } from "node:crypto";
 import type { CurrentAction, InteractionTargetIntent, RunEvent } from "@scry/contracts";
 import {
   executePraxisConsumer,
+  pressPageKey,
   PraxisConsumerError,
+  wheelPage,
   type PraxisConsumerInput,
   type PraxisConsumerContext,
 } from "@scry/praxis";
@@ -270,7 +272,7 @@ export async function executeAction(
       } else {
         assertActionDeadline(preDispatchDeadlineAt);
         await options.onMutationDispatch?.();
-        await page.keyboard.press(action.key);
+        await pressPageKey(page, action.key);
       }
       return;
     case "scroll":
@@ -284,7 +286,7 @@ export async function executeAction(
         });
       } else {
         assertActionDeadline(preDispatchDeadlineAt);
-        await page.mouse.wheel(0, action.deltaY);
+        await wheelPage(page, action.deltaY);
       }
       return;
     case "waitFor":

@@ -1,4 +1,4 @@
-import type { ElementHandle } from "playwright";
+import type { ElementHandle, Page } from "playwright";
 
 import { PraxisStaleTargetError } from "../observation.js";
 import type { PraxisTargetReference } from "../references/target-reference.js";
@@ -30,6 +30,14 @@ export async function scrollReferencedTarget(
       throw error;
     });
   }
+  return { dispatched: true };
+}
+
+export async function wheelPage(
+  page: Page,
+  deltaY: number,
+): Promise<{ dispatched: true }> {
+  await page.mouse.wheel(0, deltaY);
   return { dispatched: true };
 }
 
