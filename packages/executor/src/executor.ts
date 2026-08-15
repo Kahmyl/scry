@@ -19,7 +19,6 @@ import {
 } from "@scry/policy";
 import { compileDefaultVeilPolicy, veilPolicyDigest, VeilAuthority } from "@scry/veil";
 import {
-  chromium,
   type Browser,
   type BrowserContext,
   type CDPSession,
@@ -32,7 +31,7 @@ import {
   registerVeilEvidenceAdmission,
   writeJson,
 } from "./artifacts.js";
-import { observeSemanticPageContext, playwrightBrowserChannel, visualRedactionInitScript } from "@scry/praxis";
+import { observeSemanticPageContext, openPraxisBrowserSession, visualRedactionInitScript } from "@scry/praxis";
 import {
   registerGroundingHistoryProvider,
   registerGroundingObserver,
@@ -227,19 +226,20 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       page = options.existingSafeSession.page;
       safeProvenance = options.existingSafeSession.provenance;
     } else {
-      const browserChannel = playwrightBrowserChannel(options.browserChannel);
-      browser = await chromium.launch({
-        headless: options.headless ?? true,
-        ...(browserChannel ? { channel: browserChannel } : {}),
-      });
       const viewport = options.viewport ?? { width: 1280, height: 720 };
-      context = await browser.newContext({
-        viewport,
-        serviceWorkers: "block",
-        acceptDownloads: false,
-        ...(options.browserStorageState ? { storageState: options.browserStorageState } : {}),
+      const session = await openPraxisBrowserSession({
+        ...(options.browserChannel === undefined ? {} : { browserChannel: options.browserChannel }),
+        headless: options.headless ?? true,
+        context: {
+          viewport,
+          serviceWorkers: "block",
+          acceptDownloads: false,
+          ...(options.browserStorageState ? { storageState: options.browserStorageState } : {}),
+        },
       });
-      page = await context.newPage();
+      browser = session.browser;
+      context = session.context;
+      page = session.page;
       safeProvenance = new BrowserSessionProvenance(randomUUID(), "safe");
     }
     await installVisualRedactionStyles(context);
@@ -1057,19 +1057,10 @@ async function openCompatibilityBrowser(
   browserChannel: string | undefined,
   contextOptions?: import("playwright").BrowserContextOptions,
 ) {
-  const launchChannel = playwrightBrowserChannel(browserChannel);
-  const browser = await chromium.launch({
-    headless: true,
-    ...(launchChannel ? { channel: launchChannel } : {}),
+  return openPraxisBrowserSession({
+    ...(browserChannel === undefined ? {} : { browserChannel }),
+    context: { ...contextOptions, acceptDownloads: false },
   });
-  try {
-    const context = await browser.newContext({ ...contextOptions, acceptDownloads: false });
-    const page = await context.newPage();
-    return { browser, context, page };
-  } catch (error) {
-    await browser.close().catch(() => undefined);
-    throw error;
-  }
 }
 
 export { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";

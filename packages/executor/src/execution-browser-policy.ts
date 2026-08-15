@@ -1,5 +1,6 @@
 import { RuntimePolicyError, RuntimeRequestPolicy } from "@scry/policy";
 import type { Browser, BrowserContext, CDPSession, Page } from "playwright";
+import { boundedBrowserClose, closePraxisBrowserResources } from "@scry/praxis";
 
 import type { ExecuteOptions } from "./types.js";
 
@@ -118,22 +119,9 @@ export async function stopBrowser(
   context: BrowserContext | undefined,
   browser: Browser | undefined,
 ) {
-  await Promise.allSettled([
-    context ? boundedClose(context.close()) : Promise.resolve(),
-    browser ? boundedClose(browser.close()) : Promise.resolve(),
-  ]);
+  await closePraxisBrowserResources(context, browser);
 }
 
 export async function boundedClose(operation: Promise<unknown>) {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    await Promise.race([
-      operation,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("Browser shutdown timed out")), 5_000);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  await boundedBrowserClose(operation);
 }

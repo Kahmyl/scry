@@ -20,3 +20,4 @@ export * from "./interaction/form-control.js";
 export * from "./interaction/keyboard.js";
 export * from "./interaction/scroll.js";
 export * from "./interaction/download.js";
+export * from "./lifecycle/browser-session.js";
