@@ -91,7 +91,7 @@ Do not continue polishing Chronicle unless a concrete migration requires it.
 
 ---
 
-## R0.3 — Praxis / Executor consolidation — IN PROGRESS
+## R0.3 — Praxis / Executor consolidation — COMPLETE
 
 Goal:
 
@@ -576,12 +576,11 @@ than a second lifecycle model.
 
 ### Current active slice
 
-Continue R0.3.7 Executor retirement from the semantic-control checkpoint.
-Inventory remaining Executor responsibilities and classify each as product
-orchestration, policy/evidence composition, Praxis compatibility adapter, or
-obsolete browser substrate. Remove the obsolete/compatibility layer one
-bounded call-site family at a time; do not delete product orchestration or
-Veil/Chronicle responsibilities.
+Begin R0.4 Veil narrowing from the closed R0.3 browser-ownership checkpoint.
+Trace actual active Veil call sites, classify narrow trust/privacy authority
+versus semantic/action/lifecycle/orchestration authority, and migrate only the
+violating responsibility. Preserve disclosure, redaction, capture suppression,
+protected-handle, persistence, and safe-boundary invariants.
 
 ### Executor semantic-control path — COMPLETE
 
@@ -813,6 +812,68 @@ Next: classify diagnostics, request/response observation, and browser policy
 listeners as factual observation versus application policy, then move only the
 remaining low-level mechanics.
 
+### Executor browser-ownership closure — COMPLETE
+
+Checkpoint:
+
+```text
+3e58906 refactor: close executor browser ownership
+```
+
+Final inventory classification:
+
+```text
+browser actions, pinned references, browser/session lifecycle, navigation,
+evidence capture, recording/tracing, clipboard reads, and session-state mechanics
+→ Praxis
+
+readiness/calibration composition, request/response policy listeners,
+popup/download admission, protected-response correlation, checkpoint workflow,
+and artifact/evidence request orchestration
+→ temporary Executor application composition with retirement through R0.5
+
+privacy admission, disclosure, redaction, capture suppression, clipboard
+lifecycle, and protected safe-boundary authority
+→ Veil
+
+durable factual events/artifact and checkpoint persistence
+→ Chronicle target ownership; remaining application repositories retire through R0.5
+
+browser fixtures, candidate matrices, negative controls, and ownership gates
+→ Assurance/qualification only
+```
+
+Closure repair and proof:
+
+```text
+activate pins the exact target during grounding and carries that entity through dispatch
+post-dispatch quality analysis reads the pinned entity, never a semantic replacement
+late acquisition retry timeout cannot overwrite stronger observed validation evidence
+direct-browser boundary rejects production action mechanics outside Praxis
+whole-system candidate qualification is independently deadline-owned per journey
+```
+
+R0.3 closure review:
+
+```text
+one authoritative browser substrate = Praxis: YES
+direct semantic/native browser-action bypass in Executor: NONE
+remaining Executor browser code: application composition only, retirement path R0.5
+browser lifecycle duplication: NONE
+semantic admission authority reintroduced: NO
+Veil protected trust boundaries preserved: YES
+Praxis: 174/174 GREEN
+Assurance: 34/34 GREEN
+Executor: 423/423 GREEN, 1 intentionally skipped
+repository typecheck: GREEN
+subsystem, execution-kernel, and direct-browser boundaries: GREEN
+```
+
+R0.3 is closed. Continue directly with R0.4 Veil narrowing by tracing active
+Veil call sites and migrating only semantic, action-selection, task-progression,
+browser-lifecycle, or general execution authority that violates the narrow
+trust/privacy boundary.
+
 Before doing anything:
 
 ```bash
@@ -828,9 +889,10 @@ Do not reset work left by another agent.
 
 ## Executor
 
-Executor still owns or participates in substantial legacy browser/runtime behavior.
-
-Do not delete it before capabilities are deliberately migrated.
+Executor no longer owns an independent browser/action/runtime substrate. Its
+remaining code is temporary application compatibility and composition with a
+named retirement path through R0.5; do not move that product orchestration into
+Praxis or Veil.
 
 Target end-state:
 
