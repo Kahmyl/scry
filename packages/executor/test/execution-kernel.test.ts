@@ -377,19 +377,40 @@ describe("execution kernel admission", () => {
     });
   });
 
-  it("projects bounded semantic target evidence for native-resolved controls", async () => {
-    const outcome = await executeInteractionCompatibility({
-      sessionId: "session", operationId: "native-observation", page: {} as never,
-      action: { type: "waitFor", target: target("Account", "region", ["observable"]), state: "visible", timeoutMs: 1_000 },
-      ordinal: 1, policy,
-      options: { outputDirectory: "/tmp/unused" },
+  it("projects bounded semantic target evidence for Praxis-resolved controls", async () => {
+    const opened = await openTestBrowser();
+    const unregister = registerPraxisVeilAuthority(opened.page, {
+      authority: new VeilAuthority(
+        compileVeilPolicy({ profile: "balanced", allowedOrigins: ["https://example.test"] }),
+      ),
+      userId: "test",
+      environmentId: "test",
+      browserContextId: "praxis-observation",
     });
+    try {
+      await opened.page.setContent('<main><button>Account</button></main>');
+      const outcome = await executeInteractionCompatibility({
+        sessionId: "session", operationId: "praxis-observation", page: opened.page,
+        action: {
+          type: "click",
+          target: target("Account", "button", ["focusable", "pointer_activatable"]),
+          expectedEffect: { type: "none" },
+          timeoutMs: 1_000,
+        },
+        ordinal: 1, policy,
+        options: { outputDirectory: "/tmp/unused" },
+      });
 
-    expect(outcome.resolvedTarget).toMatchObject({
-      version: 2, concept: "Account", scopeKind: "page", structuralPath: [],
-    });
-    expect(outcome.mutationOutcome).toBe("not_applied");
-    expect(JSON.stringify(outcome.resolvedTarget).length).toBeLessThan(500);
+      expect(outcome.resolvedTarget).toMatchObject({
+        version: 2, concept: "Account", scopeKind: "page", structuralPath: [],
+      });
+      expect(outcome.mutationOutcome).toBe("applied");
+      expect(JSON.stringify(outcome.resolvedTarget).length).toBeLessThan(500);
+    } finally {
+      unregister();
+      await opened.context.close();
+      await opened.browser.close();
+    }
   });
 
   it("classifies a Praxis scheduling refusal as proven pre-dispatch", () => {

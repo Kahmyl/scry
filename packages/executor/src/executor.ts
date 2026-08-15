@@ -655,6 +655,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               ordinal: index,
               allowedOrigins: options.plan.allowedOrigins,
               timeoutMs: "timeoutMs" in step.action ? (step.action.timeoutMs ?? 10_000) : 10_000,
+              ...(options.onMutationDispatch ? { beforeMutation: options.onMutationDispatch } : {}),
               ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}),
             },
           );
