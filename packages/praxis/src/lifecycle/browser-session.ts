@@ -123,6 +123,27 @@ export async function closePraxisBrowserResources(
   if (browser) await boundedBrowserClose(browser.close(), timeoutMs).catch(() => undefined);
 }
 
+export async function destroyPraxisIsolatedSession(
+  session: {
+    context: BrowserContext;
+    browser: Browser;
+    forceClose?: () => Promise<void>;
+  },
+  timeoutMs = 2_000,
+): Promise<"destroyed" | "force_terminated"> {
+  try {
+    await boundedBrowserClose(session.context.close(), timeoutMs);
+    await boundedBrowserClose(session.browser.close(), timeoutMs);
+    return "destroyed";
+  } catch {
+    if (session.forceClose)
+      await boundedBrowserClose(session.forceClose(), timeoutMs).catch(() => undefined);
+    else
+      await boundedBrowserClose(session.browser.close(), timeoutMs).catch(() => undefined);
+    return "force_terminated";
+  }
+}
+
 export async function boundedBrowserClose(
   operation: Promise<unknown>,
   timeoutMs = 5_000,

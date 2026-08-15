@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { VeilClipboardCollector } from "@scry/veil";
+import { destroyPraxisIsolatedSession } from "@scry/praxis";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 
 import {
@@ -8,7 +9,6 @@ import {
   type ProtectedBrowserSession,
   type SafeBrowserSession,
 } from "./browser-session.js";
-import { runProtectedStage } from "./protected-stage-supervisor.js";
 
 export type CapsuleFactory = {
   create(input: {
@@ -63,18 +63,11 @@ export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
       destroy: async () => {
         if (destroyed) return "destroyed";
         destroyed = true;
-        let outcome: "destroyed" | "force_terminated" = "destroyed";
-        try {
-          await boundedDestruction(context.close(), 2_000);
-          await boundedDestruction(browser.close(), 2_000);
-        } catch {
-          outcome = "force_terminated";
-          if (forceClose) {
-            await boundedDestruction(forceClose(), 2_000).catch(() => undefined);
-          } else {
-            await boundedDestruction(browser.close(), 2_000).catch(() => undefined);
-          }
-        }
+        const outcome = await destroyPraxisIsolatedSession({
+          context,
+          browser,
+          ...(forceClose ? { forceClose } : {}),
+        });
         if (provenance.value() !== "destroyed") provenance.transition("destroyed");
         return outcome;
       },
@@ -87,12 +80,4 @@ export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
       throw error;
     }
   }
-}
-
-async function boundedDestruction(work: Promise<unknown>, timeoutMs: number) {
-  return runProtectedStage({
-    stage: "capsule_destruction", timeoutMs,
-    timeoutCode: "PROTECTED_CAPSULE_DESTRUCTION_TIMEOUT",
-    dispatchPosition: "post_dispatch", work: () => work,
-  });
 }

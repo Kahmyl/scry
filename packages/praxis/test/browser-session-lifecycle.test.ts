@@ -1,8 +1,9 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import {
   boundedBrowserClose,
   closePraxisBrowserResources,
+  destroyPraxisIsolatedSession,
   openPraxisBrowserSession,
   openPraxisBrowserServerSession,
 } from "../src/lifecycle/browser-session.js";
@@ -51,4 +52,17 @@ it("owns browser-server connection and records graceful ownership release", asyn
       "ownership_released",
     ]),
   );
+});
+
+it("force-terminates an isolated session when graceful context destruction stalls", async () => {
+  const forceClose = vi.fn(async () => undefined);
+  const browserClose = vi.fn(async () => undefined);
+  const outcome = await destroyPraxisIsolatedSession({
+    context: { close: () => new Promise(() => undefined) } as never,
+    browser: { close: browserClose } as never,
+    forceClose,
+  }, 20);
+  expect(outcome).toBe("force_terminated");
+  expect(forceClose).toHaveBeenCalledOnce();
+  expect(browserClose).not.toHaveBeenCalled();
 });
