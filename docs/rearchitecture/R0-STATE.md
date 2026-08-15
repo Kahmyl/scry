@@ -936,6 +936,38 @@ Next: inspect Veil visual-capture and video-segment Page dependencies. Preserve
 mask/disclosure/permit authority in Veil while moving any screenshot, geometry,
 DOM, or browser-session mechanics to Praxis/application composition.
 
+### General execution-admission removal — COMPLETE
+
+Checkpoint:
+
+```text
+684171b refactor: narrow veil to privacy admission
+```
+
+Established:
+
+```text
+ordinary scheduling and browser interaction admission → Praxis/application policy
+Veil schedule/interact operation contracts → removed and rejected
+observation-channel disclosure → Veil
+protected-transaction trust boundary → Veil
+evidence capture/admission disposition → Veil
+```
+
+Qualification:
+
+```text
+focused trust-boundary cohort: 55/55 GREEN
+full Praxis + Veil suites: 209/209 GREEN
+focused Executor regression: 31/31 GREEN
+repository typecheck: GREEN
+subsystem, execution-kernel, and direct-browser boundaries: GREEN
+```
+
+Next: continue with visual-capture and video-segment browser mechanics, keeping
+Veil's permit, masking requirement, disclosure disposition, and tamper-evident
+admission authority while moving Page evaluation and geometry observation out.
+
 Before doing anything:
 
 ```bash
