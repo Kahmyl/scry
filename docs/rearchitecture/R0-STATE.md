@@ -536,12 +536,51 @@ Assurance truth: 23/23 GREEN
 repository typecheck and boundary gates: GREEN
 ```
 
+### Navigation and teardown lifecycle consolidation — COMPLETE
+
+Checkpoint:
+
+```text
+47b5cc5 refactor: consolidate browser navigation lifecycle
+```
+
+Established:
+
+```text
+navigation, reload, URL/load waiting → Praxis lifecycle
+context/page/browser close mechanics → Praxis lifecycle
+checkpoint and protected continuation navigation → Praxis lifecycle
+CDP session creation → Praxis lifecycle
+Executor native-browser-navigation → compatibility re-export only
+application origin/popup/download policy listeners → retained as policy composition
+```
+
+Qualification at closure:
+
+```text
+navigation compatibility: 3/3 GREEN
+navigation/protected lifecycle cohort: 26/26 GREEN
+authoring/executePlan lifecycle cohort: 6/6 GREEN
+full Praxis suite: 174/174 GREEN
+Assurance truth: 23/23 GREEN
+repository typecheck and boundary gates: GREEN
+```
+
+The direct-browser boundary now rejects production browser creation,
+context/page/CDP creation, navigation/load operations, and direct lifecycle
+close calls outside Praxis. Frame mechanics already live in Praxis grounding
+and references; dialog/download admission remains application policy rather
+than a second lifecycle model.
+
+## R0.3.6 — browser lifecycle consolidation — COMPLETE
+
 ### Current active slice
 
-Finish the R0.3.6 audit for navigation, frame/tab, dialog, download policy, and
-teardown call sites. Move remaining mechanical ownership to Praxis, keep
-application policy decisions outside, and close R0.3.6 only when no duplicate
-production lifecycle model remains.
+Begin R0.3.7 Executor retirement. Inventory remaining Executor responsibilities
+and classify each as product orchestration, policy/evidence composition,
+Praxis compatibility adapter, or obsolete browser substrate. Remove the
+obsolete/compatibility layer one bounded call-site family at a time; do not
+delete product orchestration or Veil/Chronicle responsibilities.
 
 Before doing anything:
 
