@@ -576,11 +576,47 @@ than a second lifecycle model.
 
 ### Current active slice
 
-Begin R0.3.7 Executor retirement. Inventory remaining Executor responsibilities
-and classify each as product orchestration, policy/evidence composition,
-Praxis compatibility adapter, or obsolete browser substrate. Remove the
-obsolete/compatibility layer one bounded call-site family at a time; do not
-delete product orchestration or Veil/Chronicle responsibilities.
+Continue R0.3.7 Executor retirement from the semantic-control checkpoint.
+Inventory remaining Executor responsibilities and classify each as product
+orchestration, policy/evidence composition, Praxis compatibility adapter, or
+obsolete browser substrate. Remove the obsolete/compatibility layer one
+bounded call-site family at a time; do not delete product orchestration or
+Veil/Chronicle responsibilities.
+
+### Executor semantic-control path — COMPLETE
+
+Checkpoint:
+
+```text
+8eb21e7 refactor: retire executor semantic control path
+```
+
+Established:
+
+```text
+click/wait and protected preparation controls → Praxis only
+legacy public-text activation → explicit Praxis interaction intent
+Executor executeNativeControl capability and native-only policy → removed
+API production composition → no semantic-control or native-effect callback
+NativeBrowserDriver duplicate locator/control engine → removed
+remaining driver semantic methods → qualification-only Praxis delegates
+native-first regression corpus → retired or converted to Praxis expectations
+```
+
+Qualification at checkpoint:
+
+```text
+repository typecheck: GREEN
+direct browser ownership boundary: GREEN
+diff integrity: GREEN
+browser-backed suites: ENVIRONMENT BLOCKED — installed Chrome 151 aborted
+  every isolated Playwright launch before tests ran (Browser.getVersion session closed)
+```
+
+Next: retire the now-dead native-resolution/effect telemetry surface and the
+qualification-only NativeBrowserDriver semantic delegates, migrating active
+qualification scripts to direct Praxis composition before deleting those
+compatibility methods.
 
 Before doing anything:
 
