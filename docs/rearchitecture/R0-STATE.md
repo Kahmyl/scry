@@ -1060,6 +1060,43 @@ API typecheck: GREEN
 git diff --check: GREEN
 ```
 
+### Current R0.5 blocker after Slice 4
+
+Calibration authority cannot be removed safely in the currently documented
+order. The ordinary Run path still supplies calibration verification for
+protected transactions, while the agent-directed Run request does not yet carry
+and enforce an explicit protected-operation `authorizationId` with matching
+Mission/Objective/Environment/operation scope and expiry.
+
+Required prerequisite correction:
+
+```text
+1. add explicit protected authorization binding to the agent-directed Run /
+   bounded-operation contract;
+2. verify identity, scope, status, and expiry in application composition before
+   protected dispatch;
+3. prove missing, expired, revoked, and cross-scope authorization refusal plus
+   Veil permit refusal;
+4. only then remove calibration from Flow validation, orchestration readiness,
+   Run capabilities, and Executor protected-transaction verification;
+5. retain calibration records as Assurance/Chronicle evidence only.
+```
+
+Attempting step 4 before steps 1–3 was rejected by the execution safety gate as
+a potential weakening of authorization for irreversible mutations. No rejected
+production change remains in the worktree. Explicit approval is required before
+continuing this corrected protected-authorization cutover.
+
+Last green checkpoint:
+
+```text
+e0595ba refactor: restore direct flow representation
+```
+
+Exact next action after approval: implement the authorization binding and its
+negative tests as a prerequisite to Slice 6, then continue Slice 5 and Slices
+7–12 without weakening the protected mutation boundary.
+
 Objective:
 
 ```text
