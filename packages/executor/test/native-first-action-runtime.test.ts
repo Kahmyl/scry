@@ -104,6 +104,53 @@ describe("native-first action runtime", () => {
     expect(onMutationDispatch).toHaveBeenCalledOnce();
   });
 
+  it("routes select and check mechanics through Praxis without native Executor control", async () => {
+    const opened = await openTestBrowser();
+    const unregister = registerPraxisVeilAuthority(opened.page, {
+      authority: new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: ["https://example.test"] })),
+      userId: "test", environmentId: "test", browserContextId: "form-control-context",
+    });
+    const native = vi.fn(async () => { throw new Error("FORM_CONTROL_MUST_NOT_USE_NATIVE_EXECUTOR"); });
+    const policy = { allowedOrigins: ["https://example.test"], allowPrivateNetwork: false,
+      allowDownloads: false as const, allowPopups: false as const, maxActions: 2, maxDurationMs: 30_000,
+      maxNavigations: 1 };
+    try {
+      await opened.page.setContent(`
+        <label>Tier<select><option>Basic</option><option>Pro</option></select></label>
+        <label><input type="checkbox"> Enabled</label>
+      `);
+      const select = await executeInteractionCompatibility({
+        sessionId: "form-control", operationId: "select", ordinal: 1, page: opened.page,
+        action: { type: "select", value: "Pro", target: {
+          ...target, concept: "tier", requiredCapabilities: ["selects_option"],
+          preferredEvidence: { ...target.preferredEvidence, roles: ["combobox"], names: ["Tier"] },
+          risk: "ordinary",
+        } },
+        policy,
+        options: { outputDirectory: "/tmp/praxis-select-check", executeNativeControl: native },
+      });
+      const check = await executeInteractionCompatibility({
+        sessionId: "form-control", operationId: "check", ordinal: 2, page: opened.page,
+        action: { type: "check", checked: true, target: {
+          ...target, concept: "enabled", requiredCapabilities: ["toggleable"],
+          preferredEvidence: { ...target.preferredEvidence, roles: ["checkbox"], names: ["Enabled"] },
+          risk: "ordinary",
+        } },
+        policy,
+        options: { outputDirectory: "/tmp/praxis-select-check", executeNativeControl: native },
+      });
+      expect(select).toMatchObject({ functionalResult: "succeeded", mutationOutcome: "applied" });
+      expect(check).toMatchObject({ functionalResult: "succeeded", mutationOutcome: "applied" });
+      expect(native).not.toHaveBeenCalled();
+      expect(await opened.page.getByRole("combobox", { name: "Tier" }).inputValue()).toBe("Pro");
+      expect(await opened.page.getByRole("checkbox", { name: "Enabled" }).isChecked()).toBe(true);
+    } finally {
+      unregister();
+      await opened.context.close();
+      await opened.browser.close();
+    }
+  });
+
   it("dispatches a standard control through one native resolution with zero Praxis results", async () => {
     const click = vi.fn(async () => undefined);
     const executeNativeControl = vi.fn(async (_page, _target, operation, beforeDispatch) => {

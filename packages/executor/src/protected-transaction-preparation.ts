@@ -112,11 +112,6 @@ export async function executeProtectedPreparation(
           });
         }
         if (action.type === "selectPublicInput") {
-          if (await executeNative(page, action.target, {
-            type: "select",
-            value: String(input.value),
-            ...nativeTimeouts(action.timeoutMs),
-          }, dependencies)) continue;
           await requirePraxisSuccess({
             page,
             intent: action.target,
@@ -133,11 +128,6 @@ export async function executeProtectedPreparation(
           if (typeof input.value !== "boolean") {
             throw new PhaseError("TRANSACTION_INPUT_TYPE_MISMATCH", "preparation", "do_not_retry");
           }
-          if (await executeNative(page, action.target, {
-            type: "check",
-            checked: input.value,
-            ...nativeTimeouts(action.timeoutMs),
-          }, dependencies)) continue;
           await requirePraxisSuccess({
             page,
             intent: action.target,

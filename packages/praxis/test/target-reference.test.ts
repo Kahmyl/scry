@@ -15,6 +15,10 @@ import {
   fillReferencedTarget,
   PraxisTextEntryDispatchError,
 } from "../src/interaction/fill.js";
+import {
+  selectReferencedTarget,
+  setCheckedReferencedTarget,
+} from "../src/interaction/form-control.js";
 
 let browser: Browser;
 let page: Page;
@@ -616,6 +620,42 @@ describe("Praxis target reference and pinned click", () => {
       PraxisStaleTargetError,
     );
     await reference.dispose();
+  });
+
+  it("mutates the exact pinned select and checkbox entities", { timeout: 30_000 }, async () => {
+    await resetPage(`
+      <label>Tier<select id="tier"><option>Basic</option><option>Pro</option></select></label>
+      <label><input id="enabled" type="checkbox"> Enabled</label>
+    `);
+    const select = await observeTargetReference(page, page.locator("#tier"));
+    const checkbox = await observeTargetReference(page, page.locator("#enabled"));
+    await expect(selectReferencedTarget(select, "Pro", { timeoutMs: 1_500 })).resolves.toEqual({ dispatched: true });
+    await expect(setCheckedReferencedTarget(checkbox, true, { timeoutMs: 1_500 })).resolves.toEqual({ dispatched: true });
+    expect(await page.locator("#tier").inputValue()).toBe("Pro");
+    expect(await page.locator("#enabled").isChecked()).toBe(true);
+    await select.dispose();
+    await checkbox.dispose();
+  });
+
+  it("refuses substituted select and checkbox controls without mutating replacements", { timeout: 30_000 }, async () => {
+    await resetPage(`
+      <select id="tier"><option>Basic</option><option>Pro</option></select>
+      <input id="enabled" type="checkbox">
+    `);
+    const select = await observeTargetReference(page, page.locator("#tier"));
+    const checkbox = await observeTargetReference(page, page.locator("#enabled"));
+    await page.evaluate(() => {
+      const replacementSelect = document.querySelector("#tier")!.cloneNode(true) as HTMLSelectElement;
+      const replacementCheckbox = document.querySelector("#enabled")!.cloneNode(true) as HTMLInputElement;
+      document.querySelector("#tier")!.replaceWith(replacementSelect);
+      document.querySelector("#enabled")!.replaceWith(replacementCheckbox);
+    });
+    await expect(selectReferencedTarget(select, "Pro", { timeoutMs: 1_500 })).rejects.toBeInstanceOf(PraxisStaleTargetError);
+    await expect(setCheckedReferencedTarget(checkbox, true, { timeoutMs: 1_500 })).rejects.toBeInstanceOf(PraxisStaleTargetError);
+    expect(await page.locator("#tier").inputValue()).toBe("Basic");
+    expect(await page.locator("#enabled").isChecked()).toBe(false);
+    await select.dispose();
+    await checkbox.dispose();
   });
 
   it("permits unrelated document mutation", { timeout: 30_000 }, async () => {

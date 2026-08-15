@@ -308,6 +308,39 @@ describe("Praxis strategy, dispatch, and verification", () => {
     expect(JSON.stringify(result)).not.toContain(secret);
   });
 
+  it("does not verify select state through a semantic replacement after dispatch", async () => {
+    await page.setContent(`
+      <label>Tier<select><option>Basic</option><option>Pro</option></select></label>
+      <script>
+        const originalSelect = document.querySelector("select");
+        originalSelect.addEventListener("change", () => {
+          const replacement = originalSelect.cloneNode(true);
+          replacement.value = "Pro";
+          replacement.dataset.replacement = "true";
+          originalSelect.replaceWith(replacement);
+        }, { once: true });
+      </script>
+    `);
+    const target: InteractionTargetIntent = {
+      ...intent("Tier"), requiredCapabilities: ["selects_option"],
+      preferredEvidence: { ...intent("Tier").preferredEvidence, roles: ["combobox"] },
+    };
+    const result = await new PraxisTransactionCoordinator(
+      new PraxisAdapter(page, async () => "Pro"),
+    ).execute(
+      request(
+        { type: "select_option", input: { reference: "tier", classification: "public" } },
+        target,
+      ),
+      new AbortController().signal,
+    );
+    expect(await page.locator('select[data-replacement="true"]').inputValue()).toBe("Pro");
+    expect(result).toMatchObject({
+      status: "failed", code: "PRAXIS_LOCAL_STATE_NOT_OBSERVED",
+      mutationOutcome: "applied", retry: "requires_reobservation", safeActions: ["inspect_artifact"],
+    });
+  });
+
   it("keeps an unexpected adapter failure after native fill unknown and unsafe", async () => {
     await page.setContent("<input aria-label=Name>");
 

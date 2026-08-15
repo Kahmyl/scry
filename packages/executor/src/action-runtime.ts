@@ -235,8 +235,6 @@ export async function executeAction(
       return;
     }
     case "select":
-      if (await executeNative(page, action.target, { type: "select", value: action.value, ...nativeActionTimeouts(action.timeoutMs, preDispatchDeadlineAt) }, options)) return;
-      requirePraxisFallback(options);
       await requirePraxisWithNoCapabilityRetry({
         page,
         intent: action.target,
@@ -250,8 +248,6 @@ export async function executeAction(
       });
       return;
     case "check":
-      if (await executeNative(page, action.target, { type: "check", checked: action.checked, ...nativeActionTimeouts(action.timeoutMs, preDispatchDeadlineAt) }, options)) return;
-      requirePraxisFallback(options);
       await requirePraxisWithNoCapabilityRetry({
         page,
         intent: action.target,

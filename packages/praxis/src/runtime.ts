@@ -33,6 +33,11 @@ import {
   PraxisFillDispatchError,
   PraxisTextEntryDispatchError,
 } from "./interaction/fill.js";
+import {
+  PraxisFormControlDispatchError,
+  selectReferencedTarget,
+  setCheckedReferencedTarget,
+} from "./interaction/form-control.js";
 import { observeTargetReference, type PraxisTargetReference } from "./references/target-reference.js";
 import { PraxisExecutionEnvelope, type PraxisPreDispatchDeadline } from "./execution-envelope.js";
 import { PraxisStateObserver } from "./state-observer.js";
@@ -215,7 +220,7 @@ export class PraxisGroundingEngine {
     const providerIds = PRAXIS_PROVIDER_CATALOG.map(
       (provider) => `${provider.id}@${provider.version}`,
     );
-    const pinnedReference = shouldPinTextEntry(request, strategy)
+    const pinnedReference = shouldPinMutationTarget(request, strategy)
       ? await observeTargetReference(this.page, grounded.locator, {
           timeoutMs: request.policy.actionTimeoutMs,
         }).catch(() => undefined)
@@ -274,9 +279,12 @@ function groundingPendingSignature(error: GroundingError) {
   });
 }
 
-function shouldPinTextEntry(request: PraxisRequest, strategy: PraxisStrategy): boolean {
-  if (request.operation.type !== "enter_text") return false;
-  return ["native_fill", "content_editable", "focus_keyboard"].includes(strategy);
+function shouldPinMutationTarget(request: PraxisRequest, strategy: PraxisStrategy): boolean {
+  if (request.operation.type === "enter_text")
+    return ["native_fill", "content_editable", "focus_keyboard"].includes(strategy);
+  if (request.operation.type === "select_option") return strategy === "native_select";
+  if (request.operation.type === "set_checked") return strategy === "native_check";
+  return false;
 }
 
 export function selectPraxisStrategy(
@@ -497,6 +505,26 @@ export class PraxisVerifier {
       )
     )
       return "not_required";
+    if (request.operation.type === "select_option" || request.operation.type === "set_checked") {
+      const reference = target.pinnedReference;
+      if (!reference) return "failed";
+      try {
+        await reference.assertCurrent();
+        if (request.operation.type === "select_option")
+          return (await reference.element().inputValue()) ===
+            (await this.resolveInput(
+              request.operation.input.reference,
+              request.operation.input.classification,
+            ))
+            ? "passed"
+            : "failed";
+        return (await reference.element().isChecked()) === request.operation.checked
+          ? "passed"
+          : "failed";
+      } catch {
+        return "failed";
+      }
+    }
     return target.handle.readAfterDispatch(async (locator) => {
       if (request.operation.type === "enter_text")
         return (await stateObserver.readValue(locator)) ===
@@ -504,18 +532,6 @@ export class PraxisVerifier {
             request.operation.input.reference,
             request.operation.input.classification,
           ))
-          ? "passed"
-          : "failed";
-      if (request.operation.type === "select_option")
-        return (await locator.inputValue()) ===
-          (await this.resolveInput(
-            request.operation.input.reference,
-            request.operation.input.classification,
-          ))
-          ? "passed"
-          : "failed";
-      if (request.operation.type === "set_checked")
-        return (await stateObserver.checked(locator)) === request.operation.checked
           ? "passed"
           : "failed";
       return "not_required";
@@ -628,10 +644,26 @@ async function dispatchOperation(
       break;
     }
     case "select_option":
-      await locator.selectOption(preparedInput!, options);
+      if (!target.pinnedReference)
+        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", { provenance: "application" });
+      try {
+        await selectReferencedTarget(target.pinnedReference, preparedInput!, { timeoutMs: options.timeout });
+      } catch (error) {
+        if (error instanceof PraxisFormControlDispatchError)
+          throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+        throw error;
+      }
       break;
     case "set_checked":
-      await locator.setChecked(request.operation.checked, options);
+      if (!target.pinnedReference)
+        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", { provenance: "application" });
+      try {
+        await setCheckedReferencedTarget(target.pinnedReference, request.operation.checked, { timeoutMs: options.timeout });
+      } catch (error) {
+        if (error instanceof PraxisFormControlDispatchError)
+          throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+        throw error;
+      }
       break;
     case "press_key":
       await locator.press(request.operation.key, options);
