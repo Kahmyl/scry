@@ -344,12 +344,51 @@ repository typecheck and boundary gates: GREEN
 
 Page-level wheel scrolling remains a separate targetless mechanic.
 
+### Targetless keyboard/wheel mechanics — COMPLETE
+
+Checkpoint:
+
+```text
+db9f9e8 refactor: move page input mechanics to praxis
+```
+
+Established:
+
+```text
+page-level key and wheel input
+→ explicit Praxis browser-mechanics functions
+→ no fabricated semantic element target
+→ Executor retains dispatch composition/truth callbacks only
+→ no direct page.keyboard/page.mouse ownership in action-runtime
+```
+
+Qualification at closure:
+
+```text
+Praxis targetless mechanics: 29/29 targeted reference suite GREEN
+full Praxis suite: 169/169 GREEN
+Executor kernel regression: 33/33 GREEN
+Assurance truth: 23/23 GREEN
+repository typecheck and boundary gates: GREEN
+```
+
+Remaining usage inventory:
+
+```text
+hover: no authored product action; pointer hover exists only inside pinned click actionability
+drag/drop: no authored product action
+upload: no authored product action; direct usage is Veil qualification infrastructure only
+download: active protected acquisition adapter and browser-policy handling
+dialog/page switching: active lifecycle/effect ownership, reserved for R0.3.6
+protected copy experience: active acquisition adapter with direct keyboard mechanics
+```
+
 ### Current active slice
 
-Complete the remaining R0.3.5 usage inventory. Classify targetless keyboard and
-wheel behavior plus hover, drag/drop, upload/download, dialog, and page
-switching by active product call sites before migrating the next coherent
-family or declaring unsupported/non-active mechanics explicitly.
+Finish R0.3.5 by moving the active protected copy/download acquisition browser
+mechanics behind Praxis without changing Veil authority or acquisition policy.
+Keep popup adoption, dialogs, and page switching for R0.3.6 lifecycle
+consolidation.
 
 Before doing anything:
 
