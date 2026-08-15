@@ -9,7 +9,7 @@ import {
   latestPassingCurrentRelease,
   matchesCampaignRelease,
   readCampaignReport,
-} from "@scry/campaigns";
+} from "@scry/assurance/legacy";
 
 try {
   loadEnvFile(".env");

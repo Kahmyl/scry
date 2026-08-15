@@ -12,7 +12,7 @@ import {
   startAdaptiveFixture,
   type CampaignCheck,
   type MilestoneCampaignResult,
-} from "@scry/campaigns";
+} from "@scry/assurance/legacy";
 import {
   currentPlanSchema,
   executionPolicySchema,

@@ -17,7 +17,7 @@
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-fastify": "^11.0.0",
     "@scry/artifact": "workspace:*",
-    "@scry/campaigns": "workspace:*",
+    "@scry/assurance": "workspace:*",
     "@scry/contracts": "workspace:*",
     "@scry/executor": "workspace:*",
     "@scry/policy": "workspace:*",

@@ -28,7 +28,7 @@
     "verify:mission-first:m1:ownership": "node scripts/verify-direct-browser-boundary.mjs",
     "campaign:adaptive:m0:core": "pnpm --filter @scry/api exec tsx scripts/adaptive-core-campaign-m0.ts",
     "campaign:adaptive:m0:vitract": "pnpm --filter @scry/api exec tsx scripts/adaptive-vitract-campaign.ts M0",
-    "verify:adaptive:m0": "pnpm --filter @scry/campaigns test && pnpm --filter @scry/api exec tsx scripts/verify-adaptive-milestone.ts M0",
+    "verify:adaptive:m0": "pnpm --filter @scry/assurance test && pnpm --filter @scry/api exec tsx scripts/verify-adaptive-milestone.ts M0",
     "campaign:adaptive:m1:core": "pnpm --filter @scry/api exec tsx scripts/adaptive-core-campaign-m1.ts",
     "campaign:adaptive:m1:vitract": "pnpm --filter @scry/api exec tsx scripts/adaptive-vitract-campaign.ts M1",
     "verify:adaptive:m1": "pnpm verify:execution-kernel-boundary && pnpm --filter @scry/api exec tsx scripts/verify-adaptive-milestone.ts M1",
@@ -84,7 +84,8 @@
     "format:check": "prettier --check .",
     "analyze:decomposition": "node scripts/analyze-source-structure.mjs",
     "test": "pnpm --recursive test",
-    "typecheck": "pnpm --recursive typecheck"
+    "typecheck": "pnpm --recursive typecheck",
+    "verify:assurance-foundation": "pnpm --filter @scry/assurance test:foundation"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

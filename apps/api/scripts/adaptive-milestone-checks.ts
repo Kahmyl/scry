@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import type { AdaptiveMilestone, CampaignCheck, CampaignMetricsCollector } from "@scry/campaigns";
+import type { AdaptiveMilestone, CampaignCheck, CampaignMetricsCollector } from "@scry/assurance/legacy";
 
 export type MilestoneCommand = {
   id: string;

@@ -1,14 +1,16 @@
 {
-  "name": "@scry/campaigns",
+  "name": "@scry/assurance",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./legacy": "./src/legacy/index.ts"
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:foundation": "vitest run test/assurance-foundation.test.ts"
   },
   "dependencies": {
     "@scry/contracts": "workspace:*"

@@ -15,7 +15,7 @@ import {
   retainCampaignReport,
   serializeSanitizedCampaign,
   startAdaptiveFixture,
-} from "../src/index.js";
+} from "../src/legacy/index.js";
 
 describe("adaptive campaign authority", () => {
   it("provides deterministic protected acquisition fixtures with independent dispatch counts", async () => {

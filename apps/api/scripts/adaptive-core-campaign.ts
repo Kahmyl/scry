@@ -9,7 +9,7 @@ import {
   retainCampaignReport,
   type AdaptiveMilestone,
   type CampaignCheck,
-} from "@scry/campaigns";
+} from "@scry/assurance/legacy";
 
 import { milestoneCommands, runMilestoneCommands } from "./adaptive-milestone-checks.js";
 

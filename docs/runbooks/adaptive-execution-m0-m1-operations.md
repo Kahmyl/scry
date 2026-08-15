@@ -71,7 +71,7 @@ Code-only gates:
 ```text
 pnpm verify:execution-kernel-boundary
 pnpm --filter @scry/contracts test
-pnpm --filter @scry/campaigns test
+pnpm --filter @scry/assurance test
 pnpm --filter @scry/executor typecheck
 pnpm --filter @scry/api typecheck
 pnpm --filter @scry/mcp typecheck

@@ -3,7 +3,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-import { retainMissionLiveCampaignReport, type CampaignCheck } from "@scry/campaigns";
+import { retainMissionLiveCampaignReport, type CampaignCheck } from "@scry/assurance/legacy";
 import { missionLiveCampaignResultSchema, type MissionAuthoringIntent } from "@scry/contracts";
 import pg from "pg";
 
