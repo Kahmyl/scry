@@ -726,6 +726,35 @@ Next: migrate the remaining recording/tracing browser mechanics to Praxis,
 leaving evidence policy and persistence ownership explicit rather than moving
 product orchestration into Praxis.
 
+### Recording and tracing mechanics — COMPLETE
+
+Checkpoint:
+
+```text
+dd74391 refactor: move recording mechanics to praxis
+```
+
+Ownership classification and result:
+
+```text
+screencast and Playwright trace start/stop mechanics → Praxis
+segment/timeline/artifact orchestration → temporary Executor application composition
+privacy suspension/sealing authority → Veil unchanged
+artifact record target owner → Chronicle (remaining retirement path)
+```
+
+Qualification:
+
+```text
+recording/trace/protected-recording cohort: 12/12 GREEN
+full Praxis suite: 174/174 GREEN
+repository typecheck and direct-browser boundary: GREEN
+```
+
+Next: classify and migrate remaining protected extraction/clipboard browser
+mechanics without moving protected workflow orchestration or Veil trust policy
+into Praxis.
+
 Before doing anything:
 
 ```bash
