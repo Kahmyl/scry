@@ -3,6 +3,7 @@ export * from "./visual-grounding.js";
 export * from "./browser-runtime-artifacts.js";
 export * from "./observation.js";
 export * from "./evidence.js";
+export * from "./evidence/browser-evidence.js";
 export * from "./latency.js";
 export * from "./transaction.js";
 export * from "./adapter.js";
