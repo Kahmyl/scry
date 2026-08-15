@@ -639,6 +639,35 @@ qualification-only NativeBrowserDriver semantic delegates, migrating active
 qualification scripts to direct Praxis composition before deleting those
 compatibility methods.
 
+### Native-resolution telemetry retirement — COMPLETE
+
+Checkpoint:
+
+```text
+c5ee614 refactor: retire native resolution telemetry
+```
+
+Established:
+
+```text
+Executor native resolution callback and synthesized target evidence → removed
+API native.resolution event adapter → removed
+adaptive resolveMs → sourced from Praxis grounding timing
+expected-effect timing → unchanged
+```
+
+Qualification:
+
+```text
+adaptive Praxis-grounding timing characterization: GREEN
+Executor semantic evidence regression: 31/31 GREEN
+repository typecheck and direct-browser boundary: GREEN
+```
+
+Next: migrate active qualification scripts from the qualification-only
+NativeBrowserDriver semantic delegates to direct Praxis composition, then
+delete those delegates and their retired native-driver regression corpus.
+
 Before doing anything:
 
 ```bash
