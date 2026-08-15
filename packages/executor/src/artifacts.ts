@@ -12,7 +12,7 @@ import {
   type VeilEvidenceChannel,
   type VeilLeaseRequest,
 } from "@scry/contracts";
-import { signVeilEvidenceAdmission } from "@scry/artifact";
+import { signVeilEvidenceAdmission } from "@scry/chronicle/legacy";
 
 import { VeilAuthority } from "@scry/veil";
 

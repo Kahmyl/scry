@@ -10,7 +10,7 @@ import {
   type VeilEvidenceChannel,
   type VeilLeaseRequest,
 } from "@scry/contracts";
-import { LocalArtifactStore, signVeilEvidenceAdmission } from "@scry/artifact";
+import { LocalArtifactStore, signVeilEvidenceAdmission } from "@scry/chronicle/legacy";
 import { compileVeilPolicy } from "@scry/veil";
 
 import { VeilAuthority } from "@scry/veil";

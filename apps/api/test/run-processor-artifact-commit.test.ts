@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { LocalArtifactStore, signVeilEvidenceAdmission } from "@scry/artifact";
+import { LocalArtifactStore, signVeilEvidenceAdmission } from "@scry/chronicle/legacy";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 import { describe, expect, it, vi } from "vitest";
 

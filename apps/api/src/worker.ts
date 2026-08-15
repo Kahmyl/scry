@@ -14,7 +14,7 @@ import {
 } from "@scry/contracts";
 import { verifyBrowserObservationRuntime } from "@scry/praxis";
 import { compileDefaultVeilPolicy } from "@scry/veil";
-import { createArtifactStoreFromEnv } from "@scry/artifact";
+import { createArtifactStoreFromEnv } from "@scry/chronicle/legacy";
 
 import { AppModule } from "./app.module.js";
 import { ArtifactRetentionService } from "./artifacts/index.js";

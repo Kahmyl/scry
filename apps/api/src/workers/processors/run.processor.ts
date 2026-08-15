@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 
-import { type ArtifactStore } from "@scry/artifact";
+import { type ArtifactStore } from "@scry/chronicle/legacy";
 import {
   currentPlanSchema,
   executionPolicySchema,

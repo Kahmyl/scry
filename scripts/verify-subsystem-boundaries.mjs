@@ -11,10 +11,10 @@ const sourceFiles = await sourceTree(root);
 const forbiddenDependencies = new Map([
   [
     "packages/contracts",
-    new Set(["@scry/artifact", "@scry/policy", "@scry/praxis", "@scry/veil", "@scry/executor"]),
+    new Set(["@scry/chronicle", "@scry/policy", "@scry/praxis", "@scry/veil", "@scry/executor"]),
   ],
-  ["packages/artifact", new Set(["@scry/policy", "@scry/praxis", "@scry/veil", "@scry/executor"])],
-  ["packages/policy", new Set(["@scry/artifact", "@scry/praxis", "@scry/veil", "@scry/executor"])],
+  ["packages/chronicle", new Set(["@scry/policy", "@scry/praxis", "@scry/veil", "@scry/executor"])],
+  ["packages/policy", new Set(["@scry/chronicle", "@scry/praxis", "@scry/veil", "@scry/executor"])],
   ["packages/veil", new Set(["@scry/praxis", "@scry/executor"])],
   ["packages/praxis", new Set(["@scry/executor"])],
 ]);

@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { LocalArtifactStore, signVeilEvidenceAdmission } from "../src/index.js";
+import { LocalArtifactStore, signVeilEvidenceAdmission } from "../src/legacy/index.js";
 
 const key = "test-admission-key-that-is-at-least-32-bytes";
 

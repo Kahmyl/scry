@@ -8,7 +8,7 @@ import {
   LocalArtifactStore,
   VeilEvidenceAdmissionError,
   type VeilEvidenceAdmissionProof,
-} from "@scry/artifact";
+} from "@scry/chronicle/legacy";
 import {
   currentPlanSchema,
   executionPolicySchema,

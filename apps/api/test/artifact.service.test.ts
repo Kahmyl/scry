@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { LocalArtifactStore, signVeilEvidenceAdmission } from "@scry/artifact";
+import { LocalArtifactStore, signVeilEvidenceAdmission } from "@scry/chronicle/legacy";
 import { describe, expect, it, vi } from "vitest";
 
 import { ArtifactService } from "../src/artifacts/index.js";

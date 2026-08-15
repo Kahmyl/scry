@@ -6,7 +6,7 @@ import {
   createArtifactStoreFromEnv,
   signVeilEvidenceAdmission,
   type RemoteObjectBackend,
-} from "../src/index.js";
+} from "../src/legacy/index.js";
 
 const admissionKey = "storage-adapter-admission-key-at-least-32-bytes";
 

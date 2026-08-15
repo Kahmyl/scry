@@ -128,8 +128,8 @@ services:
           path: packages/contracts/src
           target: /workspace/packages/contracts/src
         - action: sync
-          path: packages/artifact/src
-          target: /workspace/packages/artifact/src
+          path: packages/chronicle/src
+          target: /workspace/packages/chronicle/src
         - action: rebuild
           path: apps/api/package.json
         - action: rebuild
@@ -172,8 +172,8 @@ services:
           path: packages/contracts/src
           target: /workspace/packages/contracts/src
         - action: sync+restart
-          path: packages/artifact/src
-          target: /workspace/packages/artifact/src
+          path: packages/chronicle/src
+          target: /workspace/packages/chronicle/src
         - action: rebuild
           path: apps/api/package.json
         - action: rebuild
