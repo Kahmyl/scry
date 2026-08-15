@@ -38,7 +38,6 @@ export class ExecutionCapabilityFactory {
     const options = input.options;
     const originalEvent = options.onEvent;
     const originalPraxisResult = options.onPraxisResult;
-    const originalNativeResolution = options.onNativeResolution;
     const originalEffectVerification = options.onExpectedEffectVerification;
     const atomicSecretCapture = options.atomicSecretCapture ?? ((capture: Parameters<NonNullable<ExecuteOptions["atomicSecretCapture"]>>[0]) => {
       if (capture.scope !== "run") throw new Error("PROJECT_SECRET_PERSISTENCE_AUTHORITY_REQUIRED");
@@ -145,15 +144,6 @@ export class ExecutionCapabilityFactory {
             },
           );
           await originalPraxisResult?.(result);
-        },
-        onNativeResolution: async (result) => {
-          await this.kernelRepository.appendEvent(
-            input.sessionId,
-            input.operationId,
-            "native.resolution",
-            result,
-          );
-          await originalNativeResolution?.(result);
         },
         onExpectedEffectVerification: async (result) => {
           await this.kernelRepository.appendEvent(

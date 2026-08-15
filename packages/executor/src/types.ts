@@ -86,11 +86,6 @@ export type ExecuteOptions = {
     allowedOrigins: string[],
     beforeDispatch?: () => Promise<void>,
   ) => Promise<{ status: number; classification: "expected" | "unexpected" }>;
-  onNativeResolution?: (input: {
-    status: "resolved" | "fallback";
-    reasonCode?: string;
-    durationMs: number;
-  }) => void | Promise<void>;
   onExpectedEffectVerification?: (input: {
     status: "succeeded" | "failed";
     reasonCode?: string;

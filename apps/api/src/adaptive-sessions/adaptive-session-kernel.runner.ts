@@ -42,7 +42,7 @@ type OwnedRuntime = {
 };
 
 type OperationTimingCollector = {
-  onNativeResolution: (result: { status: "resolved" | "fallback"; reasonCode?: string; durationMs: number }) => void;
+  onPraxisResult: (result: import("@scry/contracts").PraxisResult) => void;
   onExpectedEffectVerification: (result: { status: "succeeded" | "failed"; reasonCode?: string; durationMs: number }) => void;
 };
 
@@ -117,13 +117,13 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         mode: operation.mode,
         policy: context.policy,
         ...(protectedContext ? { protectedContext, leaseOwner: `${this.ownerId}:${owned.fencingToken}` } : {}),
-        onNativeResolution: (result) => { resolveMs += result.durationMs; },
+        onPraxisResult: (result) => { resolveMs += result.timing.groundingMs ?? 0; },
         onExpectedEffectVerification: (result) => { verifyMs += result.durationMs; },
       });
       const modeKey = `${sessionId}:${operation.operationId}`;
       this.operationModes.set(modeKey, operation.mode);
       this.operationTimingCollectors.set(modeKey, {
-        onNativeResolution: (result) => { resolveMs += result.durationMs; },
+        onPraxisResult: (result) => { resolveMs += result.timing.groundingMs ?? 0; },
         onExpectedEffectVerification: (result) => { verifyMs += result.durationMs; },
       });
       this.operationLeaseGuards.set(modeKey, leaseGuard);
@@ -539,7 +539,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       },
       ...(signal ? { signal } : {}),
       ...(collector ? {
-        onNativeResolution: collector.onNativeResolution,
+        onPraxisResult: collector.onPraxisResult,
         onExpectedEffectVerification: collector.onExpectedEffectVerification,
       } : {}),
     });
@@ -585,7 +585,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       dispatchDisposition: "execute" | "qualification_only";
     };
     leaseOwner?: string;
-    onNativeResolution?: (result: { status: "resolved" | "fallback"; reasonCode?: string; durationMs: number }) => void;
+    onPraxisResult?: (result: import("@scry/contracts").PraxisResult) => void;
     onExpectedEffectVerification?: (result: { status: "succeeded" | "failed"; reasonCode?: string; durationMs: number }) => void;
   }) {
     const create = input.protectedContext
@@ -606,7 +606,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         dispatchDisposition: input.dispatchDisposition ?? "execute",
         ...(input.onMutationDispatch ? { onMutationDispatch: input.onMutationDispatch } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
-        ...(input.onNativeResolution ? { onNativeResolution: input.onNativeResolution } : {}),
+        ...(input.onPraxisResult ? { onPraxisResult: input.onPraxisResult } : {}),
         ...(input.onExpectedEffectVerification ? { onExpectedEffectVerification: input.onExpectedEffectVerification } : {}),
       },
       ...(input.protectedContext ? { ...input.protectedContext, leaseOwner: input.leaseOwner! } : {}),

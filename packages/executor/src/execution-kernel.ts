@@ -633,7 +633,6 @@ export async function executeInteractionCompatibility(input: {
   const startedAt = performance.now();
   const lifecycle = input.lifecycle ?? new InteractionLifecycleTracker();
   const praxisResults: import("@scry/contracts").PraxisResult[] = [];
-  let nativeResolved = false;
   let rejectedCandidateDistinctions: Array<{ label: string; distinction: string }> | undefined;
   try {
     const beforeDispatch = async () => {
@@ -644,10 +643,6 @@ export async function executeInteractionCompatibility(input: {
       input.action,
       {
         ...input.options,
-        onNativeResolution: async (result) => {
-          if (result.status === "resolved") nativeResolved = true;
-          await input.options.onNativeResolution?.(result);
-        },
         onMutationDispatch: beforeDispatch,
         onPrivacyBoundary: async (phase) => {
           lifecycle.recordPrivacy(phase);
@@ -705,7 +700,7 @@ export async function executeInteractionCompatibility(input: {
           : "unverified",
       evidenceResult: [],
       qualityFindings: praxisResults.flatMap((result) => result.qualityFindings),
-      ...resolvedTargetOutcome(praxisResults, nativeResolved ? input.action : undefined),
+      ...resolvedTargetOutcome(praxisResults),
       durationMs: performance.now() - startedAt,
     });
   } catch (error) {
@@ -718,7 +713,7 @@ export async function executeInteractionCompatibility(input: {
       privacyResult: lifecycle.privacyFailure(privacyOutcomeFromError(reasonCode)),
       evidenceResult: evidenceOutcomeFromError(reasonCode),
       qualityFindings: praxisResults.flatMap((result) => result.qualityFindings),
-      ...resolvedTargetOutcome(praxisResults, nativeResolved ? input.action : undefined),
+      ...resolvedTargetOutcome(praxisResults),
       durationMs: performance.now() - startedAt,
       reasonCode,
       ...safeEnvironmentFailure(error),
@@ -908,26 +903,10 @@ function protectedTelemetryReasonCode(event: import("@scry/contracts").RunEvent)
 
 function resolvedTargetOutcome(
   results: import("@scry/contracts").PraxisResult[],
-  nativeAction?: CurrentAction,
 ) {
   const resolved = [...results].reverse().find((result) => result.status === "succeeded");
   const target = resolved?.status === "succeeded" ? resolved.resolution.target : undefined;
-  if (!target) {
-    if (!nativeAction || !("target" in nativeAction) || !nativeAction.target) return {};
-    const intent = nativeAction.target;
-    return {
-      resolvedTarget: {
-        version: 2 as const,
-        digest: createHash("sha256").update(JSON.stringify(intent)).digest("hex"),
-        concept: intent.concept,
-        scopeKind: intent.scope.kind,
-        capabilityDigest: createHash("sha256")
-          .update(JSON.stringify(intent.requiredCapabilities))
-          .digest("hex"),
-        structuralPath: [],
-      },
-    };
-  }
+  if (!target) return {};
   return {
     resolvedTarget: {
       version: 2 as const,

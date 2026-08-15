@@ -403,7 +403,7 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     expect(capability.options.veilPolicySnapshot).toEqual(compileDefaultVeilPolicy(policy));
   });
 
-  it("collects native resolution and expected-effect timings from the capability that executes the interaction", async () => {
+  it("collects Praxis grounding and expected-effect timings from the capability that executes the interaction", async () => {
     const sessionId = "11111111-1111-4111-8111-111111111111";
     const operation = {
       operationId: "m2-timed-operation", idempotencyKey: "m2-timed-operation-key",
@@ -418,11 +418,11 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     };
     const kernel = {
       interact: vi.fn(async ({ capabilities }: { capabilities: { options: {
-        onNativeResolution?: (input: { durationMs: number; status: "resolved" }) => Promise<void>;
+        onPraxisResult?: (input: import("@scry/contracts").PraxisResult) => Promise<void>;
         onExpectedEffectVerification?: (input: { durationMs: number; status: "succeeded" }) => Promise<void>;
       } } }) => {
         await new Promise((resolve) => setTimeout(resolve, 5));
-        await capabilities.options.onNativeResolution?.({ status: "resolved", durationMs: 7 });
+        await capabilities.options.onPraxisResult?.({ timing: { groundingMs: 7 } } as never);
         await new Promise((resolve) => setTimeout(resolve, 5));
         await capabilities.options.onExpectedEffectVerification?.({ status: "succeeded", durationMs: 11 });
         return outcome;
@@ -435,11 +435,14 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
         environmentId: "environment", correlationId: "correlation",
         policy: { allowedOrigins: ["https://example.test"], allowPrivateNetwork: false, allowDownloads: false, allowPopups: false, maxActions: 2, maxDurationMs: 30_000, maxNavigations: 1 },
       }),
+      recordDispatchBaseline: vi.fn(),
       recordVerifiedObservation: vi.fn(),
     };
     const runner = new AdaptiveSessionKernelRunner(kernel as never, capabilities as never, sessions as never, {} as never);
     const page = { url: () => "https://example.test/account" };
     const ownedSession = {
+      page,
+      documentEpoch: () => 3,
       interact: vi.fn(async (action: never, context: { operationId: string; correlationId: string; mutationIdentity: string; expectedEffect: never }) =>
         ({
           documentEpoch: 4, url: page.url(),
