@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 
 import { SecretRedactor } from "@scry/policy";
+import { requirePraxisSuccess } from "@scry/praxis";
 import {
   acquireValue,
   beginProtectedResponseEnvelope,
@@ -552,12 +553,25 @@ async function semanticControlAdapter(cell: Cell): Promise<DirectObservation> {
       confidence: { requiredFamilies: [] }, matching: "exact" };
     let failure: unknown;
     try {
-      await driver.executeSemanticControl(owned.page, target as never,
-        { type: "click", timeoutMs: 1_000, resolutionTimeoutMs: 200 }, async () => {
+      await requirePraxisSuccess({
+        page: owned.page,
+        intent: target as never,
+        operation: { type: "activate" },
+        context: {
+          stepId: operationId,
+          channel: "protected",
+          ordinal: 0,
+          allowedOrigins: [origin],
+          timeoutMs: 1_000,
+          privacy: { state: "protected", allowedChannels: ["public_dom", "accessibility"], suppressedChannels: ["visual", "ocr"] },
+          beforeMutation: async () => {
           claim = await fixture.operations.transition({ id: claim.id, leaseOwner: fixture.leaseOwner,
             fencingToken: claim.fencingToken, version: claim.version, expected: "ready_to_dispatch",
             next: "dispatching", phase: "dispatching" });
-        });
+          },
+        },
+        signal: new AbortController().signal,
+      });
       await new Promise((resolve) => setTimeout(resolve, 30));
     } catch (error) { failure = error; }
     if (dispatches === 1 && claim.state === "dispatching") {
@@ -1074,7 +1088,7 @@ function authorityAuditFor(cell: Cell) {
     if (cell.family === "G") return ["ProtectedOutputPersistenceRepository", "persistOutputsAtomically", cell.fixture.persistence, ["PostgreSQL transaction", "protected references", "staging rows", "fencing token"]];
     if (cell.family === "K") return ["VeilRuntimeCoordinator", "safe-boundary lifecycle", cell.fixture.safeBoundary, ["collector acknowledgements", "runtime state", "late completion guard"]];
     if (cell.family === "F") return ["Veil cleanup/runtime owner", "collector/capsule cleanup lifecycle", cell.fixture.browserFault !== "none" ? cell.fixture.browserFault : cell.fixture.acquisition, ["cleanup completion", "ownership release", "sealed runtime state"]];
-    if (cell.family === "M") return ["NativeBrowserDriver semantic-control owner", "executeSemanticControl", cell.fixture.control, ["real page control", "dispatch counter", "protected row", "browser ownership"]];
+    if (cell.family === "M") return ["Praxis semantic-control owner", "requirePraxisSuccess", cell.fixture.control, ["real page control", "dispatch counter", "protected row", "browser ownership"]];
     if (cell.family === "L" || ["A1","A2","A3"].includes(cell.id)) return ["protected acquisition owner", "acquireValue", cell.fixture.acquisition, ["real protected page", "acquisition result", "atomic persistence", "browser ownership"]];
     if (cell.family === "B" || cell.family === "C" || cell.id === "A4" || (cell.family === "N" && ["N1","N2","N3","N4","N5"].includes(cell.id))) return ["ProtectedResponseEnvelope", "beginProtectedResponseEnvelope", `${cell.fixture.request}/${cell.fixture.response}`, ["request initiation", "response settlement", "staged outputs", "durable result"]];
     if (cell.family === "N") return ["ProtectedOperationRepository/ProtectedOutputPersistenceRepository", "read-only settlement and retry lifecycle", cell.fixture.persistence, ["staging disposal", "fresh operation identity", "atomic references", "durable states"]];

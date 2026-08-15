@@ -11,11 +11,10 @@ import { pathToFileURL } from "node:url";
 
 import { executionPolicySchema, type InteractionTargetIntent, type MissionAuthoringIntent } from "@scry/contracts";
 import { chromium, type Page, type Response } from "playwright";
-import { resolveTarget } from "@scry/praxis";
+import { resolveTarget, resolveTargetLocator } from "@scry/praxis";
 
 import { AdaptiveSessionRepository } from "../src/adaptive-sessions/adaptive-session.repository.js";
 import { Database } from "../src/infrastructure/database.js";
-import { NativeBrowserDriver } from "../src/runtime/native-browser-driver/native-browser-driver.js";
 import { ExternalResourceBindingRepository } from "../src/runtime/repositories/external-resource-binding.repository.js";
 import { ExternalResourcePresentationAuthorityRepository } from "../src/runtime/repositories/external-resource-presentation-authority.repository.js";
 import { ExternalResourceDestructiveTargetPreparationService } from "../src/runtime/services/external-resource-destructive-target-preparation.service.js";
@@ -532,12 +531,11 @@ async function prepareLiveTarget(
     try {
       await navigateAndWaitNative(page, "https://preview.vitract.com/login", preflight.allowedOrigins,
         30_000, preflight.trustedScriptOrigins);
-      const driver = new NativeBrowserDriver();
-      const emailTarget = await driver.resolveSemanticTarget(page, loginTarget("email"), 10_000);
+      const emailTarget = await resolveTargetLocator(page, loginTarget("email"));
       await emailTarget.fill(email, { timeout: 10_000 });
-      const passwordTarget = await driver.resolveSemanticTarget(page, loginTarget("password"), 10_000);
+      const passwordTarget = await resolveTargetLocator(page, loginTarget("password"));
       await passwordTarget.fill(password, { timeout: 10_000 });
-      const login = await driver.resolveSemanticTarget(page, loginTarget("login"), 10_000);
+      const login = await resolveTargetLocator(page, loginTarget("login"));
       await login.click({ timeout: 10_000 });
       await page.waitForURL((url) => url.origin === "https://preview.vitract.com" && url.pathname !== "/login", { timeout: 30_000 });
     } finally {
@@ -704,12 +702,12 @@ async function prepareLiveTarget(
       await prepared.locator.click({ timeout: 10_000 });
       const dialog = page.getByRole("dialog");
       await dialog.waitFor({ state: "visible", timeout: 5_000 });
-      const confirmationInput = await new NativeBrowserDriver().resolveSemanticTarget(page, {
+      const confirmationInput = await resolveTargetLocator(page, {
         concept: "revoke confirmation phrase", requiredCapabilities: ["accepts_text", "focusable", "editable"],
         preferredEvidence: { roles: ["textbox"], names: [], labels: [], descriptions: [], placeholders: ["REVOKE"], inputTypes: [], testIds: [] },
         scope: { kind: "dialog" }, relations: [], prohibited: ["hidden", "disabled", "readonly"], risk: "destructive",
         confidence: { requiredFamilies: [] }, matching: "exact",
-      }, 5_000);
+      });
       await confirmationInput.fill("REVOKE", { timeout: 5_000 });
       const finalButtons = dialog.getByRole("button").filter({ visible: true });
       const finalNames = await finalButtons.evaluateAll((buttons) => buttons.flatMap((button) => {

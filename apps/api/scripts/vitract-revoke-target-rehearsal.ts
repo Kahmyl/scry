@@ -1,13 +1,12 @@
 import { pathToFileURL } from "node:url";
 import { chromium, errors as playwrightErrors, type Locator, type Page } from "playwright";
 import { executionPolicySchema, type ExecutionPolicy, type InteractionTargetIntent, type MissionAuthoringIntent } from "@scry/contracts";
-import { resolveTarget } from "@scry/praxis";
+import { resolveTarget, resolveTargetLocator } from "@scry/praxis";
 import { SecretRedactor } from "@scry/policy";
 import { navigateAndWaitNative } from "@scry/executor";
 
 import { AdaptiveSessionRepository } from "../src/adaptive-sessions/adaptive-session.repository.js";
 import { Database } from "../src/infrastructure/database.js";
-import { NativeBrowserDriver } from "../src/runtime/native-browser-driver/native-browser-driver.js";
 
 const EXPECTED = {
   clientIdReference: "e2eb0fbc-7fdc-46f9-a016-c53558e5e637",
@@ -386,11 +385,10 @@ export async function main(argv = process.argv.slice(2)) {
     launchBrowser: async () => { browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" }); page = await browser.newPage(); },
     runLive: async ({ email, password, policy, stage, recordResolution }: Parameters<NonNullable<PreparationDependencies["runLive"]>>[0]) => {
       if (!page) throw new Error("REHEARSAL_BROWSER_PAGE_UNAVAILABLE");
-      const semanticReadiness = new NativeBrowserDriver();
       await stage("LOGIN_NAVIGATION", async () => { await navigateAndWaitNative(page!, EXPECTED.loginUrl, policy.allowedOrigins, 30_000, policy.trustedScriptOrigins ?? []); });
       type RehearsalTarget = { locator: Locator; revalidate(): Promise<void> };
       const nativeTarget = async (intent: InteractionTargetIntent): Promise<RehearsalTarget> => {
-        const locator = await semanticReadiness.resolveSemanticTarget(page!, intent, 5_000);
+        const locator = await resolveTargetLocator(page!, intent);
         return { locator, revalidate: async () => { await locator.waitFor({ state: "visible", timeout: 1_000 }); } };
       };
       const praxisTarget = (intent: InteractionTargetIntent): Promise<RehearsalTarget> => resolveTarget(page!, intent, { allowedOrigins: policy.allowedOrigins });
