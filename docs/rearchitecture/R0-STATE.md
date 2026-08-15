@@ -874,6 +874,39 @@ Veil call sites and migrating only semantic, action-selection, task-progression,
 browser-lifecycle, or general execution authority that violates the narrow
 trust/privacy boundary.
 
+## R0.4 — Veil narrowing — IN PROGRESS
+
+### Semantic safe-boundary payload removal — COMPLETE
+
+Checkpoint:
+
+```text
+bbaa3a8 refactor: remove semantic intent from veil boundary
+```
+
+Established:
+
+```text
+protected-surface verification → application/Praxis responsibility
+Veil safe-boundary input → factual protected_surface_closed claim only
+InteractionTargetIntent in Veil safe-boundary contracts → rejected
+Veil privacy transition and fail-closed collector lifecycle → unchanged
+```
+
+Qualification:
+
+```text
+focused Contracts/Veil safe-boundary cohort: 16/16 GREEN
+full Contracts + Veil suites: 121/121 GREEN
+repository typecheck: GREEN
+subsystem and direct-browser boundaries: GREEN
+```
+
+Next: continue the active Veil call-site inventory. Classify capability leases,
+capture decisions, safe-boundary lifecycle, clipboard cleanup, and collector
+coordination; migrate only any remaining semantic/action/lifecycle authority
+that exceeds Veil's trust/privacy role.
+
 Before doing anything:
 
 ```bash
