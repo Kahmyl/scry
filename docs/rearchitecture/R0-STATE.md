@@ -784,6 +784,35 @@ Next: inventory remaining direct Executor browser runtime calls (checkpoint
 state capture, diagnostics, policy listeners, and response observation),
 separating factual observation from product orchestration before migration.
 
+### Session/checkpoint state mechanics — COMPLETE
+
+Checkpoint:
+
+```text
+52d2e11 refactor: move session state mechanics to praxis
+```
+
+Ownership classification and result:
+
+```text
+Playwright storage/session state capture and restoration mechanics → Praxis
+checkpoint binding/admission/recovery orchestration → temporary Executor application composition
+durable checkpoint persistence → application repository pending Chronicle consolidation
+protected capsule trust boundary → Veil unchanged
+```
+
+Qualification:
+
+```text
+checkpoint/capsule/authoring session cohort: 32/32 GREEN
+full Praxis suite: 174/174 GREEN
+repository typecheck and direct-browser boundary: GREEN
+```
+
+Next: classify diagnostics, request/response observation, and browser policy
+listeners as factual observation versus application policy, then move only the
+remaining low-level mechanics.
+
 Before doing anything:
 
 ```bash
