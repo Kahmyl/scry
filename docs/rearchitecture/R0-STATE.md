@@ -420,13 +420,44 @@ authored product action; qualification-only upload code is not runtime
 ownership. Dialog and page switching are lifecycle concerns carried into
 R0.3.6.
 
+### Praxis browser session lifecycle foundation — COMPLETE
+
+Checkpoint:
+
+```text
+990afc6 refactor: establish praxis browser session lifecycle
+```
+
+Established:
+
+```text
+ordinary Executor browser/context/page creation → Praxis lifecycle
+Executor compatibility session creation → Praxis lifecycle
+bounded context/browser teardown mechanics → Praxis lifecycle
+Executor retains policy, recording, evidence, and product composition
+direct-browser boundary now admits Praxis as the ordinary launch owner
+```
+
+Qualification at closure:
+
+```text
+Praxis lifecycle creation/teardown/timeout tests: 2/2 GREEN
+focused Executor executePlan lifecycle regressions: 2/2 GREEN
+full Praxis suite: 172/172 GREEN
+Assurance truth: 23/23 GREEN
+repository typecheck and boundary gates: GREEN
+```
+
+The API browser-server driver and protected capsule factory remain explicit
+sibling lifecycle owners pending migration; popup adoption remains with the
+authoring session until the shared page-adoption lifecycle is established.
+
 ### Current active slice
 
-Begin R0.3.6 browser lifecycle consolidation. Trace browser/context/page
-creation, navigation, popup adoption, dialog handling, download policy, and
-teardown across Executor and application composition roots. Migrate one
-lifecycle owner at a time without weakening origin, popup, privacy, or cleanup
-invariants.
+Continue R0.3.6 by moving the API native browser-server creation/connection and
+close fallback behind the Praxis lifecycle boundary while preserving its
+ownership timeline and force-kill semantics. Then migrate protected capsule
+creation/destruction before popup/page adoption.
 
 Before doing anything:
 
