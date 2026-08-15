@@ -1142,6 +1142,47 @@ git diff --check: GREEN
 Exact next action: Slices 7–8 exact agent-selected target and optional factual
 effect assertion cutover.
 
+### R0.5 execution blocker at Slices 7/9/10 — LIVE SESSION OWNERSHIP UNRESOLVED
+
+The exact-reference invariant exposes a runtime ownership decision not resolved
+by the frozen R0.5 contracts. `context-control-*` references are backed by a
+Praxis `ElementHandle`, Page identity, document identity, and document epoch.
+They are deliberately non-serializable and cannot be re-resolved. The current
+ordinary Run worker, however, restores a durable Flow snapshot and opens a new
+browser/context/page. Consequently an external agent cannot observe a target,
+submit its exact reference to that Run, and have Praxis execute the same browser
+entity. Serializing semantic hints into the Run would reintroduce target-choice
+authority; serializing a locator would violate exact-entity pinning.
+
+This blocks a truthful implementation of Slices 7, 9, and 10 and therefore
+Slices 8, 11, and 12. One product/runtime ownership contract must be selected:
+
+```text
+A. Bind each V2 Run ledger to an existing agent-owned live Praxis browser
+   session. Dispatch accepts runId + browserSessionId + exact context-control
+   reference and executes one bounded operation in that session. The Run owns
+   factual ledger/finalization; the session owns Page lifetime.
+
+B. Make the V2 Run itself the long-lived Praxis browser session and expose
+   observe/dispatch commands against it. The external agent observes and then
+   dispatches exact references returned by that same Run session.
+```
+
+Recommendation: **A** reuses the active adaptive authoring browser/session
+lifecycle and minimizes browser-lifecycle duplication. It requires an explicit
+decision that an adaptive/live Praxis session may be promoted or attached to a
+durable Run ledger. Without that decision, proceeding would either preserve
+semantic grounding authority or invent a second browser lifecycle, both of
+which contradict the frozen architecture.
+
+Latest green production checkpoints:
+
+```text
+2c24d25 explicit protected-operation authorization binding
+4fdc30d calibration runtime authority removed
+1a1e13b production compile/certification entry points retired
+```
+
 Objective:
 
 ```text
