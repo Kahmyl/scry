@@ -480,11 +480,40 @@ repository typecheck and boundary gates: GREEN
 direct-browser boundary admits only Praxis browser creation
 ```
 
+### Protected capsule destruction lifecycle — COMPLETE
+
+Checkpoint:
+
+```text
+081b78f refactor: move capsule destruction to praxis
+```
+
+Established:
+
+```text
+isolated context/browser bounded destruction → Praxis lifecycle
+force-close fallback → Praxis lifecycle
+destroyed versus force_terminated outcome → preserved
+Executor capsule factory → privacy/provenance composition only
+preparation failure still destroys the capsule before propagation
+```
+
+Qualification at closure:
+
+```text
+Praxis lifecycle tests: 4/4 GREEN
+protected transaction coordinator: 23/23 GREEN
+full Praxis suite: 174/174 GREEN
+Assurance truth: 23/23 GREEN
+repository typecheck and boundary gates: GREEN
+```
+
 ### Current active slice
 
-Continue R0.3.6 with protected capsule creation/destruction. Preserve isolation,
-tainted provenance, bounded destruction, and force-close semantics. After that,
-consolidate popup/page adoption and navigation lifecycle.
+Continue R0.3.6 with popup/page adoption and navigation lifecycle. Preserve
+single-popup cardinality, origin admission, old-page retirement, Veil
+registration, and failure cleanup. Then audit frame/tab/dialog ownership before
+closing browser lifecycle consolidation.
 
 Before doing anything:
 
