@@ -609,9 +609,30 @@ Qualification at checkpoint:
 repository typecheck: GREEN
 direct browser ownership boundary: GREEN
 diff integrity: GREEN
-browser-backed suites: ENVIRONMENT BLOCKED — installed Chrome 151 aborted
-  every isolated Playwright launch before tests ran (Browser.getVersion session closed)
+full Praxis suite: 174/174 GREEN
+full Assurance suite: 34/34 GREEN
+Executor R0.3.7 browser cohort: 66/66 GREEN
+action-deadline closure: 2/2 GREEN
 ```
+
+Environment diagnosis and qualification repair:
+
+```text
+eb3b890 fix: preserve praxis mutation dispatch lifecycle
+```
+
+The apparent Chrome 151 blocker was a restricted process-sandbox denial, not
+a browser-version or repository-runtime defect. Both Playwright-managed
+Chromium 151.0.7922.34 and system Chrome 151.0.7922.138 launched, rendered,
+and closed reliably with the required process permission. No machine-specific
+or repository browser workaround was committed.
+
+Restored browser execution exposed one real checkpoint regression:
+`executePlan` omitted its Praxis `beforeMutation` hook after native-control
+retirement. The repair restores mutation-lifecycle notification immediately
+before Praxis dispatch and retains the independent readiness characterization.
+The bounded resolved-target proof now observes an actual Praxis-resolved
+control rather than the retired native synthesis path.
 
 Next: retire the now-dead native-resolution/effect telemetry surface and the
 qualification-only NativeBrowserDriver semantic delegates, migrating active
