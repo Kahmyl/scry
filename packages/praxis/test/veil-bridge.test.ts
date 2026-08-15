@@ -112,7 +112,7 @@ describe("Praxis Veil capability boundaries", () => {
 
     unregisterOuter();
     expect(() => authorizePraxisRequest(page, request())).toThrowError(
-      expect.objectContaining({ code: "PRAXIS_VEIL_SCHEDULE_REFUSED" }),
+      expect.objectContaining({ code: "PRAXIS_VEIL_OBSERVE_REFUSED" }),
     );
   });
 
@@ -125,16 +125,16 @@ describe("Praxis Veil capability boundaries", () => {
 
     unregisterOuter();
     const authorized = authorizePraxisRequest(page, request());
-    expect(() => validatePraxisVeilBoundary(authorized, "schedule")).not.toThrow();
+    expect(() => validatePraxisVeilGrants(authorized)).not.toThrow();
     releasePraxisVeilGrants(authorized);
 
     unregisterInner();
     expect(() => authorizePraxisRequest(page, request())).toThrowError(
-      expect.objectContaining({ code: "PRAXIS_VEIL_SCHEDULE_REFUSED" }),
+      expect.objectContaining({ code: "PRAXIS_VEIL_OBSERVE_REFUSED" }),
     );
   });
 
-  it("binds scheduling, observation, interaction, protected transaction, evidence, and admission leases exactly", () => {
+  it("binds observation, protected transaction, evidence, and admission leases exactly", () => {
     const { page, authority } = setup();
     const issued: VeilLeaseRequest[] = [];
     const original = authority.issueLease.bind(authority);
@@ -148,15 +148,12 @@ describe("Praxis Veil capability boundaries", () => {
       suppressedChannels: ["unsupported"],
     });
     validatePraxisVeilGrants(authorized);
-    validatePraxisVeilBoundary(authorized, "interact");
     validatePraxisVeilBoundary(authorized, "protected_transaction");
     validatePraxisVeilBoundary(authorized, "produce_evidence");
     validatePraxisVeilBoundary(authorized, "admit_result");
     expect(issued.map(({ operation, channel }) => `${operation}:${channel}`)).toEqual([
-      "schedule:metadata",
       "observe:dom",
       "observe:accessibility",
-      "interact:event",
       "protected_transaction:event",
       "capture:report",
       "admit_evidence:report",
@@ -175,12 +172,12 @@ describe("Praxis Veil capability boundaries", () => {
     const { page, authority } = setup();
     const revoke = vi.spyOn(authority, "revoke");
     const authorized = authorizePraxisRequest(page, request());
-    validatePraxisVeilBoundary(authorized, "interact");
+    validatePraxisVeilBoundary(authorized, "protected_transaction");
     validatePraxisVeilBoundary(authorized, "produce_evidence");
     releasePraxisVeilGrants(authorized);
     releasePraxisVeilGrants(authorized);
-    expect(revoke).toHaveBeenCalledTimes(5); // schedule + two observation + interaction + evidence
-    expect(() => validatePraxisVeilBoundary(authorized, "schedule")).toThrow(
+    expect(revoke).toHaveBeenCalledTimes(4); // two observation + protected transaction + evidence
+    expect(() => validatePraxisVeilBoundary(authorized, "protected_transaction")).toThrow(
       PraxisVeilAuthorizationError,
     );
   });
@@ -190,8 +187,8 @@ describe("Praxis Veil capability boundaries", () => {
     const { page } = setup(() => now);
     const authorized = authorizePraxisRequest(page, request());
     now += 101;
-    expect(() => validatePraxisVeilBoundary(authorized, "schedule")).toThrowError(
-      expect.objectContaining({ code: "PRAXIS_VEIL_SCHEDULE_REFUSED", boundary: "schedule" }),
+    expect(() => validatePraxisVeilBoundary(authorized, "observe")).toThrowError(
+      expect.objectContaining({ code: "PRAXIS_VEIL_OBSERVE_REFUSED", boundary: "observe" }),
     );
     releasePraxisVeilGrants(authorized);
   });
@@ -200,8 +197,8 @@ describe("Praxis Veil capability boundaries", () => {
     const { page } = setup();
     const authorized = authorizePraxisRequest(page, request());
     authorized.context.documentEpoch = 4;
-    expect(() => validatePraxisVeilBoundary(authorized, "interact")).toThrowError(
-      expect.objectContaining({ code: "PRAXIS_VEIL_INTERACT_REFUSED" }),
+    expect(() => validatePraxisVeilBoundary(authorized, "protected_transaction")).toThrowError(
+      expect.objectContaining({ code: "PRAXIS_VEIL_PROTECTED_TRANSACTION_REFUSED" }),
     );
     releasePraxisVeilGrants(authorized);
   });

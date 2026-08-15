@@ -215,7 +215,6 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
     let release: () => void = () => undefined;
     try {
       await this.event(request, "praxis.transaction_started", "created", {});
-      validatePraxisVeilBoundary(request, "schedule");
       const queuedAt = performance.now();
       release = (await this.adapter.acquire?.(request, operationSignal)) ?? release;
       durations.set("created", performance.now() - queuedAt);
@@ -254,7 +253,6 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
           retry: "requires_revision",
           mutationOutcome: "not_started",
         });
-      validatePraxisVeilBoundary(request, "interact");
       if (["authentication", "credential", "protected"].includes(request.risk))
         validatePraxisVeilBoundary(request, "protected_transaction");
       state.transition("dispatching");

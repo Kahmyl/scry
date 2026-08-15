@@ -10,10 +10,17 @@ import {
   veilVideoMaskCheckpointSchema,
   veilVideoSegmentFinalizationSchema,
   veilVideoSegmentPermitSchema,
+  veilOperationSchema,
 } from "../src/veil/index.js";
 import { safeResumeBoundarySchema } from "../src/current.js";
 
 describe("Veil contracts", () => {
+  it("cannot represent general scheduling or interaction admission", () => {
+    expect(() => veilOperationSchema.parse("schedule")).toThrow();
+    expect(() => veilOperationSchema.parse("interact")).toThrow();
+    expect(veilOperationSchema.parse("protected_transaction")).toBe("protected_transaction");
+  });
+
   it("keeps browser targeting semantics outside safe-boundary claims", () => {
     expect(safeResumeBoundarySchema.parse({ kind: "protected_surface_closed" })).toEqual({
       kind: "protected_surface_closed",
