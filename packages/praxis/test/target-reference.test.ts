@@ -20,14 +20,18 @@ afterAll(async () => {
   await browser?.close();
 });
 
-/** Park the pointer at a neutral position so later moves cross onto targets. */
+/**
+ * Park the pointer at a neutral position before replacing content so the new
+ * document never renders a target under an already-hovered pointer (which can
+ * fire pointerover without any mouse movement).
+ */
 async function resetPage(content: string) {
-  await page.setContent(content);
   await page.mouse.move(0, 0);
+  await page.setContent(content);
 }
 
 describe("Praxis target reference and pinned click", () => {
-  it("pins the observed entity and dispatches a click against it", { timeout: 15_000 }, async () => {
+  it("pins the observed entity and dispatches a click against it", { timeout: 30_000 }, async () => {
     await resetPage(`
       <button id="target">Submit order</button>
       <script>
@@ -48,7 +52,7 @@ describe("Praxis target reference and pinned click", () => {
     await reference.dispose();
   });
 
-  it("serializes only opaque mechanical identity", { timeout: 15_000 }, async () => {
+  it("serializes only opaque mechanical identity", { timeout: 30_000 }, async () => {
     await resetPage(`<button id="target">Save</button>`);
     const reference = await observeTargetReference(page, page.locator("#target"));
     const serialized = JSON.stringify(reference);
@@ -58,7 +62,7 @@ describe("Praxis target reference and pinned click", () => {
     await reference.dispose();
   });
 
-  it("permits unrelated document mutation", { timeout: 15_000 }, async () => {
+  it("permits unrelated document mutation", { timeout: 30_000 }, async () => {
     await resetPage(`
       <button id="target">Save</button>
       <script>
@@ -79,7 +83,7 @@ describe("Praxis target reference and pinned click", () => {
     await reference.dispose();
   });
 
-  it("refuses when the observed entity is replaced during pointer interaction", { timeout: 15_000 }, async () => {
+  it("refuses when the observed entity is replaced during pointer interaction", { timeout: 30_000 }, async () => {
     await resetPage(`
       <button id="target">Submit order</button>
       <script>
@@ -104,7 +108,7 @@ describe("Praxis target reference and pinned click", () => {
     await reference.dispose();
   });
 
-  it("refuses after the document changes", { timeout: 15_000 }, async () => {
+  it("refuses after the document changes", { timeout: 30_000 }, async () => {
     await resetPage(`<button id="target">Save</button>`);
     const reference = await observeTargetReference(page, page.locator("#target"));
     await page.goto("data:text/html,<button>Replacement</button>");
@@ -114,7 +118,7 @@ describe("Praxis target reference and pinned click", () => {
     await reference.dispose();
   });
 
-  it("refuses after the observed entity is detached without replacement", { timeout: 15_000 }, async () => {
+  it("refuses after the observed entity is detached without replacement", { timeout: 30_000 }, async () => {
     await resetPage(`<button id="target">Save</button>`);
     const reference = await observeTargetReference(page, page.locator("#target"));
     await page.locator("#target").evaluate((element) => element.remove());

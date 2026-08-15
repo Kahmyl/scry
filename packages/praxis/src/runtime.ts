@@ -26,6 +26,7 @@ import {
   type PraxisProviderTiming,
 } from "./observation.js";
 import { PraxisAdapterError, type PraxisDispatchBoundary } from "./transaction.js";
+import { clickPinnedElement } from "./interaction/click.js";
 import { PraxisExecutionEnvelope, type PraxisPreDispatchDeadline } from "./execution-envelope.js";
 import { PraxisStateObserver } from "./state-observer.js";
 import { validatePraxisVeilGrants } from "./veil-bridge.js";
@@ -546,11 +547,19 @@ async function dispatchOperation(
         });
       const receipt = `${request.transactionId}:${request.operationId}`;
       const activationObserved = await armActivationReceipt(page, activationTarget, receipt);
-      await activationTarget.click(
-        target.strategy === "canvas_coordinate" && point
-          ? { ...options, position: point }
-          : options,
-      );
+      try {
+        await clickPinnedElement(page, activationTarget, {
+          timeoutMs: options.timeout,
+          ...(target.strategy === "canvas_coordinate" && point ? { position: point } : {}),
+        });
+      } catch (error) {
+        // Inside the transaction the mutation fence has already begun, so a
+        // target lost mid-dispatch keeps the conservative dispatch-failure
+        // semantics instead of the standalone stale-reference signal.
+        if (error instanceof PraxisStaleTargetError)
+          throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+        throw error;
+      }
       if (!(await activationObserved()))
         throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
       break;
