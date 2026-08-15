@@ -7,6 +7,11 @@ import type {
 import type { Locator, Page } from "playwright";
 import type { Readable } from "node:stream";
 import {
+  clearPraxisClipboard,
+  observePraxisCopyEvent,
+  readPraxisClipboard,
+  readPraxisElementValue,
+  readPraxisSelectedText,
   armExpectedEffect,
   clickReferencedTarget,
   downloadFromReferencedTarget,
@@ -463,15 +468,7 @@ async function acquireByMethod(
     case "dom_text":
       return target.textContent().then((value) => capture(value ?? ""));
     case "semantic_field_value":
-      return target
-        .evaluate((element) =>
-          element instanceof HTMLInputElement ||
-          element instanceof HTMLTextAreaElement ||
-          element instanceof HTMLSelectElement
-            ? element.value
-            : (element.textContent ?? ""),
-        )
-        .then(capture);
+      return readPraxisElementValue(target).then(capture);
     case "copy_control": {
       const group = target.locator(
         "xpath=ancestor::*[self::fieldset or @role='group' or self::div][1]",
@@ -481,15 +478,15 @@ async function acquireByMethod(
       const copyReference = await observeTargetReference(page, copy);
       try {
         if (acquisition.objective?.kind === "verify_user_copy_experience") {
-          const copied = copyEventObserved(page, () => clickReferencedTarget(copyReference));
+          const copied = observePraxisCopyEvent(page, () => clickReferencedTarget(copyReference));
           markVeilProtectedClipboardTouched(page);
           if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
           return { kind: "copy_experience_verified", adapter: "copy_control" };
         }
         await clickReferencedTarget(copyReference);
         const lifecycleOwned = markVeilProtectedClipboardTouched(page);
-        const value = await page.evaluate(() => navigator.clipboard.readText());
-        if (!lifecycleOwned) await page.evaluate(() => navigator.clipboard.writeText(""));
+        const value = await readPraxisClipboard(page);
+        if (!lifecycleOwned) await clearPraxisClipboard(page);
         return capture(value);
       } finally {
         await copyReference.dispose();
@@ -497,25 +494,14 @@ async function acquireByMethod(
     }
     case "selected_text":
     case "scoped_text_selection":
-      return target
-        .evaluate((element) => {
-          const selection = getSelection();
-          const range = document.createRange();
-          range.selectNodeContents(element);
-          selection?.removeAllRanges();
-          selection?.addRange(range);
-          const value = selection?.toString() ?? "";
-          selection?.removeAllRanges();
-          return value;
-        })
-        .then(capture);
+      return readPraxisSelectedText(target).then(capture);
     case "keyboard_copy":
     case "clipboard_event": {
       const reference = await observeTargetReference(page, target);
       try {
         await focusReferencedTarget(reference);
         await pressPageKey(page, process.platform === "darwin" ? "Meta+A" : "Control+A");
-        const copied = copyEventObserved(page, () =>
+        const copied = observePraxisCopyEvent(page, () =>
           pressPageKey(page, process.platform === "darwin" ? "Meta+C" : "Control+C"),
         );
         markVeilProtectedClipboardTouched(page);
@@ -531,13 +517,13 @@ async function acquireByMethod(
       try {
         await focusReferencedTarget(reference);
         await pressPageKey(page, process.platform === "darwin" ? "Meta+A" : "Control+A");
-        const copied = copyEventObserved(page, () =>
+        const copied = observePraxisCopyEvent(page, () =>
           pressPageKey(page, process.platform === "darwin" ? "Meta+C" : "Control+C"),
         );
         const lifecycleOwned = markVeilProtectedClipboardTouched(page);
         if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
-        const value = await page.evaluate(() => navigator.clipboard.readText());
-        if (!lifecycleOwned) await page.evaluate(() => navigator.clipboard.writeText(""));
+        const value = await readPraxisClipboard(page);
+        if (!lifecycleOwned) await clearPraxisClipboard(page);
         await pressPageKey(page, "Escape").catch(() => undefined);
         return capture(value);
       } finally {
@@ -567,26 +553,6 @@ async function acquireByMethod(
     case "protected_visual_reading":
       return acquireProtectedVisualText(page, intent).then(capture);
   }
-}
-
-async function copyEventObserved(page: Page, perform: () => Promise<unknown>) {
-  await page.evaluate(() => {
-    (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved = false;
-    document.addEventListener(
-      "copy",
-      () => {
-        (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved =
-          true;
-      },
-      { once: true },
-    );
-  });
-  await perform();
-  return page.evaluate(
-    () =>
-      (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved ===
-      true,
-  );
 }
 
 function assertObjectiveMethods(acquisition: AcquisitionIntent) {

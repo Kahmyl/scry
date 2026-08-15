@@ -21,6 +21,7 @@ export * from "./interaction/form-control.js";
 export * from "./interaction/keyboard.js";
 export * from "./interaction/scroll.js";
 export * from "./interaction/download.js";
+export * from "./interaction/clipboard.js";
 export * from "./lifecycle/browser-session.js";
 export * from "./lifecycle/page-ownership.js";
 export * from "./lifecycle/navigation.js";
