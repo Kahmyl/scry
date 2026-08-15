@@ -10,7 +10,6 @@ import {
   waitForDocumentSurface,
 } from "@scry/executor";
 import {
-  chromium,
   type Browser,
   type BrowserContext,
   type BrowserContextOptions,
@@ -18,6 +17,7 @@ import {
   type Locator,
   type Page,
 } from "playwright";
+import { openPraxisBrowserServerSession } from "@scry/praxis";
 
 @Injectable()
 export class NativeBrowserDriver {
@@ -28,65 +28,7 @@ export class NativeBrowserDriver {
       ownerId: randomUUID(),
     },
   ) {
-    const browserChannel = process.env.SCRY_BROWSER_CHANNEL ?? "chrome";
-    const server = await chromium.launchServer({
-      headless: true,
-      ...(browserChannel === "chromium" ? {} : { channel: browserChannel }),
-    });
-    const browser = await chromium.connect(server.wsEndpoint());
-    const events: Array<{ milestone: string; at: string }> = [];
-    const record = (milestone: string) => events.push({ milestone, at: new Date().toISOString() });
-    const ownership = {
-      ownerKind: owner.kind,
-      ownerId: owner.ownerId,
-      browserId: randomUUID(),
-      contextId: randomUUID(),
-      pageId: randomUUID(),
-      events,
-    };
-    record("created");
-    record("ownership_acquired");
-    const closeClient = browser.close.bind(browser);
-    let forceClosed = false;
-    const forceClose = async () => {
-      if (forceClosed) return;
-      forceClosed = true;
-      record("force_close_started");
-      await server.kill();
-      record("force_close_completed");
-    };
-    browser.close = async (closeOptions) => {
-      record("close_requested");
-      record("graceful_close_started");
-      try {
-        await closeClient(closeOptions);
-        await server.close();
-        record("graceful_close_completed");
-      } catch (error) {
-        await forceClose().catch(() => undefined);
-        throw error;
-      }
-    };
-    browser.once("disconnected", () => {
-      record("process_exit_observed");
-      record("ownership_released");
-    });
-    try {
-      const context = await browser.newContext({ ...options, acceptDownloads: false });
-      const page = await context.newPage();
-      const browserProcessId = server.process().pid;
-      return {
-        browser,
-        context,
-        page,
-        forceClose,
-        ownership,
-        ...(browserProcessId === undefined ? {} : { browserProcessId }),
-      };
-    } catch (error) {
-      await forceClose().catch(() => undefined);
-      throw error;
-    }
+    return openPraxisBrowserServerSession(options, owner);
   }
 
   async closeBrowser(browser: Browser, context: BrowserContext) {

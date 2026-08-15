@@ -4,6 +4,7 @@ import {
   boundedBrowserClose,
   closePraxisBrowserResources,
   openPraxisBrowserSession,
+  openPraxisBrowserServerSession,
 } from "../src/lifecycle/browser-session.js";
 
 it("owns browser, context, and initial page creation and teardown as one lifecycle", async () => {
@@ -23,5 +24,31 @@ it("owns browser, context, and initial page creation and teardown as one lifecyc
 it("bounds a lifecycle close operation that never settles", async () => {
   await expect(boundedBrowserClose(new Promise(() => undefined), 20)).rejects.toThrow(
     "Browser shutdown timed out",
+  );
+});
+
+it("owns browser-server connection and records graceful ownership release", async () => {
+  const session = await openPraxisBrowserServerSession(
+    { viewport: { width: 700, height: 500 } },
+    { kind: "runtime_browser", ownerId: "lifecycle-test" },
+  );
+  expect(session.ownership).toMatchObject({
+    ownerKind: "runtime_browser",
+    ownerId: "lifecycle-test",
+  });
+  expect(session.ownership.events.map((event) => event.milestone)).toEqual([
+    "created",
+    "ownership_acquired",
+  ]);
+  await session.context.close();
+  await session.browser.close();
+  expect(session.ownership.events.map((event) => event.milestone)).toEqual(
+    expect.arrayContaining([
+      "close_requested",
+      "graceful_close_started",
+      "graceful_close_completed",
+      "process_exit_observed",
+      "ownership_released",
+    ]),
   );
 });

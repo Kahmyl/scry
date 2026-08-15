@@ -48,7 +48,6 @@ for (const file of filesToScan()) {
   const productionSource = !relative.includes("/test/") && !relative.includes("/scripts/");
   if (productionSource && /\b(?:chromium|firefox|webkit)\.launch\s*\(/.test(source)) {
     const allowed = new Set([
-      "apps/api/src/runtime/native-browser-driver/native-browser-driver.ts",
       "packages/praxis/src/lifecycle/browser-session.ts",
     ]);
     if (!allowed.has(relative)) violations.push(`${relative}: browser creation is outside an admitted owner`);
