@@ -874,7 +874,7 @@ Veil call sites and migrating only semantic, action-selection, task-progression,
 browser-lifecycle, or general execution authority that violates the narrow
 trust/privacy boundary.
 
-## R0.4 — Veil narrowing — IN PROGRESS
+## R0.4 — Veil narrowing — COMPLETE
 
 ### Semantic safe-boundary payload removal — COMPLETE
 
@@ -964,9 +964,51 @@ repository typecheck: GREEN
 subsystem, execution-kernel, and direct-browser boundaries: GREEN
 ```
 
-Next: continue with visual-capture and video-segment browser mechanics, keeping
-Veil's permit, masking requirement, disclosure disposition, and tamper-evident
-admission authority while moving Page evaluation and geometry observation out.
+The next queued slice was visual-capture and video-segment browser mechanics,
+completed below.
+
+### Visual-capture and video-segment browser-mechanics removal — COMPLETE
+
+Checkpoint:
+
+```text
+e20eed1 refactor: remove browser mechanics from veil capture
+```
+
+Established:
+
+```text
+DOM discovery, mask application/observation, geometry, and document identity → Praxis
+screenshot and browser screencast mechanics → Praxis
+Veil visual boundary input → narrow factual mask observation plus browser binding facts
+capture permits, mask-policy proof, TTL/context/replay checks, and admission binding → Veil
+video checkpoint chain and tamper-evident finalization admission → Veil
+Veil Playwright dependency → removed
+Executor → composition only: Veil decision → Praxis observation/capture → Veil validation
+```
+
+Qualification:
+
+```text
+focused visual/video/evidence/recording cohort: 19/19 GREEN
+full Praxis + Veil and affected Executor browser-backed cohort: 226/226 GREEN
+repository typecheck: GREEN
+subsystem, execution-kernel, and direct-browser boundaries: GREEN
+Veil browser-mechanics ownership scan: CLEAN
+```
+
+R0.4 closure audit:
+
+```text
+Playwright Page/Browser/Context/ElementHandle in active Veil code: NONE
+DOM query, geometry, screenshot, or browser-recording mechanics in Veil: NONE
+required trust/privacy authority retained by Veil: YES
+semantic target/action/strategy/scheduling/task-progression authority in Veil: NONE
+protected disclosure, persistence, redaction, permit, and safe-boundary invariants: PRESERVED
+browser-backed qualification: GREEN
+```
+
+R0.4 is closed. Stop at this checkpoint; do not begin R0.5 in this slice.
 
 Before doing anything:
 
