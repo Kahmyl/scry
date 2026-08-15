@@ -11,9 +11,11 @@ import { registerAcceptObjectiveEvidenceTool } from "./accept-objective-evidence
 import { registerClassifyRunTool } from "./classify-run.tool.js";
 import { registerSetMissionResumePointerTool } from "./set-mission-resume-pointer.tool.js";
 import { registerPublishMissionReportTool } from "./publish-mission-report.tool.js";
+import { registerAgentDirectedRunTools } from "./agent-directed-run.tool.js";
 
 export function registerRunsTools(server: McpServer, client: ScryApiClient) {
   registerStartRunTool(server, client);
+  registerAgentDirectedRunTools(server, client);
   registerGetRunTool(server, client);
   registerGetVeilFindingsTool(server, client);
   registerTightenVeilPreferencesTool(server, client);

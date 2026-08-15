@@ -31,13 +31,14 @@ export function registerStartRunTool(server: McpServer, client: ScryApiClient) {
     "start_run",
     {
       title: "Start run",
-      description: "Create and queue a run from an immutable Flow revision.",
+      description: "Open a durable agent-directed Run ledger bound to an existing live Praxis session. This does not create or queue a browser.",
       inputSchema: {
         ...objectiveContext,
         projectId: uuid,
         environmentId: uuid,
         flowRevisionId: uuid,
-        compiledContractId: uuid,
+        praxisSessionId: uuid,
+        protectedAuthorizations: z.array(z.object({ operationId: z.string().min(1), authorizationId: uuid })).default([]),
         role: runRoleSchema.default("candidate"),
         viewport: z
           .object({
@@ -57,7 +58,7 @@ export function registerStartRunTool(server: McpServer, client: ScryApiClient) {
         browser: "chromium",
         idempotencyKey: idempotencyKey ?? stableKey("run", { projectId, ...body }),
       });
-      return result({ run }, "Run queued.");
+      return result({ run }, "Agent-directed Run ledger opened.");
     },
   );
 }

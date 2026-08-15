@@ -2,7 +2,6 @@ import {
   ConflictException,
   Inject,
   Injectable,
-  OnModuleInit,
   OnModuleDestroy,
 } from "@nestjs/common";
 import { Queue } from "bullmq";
@@ -28,12 +27,11 @@ export type CalibrationJob = {
 export type ProbeJob = { probeSessionId: string; releaseId: string; schemaFingerprint: string };
 
 @Injectable()
-export class RunQueueService implements OnModuleDestroy, OnModuleInit {
+export class RunQueueService implements OnModuleDestroy {
   readonly queue: Queue<RunJob>;
   readonly calibrationQueue: Queue<CalibrationJob>;
   readonly probeQueue: Queue<ProbeJob>;
   readonly praxisQueue: Queue<PraxisJob>;
-  private dispatcher?: NodeJS.Timeout;
 
   constructor(
     @Inject(RedisConnection) redis: RedisConnection,
@@ -62,11 +60,6 @@ export class RunQueueService implements OnModuleDestroy, OnModuleInit {
       connection: redis.client,
       defaultJobOptions: { attempts: 1, removeOnComplete: 100, removeOnFail: 500 },
     });
-  }
-
-  async onModuleInit() {
-    await this.dispatchPending().catch(() => undefined);
-    this.dispatcher = setInterval(() => void this.dispatchPending().catch(() => undefined), 1_000);
   }
 
   async dispatchPending(limit = 100) {
@@ -187,7 +180,6 @@ export class RunQueueService implements OnModuleDestroy, OnModuleInit {
   }
 
   async onModuleDestroy() {
-    if (this.dispatcher) clearInterval(this.dispatcher);
     await this.queue.close();
     await this.calibrationQueue.close();
     await this.probeQueue.close();

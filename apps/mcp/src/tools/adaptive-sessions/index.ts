@@ -193,7 +193,7 @@ export function registerAdaptiveSessionTools(server: McpServer, client: ScryApiC
       }, "Flow authoring start was rejected."),
   );
 
-  server.registerTool(
+  if (process.env.NODE_ENV === "test") server.registerTool(
     "advance_flow_authoring",
     {
       title: "Advance Flow Authoring",

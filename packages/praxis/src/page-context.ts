@@ -79,8 +79,6 @@ export async function observeSemanticPageContextReferenceState(
   if (exactAttached) {
     if (!locator)
       return { state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_SEMANTICS_CHANGED" };
-    if (!(await revalidateSemanticPageContextControl(entry, locator)))
-      return { state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_SEMANTICS_CHANGED" };
     return (await locator.isVisible())
       ? { state: "visible", reasonCode: "CONTEXT_REFERENCE_VISIBLE" }
       : { state: "hidden", reasonCode: "CONTEXT_REFERENCE_HIDDEN" };
@@ -99,15 +97,6 @@ export async function observeSemanticPageContextReferenceState(
   if (candidateCount > examined)
     return { state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_OBSERVATION_TRUNCATED" };
   return { state: "absent", reasonCode: "CONTEXT_REFERENCE_ABSENT" };
-}
-
-export async function revalidateSemanticPageContextControl(
-  entry: NonNullable<ReturnType<typeof resolveSemanticPageContextControl>>,
-  locator: Locator,
-) {
-  const currentIdentity = await semanticIdentityForLocator(locator);
-  if (currentIdentity !== entry.semanticIdentity) return false;
-  return contextContainersCurrent(entry, true);
 }
 
 async function semanticIdentityForLocator(locator: Locator) {

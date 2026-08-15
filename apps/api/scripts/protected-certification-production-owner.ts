@@ -24,7 +24,6 @@ import { NativeBrowserDriver } from "../src/runtime/native-browser-driver/native
 import { MissionFlowAuthoringService } from "../src/adaptive-sessions/mission-flow-authoring.service.js";
 import { deriveMissionAuthoringOperation, missionAuthoringOperationIdentity } from "../src/adaptive-sessions/mission-authoring-derivation.js";
 import { missionAuthoringProtectedOperationReservation } from "../src/adaptive-sessions/mission-authoring-protected-transaction.js";
-import { AdaptiveSessionController } from "../src/adaptive-sessions/adaptive-session.controller.js";
 
 type OwnerFamily = "D" | "E" | "H" | "I" | "J";
 type OwnerObservation = {
@@ -399,8 +398,7 @@ export async function runPublicMissionReplayCertification(cellId: string): Promi
     const repository = missionRepositoryFacade(fixture, origin, turnId, intent);
     const runner = { execute: async () => { counters.kernelLaunches += 1; counters.missionActivations += 1; throw new Error("TERMINAL_REPLAY_KERNEL_LAUNCH_FORBIDDEN"); } };
     const service = new MissionFlowAuthoringService(repository as never, runner as never, { assertAcceptingWork: async () => undefined } as never);
-    const controller = new AdaptiveSessionController(service);
-    await controller.advance({ kind: "user", role: "owner", workspaceId: fixture.workspaceId } as never, fixture.sessionId, {
+    await service.advance({ kind: "user", role: "owner", workspaceId: fixture.workspaceId } as never, fixture.sessionId, {
       kind: "continue", turnId, idempotencyKey: `public-replay-${cellId}`,
       budgets: { maxOperations: 1, maxDurationMs: 30_000 },
     } as never);

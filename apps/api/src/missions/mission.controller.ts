@@ -16,7 +16,6 @@ import {
   createExecutionPlanSchema,
   activateExecutionPlanSchema,
   orchestrationControlSchema,
-  startReadyObjectivesSchema,
   grantMissionAuthorizationSchema,
   finalizeAgentWorkSchema,
   type AcceptEvidenceInput,
@@ -39,7 +38,6 @@ import type {
   ActivateExecutionPlanInput,
   GrantMissionAuthorizationInput,
   OrchestrationControlInput,
-  StartReadyObjectivesInput,
 } from "@scry/contracts";
 
 import { CurrentPrincipal, type Principal } from "../auth/index.js";
@@ -234,13 +232,6 @@ export class MissionController {
     @CurrentPrincipal() p: Principal,
   ) {
     return this.orchestration.status(p, id);
-  }
-  @Post("missions/:missionId/orchestration/start-ready") startReady(
-    @Param("missionId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(startReadyObjectivesSchema)) i: StartReadyObjectivesInput,
-  ) {
-    return this.orchestration.startReady(p, id, i);
   }
   @Post("missions/:missionId/orchestration/pause") pause(
     @Param("missionId") id: string,

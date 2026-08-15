@@ -1198,6 +1198,38 @@ Latest green production checkpoints:
 1a1e13b production compile/certification entry points retired
 ```
 
+### Slices 7–11 — agent-directed execution cutover — COMPLETE
+
+- Slice 7: V2 dispatch accepts only exact live `context-control-*` references
+  for target-bearing operations. Praxis checks exact entity, session, page,
+  document, attachment, and capability. Same-entity semantic drift is not an
+  admission gate; replacement cannot substitute.
+- Slice 8: V2 dispatch forces expected effect to `none`. Expected-effect data
+  is not consumed for operation truth, retry, continuation, or Run state.
+- Slice 9: the public adaptive `advance` API is removed. The legacy MCP turn
+  tool is registered only under `NODE_ENV=test` for compatibility fixtures;
+  production clients use `dispatch_run_operation`, which returns factual
+  operation/mutation/privacy/evidence results without a decision boundary.
+- Slice 10: V2 Run creation never queues a whole-Flow worker. Each command
+  executes exactly one operation in the associated live Praxis session, and
+  only `finalize_run` terminalizes the ledger.
+- Slice 11: Mission orchestration no longer starts a timer, reconciles on
+  activation/resume/authorization, or exposes `start-ready`. The Run outbox no
+  longer has an automatic publisher, and legacy Run start/rerun routes are
+  removed. Pause/cancel and authorization remain factual/mechanical controls.
+
+Focused qualification:
+
+```text
+Praxis exact-reference browser suite: 72/72 GREEN
+Run/Mission/orchestration API tests: 11/11 GREEN
+MCP tests: 30/30 GREEN
+API + MCP typecheck: GREEN
+```
+
+Exact next action: Slice 12 zero-use/compatibility audit, full R0.5
+qualification, and closure documentation.
+
 Objective:
 
 ```text

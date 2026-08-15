@@ -1,4 +1,4 @@
-import { Body, ConflictException, Controller, Get, Inject, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common";
 import {
   attachRunPraxisSessionSchema,
   dispatchRunOperationSchema,
@@ -10,7 +10,7 @@ import {
 
 import { ScryRepository } from "../access/index.js";
 import { CurrentPrincipal, type Principal } from "../auth/index.js";
-import { ReleaseAdmissionService, RunQueueService } from "../runtime/index.js";
+import { RunQueueService } from "../runtime/index.js";
 import { RunObservationService } from "./run-observation.service.js";
 import { AgentDirectedRunService } from "./agent-directed-run.service.js";
 import { ZodValidationPipe } from "../common/validation.pipe.js";
@@ -21,7 +21,6 @@ export class RunsController {
     @Inject(ScryRepository) private readonly repository: ScryRepository,
     @Inject(RunQueueService) private readonly queue: RunQueueService,
     @Inject(RunObservationService) private readonly observations: RunObservationService,
-    @Inject(ReleaseAdmissionService) private readonly admission: ReleaseAdmissionService,
     @Inject(AgentDirectedRunService) private readonly agentRuns: AgentDirectedRunService,
   ) {}
 
@@ -62,17 +61,6 @@ export class RunsController {
     return (await this.observations.observe(principal, runId)).veil;
   }
 
-  @Post(":runId/start")
-  async start(@Param("runId") runId: string, @CurrentPrincipal() principal: Principal) {
-    await this.admission.assertAcceptingWork();
-    this.repository.requireWriteAccess(principal);
-    const run = await this.repository.getRun(principal, runId) as { executionSnapshot?: { executionModel?: string } };
-    if (run.executionSnapshot?.executionModel === "agent_directed_v1")
-      throw new ConflictException({ code: "AGENT_DIRECTED_RUN_REQUIRES_EXPLICIT_OPERATION" });
-    await this.repository.validateRunCredentials(principal, runId);
-    return this.queue.start(runId);
-  }
-
   @Post(":runId/cancel")
   async cancel(@Param("runId") runId: string, @CurrentPrincipal() principal: Principal) {
     this.repository.requireWriteAccess(principal);
@@ -80,14 +68,4 @@ export class RunsController {
     return this.queue.cancel(runId);
   }
 
-  @Post(":runId/rerun")
-  async rerun(@Param("runId") runId: string, @CurrentPrincipal() principal: Principal) {
-    await this.admission.assertAcceptingWork();
-    const source = await this.repository.getRun(principal, runId) as { executionSnapshot?: { executionModel?: string } };
-    if (source.executionSnapshot?.executionModel === "agent_directed_v1")
-      throw new ConflictException({ code: "AGENT_DIRECTED_RUN_REQUIRES_NEW_SESSION_BINDING" });
-    const run = await this.repository.rerunExact(principal, runId);
-    await this.queue.dispatchPending();
-    return run;
-  }
 }

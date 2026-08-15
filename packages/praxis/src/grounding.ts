@@ -23,7 +23,6 @@ import { escalationLevel } from "./latency.js";
 import { interactionRiskPolicy } from "./risk-policy.js";
 import {
   resolveSemanticPageContextControl,
-  revalidateSemanticPageContextControl,
 } from "./page-context.js";
 
 type SafeAction =
@@ -473,8 +472,6 @@ async function resolveAuthoritativeContextReference(
           .catch(() => false);
         await currentElement.dispose();
         if (!sameControl) throw new Error("CONTEXT_CONTROL_REPLACED");
-        if (!(await revalidateSemanticPageContextControl(entry, locator)))
-          throw new Error("CONTEXT_CONTROL_SEMANTICS_CHANGED");
         for (let index = 0; index < entry.containers.length; index += 1) {
           const container = entry.containers[index]!;
           if (container.documentIdentity !== entry.handle.documentIdentity)

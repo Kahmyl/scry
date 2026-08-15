@@ -1,13 +1,11 @@
 import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common";
 import {
-  advanceAdaptiveSessionSchema,
   closeAdaptiveSessionSchema,
   recoverTrustedOriginsSchema,
   prepareFlowAuthoringSchema,
   reconcileAdaptiveOperationSchema,
   startAdaptiveSessionSchema,
   type CloseAdaptiveSessionInput,
-  type MissionAuthoringAdvanceInput,
   type StartAdaptiveSessionInput,
   type RecoverTrustedOriginsInput,
   type PrepareFlowAuthoringInput,
@@ -49,15 +47,6 @@ export class AdaptiveSessionController {
   @Get(":sessionId")
   get(@CurrentPrincipal() principal: Principal, @Param("sessionId") sessionId: string) {
     return this.sessions.get(principal, sessionId);
-  }
-
-  @Post(":sessionId/advance")
-  advance(
-    @CurrentPrincipal() principal: Principal,
-    @Param("sessionId") sessionId: string,
-    @Body(new ZodValidationPipe(advanceAdaptiveSessionSchema)) input: MissionAuthoringAdvanceInput,
-  ) {
-    return this.sessions.advance(principal, sessionId, input);
   }
 
   @Post(":sessionId/reconcile-unknown")

@@ -198,20 +198,20 @@ describe("bounded semantic page context", () => {
     expect(replacement.containers[0]!.reference).not.toBe(control.containerReferences![0]);
   });
 
-  it("denies same-element semantic and structural-kind drift", async () => {
+  it("keeps same-document exact identity authoritative across semantic drift", async () => {
     await page.setContent('<div role="row"><button id="action">Rotate</button></div>');
     const context = await observeSemanticPageContext(page);
     const intent = referenceIntent(context.controls[0]!.reference);
     intent.requiredCapabilities = ["focusable", "pointer_activatable"];
     await page.locator("#action").evaluate((button) => { button.textContent = "Revoke"; });
-    await expect(resolveTarget(page, intent)).rejects.toThrow("TARGET_CHANGED_BEFORE_ACTION");
+    await expect(resolveTarget(page, intent)).resolves.toMatchObject({ diagnostic: { candidateCount: 1 } });
 
     await page.setContent('<div role="row" id="row"><button>Rotate</button></div>');
     const structural = await observeSemanticPageContext(page);
     const structuralIntent = referenceIntent(structural.controls[0]!.reference);
     structuralIntent.requiredCapabilities = ["focusable", "pointer_activatable"];
     await page.locator("#row").evaluate((row) => row.setAttribute("role", "group"));
-    await expect(resolveTarget(page, structuralIntent)).rejects.toThrow("TARGET_CHANGED_BEFORE_ACTION");
+    await expect(resolveTarget(page, structuralIntent)).resolves.toMatchObject({ diagnostic: { candidateCount: 1 } });
   });
 
   it("suppresses group text around protected descendants and bounds candidate relocation", async () => {
@@ -371,7 +371,7 @@ describe("bounded semantic page context", () => {
     });
   });
 
-  it("treats exact-handle moves, semantic drift, and cross-document reuse as stale", async () => {
+  it("preserves exact handles across same-document moves and refuses cross-document reuse", async () => {
     await page.setContent(`
       <div role="row" id="first"><button id="target">Rotate key</button></div>
       <div role="row" id="second"></div>
@@ -379,16 +379,14 @@ describe("bounded semantic page context", () => {
     const context = await observeSemanticPageContext(page);
     const reference = context.controls.find((control) => control.name === "Rotate key")!.reference;
     await page.locator("#target").evaluate((element) => document.querySelector("#second")!.append(element));
-    await expect(observeSemanticPageContextReferenceState(page, reference)).resolves.toMatchObject({
-      state: "ambiguous_stale",
-    });
+    await expect(observeSemanticPageContextReferenceState(page, reference)).resolves.toMatchObject({ state: "visible" });
 
     await page.setContent('<button id="target">Rotate key</button>');
     const semanticContext = await observeSemanticPageContext(page);
     const semanticReference = semanticContext.controls[0]!.reference;
     await page.locator("#target").evaluate((element) => { element.textContent = "Delete key"; });
     await expect(observeSemanticPageContextReferenceState(page, semanticReference)).resolves.toEqual({
-      state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_SEMANTICS_CHANGED",
+      state: "visible", reasonCode: "CONTEXT_REFERENCE_VISIBLE",
     });
 
     await page.goto('data:text/html,<button id="new-document">Rotate key</button>');

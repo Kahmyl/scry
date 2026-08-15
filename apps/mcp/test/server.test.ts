@@ -200,6 +200,9 @@ describe("current Scry MCP surface", () => {
       "list_authenticated_session_leases",
       "revoke_authenticated_session_lease",
       "start_run",
+      "dispatch_run_operation",
+      "attach_run_praxis_session",
+      "finalize_run",
       "get_run",
       "get_veil_findings",
       "tighten_veil_preferences",
@@ -877,7 +880,7 @@ describe("current Scry MCP surface", () => {
     await server.close();
   });
 
-  it("starts a run only with an admitted compiled contract", async () => {
+  it("opens an agent-directed Run only with an explicit live Praxis session", async () => {
     const requests: Array<{ path: string; body?: Record<string, unknown> }> = [];
     vi.stubGlobal(
       "fetch",
@@ -901,7 +904,7 @@ describe("current Scry MCP surface", () => {
         projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         flowRevisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-        compiledContractId: "99999999-9999-4999-8999-999999999999",
+        praxisSessionId: "99999999-9999-4999-8999-999999999999",
       },
     });
     expect(response.isError).not.toBe(true);
@@ -911,7 +914,7 @@ describe("current Scry MCP surface", () => {
     ]);
     expect(requests[1]?.body).toMatchObject({
       flowRevisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      compiledContractId: "99999999-9999-4999-8999-999999999999",
+      praxisSessionId: "99999999-9999-4999-8999-999999999999",
       browser: "chromium",
     });
     await client.close();

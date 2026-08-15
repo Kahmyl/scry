@@ -4,8 +4,6 @@ import {
   Inject,
   Injectable,
   NotFoundException,
-  OnModuleDestroy,
-  OnModuleInit,
 } from "@nestjs/common";
 import type {
   ActivateExecutionPlanInput,
@@ -25,21 +23,10 @@ const TERMINAL_RUNS = ["passed", "failed", "cancelled", "timed_out", "infrastruc
 const workspaceId = (p: Principal) => (p.kind === "user" ? p.workspaceId : null);
 
 @Injectable()
-export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
-  private timer?: NodeJS.Timeout;
+export class OrchestrationService {
   private ticking = false;
   constructor(@Inject(Database) private readonly db: Database) {}
 
-  async onModuleInit() {
-    await this.tick().catch(() => undefined);
-    this.timer = setInterval(
-      () => void this.tick().catch(() => undefined),
-      Number(process.env.SCRY_ORCHESTRATION_INTERVAL_MS ?? 1_000),
-    );
-  }
-  onModuleDestroy() {
-    if (this.timer) clearInterval(this.timer);
-  }
   private write(p: Principal) {
     if (p.kind === "user" && p.role === "viewer")
       throw new ForbiddenException("Write access required");
@@ -211,7 +198,6 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
         `UPDATE missions SET status='running',revision=revision+1,updated_at=now() WHERE id=$1`,
         [missionId],
       );
-      await this.reconcileMission(c, missionId);
       await this.activity(c, missionId, input.agentSessionId, null, "Execution plan activated", {
         planId: plan.rows[0]!.id,
         revision: input.planRevision,
@@ -277,7 +263,7 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
           `UPDATE mission_objective_orchestration SET state='cancelled',blocker_code='MISSION_CANCELLED',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE mission_id=$1 AND state NOT IN ('passed','failed','awaiting_evidence')`,
           [missionId],
         );
-      } else if (action === "resume") await this.reconcileMission(c, missionId);
+      }
       await this.activity(
         c,
         missionId,
@@ -330,7 +316,6 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
           environmentId: input.environmentId,
         },
       );
-      await this.reconcileMission(c, missionId);
       return { id: result.rows[0]!.id, status: "approved", kind: input.kind };
     });
   }

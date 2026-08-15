@@ -85,13 +85,14 @@ export type CreateFlowRevisionInput = z.infer<typeof createFlowRevisionSchema>;
 export type ValidatePlanInput = z.infer<typeof validatePlanSchema>;
 export type CreateFlowRunInput = z.infer<typeof createFlowRunSchema>;
 
-export const dispatchRunOperationSchema = z
+export const dispatchRunOperationBaseSchema = z
   .object({
     praxisSessionId: uuidSchema,
     intent: missionAuthoringIntentSchema,
   })
-  .strict()
-  .superRefine((value, context) => {
+  .strict();
+
+export const dispatchRunOperationSchema = dispatchRunOperationBaseSchema.superRefine((value, context) => {
     const references: Array<string | undefined> = [];
     const action = value.intent.action;
     if ("target" in action && action.target) references.push(action.target.reference);
