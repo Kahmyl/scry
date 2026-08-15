@@ -31,7 +31,13 @@ import {
   registerVeilEvidenceAdmission,
   writeJson,
 } from "./artifacts.js";
-import { observeSemanticPageContext, openPraxisBrowserSession, visualRedactionInitScript } from "@scry/praxis";
+import {
+  closePraxisBrowser,
+  closePraxisContext,
+  observeSemanticPageContext,
+  openPraxisBrowserSession,
+  visualRedactionInitScript,
+} from "@scry/praxis";
 import {
   registerGroundingHistoryProvider,
   registerGroundingObserver,
@@ -302,7 +308,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       videoAuthority: veilVideoSegments,
       videoBinding: veilCaptureBinding,
       abortCapture: async () => {
-        await context?.close();
+        if (context) await closePraxisContext(context);
       },
     });
     trace = new TraceCoordinator({
@@ -329,7 +335,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         return decision.disposition === "allow" || decision.disposition === "sanitize";
       },
       abortCapture: async () => {
-        await context?.close();
+        if (context) await closePraxisContext(context);
       },
     });
     let recordingVeilState: ReturnType<PrivacyCollector["state"]>["status"] = "active";
@@ -994,9 +1000,10 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       );
     }
     if (context && !borrowsSafeSession) {
-      await boundedClose(context.close()).catch(() => undefined);
+      await boundedClose(closePraxisContext(context)).catch(() => undefined);
     }
-    if (browser && !borrowsSafeSession) await boundedClose(browser.close()).catch(() => undefined);
+    if (browser && !borrowsSafeSession)
+      await boundedClose(closePraxisBrowser(browser)).catch(() => undefined);
     unregisterPraxisVeil?.();
     unregisterVeilAdmission();
   }

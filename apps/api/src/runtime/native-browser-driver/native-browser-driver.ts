@@ -5,9 +5,6 @@ import type { ExpectedEffect, InteractionTargetIntent, SemanticScope } from "@sc
 import { isPrivateAddress } from "@scry/policy";
 import {
   NativeControlResolutionError,
-  blockedThirdPartyScriptOrigins,
-  navigateAndWaitNative,
-  waitForDocumentSurface,
 } from "@scry/executor";
 import {
   type Browser,
@@ -17,7 +14,14 @@ import {
   type Locator,
   type Page,
 } from "playwright";
-import { openPraxisBrowserServerSession } from "@scry/praxis";
+import {
+  blockedThirdPartyScriptOrigins,
+  closePraxisBrowserResources,
+  navigateAndWaitNative,
+  openPraxisBrowserServerSession,
+  waitForDocumentSurface,
+  waitForPraxisURL,
+} from "@scry/praxis";
 
 @Injectable()
 export class NativeBrowserDriver {
@@ -32,8 +36,7 @@ export class NativeBrowserDriver {
   }
 
   async closeBrowser(browser: Browser, context: BrowserContext) {
-    await context.close().catch(() => undefined);
-    await browser.close().catch(() => undefined);
+    await closePraxisBrowserResources(context, browser);
   }
 
   async navigateAndWait(
@@ -83,7 +86,7 @@ export class NativeBrowserDriver {
   async verifyExpectedEffect(page: Page, effect: ExpectedEffect, beforeUrl: string, timeoutMs: number) {
     if (effect.type === "none") return;
     if (effect.type === "navigation") {
-      await page.waitForURL((url) => {
+      await waitForPraxisURL(page, (url) => {
         if (!effect.url) return url.href !== beforeUrl;
         return effect.match === "exact" ? url.href === effect.url :
           effect.match === "path" ? url.pathname === new URL(effect.url).pathname : url.href.includes(effect.url);

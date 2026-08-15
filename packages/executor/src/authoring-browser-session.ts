@@ -8,18 +8,21 @@ import {
 } from "@scry/contracts";
 import {
   closePraxisPage,
+  closePraxisBrowser,
+  closePraxisContext,
   createPraxisExpectedPageOwnership,
   observeSemanticPageContext,
   playwrightBrowserChannel,
   registerPraxisVeilAuthority,
   settlePraxisPopup,
+  installThirdPartyScriptFence,
+  waitForPraxisLoadState,
 } from "@scry/praxis";
 import { VeilAuthority, VeilRuntimeCoordinator } from "@scry/veil";
 import type { Browser, BrowserContext, Page } from "playwright";
 
 import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
 import { BrowserSessionProvenance } from "./browser-session.js";
-import { installThirdPartyScriptFence } from "./native-browser-navigation.js";
 import { runProtectedStage } from "./protected-stage-supervisor.js";
 
 export type AuthoringBrowserSessionState =
@@ -153,7 +156,7 @@ export async function createAuthoringBrowserSession(input: {
         throw new Error("AUTHORING_BROWSER_SESSION_NOT_ACTIVE");
       }
 
-      await page!.waitForLoadState("domcontentloaded");
+      await waitForPraxisLoadState(page!, "domcontentloaded");
 
       const documentToken = await page!.evaluate(() => {
         const key = "__scryAuthoringDocumentToken";
@@ -330,9 +333,9 @@ export async function createAuthoringBrowserSession(input: {
         try {
           unregisterVeil.forEach((unregister) => unregister());
           await privacyGate.seal({ code: "AUTHORING_OPERATION_CANCELLED" }).catch(() => undefined);
-          await boundedAuthoringClose("authoring_context_cancel", () => context!.close());
+          await boundedAuthoringClose("authoring_context_cancel", () => closePraxisContext(context!));
         } finally {
-          await boundedAuthoringClose("authoring_browser_cancel", () => browser.close()).catch(() =>
+          await boundedAuthoringClose("authoring_browser_cancel", () => closePraxisBrowser(browser)).catch(() =>
             forceClose?.(),
           );
         }
@@ -351,9 +354,9 @@ export async function createAuthoringBrowserSession(input: {
         );
 
         try {
-          await boundedAuthoringClose("authoring_context_close", () => context!.close());
+          await boundedAuthoringClose("authoring_context_close", () => closePraxisContext(context!));
         } finally {
-          await boundedAuthoringClose("authoring_browser_close", () => browser.close()).catch(
+          await boundedAuthoringClose("authoring_browser_close", () => closePraxisBrowser(browser)).catch(
             async (error) => {
               if (!forceClose) throw error;
               await boundedAuthoringClose("authoring_browser_force_close", forceClose);
@@ -364,8 +367,8 @@ export async function createAuthoringBrowserSession(input: {
       },
     };
   } catch (error) {
-    await context?.close().catch(() => undefined);
-    await browser.close().catch(() => undefined);
+    if (context) await closePraxisContext(context).catch(() => undefined);
+    await closePraxisBrowser(browser).catch(() => undefined);
     throw error;
   }
 }

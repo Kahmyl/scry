@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Page } from "playwright";
 import type { Assertion, ProtectedOperationState, ProtectedTransaction, ProtectedTransactionResult } from "@scry/contracts";
 import type { SecretRedactor } from "@scry/policy";
+import { gotoPraxisPage } from "@scry/praxis";
 import type { ProtectedBrowserSession, SafeBrowserSession } from "./browser-session.js";
 import { executeProtectedReveal, verifyProtectedRevealTarget } from "./protected-extractor.js";
 import {
@@ -341,7 +342,7 @@ export class ProtectedTransactionKernel {
         }) ?? Promise.resolve(),
       });
       try {
-        await capsule.page.goto(transaction.entry.url, { waitUntil: "domcontentloaded" });
+        await gotoPraxisPage(capsule.page, transaction.entry.url, { waitUntil: "domcontentloaded" });
       } catch {
         throw new PhaseError("TRANSACTION_ENTRY_NAVIGATION_FAILED", "bootstrap", "safe_to_retry");
       }

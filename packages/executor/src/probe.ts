@@ -3,7 +3,9 @@ import { createHash, randomUUID } from "node:crypto";
 import type { CurrentPlan, ExecutionPolicy, InteractionTargetIntent } from "@scry/contracts";
 import {
   browserObservationRuntimeHealth,
+  closePraxisBrowser,
   executePraxisConsumer,
+  gotoPraxisPage,
   playwrightBrowserChannel,
   registerPraxisVeilAuthority,
 } from "@scry/praxis";
@@ -183,8 +185,7 @@ export async function probeFlowPlan(input: {
   try {
     for (const [stepIndex, step] of input.plan.steps.entries()) {
       if (step.action.type === "navigate") {
-        await page
-          .goto(step.action.url, {
+        await gotoPraxisPage(page, step.action.url, {
             waitUntil: "domcontentloaded",
           })
           .catch((error) => {
@@ -283,7 +284,7 @@ export async function probeFlowPlan(input: {
     };
   } finally {
     unregisterPraxisVeil();
-    await browser.close();
+    await closePraxisBrowser(browser);
   }
 }
 

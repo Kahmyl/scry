@@ -3,6 +3,7 @@ import {
   type Browser,
   type BrowserContext,
   type BrowserContextOptions,
+  type CDPSession,
   type LaunchOptions,
   type Page,
 } from "playwright";
@@ -121,6 +122,21 @@ export async function closePraxisBrowserResources(
 ): Promise<void> {
   if (context) await boundedBrowserClose(context.close(), timeoutMs).catch(() => undefined);
   if (browser) await boundedBrowserClose(browser.close(), timeoutMs).catch(() => undefined);
+}
+
+export function closePraxisContext(context: BrowserContext): Promise<void> {
+  return context.close();
+}
+
+export function closePraxisBrowser(browser: Browser): Promise<void> {
+  return browser.close();
+}
+
+export function openPraxisCdpSession(
+  context: BrowserContext,
+  page: Page,
+): Promise<CDPSession> {
+  return context.newCDPSession(page);
 }
 
 export async function destroyPraxisIsolatedSession(

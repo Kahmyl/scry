@@ -2,6 +2,7 @@ import type { Assertion, CurrentAction } from "@scry/contracts";
 import {
   requirePraxisSuccess,
   resolveTargetLocator,
+  waitForPraxisLoadState,
   type PraxisConsumerContext,
 } from "@scry/praxis";
 import type { Page } from "playwright";
@@ -84,7 +85,7 @@ export async function executeAssertion(
     return;
   }
   const actual = new URL(page.url());
-  await page.waitForLoadState("domcontentloaded", optionalTimeout(assertion.timeoutMs));
+  await waitForPraxisLoadState(page, "domcontentloaded", optionalTimeout(assertion.timeoutMs));
   const expected = new URL(assertion.expected, baseOrigin);
   const matches =
     assertion.match === "exact"

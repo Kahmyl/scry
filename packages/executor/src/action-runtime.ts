@@ -15,7 +15,7 @@ import type { Page } from "playwright";
 
 import { capturePublicGeneratedValue } from "./public-value-capture.js";
 import type { ExecuteOptions } from "./types.js";
-import { navigateAndWaitNative } from "./native-browser-navigation.js";
+import { navigateAndWaitNative } from "@scry/praxis";
 import { isNativeControlResolutionError } from "./interaction-lifecycle.js";
 
 export async function executeAction(

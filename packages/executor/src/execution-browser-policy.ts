@@ -1,6 +1,11 @@
 import { RuntimePolicyError, RuntimeRequestPolicy } from "@scry/policy";
 import type { Browser, BrowserContext, CDPSession, Page } from "playwright";
-import { boundedBrowserClose, closePraxisBrowserResources } from "@scry/praxis";
+import {
+  boundedBrowserClose,
+  closePraxisBrowserResources,
+  closePraxisPage,
+  openPraxisCdpSession,
+} from "@scry/praxis";
 
 import type { ExecuteOptions } from "./types.js";
 
@@ -14,7 +19,7 @@ export function attachCapabilityGuards(
     if (page === primaryPage || options.policy.allowPopups) return;
     void reject(
       new RuntimePolicyError("POPUP_NOT_ALLOWED", "Popup or new page was blocked"),
-    ).finally(() => void page.close().catch(() => undefined));
+    ).finally(() => void closePraxisPage(page));
   });
   primaryPage.on("download", (download) => {
     if (options.policy.allowDownloads) return;
@@ -37,7 +42,7 @@ export async function attachRequestInterception(
     context?: { fatal?: boolean; resourceType?: string },
   ) => Promise<void>,
 ): Promise<CDPSession> {
-  const session = await context.newCDPSession(page);
+  const session = await openPraxisCdpSession(context, page);
   const frameTree = (await session.send("Page.getFrameTree")) as {
     frameTree: { frame: { id: string } };
   };

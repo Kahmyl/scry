@@ -52,6 +52,13 @@ for (const file of filesToScan()) {
     ]);
     if (!allowed.has(relative)) violations.push(`${relative}: browser creation is outside an admitted owner`);
   }
+  if (
+    productionSource &&
+    !relative.startsWith("packages/praxis/src/") &&
+    /\.(?:newContext|newPage|newCDPSession|goto|reload|waitForURL|waitForLoadState)\s*\(|\b(?:browser|context|page|candidate|popup|previousPage|uncertainContext)\.close\s*\(/.test(source)
+  ) {
+    violations.push(`${relative}: browser lifecycle mechanics are outside Praxis`);
+  }
   if (relative.startsWith("apps/api/src/") && !relative.includes("/native-browser-driver/")) {
     if (/\.(?:getByRole|getByLabel|getByPlaceholder|getByText|getByTestId|locator)\s*\(/.test(source)) {
       violations.push(`${relative}: native locator execution is outside NativeBrowserDriver`);

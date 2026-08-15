@@ -22,3 +22,4 @@ export * from "./interaction/scroll.js";
 export * from "./interaction/download.js";
 export * from "./lifecycle/browser-session.js";
 export * from "./lifecycle/page-ownership.js";
+export * from "./lifecycle/navigation.js";

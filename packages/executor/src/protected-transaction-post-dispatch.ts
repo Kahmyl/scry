@@ -1,4 +1,5 @@
 import type { ProtectedTransaction, ProtectedTransactionResult } from "@scry/contracts";
+import { gotoPraxisPage, reloadPraxisPage } from "@scry/praxis";
 
 import type { SafeBrowserSession } from "./browser-session.js";
 import type {
@@ -26,7 +27,7 @@ export async function reconcileProtectedMutation(
   }
   try {
     if (transaction.mutation.reconciliation.strategy === "public_ui_state") {
-      await session.page.reload({ waitUntil: "domcontentloaded" });
+      await reloadPraxisPage(session.page, { waitUntil: "domcontentloaded" });
       await verifyProtectedTransactionAssertions(
         session.page,
         transaction.mutation.reconciliation.assertions,
@@ -57,7 +58,7 @@ export async function continueAfterProtectedMutation(
   for (const strategy of transaction.continuation.strategies) {
     try {
       if (strategy.mode === "resume_parked_context") {
-        await session.page.goto(strategy.reentryUrl, { waitUntil: "domcontentloaded" });
+        await gotoPraxisPage(session.page, strategy.reentryUrl, { waitUntil: "domcontentloaded" });
         await verifyProtectedTransactionAssertions(
           session.page,
           strategy.assertions,
@@ -79,7 +80,7 @@ export async function continueAfterProtectedMutation(
           dispatchPosition: "post_dispatch",
           work: () => dependencies.recreateCleanSession!(strategy.checkpointId),
         });
-        await session.page.goto(strategy.reentryUrl, { waitUntil: "domcontentloaded" });
+        await gotoPraxisPage(session.page, strategy.reentryUrl, { waitUntil: "domcontentloaded" });
         await verifyProtectedTransactionAssertions(
           session.page,
           strategy.assertions,
@@ -102,7 +103,7 @@ export async function continueAfterProtectedMutation(
           dispatchPosition: "post_dispatch",
           work: () => dependencies.reauthenticate!(strategy.authenticationContractId),
         });
-        await session.page.goto(strategy.reentryUrl, { waitUntil: "domcontentloaded" });
+        await gotoPraxisPage(session.page, strategy.reentryUrl, { waitUntil: "domcontentloaded" });
         await verifyProtectedTransactionAssertions(
           session.page,
           strategy.assertions,

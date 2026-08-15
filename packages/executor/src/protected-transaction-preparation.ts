@@ -1,5 +1,5 @@
 import type { ProtectedTransaction } from "@scry/contracts";
-import { PraxisConsumerError, requirePraxisSuccess, resolveTargetLocator } from "@scry/praxis";
+import { gotoPraxisPage, PraxisConsumerError, requirePraxisSuccess, resolveTargetLocator } from "@scry/praxis";
 import type { Page } from "playwright";
 
 import type { ProtectedTransactionDependencies } from "./protected-transaction-coordinator.js";
@@ -13,7 +13,7 @@ export async function executeProtectedPreparation(
   for (const action of transaction.preparation.actions) {
     try {
       if (action.type === "navigate") {
-        await page.goto(action.url, {
+        await gotoPraxisPage(page, action.url, {
           waitUntil: "domcontentloaded",
           ...timeout(action.timeoutMs),
         });
