@@ -383,12 +383,50 @@ dialog/page switching: active lifecycle/effect ownership, reserved for R0.3.6
 protected copy experience: active acquisition adapter with direct keyboard mechanics
 ```
 
+### Protected copy/download acquisition mechanics — COMPLETE
+
+Checkpoint:
+
+```text
+29f7925 refactor: pin protected copy and download mechanics
+```
+
+Established:
+
+```text
+copy-control activation → pinned Praxis click
+keyboard-copy focus → pinned Praxis reference
+keyboard-copy page input → Praxis-owned page key mechanics
+download activation → pinned Praxis click with armed download observation
+Veil clipboard ownership/redaction policy → unchanged
+bounded acquisition fallback/deadline behavior → preserved
+```
+
+Qualification at closure:
+
+```text
+protected acquisition adapter/extractor/deadline tests: 22/22 GREEN
+Praxis exact-reference/download tests: 30/30 GREEN
+full Praxis suite: 170/170 GREEN
+Assurance truth: 23/23 GREEN
+repository typecheck and boundary gates: GREEN
+```
+
+### R0.3.5 — remaining interaction primitives — COMPLETE
+
+All actively authored interaction mechanics are now Praxis-owned. Hover remains
+an internal pinned-click actionability phase; drag/drop and upload have no
+authored product action; qualification-only upload code is not runtime
+ownership. Dialog and page switching are lifecycle concerns carried into
+R0.3.6.
+
 ### Current active slice
 
-Finish R0.3.5 by moving the active protected copy/download acquisition browser
-mechanics behind Praxis without changing Veil authority or acquisition policy.
-Keep popup adoption, dialogs, and page switching for R0.3.6 lifecycle
-consolidation.
+Begin R0.3.6 browser lifecycle consolidation. Trace browser/context/page
+creation, navigation, popup adoption, dialog handling, download policy, and
+teardown across Executor and application composition roots. Migrate one
+lifecycle owner at a time without weakening origin, popup, privacy, or cleanup
+invariants.
 
 Before doing anything:
 
