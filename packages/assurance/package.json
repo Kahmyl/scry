@@ -10,13 +10,15 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "test:truth": "vitest run test/results.test.ts test/fixtures.test.ts test/browser-fixtures.test.ts test/campaigns.test.ts test/journeys.test.ts"
+    "test:truth": "vitest run test/results.test.ts test/fixtures.test.ts test/browser-fixtures.test.ts test/praxis-reference-replacement.test.ts test/campaigns.test.ts test/journeys.test.ts"
   },
   "dependencies": {
     "@scry/contracts": "workspace:*"
   },
   "devDependencies": {
+    "@scry/praxis": "workspace:*",
     "@types/node": "^22.0.0",
+    "playwright": "1.62.0",
     "typescript": "^5.8.3",
     "vitest": "^4.0.15"
   }

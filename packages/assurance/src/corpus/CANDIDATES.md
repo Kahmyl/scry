@@ -99,9 +99,20 @@ Before a candidate is promoted:
 
 Status:
 
-FIXTURE READY — NOT CORPUS ADMITTED.
+PROMOTED — qualified through the rebuilt Praxis reference/interaction path.
 
-Current evidence:
+Invariant:
+
+After the observed target entity is replaced during pointer interaction, no
+mutation dispatch may occur against the original or the replacement entity.
+
+Oracle:
+
+`verifyStaleReferenceDidNotDispatch` against independent fixture-server ground
+truth (`mutationCount`, `originalDispatches`, `replacementDispatches`); the
+subsystem under test is not its own oracle.
+
+Evidence:
 
 - controlled local page exists;
 - replacement is independently recorded by the fixture server;
@@ -110,11 +121,16 @@ Current evidence:
 - verifier refuses to pass unless replacement occurred;
 - verifier passes when replacement occurred with zero dispatch;
 - negative control proves replacement dispatch is detected;
-- negative control proves stale-original dispatch is detected.
+- negative control proves stale-original dispatch is detected;
+- real browser integration: `observeTargetReference` pins the observed entity
+  and `clickReferencedTarget` refuses with `PraxisStaleTargetError` after the
+  fixture replaces the target on pointerover; zero dispatches recorded; the
+  oracle returns PASS;
+- deliberately unsafe behavior: semantic re-resolution by accessible name
+  retargets the replacement, the replacement receives the click, and the same
+  oracle returns FAIL.
 
-Still required before corpus promotion:
+Durable gate:
 
-- exercise the fixture through the rebuilt Praxis reference/interaction path;
-- demonstrate the intended mechanical behavior through that real integration;
-- deliberately substitute a broken Praxis behavior and confirm the same
-  Assurance verifier fails.
+`packages/assurance/test/praxis-reference-replacement.test.ts`, required in
+`test:truth`.

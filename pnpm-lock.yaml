@@ -180,9 +180,15 @@ importers:
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
+      '@scry/praxis':
+        specifier: workspace:*
+        version: link:../praxis
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1
+      playwright:
+        specifier: 1.62.0
+        version: 1.62.0
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
