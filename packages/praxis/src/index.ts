@@ -13,3 +13,5 @@ export * from "./quality.js";
 export * from "./execution-envelope.js";
 export * from "./veil-bridge.js";
 export * from "./page-context.js";
+export * from "./references/target-reference.js";
+export * from "./interaction/click.js";
