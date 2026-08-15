@@ -314,12 +314,42 @@ Targetless page-level key dispatch remains a distinct active mechanic and is
 not represented by the current target-required Praxis request contract. Do not
 hide it inside the targeted primitive.
 
+### Target-scoped scroll — COMPLETE
+
+Checkpoint:
+
+```text
+1cfbd79 refactor: pin targeted scroll dispatch
+```
+
+Established:
+
+```text
+target-scoped into-view and directional container scroll
+→ exact PraxisTargetReference and ElementHandle mechanics
+→ no Executor native target-scroll bypass
+→ replacement/document refusal
+→ pinned-reference post-scroll verification
+```
+
+Qualification at closure:
+
+```text
+Praxis targeted reference/runtime tests: 49/49 GREEN
+full Praxis suite: 168/168 GREEN
+Executor affected ownership regression: 15/15 GREEN
+Assurance truth: 23/23 GREEN
+repository typecheck and boundary gates: GREEN
+```
+
+Page-level wheel scrolling remains a separate targetless mechanic.
+
 ### Current active slice
 
-Continue R0.3.5 with the active scroll family. Inventory target-scoped and
-page-scoped scroll independently before choosing the next bounded migration;
-then classify hover, drag/drop, upload/download, dialog, and page switching by
-actual call sites.
+Complete the remaining R0.3.5 usage inventory. Classify targetless keyboard and
+wheel behavior plus hover, drag/drop, upload/download, dialog, and page
+switching by active product call sites before migrating the next coherent
+family or declaring unsupported/non-active mechanics explicitly.
 
 Before doing anything:
 
