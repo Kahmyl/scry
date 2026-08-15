@@ -34,7 +34,7 @@
     "analyze:decomposition": "node scripts/analyze-source-structure.mjs",
     "test": "pnpm --recursive test",
     "typecheck": "pnpm --recursive typecheck",
-    "verify:assurance-foundation": "pnpm --filter @scry/assurance test:foundation"
+    "verify:assurance": "pnpm --filter @scry/assurance typecheck && pnpm --filter @scry/assurance test:truth"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

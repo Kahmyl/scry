@@ -10,7 +10,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "test:foundation": "vitest run test/assurance-foundation.test.ts"
+    "test:truth": "vitest run test/results.test.ts test/fixtures.test.ts test/browser-fixtures.test.ts test/campaigns.test.ts test/journeys.test.ts"
   },
   "dependencies": {
     "@scry/contracts": "workspace:*"

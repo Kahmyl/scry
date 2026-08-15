@@ -90,3 +90,31 @@ Before a candidate is promoted:
 - demonstrate the correct condition passes;
 - demonstrate a deliberately broken condition fails;
 - eliminate duplicate candidates representing the same phenomenon.
+
+---
+
+## Candidate readiness
+
+### Target replaced before interaction
+
+Status:
+
+FIXTURE READY — NOT CORPUS ADMITTED.
+
+Current evidence:
+
+- controlled local page exists;
+- replacement is independently recorded by the fixture server;
+- original dispatch count is independently recorded;
+- replacement dispatch count is independently recorded;
+- verifier refuses to pass unless replacement occurred;
+- verifier passes when replacement occurred with zero dispatch;
+- negative control proves replacement dispatch is detected;
+- negative control proves stale-original dispatch is detected.
+
+Still required before corpus promotion:
+
+- exercise the fixture through the rebuilt Praxis reference/interaction path;
+- demonstrate the intended mechanical behavior through that real integration;
+- deliberately substitute a broken Praxis behavior and confirm the same
+  Assurance verifier fails.
