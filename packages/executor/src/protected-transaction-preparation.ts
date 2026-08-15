@@ -73,12 +73,6 @@ export async function executeProtectedPreparation(
         }
         const secret = await dependencies.resolveKnownSecret(input.credentialRef);
         dependencies.redactor.add(secret);
-        if (await executeNative(page, action.target, {
-          type: "fill",
-          value: secret,
-          protected: true,
-          ...nativeTimeouts(action.timeoutMs),
-        }, dependencies)) continue;
         await requirePraxisSuccess({
           page,
           intent: action.target,

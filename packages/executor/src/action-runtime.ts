@@ -181,29 +181,20 @@ export async function executeAction(
           await privacyTransition;
         };
         try {
-          const native = await executeNative(
+          await requirePraxisWithNoCapabilityRetry({
             page,
-            action.target,
-            { type: "fill", value, protected: true, ...nativeActionTimeouts(action.timeoutMs, preDispatchDeadlineAt) },
-            { ...options, onMutationDispatch: beginProtectedDispatch },
-          );
-          if (!native) {
-            requirePraxisFallback(options);
-            await requirePraxisWithNoCapabilityRetry({
-              page,
-              intent: action.target,
-              operation: {
-                type: "enter_text",
-                input: { reference: "resolved-input", classification: "known_secret" },
-              },
-              context: {
-                ...praxisContextAt(praxisContext, preDispatchDeadlineAt),
-                beforeMutation: beginProtectedDispatch,
-              },
-              signal,
-              resolveInput: async () => value!,
-            });
-          }
+            intent: action.target,
+            operation: {
+              type: "enter_text",
+              input: { reference: "resolved-input", classification: "known_secret" },
+            },
+            context: {
+              ...praxisContextAt(praxisContext, preDispatchDeadlineAt),
+              beforeMutation: beginProtectedDispatch,
+            },
+            signal,
+            resolveInput: async () => value!,
+          });
           if (!privacyEntered) {
             throw new Error("PROTECTED_FILL_DISPATCH_BOUNDARY_NOT_ENTERED");
           }

@@ -276,11 +276,7 @@ function groundingPendingSignature(error: GroundingError) {
 
 function shouldPinTextEntry(request: PraxisRequest, strategy: PraxisStrategy): boolean {
   if (request.operation.type !== "enter_text") return false;
-  if (strategy === "native_fill") return true;
-  return (
-    ["content_editable", "focus_keyboard"].includes(strategy) &&
-    ["public", "captured_public"].includes(request.operation.input.classification)
-  );
+  return ["native_fill", "content_editable", "focus_keyboard"].includes(strategy);
 }
 
 export function selectPraxisStrategy(
@@ -606,10 +602,7 @@ async function dispatchOperation(
             throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
           throw error;
         }
-      } else if (
-        ["public", "captured_public"].includes(request.operation.input.classification) &&
-        (target.strategy === "content_editable" || target.strategy === "focus_keyboard")
-      ) {
+      } else if (target.strategy === "content_editable" || target.strategy === "focus_keyboard") {
         if (!target.pinnedReference)
           throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
             provenance: "application",
@@ -628,10 +621,9 @@ async function dispatchOperation(
           throw error;
         }
       } else {
-        await locator.focus(options);
-        if (target.strategy === "content_editable")
-          await locator.press(process.platform === "darwin" ? "Meta+A" : "Control+A", options);
-        await page.keyboard.insertText(value);
+        throw new PraxisAdapterError("PRAXIS_TEXT_ENTRY_STRATEGY_UNSUPPORTED", {
+          provenance: "application",
+        });
       }
       break;
     }

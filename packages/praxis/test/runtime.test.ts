@@ -289,6 +289,25 @@ describe("Praxis strategy, dispatch, and verification", () => {
     expect(await page.getByRole("textbox", { name: "Notes" }).textContent()).toBe("replacement text");
   });
 
+  it("dispatches protected contenteditable text through the pinned entity without serializing it", async () => {
+    const secret = "protected-contenteditable-canary-91f4";
+    await page.setContent(
+      '<div data-scry-redacted="true"><div role="textbox" aria-label="Secret notes" contenteditable="true"></div></div>',
+    );
+    const result = await new PraxisTransactionCoordinator(
+      new PraxisAdapter(page, async () => secret),
+    ).execute(
+      request(
+        { type: "enter_text", input: { reference: "secret-notes", classification: "known_secret" } },
+        { ...intent("Secret notes", "textbox"), risk: "credential" },
+      ),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({ status: "succeeded", mutationOutcome: "applied" });
+    expect(await page.getByRole("textbox", { name: "Secret notes" }).textContent()).toBe(secret);
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
   it("keeps an unexpected adapter failure after native fill unknown and unsafe", async () => {
     await page.setContent("<input aria-label=Name>");
 

@@ -10,7 +10,6 @@ import {
 
 import { executeAction } from "../src/action-runtime.js";
 import { executeInteractionCompatibility } from "../src/execution-kernel.js";
-import { NativeControlResolutionError } from "../src/interaction-lifecycle.js";
 import { openTestBrowser } from "./kernel-harness.js";
 
 const target = {
@@ -25,7 +24,12 @@ const target = {
 };
 
 describe("native-first action runtime", () => {
-  it("settles typed protected resolution failures from lifecycle phase, not reason-code lists", async () => {
+  it("keeps protected fill resolution in Praxis without entering privacy on pre-dispatch failure", async () => {
+    const opened = await openTestBrowser();
+    const unregister = registerPraxisVeilAuthority(opened.page, {
+      authority: new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: ["https://example.test"] })),
+      userId: "test", environmentId: "test", browserContextId: "test-context",
+    });
     const lifecycle: string[] = [];
     const privacyGate = {
       prepare: vi.fn(async () => { lifecycle.push("prepare"); }),
@@ -33,9 +37,12 @@ describe("native-first action runtime", () => {
       seal: vi.fn(async () => { lifecycle.push("sealed"); }),
     };
     const onMutationDispatch = vi.fn();
-    const outcome = await executeInteractionCompatibility({
+    const native = vi.fn();
+    try {
+      await opened.page.setContent('<section aria-label="Other"><label>Client ID<input></label></section>');
+      const outcome = await executeInteractionCompatibility({
       sessionId: "section-scope-session", operationId: "section-scope-fill", ordinal: 1,
-      page: {} as never,
+      page: opened.page,
       action: {
         type: "fill", secretRef: "00000000-0000-4000-8000-000000000001",
         target: {
@@ -54,9 +61,7 @@ describe("native-first action runtime", () => {
         outputDirectory: "/tmp/native-section-scope-lifecycle",
         nativeResolutionPolicy: "native_only",
         secretResolver: vi.fn(async () => "protected-canary-never-serialized"),
-        executeNativeControl: vi.fn(async () => {
-          throw new NativeControlResolutionError("NATIVE_FUTURE_SCOPE_REJECTION");
-        }),
+        executeNativeControl: native,
         onMutationDispatch,
       },
     });
@@ -64,11 +69,17 @@ describe("native-first action runtime", () => {
       functionalResult: "failed",
       mutationOutcome: "not_applied",
       privacyResult: "unverified",
-      reasonCode: "NATIVE_FUTURE_SCOPE_REJECTION",
+      reasonCode: expect.stringMatching(/^PRAXIS_/),
     });
-    expect(lifecycle).toEqual([]);
-    expect(onMutationDispatch).not.toHaveBeenCalled();
-    expect(JSON.stringify(outcome)).not.toContain("protected-canary-never-serialized");
+      expect(native).not.toHaveBeenCalled();
+      expect(lifecycle).toEqual([]);
+      expect(onMutationDispatch).not.toHaveBeenCalled();
+      expect(JSON.stringify(outcome)).not.toContain("protected-canary-never-serialized");
+    } finally {
+      unregister();
+      await opened.context.close();
+      await opened.browser.close();
+    }
   });
 
   it("uses an observed dispatch transition, not an error name, to preserve unknown outcome", async () => {
@@ -465,6 +476,9 @@ describe("native-first action runtime", () => {
       expect(JSON.stringify(outcome)).not.toContain(secretCanary);
       expect(privacyGate.state()).toBe("normal");
 
+      const revisedNative = vi.fn(async () => {
+        throw new Error("PROTECTED_FILL_MUST_NOT_USE_NATIVE_EXECUTOR");
+      });
       const revised = await executeInteractionCompatibility({
         sessionId: "protected-fill-session", operationId: "protected-fill-revised", ordinal: 2,
         page: opened.page,
@@ -488,11 +502,7 @@ describe("native-first action runtime", () => {
         options: {
           outputDirectory: "/tmp/native-protected-fill-revision-test",
           secretResolver: vi.fn(async () => secretCanary),
-          executeNativeControl: vi.fn(async (page, _target, operation, beforeDispatch) => {
-            await beforeDispatch?.();
-            if (operation.type !== "fill") throw new Error("EXPECTED_FILL");
-            await page.getByLabel("Email address primary").fill(operation.value);
-          }),
+          executeNativeControl: revisedNative,
           onMutationDispatch: mutationDispatch,
         },
       });
@@ -500,6 +510,7 @@ describe("native-first action runtime", () => {
         functionalResult: "succeeded", mutationOutcome: "applied", privacyResult: "verified",
       });
       expect(mutationDispatch).toHaveBeenCalledOnce();
+      expect(revisedNative).not.toHaveBeenCalled();
       expect(privacyGate.state()).toBe("normal");
       expect(await opened.page.getByLabel("Email address primary").inputValue()).toBe(secretCanary);
       expect(JSON.stringify(revised)).not.toContain(secretCanary);
