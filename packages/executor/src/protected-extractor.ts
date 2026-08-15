@@ -8,7 +8,12 @@ import type { Locator, Page } from "playwright";
 import type { Readable } from "node:stream";
 import {
   armExpectedEffect,
+  clickReferencedTarget,
+  downloadFromReferencedTarget,
+  focusReferencedTarget,
   GroundingError,
+  observeTargetReference,
+  pressPageKey,
   resolveTarget,
   verifyExpectedEffect,
 } from "@scry/praxis";
@@ -108,7 +113,7 @@ export async function executeProtectedReveal(
   }
   const beforeUrl = page.url();
   const expectedEffect = armExpectedEffect(page, action.expectedEffect, action.timeoutMs);
-  await page.keyboard.press(action.key);
+  await pressPageKey(page, action.key);
   await verifyExpectedEffect(
     page,
     action.expectedEffect,
@@ -473,17 +478,22 @@ async function acquireByMethod(
       );
       const copy = group.getByRole("button", { name: /copy/i });
       if ((await copy.count()) !== 1) throw new AcquisitionError("COPY_CONTROL_UNRESOLVED");
-      if (acquisition.objective?.kind === "verify_user_copy_experience") {
-        const copied = copyEventObserved(page, () => copy.click());
-        markVeilProtectedClipboardTouched(page);
-        if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
-        return { kind: "copy_experience_verified", adapter: "copy_control" };
+      const copyReference = await observeTargetReference(page, copy);
+      try {
+        if (acquisition.objective?.kind === "verify_user_copy_experience") {
+          const copied = copyEventObserved(page, () => clickReferencedTarget(copyReference));
+          markVeilProtectedClipboardTouched(page);
+          if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
+          return { kind: "copy_experience_verified", adapter: "copy_control" };
+        }
+        await clickReferencedTarget(copyReference);
+        const lifecycleOwned = markVeilProtectedClipboardTouched(page);
+        const value = await page.evaluate(() => navigator.clipboard.readText());
+        if (!lifecycleOwned) await page.evaluate(() => navigator.clipboard.writeText(""));
+        return capture(value);
+      } finally {
+        await copyReference.dispose();
       }
-      await copy.click();
-      const lifecycleOwned = markVeilProtectedClipboardTouched(page);
-      const value = await page.evaluate(() => navigator.clipboard.readText());
-      if (!lifecycleOwned) await page.evaluate(() => navigator.clipboard.writeText(""));
-      return capture(value);
     }
     case "selected_text":
     case "scoped_text_selection":
@@ -501,31 +511,42 @@ async function acquireByMethod(
         .then(capture);
     case "keyboard_copy":
     case "clipboard_event": {
-      await target.focus();
-      await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-      const copied = copyEventObserved(page, () =>
-        page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C"),
-      );
-      markVeilProtectedClipboardTouched(page);
-      if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
-      await page.keyboard.press("Escape").catch(() => undefined);
-      return { kind: "copy_experience_verified", adapter: canonicalMethod(method) };
+      const reference = await observeTargetReference(page, target);
+      try {
+        await focusReferencedTarget(reference);
+        await pressPageKey(page, process.platform === "darwin" ? "Meta+A" : "Control+A");
+        const copied = copyEventObserved(page, () =>
+          pressPageKey(page, process.platform === "darwin" ? "Meta+C" : "Control+C"),
+        );
+        markVeilProtectedClipboardTouched(page);
+        if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
+        await pressPageKey(page, "Escape").catch(() => undefined);
+        return { kind: "copy_experience_verified", adapter: canonicalMethod(method) };
+      } finally {
+        await reference.dispose();
+      }
     }
     case "focused_keyboard_selection": {
-      await target.focus();
-      await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-      const copied = copyEventObserved(page, () =>
-        page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C"),
-      );
-      const lifecycleOwned = markVeilProtectedClipboardTouched(page);
-      if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
-      const value = await page.evaluate(() => navigator.clipboard.readText());
-      if (!lifecycleOwned) await page.evaluate(() => navigator.clipboard.writeText(""));
-      await page.keyboard.press("Escape").catch(() => undefined);
-      return capture(value);
+      const reference = await observeTargetReference(page, target);
+      try {
+        await focusReferencedTarget(reference);
+        await pressPageKey(page, process.platform === "darwin" ? "Meta+A" : "Control+A");
+        const copied = copyEventObserved(page, () =>
+          pressPageKey(page, process.platform === "darwin" ? "Meta+C" : "Control+C"),
+        );
+        const lifecycleOwned = markVeilProtectedClipboardTouched(page);
+        if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
+        const value = await page.evaluate(() => navigator.clipboard.readText());
+        if (!lifecycleOwned) await page.evaluate(() => navigator.clipboard.writeText(""));
+        await pressPageKey(page, "Escape").catch(() => undefined);
+        return capture(value);
+      } finally {
+        await reference.dispose();
+      }
     }
     case "download_content": {
-      const [download] = await Promise.all([page.waitForEvent("download"), target.click()]);
+      const reference = await observeTargetReference(page, target);
+      const download = await downloadFromReferencedTarget(reference).finally(() => reference.dispose());
       const stream = await download.createReadStream();
       if (!stream) throw new AcquisitionError("DOWNLOAD_STREAM_UNAVAILABLE");
       return readBoundedText(stream, acquisition.validation.maximumLength).then(capture);

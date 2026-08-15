@@ -139,10 +139,10 @@ describe("protected acquisition subordinate deadline ownership", () => {
     expect(JSON.stringify(result)).not.toContain("LATE_PROTECTED_FALLBACK_VALUE");
   });
 
-  it("rechecks protected network acquisition after copy-control click stalls", async () => {
+  it("rechecks protected network acquisition after pinned copy-control preparation stalls", async () => {
     const copy = {
       count: vi.fn(async () => 1),
-      click: vi.fn(() => {
+      elementHandle: vi.fn(() => {
         state.networkAvailable = true;
         return never();
       }),

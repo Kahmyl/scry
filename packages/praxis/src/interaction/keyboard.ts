@@ -39,6 +39,22 @@ export async function pressPageKey(page: Page, key: string): Promise<{ dispatche
   return { dispatched: true };
 }
 
+export async function focusReferencedTarget(
+  reference: PraxisTargetReference,
+): Promise<{ focused: true }> {
+  await reference.assertCurrent();
+  const element = reference.element();
+  await assertKeyboardActionable(element);
+  await reference.assertCurrent();
+  await element.focus().catch(async (error) => {
+    const connected = await element.evaluate((node) => node.isConnected).catch(() => false);
+    if (!connected) throw new PraxisStaleTargetError();
+    throw error;
+  });
+  await reference.assertCurrent();
+  return { focused: true };
+}
+
 async function assertKeyboardActionable(element: ElementHandle<HTMLElement>): Promise<void> {
   const state = await element.evaluate((node) => ({
     connected: node.isConnected,

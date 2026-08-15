@@ -19,3 +19,4 @@ export * from "./interaction/fill.js";
 export * from "./interaction/form-control.js";
 export * from "./interaction/keyboard.js";
 export * from "./interaction/scroll.js";
+export * from "./interaction/download.js";

@@ -21,6 +21,7 @@ import {
 } from "../src/interaction/form-control.js";
 import { pressPageKey, pressReferencedTarget } from "../src/interaction/keyboard.js";
 import { scrollReferencedTarget, wheelPage } from "../src/interaction/scroll.js";
+import { downloadFromReferencedTarget } from "../src/interaction/download.js";
 
 let browser: Browser;
 let page: Page;
@@ -713,6 +714,23 @@ describe("Praxis target reference and pinned click", () => {
     await expect(wheelPage(page, 500)).resolves.toEqual({ dispatched: true });
     expect(await page.evaluate(() => (globalThis as unknown as { __pageKeys: string[] }).__pageKeys)).toEqual(["Escape"]);
     await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0);
+  });
+
+  it("downloads only through the exact pinned activation entity", { timeout: 30_000 }, async () => {
+    await resetPage('<a id="target" download="receipt.txt" href="data:text/plain,receipt">Download</a>');
+    const reference = await observeTargetReference(page, page.locator("#target"));
+    const download = await downloadFromReferencedTarget(reference, { timeoutMs: 2_000 });
+    expect(download.suggestedFilename()).toBe("receipt.txt");
+    await download.delete();
+    await reference.dispose();
+
+    const stale = await observeTargetReference(page, page.locator("#target"));
+    await page.evaluate(() => {
+      const replacement = document.querySelector("#target")!.cloneNode(true);
+      document.querySelector("#target")!.replaceWith(replacement);
+    });
+    await expect(downloadFromReferencedTarget(stale, { timeoutMs: 200 })).rejects.toBeInstanceOf(PraxisStaleTargetError);
+    await stale.dispose();
   });
 
   it("permits unrelated document mutation", { timeout: 30_000 }, async () => {
