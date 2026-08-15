@@ -1010,6 +1010,192 @@ browser-backed qualification: GREEN
 
 R0.4 is closed. Stop at this checkpoint; do not begin R0.5 in this slice.
 
+## R0.5 — external reasoning authority — INVENTORY COMPLETE / IMPLEMENTATION NOT STARTED
+
+Objective:
+
+```text
+Keep Project / Mission / Flow / Run as durable work representation, while the
+external intelligent agent owns semantic reasoning, target choice, and task
+progression. Scry continues to enforce mechanical validity, current-reference
+validity, privacy/trust, mutation truth, persistence integrity, and durable
+domain invariants.
+```
+
+This inventory traces active API, MCP, worker, Executor, Praxis, contract, and
+persistence paths. Names such as `admission`, `checkpoint`, and `UNKNOWN` were
+classified by exercised authority, not by name. No production code was changed.
+
+### Active ownership map
+
+| Active path / call site                                                                                                                                                                                                | Authority exercised now                                                                                                                                             | Class                                                                                                                              | Replacement / retained owner                                                                                                                                                                           |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/contracts/src/mission.ts`, `flow.ts`, `run.ts`; `apps/api/src/missions/mission.service.ts`, `flows/flow-read.repository.ts`, `runs/run-observation.service.ts`                                               | Durable identity, revision, linkage, status, observations, accepted evidence, and idempotency                                                                       | **A — KEEP**                                                                                                                       | Domain/application representation; factual persistence trends to Chronicle                                                                                                                             |
+| `packages/contracts/src/plan.ts` and mechanical portions of `validatePlanAgainstPolicy`; `apps/api/src/flows/flow.service.ts:validateWith`                                                                             | Schema bounds, allowed-origin/policy checks, capability existence, secret-reference validity, budgets                                                               | **A — KEEP**                                                                                                                       | Contracts/application policy; browser capability facts from Praxis                                                                                                                                     |
+| `packages/executor/src/execution-kernel.ts:admit` capability digest/binding, required physical capabilities, mutation identity and journal-settlement checks                                                           | Mechanical request/capability/fencing validity                                                                                                                      | **A — KEEP**, but rename after authority removal                                                                                   | Application composition plus Chronicle mutation journal; not semantic admission                                                                                                                        |
+| `packages/executor/src/execution-kernel.ts:beginMutationFence`; `apps/api/src/runtime/repositories/execution-kernel.repository.ts`; `unknown-mutation-administration.service.ts`                                       | Prevents duplicate dispatch and requires reconciliation after UNKNOWN mutation truth                                                                                | **A — KEEP**                                                                                                                       | Chronicle factual ledger/application safety. UNKNOWN fencing is not task reasoning                                                                                                                     |
+| `packages/executor/src/checkpoint-coordinator.ts`; checkpoint portions of `executor.ts`; run successor-checkpoint repositories                                                                                         | Current document/environment binding, sealed restore, claim/fencing, crash-safe handoff                                                                             | **A — KEEP**                                                                                                                       | Praxis browser state + Chronicle facts + application composition                                                                                                                                       |
+| `packages/veil/src/**` protected permits, disclosure, redaction, safe-boundary and artifact admission                                                                                                                  | Trust/privacy authority                                                                                                                                             | **A — KEEP**                                                                                                                       | Veil; excluded from R0.5 semantic-admission removal                                                                                                                                                    |
+| `apps/api/src/runtime/services/release-admission.service.ts` and `assertAcceptingWork` callers                                                                                                                         | Deployment/schema health gate, not semantic execution judgment                                                                                                      | **A — KEEP**                                                                                                                       | Application operations/readiness; rename only if clarity is needed                                                                                                                                     |
+| `apps/api/src/flows/flow.service.ts:createRun` compilation lookup/status/hash checks, `EXECUTION_READY_COMPILATION_REQUIRED`, `COMPILED_CONTRACT_STALE`, candidate-run budget, and authoritative objective-ready check | Makes compile/certify/orchestration ceremony a prerequisite for ordinary Run execution                                                                              | **B — REMOVE AUTHORITY**                                                                                                           | Direct agent-requested Run composition validates Flow revision + environment + mechanical policy only                                                                                                  |
+| `apps/api/src/orchestration/orchestration.service.ts:createPlan/activate/bindingBlockers` compiled-contract prerequisites                                                                                              | Refuses an execution binding unless internal compilation/certification declared it ready                                                                            | **B — REMOVE AUTHORITY**                                                                                                           | Keep durable bindings and revision/scope consistency; external agent chooses when to execute                                                                                                           |
+| `apps/api/src/authoring/authoring.service.ts:compile`, `publish`, `compileAndCertify`, `waitForCertificationTerminal`; `flow_compilations` publication gate                                                            | Derives an execution-ready contract from probe transcripts and certifies it through a candidate Run before publication                                              | **B — REMOVE AUTHORITY** for compilation-as-admission; **C — DELETE** certification gate/candidate machinery after callers migrate | Flow publication stores immutable representation; Assurance may consume probes/candidate evidence without production admission power                                                                   |
+| `apps/api/src/flows/flow.service.ts:createFlow/reviseFlow` hard failures `AUTHORING_DRAFT_REQUIRED`                                                                                                                    | Makes the authoring lifecycle mandatory for ordinary Flow representation changes                                                                                    | **B — REMOVE AUTHORITY**                                                                                                           | Application authoring remains optional representation UX; direct revision APIs may enforce revision/idempotency invariants                                                                             |
+| `packages/contracts/src/authoring.ts` certification statuses/results and compiled-contract inputs; `packages/contracts/src/flow.ts` required `compiledContractId`; MCP `compile_and_certify_flow`                      | Public compatibility contract for mandatory certification ceremony                                                                                                  | **C — DELETE** after replacement Run/publication contracts ship                                                                    | Remove through API/MCP/schema compatibility slice, with persisted-record migration                                                                                                                     |
+| `apps/api/src/workers/processors/run.processor.ts` `certificationCandidate` → `mode: certify`; Executor capability requirement `mode === certify` → calibration                                                        | Gives certification Runs a distinct execution-admission mode                                                                                                        | **C — DELETE**                                                                                                                     | Normal Runs remain factual executions; Assurance owns qualification campaigns                                                                                                                          |
+| `apps/api/src/calibration/**`, protected-transaction calibration checks in `flow.service.ts:validateWith`, `orchestration.service.ts:authorizationBlocker`, and `ExecutionCapabilityFactory.createRun`                 | Mixes factual rehearsal evidence with a mandatory approval gate for protected mutations                                                                             | **E — UNCERTAIN**                                                                                                                  | Sol decision: retain only if it is a user/privacy authorization and move that decision to Veil/application trust composition; otherwise remove gate and move rehearsal evidence to Assurance/Chronicle |
+| `packages/praxis/src/risk-policy.ts` confidence/minimum-margin/family thresholds and active grounding callers                                                                                                          | Heuristic confidence can admit/refuse a target choice                                                                                                               | **B — REMOVE AUTHORITY**; factual scores remain useful                                                                             | Praxis returns candidate facts, exact-reference validity, and mechanical ambiguity; external agent owns choice                                                                                         |
+| `packages/contracts/src/praxis/**` and InteractionTargetIntent confidence fields                                                                                                                                       | Carries heuristic target-choice admission policy in action contracts                                                                                                | **B — REMOVE AUTHORITY**                                                                                                           | Replace with agent-selected exact reference or an explicitly requested mechanical resolution mode                                                                                                      |
+| `packages/praxis/src/observation.ts` expected-effect compatibility; `packages/executor/src/execution-kernel.ts:interact`; `action-runtime.ts`; `authoring-browser-session.ts`; `probe.ts`                              | Arms/verifies declared effects, sometimes adopts a popup and emits internal next-decision guidance; compilation treats verified effect as semantic success evidence | **B — REMOVE AUTHORITY** from action choice/progression; **A — KEEP** narrow factual post-dispatch observation                     | Praxis may report observed navigation/popup/state facts; external agent interprets them. Mechanical popup identity/origin safety remains Praxis/policy                                                 |
+| `packages/contracts/src/current.ts`, `grounding.ts`, `execution-kernel.ts` expected-effect schemas                                                                                                                     | Useful optional representation is coupled to required semantic verification and decision-boundary results                                                           | **B — REMOVE AUTHORITY**                                                                                                           | Preserve optional asserted/observed facts only; eliminate requirement that expected-effect agreement authorizes progression                                                                            |
+| `packages/executor/src/executor.ts` ordered step loop, `after` readiness, `onFailure`, assertions, checkpoint continuation; `readiness-runtime.ts`                                                                     | Executes and progresses a whole Flow according to Scry-owned readiness/failure semantics                                                                            | **B — REMOVE AUTHORITY** from the ordinary interaction hot path                                                                    | External agent submits/authorizes the next bounded operation; Flow may durably represent suggested/declared sequence. Application records progress facts                                               |
+| `packages/executor/src/probe.ts` resolution/allResolved result used by compilation                                                                                                                                     | Probe qualification becomes production semantic admission                                                                                                           | **D — MOVE**                                                                                                                       | Assurance owns qualification; Praxis owns only browser observation mechanics; Chronicle stores factual probe evidence                                                                                  |
+| `apps/api/src/adaptive-sessions/mission-flow-authoring.service.ts`, `adaptive-session-kernel.runner.ts`, repository decision-boundary/safe-action state, and `workers/authoring-runtime-owner.ts`                      | Iterates intents, derives operations/effects, decides continuation/retry/budget boundaries, and tells the agent what to do next                                     | **B — REMOVE AUTHORITY**; delete obsolete derived-decision compatibility after clients migrate                                     | Application accepts explicit agent operations and returns facts; external agent owns retry, next action, and completion reasoning                                                                      |
+| `packages/contracts/src/execution-kernel.ts` `AgentDecisionBoundary`, `safeActions`, `objectiveDelta`, turn budgets and authoring-turn progression result                                                              | Product contract encodes Scry-owned next-step adjudication                                                                                                          | **C — DELETE** after a factual operation-result contract replaces it                                                               | External agent protocol/application composition                                                                                                                                                        |
+| `apps/api/src/orchestration/orchestration.service.ts:onModuleInit/tick/scheduleProject/reconcileMission` and mission-objective orchestration state                                                                     | Timer infers readiness from dependency/evidence state, starts automatic Runs, marks progression, blocks dependents, and writes recommended resume actions           | **B — REMOVE AUTHORITY**                                                                                                           | Keep observable statuses and concurrency/lease facts; external agent explicitly requests each Run and objective decision                                                                               |
+| MCP orchestration tools under `apps/mcp/src/tools/missions/`                                                                                                                                                           | Status/pause/cancel are useful, while activate/start-ready/resume trigger internal progression                                                                      | **B — REMOVE AUTHORITY** for progression commands; **A — KEEP** observation/cancel and explicit run request                        | MCP/application protocol driven by external agent                                                                                                                                                      |
+| `apps/api/src/missions/mission.service.ts` accepted-evidence persistence, explicit `finalize-agent-work`, user authorization, cancellation                                                                             | Explicit external decisions and durable domain transitions                                                                                                          | **A — KEEP**                                                                                                                       | Application/domain; Chronicle for evidence facts, Veil for protected trust                                                                                                                             |
+| `apps/api/src/missions/mission.service.ts` and orchestration-generated `resume_pointer.recommendedAction`; web/MCP `safeActions`                                                                                       | Scry recommends/determines next task progression                                                                                                                    | **B — REMOVE AUTHORITY**                                                                                                           | Return blocker/current-state facts only; external agent chooses next action                                                                                                                            |
+| `packages/assurance/**`, qualification campaigns and certification-named test scripts                                                                                                                                  | Independent qualification, fixtures, and release evidence                                                                                                           | **D — MOVE/KEEP IN ASSURANCE**                                                                                                     | Assurance. Rename “certification” where it could be confused with production admission                                                                                                                 |
+| `apps/api/src/runtime/repositories/**`, authoring/adaptive repositories that persist operation outcomes, revisions, events, artifacts, and checkpoints                                                                 | Factual persistence currently lives in application repositories                                                                                                     | **D — MOVE** incrementally                                                                                                         | Chronicle, without moving execution policy into persistence                                                                                                                                            |
+
+### Architectural decisions that must be made before their slices
+
+1. **Target selection contract (Sol):** choose the replacement for confidence
+   admission. Recommended: the agent selects an exact Praxis reference from a
+   factual observation; Praxis refuses only stale/current-document mismatch,
+   substitution, non-actionability, or truly indistinguishable mechanical
+   ambiguity. Confidence scores become diagnostics, never permission.
+2. **Expected-effect contract (Sol):** distinguish optional agent assertions
+   from browser facts. Recommended: Praxis reports observations and validates
+   only mechanically explicit assertions; no mismatch determines the next
+   action or substitutes for agent reasoning.
+3. **Protected calibration (Sol):** decide whether approval represents actual
+   human/privacy authorization. If yes, retain the narrow authorization in
+   Veil/application trust composition while moving rehearsal/quality evidence
+   to Assurance/Chronicle. If no, delete it as execution ceremony.
+4. **Run granularity (Sol):** decide how an agent-authorized bounded operation
+   relates to a durable multi-step Flow/Run. Recommended: Run records an agent
+   execution attempt and its ordered operation facts, but Scry never chooses
+   the next operation. This preserves Flow/Run without preserving progression.
+
+### Ordered smallest-first migration sequence
+
+Each slice must remain green and be checkpointed independently. Do not combine
+later contract/database cleanup with the authority cut that makes it safe.
+
+1. **Characterize and install R0.5 ownership gates.** Add static inventory gates
+   for new production certification prerequisites, confidence-based permission,
+   decision-boundary generation, and automatic progression. Add characterization
+   tests separating mechanical policy/mutation/privacy refusal from semantic
+   admission. Production behavior is unchanged.
+2. **Separate factual validation from semantic readiness.** Split
+   `validatePlanAgainstPolicy`/`validateWith` diagnostics into mechanical-policy
+   errors versus authoring/quality findings. Only the former may block an
+   explicitly agent-requested operation. Preserve schema, origin, budget,
+   reference, authorization, and mutation invariants.
+3. **Open direct Flow-revision → Run execution.** Remove `compiledContractId`,
+   execution-ready compilation, certification candidate, candidate-run budget,
+   and authoritative objective-ready prerequisites from the explicit Run path.
+   Retain project/mission/objective/revision/environment scope, idempotency,
+   concurrency, trust authorization, and UNKNOWN fencing. This establishes the
+   replacement before legacy deletion.
+4. **Make Flow publication representation-only.** Publish immutable revisions
+   from validated draft/content without probe transcript compilation or a
+   certification Run. Restore direct create/revise capability (or one equivalent
+   revision command) with revision and idempotency invariants. Probes become
+   optional factual evidence.
+5. **Delete production compilation/certification admission.** Migrate API/MCP/web
+   callers, then remove `compileAndCertify`, publication gates, certification
+   worker mode/capability, compiled-contract request requirements, and obsolete
+   compatibility responses. Preserve old database rows read-only until an
+   explicit migration proves they are no longer referenced.
+6. **Resolve and narrow protected calibration.** Apply decision 3. Remove all
+   non-trust calibration prerequisites from Run/Flow admission; move qualifying
+   evidence to Assurance and facts to Chronicle. Keep protected authorization
+   only under its explicit trust owner.
+7. **Remove heuristic target-choice authority.** Apply decision 1 across Praxis,
+   contracts, Executor, authoring session, probes, and callers. Add independent
+   substitution/stale-document tests before deleting confidence thresholds.
+8. **Remove expected-effect progression authority.** Apply decision 2. Keep
+   browser facts and exact popup/document mechanics; stop using effect agreement
+   to certify learned interactions, advance a turn, or choose a continuation.
+9. **Replace adaptive authoring turns with explicit operation composition.** The
+   API accepts agent-selected bounded operations and returns operation/mutation/
+   privacy/evidence facts. Remove derived intent loops, internal retries,
+   `AgentDecisionBoundary`, recommended `safeActions`, and objective-completion
+   inference after callers use the factual protocol.
+10. **Remove Executor whole-Flow progression authority.** Apply decision 4.
+    Replace the internal step/readiness/onFailure progression loop in ordinary
+    execution with agent-authorized operation dispatch. Retain Flow ordering as
+    representation and checkpoints as mechanical state, not permission to pick
+    the next step.
+11. **Retire automatic Mission orchestration.** Stop the timer from selecting
+    ready objectives or creating Runs. Convert orchestration state to observed
+    status/leases/concurrency, preserve explicit pause/cancel and authorization,
+    and require the external agent to request Runs and persist objective
+    conclusions. Remove progression-trigger MCP tools after callers migrate.
+12. **Persistence and compatibility cleanup.** Move remaining factual execution,
+    checkpoint, probe, and evidence records toward Chronicle; delete obsolete
+    contracts, columns/tables, repositories, UI copy, MCP tools, feature flags,
+    and certification/adaptive fixtures only after repository-wide zero-use
+    proof. Rename remaining mechanical “admission” surfaces for clarity.
+
+### Execution model assignment
+
+**Spark-mechanical after the preceding owner/contract decision is fixed:**
+
+```text
+ownership/static gates and inventory assertions
+capability/readiness copy corrections
+MCP/controller/client call-site migrations with an established replacement
+certification mode/flag/result deletion after Run cutover
+dead contract/export/test/feature-flag cleanup
+database zero-reference checks and additive/deprecation migrations
+moving factual records behind an already-defined Chronicle repository interface
+```
+
+**Sol-level judgment required:**
+
+```text
+mechanical-versus-semantic validation split
+direct Run contract and Flow publication invariant
+target selection/confidence replacement contract
+expected-effect fact/assertion boundary
+protected calibration ownership decision
+bounded-operation versus durable Flow/Run model
+adaptive authoring protocol replacement
+automatic orchestration/progression retirement and migration safety
+```
+
+### R0.5 closure criteria
+
+R0.5 may close only when all are true:
+
+```text
+Project / Mission / Flow / Run remain durable, readable, revisioned representation
+an explicit agent-selected ordinary operation can execute without compile/certify ceremony
+no production certification Run or compiled-contract admission gate remains
+no confidence threshold grants or denies semantic target choice
+Praxis refuses only mechanical/current-reference/actionability/safety invalidity
+expected-effect data is optional assertion/observation, never next-action authority
+no service derives the next browser action, retry, objective, or task progression
+no timer automatically selects objectives or creates Runs
+UNKNOWN mutation fencing and reconciliation remain fail-closed
+checkpoint/resume remains mechanical and cannot select continuation semantics
+Veil privacy/trust authority and protected-data invariants remain intact
+Chronicle persistence remains factual and does not acquire execution policy
+Assurance qualification has no production admission power
+active API/MCP/web callers use the external-agent factual operation protocol
+legacy certification/adaptive/progression compatibility has repository-wide zero-use proof
+browser-backed Praxis/Veil/affected application qualification is green
+typecheck, schema/migration, subsystem, execution-kernel, and ownership gates are green
+```
+
+Next checkpoint starts with slice 1 only. Do not begin implementation by deleting
+Project, Mission, Flow, Run, UNKNOWN fencing, checkpoint integrity, mechanical
+policy validation, or Veil trust authority.
+
 Before doing anything:
 
 ```bash
