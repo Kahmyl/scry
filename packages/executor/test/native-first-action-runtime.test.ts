@@ -104,7 +104,7 @@ describe("native-first action runtime", () => {
     expect(onMutationDispatch).toHaveBeenCalledOnce();
   });
 
-  it("routes select and check mechanics through Praxis without native Executor control", async () => {
+  it("routes select, check, and targeted key mechanics through Praxis without native Executor control", async () => {
     const opened = await openTestBrowser();
     const unregister = registerPraxisVeilAuthority(opened.page, {
       authority: new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: ["https://example.test"] })),
@@ -118,6 +118,8 @@ describe("native-first action runtime", () => {
       await opened.page.setContent(`
         <label>Tier<select><option>Basic</option><option>Pro</option></select></label>
         <label><input type="checkbox"> Enabled</label>
+        <label>Search<input></label><output></output>
+        <script>document.querySelector('input:not([type])').addEventListener('keydown', event => { if (event.key === 'Enter') document.querySelector('output').textContent = 'submitted'; })</script>
       `);
       const select = await executeInteractionCompatibility({
         sessionId: "form-control", operationId: "select", ordinal: 1, page: opened.page,
@@ -139,11 +141,23 @@ describe("native-first action runtime", () => {
         policy,
         options: { outputDirectory: "/tmp/praxis-select-check", executeNativeControl: native },
       });
+      const press = await executeInteractionCompatibility({
+        sessionId: "form-control", operationId: "press", ordinal: 3, page: opened.page,
+        action: { type: "press", key: "Enter", target: {
+          ...target, concept: "search", requiredCapabilities: ["focusable", "accepts_text", "editable"],
+          preferredEvidence: { ...target.preferredEvidence, roles: ["textbox"], names: ["Search"] },
+          risk: "ordinary",
+        } },
+        policy,
+        options: { outputDirectory: "/tmp/praxis-select-check", executeNativeControl: native },
+      });
       expect(select).toMatchObject({ functionalResult: "succeeded", mutationOutcome: "applied" });
       expect(check).toMatchObject({ functionalResult: "succeeded", mutationOutcome: "applied" });
+      expect(press).toMatchObject({ functionalResult: "succeeded", mutationOutcome: "applied" });
       expect(native).not.toHaveBeenCalled();
       expect(await opened.page.getByRole("combobox", { name: "Tier" }).inputValue()).toBe("Pro");
       expect(await opened.page.getByRole("checkbox", { name: "Enabled" }).isChecked()).toBe(true);
+      expect(await opened.page.locator("output").textContent()).toBe("submitted");
     } finally {
       unregister();
       await opened.context.close();

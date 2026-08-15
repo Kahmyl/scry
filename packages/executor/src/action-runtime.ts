@@ -258,8 +258,6 @@ export async function executeAction(
       return;
     case "press":
       if (action.target && approvedKey(action.key)) {
-        if (await executeNative(page, action.target, { type: "press", key: action.key, ...nativeActionTimeouts(action.timeoutMs, preDispatchDeadlineAt) }, options)) return;
-        requirePraxisFallback(options);
         await requirePraxisWithNoCapabilityRetry({
           page,
           intent: action.target,

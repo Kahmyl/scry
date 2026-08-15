@@ -19,6 +19,7 @@ import {
   selectReferencedTarget,
   setCheckedReferencedTarget,
 } from "../src/interaction/form-control.js";
+import { pressReferencedTarget } from "../src/interaction/keyboard.js";
 
 let browser: Browser;
 let page: Page;
@@ -656,6 +657,30 @@ describe("Praxis target reference and pinned click", () => {
     expect(await page.locator("#enabled").isChecked()).toBe(false);
     await select.dispose();
     await checkbox.dispose();
+  });
+
+  it("presses the exact pinned keyboard target and refuses its replacement", { timeout: 30_000 }, async () => {
+    await resetPage(`
+      <input id="target" aria-label="Search">
+      <script>
+        globalThis.__keys = [];
+        document.querySelector("#target").addEventListener("keydown", event => globalThis.__keys.push("original:" + event.key));
+      </script>
+    `);
+    const original = await observeTargetReference(page, page.locator("#target"));
+    await expect(pressReferencedTarget(original, "Enter", { timeoutMs: 1_500 })).resolves.toEqual({ dispatched: true });
+    expect(await page.evaluate(() => (globalThis as unknown as { __keys: string[] }).__keys)).toEqual(["original:Enter"]);
+    await original.dispose();
+
+    const stale = await observeTargetReference(page, page.locator("#target"));
+    await page.evaluate(() => {
+      const replacement = document.querySelector("#target")!.cloneNode(true) as HTMLInputElement;
+      replacement.addEventListener("keydown", event => (globalThis as unknown as { __keys: string[] }).__keys.push("replacement:" + event.key));
+      document.querySelector("#target")!.replaceWith(replacement);
+    });
+    await expect(pressReferencedTarget(stale, "Enter", { timeoutMs: 1_500 })).rejects.toBeInstanceOf(PraxisStaleTargetError);
+    expect(await page.evaluate(() => (globalThis as unknown as { __keys: string[] }).__keys)).toEqual(["original:Enter"]);
+    await stale.dispose();
   });
 
   it("permits unrelated document mutation", { timeout: 30_000 }, async () => {

@@ -38,6 +38,7 @@ import {
   selectReferencedTarget,
   setCheckedReferencedTarget,
 } from "./interaction/form-control.js";
+import { PraxisKeyDispatchError, pressReferencedTarget } from "./interaction/keyboard.js";
 import { observeTargetReference, type PraxisTargetReference } from "./references/target-reference.js";
 import { PraxisExecutionEnvelope, type PraxisPreDispatchDeadline } from "./execution-envelope.js";
 import { PraxisStateObserver } from "./state-observer.js";
@@ -284,6 +285,7 @@ function shouldPinMutationTarget(request: PraxisRequest, strategy: PraxisStrateg
     return ["native_fill", "content_editable", "focus_keyboard"].includes(strategy);
   if (request.operation.type === "select_option") return strategy === "native_select";
   if (request.operation.type === "set_checked") return strategy === "native_check";
+  if (request.operation.type === "press_key") return true;
   return false;
 }
 
@@ -666,7 +668,15 @@ async function dispatchOperation(
       }
       break;
     case "press_key":
-      await locator.press(request.operation.key, options);
+      if (!target.pinnedReference)
+        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", { provenance: "application" });
+      try {
+        await pressReferencedTarget(target.pinnedReference, request.operation.key, { timeoutMs: options.timeout });
+      } catch (error) {
+        if (error instanceof PraxisKeyDispatchError)
+          throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+        throw error;
+      }
       break;
     case "wait_for_state":
       if (
