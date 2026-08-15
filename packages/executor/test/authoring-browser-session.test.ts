@@ -206,6 +206,24 @@ describe("persistent authoring browser session", () => {
       });
       await expect.poll(() => session.context.pages().length).toBe(1);
 
+      const mismatchedExpectedOrigin = await session.interact(
+        {
+          type: "click",
+          target: target("api documentation", "link", "API documentation"),
+          expectedEffect: { type: "new_page", origin: "https://expected.example.test" },
+        },
+        {
+          operationId: "reject-mismatched-expected-origin",
+          expectedEffect: { type: "new_page", origin: "https://expected.example.test" },
+        },
+      );
+      expect(mismatchedExpectedOrigin.outcome).toMatchObject({
+        functionalResult: "failed",
+        reasonCode: "EXPECTED_NEW_PAGE_ORIGIN_MISMATCH",
+      });
+      expect(mismatchedExpectedOrigin.outcome.navigationEnvironmentFailure).toBeUndefined();
+      await expect.poll(() => session.context.pages().length).toBe(1);
+
       const documentation = await session.interact(
         {
           type: "click",

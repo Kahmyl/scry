@@ -754,6 +754,13 @@ function decisionBoundary(outcome: OperationOutcome, environment?: {
       },
     };
   }
+  if (outcome.reasonCode === "EXPECTED_NEW_PAGE_ORIGIN_MISMATCH") {
+    return {
+      type: "policy_refused",
+      reasonCode: outcome.reasonCode,
+      safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+    };
+  }
   if (outcome.mutationOutcome === "unknown") {
     return {
       type: "mutation_reconciliation_required",

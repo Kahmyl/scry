@@ -261,14 +261,14 @@ export async function createAuthoringBrowserSession(input: {
                       });
                     if (popup === page) throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED");
                     const popupOrigin = new URL(popup.url()).origin;
-                    if (
-                      !input.policy.allowedOrigins.includes(popupOrigin) ||
-                      (expectedEffect.type === "new_page" &&
-                        expectedEffect.origin &&
-                        popupOrigin !== new URL(expectedEffect.origin).origin)
-                    ) {
+                    if (!allowedDocumentOrigins.has(popupOrigin)) {
                       await popup.close().catch(() => undefined);
                       throw newPageOriginNotAllowed(popupOrigin);
+                    }
+                    if (expectedEffect.type === "new_page" && expectedEffect.origin
+                        && popupOrigin !== new URL(expectedEffect.origin).origin) {
+                      await popup.close().catch(() => undefined);
+                      throw new Error("EXPECTED_NEW_PAGE_ORIGIN_MISMATCH");
                     }
                     const previousPage = page!;
                     page = popup;
