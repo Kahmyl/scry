@@ -603,7 +603,7 @@ export class FlowService {
           input.agentSessionId,
           input.environmentId,
           input.flowRevisionId,
-          input.compiledContractId,
+          null,
           null,
           JSON.stringify(revision.rows[0]!.plan),
           JSON.stringify({

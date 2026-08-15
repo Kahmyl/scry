@@ -195,7 +195,6 @@ describe("current Scry MCP surface", () => {
       "get_flow_draft",
       "list_mission_flow_drafts",
       "abandon_flow_draft",
-      "compile_and_certify_flow",
       "publish_flow_draft",
       "list_authentication_contracts",
       "list_authenticated_session_leases",
@@ -919,44 +918,6 @@ describe("current Scry MCP surface", () => {
     await server.close();
   });
 
-  it("rejects compile and certify before writing when the API release mismatches", async () => {
-    vi.stubEnv("SCRY_RELEASE_ID", "expected-release");
-    const requests: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((input: string | URL | Request) => {
-        const path = new URL(String(input)).pathname;
-        requests.push(path);
-        return Promise.resolve(
-          new Response(JSON.stringify({ ...admittedCapabilities, releaseId: "stale-release" }), {
-            status: 200,
-          }),
-        );
-      }),
-    );
-    const { client, server } = await connected();
-    const response = await client.callTool({
-      name: "compile_and_certify_flow",
-      arguments: {
-        ...context,
-        draftId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        draftVersion: 1,
-        authoringSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      },
-    });
-    expect(response.isError).toBe(true);
-    expect(response.structuredContent).toMatchObject({
-      rejection: {
-        code: "SCRY_RELEASE_MISMATCH",
-        safeActions: ["restart_mcp_with_current_release", "verify_api_release"],
-      },
-    });
-    expect(requests).toEqual(["/api/capabilities"]);
-    await client.close();
-    await server.close();
-  });
-
   it("rejects publication before writing when the API schema mismatches", async () => {
     vi.stubEnv("SCRY_SCHEMA_FINGERPRINT", "expected-schema");
     const requests: string[] = [];
@@ -1035,52 +996,6 @@ describe("current Scry MCP surface", () => {
       "/api/capabilities",
       "/api/flow-drafts/dddddddd-dddd-4ddd-8ddd-dddddddddddd/publish",
     ]);
-    await client.close();
-    await server.close();
-  });
-
-  it("preserves typed certification rejection actions through the authoring tool", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((input: string | URL | Request) => {
-        const path = new URL(String(input)).pathname;
-        if (path.endsWith("/capabilities")) {
-          return Promise.resolve(
-            new Response(JSON.stringify(admittedCapabilities), { status: 200 }),
-          );
-        }
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              statusCode: 409,
-              message: {
-                code: "EXECUTION_READY_COMPILATION_REQUIRED",
-                safeActions: ["revise_flow", "compile_and_certify_flow"],
-              },
-            }),
-            { status: 409 },
-          ),
-        );
-      }),
-    );
-    const { client, server } = await connected();
-    const response = await client.callTool({
-      name: "compile_and_certify_flow",
-      arguments: {
-        ...context,
-        draftId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        draftVersion: 1,
-        authoringSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      },
-    });
-    expect(response.isError).toBe(true);
-    expect(response.structuredContent).toMatchObject({
-      rejection: {
-        code: "EXECUTION_READY_COMPILATION_REQUIRED",
-        safeActions: ["revise_flow", "compile_and_certify_flow"],
-      },
-    });
     await client.close();
     await server.close();
   });

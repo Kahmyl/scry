@@ -45,7 +45,6 @@ export const createFlowRunSchema = objectiveContextSchema
   .extend({
     environmentId: uuidSchema,
     flowRevisionId: uuidSchema,
-    compiledContractId: uuidSchema.optional(),
     executionModel: z.literal("agent_directed_v1").default("agent_directed_v1"),
     protectedAuthorizations: z
       .array(

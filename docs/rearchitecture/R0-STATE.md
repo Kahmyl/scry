@@ -1120,6 +1120,28 @@ git diff --check: GREEN
 Exact next action: Slice 5 production compile/certification compatibility
 retirement, followed by Slices 7–12.
 
+### Slice 5 — production compile/certification admission retired — COMPLETE
+
+The API compile-and-certify route and MCP tool are removed, the ordinary Run
+contract no longer accepts a compiled contract, and the Run worker always uses
+ordinary execution mode. MCP guidance now directs agents to publish immutable
+representation-only Flow revisions. Historical compilation/certification rows
+and their read projections remain intact; the unregistered AuthoringService
+implementation remains temporarily readable only for legacy integration
+fixtures and has no production controller, tool, or worker caller.
+
+Qualification:
+
+```text
+API worker/release tests: 14/14 GREEN
+MCP tests: 30/30 GREEN
+Contracts + API + MCP typecheck: GREEN
+git diff --check: GREEN
+```
+
+Exact next action: Slices 7–8 exact agent-selected target and optional factual
+effect assertion cutover.
+
 Objective:
 
 ```text

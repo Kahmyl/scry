@@ -1,10 +1,8 @@
 import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common";
 import {
-  compileAndCertifyFlowSchema,
   createAuthenticationContractSchema,
   createFlowDraftSchema,
   publishFlowDraftSchema,
-  type CompileAndCertifyFlowInput,
   type CreateAuthenticationContractInput,
   type CreateFlowDraftInput,
   type PublishFlowDraftInput,
@@ -14,7 +12,6 @@ import { z } from "zod";
 import type { Principal } from "../auth/index.js";
 import { CurrentPrincipal } from "../auth/index.js";
 import { ZodValidationPipe } from "../common/validation.pipe.js";
-import { RunQueueService } from "../runtime/index.js";
 import { AuthoringService } from "./authoring.service.js";
 
 const abandonSchema = z
@@ -31,7 +28,6 @@ const abandonSchema = z
 export class AuthoringController {
   constructor(
     @Inject(AuthoringService) private readonly authoring: AuthoringService,
-    @Inject(RunQueueService) private readonly queue: RunQueueService,
   ) {}
 
   @Post("flow-drafts")
@@ -59,17 +55,6 @@ export class AuthoringController {
     @Body(new ZodValidationPipe(abandonSchema)) input: z.infer<typeof abandonSchema>,
   ) {
     return this.authoring.abandonDraft(p, id, input);
-  }
-
-  @Post("flow-drafts/:draftId/compile-and-certify")
-  async compileAndCertify(
-    @Param("draftId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(compileAndCertifyFlowSchema)) input: CompileAndCertifyFlowInput,
-  ) {
-    const result = await this.authoring.compileAndCertify(p, id, input);
-    await this.queue.dispatchPending();
-    return result;
   }
 
   @Post("flow-drafts/:draftId/publish")

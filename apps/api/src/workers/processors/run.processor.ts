@@ -64,7 +64,6 @@ export function createRunProcessor(options: RunProcessorOptions) {
       const execution = snapshot.executionSnapshot as {
         viewport: { width: number; height: number };
         readinessTimeoutMultiplier?: number;
-        certificationCandidate?: boolean;
         protectedAuthorizations?: Record<string, string>;
       };
       await options.executions.markRunning(job.data.runId, attempt.id, claimToken);
@@ -90,7 +89,7 @@ export function createRunProcessor(options: RunProcessorOptions) {
         `attempt-${attempt.attemptNumber}`,
       );
       const correlationId = randomUUID();
-      const mode = execution.certificationCandidate ? "certify" : "run";
+      const mode = "run";
       const capabilities = options.capabilities.createRun({
         sessionId: job.data.runId,
         operationId: `attempt-${attempt.id}`,
