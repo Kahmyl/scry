@@ -879,8 +879,8 @@ function baseObservation(overrides: Partial<DirectObservation> = {}): DirectObse
 }
 async function cleanupAdapter(cell: Cell): Promise<DirectObservation> {
   if (cell.id === "F1" || cell.id === "F2") {
-    const page = { evaluate: () => cell.id === "F2" ? new Promise<never>(() => undefined) : Promise.resolve() };
-    const collector = new VeilClipboardCollector(page as never, cell.id === "F2" ? 1 : 3, 5);
+    const clearAndVerify = () => cell.id === "F2" ? new Promise<never>(() => undefined) : Promise.resolve();
+    const collector = new VeilClipboardCollector(clearAndVerify, cell.id === "F2" ? 1 : 3, 5);
     collector.markProtectedClipboardTouched();
     try {
       await collector.finalize();

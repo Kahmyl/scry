@@ -49,11 +49,11 @@ import { requirePraxisSuccess, type PraxisConsumerContext } from "@scry/praxis";
 import { registerPraxisVeilAuthority } from "@scry/praxis";
 import { RecordingCoordinator } from "./recording-coordinator.js";
 import { VeilRuntimeCoordinator, type PrivacyCollector, type PrivacyPreparation } from "@scry/veil";
-import { VeilClipboardCollector } from "@scry/veil";
 import { VeilChannelCollector } from "@scry/veil";
 import { VeilVisualCaptureAuthority } from "@scry/veil";
 import { VeilVideoSegmentAuthority } from "@scry/veil";
 import { BrowserSessionProvenance } from "./browser-session.js";
+import { createVeilClipboardCollector } from "./privacy-clipboard-runtime.js";
 import {
   PlaywrightProtectedCapsuleFactory,
   ProtectedTransactionCoordinator,
@@ -389,7 +389,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       },
       state: () => ({ status: recordingVeilState }),
     };
-    const clipboardCollector = new VeilClipboardCollector(page);
+    const clipboardCollector = createVeilClipboardCollector(page);
     const passiveCollectors = [...veilChannelCollectors.values(), clipboardCollector];
     privacyGate = new VeilRuntimeCoordinator(
       [recordingCollector, trace, ...passiveCollectors],

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import { VeilClipboardCollector } from "@scry/veil";
 import { destroyPraxisIsolatedSession, installPraxisSessionStorage } from "@scry/praxis";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 
@@ -9,6 +8,7 @@ import {
   type ProtectedBrowserSession,
   type SafeBrowserSession,
 } from "./browser-session.js";
+import { createVeilClipboardCollector } from "./privacy-clipboard-runtime.js";
 
 export type CapsuleFactory = {
   create(input: {
@@ -49,7 +49,7 @@ export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
       await installPraxisSessionStorage(context, input.sessionStorage);
     }
     const provenance = new BrowserSessionProvenance(randomUUID(), "protected");
-    const clipboardCollector = new VeilClipboardCollector(page);
+    const clipboardCollector = createVeilClipboardCollector(page);
     let destroyed = false;
     const session: ProtectedBrowserSession = {
       browser,

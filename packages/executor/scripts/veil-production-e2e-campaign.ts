@@ -965,7 +965,8 @@ async function inspectBrowserCapabilityTeardown(origin: string, admittedReport: 
   });
   const page = await context.newPage();
   const { VeilClipboardCollector } = await import("@scry/veil");
-  const clipboardCollector = new VeilClipboardCollector(page);
+  const { clearAndVerifyPraxisClipboard } = await import("@scry/praxis");
+  const clipboardCollector = new VeilClipboardCollector(() => clearAndVerifyPraxisClipboard(page));
   try {
     await page.goto(`${origin}/replica/credential`);
     await page.evaluate(

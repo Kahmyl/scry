@@ -24,7 +24,7 @@ import {
 } from "@scry/praxis";
 import { acquireProtectedVisualText } from "@scry/praxis";
 import { requirePraxisSuccess } from "@scry/praxis";
-import { markVeilProtectedClipboardTouched } from "@scry/veil";
+import { markProtectedClipboardTouched } from "./privacy-clipboard-runtime.js";
 
 import { acquireProtectedResponseValue } from "./protected-response-envelope.js";
 
@@ -488,12 +488,12 @@ async function acquireByMethod(
       try {
         if (acquisition.objective?.kind === "verify_user_copy_experience") {
           const copied = observePraxisCopyEvent(page, () => clickReferencedTarget(copyReference));
-          markVeilProtectedClipboardTouched(page);
+          markProtectedClipboardTouched(page);
           if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
           return { kind: "copy_experience_verified", adapter: "copy_control" };
         }
         await clickReferencedTarget(copyReference);
-        const lifecycleOwned = markVeilProtectedClipboardTouched(page);
+        const lifecycleOwned = markProtectedClipboardTouched(page);
         const value = await readPraxisClipboard(page);
         if (!lifecycleOwned) await clearPraxisClipboard(page);
         return capture(value);
@@ -513,7 +513,7 @@ async function acquireByMethod(
         const copied = observePraxisCopyEvent(page, () =>
           pressPageKey(page, process.platform === "darwin" ? "Meta+C" : "Control+C"),
         );
-        markVeilProtectedClipboardTouched(page);
+        markProtectedClipboardTouched(page);
         if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
         await pressPageKey(page, "Escape").catch(() => undefined);
         return { kind: "copy_experience_verified", adapter: canonicalMethod(method) };
@@ -529,7 +529,7 @@ async function acquireByMethod(
         const copied = observePraxisCopyEvent(page, () =>
           pressPageKey(page, process.platform === "darwin" ? "Meta+C" : "Control+C"),
         );
-        const lifecycleOwned = markVeilProtectedClipboardTouched(page);
+        const lifecycleOwned = markProtectedClipboardTouched(page);
         if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
         const value = await readPraxisClipboard(page);
         if (!lifecycleOwned) await clearPraxisClipboard(page);

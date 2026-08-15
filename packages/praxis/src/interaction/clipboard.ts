@@ -8,6 +8,12 @@ export function clearPraxisClipboard(page: Page): Promise<void> {
   return page.evaluate(() => navigator.clipboard.writeText(""));
 }
 
+export async function clearAndVerifyPraxisClipboard(page: Page): Promise<void> {
+  await clearPraxisClipboard(page);
+  if ((await readPraxisClipboard(page)) !== "")
+    throw new Error("PRAXIS_CLIPBOARD_CLEAR_NOT_OBSERVED");
+}
+
 export async function observePraxisCopyEvent(
   page: Page,
   perform: () => Promise<unknown>,
