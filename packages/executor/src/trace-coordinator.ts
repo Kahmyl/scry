@@ -9,6 +9,7 @@ import type {
   SafeResumeBoundary,
 } from "@scry/contracts";
 import type { BrowserContext } from "playwright";
+import { startPraxisTrace, stopPraxisTrace } from "@scry/praxis";
 
 import { availableArtifact } from "./artifacts.js";
 import type { PrivacyCollector } from "@scry/veil";
@@ -56,7 +57,7 @@ export class TraceCoordinator implements PrivacyCollector {
       const target = path.join(this.options.outputDirectory, ...relativePath.split("/"));
       await mkdir(path.dirname(target), { recursive: true });
       await this.bounded(
-        this.options.context.tracing.start({ screenshots: true, snapshots: true, sources: false }),
+        startPraxisTrace(this.options.context),
       );
       this.active = { id, startedAt: this.now(), reason, path: target, relativePath };
     });
@@ -109,7 +110,7 @@ export class TraceCoordinator implements PrivacyCollector {
       this.active = undefined;
       const endedAt = this.now();
       try {
-        await this.bounded(this.options.context.tracing.stop({ path: active.path }));
+        await this.bounded(stopPraxisTrace(this.options.context, active.path));
         if (quarantine || this.sealed) {
           await rm(active.path, { force: true });
           const artifact: Artifact = {

@@ -70,3 +70,19 @@ export function capturePraxisSanitizedStructure(page: Page): Promise<string> {
     }
   });
 }
+
+export function startPraxisScreencast(page: Page, path: string) {
+  return page.screencast.start({ path });
+}
+
+export function stopPraxisScreencast(page: Page) {
+  return page.screencast.stop();
+}
+
+export function startPraxisTrace(context: BrowserContext) {
+  return context.tracing.start({ screenshots: true, snapshots: true, sources: false });
+}
+
+export function stopPraxisTrace(context: BrowserContext, path: string) {
+  return context.tracing.stop({ path });
+}

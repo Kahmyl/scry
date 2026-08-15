@@ -8,6 +8,7 @@ import {
   type RecordingTimelineEntry,
 } from "@scry/contracts";
 import type { Page } from "playwright";
+import { startPraxisScreencast, stopPraxisScreencast } from "@scry/praxis";
 import type { VeilVideoSegmentFinalization, VeilVideoSegmentPermit } from "@scry/contracts";
 
 import { availableArtifact } from "./artifacts.js";
@@ -113,7 +114,7 @@ export class RecordingCoordinator {
         // active screencast negotiate its own dimensions so the WebM canvas
         // always matches the incoming frames. Forcing the run viewport here
         // makes Playwright pad smaller shared frames with gray pixels.
-        await this.bounded(page.screencast.start({ path: filePath }), "SCREENCAST_START_TIMEOUT");
+        await this.bounded(startPraxisScreencast(page, filePath), "SCREENCAST_START_TIMEOUT");
       } catch (error) {
         this.timelineEntries.push(this.unavailable(segment.startedAt, "SCREENCAST_START_FAILED"));
         await this.sealUnsafe("SCREENCAST_START_FAILED");
@@ -218,7 +219,7 @@ export class RecordingCoordinator {
     };
     try {
       await this.armVideoVeil(segment);
-      await this.bounded(page.screencast.start({ path: filePath }), "SCREENCAST_START_TIMEOUT");
+      await this.bounded(startPraxisScreencast(page, filePath), "SCREENCAST_START_TIMEOUT");
       this.activeSegment = segment;
       await this.emit("recording.segment_started", {
         id,
@@ -240,7 +241,7 @@ export class RecordingCoordinator {
     await segment.veilCheckpoint?.catch(() => undefined);
     let stopFailed = false;
     try {
-      await this.bounded(segment.page.screencast.stop(), "SCREENCAST_STOP_TIMEOUT");
+      await this.bounded(stopPraxisScreencast(segment.page), "SCREENCAST_STOP_TIMEOUT");
     } catch {
       stopFailed = true;
     }
@@ -380,7 +381,7 @@ export class RecordingCoordinator {
         .then(() => undefined)
         .catch((error) => {
           segment.veilFailure = error;
-          void segment.page.screencast.stop().catch(() => undefined);
+          void stopPraxisScreencast(segment.page).catch(() => undefined);
         })
         .finally(() => {
           segment.veilCheckpoint = undefined;
