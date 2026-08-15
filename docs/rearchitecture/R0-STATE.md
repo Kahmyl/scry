@@ -907,6 +907,35 @@ capture decisions, safe-boundary lifecycle, clipboard cleanup, and collector
 coordination; migrate only any remaining semantic/action/lifecycle authority
 that exceeds Veil's trust/privacy role.
 
+### Clipboard browser-mechanics removal — COMPLETE
+
+Checkpoint:
+
+```text
+5802aef refactor: remove browser mechanics from veil clipboard
+```
+
+Established:
+
+```text
+clipboard clear/read verification mechanics → Praxis
+page-to-collector association → Executor application composition
+cleanup required/retry/fail-closed finalization truth → Veil
+Veil clipboard collector Playwright/Page dependency → removed
+```
+
+Qualification:
+
+```text
+Veil + protected clipboard/acquisition cohort: 65/65 GREEN
+repository typecheck: GREEN
+subsystem and direct-browser boundaries: GREEN
+```
+
+Next: inspect Veil visual-capture and video-segment Page dependencies. Preserve
+mask/disclosure/permit authority in Veil while moving any screenshot, geometry,
+DOM, or browser-session mechanics to Praxis/application composition.
+
 Before doing anything:
 
 ```bash
