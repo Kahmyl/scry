@@ -25,3 +25,4 @@ export * from "./interaction/clipboard.js";
 export * from "./lifecycle/browser-session.js";
 export * from "./lifecycle/page-ownership.js";
 export * from "./lifecycle/navigation.js";
+export * from "./lifecycle/session-state.js";

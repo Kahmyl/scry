@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { VeilClipboardCollector } from "@scry/veil";
-import { destroyPraxisIsolatedSession } from "@scry/praxis";
+import { destroyPraxisIsolatedSession, installPraxisSessionStorage } from "@scry/praxis";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 
 import {
@@ -46,10 +46,7 @@ export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
     };
     const { browser, context, page, forceClose } = await this.openBrowser(options);
     if (input.sessionStorage) {
-      await context.addInitScript(({ origin, entries }) => {
-        if (window.location.origin !== origin) return;
-        for (const [key, value] of entries) window.sessionStorage.setItem(key, value);
-      }, input.sessionStorage);
+      await installPraxisSessionStorage(context, input.sessionStorage);
     }
     const provenance = new BrowserSessionProvenance(randomUUID(), "protected");
     const clipboardCollector = new VeilClipboardCollector(page);

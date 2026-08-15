@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { BrowserContext, BrowserContextOptions, Page } from "playwright";
 import type { Checkpoint } from "@scry/contracts";
-import { closePraxisContext, gotoPraxisPage } from "@scry/praxis";
+import { capturePraxisStorageState, closePraxisContext, gotoPraxisPage } from "@scry/praxis";
 
 export type CheckpointPayload = Awaited<ReturnType<BrowserContext["storageState"]>>;
 export type CheckpointStore = {
@@ -31,7 +31,7 @@ export class CheckpointCoordinator {
     },
   ) {}
   async establish(context: BrowserContext, checkpoint: Checkpoint) {
-    const payload = await context.storageState({ indexedDB: checkpoint.state.indexedDb });
+    const payload = await capturePraxisStorageState(context, { indexedDB: checkpoint.state.indexedDb });
     const bindingFingerprint = this.binding(checkpoint);
     await this.input.store.establish({
       checkpoint,

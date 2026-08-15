@@ -32,6 +32,8 @@ import {
   writeJson,
 } from "./artifacts.js";
 import {
+  capturePraxisSessionStorage,
+  capturePraxisStorageState,
   closePraxisBrowser,
   closePraxisContext,
   observeSemanticPageContext,
@@ -950,8 +952,8 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     if (context && page && state.terminalState === "passed" && options.captureSuccessorCheckpoint) {
       try {
         const [storageState, sessionEntries, semantic] = await Promise.all([
-          context.storageState({ indexedDB: true }),
-          page.evaluate(() => Object.entries(sessionStorage)),
+          capturePraxisStorageState(context, { indexedDB: true }),
+          capturePraxisSessionStorage(page),
           observeSemanticPageContext(page),
         ]);
         const restorationUrl = page.url();
@@ -993,7 +995,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       }
     }
     if (context && state.terminalState === "passed" && options.captureBrowserState) {
-      await Promise.resolve(options.captureBrowserState(await context.storageState())).catch(
+      await Promise.resolve(options.captureBrowserState(await capturePraxisStorageState(context))).catch(
         () => undefined,
       );
     }

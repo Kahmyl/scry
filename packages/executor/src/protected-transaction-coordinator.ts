@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Page } from "playwright";
 import type { Assertion, ProtectedOperationState, ProtectedTransaction, ProtectedTransactionResult } from "@scry/contracts";
 import type { SecretRedactor } from "@scry/policy";
-import { gotoPraxisPage } from "@scry/praxis";
+import { capturePraxisSessionStorage, capturePraxisStorageState, gotoPraxisPage } from "@scry/praxis";
 import type { ProtectedBrowserSession, SafeBrowserSession } from "./browser-session.js";
 import { executeProtectedReveal, verifyProtectedRevealTarget } from "./protected-extractor.js";
 import {
@@ -296,8 +296,8 @@ export class ProtectedTransactionKernel {
           stage: "portable_state_export", timeoutMs: transaction.extraction.timeoutMs,
           signal: lifecycleSignal, timeoutCode: "PROTECTED_PORTABLE_STATE_EXPORT_TIMEOUT",
           dispatchPosition: "pre_dispatch",
-          work: () => safeSession.context.storageState({ indexedDB: true })
-            .catch(() => safeSession.context.storageState()),
+          work: () => capturePraxisStorageState(safeSession.context, { indexedDB: true })
+            .catch(() => capturePraxisStorageState(safeSession.context)),
         });
       } catch {
         throw new PhaseError("PROTECTED_PORTABLE_STATE_EXPORT_FAILED", "bootstrap", "safe_to_retry");
@@ -309,7 +309,7 @@ export class ProtectedTransactionKernel {
             stage: "session_state_export", timeoutMs: transaction.extraction.timeoutMs,
             signal: lifecycleSignal, timeoutCode: "PROTECTED_SESSION_STATE_EXPORT_TIMEOUT",
             dispatchPosition: "pre_dispatch",
-            work: () => safeSession.page.evaluate(() => Object.entries(sessionStorage)),
+            work: () => capturePraxisSessionStorage(safeSession.page),
           }),
         };
       } catch {
