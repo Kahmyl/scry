@@ -697,6 +697,35 @@ no executeSemanticControl/resolveSemanticTarget call sites remain
 Next: continue the R0.3.7 Executor responsibility inventory from this clean
 checkpoint, preserving product orchestration and Veil/Chronicle ownership.
 
+### Browser evidence mechanics — COMPLETE
+
+Checkpoint:
+
+```text
+0e00179 refactor: move browser evidence mechanics to praxis
+```
+
+Ownership classification and result:
+
+```text
+screenshot/init-script/document-measurement/DOM extraction mechanics → Praxis
+evidence request/privacy orchestration → temporarily Executor application composition
+artifact persistence/factual record target owner → Chronicle (remaining retirement path)
+Veil visual permit and suppression boundary → unchanged
+```
+
+Qualification:
+
+```text
+Executor evidence/visual cohort: 4/4 GREEN
+full Praxis suite: 174/174 GREEN
+repository typecheck and direct-browser boundary: GREEN
+```
+
+Next: migrate the remaining recording/tracing browser mechanics to Praxis,
+leaving evidence policy and persistence ownership explicit rather than moving
+product orchestration into Praxis.
+
 Before doing anything:
 
 ```bash
