@@ -136,7 +136,6 @@ export type ProtectedTransactionDependencies = {
     scope: "run" | "project";
   }> | undefined>;
   resolveKnownSecret(reference: string): Promise<string>;
-  executeNativeControl?: ExecuteOptions["executeNativeControl"];
   verifyAssertions(page: Page, assertions: Assertion[]): Promise<void>;
   prepareCapsule(session: ProtectedBrowserSession): Promise<void>;
   verifyCalibration?(

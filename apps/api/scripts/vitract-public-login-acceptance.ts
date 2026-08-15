@@ -163,18 +163,6 @@ try {
     policy: actionPolicy,
     options: {
       outputDirectory: "/tmp/scry-vitract-public-login-acceptance",
-      executeNativeControl: async (activePage, target, operation, beforeDispatch) => {
-        output.nativeAttempted = true;
-        if ("resolutionTimeoutMs" in operation)
-          output.nativeProbeBudgetMs = operation.resolutionTimeoutMs ?? 0;
-        try {
-          await driver.executeSemanticControl(activePage, target, operation, beforeDispatch);
-          output.nativeSucceeded = true;
-        } catch (error) {
-          output.nativeFailureCode = safeCode(error);
-          throw error;
-        }
-      },
       onPraxisResult: async (result) => {
         output.praxisInvocationCount += 1;
         output.praxisResultSequence.push(

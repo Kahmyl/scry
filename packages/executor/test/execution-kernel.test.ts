@@ -255,110 +255,6 @@ describe("execution kernel admission", () => {
       );
   });
 
-  it("uses the native expected-effect verifier without invoking Praxis for M2 native-only authoring", async () => {
-    const correlationId = randomUUID();
-    const manifest = createExecutionCapabilityManifest({ mode: "rehearse", correlationId });
-    const nativeEffect = vi.fn(async () => undefined);
-    const nativeControl = vi.fn(async () => undefined);
-    const outcome = await new ExecutionKernel().interact({
-      request: {
-        sessionId: "session",
-        operationId: "native-effect",
-        correlationId,
-        mode: "rehearse",
-        policy,
-        mutationIdentity: "native-effect-mutation",
-      },
-      capabilities: {
-        manifest,
-        journal: { begin: vi.fn(), complete: vi.fn(), fail: vi.fn(), settle: vi.fn() },
-        mutationFence: {
-          claim: vi.fn(async () => ({ state: "planned", fencingToken: 1 })),
-          transition: vi.fn(async () => true),
-        },
-        options: {
-          outputDirectory: "/tmp/native-effect",
-          nativeResolutionPolicy: "native_only",
-          executeNativeControl: nativeControl,
-          verifyNativeExpectedEffect: nativeEffect,
-        },
-      },
-      page: { url: () => "https://example.test" } as never,
-      action: {
-        type: "click",
-        target: target("Save", "button", ["focusable", "pointer_activatable"]),
-        expectedEffect: { type: "none" },
-      },
-      expectedEffect: {
-        type: "visibility_change",
-        target: target("Saved", "region", ["readable_value"]),
-        visible: true,
-      },
-      ordinal: 1,
-    });
-    expect(outcome.functionalResult).toBe("succeeded");
-    expect(nativeControl).toHaveBeenCalledOnce();
-    expect(nativeEffect).toHaveBeenCalledOnce();
-  });
-
-  it("preserves an applied mutation and requests observation when its effect is unresolved", async () => {
-    const correlationId = randomUUID();
-    const manifest = createExecutionCapabilityManifest({ mode: "rehearse", correlationId });
-    const dispatch = vi.fn(async (_page, _target, _operation, beforeDispatch) => {
-      await beforeDispatch?.();
-    });
-    const verify = vi.fn(async () => {
-      throw new Error("EXPECTED_EFFECT_NOT_OBSERVED");
-    });
-    const outcome = await new ExecutionKernel().interact({
-      request: {
-        sessionId: "session",
-        operationId: "unresolved-effect",
-        correlationId,
-        mode: "rehearse",
-        policy,
-        mutationIdentity: "unresolved-effect-mutation",
-      },
-      capabilities: {
-        manifest,
-        journal: { begin: vi.fn(), complete: vi.fn(), fail: vi.fn(), settle: vi.fn() },
-        mutationFence: {
-          claim: vi.fn(async () => ({ state: "planned", fencingToken: 1 })),
-          transition: vi.fn(async () => true),
-        },
-        options: {
-          outputDirectory: "/tmp/unresolved-effect",
-          nativeResolutionPolicy: "native_only",
-          executeNativeControl: dispatch,
-          verifyNativeExpectedEffect: verify,
-        },
-      },
-      page: { url: () => "https://example.test" } as never,
-      action: {
-        type: "click",
-        target: target("Save", "button", ["focusable", "pointer_activatable"]),
-        expectedEffect: { type: "none" },
-      },
-      expectedEffect: {
-        type: "visibility_change",
-        visible: true,
-        target: target("Saved", "region", ["readable_value"]),
-      },
-      ordinal: 1,
-    });
-    expect(dispatch).toHaveBeenCalledOnce();
-    expect(verify).toHaveBeenCalledOnce();
-    expect(outcome).toMatchObject({
-      functionalResult: "failed",
-      mutationOutcome: "applied",
-      reasonCode: "EXPECTED_EFFECT_NOT_OBSERVED",
-      nextDecisionBoundary: {
-        type: "effect_observation_required",
-        safeActions: ["get_flow_authoring", "advance_flow_authoring"],
-      },
-    });
-  });
-
   it("gives the kernel sole positive-visibility ownership for non-value-readable links and buttons", async () => {
     const opened = await openTestBrowser();
     const correlationId = randomUUID();
@@ -412,9 +308,6 @@ describe("execution kernel admission", () => {
             },
             options: {
               outputDirectory: "/tmp/praxis-effect-owner",
-              executeNativeControl: vi.fn(async () => {
-                throw new Error("NATIVE_TARGET_NOT_FOUND");
-              }),
               onPraxisResult: async (result) => {
                 praxisResults.push(result);
               },
@@ -489,7 +382,7 @@ describe("execution kernel admission", () => {
       sessionId: "session", operationId: "native-observation", page: {} as never,
       action: { type: "waitFor", target: target("Account", "region", ["observable"]), state: "visible", timeoutMs: 1_000 },
       ordinal: 1, policy,
-      options: { outputDirectory: "/tmp/unused", executeNativeControl: vi.fn(async () => undefined) },
+      options: { outputDirectory: "/tmp/unused" },
     });
 
     expect(outcome.resolvedTarget).toMatchObject({

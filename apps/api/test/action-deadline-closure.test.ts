@@ -59,7 +59,6 @@ async function closureCase(input: {
     userId: "closure-test", environmentId: "local", browserContextId: input.name,
   });
   const praxisResults: string[] = [];
-  const nativeResults: string[] = [];
   const dispatches: number[] = [];
   const started = performance.now();
   try {
@@ -73,13 +72,11 @@ async function closureCase(input: {
         maxNavigations: 1 },
       options: {
         outputDirectory: "/tmp/action-deadline-closure-test",
-        executeNativeControl: driver.executeSemanticControl.bind(driver),
-        onNativeResolution: async (result) => { nativeResults.push(result.status); },
         onPraxisResult: async (result) => { praxisResults.push(result.status === "succeeded" ? "succeeded" : result.code); },
         onMutationDispatch: async () => { dispatches.push(performance.now() - started); },
       },
     });
-    return { outcome, praxisResults, nativeResults, dispatches, elapsedMs: performance.now() - started };
+    return { outcome, praxisResults, dispatches, elapsedMs: performance.now() - started };
   } finally {
     unregister();
     await context.close();
@@ -90,14 +87,12 @@ describe("authoritative action deadline closure", () => {
   it("runs the exact six production-path closure scenarios", async () => {
     const native = await closureCase({ name: "native-present", timeoutMs: 3_000, fixture: "native", insertAtMs: 0 });
     expect(native.outcome.functionalResult).toBe("succeeded");
-    expect(native.nativeResults).toEqual(["resolved"]);
-    expect(native.praxisResults).toEqual([]);
+    expect(native.praxisResults.at(-1)).toBe("succeeded");
     expect(native.dispatches).toHaveLength(1);
     expect(native.dispatches[0]).toBeLessThan(3_000);
 
     const immediate = await closureCase({ name: "praxis-immediate", timeoutMs: 3_000, fixture: "praxis", insertAtMs: 0 });
     expect(immediate.outcome.functionalResult).toBe("succeeded");
-    expect(immediate.nativeResults).toEqual(["fallback"]);
     expect(immediate.praxisResults).toEqual(["succeeded"]);
     expect(immediate.dispatches[0]).toBeLessThan(3_000);
 
@@ -152,7 +147,6 @@ describe("authoritative action deadline closure", () => {
             maxNavigations: 1 },
           options: {
             outputDirectory: "/tmp/action-deadline-closure-test",
-            executeNativeControl: driver.executeSemanticControl.bind(driver),
             onPraxisResult: async (result) => {
               praxisResults.push(result.status === "succeeded" ? "succeeded" : result.code);
             },

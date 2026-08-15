@@ -57,10 +57,6 @@ export class ExecutionCapabilityFactory {
         kind: "protected_capsule",
         ownerId: `${input.sessionId}:${input.operationId}`,
       })),
-      executeNativeControl:
-        options.executeNativeControl ??
-        ((page, target, operation, beforeDispatch) =>
-          this.nativeBrowser.executeSemanticControl(page, target, operation, beforeDispatch)),
       executeNativeNavigation:
         options.executeNativeNavigation ??
         ((page, url, allowedOrigins, timeoutMs, trustedScriptOrigins) =>
@@ -71,10 +67,6 @@ export class ExecutionCapabilityFactory {
         options.executeSameOriginRequest ??
         ((page, request, allowedOrigins, beforeDispatch) =>
           this.nativeBrowser.sameOriginRequest(page, request, allowedOrigins, beforeDispatch)),
-      verifyNativeExpectedEffect:
-        options.verifyNativeExpectedEffect ??
-        ((page, effect, beforeUrl, timeoutMs) =>
-          this.nativeBrowser.verifyExpectedEffect(page, effect, beforeUrl, timeoutMs)),
       atomicSecretCapture,
       publicValueCapture,
       publicValueResolver:

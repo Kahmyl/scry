@@ -405,7 +405,6 @@ export class ExecutionKernel {
       fence = await this.beginMutationFence(request, input.capabilities);
       const beforeUrl = input.page.url();
       const expectedEffect = input.expectedEffect ?? { type: "none" };
-      const nativeOnly = input.capabilities.options.nativeResolutionPolicy === "native_only";
       const armedEffect = armExpectedEffect(
         input.page,
         expectedEffect,
@@ -440,20 +439,6 @@ export class ExecutionKernel {
             ("timeoutMs" in input.action ? input.action.timeoutMs : undefined) ?? 10_000;
           if (expectedEffect.type === "new_page") {
             verifyAdoptedPopup(effectPage, beforeUrl, expectedEffect.origin);
-          } else if (
-            nativeOnly &&
-            ["visibility_change", "value_change", "state_change", "new_region"].includes(
-              expectedEffect.type,
-            )
-          ) {
-            if (!input.capabilities.options.verifyNativeExpectedEffect)
-              throw new Error("NATIVE_EXPECTED_EFFECT_VERIFIER_REQUIRED");
-            await input.capabilities.options.verifyNativeExpectedEffect(
-              effectPage,
-              expectedEffect,
-              beforeUrl,
-              timeoutMs,
-            );
           } else {
             await verifyExpectedEffect(
               effectPage,

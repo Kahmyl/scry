@@ -6,7 +6,6 @@ import { executePraxisConsumer, registerPraxisVeilAuthority } from "@scry/praxis
 import { compileVeilPolicy, VeilAuthority } from "@scry/veil";
 
 import { executeProtectedPreparation } from "../../src/protected-transaction-preparation.js";
-import type { ExecuteOptions } from "../../src/types.js";
 
 const origin = "https://campaign-d.test";
 const secret = "campaign-d-synthetic-secret-canary";
@@ -123,23 +122,8 @@ describe("Campaign D: known-secret protected preparation", () => {
     }
   });
 
-  it("reconstructs ephemeral UI with native-first suffix replay", async () => {
+  it("reconstructs ephemeral UI through Praxis suffix replay", async () => {
     const page = await openAuthenticatedReplayPage();
-    const nativeOperations: string[] = [];
-    const executeNativeControl: NonNullable<ExecuteOptions["executeNativeControl"]> =
-      async (_page, target, nativeOperation) => {
-        nativeOperations.push(nativeOperation.type);
-        const name = target.preferredEvidence.names[0]!;
-        if (nativeOperation.type === "click") {
-          await page.getByRole("button", { name, exact: true }).click();
-          return;
-        }
-        if (nativeOperation.type === "fill") {
-          await page.getByRole("textbox", { name, exact: true }).fill(nativeOperation.value);
-          return;
-        }
-        throw new Error("NATIVE_TARGET_NOT_FOUND");
-      };
     const operation = transaction(field("unused", "unused"));
     operation.inputs = {
       credentialName: { classification: "public", value: "Campaign D credential" },
@@ -167,10 +151,8 @@ describe("Campaign D: known-secret protected preparation", () => {
           redactor: new SecretRedactor(),
           resolveKnownSecret: async () => secret,
           verifyAssertions: async () => undefined,
-          executeNativeControl,
         } as never),
       ).resolves.toBeUndefined();
-      expect(nativeOperations).toEqual(["click", "fill"]);
       expect(page.url()).toBe(`${origin}/partner/credentials`);
       expect(await page.getByRole("dialog", { name: "Add credential" }).isVisible()).toBe(true);
       expect(await page.getByRole("textbox", { name: "Name" }).inputValue()).toBe(

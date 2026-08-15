@@ -493,9 +493,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
                 ? { recoverStagedResponseOutputs: options.recoverStagedProtectedResponseOutputs }
                 : {}),
               resolveKnownSecret: options.secretResolver ?? missingSecretResolver,
-              ...(options.executeNativeControl
-                ? { executeNativeControl: options.executeNativeControl }
-                : {}),
               prepareCapsule: async (capsule) => {
                 registerPraxisVeilAuthority(capsule.page, {
                   authority: veilAuthority,

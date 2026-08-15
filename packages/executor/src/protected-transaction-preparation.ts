@@ -1,4 +1,4 @@
-import type { ProtectedTransaction } from "@scry/contracts";
+import type { InteractionTargetIntent, ProtectedTransaction } from "@scry/contracts";
 import { gotoPraxisPage, PraxisConsumerError, requirePraxisSuccess, resolveTargetLocator } from "@scry/praxis";
 import type { Page } from "playwright";
 
@@ -20,10 +20,6 @@ export async function executeProtectedPreparation(
         continue;
       }
       if (action.type === "clickNavigation") {
-        if (await executeNative(page, action.target, {
-          type: "click",
-          ...nativeTimeouts(action.timeoutMs),
-        }, dependencies)) continue;
         await requirePraxisSuccess({
           page,
           intent: action.target,
@@ -38,15 +34,16 @@ export async function executeProtectedPreparation(
         if (!input || input.classification !== "public" || typeof input.value !== "string") {
           throw new PhaseError("PUBLIC_NAVIGATION_INPUT_INVALID", "preparation", "safe_to_retry");
         }
-        await page.getByText(input.value, { exact: action.exact }).click(timeout(action.timeoutMs));
+        await requirePraxisSuccess({
+          page,
+          intent: publicTextActivationIntent(input.value, action.exact),
+          operation: { type: "activate" },
+          context: protectedContext(transaction, action.timeoutMs, dependencies.allowedOrigins),
+          signal: dependencies.signal ?? new AbortController().signal,
+        });
         continue;
       }
       if (action.type === "waitFor") {
-        if (await executeNative(page, action.target, {
-          type: "waitFor",
-          state: action.state,
-          ...(action.timeoutMs === undefined ? {} : { timeoutMs: action.timeoutMs }),
-        }, dependencies)) continue;
         await requirePraxisSuccess({
           page,
           intent: action.target,
@@ -93,12 +90,6 @@ export async function executeProtectedPreparation(
           );
         }
         if (action.type === "fillPublicInput") {
-          if (await executeNative(page, action.target, {
-            type: "fill",
-            value: String(input.value),
-            protected: false,
-            ...nativeTimeouts(action.timeoutMs),
-          }, dependencies)) continue;
           await requirePraxisSuccess({
             page,
             intent: action.target,
@@ -262,27 +253,24 @@ function timeout(timeoutMs?: number) {
   return timeoutMs === undefined ? {} : { timeout: timeoutMs };
 }
 
-async function executeNative(
-  page: Page,
-  target: Parameters<NonNullable<ProtectedTransactionDependencies["executeNativeControl"]>>[1],
-  operation: Parameters<NonNullable<ProtectedTransactionDependencies["executeNativeControl"]>>[2],
-  dependencies: ProtectedTransactionDependencies,
-) {
-  if (!dependencies.executeNativeControl) return false;
-  try {
-    await dependencies.executeNativeControl(page, target, operation);
-    return true;
-  } catch (error) {
-    const code = error instanceof Error ? error.message : String(error);
-    if (["NATIVE_TARGET_NOT_FOUND", "NATIVE_TARGET_AMBIGUOUS", "NATIVE_SCOPE_UNSAFE"].includes(code))
-      return false;
-    throw error;
-  }
-}
-
-function nativeTimeouts(timeoutMs?: number) {
+function publicTextActivationIntent(value: string, exact: boolean): InteractionTargetIntent {
   return {
-    ...(timeoutMs === undefined ? {} : { timeoutMs }),
-    resolutionTimeoutMs: Math.min(timeoutMs ?? 5_000, 5_000),
+    concept: value,
+    requiredCapabilities: ["pointer_activatable"],
+    preferredEvidence: {
+      roles: [],
+      names: [value],
+      labels: [],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+      expectedText: value,
+    },
+    scope: { kind: "page" },
+    relations: [],
+    prohibited: ["hidden", "disabled"],
+    risk: "ordinary",
+    confidence: { requiredFamilies: [] },
+    matching: exact ? "exact" : "non_exact",
   };
 }

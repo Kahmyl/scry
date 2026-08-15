@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { CurrentAction, InteractionTargetIntent, RunEvent } from "@scry/contracts";
+import type { CurrentAction, RunEvent } from "@scry/contracts";
 import {
   executePraxisConsumer,
   pressPageKey,
@@ -16,7 +16,6 @@ import type { Page } from "playwright";
 import { capturePublicGeneratedValue } from "./public-value-capture.js";
 import type { ExecuteOptions } from "./types.js";
 import { navigateAndWaitNative } from "@scry/praxis";
-import { isNativeControlResolutionError } from "./interaction-lifecycle.js";
 
 export async function executeAction(
   page: Page,
@@ -109,8 +108,6 @@ export async function executeAction(
       return;
     }
     case "click":
-      if (await executeNative(page, action.target, { type: "click", ...nativeActionTimeouts(action.timeoutMs, preDispatchDeadlineAt) }, options)) return;
-      requirePraxisFallback(options);
       await requirePraxisWithNoCapabilityRetry({
         page,
         intent: action.target,
@@ -290,14 +287,6 @@ export async function executeAction(
       }
       return;
     case "waitFor":
-      if (await executeNative(page, action.target, {
-        type: "waitFor", state: action.state,
-        ...nativeTimeout(roleOnlyTarget(action.target)
-          ? Math.min(action.timeoutMs ?? NATIVE_FAST_PATH_PROBE_MS, NATIVE_FAST_PATH_PROBE_MS)
-          : Math.min(action.timeoutMs ?? NATIVE_OBSERVATION_PROBE_MS, NATIVE_OBSERVATION_PROBE_MS)),
-        preDispatchDeadlineAt,
-      }, options)) return;
-      requirePraxisFallback(options);
       await requirePraxisWithNoCapabilityRetry({
         page,
         intent: action.target,
@@ -311,78 +300,7 @@ export async function executeAction(
   }
 }
 
-function requirePraxisFallback(options: ExecuteOptions) {
-  if (options.nativeResolutionPolicy === "native_only") {
-    throw new Error("NATIVE_RESOLUTION_REQUIRED");
-  }
-}
-
-async function executeNative(
-  page: Page,
-  target: InteractionTargetIntent,
-  operation: Parameters<NonNullable<ExecuteOptions["executeNativeControl"]>>[2],
-  options: ExecuteOptions,
-) {
-  if (!options.executeNativeControl) return false;
-  const startedAt = performance.now();
-  try {
-    await options.executeNativeControl(
-      page,
-      target,
-      operation,
-      options.onMutationDispatch ? async () => { await options.onMutationDispatch?.(); } : undefined,
-    );
-    await options.onNativeResolution?.({ status: "resolved", durationMs: performance.now() - startedAt });
-    return true;
-  } catch (error) {
-    const code = error instanceof Error ? error.message : String(error);
-    if (isNativeControlResolutionError(error) ||
-        ["NATIVE_TARGET_NOT_FOUND", "NATIVE_TARGET_AMBIGUOUS", "NATIVE_SCOPE_UNSAFE"].includes(code)) {
-      await options.onNativeResolution?.({
-        status: "fallback", reasonCode: code, durationMs: performance.now() - startedAt,
-      });
-      if (options.nativeResolutionPolicy === "native_only") throw error;
-      return false;
-    }
-    throw error;
-  }
-}
-
-function nativeTimeout(timeoutMs: number | undefined): { timeoutMs?: number } {
-  return timeoutMs === undefined ? {} : { timeoutMs };
-}
-
-function roleOnlyTarget(target: InteractionTargetIntent) {
-  const evidence = target.preferredEvidence;
-  return evidence.roles.length > 0 &&
-    evidence.names.length === 0 && evidence.labels.length === 0 &&
-    evidence.placeholders.length === 0 && (evidence.testIds?.length ?? 0) === 0 &&
-    !evidence.expectedText && !evidence.visual?.expectedText && !evidence.visual?.icon;
-}
-
-const NATIVE_FAST_PATH_PROBE_MS = 100;
-// Native observation is a bounded readiness probe, not ownership of the whole
-// authored action deadline. Praxis retains the remaining deadline and stops
-// once its semantic diagnostic is stable.
-const NATIVE_OBSERVATION_PROBE_MS = 4_000;
 const DEFAULT_ACTION_TIMEOUT_MS = 5_000;
-
-function nativeActionTimeouts(timeoutMs: number | undefined, deadline: number): {
-  timeoutMs?: number;
-  resolutionTimeoutMs: number;
-  preDispatchDeadlineAt: number;
-} {
-  const remaining = deadline - performance.now();
-  if (remaining <= 0) throw new ActionPreDispatchTimeoutError();
-  return {
-    ...nativeTimeout(timeoutMs),
-    preDispatchDeadlineAt: deadline,
-    resolutionTimeoutMs: Math.max(
-      1,
-      Math.min(timeoutMs ?? NATIVE_FAST_PATH_PROBE_MS, NATIVE_FAST_PATH_PROBE_MS, remaining),
-    ),
-  };
-}
 
 function actionDeadline(action: CurrentAction, context?: PraxisConsumerContext) {
   const authored = "timeoutMs" in action ? action.timeoutMs : undefined;

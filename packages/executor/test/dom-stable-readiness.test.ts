@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { currentPlanSchema, executionPolicySchema } from "@scry/contracts";
-import { resolveTargetLocator } from "@scry/praxis";
 
 import { executePlan } from "../src/executor.js";
 
@@ -161,12 +160,6 @@ describe("DOM-stable readiness", () => {
       policy: executionPolicySchema.parse({ allowedOrigins: [origin], allowPrivateNetwork: true }),
       outputDirectory: await mkdtemp(path.join(tmpdir(), "scry-readiness-independence-")),
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
-      executeNativeControl: async (page, target, operation, beforeDispatch) => {
-        if (operation.type !== "click") throw new Error("EXPECTED_CLICK");
-        const locator = await resolveTargetLocator(page, target);
-        await beforeDispatch?.();
-        await locator.click(operation.timeoutMs === undefined ? {} : { timeout: operation.timeoutMs });
-      },
       onMutationDispatch: async () => {
         dispatchCount += 1;
         dispatchAt = performance.now() - actionStartedAt;
