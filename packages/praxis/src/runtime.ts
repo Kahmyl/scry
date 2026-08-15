@@ -39,6 +39,7 @@ import {
   setCheckedReferencedTarget,
 } from "./interaction/form-control.js";
 import { PraxisKeyDispatchError, pressReferencedTarget } from "./interaction/keyboard.js";
+import { scrollReferencedTarget } from "./interaction/scroll.js";
 import { observeTargetReference, type PraxisTargetReference } from "./references/target-reference.js";
 import { PraxisExecutionEnvelope, type PraxisPreDispatchDeadline } from "./execution-envelope.js";
 import { PraxisStateObserver } from "./state-observer.js";
@@ -221,7 +222,7 @@ export class PraxisGroundingEngine {
     const providerIds = PRAXIS_PROVIDER_CATALOG.map(
       (provider) => `${provider.id}@${provider.version}`,
     );
-    const pinnedReference = shouldPinMutationTarget(request, strategy)
+    const pinnedReference = shouldPinTargetReference(request, strategy)
       ? await observeTargetReference(this.page, grounded.locator, {
           timeoutMs: request.policy.actionTimeoutMs,
         }).catch(() => undefined)
@@ -280,12 +281,13 @@ function groundingPendingSignature(error: GroundingError) {
   });
 }
 
-function shouldPinMutationTarget(request: PraxisRequest, strategy: PraxisStrategy): boolean {
+function shouldPinTargetReference(request: PraxisRequest, strategy: PraxisStrategy): boolean {
   if (request.operation.type === "enter_text")
     return ["native_fill", "content_editable", "focus_keyboard"].includes(strategy);
   if (request.operation.type === "select_option") return strategy === "native_select";
   if (request.operation.type === "set_checked") return strategy === "native_check";
   if (request.operation.type === "press_key") return true;
+  if (request.operation.type === "scroll") return true;
   return false;
 }
 
@@ -493,7 +495,15 @@ export class PraxisVerifier {
       return (await observationSetMatches(target.observationLocators(), request.operation.state))
         ? "passed"
         : "failed";
-    if (["inspect", "read_value", "scroll"].includes(request.operation.type)) {
+    if (request.operation.type === "scroll") {
+      try {
+        await target.pinnedReference?.assertCurrent();
+        return target.pinnedReference ? "passed" : "failed";
+      } catch {
+        return "failed";
+      }
+    }
+    if (["inspect", "read_value"].includes(request.operation.type)) {
       try {
         await target.handle.readAfterDispatch(async () => target.revalidate());
         return "passed";
@@ -695,27 +705,9 @@ async function dispatchOperation(
         });
       break;
     case "scroll":
-      if (request.operation.direction === "into_view")
-        await locator.scrollIntoViewIfNeeded(options);
-      else
-        await locator.evaluate(
-          (element, direction) =>
-            element.scrollBy({
-              top:
-                direction === "down"
-                  ? element.clientHeight
-                  : direction === "up"
-                    ? -element.clientHeight
-                    : 0,
-              left:
-                direction === "right"
-                  ? element.clientWidth
-                  : direction === "left"
-                    ? -element.clientWidth
-                    : 0,
-            }),
-          request.operation.direction,
-        );
+      if (!target.pinnedReference)
+        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", { provenance: "application" });
+      await scrollReferencedTarget(target.pinnedReference, request.operation.direction, { timeoutMs: options.timeout });
       break;
     case "read_value":
       if (request.operation.classification === "public")

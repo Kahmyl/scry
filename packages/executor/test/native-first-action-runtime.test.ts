@@ -104,7 +104,7 @@ describe("native-first action runtime", () => {
     expect(onMutationDispatch).toHaveBeenCalledOnce();
   });
 
-  it("routes select, check, and targeted key mechanics through Praxis without native Executor control", async () => {
+  it("routes migrated targeted mechanics through Praxis without native Executor control", async () => {
     const opened = await openTestBrowser();
     const unregister = registerPraxisVeilAuthority(opened.page, {
       authority: new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: ["https://example.test"] })),
@@ -119,6 +119,7 @@ describe("native-first action runtime", () => {
         <label>Tier<select><option>Basic</option><option>Pro</option></select></label>
         <label><input type="checkbox"> Enabled</label>
         <label>Search<input></label><output></output>
+        <div title="Audit scroll container" tabindex="0" style="height:50px;overflow:auto"><div style="height:300px"></div></div>
         <script>document.querySelector('input:not([type])').addEventListener('keydown', event => { if (event.key === 'Enter') document.querySelector('output').textContent = 'submitted'; })</script>
       `);
       const select = await executeInteractionCompatibility({
@@ -151,13 +152,25 @@ describe("native-first action runtime", () => {
         policy,
         options: { outputDirectory: "/tmp/praxis-select-check", executeNativeControl: native },
       });
+      const scroll = await executeInteractionCompatibility({
+        sessionId: "form-control", operationId: "scroll", ordinal: 4, page: opened.page,
+        action: { type: "scroll", deltaY: 100, target: {
+          ...target, concept: "Audit scroll container", requiredCapabilities: ["focusable", "readable_value"],
+          preferredEvidence: { ...target.preferredEvidence, roles: [], names: ["Audit scroll container"], labels: ["Audit scroll container"] },
+          risk: "ordinary", confidence: { requiredFamilies: [] },
+        } },
+        policy,
+        options: { outputDirectory: "/tmp/praxis-select-check", executeNativeControl: native },
+      });
       expect(select).toMatchObject({ functionalResult: "succeeded", mutationOutcome: "applied" });
       expect(check).toMatchObject({ functionalResult: "succeeded", mutationOutcome: "applied" });
       expect(press).toMatchObject({ functionalResult: "succeeded", mutationOutcome: "applied" });
+      expect(scroll).toMatchObject({ functionalResult: "succeeded", mutationOutcome: "not_applied" });
       expect(native).not.toHaveBeenCalled();
       expect(await opened.page.getByRole("combobox", { name: "Tier" }).inputValue()).toBe("Pro");
       expect(await opened.page.getByRole("checkbox", { name: "Enabled" }).isChecked()).toBe(true);
       expect(await opened.page.locator("output").textContent()).toBe("submitted");
+      expect(await opened.page.locator('[title="Audit scroll container"]').evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
     } finally {
       unregister();
       await opened.context.close();

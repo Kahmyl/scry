@@ -20,6 +20,7 @@ import {
   setCheckedReferencedTarget,
 } from "../src/interaction/form-control.js";
 import { pressReferencedTarget } from "../src/interaction/keyboard.js";
+import { scrollReferencedTarget } from "../src/interaction/scroll.js";
 
 let browser: Browser;
 let page: Page;
@@ -680,6 +681,24 @@ describe("Praxis target reference and pinned click", () => {
     });
     await expect(pressReferencedTarget(stale, "Enter", { timeoutMs: 1_500 })).rejects.toBeInstanceOf(PraxisStaleTargetError);
     expect(await page.evaluate(() => (globalThis as unknown as { __keys: string[] }).__keys)).toEqual(["original:Enter"]);
+    await stale.dispose();
+  });
+
+  it("scrolls the exact pinned container and refuses a substituted container", { timeout: 30_000 }, async () => {
+    await resetPage('<div id="target" style="width:100px;height:50px;overflow:auto"><div style="height:300px"></div></div>');
+    const original = await observeTargetReference(page, page.locator("#target"));
+    await expect(scrollReferencedTarget(original, "down")).resolves.toEqual({ dispatched: true });
+    expect(await page.locator("#target").evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+    await original.dispose();
+
+    const stale = await observeTargetReference(page, page.locator("#target"));
+    await page.evaluate(() => {
+      const replacement = document.querySelector("#target")!.cloneNode(true) as HTMLElement;
+      replacement.scrollTop = 0;
+      document.querySelector("#target")!.replaceWith(replacement);
+    });
+    await expect(scrollReferencedTarget(stale, "down")).rejects.toBeInstanceOf(PraxisStaleTargetError);
+    expect(await page.locator("#target").evaluate((node) => node.scrollTop)).toBe(0);
     await stale.dispose();
   });
 

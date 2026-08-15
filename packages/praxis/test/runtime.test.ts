@@ -132,7 +132,7 @@ describe("Praxis strategy, dispatch, and verification", () => {
       input,
       new AbortController().signal,
     );
-    expect(result).toMatchObject({ status: "succeeded", mutationOutcome: "not_applied" });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: "succeeded", mutationOutcome: "not_applied" });
   });
 
   it("selects typed least-invasive strategies", () => {
@@ -339,6 +339,22 @@ describe("Praxis strategy, dispatch, and verification", () => {
       status: "failed", code: "PRAXIS_LOCAL_STATE_NOT_OBSERVED",
       mutationOutcome: "applied", retry: "requires_reobservation", safeActions: ["inspect_artifact"],
     });
+  });
+
+  it("dispatches and verifies scroll through the pinned container", async () => {
+    await page.setContent('<div title="Audit scroll container" tabindex="0" style="height:50px;overflow:auto"><div style="height:300px"></div></div>');
+    const target: InteractionTargetIntent = {
+      ...intent("Audit scroll container"),
+      requiredCapabilities: ["focusable", "readable_value"],
+      preferredEvidence: { ...intent("Audit scroll container").preferredEvidence, roles: [], names: ["Audit scroll container"], labels: ["Audit scroll container"] },
+      confidence: { requiredFamilies: [] },
+    };
+    const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(
+      request({ type: "scroll", direction: "down" }, target),
+      new AbortController().signal,
+    );
+    expect(result, JSON.stringify(result)).toMatchObject({ status: "succeeded", mutationOutcome: "not_applied" });
+    expect(await page.locator('[tabindex="0"]').evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
   });
 
   it("keeps an unexpected adapter failure after native fill unknown and unsafe", async () => {

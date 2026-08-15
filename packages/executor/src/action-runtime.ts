@@ -275,7 +275,6 @@ export async function executeAction(
       return;
     case "scroll":
       if (action.target) {
-        if (await executeNative(page, action.target, { type: "scroll", deltaY: action.deltaY, preDispatchDeadlineAt }, options)) return;
         await requirePraxisWithNoCapabilityRetry({
           page,
           intent: action.target,
