@@ -281,11 +281,45 @@ repository typecheck: GREEN
 subsystem, execution-kernel, and direct-browser boundaries: GREEN
 ```
 
+### Targeted press/keyboard — COMPLETE
+
+Checkpoint:
+
+```text
+9c96034 refactor: pin targeted key dispatch
+```
+
+Established:
+
+```text
+targeted approved-key dispatch
+→ exact PraxisTargetReference captured during grounding
+→ ElementHandle.press owned by Praxis
+→ no Executor native-control fast path
+→ replacement/document refusal before keyboard input
+→ any Playwright failure after press begins is dispatch-uncertain
+```
+
+Qualification at closure:
+
+```text
+Praxis targeted reference/runtime tests: 47/47 GREEN
+full Praxis suite: 166/166 GREEN
+Executor affected ownership regression: 15/15 GREEN
+Assurance truth: 23/23 GREEN
+repository typecheck and boundary gates: GREEN
+```
+
+Targetless page-level key dispatch remains a distinct active mechanic and is
+not represented by the current target-required Praxis request contract. Do not
+hide it inside the targeted primitive.
+
 ### Current active slice
 
-Continue the R0.3.5 inventory with press/keyboard as the next distinct active
-mechanic. Keep hover, scroll, drag/drop, upload/download, dialog, and page
-switching separate and migrate only proven active usage.
+Continue R0.3.5 with the active scroll family. Inventory target-scoped and
+page-scoped scroll independently before choosing the next bounded migration;
+then classify hover, drag/drop, upload/download, dialog, and page switching by
+actual call sites.
 
 Before doing anything:
 
