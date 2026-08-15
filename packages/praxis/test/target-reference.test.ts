@@ -11,7 +11,9 @@ import {
   PraxisClickDispatchError,
 } from "../src/interaction/click.js";
 import {
+  enterTextReferencedTarget,
   fillReferencedTarget,
+  PraxisTextEntryDispatchError,
 } from "../src/interaction/fill.js";
 
 let browser: Browser;
@@ -464,6 +466,88 @@ describe("Praxis target reference and pinned click", () => {
     ).toEqual(
       expect.arrayContaining(["line one\nline two"]),
     );
+    await reference.dispose();
+  });
+
+  it("replaces content on the exact pinned contenteditable entity", { timeout: 30_000 }, async () => {
+    await resetPage(`
+      <div id="target" role="textbox" aria-label="Notes" contenteditable="true">starting</div>
+      <script>
+        window.__inputValues = [];
+        document.querySelector("#target").addEventListener("input", (event) => {
+          window.__inputValues.push(event.target.textContent);
+        });
+      </script>
+    `);
+    const reference = await observeTargetReference(page, page.getByRole("textbox", { name: "Notes" }));
+    await expect(
+      enterTextReferencedTarget(reference, "replacement text", {
+        strategy: "content_editable",
+        timeoutMs: 2_000,
+      }),
+    ).resolves.toEqual({ dispatched: true });
+    expect(await page.locator("#target").textContent()).toBe("replacement text");
+    expect(await page.evaluate(() => (globalThis as unknown as { __inputValues: string[] }).__inputValues)).toContain(
+      "replacement text",
+    );
+    await reference.dispose();
+  });
+
+  it("refuses a contenteditable target replaced by its focus handler before keyboard input", { timeout: 30_000 }, async () => {
+    await resetPage(`
+      <div id="target" role="textbox" aria-label="Notes" contenteditable="true">starting</div>
+      <script>
+        window.__inputValues = [];
+        const contenteditableOriginal = document.querySelector("#target");
+        contenteditableOriginal.addEventListener("input", (event) => window.__inputValues.push("original:" + event.data));
+        contenteditableOriginal.addEventListener("focus", () => {
+          const replacement = contenteditableOriginal.cloneNode(true);
+          replacement.id = "replacement";
+          replacement.addEventListener("input", (event) => window.__inputValues.push("replacement:" + event.data));
+          contenteditableOriginal.replaceWith(replacement);
+          replacement.focus();
+        }, { once: true });
+      </script>
+    `);
+    const reference = await observeTargetReference(page, page.getByRole("textbox", { name: "Notes" }));
+    await expect(
+      enterTextReferencedTarget(reference, "must-not-dispatch", {
+        strategy: "content_editable",
+        timeoutMs: 2_000,
+      }),
+    ).rejects.toBeInstanceOf(PraxisStaleTargetError);
+    expect(await page.evaluate(() => (globalThis as unknown as { __inputValues: string[] }).__inputValues)).toEqual([]);
+    expect(await page.locator("#replacement").textContent()).toBe("starting");
+    await page.locator("#replacement").evaluate((node) => (node as HTMLElement).blur());
+    await reference.dispose();
+  });
+
+  it("does not type into a contenteditable replacement created by the select-all chord", { timeout: 30_000 }, async () => {
+    await resetPage(`
+      <div id="target" role="textbox" aria-label="Notes" contenteditable="true">starting</div>
+      <script>
+        window.__inputValues = [];
+        const chordOriginal = document.querySelector("#target");
+        chordOriginal.addEventListener("input", (event) => window.__inputValues.push("original:" + event.data));
+        chordOriginal.addEventListener("keydown", () => {
+          const replacement = chordOriginal.cloneNode(true);
+          replacement.id = "replacement";
+          replacement.addEventListener("input", (inputEvent) => window.__inputValues.push("replacement:" + inputEvent.data));
+          chordOriginal.replaceWith(replacement);
+          replacement.focus();
+        }, { once: true });
+      </script>
+    `);
+    const reference = await observeTargetReference(page, page.getByRole("textbox", { name: "Notes" }));
+    await expect(
+      enterTextReferencedTarget(reference, "must-not-retarget", {
+        strategy: "content_editable",
+        timeoutMs: 2_000,
+      }),
+    ).rejects.toBeInstanceOf(PraxisTextEntryDispatchError);
+    expect(await page.evaluate(() => (globalThis as unknown as { __inputValues: string[] }).__inputValues)).toEqual([]);
+    expect(await page.locator("#replacement").textContent()).toBe("starting");
+    await page.locator("#replacement").evaluate((node) => (node as HTMLElement).blur());
     await reference.dispose();
   });
 

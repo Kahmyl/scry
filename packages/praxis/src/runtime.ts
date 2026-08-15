@@ -27,7 +27,12 @@ import {
 } from "./observation.js";
 import { PraxisAdapterError, type PraxisDispatchBoundary } from "./transaction.js";
 import { clickPinnedElement } from "./interaction/click.js";
-import { fillReferencedTarget, PraxisFillDispatchError } from "./interaction/fill.js";
+import {
+  enterTextReferencedTarget,
+  fillReferencedTarget,
+  PraxisFillDispatchError,
+  PraxisTextEntryDispatchError,
+} from "./interaction/fill.js";
 import { observeTargetReference, type PraxisTargetReference } from "./references/target-reference.js";
 import { PraxisExecutionEnvelope, type PraxisPreDispatchDeadline } from "./execution-envelope.js";
 import { PraxisStateObserver } from "./state-observer.js";
@@ -210,7 +215,7 @@ export class PraxisGroundingEngine {
     const providerIds = PRAXIS_PROVIDER_CATALOG.map(
       (provider) => `${provider.id}@${provider.version}`,
     );
-    const pinnedReference = strategy === "native_fill"
+    const pinnedReference = shouldPinTextEntry(request, strategy)
       ? await observeTargetReference(this.page, grounded.locator, {
           timeoutMs: request.policy.actionTimeoutMs,
         }).catch(() => undefined)
@@ -267,6 +272,15 @@ function groundingPendingSignature(error: GroundingError) {
     distinctions: diagnostic.candidateDistinctions,
     rejectedConstraints: diagnostic.rejectedConstraints,
   });
+}
+
+function shouldPinTextEntry(request: PraxisRequest, strategy: PraxisStrategy): boolean {
+  if (request.operation.type !== "enter_text") return false;
+  if (strategy === "native_fill") return true;
+  return (
+    ["content_editable", "focus_keyboard"].includes(strategy) &&
+    ["public", "captured_public"].includes(request.operation.input.classification)
+  );
 }
 
 export function selectPraxisStrategy(
@@ -592,6 +606,27 @@ async function dispatchOperation(
             throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
           throw error;
         }
+      } else if (
+        ["public", "captured_public"].includes(request.operation.input.classification) &&
+        (target.strategy === "content_editable" || target.strategy === "focus_keyboard")
+      ) {
+        if (!target.pinnedReference)
+          throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+            provenance: "application",
+            mutationOutcome: "unknown",
+            retry: "unsafe",
+            safeActions: ["do_not_retry"],
+          });
+        try {
+          await enterTextReferencedTarget(target.pinnedReference, value, {
+            strategy: target.strategy,
+            timeoutMs: options.timeout,
+          });
+        } catch (error) {
+          if (error instanceof PraxisTextEntryDispatchError)
+            throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+          throw error;
+        }
       } else {
         await locator.focus(options);
         if (target.strategy === "content_editable")
@@ -657,6 +692,7 @@ async function dispatchOperation(
   }
   return undefined;
 }
+
 
 async function observationSetMatches(
   locators: readonly Locator[],

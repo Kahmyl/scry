@@ -272,6 +272,23 @@ describe("Praxis strategy, dispatch, and verification", () => {
     expect(await page.locator("input").inputValue()).toBe("Ada");
   });
 
+  it("dispatches public contenteditable text through the pinned entity", async () => {
+    await page.setContent(
+      '<div role="textbox" aria-label="Notes" contenteditable="true">starting</div>',
+    );
+    const result = await new PraxisTransactionCoordinator(
+      new PraxisAdapter(page, async () => "replacement text"),
+    ).execute(
+      request(
+        { type: "enter_text", input: { reference: "notes", classification: "public" } },
+        intent("Notes", "textbox"),
+      ),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({ status: "succeeded", mutationOutcome: "applied" });
+    expect(await page.getByRole("textbox", { name: "Notes" }).textContent()).toBe("replacement text");
+  });
+
   it("keeps an unexpected adapter failure after native fill unknown and unsafe", async () => {
     await page.setContent("<input aria-label=Name>");
 
