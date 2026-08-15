@@ -7,6 +7,7 @@ import {
   capturePraxisScreenshot,
   installPraxisInitScript,
   measurePraxisDocument,
+  observeAndMaskPraxisVisualRegions,
   visualRedactionInitScript,
 } from "@scry/praxis";
 import type { SecretRedactor } from "@scry/policy";
@@ -64,8 +65,10 @@ export async function captureRequestedEvidence(
         if (!visualCapture || !captureBinding)
           throw new Error("VEIL_VISUAL_CAPTURE_AUTHORITY_REQUIRED");
         const binding = captureBinding();
-        const { permit } = await visualCapture.issue(page, binding);
-        const fallback = await visualCapture.capture(page, permit, binding, () =>
+        const observation = await observeAndMaskPraxisVisualRegions(page);
+        const { permit } = visualCapture.issue(observation, binding);
+        const validatedObservation = await observeAndMaskPraxisVisualRegions(page);
+        const fallback = await visualCapture.capture(validatedObservation, permit, binding, () =>
           captureScreenshotWithFallback(page, file, true),
         );
         const artifact = await availableArtifact(
@@ -223,8 +226,10 @@ export async function captureFailureScreenshot(
     const file = path.join(root, "screenshots", `${stepId}.failure.png`);
     if (!visualCapture || !captureBinding) return;
     const binding = captureBinding();
-    const { permit } = await visualCapture.issue(page, binding);
-    await visualCapture.capture(page, permit, binding, () =>
+    const observation = await observeAndMaskPraxisVisualRegions(page);
+    const { permit } = visualCapture.issue(observation, binding);
+    const validatedObservation = await observeAndMaskPraxisVisualRegions(page);
+    await visualCapture.capture(validatedObservation, permit, binding, () =>
       capturePraxisScreenshot(page, file, { fullPage: true }),
     );
     result.artifacts.push(

@@ -329,9 +329,6 @@ importers:
       '@scry/contracts':
         specifier: workspace:*
         version: link:../contracts
-      playwright:
-        specifier: 1.62.0
-        version: 1.62.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

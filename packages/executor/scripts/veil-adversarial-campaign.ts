@@ -9,7 +9,7 @@ import {
 import { compileVeilPolicy } from "@scry/veil";
 import { VeilAuthority } from "@scry/veil";
 import { VeilRuntimeSession, type VeilRuntimeCollector } from "@scry/veil";
-import { visualRedactionInitScript } from "@scry/praxis";
+import { observeAndMaskPraxisVisualRegions, visualRedactionInitScript } from "@scry/praxis";
 import { VeilVisualCaptureAuthority } from "@scry/veil";
 
 type Result = {
@@ -208,7 +208,7 @@ async function main() {
             frameId: "main",
             documentEpoch: 1,
           };
-          const { permit } = await visual.issue(page, binding);
+          const { permit } = visual.issue(await observeAndMaskPraxisVisualRegions(page), binding);
           await page.evaluate(() => {
             document.getElementById("scry-veil-capture-mask-style")?.remove();
             document
@@ -216,7 +216,7 @@ async function main() {
               .forEach((element) => element.removeAttribute("data-scry-veil-capture-mask"));
           });
           try {
-            await visual.validate(page, permit, binding);
+            visual.validate(await observeAndMaskPraxisVisualRegions(page), permit, binding);
             await assertMasked(page, "#canvas2d");
           } catch (error) {
             check(error instanceof Error, "mask loss produced an untyped outcome");

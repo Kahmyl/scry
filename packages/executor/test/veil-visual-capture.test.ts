@@ -1,6 +1,6 @@
 import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { visualRedactionInitScript } from "@scry/praxis";
+import { observeAndMaskPraxisVisualRegions, visualRedactionInitScript } from "@scry/praxis";
 import { VeilVisualCaptureAuthority, VeilVisualCaptureError } from "@scry/veil";
 
 const policyDigest = "a".repeat(64);
@@ -29,7 +29,8 @@ describe("VeilVisualCaptureAuthority", () => {
       `<style>#bg{background-image:linear-gradient(#f0f,#f0f)}#pseudo::before{content:'';display:block;width:4px;height:4px;background-image:linear-gradient(#f0f,#f0f)}</style><input value="canary"><div aria-label="medical account">private</div><canvas></canvas><svg><text>secret</text></svg><video></video><iframe src="about:blank"></iframe><img alt="canary" width="4" height="4"><picture></picture><div id="bg"></div><div id="pseudo"></div><div id="closed"></div><script>document.querySelector('#closed').attachShadow({mode:'closed'}).innerHTML='<span>secret</span>'</script>`,
     );
     const authority = new VeilVisualCaptureAuthority(policyDigest);
-    const { permit, regions } = await authority.issue(page, binding);
+    const observation = await observeAndMaskPraxisVisualRegions(page);
+    const { permit, regions } = authority.issue(observation, binding);
 
     expect(new Set(regions.map((region) => region.surface))).toEqual(
       new Set([
@@ -56,7 +57,7 @@ describe("VeilVisualCaptureAuthority", () => {
   it("refuses stale geometry and changed documents", async () => {
     await page.setContent(`<input id="secret" value="canary" style="width:100px">`);
     const authority = new VeilVisualCaptureAuthority(policyDigest);
-    const { permit } = await authority.issue(page, binding);
+    const { permit } = authority.issue(await observeAndMaskPraxisVisualRegions(page), binding);
     await page.locator("#secret").evaluate((element) => {
       element.setAttribute("style", "width:200px");
       const dynamic = document.createElement("div");
@@ -68,31 +69,34 @@ describe("VeilVisualCaptureAuthority", () => {
     expect(
       await page.locator("#dynamic-secret").evaluate((element) => getComputedStyle(element).filter),
     ).not.toBe("none");
-    await expect(authority.validate(page, permit, binding)).rejects.toMatchObject({
-      code: "VEIL_CAPTURE_DOCUMENT_CHANGED",
-    });
+    const changed = await observeAndMaskPraxisVisualRegions(page);
+    expect(() => authority.validate(changed, permit, binding)).toThrowError(
+      expect.objectContaining({ code: "VEIL_CAPTURE_DOCUMENT_CHANGED" }),
+    );
   });
 
   it("refuses cross-context, stale-epoch, expired, forged, and replayed permits", async () => {
     await page.setContent(`<textarea>canary</textarea>`);
     let now = 1_000;
     const authority = new VeilVisualCaptureAuthority(policyDigest, () => now, 100);
-    const first = await authority.issue(page, binding);
-    await expect(
-      authority.validate(page, first.permit, { ...binding, documentEpoch: 5 }),
-    ).rejects.toMatchObject({ code: "VEIL_CAPTURE_CONTEXT_MISMATCH" });
-    await expect(
-      authority.validate(page, { ...first.permit, maskDigest: "b".repeat(64) }, binding),
-    ).rejects.toMatchObject({ code: "VEIL_CAPTURE_PERMIT_INVALID" });
+    const observation = await observeAndMaskPraxisVisualRegions(page);
+    const first = authority.issue(observation, binding);
+    expect(() =>
+      authority.validate(observation, first.permit, { ...binding, documentEpoch: 5 }),
+    ).toThrowError(expect.objectContaining({ code: "VEIL_CAPTURE_CONTEXT_MISMATCH" }));
+    expect(() =>
+      authority.validate(observation, { ...first.permit, maskDigest: "b".repeat(64) }, binding),
+    ).toThrowError(expect.objectContaining({ code: "VEIL_CAPTURE_PERMIT_INVALID" }));
     now = 1_101;
-    await expect(authority.validate(page, first.permit, binding)).rejects.toMatchObject({
-      code: "VEIL_CAPTURE_PERMIT_EXPIRED",
-    });
+    expect(() => authority.validate(observation, first.permit, binding)).toThrowError(
+      expect.objectContaining({ code: "VEIL_CAPTURE_PERMIT_EXPIRED" }),
+    );
 
     now = 2_000;
-    const second = await authority.issue(page, binding);
-    await authority.capture(page, second.permit, binding, async () => "captured");
-    await expect(authority.validate(page, second.permit, binding)).rejects.toBeInstanceOf(
+    const secondObservation = await observeAndMaskPraxisVisualRegions(page);
+    const second = authority.issue(secondObservation, binding);
+    await authority.capture(secondObservation, second.permit, binding, async () => "captured");
+    expect(() => authority.validate(secondObservation, second.permit, binding)).toThrow(
       VeilVisualCaptureError,
     );
   });

@@ -11,9 +11,7 @@ import {
   type VeilVideoSegmentFinalization,
   type VeilVideoSegmentPermit,
 } from "@scry/contracts";
-import type { Page } from "playwright";
-
-import { VeilVisualCaptureAuthority } from "./visual-capture.js";
+import { VeilVisualCaptureAuthority, type VeilVisualMaskObservation } from "./visual-capture.js";
 
 export type VeilVideoSegmentBinding = Pick<
   VeilContext,
@@ -84,13 +82,13 @@ export class VeilVideoSegmentAuthority {
   }
 
   async checkpoint(
-    page: Page,
+    observation: VeilVisualMaskObservation,
     rawPermit: VeilVideoSegmentPermit,
     binding: VeilVideoSegmentBinding,
   ): Promise<VeilVideoMaskCheckpoint> {
     const state = this.requireActive(rawPermit, binding);
-    const { permit: capturePermit } = await this.visual.issue(page, binding);
-    await this.visual.capture(page, capturePermit, binding, async () => undefined);
+    const { permit: capturePermit } = await this.visual.issue(observation, binding);
+    await this.visual.capture(observation, capturePermit, binding, async () => undefined);
     const capture = this.visual.admissionBinding(capturePermit);
     const previous = state.checkpoints.at(-1)?.checkpointDigest ?? null;
     const unsigned = {

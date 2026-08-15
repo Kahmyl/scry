@@ -8,11 +8,19 @@ import {
   type RecordingTimelineEntry,
 } from "@scry/contracts";
 import type { Page } from "playwright";
-import { startPraxisScreencast, stopPraxisScreencast } from "@scry/praxis";
+import {
+  observeAndMaskPraxisVisualRegions,
+  startPraxisScreencast,
+  stopPraxisScreencast,
+} from "@scry/praxis";
 import type { VeilVideoSegmentFinalization, VeilVideoSegmentPermit } from "@scry/contracts";
 
 import { availableArtifact } from "./artifacts.js";
-import type { VeilVideoSegmentAuthority, VeilVideoSegmentBinding } from "@scry/veil";
+import type {
+  VeilVisualMaskObservation,
+  VeilVideoSegmentAuthority,
+  VeilVideoSegmentBinding,
+} from "@scry/veil";
 
 type SegmentReason = "run_started" | "safe_resume" | "page_switch";
 type StopReason =
@@ -57,6 +65,7 @@ export type RecordingCoordinatorOptions = {
   createId?: () => string;
   videoAuthority?: VeilVideoSegmentAuthority;
   videoBinding?: () => VeilVideoSegmentBinding;
+  observeVisualMask?: (page: Page) => Promise<VeilVisualMaskObservation>;
   transitionTimeoutMs?: number;
   abortCapture?: () => Promise<void>;
 };
@@ -271,11 +280,9 @@ export class RecordingCoordinator {
       if (segment.veilFailure) throw segment.veilFailure;
       let videoFinalization: VeilVideoSegmentFinalization | undefined;
       if (segment.veilPermit && segment.veilBinding && this.options.videoAuthority) {
-        await this.options.videoAuthority
-          .checkpoint(segment.page, segment.veilPermit, segment.veilBinding)
-          .catch(() => {
-            throw new Error("VEIL_VIDEO_FINALIZATION_FAILED");
-          });
+        await this.checkpointVideoVeil(segment).catch(() => {
+          throw new Error("VEIL_VIDEO_FINALIZATION_FAILED");
+        });
         videoFinalization = this.options.videoAuthority.finalize(
           segment.veilPermit,
           segment.veilBinding,
@@ -373,11 +380,10 @@ export class RecordingCoordinator {
     const permit = this.options.videoAuthority.issue(segment.id, binding);
     segment.veilBinding = binding;
     segment.veilPermit = permit;
-    await this.options.videoAuthority.checkpoint(segment.page, permit, binding);
+    await this.checkpointVideoVeil(segment);
     segment.veilPoll = setInterval(() => {
       if (segment.veilCheckpoint || segment.veilFailure) return;
-      segment.veilCheckpoint = this.options
-        .videoAuthority!.checkpoint(segment.page, permit, binding)
+      segment.veilCheckpoint = this.checkpointVideoVeil(segment)
         .then(() => undefined)
         .catch((error) => {
           segment.veilFailure = error;
@@ -387,6 +393,19 @@ export class RecordingCoordinator {
           segment.veilCheckpoint = undefined;
         });
     }, 100);
+  }
+
+  private async checkpointVideoVeil(segment: ActiveSegment) {
+    if (!this.options.videoAuthority || !segment.veilPermit || !segment.veilBinding)
+      throw new Error("VEIL_VIDEO_AUTHORITY_REQUIRED");
+    const observation = await (this.options.observeVisualMask ?? observeAndMaskPraxisVisualRegions)(
+      segment.page,
+    );
+    return this.options.videoAuthority.checkpoint(
+      observation,
+      segment.veilPermit,
+      segment.veilBinding,
+    );
   }
 
   private async closeGap() {

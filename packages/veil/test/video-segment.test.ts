@@ -9,12 +9,13 @@ const binding = {
   frameId: "main",
   documentEpoch: 7,
 } as const;
+const observation = { documentIdentity: "document-1", revision: 1, regions: [] } as const;
 
 function visual() {
   let index = 0;
   return {
     issue: vi.fn(async () => ({ permit: { token: `capture-${++index}` }, regions: [] })),
-    capture: vi.fn(async (_page, _permit, _binding, operation: () => Promise<unknown>) =>
+    capture: vi.fn(async (_observation, _permit, _binding, operation: () => Promise<unknown>) =>
       operation(),
     ),
     admissionBinding: vi.fn((permit: { token: string }) => ({
@@ -30,8 +31,8 @@ describe("VeilVideoSegmentAuthority", () => {
     const masks = visual();
     const authority = new VeilVideoSegmentAuthority(policyDigest, masks as never);
     const permit = authority.issue("segment-1", binding);
-    const first = await authority.checkpoint({} as never, permit, binding);
-    const second = await authority.checkpoint({} as never, permit, binding);
+    const first = await authority.checkpoint(observation, permit, binding);
+    const second = await authority.checkpoint(observation, permit, binding);
     expect(first).toMatchObject({ sequence: 1, previousCheckpointDigest: null, documentEpoch: 7 });
     expect(second).toMatchObject({ sequence: 2, previousCheckpointDigest: first.checkpointDigest });
     expect(second.checkpointDigest).not.toBe(first.checkpointDigest);
@@ -53,7 +54,7 @@ describe("VeilVideoSegmentAuthority", () => {
   it("refuses caller-forged finalizations even when their schema is valid", async () => {
     const authority = new VeilVideoSegmentAuthority(policyDigest, visual() as never);
     const permit = authority.issue("segment-3", binding);
-    await authority.checkpoint({} as never, permit, binding);
+    await authority.checkpoint(observation, permit, binding);
     const finalization = authority.finalize(permit, binding);
     expect(() =>
       authority.consumeFinalization({ ...finalization, checkpointChainDigest: "b".repeat(64) }),
@@ -66,13 +67,13 @@ describe("VeilVideoSegmentAuthority", () => {
     const permit = authority.issue("segment-2", binding);
     expect(() => authority.finalize(permit, binding)).toThrow("without a visual mask checkpoint");
     await expect(
-      authority.checkpoint({} as never, { ...permit, policyDigest: "b".repeat(64) }, binding),
+      authority.checkpoint(observation, { ...permit, policyDigest: "b".repeat(64) }, binding),
     ).rejects.toMatchObject({ code: "VEIL_VIDEO_PERMIT_INVALID" });
     await expect(
-      authority.checkpoint({} as never, permit, { ...binding, pageId: "other" }),
+      authority.checkpoint(observation, permit, { ...binding, pageId: "other" }),
     ).rejects.toMatchObject({ code: "VEIL_VIDEO_CONTEXT_MISMATCH" });
     await expect(
-      authority.checkpoint({} as never, permit, { ...binding, documentEpoch: 8 }),
+      authority.checkpoint(observation, permit, { ...binding, documentEpoch: 8 }),
     ).rejects.toMatchObject({ code: "VEIL_VIDEO_CONTEXT_MISMATCH" });
   });
 
@@ -86,13 +87,13 @@ describe("VeilVideoSegmentAuthority", () => {
     );
     const expired = authority.issue("expired", binding);
     now = 2_000;
-    await expect(authority.checkpoint({} as never, expired, binding)).rejects.toMatchObject({
+    await expect(authority.checkpoint(observation, expired, binding)).rejects.toMatchObject({
       code: "VEIL_VIDEO_PERMIT_EXPIRED",
     });
     now = 3_000;
     const revoked = authority.issue("revoked", binding);
     expect(authority.revoke(revoked)).toBe(true);
-    await expect(authority.checkpoint({} as never, revoked, binding)).rejects.toMatchObject({
+    await expect(authority.checkpoint(observation, revoked, binding)).rejects.toMatchObject({
       code: "VEIL_VIDEO_PERMIT_INVALID",
     });
   });

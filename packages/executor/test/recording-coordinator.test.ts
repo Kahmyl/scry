@@ -93,6 +93,11 @@ async function fixture(
       frameId: "main",
       documentEpoch: 1,
     }),
+    observeVisualMask: async () => ({
+      documentIdentity: "recording-test-document",
+      revision: 1,
+      regions: [],
+    }),
     ...(options.transitionTimeoutMs !== undefined
       ? { transitionTimeoutMs: options.transitionTimeoutMs }
       : {}),

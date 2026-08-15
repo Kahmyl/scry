@@ -33,6 +33,16 @@ for (const file of sourceFiles) {
         failures.push(`forbidden dependency: ${path} -> ${specifier}`);
     }
   }
+  if (path.startsWith("packages/veil/src/")) {
+    if (imports.includes("playwright"))
+      failures.push(`Veil must not depend on Playwright: ${path}`);
+    if (
+      /\b(?:Page|Browser|BrowserContext|ElementHandle)\b|\bdocument\.|\bquerySelector(?:All)?\s*\(|\bgetBoundingClientRect\s*\(|\.screenshot\s*\(|\.screencast\b/.test(
+        source,
+      )
+    )
+      failures.push(`Veil contains browser, DOM, geometry, or capture mechanics: ${path}`);
+  }
 }
 
 const composition = [...(inventory.applicationComposition ?? [])].sort();

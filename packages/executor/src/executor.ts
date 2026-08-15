@@ -18,12 +18,7 @@ import {
   SecretRedactor,
 } from "@scry/policy";
 import { compileDefaultVeilPolicy, veilPolicyDigest, VeilAuthority } from "@scry/veil";
-import {
-  type Browser,
-  type BrowserContext,
-  type CDPSession,
-  type Page,
-} from "playwright";
+import { type Browser, type BrowserContext, type CDPSession, type Page } from "playwright";
 
 import {
   availableArtifact,
@@ -36,6 +31,7 @@ import {
   capturePraxisStorageState,
   closePraxisBrowser,
   closePraxisContext,
+  observeAndMaskPraxisVisualRegions,
   observeSemanticPageContext,
   openPraxisBrowserSession,
   visualRedactionInitScript,
@@ -479,8 +475,9 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               redactor,
               store: options.protectedTransactionStore,
               capsuleFactory: new PlaywrightProtectedCapsuleFactory(
-                options.openBrowser ?? ((contextOptions) =>
-                  openCompatibilityBrowser(options.browserChannel, contextOptions)),
+                options.openBrowser ??
+                  ((contextOptions) =>
+                    openCompatibilityBrowser(options.browserChannel, contextOptions)),
               ),
               allowedOrigins: options.plan.allowedOrigins,
               persistSecret: options.atomicSecretCapture,
@@ -603,10 +600,18 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               },
               emit,
               signal: timeoutController.signal,
-              ...(options.dispatchDisposition ? { dispatchDisposition: options.dispatchDisposition } : {}),
-              ...(options.onReadyToDispatch ? { onReadyToDispatch: options.onReadyToDispatch } : {}),
-              ...(options.onMutationDispatch ? { onMutationDispatch: options.onMutationDispatch } : {}),
-              ...(options.markCredentialCompromised ? { markCredentialCompromised: options.markCredentialCompromised } : {}),
+              ...(options.dispatchDisposition
+                ? { dispatchDisposition: options.dispatchDisposition }
+                : {}),
+              ...(options.onReadyToDispatch
+                ? { onReadyToDispatch: options.onReadyToDispatch }
+                : {}),
+              ...(options.onMutationDispatch
+                ? { onMutationDispatch: options.onMutationDispatch }
+                : {}),
+              ...(options.markCredentialCompromised
+                ? { markCredentialCompromised: options.markCredentialCompromised }
+                : {}),
             }).execute(step.action);
           browser = transaction.safeSession.browser;
           context = transaction.safeSession.context;
@@ -749,9 +754,11 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             "screenshots",
             `${step.action.name}.png`,
           );
-          const { permit } = await veilVisualCapture.issue(capturePage, veilCaptureBinding());
+          const observation = await observeAndMaskPraxisVisualRegions(capturePage);
+          const { permit } = veilVisualCapture.issue(observation, veilCaptureBinding());
+          const validatedObservation = await observeAndMaskPraxisVisualRegions(capturePage);
           const fallback = await veilVisualCapture.capture(
-            capturePage,
+            validatedObservation,
             permit,
             veilCaptureBinding(),
             () => captureScreenshotWithFallback(capturePage, screenshotPath, fullPage),
@@ -963,7 +970,9 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         const admittedHosts = new Set(
           options.policy.allowedOrigins.map((origin) => new URL(origin).hostname),
         );
-        storageState.origins = storageState.origins.filter((entry) => admittedOrigins.has(entry.origin));
+        storageState.origins = storageState.origins.filter((entry) =>
+          admittedOrigins.has(entry.origin),
+        );
         storageState.cookies = storageState.cookies.filter((cookie) => {
           const cookieDomain = cookie.domain.replace(/^\./, "");
           return [...admittedHosts].some(
@@ -995,9 +1004,9 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       }
     }
     if (context && state.terminalState === "passed" && options.captureBrowserState) {
-      await Promise.resolve(options.captureBrowserState(await capturePraxisStorageState(context))).catch(
-        () => undefined,
-      );
+      await Promise.resolve(
+        options.captureBrowserState(await capturePraxisStorageState(context)),
+      ).catch(() => undefined);
     }
     if (context && !borrowsSafeSession) {
       await boundedClose(closePraxisContext(context)).catch(() => undefined);
