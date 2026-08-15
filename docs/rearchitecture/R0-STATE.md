@@ -210,10 +210,49 @@ Praxis/Executor/API/repository typechecks: GREEN
 subsystem boundaries: GREEN
 ```
 
+### Protected fill cutover — COMPLETE
+
+Checkpoint:
+
+```text
+1bb3696 refactor: route protected fill through praxis
+```
+
+Established:
+
+```text
+protected input/textarea/contenteditable/focus-keyboard entry
+→ one Praxis-owned pinned text-entry path
+→ no Executor native-control dispatch
+→ no Locator-based protected text-entry fallback
+→ Veil remains the protected-value/privacy/safe-boundary authority
+→ pre-dispatch target failure does not enter privacy or dispatch
+→ successful protected dispatch enters and verifies the Veil boundary
+→ protected values are not serialized in Praxis or Executor results
+```
+
+Qualification at closure:
+
+```text
+Praxis targeted runtime/reference tests: 43/43 GREEN
+Executor protected action/coordinator tests: 37/37 GREEN
+isolated persistence-failure system journey: GREEN with one dispatch and no redispatch
+Praxis/Executor/repository typechecks: GREEN
+subsystem, execution-kernel, and direct-browser boundaries: GREEN
+```
+
+The full four-worker Executor browser suite remains resource-sensitive: 413/425
+passed in the closure run, while 11 protected-acquisition/journey assertions
+timed out or inherited shared fixture state after a 90-second timeout. The changed
+persistence-failure journey passes in isolation, and the deterministic changed-path
+suites above are green. Treat these broad-suite timing failures as an explicit
+verification debt; do not reinterpret them as proof of a protected-fill redispatch.
+
 ### Current active slice
 
-Continue R0.3 by cutting protected fill over to the same Praxis-owned pinned
-text-entry mechanics while keeping Veil as the narrow trust/privacy authority.
+Continue R0.3.5 by inventorying actual remaining interaction primitives and
+migrating one small used family at a time. Start with read-only call-site tracing;
+do not invent unused capability.
 
 Before doing anything:
 
