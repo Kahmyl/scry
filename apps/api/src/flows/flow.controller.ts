@@ -14,14 +14,12 @@ import {
 
 import { CurrentPrincipal, Public, type Principal } from "../auth/index.js";
 import { FlowService } from "./flow.service.js";
-import { RunQueueService } from "../runtime/index.js";
 import { ZodValidationPipe } from "../common/validation.pipe.js";
 
 @Controller("api")
 export class FlowController {
   constructor(
     @Inject(FlowService) private readonly core: FlowService,
-    @Inject(RunQueueService) private readonly queue: RunQueueService,
   ) {}
 
   @Get("capabilities")
@@ -97,7 +95,6 @@ export class FlowController {
     @Body(new ZodValidationPipe(createFlowRunSchema)) input: CreateFlowRunInput,
   ) {
     const run = await this.core.createRun(principal, projectId, input);
-    await this.queue.dispatchPending();
     return run;
   }
 }

@@ -413,4 +413,5 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir structured-synthetic-protected-input.sql
 \ir segmented-flow-successor-checkpoints.sql
 \ir adaptive-certification-provenance.sql
+\ir run-praxis-session-ledger.sql
 \ir adaptive-operation-reconciliation.sql

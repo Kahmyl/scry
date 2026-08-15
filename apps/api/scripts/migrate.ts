@@ -110,6 +110,7 @@ const structuredSyntheticProtectedInputPath = fileURLToPath(new URL("../migratio
 const segmentedFlowSuccessorCheckpointsPath = fileURLToPath(new URL("../migrations/segmented-flow-successor-checkpoints.sql", import.meta.url));
 const adaptiveCertificationProvenancePath = fileURLToPath(new URL("../migrations/adaptive-certification-provenance.sql", import.meta.url));
 const adaptiveOperationReconciliationPath = fileURLToPath(new URL("../migrations/adaptive-operation-reconciliation.sql", import.meta.url));
+const runPraxisSessionLedgerPath = fileURLToPath(new URL("../migrations/run-praxis-session-ledger.sql", import.meta.url));
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -154,6 +155,7 @@ const structuredSyntheticProtectedInput = await readFile(structuredSyntheticProt
 const segmentedFlowSuccessorCheckpoints = await readFile(segmentedFlowSuccessorCheckpointsPath, "utf8");
 const adaptiveCertificationProvenance = await readFile(adaptiveCertificationProvenancePath, "utf8");
 const adaptiveOperationReconciliation = await readFile(adaptiveOperationReconciliationPath, "utf8");
+const runPraxisSessionLedger = await readFile(runPraxisSessionLedgerPath, "utf8");
 const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
 
 const expandFoundation = (source: string) =>
@@ -189,6 +191,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "segmented-flow-successor-checkpoints.sql": segmentedFlowSuccessorCheckpoints,
   "adaptive-certification-provenance.sql": adaptiveCertificationProvenance,
   "adaptive-operation-reconciliation.sql": adaptiveOperationReconciliation,
+  "run-praxis-session-ledger.sql": runPraxisSessionLedger,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) =>

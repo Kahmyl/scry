@@ -45,6 +45,7 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "segmented-flow-successor-checkpoints.sql",
   "adaptive-certification-provenance.sql",
   "adaptive-operation-reconciliation.sql",
+  "run-praxis-session-ledger.sql",
 ] as const;
 
 export type OptionalBaselineMigration = (typeof OPTIONAL_BASELINE_MIGRATIONS)[number];

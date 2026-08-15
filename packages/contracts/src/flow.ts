@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { flowRevisionContentSchema, nameSchema, uuidSchema } from "./api.js";
 import { currentPlanSchema } from "./current.js";
+import { missionAuthoringIntentSchema } from "./authoring.js";
 import { flowPurposeSchema, flowVisibilitySchema, objectiveContextSchema } from "./mission.js";
 
 export const idempotencyKeySchema = z.string().trim().min(8).max(200);
@@ -46,6 +47,7 @@ export const createFlowRunSchema = objectiveContextSchema
     environmentId: uuidSchema,
     flowRevisionId: uuidSchema,
     executionModel: z.literal("agent_directed_v1").default("agent_directed_v1"),
+    praxisSessionId: uuidSchema,
     protectedAuthorizations: z
       .array(
         z
@@ -82,3 +84,42 @@ export type CreateFlowInput = z.infer<typeof createFlowSchema>;
 export type CreateFlowRevisionInput = z.infer<typeof createFlowRevisionSchema>;
 export type ValidatePlanInput = z.infer<typeof validatePlanSchema>;
 export type CreateFlowRunInput = z.infer<typeof createFlowRunSchema>;
+
+export const dispatchRunOperationSchema = z
+  .object({
+    praxisSessionId: uuidSchema,
+    intent: missionAuthoringIntentSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const references: Array<string | undefined> = [];
+    const action = value.intent.action;
+    if ("target" in action && action.target) references.push(action.target.reference);
+    if (action.kind === "acquire_protected_outputs") {
+      references.push(action.mutation.target.reference, ...action.outputs.map((output) => output.target.reference));
+      references.push(...(action.syntheticProtectedInputs ?? []).map((input) => input.target.reference));
+    }
+    if (references.some((reference) => !reference))
+      context.addIssue({
+        code: "custom",
+        path: ["intent", "action"],
+        message: "Every target-bearing Run operation requires an exact live Praxis reference",
+      });
+  });
+
+export const attachRunPraxisSessionSchema = z
+  .object({ praxisSessionId: uuidSchema, idempotencyKey: idempotencyKeySchema })
+  .strict();
+
+export const finalizeAgentDirectedRunSchema = z
+  .object({
+    praxisSessionId: uuidSchema,
+    outcome: z.enum(["passed", "failed", "cancelled"]),
+    reason: z.string().trim().min(1).max(2_000),
+    idempotencyKey: idempotencyKeySchema,
+  })
+  .strict();
+
+export type DispatchRunOperationInput = z.infer<typeof dispatchRunOperationSchema>;
+export type AttachRunPraxisSessionInput = z.infer<typeof attachRunPraxisSessionSchema>;
+export type FinalizeAgentDirectedRunInput = z.infer<typeof finalizeAgentDirectedRunSchema>;

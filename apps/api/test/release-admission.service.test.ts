@@ -142,7 +142,7 @@ describe("release admission", () => {
   it("returns HTTP 503 from readiness when work admission is blocked", async () => {
     const core = { readiness: vi.fn(async () => ({ ready: false })) };
     const reply = { status: vi.fn() };
-    const controller = new FlowController(core as never, {} as never);
+    const controller = new FlowController(core as never);
     await expect(controller.readiness(reply as never)).resolves.toEqual({ ready: false });
     expect(reply.status).toHaveBeenCalledWith(503);
   });

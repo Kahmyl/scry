@@ -538,6 +538,14 @@ export class FlowService {
         [input.flowRevisionId, projectId, workspaceId(principal)],
       );
       if (!revision.rowCount) throw new NotFoundException("Flow revision not found");
+      const praxisSession = await query(
+        `SELECT 1 FROM adaptive_sessions
+         WHERE id=$1 AND project_id=$2 AND mission_id=$3 AND objective_id=$4
+           AND environment_id=$5 AND state IN ('created','provisioning','active','suspended')`,
+        [input.praxisSessionId,projectId,input.missionId,input.objectiveId,input.environmentId],
+      );
+      if (!praxisSession.rowCount)
+        throw new ConflictException({ code: "RUN_PRAXIS_SESSION_SCOPE_MISMATCH" });
       const protectedOperations = revision.rows[0]!.plan.steps.flatMap((step) =>
         step.action.type === "protectedTransaction" ? [step.action.operationId] : [],
       );
@@ -594,7 +602,7 @@ export class FlowService {
       const run = await query<{ id: string; state: string }>(
         `INSERT INTO runs(project_id,mission_id,objective_id,agent_session_id,environment_id,flow_revision_id,compiled_contract_id,compiled_contract_digest,state,phase,
                           plan_snapshot, environment_snapshot, policy_snapshot,veil_policy_snapshot, execution_snapshot, idempotency_key)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued','queued',$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'running','executing_action',$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14)
          RETURNING id, state`,
         [
           projectId,
@@ -618,10 +626,16 @@ export class FlowService {
             viewport: input.viewport,
             seed: input.seed,
             executionModel: input.executionModel,
+            praxisSessionId: input.praxisSessionId,
             protectedAuthorizations: Object.fromEntries(authorizationByOperation),
           }),
           input.idempotencyKey,
         ],
+      );
+      await query(
+        `INSERT INTO run_praxis_sessions(run_id,praxis_session_id,epoch,idempotency_key)
+         VALUES($1,$2,1,$3)`,
+        [run.rows[0]!.id,input.praxisSessionId,input.idempotencyKey],
       );
       await query(
         `INSERT INTO mission_run_links(run_id,mission_id,objective_id,role,reason,classified_by_agent_session_id) VALUES($1,$2,$3,$4,'Run created',$5)`,

@@ -1142,7 +1142,7 @@ git diff --check: GREEN
 Exact next action: Slices 7–8 exact agent-selected target and optional factual
 effect assertion cutover.
 
-### R0.5 execution blocker at Slices 7/9/10 — LIVE SESSION OWNERSHIP UNRESOLVED
+### R0.5 live Praxis session ownership — RESOLVED / IMPLEMENTED
 
 The exact-reference invariant exposes a runtime ownership decision not resolved
 by the frozen R0.5 contracts. `context-control-*` references are backed by a
@@ -1154,26 +1154,41 @@ submit its exact reference to that Run, and have Praxis execute the same browser
 entity. Serializing semantic hints into the Run would reintroduce target-choice
 authority; serializing a locator would violate exact-entity pinning.
 
-This blocks a truthful implementation of Slices 7, 9, and 10 and therefore
-Slices 8, 11, and 12. One product/runtime ownership contract must be selected:
+The selected contract is:
 
 ```text
-A. Bind each V2 Run ledger to an existing agent-owned live Praxis browser
+Bind each V2 Run ledger to an existing agent-owned live Praxis browser
    session. Dispatch accepts runId + browserSessionId + exact context-control
    reference and executes one bounded operation in that session. The Run owns
    factual ledger/finalization; the session owns Page lifetime.
 
-B. Make the V2 Run itself the long-lived Praxis browser session and expose
-   observe/dispatch commands against it. The external agent observes and then
-   dispatches exact references returned by that same Run session.
 ```
 
-Recommendation: **A** reuses the active adaptive authoring browser/session
-lifecycle and minimizes browser-lifecycle duplication. It requires an explicit
-decision that an adaptive/live Praxis session may be promoted or attached to a
-durable Run ledger. Without that decision, proceeding would either preserve
-semantic grounding authority or invent a second browser lifecycle, both of
-which contradict the frozen architecture.
+Implementation:
+
+- `run_praxis_sessions` records append-only session epochs; attaching a new
+  session detaches the prior epoch without translating any reference;
+- `run_operation_links` links factual Run ledger entries to the exact durable
+  adaptive operation executed by the associated live Praxis session;
+- V2 Run creation requires a same Project/Mission/Objective/Environment live
+  session and never queues or creates a worker browser;
+- each dispatch carries `praxisSessionId`, must equal the Run's active binding,
+  and every target-bearing action requires `context-control-*`;
+- dead/mismatched sessions refuse before Praxis; cross-session references then
+  fail in the owning session's reference registry without semantic fallback;
+- dispatch executes exactly one intent; expected-effect input is replaced with
+  `none` and cannot affect functional or mutation truth;
+- Run finalization is an explicit external command.
+
+Focused qualification:
+
+```text
+Run live-session contract tests: 2/2 GREEN
+Run service/admission tests: 8/8 GREEN
+Praxis reference/page/runtime browser tests: 72/72 GREEN
+Contracts + API typecheck: GREEN
+subsystem and direct-browser boundaries: GREEN
+```
 
 Latest green production checkpoints:
 
