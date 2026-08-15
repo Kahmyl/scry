@@ -180,7 +180,16 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
         );
         if (acquired?.result) return { ...acquired, diagnostics };
       } catch (error) {
-        diagnostic.lastFailureCode = error instanceof GroundingError ? error.code : safeCode(error);
+        const failureCode = error instanceof GroundingError ? error.code : safeCode(error);
+        // A late retry timing out does not invalidate a factual failure already
+        // observed from this method. Preserve the stronger evidence instead of
+        // replacing it with the retry's scheduling outcome.
+        if (
+          !(error instanceof AcquisitionAttemptTimeoutError) ||
+          diagnostic.lastFailureCode === undefined
+        ) {
+          diagnostic.lastFailureCode = failureCode;
+        }
         if (error instanceof AcquisitionAttemptTimeoutError) retryPriorityMethod = true;
         if (
           method === "protected_network_value" &&

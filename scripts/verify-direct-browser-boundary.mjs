@@ -45,7 +45,8 @@ for (const file of filesToScan()) {
       if (source.includes(flag)) violations.push(`${relative}: removed execution flag ${flag}`);
     }
   }
-  const productionSource = !relative.includes("/test/") && !relative.includes("/scripts/");
+  const productionSource = !relative.includes("/test/") && !relative.includes("/scripts/") &&
+    !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(relative);
   if (productionSource && /\b(?:chromium|firefox|webkit)\.launch\s*\(/.test(source)) {
     const allowed = new Set([
       "packages/praxis/src/lifecycle/browser-session.ts",
@@ -58,6 +59,13 @@ for (const file of filesToScan()) {
     /\.(?:newContext|newPage|newCDPSession|goto|reload|waitForURL|waitForLoadState)\s*\(|\b(?:browser|context|page|candidate|popup|previousPage|uncertainContext)\.close\s*\(/.test(source)
   ) {
     violations.push(`${relative}: browser lifecycle mechanics are outside Praxis`);
+  }
+  if (
+    productionSource &&
+    !relative.startsWith("packages/praxis/src/") &&
+    /\.(?:click|dblclick|fill|type|selectOption|setChecked|check|uncheck|press|hover|dragTo|setInputFiles|waitForEvent)\s*\(|\.(?:keyboard|mouse)\.(?:press|type|down|up|click|dblclick|move|wheel)\s*\(/.test(source)
+  ) {
+    violations.push(`${relative}: browser action mechanics are outside Praxis`);
   }
   if (relative.startsWith("apps/api/src/") && !relative.includes("/native-browser-driver/")) {
     if (/\.(?:getByRole|getByLabel|getByPlaceholder|getByText|getByTestId|locator)\s*\(/.test(source)) {

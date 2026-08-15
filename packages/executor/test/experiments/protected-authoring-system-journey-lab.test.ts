@@ -95,28 +95,18 @@ describe("protected authoring whole-system architecture laboratory", () => {
     30_000,
   );
 
-  it("compares candidate designs on the complete journey rather than compilation", async () => {
-    const results: Array<Awaited<ReturnType<typeof runWholeJourney>>> = [];
-    for (const prototype of ["authored_strict", "role_neutral", "bounded_general", "bounded_with_envelope"] as const) {
-      for (const shape of ["vitract_dialog", "static_panel", "delayed_wizard", "network_only"] as const) {
-        try {
-          results.push(await runWholeJourney(shape, prototype));
-        } catch (error) {
-          throw new Error(`SYSTEM_JOURNEY_${prototype}_${shape}_${safeErrorCode(error)}`);
-        }
-      }
-    }
-
-    const completed = (prototype: Prototype) =>
-      results.filter((result) => result.prototype === prototype && result.status === "completed").length;
-    expect(completed("authored_strict")).toBe(4);
-    expect(completed("role_neutral")).toBe(4);
-    expect(completed("bounded_general")).toBe(4);
-    expect(completed("bounded_with_envelope")).toBe(4);
-    expect(results.every((result) => result.dispatches <= 1)).toBe(true);
-    expect(JSON.stringify(results)).not.toContain(protectedCanary);
-    expect(JSON.stringify(results)).not.toMatch(forbidden);
-  }, 90_000);
+  it.each(
+    (["authored_strict", "role_neutral", "bounded_general", "bounded_with_envelope"] as const)
+      .flatMap((prototype) =>
+        (["vitract_dialog", "static_panel", "delayed_wizard", "network_only"] as const)
+          .map((shape) => [prototype, shape] as const)),
+  )("proves candidate %s on the complete %s journey", async (prototype, shape) => {
+    const result = await runWholeJourney(shape, prototype);
+    expect(result.status).toBe("completed");
+    expect(result.dispatches).toBeLessThanOrEqual(1);
+    expect(JSON.stringify(result)).not.toContain(protectedCanary);
+    expect(JSON.stringify(result)).not.toMatch(forbidden);
+  }, 30_000);
 
   it.each(["missing_output", "persistence_failure", "post_dispatch_timeout"] as const)(
     "reconciles %s without redispatch or orphaned credentials",

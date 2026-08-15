@@ -282,6 +282,7 @@ function groundingPendingSignature(error: GroundingError) {
 }
 
 function shouldPinTargetReference(request: PraxisRequest, strategy: PraxisStrategy): boolean {
+  if (request.operation.type === "activate") return true;
   if (request.operation.type === "enter_text")
     return ["native_fill", "content_editable", "focus_keyboard"].includes(strategy);
   if (request.operation.type === "select_option") return strategy === "native_select";
@@ -400,10 +401,8 @@ export class PraxisDispatcher {
         if (request.operation.type === "activate") {
           await assertActivationReady(locator, this.timeout(request.policy.actionTimeoutMs));
           await target.revalidate();
-          activationTarget =
-            (await locator.elementHandle({
-              timeout: this.timeout(request.policy.actionTimeoutMs),
-            })) ?? undefined;
+          await target.pinnedReference?.assertCurrent();
+          activationTarget = target.pinnedReference?.element();
           if (!activationTarget)
             throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
               provenance: "application",
