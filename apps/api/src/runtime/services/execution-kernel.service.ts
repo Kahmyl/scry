@@ -202,14 +202,6 @@ export class ExecutionCapabilityFactory {
           complete: (checkpointId, outcome, reasonCode) =>
             this.executions.completeCheckpoint(input.runId, checkpointId, outcome, reasonCode),
         },
-        calibrationVerifier: (calibration) =>
-          this.executions.verifyCalibrationAttestation(
-            input.runId,
-            calibration.attestationId,
-            calibration.operationId,
-            calibration.operationDigest,
-            calibration.structureFingerprint,
-          ),
         recordContextProvenance: (provenance) =>
           this.executions.recordContextProvenance(input.runId, provenance),
         recoverAcquisition: async () => ({ action: "retry" as const }),
@@ -489,9 +481,6 @@ function deriveCapabilityStates(
       options.recordContextProvenance &&
       options.recoverAcquisition,
   );
-  const calibration = Boolean(
-    options.calibrationVerifier || (mode === "certify" && options.calibrationRehearsal),
-  );
   return {
     browser: browser ? "available" : "unavailable",
     praxis: "available",
@@ -501,7 +490,7 @@ function deriveCapabilityStates(
     protected_input: protectedInput ? "available" : "unavailable",
     protected_operations: protectedOperations ? "available" : "unavailable",
     checkpoint: options.checkpointStore ? "available" : "unavailable",
-    calibration: calibration ? "available" : "unavailable",
+    calibration: mode === "certify" && options.calibrationRehearsal ? "available" : "unavailable",
   };
 }
 

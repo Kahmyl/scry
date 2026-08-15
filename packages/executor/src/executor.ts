@@ -57,12 +57,7 @@ import {
 } from "./protected-transaction-coordinator.js";
 import { TraceCoordinator } from "./trace-coordinator.js";
 import { sanitizeTraceArchive } from "./trace-sanitizer.js";
-import {
-  CalibrationRequiredError,
-  capturePageStructure,
-  protectedTransactionDigest,
-  structureFingerprint,
-} from "./calibration.js";
+import { capturePageStructure } from "./calibration.js";
 import { CheckpointCoordinator } from "./checkpoint-coordinator.js";
 import {
   executeReadiness,
@@ -507,52 +502,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
                   rejectPolicy,
                 );
                 attachCapabilityGuards(capsule.context, capsule.page, options, rejectPolicy);
-              },
-              verifyCalibration: async (capsule, action) => {
-                if (!action.calibrationAttestationId) return;
-                if (!options.calibrationVerifier)
-                  throw new InfrastructureDependencyError("Calibration verifier is unavailable");
-                try {
-                  const fingerprint = structureFingerprint(
-                    await capturePageStructure(capsule.page, action),
-                  );
-                  const operationDigest = protectedTransactionDigest(
-                    action,
-                    options.plan.allowedOrigins,
-                  );
-                  const verified = await options.calibrationVerifier({
-                    attestationId: action.calibrationAttestationId,
-                    operationId: action.operationId,
-                    operationDigest,
-                    structureFingerprint: fingerprint,
-                  });
-                  await emit("calibration.boundary_reached", {
-                    operationId: action.operationId,
-                    attestationId: action.calibrationAttestationId,
-                    operationDigest,
-                    structureFingerprint: fingerprint,
-                    verified,
-                    mode: "production_verification",
-                  });
-                  if (!verified) throw new CalibrationRequiredError();
-                } catch (error) {
-                  await emit("calibration.boundary_reached", {
-                    operationId: action.operationId,
-                    code:
-                      error && typeof error === "object" && "code" in error
-                        ? String(
-                            (error as { code?: unknown }).code ?? "CALIBRATION_VERIFICATION_FAILED",
-                          )
-                        : "CALIBRATION_VERIFICATION_FAILED",
-                    message:
-                      error instanceof Error
-                        ? error.message.slice(0, 500)
-                        : "CALIBRATION_VERIFICATION_FAILED",
-                    verified: false,
-                    mode: "production_verification_failed",
-                  });
-                  throw error;
-                }
               },
               onPreparationVerified: async (capsule, action) => {
                 if (options.calibrationRehearsal?.operationId !== action.operationId) return;

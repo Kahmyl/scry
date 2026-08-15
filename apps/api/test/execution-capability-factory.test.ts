@@ -318,7 +318,7 @@ describe("execution capability factory", () => {
     expect(kernelRepository.persistSecret).not.toHaveBeenCalled();
   });
 
-  it("rejects certification admission before dispatch when no calibration verifier exists", async () => {
+  it("does not make calibration evidence a runtime capability requirement", () => {
     const kernelRepository = {
       begin: vi.fn(),
       complete: vi.fn(),
@@ -352,47 +352,6 @@ describe("execution capability factory", () => {
       },
     });
     expect(capabilities.manifest.capabilities.calibration.state).toBe("unavailable");
-    const dispatch = vi.fn();
-    const plan = currentPlanSchema.parse({
-      name: "Certification admission",
-      objective: "Reject before browser startup",
-      preconditions: [],
-      allowedOrigins: ["https://example.test"],
-      budgets: { maxActions: 1, maxDurationMs: 1_000, maxNavigations: 1 },
-      checkpoints: [],
-      steps: [
-        {
-          id: "navigate",
-          title: "Navigate",
-          action: { type: "navigate", url: "https://example.test" },
-          assertions: [],
-          onFailure: "stop",
-          evidence: [],
-          captureIntent: "final",
-        },
-      ],
-    });
-    const policy = executionPolicySchema.parse({
-      allowedOrigins: ["https://example.test"],
-      allowPrivateNetwork: false,
-    });
-    const request = factory.request({
-      sessionId: "certification-session",
-      operationId: "certification-operation",
-      correlationId,
-      mode: "certify",
-      plan,
-      policy,
-      capabilities,
-      idempotencyKey: "certification-operation",
-    });
-    await expect(
-      new ExecutionKernelService(dispatch as never).execute({ request, capabilities }),
-    ).rejects.toMatchObject({
-      code: "EXECUTION_CAPABILITY_INCOMPLETE",
-      missingCapabilities: ["calibration"],
-    });
-    expect(dispatch).not.toHaveBeenCalled();
     expect(kernelRepository.begin).not.toHaveBeenCalled();
   });
 });

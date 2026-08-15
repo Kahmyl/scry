@@ -543,11 +543,6 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
       [objectiveId],
     );
     if (credentials.rowCount) return { code: "CREDENTIAL_AUTHORIZATION_REQUIRED" };
-    const calibration = await c.query(
-      `SELECT 1 FROM mission_execution_bindings b JOIN flow_revisions fr ON fr.id=b.flow_revision_id CROSS JOIN LATERAL jsonb_path_query(fr.plan,'$.steps[*].action ? (@.type == "protectedTransaction")') action LEFT JOIN calibration_attestations a ON a.id=(action->>'calibrationAttestationId')::uuid LEFT JOIN calibration_decisions d ON d.attestation_id=a.id AND d.decision='approved' LEFT JOIN calibration_revocations r ON r.attestation_id=a.id WHERE b.objective_id=$1 AND (a.id IS NULL OR d.id IS NULL OR r.id IS NOT NULL)`,
-      [objectiveId],
-    );
-    if (calibration.rowCount) return { code: "CALIBRATION_AUTHORIZATION_REQUIRED" };
     return null;
   }
 

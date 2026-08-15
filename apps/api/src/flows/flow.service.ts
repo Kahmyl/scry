@@ -224,7 +224,6 @@ export class FlowService {
       (text, values) => this.database.query(text, values),
       principal,
       input,
-      true,
     );
   }
 
@@ -252,7 +251,6 @@ export class FlowService {
         query,
         principal,
         { projectId, environmentId: input.environmentId, plan: input.plan },
-        false,
       );
       this.requireValid(validation);
       const flowId = randomUUID();
@@ -360,7 +358,6 @@ export class FlowService {
         query,
         principal,
         { projectId: flow.projectId, environmentId: input.environmentId, plan: input.plan },
-        false,
       );
       this.requireValid(validation);
       const revisionId = randomUUID();
@@ -455,7 +452,6 @@ export class FlowService {
         query,
         principal,
         { projectId: flow.projectId, environmentId: input.environmentId, plan },
-        true,
       );
       this.requireValid(validation);
       const revisionId = randomUUID();
@@ -576,7 +572,6 @@ export class FlowService {
           environmentId: input.environmentId,
           plan: revision.rows[0]!.plan,
         },
-        true,
       );
       this.requireValid(validation);
       const environment = await query<{
@@ -685,7 +680,6 @@ export class FlowService {
     query: Query,
     principal: Principal,
     input: ValidatePlanInput,
-    requireCalibration: boolean,
   ) {
     await this.requireProject(query, principal, input.projectId);
     const environment = await query<{ policy: unknown; secretRefs: string[] }>(
@@ -731,48 +725,6 @@ export class FlowService {
             suggestion: "Use a registered origin-bound adapter or remove the adapter request.",
           });
       }
-    }
-    for (const step of input.plan.steps) {
-      if (step.action.type !== "protectedTransaction") continue;
-      if (!step.action.calibrationAttestationId) {
-        const diagnostic = {
-          code: requireCalibration ? "CALIBRATION_REQUIRED" : "CALIBRATION_PENDING",
-          message: `Protected operation ${step.action.operationId} must be calibrated and bound before execution.`,
-          stepId: step.id,
-          suggestion:
-            "Create an authenticated calibration from this Flow revision, approve the attested revision, then bind its revision ID.",
-        };
-        (requireCalibration ? mechanical : quality).push({
-          ...diagnostic,
-          severity: requireCalibration ? "error" : "warning",
-        });
-        if (!requireCalibration) continue;
-      }
-      const calibrated = await query(
-        `SELECT 1 FROM calibration_attestations attestation
-         JOIN calibration_contract_revisions revision ON revision.id=attestation.contract_revision_id
-         JOIN calibration_contracts contract ON contract.id=revision.contract_id
-         JOIN calibration_decisions decision ON decision.attestation_id=attestation.id AND decision.decision='approved'
-         LEFT JOIN calibration_revocations revocation ON revocation.attestation_id=attestation.id
-         WHERE attestation.id=$1 AND contract.project_id=$2 AND revision.environment_id=$3 AND revision.operation_id=$4
-           AND revision.operation_digest=$5 AND attestation.operation_digest=$5 AND revocation.id IS NULL
-           AND revision.input_schema_digest=attestation.input_schema_digest
-           AND attestation.privacy_verified AND attestation.canary_scan_passed AND attestation.mutation_count=1`,
-        [
-          step.action.calibrationAttestationId,
-          input.projectId,
-          input.environmentId,
-          step.action.operationId,
-          protectedTransactionDigest(step.action, input.plan.allowedOrigins),
-        ],
-      );
-      if (!calibrated.rowCount)
-        (requireCalibration ? mechanical : quality).push({
-          severity: "error",
-          code: requireCalibration ? "CALIBRATION_REQUIRED" : "CALIBRATION_PENDING",
-          message: `Protected operation ${step.action.operationId} requires an approved calibration contract revision.`,
-          stepId: step.id,
-        });
     }
     const refs = secretReferences(input.plan);
     quality.push(

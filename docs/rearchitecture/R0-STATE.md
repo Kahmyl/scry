@@ -1099,6 +1099,27 @@ Exact next action: remove calibration from runtime authority (Slice 6), while
 retaining its records as Assurance/Chronicle evidence; then continue Slice 5
 and Slices 7–12.
 
+### Slice 6 — protected calibration narrowed — COMPLETE
+
+Calibration attestations, rehearsals, and historical records remain factual
+qualification evidence. Flow validation, Mission readiness, Run capabilities,
+and protected-transaction dispatch no longer use calibration to allow or refuse
+production execution. Explicit operation-scoped authorization is independently
+revalidated before protected dispatch, and Veil remains independently
+authoritative for privacy/trust permits.
+
+Qualification:
+
+```text
+Executor protected coordinator/kernel browser qualification: 54/54 GREEN
+API capability/orchestration/admission qualification: 19/19 GREEN
+Executor + API typecheck: GREEN
+git diff --check: GREEN
+```
+
+Exact next action: Slice 5 production compile/certification compatibility
+retirement, followed by Slices 7–12.
+
 Objective:
 
 ```text

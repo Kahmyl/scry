@@ -6,7 +6,6 @@ import { capturePraxisSessionStorage, capturePraxisStorageState, gotoPraxisPage 
 import type { ProtectedBrowserSession, SafeBrowserSession } from "./browser-session.js";
 import { executeProtectedReveal, verifyProtectedRevealTarget } from "./protected-extractor.js";
 import {
-  CalibrationRequiredError,
   protectedTransactionDigest,
   transactionInputDigest,
   transactionInputSchemaDigest,
@@ -138,10 +137,6 @@ export type ProtectedTransactionDependencies = {
   resolveKnownSecret(reference: string): Promise<string>;
   verifyAssertions(page: Page, assertions: Assertion[]): Promise<void>;
   prepareCapsule(session: ProtectedBrowserSession): Promise<void>;
-  verifyCalibration?(
-    session: ProtectedBrowserSession,
-    transaction: ProtectedTransaction,
-  ): Promise<void>;
   onPreparationVerified?(
     session: ProtectedBrowserSession,
     transaction: ProtectedTransaction,
@@ -433,21 +428,11 @@ export class ProtectedTransactionKernel {
         });
         if (observedEffects.some((effect) => effect.disposition === "blocked"))
           throw new PhaseError("UNDECLARED_PREPARATION_SIDE_EFFECT", "preparation", "do_not_retry");
-        // Calibration records the transaction boundary after deterministic preparation.
-        // Production must verify at that identical boundary, never at capsule entry.
-        await runProtectedStage({
-          stage: "calibration_verification", timeoutMs: transaction.extraction.timeoutMs,
-          signal: lifecycleSignal, timeoutCode: "PROTECTED_CALIBRATION_TIMEOUT",
-          dispatchPosition: "pre_dispatch",
-          work: () => d.verifyCalibration?.(capsule!, transaction) ?? Promise.resolve(),
-        });
       } catch (error) {
         const failure =
           error instanceof PhaseError
             ? error
-            : error instanceof CalibrationRequiredError
-              ? new PhaseError("CALIBRATION_REQUIRED", "preparation", "do_not_retry")
-              : new PhaseError("REQUIRED_STATE_NOT_ESTABLISHED", "preparation", "safe_to_retry");
+            : new PhaseError("REQUIRED_STATE_NOT_ESTABLISHED", "preparation", "safe_to_retry");
         facts.preparation = { status: "failed", code: failure.code };
         throw failure;
       } finally {
@@ -1214,8 +1199,6 @@ function protectedPhaseFailure(error: unknown, facts: Facts) {
       : facts.preparation.status === "running"
         ? "preparation"
         : "bootstrap";
-  if (error instanceof CalibrationRequiredError)
-    return new PhaseError("CALIBRATION_REQUIRED", phase, "do_not_retry");
   const candidate =
     error && typeof error === "object" && "code" in error
       ? (error as { code?: unknown }).code

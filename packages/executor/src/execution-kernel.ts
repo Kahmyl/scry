@@ -1176,7 +1176,6 @@ function requiredCapabilities(request: ExecutionRequest): Set<ExecutionCapabilit
     required.add("checkpoint");
   }
   if (request.plan.checkpoints.length) required.add("checkpoint");
-  if (request.mode === "certify") required.add("calibration");
   return required;
 }
 

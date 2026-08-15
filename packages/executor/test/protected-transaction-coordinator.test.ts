@@ -512,7 +512,7 @@ describe("protected transaction capsule", () => {
           async (value) => { publics.push(value); return { valueId: "22222222-2222-4222-8222-222222222222" }; },
         ),
         verifyAssertions: verify,
-        verifyCalibration: async (session) => {
+        onPreparationVerified: async (session) => {
           expect(await session.page.getByLabel("Name").inputValue()).toBe("Capsule app");
           expect(await session.page.getByLabel("Description").inputValue()).toBe(
             "Prepared only in capsule",
