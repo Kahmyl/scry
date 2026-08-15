@@ -7,9 +7,12 @@ import {
   type OperationOutcome,
 } from "@scry/contracts";
 import {
+  closePraxisPage,
+  createPraxisExpectedPageOwnership,
   observeSemanticPageContext,
   playwrightBrowserChannel,
   registerPraxisVeilAuthority,
+  settlePraxisPopup,
 } from "@scry/praxis";
 import { VeilAuthority, VeilRuntimeCoordinator } from "@scry/veil";
 import type { Browser, BrowserContext, Page } from "playwright";
@@ -124,7 +127,7 @@ export async function createAuthoringBrowserSession(input: {
     let lastDocumentToken: string | undefined;
     let interactionOrdinal = 0;
     let closed = false;
-    const pageOwnership = expectedPageOwnership(context, () => page!);
+    const pageOwnership = createPraxisExpectedPageOwnership(context, () => page!);
     const allowedDocumentOrigins = new Set(input.policy.allowedOrigins);
     await context.route("**/*", async (route) => {
       const request = route.request();
@@ -234,9 +237,7 @@ export async function createAuthoringBrowserSession(input: {
                     }
                     if (candidates.length === 0) return undefined;
                     if (candidates.length !== 1) {
-                      await Promise.all(
-                        candidates.map((candidate) => candidate.close().catch(() => undefined)),
-                      );
+                      await Promise.all(candidates.map(closePraxisPage));
                       throw new Error("EXPECTED_NEW_PAGE_AMBIGUOUS");
                     }
                     const popup = candidates[0]!;
@@ -249,16 +250,7 @@ export async function createAuthoringBrowserSession(input: {
                         ...(input.policy.trustedScriptOrigins ?? []),
                       ]),
                     );
-                    await popup
-                      .waitForURL((url) => url.href !== "about:blank", { timeout: popupTimeoutMs })
-                      .catch(() => {
-                        throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED");
-                      });
-                    await popup
-                      .waitForLoadState("domcontentloaded", { timeout: popupTimeoutMs })
-                      .catch(() => {
-                        throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED");
-                      });
+                    await settlePraxisPopup(popup, popupTimeoutMs);
                     if (popup === page) throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED");
                     const popupOrigin = new URL(popup.url()).origin;
                     if (
@@ -267,14 +259,14 @@ export async function createAuthoringBrowserSession(input: {
                         expectedEffect.origin &&
                         popupOrigin !== new URL(expectedEffect.origin).origin)
                     ) {
-                      await popup.close().catch(() => undefined);
+                      await closePraxisPage(popup);
                       throw newPageOriginNotAllowed(popupOrigin);
                     }
                     const previousPage = page!;
                     page = popup;
                     popupCandidate.adopt(popup);
                     unregisterVeil.push(registerPraxisVeilAuthority(popup, veilRegistration));
-                    await previousPage.close().catch(() => undefined);
+                    await closePraxisPage(previousPage);
                     return popup;
                   },
                 }
@@ -438,67 +430,4 @@ function boundedAuthoringClose(stage: string, work: () => Promise<unknown>) {
     dispatchPosition: "post_dispatch",
     work,
   });
-}
-
-function expectedPageOwnership(context: BrowserContext, currentPage: () => Page) {
-  type Capture = {
-    pages: Page[];
-    adopted?: Page;
-    rejectedDocumentUrl?: string;
-    first: Promise<void>;
-    signalFirst: () => void;
-  };
-  let active: Capture | undefined;
-  context.on("page", (candidate) => {
-    if (candidate === currentPage()) return;
-    if (!active) {
-      void candidate.close().catch(() => undefined);
-      return;
-    }
-    active.pages.push(candidate);
-    active.signalFirst();
-  });
-  return {
-    rejectDocument(url: string) {
-      if (!active) return;
-      active.rejectedDocumentUrl ??= url;
-      active.signalFirst();
-    },
-    arm(timeoutMs: number) {
-      if (active) throw new Error("EXPECTED_NEW_PAGE_CAPTURE_ALREADY_ACTIVE");
-      let signalFirst!: () => void;
-      const capture: Capture = {
-        pages: [],
-        first: new Promise<void>((resolve) => {
-          signalFirst = resolve;
-        }),
-        signalFirst: () => signalFirst(),
-      };
-      active = capture;
-      return {
-        async resolve() {
-          await Promise.race([
-            capture.first,
-            new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
-          ]);
-          if (capture.pages.length) await new Promise((resolve) => setTimeout(resolve, 50));
-          return {
-            candidates: [...capture.pages],
-            rejectedDocumentUrl: capture.rejectedDocumentUrl,
-          };
-        },
-        adopt(page: Page) {
-          capture.adopted = page;
-        },
-        async dispose() {
-          if (active === capture) active = undefined;
-          await Promise.all(
-            capture.pages
-              .filter((candidate) => candidate !== capture.adopted)
-              .map((candidate) => candidate.close().catch(() => undefined)),
-          );
-        },
-      };
-    },
-  };
 }
