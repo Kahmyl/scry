@@ -1010,7 +1010,7 @@ browser-backed qualification: GREEN
 
 R0.4 is closed. Stop at this checkpoint; do not begin R0.5 in this slice.
 
-## R0.5 — external reasoning authority — IMPLEMENTATION IN PROGRESS (current)
+## R0.5 — external reasoning authority — COMPLETE
 
 ### Current checkpoint (batch 1)
 
@@ -1227,8 +1227,67 @@ MCP tests: 30/30 GREEN
 API + MCP typecheck: GREEN
 ```
 
-Exact next action: Slice 12 zero-use/compatibility audit, full R0.5
-qualification, and closure documentation.
+### Slice 12 — persistence and compatibility cleanup — COMPLETE
+
+- automatic `run_outbox` publication and the legacy Run queue-start entry point
+  are removed; calibration/probe outboxes remain Assurance qualification paths;
+- Run observations no longer prescribe cancel/rerun/revise/read continuations;
+  they expose facts and resources for the external agent to interpret;
+- the agent-directed exact-reference protected acquisition path no longer uses
+  semantic confidence or margin thresholds; the score check remains only in
+  historical whole-Flow drain compatibility fixtures;
+- production MCP guidance names representation-only Flow publication, exact
+  live-session references, and one externally selected Run operation;
+- historical compilation, calibration, expected-effect, adaptive-turn, and Run
+  records remain readable. No destructive persistence migration was needed.
+
+### R0.5 closure audit — PASSED
+
+```text
+Project / Mission / Flow / Run remain durable representation: PASS
+ordinary operations require no compile/certify or authorization ceremony: PASS
+protected authorization is factual/trust-scoped and independently Veil-gated: PASS
+V2 target dispatch requires an exact live Praxis reference: PASS
+Run / reference owner / active Praxis session equality is mechanical: PASS
+no confidence or semantic re-resolution admits V2 dispatch: PASS
+expected effects cannot affect V2 operation or mutation truth: PASS
+Run progression and finalization are explicit external commands: PASS
+no timer, reconciler, Run outbox, or worker starts ordinary Run progression: PASS
+UNKNOWN mutation fencing and exact document/page/reference refusal remain: PASS
+Veil remains privacy/trust authority; Chronicle remains factual persistence: PASS
+Assurance calibration/probe evidence has no production execution authority: PASS
+production API/MCP uses the factual agent-directed Run protocol: PASS
+```
+
+Inactive legacy authoring/whole-Flow implementations remain readable for
+historical compatibility fixtures only. They have no production controller,
+MCP registration, queue publisher, scheduler, or V2 Run caller. Their eventual
+physical deletion belongs to R0.6 API/MCP composition and legacy retirement;
+they are not an execution-authority compatibility delegate.
+
+Closure qualification:
+
+```text
+Praxis: 174/174 GREEN
+Veil: 37/37 GREEN
+MCP: 30/30 GREEN
+API affected/runtime + migration-fingerprint suite: 453/453 GREEN
+Executor full suite: 423/423 GREEN (1 skipped)
+Contracts/API/MCP/Executor/Praxis/Veil typecheck: GREEN
+subsystem/direct-browser/execution-kernel/production-operations gates: GREEN
+git diff --check: GREEN
+```
+
+The repository-wide API invocation additionally encountered the Docker-backed
+M1 snapshot migration fixture, which has no available local snapshot/database
+substrate. It is not an R0.5 production path and does not differ from the
+accepted clean-checkpoint baseline. All other 453 API tests are green. The
+released-fingerprint reconstruction is also green after restoring the immutable
+base definition and wiring protected-operation `operation_id` through its
+existing additive migration.
+
+R0.5 is complete. The next canonical phase is R0.6. Do not begin R0.6 from
+this checkpoint without a new instruction.
 
 Objective:
 

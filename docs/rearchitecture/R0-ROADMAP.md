@@ -232,6 +232,8 @@ Closure condition:
 
 # R0.5 — Product/Application simplification
 
+Status: **COMPLETE**
+
 ## Objective
 
 Keep Project/Mission/Flow/Run as durable work representation without turning them into internal intelligence.
@@ -268,6 +270,8 @@ Closure condition:
 ---
 
 # R0.6 — API/MCP composition and legacy retirement
+
+Status: **NEXT — NOT STARTED**
 
 ## Objective
 

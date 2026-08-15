@@ -24,11 +24,14 @@ export async function verifyProtectedAcquisitionReadiness(
   }
   try {
     const ceremony = await resolveTarget(page, contract.ceremonyIntent);
+    // Agent-directed V2 operations always take the exact-reference branch. The
+    // score check is retained only for historical whole-Flow drain fixtures.
     if (
-      ceremony.diagnostic.confidence < contract.minimumConfidence ||
-      ceremony.diagnostic.confidenceMargin < contract.minimumConfidenceMargin
+      !contract.ceremonyIntent.authoritativeReference &&
+      (ceremony.diagnostic.confidence < contract.minimumConfidence ||
+        ceremony.diagnostic.confidenceMargin < contract.minimumConfidenceMargin)
     ) {
-      throw new Error("confidence");
+      throw new Error("legacy-confidence");
     }
   } catch {
     throw new PhaseError("ACQUISITION_NOT_READY", "preparation", "do_not_retry");

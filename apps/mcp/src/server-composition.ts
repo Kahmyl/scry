@@ -6,7 +6,15 @@ const LEGACY_SCRY_MCP_INSTRUCTIONS =
 export const SCRY_MCP_INSTRUCTIONS = LEGACY_SCRY_MCP_INSTRUCTIONS.replace(
   "close and compile/certify that Flow",
   "publish that representation-only Flow revision",
-);
+)
+  .replace(
+    "Use semantic role, accessible name, label, placeholder, text, test-id, dialog, section, row, or live-region targets; role-only inspection is supported when the role is the only known observable fact. A control returned by fresh semanticPageContext may instead be targeted directly with its opaque reference plus concept;",
+    "Observe in the associated live Praxis session and dispatch targets only through the exact opaque context-control reference returned by that observation;",
+  )
+  .replace(
+    "Server-owned grouped turns wait to a typed terminal boundary;",
+    "Each dispatch executes one externally selected bounded Run operation;",
+  );
 
 export const SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS =
   "semanticPageContext containers expose host-owned opaque row/list-item/card/group references and each control's containerReferences, so repeated controls can be related without revealing suppressed row text. Choose an exact control reference only when the intended container is established by factual public context or an authoritative resource association. Never select the first container, use ordinal position, or infer resource identity from an opaque container reference. When no authoritative association distinguishes protected-resource containers, request clarification instead of acting. Container references are explanatory grouping facts, not action targets or resource identity, and must never be guessed, converted to selectors, or reused after page or checkpoint replacement.";

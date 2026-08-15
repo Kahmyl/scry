@@ -223,12 +223,6 @@ export class RunObservationService {
     const section = (items: unknown[]) =>
       items.length ? ("complete" as const) : active ? ("pending" as const) : ("complete" as const);
     const safeActions: RunObservation["safeActions"] = [];
-    if (active) safeActions.push("cancel");
-    else safeActions.push("rerun");
-    if (failure && ["plan", "product"].includes(failure.provenance))
-      safeActions.push("revise_flow");
-    if (artifacts.some((artifact) => artifact.availability === "available"))
-      safeActions.push("read_artifact");
     const veil = deriveVeilObservation(run, intervals.rows, artifactTimeline, artifacts, active);
     const evidenceChannels = deriveEvidenceChannels(
       run,

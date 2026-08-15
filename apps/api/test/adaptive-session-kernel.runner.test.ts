@@ -13,6 +13,7 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     const sessions = {
       heartbeatRuntimeLease: vi.fn(async () => undefined),
       runtimeContextFor: vi.fn(async () => ({ environmentId, correlationId: "correlation", policy })),
+      recordDispatchBaseline: vi.fn(async () => undefined),
       recordVerifiedObservation: vi.fn(async () => undefined),
     };
     const runner = new AdaptiveSessionKernelRunner(
@@ -28,7 +29,8 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       environmentFailure: { missingTrustedScriptOrigins: ["https://scripts.example.test"],
         missingOriginClassification: "public" as const } };
     (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
-      session: { interact: vi.fn(async () => ({ documentEpoch: 1, url: "https://example.test", outcome })) },
+      session: { page: { url: () => "https://example.test" }, documentEpoch: () => 1,
+        interact: vi.fn(async () => ({ documentEpoch: 1, url: "https://example.test", outcome })) },
       fencingToken: 1, tail: Promise.resolve(),
     });
 
@@ -56,6 +58,7 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     const sessions = {
       heartbeatRuntimeLease: vi.fn(async () => undefined),
       runtimeContextFor: vi.fn(async () => ({ environmentId, correlationId: "correlation", policy })),
+      recordDispatchBaseline: vi.fn(async () => undefined),
       recordVerifiedObservation: vi.fn(async () => undefined),
     };
     const runner = new AdaptiveSessionKernelRunner(
@@ -70,7 +73,8 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       reasonCode: "EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED",
       navigationEnvironmentFailure: { missingAllowedOrigin: "https://docs.example.test" } };
     (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
-      session: { interact: vi.fn(async () => ({ documentEpoch: 1, url: "https://app.example.test", outcome })) },
+      session: { page: { url: () => "https://app.example.test" }, documentEpoch: () => 1,
+        interact: vi.fn(async () => ({ documentEpoch: 1, url: "https://app.example.test", outcome })) },
       fencingToken: 1, tail: Promise.resolve(),
     });
 
@@ -166,6 +170,7 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
             allowDownloads: false, allowPopups: false, maxActions: 2,
             maxDurationMs: 30_000, maxNavigations: 1 },
         }),
+        recordDispatchBaseline: vi.fn(),
         recordVerifiedObservation: vi.fn(),
       };
       const outcome = { operationId: "long-resolution", functionalResult: "succeeded" as const,
@@ -189,6 +194,8 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       );
       (runner as unknown as { leaseDurationMs: number }).leaseDurationMs = leaseDurationMs;
       const ownedSession = {
+        page: { url: () => "https://example.test/app" },
+        documentEpoch: () => 1,
         interact: vi.fn(async (action: never, context: Record<string, unknown>) => ({
           documentEpoch: 2, url: "https://example.test/app",
           outcome: await (runner as unknown as { executeInteraction(input: unknown): Promise<typeof outcome> })
@@ -234,6 +241,7 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
           correlationId: "correlation", policy: { allowedOrigins: ["https://example.test"],
             allowPrivateNetwork: false, allowDownloads: false, allowPopups: false,
             maxActions: 2, maxDurationMs: 30_000, maxNavigations: 1 } }),
+        recordDispatchBaseline: vi.fn(),
         recordVerifiedObservation: vi.fn(),
       };
       const kernel = { interact: vi.fn(({ capabilities }: { capabilities: { options: {
@@ -248,7 +256,8 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
         kernel as never, capabilities as never, sessions as never, {} as never,
       );
       (runner as unknown as { leaseDurationMs: number }).leaseDurationMs = 900;
-      const ownedSession = { interact: vi.fn(async (action: never, context: Record<string, unknown>) => ({
+      const ownedSession = { page: { url: () => "https://example.test" }, documentEpoch: () => 1,
+        interact: vi.fn(async (action: never, context: Record<string, unknown>) => ({
         documentEpoch: 1, url: "https://example.test",
         outcome: await (runner as unknown as { executeInteraction(input: unknown): Promise<never> })
           .executeInteraction({ sessionId, environmentId: "environment",
@@ -293,6 +302,7 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
           correlationId: "correlation", policy: { allowedOrigins: ["https://example.test"],
             allowPrivateNetwork: false, allowDownloads: false, allowPopups: false,
             maxActions: 2, maxDurationMs: 30_000, maxNavigations: 1 } }),
+        recordDispatchBaseline: vi.fn(),
         recordVerifiedObservation: vi.fn(),
       };
       const outcome = { operationId: "post-dispatch-loss", functionalResult: "failed" as const,
@@ -314,7 +324,8 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
         kernel as never, capabilities as never, sessions as never, {} as never,
       );
       (runner as unknown as { leaseDurationMs: number }).leaseDurationMs = 900;
-      const ownedSession = { interact: vi.fn(async (action: never, context: Record<string, unknown>) => ({
+      const ownedSession = { page: { url: () => "https://example.test/app" }, documentEpoch: () => 2,
+        interact: vi.fn(async (action: never, context: Record<string, unknown>) => ({
         documentEpoch: 3, url: "https://example.test/app",
         outcome: await (runner as unknown as { executeInteraction(input: unknown): Promise<typeof outcome> })
           .executeInteraction({ sessionId, environmentId: "environment",

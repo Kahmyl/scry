@@ -1,7 +1,7 @@
 import {
-  ConflictException,
   Inject,
   Injectable,
+  OnModuleInit,
   OnModuleDestroy,
 } from "@nestjs/common";
 import { Queue } from "bullmq";
@@ -27,11 +27,12 @@ export type CalibrationJob = {
 export type ProbeJob = { probeSessionId: string; releaseId: string; schemaFingerprint: string };
 
 @Injectable()
-export class RunQueueService implements OnModuleDestroy {
+export class RunQueueService implements OnModuleDestroy, OnModuleInit {
   readonly queue: Queue<RunJob>;
   readonly calibrationQueue: Queue<CalibrationJob>;
   readonly probeQueue: Queue<ProbeJob>;
   readonly praxisQueue: Queue<PraxisJob>;
+  private dispatcher?: NodeJS.Timeout;
 
   constructor(
     @Inject(RedisConnection) redis: RedisConnection,
@@ -62,29 +63,15 @@ export class RunQueueService implements OnModuleDestroy {
     });
   }
 
+  async onModuleInit() {
+    await this.dispatchPending().catch(() => undefined);
+    this.dispatcher = setInterval(
+      () => void this.dispatchPending().catch(() => undefined),
+      1_000,
+    );
+  }
+
   async dispatchPending(limit = 100) {
-    const pending = await this.database
-      .query<RunJob>(
-        `SELECT run_id AS "runId", release_id AS "releaseId", schema_fingerprint AS "schemaFingerprint"
-       FROM run_outbox WHERE published_at IS NULL ORDER BY created_at LIMIT $1`,
-        [limit],
-      )
-      .catch(() => ({ rows: [], rowCount: 0 }));
-    for (const item of pending.rows) {
-      try {
-        const existing = await this.queue.getJob(item.runId);
-        if (!existing) await this.queue.add("execute", item, { jobId: item.runId });
-        await this.database.query(
-          `UPDATE run_outbox SET published_at = now(), publish_attempts = publish_attempts + 1, last_error = NULL WHERE run_id = $1`,
-          [item.runId],
-        );
-      } catch (error) {
-        await this.database.query(
-          `UPDATE run_outbox SET publish_attempts = publish_attempts + 1, last_error = $2 WHERE run_id = $1`,
-          [item.runId, error instanceof Error ? error.message : String(error)],
-        );
-      }
-    }
     const calibrations = await this.database
       .query<CalibrationJob>(
         `SELECT calibration_session_id AS "calibrationSessionId", release_id AS "releaseId", schema_fingerprint AS "schemaFingerprint"
@@ -141,31 +128,6 @@ export class RunQueueService implements OnModuleDestroy {
     }
   }
 
-  async start(runId: string) {
-    const state = await this.executions.markQueued(runId);
-    try {
-      const existing = await this.queue.getJob(runId);
-      if (!existing) {
-        await this.queue.add(
-          "execute",
-          {
-            runId,
-            releaseId: process.env.SCRY_RELEASE_ID ?? "development",
-            schemaFingerprint: process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline",
-          },
-          { jobId: runId },
-        );
-      }
-    } catch (error) {
-      throw new ConflictException(
-        `Run was marked queued but could not be submitted: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-    return state;
-  }
-
   async cancel(runId: string) {
     const state = await this.executions.requestCancellation(runId);
     const job = await this.queue.getJob(runId);
@@ -180,6 +142,7 @@ export class RunQueueService implements OnModuleDestroy {
   }
 
   async onModuleDestroy() {
+    if (this.dispatcher) clearInterval(this.dispatcher);
     await this.queue.close();
     await this.calibrationQueue.close();
     await this.probeQueue.close();

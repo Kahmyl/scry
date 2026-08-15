@@ -58,6 +58,7 @@ describe("adaptive session production runtime restart", () => {
       claimSuccessorCheckpoint: vi.fn(async () => null),
       heartbeatRuntimeLease: vi.fn(),
       markOperationDispatching: vi.fn(),
+      recordDispatchBaseline: vi.fn(),
       releaseRuntimeLease: vi.fn(async () => true),
       recordVerifiedObservation: vi.fn(async (observation) => {
         lastObservation = observation;
@@ -127,6 +128,7 @@ describe("adaptive session production runtime restart", () => {
       completeSuccessorCheckpoint,
       heartbeatRuntimeLease: vi.fn(),
       markOperationDispatching: vi.fn(),
+      recordDispatchBaseline: vi.fn(),
       releaseRuntimeLease: vi.fn(async () => true),
       recordVerifiedObservation: vi.fn(),
       resolveCredential: vi.fn(),

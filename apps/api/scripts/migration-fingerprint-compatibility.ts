@@ -45,6 +45,7 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "segmented-flow-successor-checkpoints.sql",
   "adaptive-certification-provenance.sql",
   "adaptive-operation-reconciliation.sql",
+  "protected-operation-authorization-binding.sql",
   "run-praxis-session-ledger.sql",
 ] as const;
 
@@ -119,6 +120,7 @@ export function compatibilityBaseline(source: string): string {
     "segmented-flow-successor-checkpoints.sql",
     "adaptive-certification-provenance.sql",
     "adaptive-operation-reconciliation.sql",
+    "protected-operation-authorization-binding.sql",
   ].reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}\\r?\\n`, "g"), ""),

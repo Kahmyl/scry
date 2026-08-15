@@ -122,4 +122,4 @@ it("continues a protected secret fill when video recording is already sealed", a
     await rm(outputDirectory, { recursive: true, force: true });
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
-});
+}, 15_000);

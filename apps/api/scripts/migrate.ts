@@ -110,6 +110,7 @@ const structuredSyntheticProtectedInputPath = fileURLToPath(new URL("../migratio
 const segmentedFlowSuccessorCheckpointsPath = fileURLToPath(new URL("../migrations/segmented-flow-successor-checkpoints.sql", import.meta.url));
 const adaptiveCertificationProvenancePath = fileURLToPath(new URL("../migrations/adaptive-certification-provenance.sql", import.meta.url));
 const adaptiveOperationReconciliationPath = fileURLToPath(new URL("../migrations/adaptive-operation-reconciliation.sql", import.meta.url));
+const protectedOperationAuthorizationBindingPath = fileURLToPath(new URL("../migrations/protected-operation-authorization-binding.sql", import.meta.url));
 const runPraxisSessionLedgerPath = fileURLToPath(new URL("../migrations/run-praxis-session-ledger.sql", import.meta.url));
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
@@ -155,6 +156,7 @@ const structuredSyntheticProtectedInput = await readFile(structuredSyntheticProt
 const segmentedFlowSuccessorCheckpoints = await readFile(segmentedFlowSuccessorCheckpointsPath, "utf8");
 const adaptiveCertificationProvenance = await readFile(adaptiveCertificationProvenancePath, "utf8");
 const adaptiveOperationReconciliation = await readFile(adaptiveOperationReconciliationPath, "utf8");
+const protectedOperationAuthorizationBinding = await readFile(protectedOperationAuthorizationBindingPath, "utf8");
 const runPraxisSessionLedger = await readFile(runPraxisSessionLedgerPath, "utf8");
 const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
 
@@ -191,6 +193,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "segmented-flow-successor-checkpoints.sql": segmentedFlowSuccessorCheckpoints,
   "adaptive-certification-provenance.sql": adaptiveCertificationProvenance,
   "adaptive-operation-reconciliation.sql": adaptiveOperationReconciliation,
+  "protected-operation-authorization-binding.sql": protectedOperationAuthorizationBinding,
   "run-praxis-session-ledger.sql": runPraxisSessionLedger,
 };
 
@@ -336,6 +339,8 @@ try {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-operation-reconciliation'))");
         await client.query(adaptiveOperationReconciliation);
+        await client.query(protectedOperationAuthorizationBinding);
+        await client.query(runPraxisSessionLedger);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied adaptive operation reconciliation ${fingerprint}\n`);
@@ -348,6 +353,8 @@ try {
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-certification-provenance'))");
         await client.query(adaptiveCertificationProvenance);
         await client.query(adaptiveOperationReconciliation);
+        await client.query(protectedOperationAuthorizationBinding);
+        await client.query(runPraxisSessionLedger);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied qualified draft-version provenance ${fingerprint}\n`);
@@ -360,6 +367,8 @@ try {
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-certification-provenance'))");
         await client.query(adaptiveCertificationProvenance);
         await client.query(adaptiveOperationReconciliation);
+        await client.query(protectedOperationAuthorizationBinding);
+        await client.query(runPraxisSessionLedger);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied adaptive certification provenance ${fingerprint}\n`);
@@ -371,6 +380,9 @@ try {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-segmented-flow-successor-checkpoints'))");
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(adaptiveOperationReconciliation);
+        await client.query(protectedOperationAuthorizationBinding);
+        await client.query(runPraxisSessionLedger);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied segmented Flow successor checkpoints ${fingerprint}\n`);
