@@ -955,10 +955,6 @@ async function safeBoundaryAdapter(cell: Cell): Promise<DirectObservation> {
   const gate = new VeilRuntimeCoordinator([collector], emit, 5);
   const boundary = {
     kind: "protected_surface_closed" as const,
-    verifier: { concept: "certification boundary", requiredCapabilities: ["readable_value" as const],
-      preferredEvidence: { roles: ["dialog" as const], names: ["Certification"], labels: [], descriptions: [], placeholders: [], inputTypes: [] },
-      scope: { kind: "page" as const }, relations: [], prohibited: [], risk: "protected" as const,
-      confidence: { requiredFamilies: [], minimumFamilyCount: 1 } },
   };
   try {
     await gate.prepare(`certification-${cell.id}`);

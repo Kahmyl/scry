@@ -75,12 +75,7 @@ export const safeResumeBoundarySchema = z.discriminatedUnion("kind", [
       referenceType: z.enum(["vault", "captured"]),
     })
     .strict(),
-  z
-    .object({
-      kind: z.literal("protected_surface_closed"),
-      verifier: interactionTargetIntentSchema,
-    })
-    .strict(),
+  z.object({ kind: z.literal("protected_surface_closed") }).strict(),
   z
     .object({
       kind: z.literal("known_safe_navigation"),

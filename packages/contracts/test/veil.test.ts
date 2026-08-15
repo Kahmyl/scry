@@ -11,8 +11,21 @@ import {
   veilVideoSegmentFinalizationSchema,
   veilVideoSegmentPermitSchema,
 } from "../src/veil/index.js";
+import { safeResumeBoundarySchema } from "../src/current.js";
 
 describe("Veil contracts", () => {
+  it("keeps browser targeting semantics outside safe-boundary claims", () => {
+    expect(safeResumeBoundarySchema.parse({ kind: "protected_surface_closed" })).toEqual({
+      kind: "protected_surface_closed",
+    });
+    expect(() =>
+      safeResumeBoundarySchema.parse({
+        kind: "protected_surface_closed",
+        verifier: { concept: "credential dialog" },
+      }),
+    ).toThrow();
+  });
+
   it("defaults to balanced and rejects unknown preference fields", () => {
     expect(
       veilPolicyPreferencesSchema.parse({ allowedOrigins: ["https://example.com"] }).profile,

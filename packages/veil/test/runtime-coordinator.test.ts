@@ -35,23 +35,6 @@ function collector(name: string, overrides: Partial<PrivacyCollector> = {}): Pri
 
 const boundary = {
   kind: "protected_surface_closed" as const,
-  verifier: {
-    concept: "Credential dialog closed",
-    requiredCapabilities: ["readable_value" as const],
-    preferredEvidence: {
-      roles: ["dialog" as const],
-      names: ["Credential dialog"],
-      labels: [],
-      descriptions: [],
-      placeholders: [],
-      inputTypes: [],
-    },
-    scope: { kind: "page" as const },
-    relations: [],
-    prohibited: [],
-    risk: "protected" as const,
-    confidence: { requiredFamilies: [], minimumFamilyCount: 1 },
-  },
 };
 
 describe("VeilRuntimeCoordinator", () => {
