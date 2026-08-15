@@ -229,6 +229,34 @@ describe("Praxis strategy, dispatch, and verification", () => {
     expect(await page.locator("body").getAttribute("data-hit")).toBeNull();
   });
 
+  it("reports unknown and unsafe when the target disappears after mouse-down input begins", async () => {
+    await page.mouse.move(0, 0);
+    await page.setContent(`
+      <button style="margin:200px">Down then detach</button>
+      <script>
+        const target = document.querySelector("button");
+        target.addEventListener("pointerdown", () => {
+          document.body.dataset.down = "yes";
+          target.remove();
+        });
+        target.addEventListener("click", () => { document.body.dataset.hit = "yes"; });
+      </script>
+    `);
+    const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(
+      request({ type: "activate" }, intent("Down then detach")),
+      new AbortController().signal,
+    );
+    expect(await page.locator("body").getAttribute("data-down")).toBe("yes");
+    expect(await page.locator("body").getAttribute("data-hit")).toBeNull();
+    expect(result).toMatchObject({
+      status: "inconclusive",
+      code: "PRAXIS_DISPATCH_FAILED",
+      mutationOutcome: "unknown",
+      retry: "unsafe",
+      safeActions: ["do_not_retry"],
+    });
+  });
+
   it("dispatches once and verifies the exact intended text", async () => {
     await page.setContent("<input aria-label=Name>");
     const result = await new PraxisTransactionCoordinator(
