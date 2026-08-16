@@ -99,6 +99,26 @@ describe("Praxis candidate resume fencing", () => {
 });
 
 describe("Praxis strategy, dispatch, and verification", () => {
+  it("explicitly DOM-activates only the exact grounded entity", async () => {
+    await page.setContent(`<button onclick="document.body.dataset.hit='exact'">DOM action</button>`);
+    const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(
+      request({ type: "activate", mechanism: "dom" }, intent("DOM action")),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({ status: "succeeded", mutationOutcome: "applied" });
+    expect(await page.locator("body").getAttribute("data-hit")).toBe("exact");
+  });
+
+  it("explicitly uses trusted element activation without selector re-resolution", async () => {
+    await page.setContent(`<button onclick="document.body.dataset.hit='element'">Element action</button>`);
+    const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(
+      request({ type: "activate", mechanism: "element" }, intent("Element action")),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({ status: "succeeded", mutationOutcome: "applied" });
+    expect(await page.locator("body").getAttribute("data-hit")).toBe("element");
+  });
+
   it("reports an absent observed target before the transaction deadline masks its cause", async () => {
     await page.setContent("<main><label>Username <input /></label></main>");
     const base = request({ type: "wait_for_state", state: "visible" }, intent("Email", "textbox"));

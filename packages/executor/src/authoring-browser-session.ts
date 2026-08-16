@@ -156,12 +156,16 @@ export async function createAuthoringBrowserSession(input: {
       }
     });
 
-    async function observe() {
+    async function observe(maximumWaitMs?: number) {
       if (lifecycle !== "active") {
         throw new Error("AUTHORING_BROWSER_SESSION_NOT_ACTIVE");
       }
 
-      await waitForPraxisLoadState(page!, "domcontentloaded");
+      await waitForPraxisLoadState(
+        page!,
+        "domcontentloaded",
+        maximumWaitMs === undefined ? {} : { timeout: maximumWaitMs },
+      );
 
       const documentToken = await page!.evaluate(() => {
         const key = "__scryAuthoringDocumentToken";
@@ -287,7 +291,10 @@ export async function createAuthoringBrowserSession(input: {
             ...(interactionContext.signal ? { signal: interactionContext.signal } : {}),
           })
           .finally(() => popupCandidate?.dispose());
-        const observation = await observe();
+        const observation = await observe(1_500).catch(() => ({
+          documentEpoch: epoch,
+          url: page!.url(),
+        }));
         // Context enrichment is informational. Its failure must never erase a
         // completed interaction outcome or manufacture mutation uncertainty.
         const semanticPageContext = await observeSettledSemanticPageContext({

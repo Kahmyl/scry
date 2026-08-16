@@ -111,7 +111,10 @@ export async function executeAction(
       await requirePraxisWithNoCapabilityRetry({
         page,
         intent: action.target,
-        operation: { type: "activate" },
+        operation: {
+          type: "activate",
+          ...(action.activationMechanism ? { mechanism: action.activationMechanism } : {}),
+        },
         // Popup ownership is verified by the authoring session/kernel after it adopts
         // a distinct page; Praxis cannot establish that browser-session invariant.
         expectedEffect:
@@ -264,14 +267,17 @@ export async function executeAction(
           page,
           intent: action.target,
           operation: { type: "press_key", key: action.key },
-          context: praxisContextAt(praxisContext, preDispatchDeadlineAt),
+          context: {
+            ...praxisContextAt(praxisContext, preDispatchDeadlineAt),
+            dispatchSemantics: action.dispatchSemantics ?? "mutation",
+          },
           signal,
         });
       } else if (action.target) {
         throw new Error("PRAXIS_UNSUPPORTED_TARGET_KEY");
       } else {
         assertActionDeadline(preDispatchDeadlineAt);
-        await options.onMutationDispatch?.();
+        if (action.dispatchSemantics !== "read_only") await options.onMutationDispatch?.();
         await pressPageKey(page, action.key);
       }
       return;

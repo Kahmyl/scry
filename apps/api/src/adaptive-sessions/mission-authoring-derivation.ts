@@ -47,6 +47,9 @@ export function deriveMissionAuthoringOperation(input: {
           expectedEffect: deriveEffect(intent.expectedEffect, target),
           dispatchSemantics:
             intent.action.semanticEffect === "read_context_transition" ? "read_only" : "mutation",
+          ...(intent.action.activationMechanism
+            ? { activationMechanism: intent.action.activationMechanism }
+            : {}),
           timeoutMs: intent.constraints.timeoutMs,
         };
       case "fill":
@@ -84,6 +87,8 @@ export function deriveMissionAuthoringOperation(input: {
             ? { target: target(intent.action.target, ["focusable", "keyboard_activatable"]) }
             : {}),
           key: intent.action.key,
+          dispatchSemantics:
+            intent.action.semanticEffect === "read_context_transition" ? "read_only" : "mutation",
           timeoutMs: intent.constraints.timeoutMs,
         };
       case "wait_for":

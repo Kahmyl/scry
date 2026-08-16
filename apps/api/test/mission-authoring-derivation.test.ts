@@ -112,11 +112,11 @@ describe("Mission authoring semantic derivation", () => {
     };
     const readContext = missionAuthoringIntentSchema.parse({
       ...base,
-      action: { kind: "activate", target, semanticEffect: "read_context_transition" },
+      action: { kind: "activate", target, semanticEffect: "read_context_transition", activationMechanism: "dom" },
     });
     expect(
       deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: readContext }),
-    ).toMatchObject({ mode: "observe", action: { type: "click", dispatchSemantics: "read_only" } });
+    ).toMatchObject({ mode: "observe", action: { type: "click", dispatchSemantics: "read_only", activationMechanism: "dom" } });
     const unknownByDefault = missionAuthoringIntentSchema.parse({
       ...base,
       intentId: "unknown-context",
@@ -125,6 +125,14 @@ describe("Mission authoring semantic derivation", () => {
     expect(
       deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: unknownByDefault }),
     ).toMatchObject({ mode: "observe", action: { type: "click", dispatchSemantics: "mutation" } });
+    const readContextPress = missionAuthoringIntentSchema.parse({
+      ...base,
+      intentId: "read-context-press",
+      action: { kind: "press", target, key: "Enter", semanticEffect: "read_context_transition" },
+    });
+    expect(
+      deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: readContextPress }),
+    ).toMatchObject({ mode: "observe", action: { type: "press", dispatchSemantics: "read_only" } });
   });
 
   it("rejects read-context activation without explicit live_read authority", () => {
@@ -134,7 +142,14 @@ describe("Mission authoring semantic derivation", () => {
       expectedEffect: { kind: "none" },
       constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
       authorization: { kind: "ordinary" }, protectedInputReferences: [],
-    })).toThrow("read-context activation requires explicit live_read authority");
+    })).toThrow("read-context transition requires explicit live_read authority");
+    expect(() => missionAuthoringIntentSchema.parse({
+      intentId: "unauthorized-read-context-press", objectiveId: ids.objectiveId, flowDraftId: ids.flowDraftId,
+      action: { kind: "press", target, key: "Enter", semanticEffect: "read_context_transition" },
+      expectedEffect: { kind: "none" },
+      constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "ordinary" }, protectedInputReferences: [],
+    })).toThrow("read-context transition requires explicit live_read authority");
   });
 
   it("preserves new-page ownership as a distinct internal effect", () => {

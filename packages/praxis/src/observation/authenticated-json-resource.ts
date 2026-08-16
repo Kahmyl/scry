@@ -2,6 +2,8 @@ import type { Response } from "playwright";
 
 import { closePraxisBrowserResources, openPraxisBrowserSession } from "../lifecycle/browser-session.js";
 import { navigateAndWaitNative } from "../lifecycle/navigation.js";
+import { fillReferencedTarget } from "../interaction/fill.js";
+import { observeTargetReference } from "../references/target-reference.js";
 
 export type AuthenticatedJsonResourceObservationInput = {
   browserChannel?: string;
@@ -37,11 +39,26 @@ export async function observeAuthenticatedJsonResource(
       session.page, input.login.url, input.allowedOrigins, input.timeoutMs, input.trustedScriptOrigins,
     );
     for (const field of input.login.fields) {
-      await session.page.getByPlaceholder(field.placeholder, { exact: true })
-        .fill(field.value, { timeout: input.timeoutMs });
+      const reference = await observeTargetReference(
+        session.page,
+        session.page.getByPlaceholder(field.placeholder, { exact: true }),
+      );
+      try {
+        await fillReferencedTarget(reference, field.value, { timeoutMs: input.timeoutMs });
+      } finally {
+        await reference.dispose();
+      }
     }
-    await session.page.getByRole("button", { name: input.login.submitName, exact: true })
-      .click({ timeout: input.timeoutMs });
+    const submit = await observeTargetReference(
+      session.page,
+      session.page.getByRole("button", { name: input.login.submitName, exact: true }),
+    );
+    try {
+      await submit.assertCurrent();
+      await submit.element().click({ timeout: input.timeoutMs, noWaitAfter: true });
+    } finally {
+      await submit.dispose();
+    }
     const loginPath = new URL(input.login.url).pathname;
     await session.page.waitForURL(
       (url) => allowed.has(url.origin) && url.pathname !== loginPath,

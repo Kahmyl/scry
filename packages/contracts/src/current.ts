@@ -106,6 +106,7 @@ const mutationActionSchema = z.discriminatedUnion("type", [
       target: interactionTargetIntentSchema,
       expectedEffect: expectedEffectSchema.default({ type: "none" }),
       dispatchSemantics: z.enum(["read_only", "mutation"]).optional(),
+      activationMechanism: z.enum(["pointer", "element", "dom"]).optional(),
       timeoutMs: timeout,
     })
     .strict(),
@@ -745,6 +746,7 @@ export const currentActionSchema = z.union([
       target: interactionTargetIntentSchema,
       expectedEffect: expectedEffectSchema.default({ type: "none" }),
       dispatchSemantics: z.enum(["read_only", "mutation"]).optional(),
+      activationMechanism: z.enum(["pointer", "element", "dom"]).optional(),
       timeoutMs: timeout,
     })
     .strict(),
@@ -792,6 +794,7 @@ export const currentActionSchema = z.union([
       type: z.literal("press"),
       target: interactionTargetIntentSchema.optional(),
       key: z.enum(["Enter", "Escape", "Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]),
+      dispatchSemantics: z.enum(["read_only", "mutation"]).optional(),
       timeoutMs: timeout,
     })
     .strict(),

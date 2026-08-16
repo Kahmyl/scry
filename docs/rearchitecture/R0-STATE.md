@@ -2296,6 +2296,36 @@ authorization, complete Vitract Create → Retrieve, qualify the second independ
 live surface, and run the final R0/R0.7 closure audit. Historical M1 remains
 `UNAVAILABLE`.
 
+The cleanup journey additionally exposed and corrected three browser-truth
+composition defects without weakening the orphan fence:
+
+- read-only dispatch semantics now cover explicitly declared targeted key
+  activation as well as pointer activation;
+- targeted key dispatch no longer lets Playwright navigation waiting redefine
+  dispatch truth, and post-interaction semantic context enrichment is bounded
+  and cannot erase an already settled operation outcome;
+- Praxis now distinguishes pointer, trusted exact `ElementHandle`, and DOM
+  activation mechanics. Each operates only on the already pinned entity; none
+  performs selector fallback, semantic re-resolution, or cross-session transfer.
+  Pointer activation retains its receipt and same-document disappearance remains
+  conservatively UNKNOWN; document replacement is factual dispatch evidence.
+
+Focused browser qualification for these corrections is **76/76 GREEN** across
+Praxis runtime/reference/transaction coverage, with Executor authoring browser
+session **4/4 GREEN** and affected typechecks GREEN. The Vitract authoritative
+adapter was also migrated from locator actions to internally pinned exact Praxis
+references and still positively re-proved the same orphan identity. This proves
+the stored credential pair and exact browser mechanics remain valid.
+
+Live cleanup login through the agent-owned protected session continues to refuse
+before reaching the credential page, while the same credentials and exact Praxis
+mechanics succeed in the authoritative adapter. Every attempted live login
+operation settled `not_applied`; no resource mutation was attempted and no
+protected value was exposed. The remaining cleanup implementation boundary is a
+separately authorized authoritative resource mutation adapter for the exact
+reconciled identity, followed by an authoritative listing that proves revoked or
+absent state and only then resolves the original cleanup-required fence.
+
 # Important current architectural facts
 
 ## Executor

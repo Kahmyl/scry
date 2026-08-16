@@ -15,14 +15,32 @@ export class PraxisKeyDispatchError extends Error {
 export async function pressReferencedTarget(
   reference: PraxisTargetReference,
   key: string,
-  options: { timeoutMs?: number } = {},
+  _options: { timeoutMs?: number } = {},
 ): Promise<{ dispatched: true }> {
   await reference.assertCurrent();
   const element = reference.element();
   await assertKeyboardActionable(element);
+  await element.focus();
   await reference.assertCurrent();
+  const ownsFocus = await element.evaluate((node) => node.ownerDocument.activeElement === node)
+    .catch(() => false);
+  if (!ownsFocus) throw new PraxisStaleTargetError();
   try {
-    await element.press(key, options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs });
+    // ElementHandle.press waits for navigation triggered by the key. Dispatch
+    // truth and destination observation are separate lifecycle facts: once the
+    // pinned entity owns focus and remains current, emit input through its Page
+    // without waiting for a resulting document transition here.
+    const keyboard = reference.page().keyboard;
+    await keyboard.down(key);
+    // A keydown can synchronously start document replacement. Key-up is still
+    // emitted, but its protocol acknowledgement must not become an implicit
+    // navigation wait after dispatch has already occurred.
+    const release = keyboard.up(key);
+    await Promise.race([
+      release,
+      new Promise<void>((resolve) => setTimeout(resolve, 100)),
+    ]);
+    void release.catch(() => undefined);
   } catch (error) {
     if (error instanceof PraxisStaleTargetError) throw error;
     throw new PraxisKeyDispatchError({ cause: error });

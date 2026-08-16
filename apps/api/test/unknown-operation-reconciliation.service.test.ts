@@ -112,4 +112,20 @@ describe("authoritative UNKNOWN reconciliation", () => {
     expect(runner.reconcileUnknownEffect).not.toHaveBeenCalled();
   });
 
+  it("applies the same mechanical reconciliation to targeted read-only key activation", async () => {
+    const { service, sessions, runner } = fixture({ type: "none" });
+    sessions.beginUnknownReconciliation.mockResolvedValueOnce({
+      state: "observing", id: "attempt", attempt: 1, replayed: false,
+      expectedEffect: { type: "none" },
+      authority: { action: { type: "press", key: "Enter", dispatchSemantics: "read_only" } as never },
+    });
+    const result = await service.reconcileUnknown(principal, "00000000-0000-4000-8000-000000000001", {
+      missionId: "00000000-0000-4000-8000-000000000002", operationId: "read-only-press-unknown",
+      idempotencyKey: "read-only-press-reconcile",
+    });
+    expect(result).toMatchObject({ result: "proven_not_applied", redispatchAllowed: false,
+      reasonCode: "READ_ONLY_DISPATCH_HAS_NO_MUTATION_EFFECT" });
+    expect(runner.reconcileUnknownEffect).not.toHaveBeenCalled();
+  });
+
 });

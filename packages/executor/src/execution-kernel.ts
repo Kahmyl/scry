@@ -772,7 +772,7 @@ function verifyAdoptedPopup(page: Page, beforeUrl: string, expectedOrigin?: stri
 
 function isMutatingAction(action: CurrentAction): boolean {
   if (action.type === "click") return action.dispatchSemantics !== "read_only";
-  if (action.type === "press") return true;
+  if (action.type === "press") return action.dispatchSemantics !== "read_only";
   return (
     ["fill", "select", "check", "protectedTransaction"].includes(action.type) ||
     (action.type === "sameOriginRequest" && action.method !== "GET")
@@ -781,7 +781,7 @@ function isMutatingAction(action: CurrentAction): boolean {
 
 function isObservationAction(action: CurrentAction): boolean {
   if (action.type === "click") return action.dispatchSemantics === "read_only";
-  if (action.type === "press") return false;
+  if (action.type === "press") return action.dispatchSemantics === "read_only";
   if (action.type === "sameOriginRequest") return action.method === "GET";
   return ["navigate", "waitFor", "scroll", "screenshot", "capturePublicValue"].includes(
     action.type,

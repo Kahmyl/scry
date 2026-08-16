@@ -176,7 +176,7 @@ export class MissionFlowAuthoringService {
       code: "UNKNOWN_RECONCILIATION_IN_PROGRESS", mutationOutcome: "unknown",
       safeActions: ["get_flow_authoring"],
     });
-    const readOnlyObservation = claim.authority.action.type === "click"
+    const readOnlyObservation = (claim.authority.action.type === "click" || claim.authority.action.type === "press")
       && claim.authority.action.dispatchSemantics === "read_only"
       ? { result: "proven_not_applied" as const,
           reasonCode: "READ_ONLY_DISPATCH_HAS_NO_MUTATION_EFFECT",

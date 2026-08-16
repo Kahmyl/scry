@@ -79,7 +79,10 @@ export const praxisSafeActionSchema = z.enum([
   "do_not_retry",
 ]);
 export const praxisOperationSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("activate") }).strict(),
+  z.object({
+    type: z.literal("activate"),
+    mechanism: z.enum(["pointer", "element", "dom"]).optional(),
+  }).strict(),
   z
     .object({
       type: z.literal("enter_text"),

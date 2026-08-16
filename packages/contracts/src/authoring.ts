@@ -164,6 +164,7 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
       semanticEffect: z
         .enum(["read_context_transition", "resource_mutation", "unknown"])
         .optional(),
+      activationMechanism: z.enum(["pointer", "element", "dom"]).optional(),
     })
     .strict(),
   z
@@ -221,6 +222,9 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
       kind: z.literal("press"),
       target: missionAuthoringSemanticTargetSchema.optional(),
       key: safePressKeySchema,
+      semanticEffect: z
+        .enum(["read_context_transition", "resource_mutation", "unknown"])
+        .optional(),
     })
     .strict(),
   z
@@ -496,14 +500,14 @@ export const missionAuthoringIntentSchema = z
   .strict()
   .superRefine((intent, context) => {
     if (
-      intent.action.kind === "activate" &&
+      (intent.action.kind === "activate" || intent.action.kind === "press") &&
       intent.action.semanticEffect === "read_context_transition" &&
       intent.authorization.kind !== "live_read"
     )
       context.addIssue({
         code: "custom",
         path: ["authorization", "kind"],
-        message: "read-context activation requires explicit live_read authority",
+        message: "read-context transition requires explicit live_read authority",
       });
     const protectedReferences =
       intent.action.kind === "fill" && intent.action.protectedReferenceId

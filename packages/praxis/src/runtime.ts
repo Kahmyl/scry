@@ -593,6 +593,35 @@ async function dispatchOperation(
         throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
           provenance: "application",
         });
+      if (request.operation.mechanism === "dom") {
+        try {
+          await activationTarget.evaluate((node) => {
+            if (!node.isConnected || !(node instanceof HTMLElement))
+              throw new Error("PINNED_DOM_ACTIVATION_TARGET_NOT_CURRENT");
+            node.click();
+          });
+        } catch (error) {
+          if (error instanceof PraxisStaleTargetError)
+            throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+              provenance: "application",
+            });
+          throw error;
+        }
+        break;
+      }
+      if (request.operation.mechanism === "element") {
+        try {
+          await activationTarget.click({ timeout: options.timeout, noWaitAfter: true });
+        } catch (error) {
+          const connected = await activationTarget.evaluate((node) => node.isConnected).catch(() => false);
+          if (!connected) throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+            provenance: "application",
+          });
+          throw error;
+        }
+        break;
+      }
+      const sourceDocumentIdentity = await readActivationDocumentIdentity(page);
       const receipt = `${request.transactionId}:${request.operationId}`;
       const activationObserved = await armActivationReceipt(page, activationTarget, receipt);
       try {
@@ -608,8 +637,11 @@ async function dispatchOperation(
           throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
         throw error;
       }
-      if (!(await activationObserved()))
-        throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+      if (!(await activationObserved())) {
+        const currentDocumentIdentity = await readActivationDocumentIdentity(page).catch(() => undefined);
+        if (!currentDocumentIdentity || currentDocumentIdentity === sourceDocumentIdentity)
+          throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+      }
       break;
     }
     case "enter_text": {
@@ -770,12 +802,9 @@ function activationReceiptState(page: Page): ActivationReceiptState {
   const waiters = new Map<string, () => void>();
   const state: ActivationReceiptState = {
     waiters,
-    ready: page
-      .exposeBinding("__scryPraxisRecordActivation", (_source, key: unknown) => {
-        if (typeof key !== "string") return;
-        waiters.get(key)?.();
-      })
-      .then(() => undefined),
+    ready: page.exposeBinding("__scryPraxisRecordActivation", (_source, key: unknown) => {
+      if (typeof key === "string") waiters.get(key)?.();
+    }).then(() => undefined),
   };
   activationReceiptStates.set(page, state);
   return state;
@@ -789,27 +818,16 @@ async function armActivationReceipt(
   await state.ready;
   let observed = false;
   let resolveObserved!: () => void;
-  const observation = new Promise<void>((resolve) => {
-    resolveObserved = resolve;
-  });
-  state.waiters.set(receipt, () => {
-    observed = true;
-    resolveObserved();
-  });
+  const observation = new Promise<void>((resolve) => { resolveObserved = resolve; });
+  state.waiters.set(receipt, () => { observed = true; resolveObserved(); });
   try {
     await target.evaluate((element, key) => {
-      element.addEventListener(
-        "click",
-        () => {
-          const binding = (
-            window as typeof window & {
-              __scryPraxisRecordActivation?: (receipt: string) => Promise<void>;
-            }
-          ).__scryPraxisRecordActivation;
-          void binding?.(key);
-        },
-        { capture: true, once: true },
-      );
+      element.addEventListener("click", () => {
+        const binding = (window as typeof window & {
+          __scryPraxisRecordActivation?: (value: string) => Promise<void>;
+        }).__scryPraxisRecordActivation;
+        void binding?.(key);
+      }, { capture: true, once: true });
     }, receipt);
   } catch (error) {
     state.waiters.delete(receipt);
@@ -821,6 +839,14 @@ async function armActivationReceipt(
     state.waiters.delete(receipt);
     return observed;
   };
+}
+async function readActivationDocumentIdentity(page: Page) {
+  return page.evaluate(() => {
+    const key = "__scryPraxisActivationDocumentIdentity";
+    const state = document as unknown as Record<string, unknown>;
+    if (typeof state[key] !== "string") state[key] = `${Date.now()}-${Math.random()}`;
+    return state[key] as string;
+  });
 }
 function isMutating(operation: PraxisOperation) {
   return ["activate", "enter_text", "select_option", "set_checked", "press_key"].includes(
