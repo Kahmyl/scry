@@ -344,10 +344,12 @@ export class ProtectedTransactionKernel {
           operationId: transaction.operationId,
         }) ?? Promise.resolve(),
       });
-      try {
-        await gotoPraxisPage(capsule.page, transaction.entry.url, { waitUntil: "domcontentloaded" });
-      } catch {
-        throw new PhaseError("TRANSACTION_ENTRY_NAVIGATION_FAILED", "bootstrap", "safe_to_retry");
+      if (!d.liveProtectedSession) {
+        try {
+          await gotoPraxisPage(capsule.page, transaction.entry.url, { waitUntil: "domcontentloaded" });
+        } catch {
+          throw new PhaseError("TRANSACTION_ENTRY_NAVIGATION_FAILED", "bootstrap", "safe_to_retry");
+        }
       }
       for (const assertion of transaction.entry.assertions) {
         try {

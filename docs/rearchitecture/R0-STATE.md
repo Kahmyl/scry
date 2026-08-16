@@ -2223,6 +2223,16 @@ are **13/13 GREEN** (with unrelated integration cases skipped), and API
 typecheck is GREEN. The refused protected reservation is durably
 `failed_not_applied`, `dispatch_state=not_started`, `mutation_outcome=not_applied`.
 
+A later live retry isolated a second pre-dispatch defect: the coordinator
+correctly borrowed the protected session but still unconditionally navigated to
+the transaction entry URL during capsule bootstrap. That same-URL reload created
+a new document and mechanically invalidated every exact reference. Live
+protected sessions now retain their current document and verify the entry URL;
+only newly created protected capsules perform entry navigation. The protected
+transaction coordinator browser suite is **23/23 GREEN** and Executor typecheck
+is GREEN. Both affected live attempts remained durably `not_started` /
+`not_applied`; no Vitract credential was created or disclosed.
+
 # Important current architectural facts
 
 ## Executor
