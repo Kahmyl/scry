@@ -808,7 +808,6 @@ export const compileAndCertifyFlowSchema = compileFlowDraftSchema
 export const publishFlowDraftSchema = objectiveContextSchema
   .extend({
     expectedVersion: z.number().int().positive(),
-    compilationId: uuid,
     visibility: z.enum(["reusable", "mission_local", "internal"]),
     purpose: z.enum([
       "primary",

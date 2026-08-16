@@ -394,6 +394,26 @@ describe("bounded semantic page context", () => {
       state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_DOCUMENT_CHANGED",
     });
   });
+
+  it("bounds observation when controls disappear while exact handles are pinned", async () => {
+    await page.setContent(`<main>${Array.from({ length: 80 }, (_, index) =>
+      `<button id="control-${index}">Control ${index}</button>`,
+    ).join("")}</main>`);
+    await page.evaluate(() => {
+      let index = 79;
+      const timer = window.setInterval(() => {
+        document.querySelector(`#control-${index}`)?.remove();
+        index -= 1;
+        if (index < 35) window.clearInterval(timer);
+      }, 0);
+    });
+
+    const before = performance.now();
+    const context = await observeSemanticPageContext(page);
+
+    expect(performance.now() - before).toBeLessThan(3_000);
+    expect(context.controls.every((control) => control.reference.startsWith("context-control-"))).toBe(true);
+  });
 });
 
 function referenceIntent(reference: string): InteractionTargetIntent {

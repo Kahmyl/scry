@@ -37,6 +37,7 @@ export type AuthoringBrowserSession = {
   observeDocument(): Promise<{
     documentEpoch: number;
     url: string;
+    semanticPageContext: NonNullable<OperationOutcome["semanticPageContext"]>;
   }>;
   interact(
     action: CurrentAction,
@@ -174,9 +175,11 @@ export async function createAuthoringBrowserSession(input: {
         epoch += 1;
       }
 
+      const semanticPageContext = await observeSemanticPageContext(page!);
       return {
         documentEpoch: epoch,
         url: page!.url(),
+        semanticPageContext,
       };
     }
 

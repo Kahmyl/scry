@@ -875,6 +875,7 @@ export class AdaptiveSessionRepository {
         AND mission_authorization.objective_id=operation.objective_id
         AND mission_authorization.environment_id=session.environment_id
         AND mission_authorization.kind='protected_mutation'
+        AND mission_authorization.operation_id=operation.authoring_intent->>'intentId'
         AND mission_authorization.status='approved'
         AND (mission_authorization.expires_at IS NULL OR mission_authorization.expires_at>now())
        WHERE operation.session_id=$1 AND operation.operation_id=$2
@@ -1937,10 +1938,8 @@ export class AdaptiveSessionRepository {
       const continuity = await q<{
         predecessorRunId: string | null;
         checkpointState: string | null;
-        hasRuns: boolean;
       }>(
-        `SELECT draft.predecessor_run_id AS "predecessorRunId",checkpoint.state AS "checkpointState",
-                EXISTS(SELECT 1 FROM runs WHERE mission_id=session.mission_id) AS "hasRuns"
+        `SELECT draft.predecessor_run_id AS "predecessorRunId",checkpoint.state AS "checkpointState"
          FROM adaptive_sessions session
          JOIN flow_drafts draft ON draft.id=session.active_flow_draft_id
          LEFT JOIN run_successor_checkpoints checkpoint
@@ -1952,8 +1951,7 @@ export class AdaptiveSessionRepository {
         throw new ConflictException({ code: "ADAPTIVE_SESSION_NOT_PROVISIONING" });
       const row = continuity.rows[0]!;
       if (
-        (row.hasRuns && !row.predecessorRunId) ||
-        (row.predecessorRunId && row.checkpointState !== "verified")
+        row.predecessorRunId && row.checkpointState !== "verified"
       )
         throw new ConflictException({ code: "SUCCESSOR_CHECKPOINT_NOT_VERIFIED" });
       await this.transitionLocked(q, sessionId, "provisioning", "active", "session_activated", {});

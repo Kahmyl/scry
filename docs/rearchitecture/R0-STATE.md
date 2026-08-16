@@ -1903,7 +1903,7 @@ R0.6 is complete.
 
 ---
 
-## R0.7 — final end-to-end qualification — IN PROGRESS / BLOCKED
+## R0.7 — final end-to-end qualification — IN PROGRESS / ARCHITECTURE BLOCKED
 
 Starting checkpoint: `d81fdca0c6c62abd53b46a16f13d6471db423b5b`.
 
@@ -2018,24 +2018,110 @@ the acceptance agent to attempt optional Flow publication and encounter
 or as evidence that compilation is required for agent-directed execution. A
 fresh connector metadata negotiation is required before the resumed live run.
 
-### Exact continuation
+### Dashboard-visible continuation and live defect qualification
 
-1. User/dashboard stores the Vitract Preview login credentials in project
-   `cd9a8d5e-0afe-4eda-899d-9b0008bbb9b2` and authorizes them for environment
-   `f29adb9c-e630-4232-abc7-b88620872d6c` without exposing plaintext to the agent.
-2. Reconnect/refresh `scrytest` so the client negotiates the running current MCP
-   metadata rather than cached historical tool descriptions.
-3. Resume Mission `87df0374-f9f6-4d7a-b876-77e61d4ef703`, Objective
-   `ca5decad-0b1d-4297-9dfc-b76c1fc258d8`, and re-observe from a new live Praxis
-   session. Do not reuse references from any prior session.
-4. Repeat Vitract Create → Retrieve with an intention-only prompt.
-5. Only after Vitract PASS, run the second independent live surface.
-6. Run the complete R0 closure regression and authority audit.
+The owner created dashboard-visible Project
+`802ec170-6d18-44b0-94ab-4445ad1ef259` and provisioned Vitract login credentials
+through the supported dashboard surface. The refreshed owner-workspace MCP
+identity lists that Project and no hidden background Project. No credential
+plaintext was exposed.
 
-R0.7 is **NOT COMPLETE**. R0 is **NOT COMPLETE**. The live acceptance claims are
-blocked by an external Vitract authentication prerequisite and stale connector
-metadata, not by the unavailable historical M1 claim and not by an accepted
-product pass.
+Supported durable scope:
+
+```text
+Project: 802ec170-6d18-44b0-94ab-4445ad1ef259
+Environment: 44410657-d9d8-486b-9c71-87a36e67fe0d
+original fenced Mission: 5c32a955-6b36-4ba1-ae61-6d916bcc3aa4
+original Objective: 24571f67-5c6e-45d7-a733-bf35c04c5fbe
+continuation Mission: e572a9b9-37ae-4ec8-bbbc-53f506aa10bc
+continuation Objective: bab216e4-d43c-446d-b1e0-5116e83b521d
+continuation Run: 1b3dc99c-a2e7-4e22-954b-1f847f558b0a
+Vitract Test application: vtr_app_sandbox_6bb9b409-1699-f111-9b33-00224854e25a
+```
+
+Positive live evidence:
+
+```text
+opaque login fill: succeeded; privacy verified
+Partner API documentation: observed at https://preview-api.vitract.com/api/docs/partner-api
+application save: mutationOutcome=applied
+application re-observation by unique public name: PASS
+protected credential attempts: mutationOutcome=not_applied; dispatch_state=not_started
+credential plaintext exposed: no
+```
+
+One application-save operation crossed dispatch as its first 60-second browser
+session expired. Scry recorded `unknown`, refused redispatch, and preserved the
+Mission fence. Observation-only reconciliation returned
+`RECONCILIATION_RUNTIME_UNAVAILABLE`. A distinct continuation Mission preserved
+that fence, independently proved the original unique name absent, and created a
+new uniquely named Test application. No uncertain operation was retried.
+
+The live journey proved and this checkpoint fixes five bounded product defects:
+
+1. representation-only Flow publication still required legacy compilation;
+2. Run links confused public intent identity with persisted operation identity;
+3. successor live sessions were blocked by unrelated historical Run existence;
+4. semantic page observation could wait 30 seconds for a candidate removed by
+   dynamic DOM churn; Praxis now snapshots handles and validates each element's
+   stable runtime identity before publishing a reference;
+5. MCP omitted the API-required protected `operationId`, protected runtime scope
+   did not compare that operation identity, generated post-dispatch outputs were
+   incorrectly required to have impossible pre-dispatch references, and the Run
+   adapter collapsed a legitimate pending protected operation into
+   `RUN_OPERATION_RESULT_UNAVAILABLE` instead of mechanically continuing that
+   same operation.
+
+Qualification at this checkpoint:
+
+```text
+workspace typecheck: GREEN
+Contracts: 91/91 GREEN
+MCP: 31/31 GREEN
+Praxis browser-backed: 175/175 GREEN
+affected API matrix: 47/47 GREEN
+adaptive repository PostgreSQL integration: included, 25/25 GREEN
+Executor browser-backed authoring session: 4/4 GREEN
+subsystem/direct-browser/execution-kernel/production-operation boundaries: GREEN
+```
+
+### New protected-capsule ownership contradiction
+
+R0.7 cannot safely continue Create → Retrieve from the public agent-directed Run
+contract without an owner-level architectural decision:
+
+```text
+live Run session observes and pins exact Add credential confirmation control
+→ protected transaction replays preparation in a separate protected browser context
+→ live-session context-control reference is invalid in that replay context
+→ removing the reference would restore semantic mutation-target resolution
+```
+
+Generated output fields are different: they do not exist before dispatch, so
+their declarations are correctly treated as narrow post-dispatch extraction
+facts and no fabricated pre-dispatch reference is required. The mutation target
+itself remains unresolved. The current product exposes no supported step to
+observe the protected replay context, return a reference owned by that exact
+Praxis session/page/document, and then authorize dispatch against it.
+
+Every live credential attempt at this boundary was mechanically
+`failed_not_applied` / `not_started`. Do not retry or weaken exact references.
+The next architecture decision must choose and implement one coherent contract:
+
+1. expose a live protected Praxis session with observe → exact pin → explicitly
+   authorized mutation dispatch; or
+2. explicitly revise the R0 exact-entity invariant for protected capsule
+   mutation targets and justify the replacement trust/mechanical contract.
+
+Option 1 preserves the frozen R0 ownership model and is recommended. After that
+contract is implemented, resume the continuation Mission with a new live session,
+issue one API credential, authorize its opaque references for the Environment,
+complete exact Vitract Create → Retrieve, run the second independent live surface,
+and execute the complete R0 closure audit.
+
+R0.7 is **NOT COMPLETE**. R0 is **NOT COMPLETE**. Authentication and supported
+Project provisioning are no longer blockers. The blocker is the protected
+capsule's missing exact-reference handoff contract.
 
 # Important current architectural facts
 

@@ -385,8 +385,8 @@ integration("adaptive session repository integration", () => {
     const authorizationId = randomUUID();
     await database.query(
       `INSERT INTO mission_authorizations(
-         id,mission_id,objective_id,environment_id,kind,reason,status,granted_by_agent_session_id
-       ) VALUES($1,$2,$3,$4,'protected_mutation','Integration qualification','approved',$5)`,
+         id,mission_id,objective_id,environment_id,kind,operation_id,reason,status,granted_by_agent_session_id
+       ) VALUES($1,$2,$3,$4,'protected_mutation','different-protected-operation','Integration qualification','approved',$5)`,
       [authorizationId, missionId, objectiveId, environmentId, agentSessionId],
     );
     const intent = {
@@ -438,6 +438,14 @@ integration("adaptive session repository integration", () => {
       expectedEffect: { type: "none" },
       mode: "transact",
     });
+
+    await expect(
+      repository.protectedExecutionContext(created.id, "protected-context-operation"),
+    ).rejects.toMatchObject({ response: { code: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID" } });
+    await database.query(
+      `UPDATE mission_authorizations SET operation_id='generate-protected-context' WHERE id=$1`,
+      [authorizationId],
+    );
 
     await expect(
       repository.protectedExecutionContext(created.id, "protected-context-operation"),

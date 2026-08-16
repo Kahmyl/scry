@@ -127,9 +127,13 @@ describe("persistent authoring browser session", () => {
       expect(session.documentEpoch()).toBe(0);
 
       await session.page.goto(origin, { waitUntil: "domcontentloaded" });
-      await session.observeDocument();
+      const observation = await session.observeDocument();
 
       expect(session.documentEpoch()).toBe(1);
+      expect(observation.semanticPageContext.controls).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "heading", name: "First page" }),
+        expect.objectContaining({ role: "textbox", name: "Name" }),
+      ]));
       expect(await session.page.getByRole("heading").textContent()).toBe("First page");
 
       await session.interact(

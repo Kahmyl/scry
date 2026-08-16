@@ -20,6 +20,7 @@ import {
   type PublishFlowDraftInput,
   type StartProbeSessionInput,
   type UpdateFlowDraftInput,
+  validatePlanAgainstPolicy,
 } from "@scry/contracts";
 import { browserObservationRuntimeHealth } from "@scry/praxis";
 
@@ -1548,6 +1549,124 @@ export class AuthoringService {
   }
 
   async publish(principal: Principal, draftId: string, input: PublishFlowDraftInput) {
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+
+    return this.db.transaction(async (client) => {
+      const q = bind(client);
+      const d = await this.requireDraft(q, principal, draftId, true);
+      this.requireDraftContext(d, input);
+      await this.requireContext(
+        q,
+        principal,
+        d.projectId,
+        input.missionId,
+        input.objectiveId,
+        input.agentSessionId,
+        d.environmentId,
+      );
+
+      const replay = await q<{ flowId: string; revisionId: string; revision: number }>(
+        `SELECT revision.flow_id AS "flowId",revision.id AS "revisionId",revision.revision
+         FROM flow_draft_events event
+         JOIN flow_drafts draft ON draft.id=event.draft_id
+         JOIN flow_revisions revision ON revision.id=draft.published_revision_id
+         WHERE event.draft_id=$1 AND event.type='published'
+           AND event.safe_metadata->>'idempotencyKey'=$2`,
+        [draftId, input.idempotencyKey],
+      );
+      if (replay.rowCount) return { ...replay.rows[0]!, replayed: true };
+      if (d.version !== input.expectedVersion) {
+        throw new ConflictException({ code: "STALE_DRAFT_VERSION", actualVersion: d.version });
+      }
+      if (d.state !== "editing" && d.state !== "publishable") {
+        throw new ConflictException({ code: "FLOW_DRAFT_NOT_EDITABLE", state: d.state });
+      }
+
+      const environment = await q<{ policy: unknown }>(
+        `SELECT policy FROM environments WHERE id=$1 AND project_id=$2`,
+        [d.environmentId, d.projectId],
+      );
+      if (!environment.rowCount) throw new NotFoundException("Environment not found");
+      const plan = currentPlanSchema.parse(d.plan);
+      const policy = executionPolicySchema.parse(environment.rows[0]!.policy);
+      const diagnostics = validatePlanAgainstPolicy(plan, policy);
+      if (diagnostics.length) {
+        throw new ConflictException({ code: "FLOW_MECHANICAL_VALIDATION_FAILED", diagnostics });
+      }
+
+      const legacyCandidate = !d.flowId
+        ? await q<{ flowId: string }>(
+            `SELECT revision.flow_id AS "flowId" FROM flow_compilations compilation
+             JOIN flow_revisions revision ON revision.id=compilation.flow_revision_id
+             JOIN flows flow ON flow.id=revision.flow_id
+             WHERE compilation.draft_id=$1 AND flow.project_id=$2
+             ORDER BY compilation.created_at DESC LIMIT 1 FOR UPDATE OF flow`,
+            [draftId, d.projectId],
+          )
+        : { rowCount: 0, rows: [] as Array<{ flowId: string }> };
+      const existingFlowId = d.flowId ?? legacyCandidate.rows[0]?.flowId;
+      const flowId = existingFlowId ?? randomUUID();
+      const revisionId = randomUUID();
+      let revision = 1;
+      if (existingFlowId) {
+        const current = await q<{ revision: number }>(
+          `SELECT revision.revision FROM flows flow
+           JOIN flow_revisions revision ON revision.id=flow.latest_revision_id
+           WHERE flow.id=$1 AND flow.project_id=$2 FOR UPDATE OF flow`,
+          [existingFlowId, d.projectId],
+        );
+        if (!current.rowCount) throw new NotFoundException("Flow not found");
+        revision = current.rows[0]!.revision + 1;
+      } else {
+        await q(
+          `INSERT INTO flows(
+             id,project_id,name,description,latest_revision_id,visibility,purpose,
+             origin_mission_id,origin_objective_id,owner_mission_id,owner_objective_id,
+             created_by_agent_session_id)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$8,$9,$10)`,
+          [flowId,d.projectId,d.name,d.description,revisionId,input.visibility,input.purpose,
+           input.missionId,input.objectiveId,input.agentSessionId],
+        );
+      }
+
+      await q(
+        `INSERT INTO flow_revisions(
+           id,flow_id,revision,content,plan,validation,created_by_agent_session_id,reason)
+         VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,$8)`,
+        [revisionId,flowId,revision,JSON.stringify(d.content),JSON.stringify(plan),
+         JSON.stringify({ valid: true, representationOnly: true, sourceDraftVersion: d.version,
+           sourcePlanDigest: hash(d.plan) }),input.agentSessionId,input.reason],
+      );
+      await q(
+        `UPDATE flows SET latest_revision_id=$2,publication_state='published',visibility=$3,
+           purpose=$4,name=$5,description=$6,updated_at=now() WHERE id=$1`,
+        [flowId,revisionId,input.visibility,input.purpose,d.name,d.description],
+      );
+      await q(
+        `INSERT INTO mission_flow_links(
+           mission_id,objective_id,flow_id,visibility,purpose,reason,created_by_agent_session_id)
+         VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,
+        [input.missionId,input.objectiveId,flowId,input.visibility,input.purpose,input.reason,
+         input.agentSessionId],
+      );
+      await q(
+        `UPDATE flow_drafts SET flow_id=$2,state='published',published_revision_id=$3,
+           updated_at=now() WHERE id=$1`,
+        [draftId,flowId,revisionId],
+      );
+      await this.event(q,draftId,d.version,"published",input.agentSessionId,
+        `Published representation-only Flow revision ${revision}`,
+        { flowId,revisionId,idempotencyKey: input.idempotencyKey });
+      return { flowId, revisionId, revision, replayed: false };
+    });
+  }
+
+  private async publishWithCompilationLegacy(
+    principal: Principal,
+    draftId: string,
+    input: PublishFlowDraftInput & { compilationId: string },
+  ) {
     await this.admission.assertAcceptingWork();
     this.requireWrite(principal);
 

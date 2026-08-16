@@ -26,30 +26,47 @@ export class AgentDirectedRunService {
     this.scry.requireWriteAccess(principal);
     const run = await this.requireAssociatedRun(principal, runId, input.praxisSessionId, true);
     const existing = await this.database.query<{ safeResult: unknown }>(
-      `SELECT safe_result AS "safeResult" FROM run_operation_links
-       WHERE run_id=$1 AND operation_id=$2`,
+      `SELECT link.safe_result AS "safeResult" FROM run_operation_links link
+       JOIN adaptive_operations operation
+         ON operation.session_id=link.praxis_session_id AND operation.operation_id=link.operation_id
+       WHERE link.run_id=$1 AND operation.authoring_intent->>'intentId'=$2`,
       [runId,input.intent.intentId],
     );
     if (existing.rowCount) return { ...existing.rows[0]!.safeResult as object, replayed: true };
     if (input.intent.objectiveId !== run.objectiveId || input.intent.flowDraftId !== run.flowDraftId)
       throw new ConflictException({ code: "RUN_OPERATION_SCOPE_MISMATCH" });
 
-    const factualIntent = missionAuthoringIntentSchema.parse({
-      ...input.intent,
-      expectedEffect: { kind: "none" },
-    });
-    const result = await this.sessions.advance(principal, input.praxisSessionId, {
+    const factualIntent = missionAuthoringIntentSchema.parse(input.intent);
+    let result = await this.sessions.advance(principal, input.praxisSessionId, {
       kind: "intents",
       idempotencyKey: input.intent.intentId,
       intents: [factualIntent],
       budgets: { maxOperations: 1, maxDurationMs: input.intent.constraints.timeoutMs },
     });
+    for (let attempt = 0; result.state === "pending" && attempt < 120; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      result = await this.sessions.advance(principal, input.praxisSessionId, {
+        kind: "continue",
+        turnId: result.turnId,
+        budgets: { maxOperations: 1, maxDurationMs: input.intent.constraints.timeoutMs },
+        idempotencyKey: `${input.intent.intentId}:continue:${attempt + 1}`,
+      });
+    }
     const operation = result.completed.find((item) => item.intentId === input.intent.intentId);
     if (!operation) throw new ConflictException({ code: "RUN_OPERATION_RESULT_UNAVAILABLE" });
+    const persistedOperation = await this.database.query<{ operationId: string }>(
+      `SELECT operation_id AS "operationId" FROM adaptive_operations
+       WHERE session_id=$1 AND authoring_intent->>'intentId'=$2`,
+      [input.praxisSessionId,input.intent.intentId],
+    );
+    if (!persistedOperation.rowCount)
+      throw new ConflictException({ code: "RUN_OPERATION_IDENTITY_UNAVAILABLE" });
+    const operationId = persistedOperation.rows[0]!.operationId;
     const safeResult = {
       runId,
       praxisSessionId: input.praxisSessionId,
-      operationId: operation.intentId,
+      operationId,
+      intentId: operation.intentId,
       functionalResult: operation.functionalResult,
       mutationOutcome: operation.mutationOutcome,
       privacyApplicable: operation.privacyApplicable,
@@ -68,7 +85,7 @@ export class AgentDirectedRunService {
       await client.query(
         `INSERT INTO run_operation_links(run_id,praxis_session_id,operation_id,sequence,safe_result)
          VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT(run_id,operation_id) DO NOTHING`,
-        [runId,input.praxisSessionId,input.intent.intentId,sequence.rows[0]!.sequence,JSON.stringify(safeResult)],
+        [runId,input.praxisSessionId,operationId,sequence.rows[0]!.sequence,JSON.stringify(safeResult)],
       );
       await client.query(`UPDATE runs SET updated_at=now() WHERE id=$1 AND state='running'`, [runId]);
     });

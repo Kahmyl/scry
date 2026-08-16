@@ -223,6 +223,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       candidateIndex: number;
       runtimeId: string;
       containerIndices: number[];
+      containerRuntimeIds: string[];
       containerKinds: ContextContainerKind[];
       semanticPurpose?: string;
       valueProtected?: boolean;
@@ -356,6 +357,15 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         .map((container) => containerCandidates.indexOf(container))
         .filter((index) => index >= 0)
         .slice(0, 4);
+      const containerRuntimeIds = containerElements.slice(0, 4).map((container) => {
+        let id = state.__scryGroundingIds!.get(container);
+        if (!id) {
+          state.__scryGroundingSequence! += 1;
+          id = `container-${state.__scryGroundingSequence}`;
+          state.__scryGroundingIds!.set(container, id);
+        }
+        return id;
+      });
       const containerKinds = containerElements.slice(0, 4).map((container) => {
         const role = container.getAttribute("role");
         const tag = container.tagName.toLowerCase();
@@ -371,6 +381,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         candidateIndex,
         runtimeId,
         containerIndices,
+        containerRuntimeIds,
         containerKinds,
         role,
         name,
@@ -434,6 +445,10 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
   const previousContainers = contextContainers.get(page);
   const registeredContainers = new Map<string, ContextContainerEntry>();
   const containerControls = new Map<string, string[]>();
+  const candidateElements = await page.locator(CONTEXT_CONTROL_SELECTOR).elementHandles() as ElementHandle<Element>[];
+  const containerElements = await page.locator(CONTEXT_CONTAINER_SELECTOR).elementHandles() as ElementHandle<Element>[];
+  const retainedCandidateIndices = new Set<number>();
+  const retainedContainerIndices = new Set<number>();
   for (const control of observed.controls) {
     const role = cleanContextText(control.role, 40);
     const name = cleanContextText(control.name, 160);
@@ -447,7 +462,17 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       disabled: Boolean(control.disabled),
     });
     let reference: string | undefined;
-    const currentElement = await locator.elementHandle();
+    const currentElement = candidateElements[control.candidateIndex] ?? null;
+    const currentIdentityMatches = currentElement
+      ? await currentElement.evaluate((element, runtimeId) => {
+          const state = globalThis as typeof globalThis & { __scryGroundingIds?: WeakMap<Element, string> };
+          return state.__scryGroundingIds?.get(element) === runtimeId;
+        }, control.runtimeId).catch(() => false)
+      : false;
+    if (!currentIdentityMatches) {
+      await currentElement?.dispose();
+      continue;
+    }
     if (previous && currentElement) {
       for (const [candidateReference, entry] of previous) {
         if (
@@ -464,11 +489,17 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       }
     }
     if (!currentElement) continue;
+    retainedCandidateIndices.add(control.candidateIndex);
     const containers: ContextContainerEntry[] = [];
     for (let index = 0; index < control.containerIndices.length; index += 1) {
-      const containerLocator = page.locator(CONTEXT_CONTAINER_SELECTOR).nth(control.containerIndices[index]!);
-      const containerElement = await containerLocator.elementHandle();
+      const containerElement = containerElements[control.containerIndices[index]!] ?? null;
       if (!containerElement) continue;
+      const containerIdentityMatches = await containerElement.evaluate((element, runtimeId) => {
+        const state = globalThis as typeof globalThis & { __scryGroundingIds?: WeakMap<Element, string> };
+        return state.__scryGroundingIds?.get(element) === runtimeId;
+      }, control.containerRuntimeIds[index]!).catch(() => false);
+      if (!containerIdentityMatches) continue;
+      retainedContainerIndices.add(control.containerIndices[index]!);
       const kind = control.containerKinds[index]!;
       let containerReference: string | undefined;
       for (const [candidateReference, entry] of registeredContainers) {
@@ -504,8 +535,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         kind,
         documentIdentity,
       };
-      if (existing) await containerElement.dispose();
-      else registeredContainers.set(containerReference, container);
+      if (!existing) registeredContainers.set(containerReference, container);
       containers.push(container);
     }
     reference ??= `context-control-${randomBytes(16).toString("hex")}`;
@@ -523,6 +553,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       candidateIndex: _candidateIndex,
       runtimeId: _runtimeId,
       containerIndices: _containerIndices,
+      containerRuntimeIds: _containerRuntimeIds,
       containerKinds: _containerKinds,
       ...publicControl
     } = control;
@@ -547,6 +578,10 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
     }
   }
   await Promise.all([
+    ...candidateElements.flatMap((element, index) =>
+      retainedCandidateIndices.has(index) ? [] : [element.dispose().catch(() => undefined)]),
+    ...containerElements.flatMap((element, index) =>
+      retainedContainerIndices.has(index) ? [] : [element.dispose().catch(() => undefined)]),
     ...[...(previous?.values() ?? [])].map((entry) => entry.element.dispose().catch(() => undefined)),
     ...[...(previousContainers?.values() ?? [])].map((entry) =>
       entry.element.dispose().catch(() => undefined),

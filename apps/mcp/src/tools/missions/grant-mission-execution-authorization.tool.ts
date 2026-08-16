@@ -40,6 +40,7 @@ export function registerGrantMissionExecutionAuthorizationTool(
         ...objectiveContext,
         environmentId: uuid,
         kind: authorizationKindSchema,
+        operationId: z.string().trim().min(1).max(200).optional(),
         reason: z.string().trim().min(1).max(2000),
         expiresAt: z.string().datetime().optional(),
         confirmedUserAuthorized: z.literal(true),

@@ -105,14 +105,14 @@ export const dispatchRunOperationSchema = dispatchRunOperationBaseSchema.superRe
     const action = value.intent.action;
     if ("target" in action && action.target) references.push(action.target.reference);
     if (action.kind === "acquire_protected_outputs") {
-      references.push(action.mutation.target.reference, ...action.outputs.map((output) => output.target.reference));
+      references.push(action.mutation.target.reference);
       references.push(...(action.syntheticProtectedInputs ?? []).map((input) => input.target.reference));
     }
     if (references.some((reference) => !reference))
       context.addIssue({
         code: "custom",
         path: ["intent", "action"],
-        message: "Every target-bearing Run operation requires an exact live Praxis reference",
+        message: "Every pre-dispatch Run target requires an exact live Praxis reference",
       });
   });
 

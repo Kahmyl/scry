@@ -173,6 +173,10 @@ describe("current Scry MCP surface", () => {
     );
     const { client, server } = await connected();
     const tools = (await client.listTools()).tools;
+    expect(
+      tools.find(({ name }) => name === "grant_mission_execution_authorization")
+        ?.inputSchema.properties,
+    ).toHaveProperty("operationId");
     expect(tools.map(({ name }) => name)).toEqual([
       "get_capabilities",
       "list_projects",
@@ -972,8 +976,7 @@ describe("current Scry MCP surface", () => {
         ...context,
         draftId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         expectedVersion: 1,
-        compilationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        reason: "Publish certified contract",
+        reason: "Publish durable representation",
       },
     });
     expect(response.isError).toBe(true);
@@ -988,8 +991,7 @@ describe("current Scry MCP surface", () => {
     await server.close();
   });
 
-  it("returns the exact compiled contract identity from publication", async () => {
-    const compiledContractId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  it("returns the immutable representation revision from publication", async () => {
     const requests: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -1002,8 +1004,7 @@ describe("current Scry MCP surface", () => {
               flowId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
               revisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
               revision: 1,
-              compilationId: compiledContractId,
-              compiledContractId,
+              replayed: false,
             };
         return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
       }),
@@ -1015,13 +1016,12 @@ describe("current Scry MCP surface", () => {
         ...context,
         draftId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         expectedVersion: 1,
-        compilationId: compiledContractId,
-        reason: "Publish certified contract",
+        reason: "Publish durable representation",
       },
     });
     expect(response.isError).not.toBe(true);
     expect(response.structuredContent).toMatchObject({
-      publication: { compilationId: compiledContractId, compiledContractId },
+      publication: { revisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", replayed: false },
     });
     expect(requests).toEqual([
       "/api/capabilities",
