@@ -173,6 +173,34 @@ describe("adaptive session contracts", () => {
     ).toMatchObject({ authorization: { kind: "live_mutation" } });
   });
 
+  it("requires one exact operation-scoped binding for protected authentication", () => {
+    const reference = "context-control-0123456789abcdef0123456789abcdef";
+    const passwordReference = "00000000-0000-4000-8000-000000000009";
+    const authentication = intent({
+      action: {
+        kind: "authenticate",
+        fields: [
+          { target: { concept: "email", reference }, protectedReferenceId: ids.protectedReferenceId },
+          { target: { concept: "password", reference }, protectedReferenceId: passwordReference },
+        ],
+        submitTarget: { concept: "login", reference },
+      },
+      authorization: { kind: "authentication" },
+      protectedInputReferences: [ids.protectedReferenceId, passwordReference],
+    });
+    expect(missionAuthoringIntentSchema.parse(authentication).action).toMatchObject({
+      kind: "authenticate",
+    });
+    expect(() => missionAuthoringIntentSchema.parse({
+      ...authentication,
+      constraints: { ...constraints, allowNonExact: true },
+    })).toThrow();
+    expect(() => missionAuthoringIntentSchema.parse({
+      ...authentication,
+      authorization: { kind: "live_read" },
+    })).toThrow();
+  });
+
   it("accepts only semantic protected-output acquisition with explicit authorization", () => {
     const acquisition = intent({
       intentId: "generate-credential",

@@ -783,6 +783,19 @@ export const currentActionSchema = z.union([
     .strict(),
   z
     .object({
+      type: z.literal("protectedAuthentication"),
+      fields: z
+        .array(
+          z.object({ target: interactionTargetIntentSchema, secretRef: z.string().uuid() }).strict(),
+        )
+        .min(1)
+        .max(8),
+      submitTarget: interactionTargetIntentSchema,
+      timeoutMs: timeout,
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("check"),
       target: interactionTargetIntentSchema,
       checked: z.boolean(),

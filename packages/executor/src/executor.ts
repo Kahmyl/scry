@@ -137,6 +137,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   const usesProtectedValues = options.plan.steps.some(
     (step) =>
       step.action.type === "protectedTransaction" ||
+      step.action.type === "protectedAuthentication" ||
       (step.action.type === "fill" &&
         Boolean(step.action.secretRef || step.action.capturedSecretRef)),
   );

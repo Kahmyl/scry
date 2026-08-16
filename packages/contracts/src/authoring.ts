@@ -205,6 +205,23 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
     }),
   z
     .object({
+      kind: z.literal("authenticate"),
+      fields: z
+        .array(
+          z
+            .object({
+              target: missionAuthoringSemanticTargetSchema,
+              protectedReferenceId: uuid,
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(8),
+      submitTarget: missionAuthoringSemanticTargetSchema,
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal("select"),
       target: missionAuthoringSemanticTargetSchema,
       value: z.string().trim().min(1).max(2_000),
@@ -509,9 +526,10 @@ export const missionAuthoringIntentSchema = z
         path: ["authorization", "kind"],
         message: "read-context transition requires explicit live_read authority",
       });
-    const protectedReferences =
-      intent.action.kind === "fill" && intent.action.protectedReferenceId
-        ? [intent.action.protectedReferenceId]
+    const protectedReferences = intent.action.kind === "fill" && intent.action.protectedReferenceId
+      ? [intent.action.protectedReferenceId]
+      : intent.action.kind === "authenticate"
+        ? intent.action.fields.map((field) => field.protectedReferenceId)
         : [];
     if (
       new Set(intent.protectedInputReferences).size !== intent.protectedInputReferences.length ||
@@ -522,6 +540,23 @@ export const missionAuthoringIntentSchema = z
         code: "custom",
         path: ["protectedInputReferences"],
         message: "protected references must exactly match protected fill references",
+      });
+    if (intent.action.kind === "authenticate" && intent.authorization.kind !== "authentication")
+      context.addIssue({
+        code: "custom",
+        path: ["authorization", "kind"],
+        message: "protected authentication requires authentication authority",
+      });
+    if (
+      intent.action.kind === "authenticate" &&
+      (intent.constraints.allowNonExact ||
+        intent.action.fields.some((field) => !field.target.reference) ||
+        !intent.action.submitTarget.reference)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["action"],
+        message: "protected authentication requires exact observed references",
       });
     if (
       (["live_mutation", "protected_mutation"].includes(intent.authorization.kind) &&

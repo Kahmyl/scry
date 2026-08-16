@@ -20,6 +20,7 @@ export * from "./interaction/click.js";
 export * from "./interaction/fill.js";
 export * from "./interaction/form-control.js";
 export * from "./interaction/keyboard.js";
+export * from "./interaction/protected-authentication.js";
 export * from "./interaction/scroll.js";
 export * from "./interaction/download.js";
 export * from "./interaction/clipboard.js";

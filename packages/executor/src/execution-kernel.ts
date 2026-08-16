@@ -697,6 +697,7 @@ export async function executeInteractionCompatibility(input: {
       privacyResult:
         (input.action.type === "fill" &&
           Boolean(input.action.secretRef || input.action.capturedSecretRef)) ||
+        input.action.type === "protectedAuthentication" ||
         input.action.type === "sameOriginRequest"
           ? "verified"
           : "unverified",
@@ -774,7 +775,7 @@ function isMutatingAction(action: CurrentAction): boolean {
   if (action.type === "click") return action.dispatchSemantics !== "read_only";
   if (action.type === "press") return action.dispatchSemantics !== "read_only";
   return (
-    ["fill", "select", "check", "protectedTransaction"].includes(action.type) ||
+    ["fill", "select", "check", "protectedAuthentication", "protectedTransaction"].includes(action.type) ||
     (action.type === "sameOriginRequest" && action.method !== "GET")
   );
 }
@@ -1165,8 +1166,9 @@ function requiredCapabilities(request: ExecutionRequest): Set<ExecutionCapabilit
   if (
     request.plan.steps.some(
       (step) =>
-        step.action.type === "fill" &&
-        Boolean(step.action.secretRef || step.action.capturedSecretRef),
+        step.action.type === "protectedAuthentication" ||
+        (step.action.type === "fill" &&
+          Boolean(step.action.secretRef || step.action.capturedSecretRef)),
     )
   ) {
     required.add("protected_input");

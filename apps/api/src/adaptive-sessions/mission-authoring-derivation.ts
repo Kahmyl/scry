@@ -66,6 +66,16 @@ export function deriveMissionAuthoringOperation(input: {
               value: intent.action.publicValue!,
               timeoutMs: intent.constraints.timeoutMs,
             };
+      case "authenticate":
+        return {
+          type: "protectedAuthentication",
+          fields: intent.action.fields.map((field) => ({
+            target: target(field.target, ["focusable", "accepts_text", "editable"]),
+            secretRef: field.protectedReferenceId,
+          })),
+          submitTarget: target(intent.action.submitTarget, ["focusable", "pointer_activatable"]),
+          timeoutMs: intent.constraints.timeoutMs,
+        };
       case "select":
         return {
           type: "select",

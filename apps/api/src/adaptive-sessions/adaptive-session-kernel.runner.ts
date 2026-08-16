@@ -527,7 +527,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     const protectedContext = input.action.type === "protectedTransaction"
       ? await this.sessions.protectedExecutionContext(input.sessionId, input.operationId)
       : undefined;
-    const protectedInputBinding = exactProtectedInputBinding(
+    const protectedInputBindings = exactProtectedInputBindings(
       input.sessionId,
       input.operationId,
       input.action,
@@ -539,7 +539,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       operationId: input.operationId,
       mode: input.mode,
       policy: input.policy,
-      ...(protectedInputBinding ? { protectedInputBinding } : {}),
+      ...(protectedInputBindings.length ? { protectedInputBindings } : {}),
       dispatchDisposition: protectedContext?.dispatchDisposition ?? "execute",
       ...(protectedContext ? {
         protectedContext,
@@ -602,7 +602,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       agentSessionId: string; flowDraftId: string; authorizationId: string;
       dispatchDisposition: "execute" | "qualification_only";
     };
-    protectedInputBinding?: ProtectedInputDeliveryBinding;
+    protectedInputBindings?: ProtectedInputDeliveryBinding[];
     leaseOwner?: string;
     onPraxisResult?: (result: import("@scry/contracts").PraxisResult) => void;
     onExpectedEffectVerification?: (result: { status: "succeeded" | "failed"; reasonCode?: string; durationMs: number }) => void;
@@ -621,18 +621,24 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         environmentId: input.environmentId,
         veilAdmissionKey: this.veilAdmissionKey!,
         veilPolicySnapshot: compileDefaultVeilPolicy(input.policy),
-        secretResolver: input.protectedInputBinding
+        secretResolver: input.protectedInputBindings
           ? (() => {
-              const binding = input.protectedInputBinding;
-              const delivery = bindProtectedInputDelivery(binding, () =>
-                this.sessions.resolveProtectedInput(
-                  binding.sessionId,
-                  binding.operationId,
-                  binding.protectedReferenceId,
-                ),
-              );
+              const deliveries = new Map(input.protectedInputBindings.map((binding) => [
+                binding.protectedReferenceId,
+                { binding, delivery: bindProtectedInputDelivery(binding, () =>
+                  this.sessions.resolveProtectedInput(
+                    binding.sessionId,
+                    binding.operationId,
+                    binding.protectedReferenceId,
+                  ),
+                ) },
+              ]));
               return (reference: string) =>
-                delivery.consume({ ...binding, protectedReferenceId: reference });
+                deliveries.get(reference)?.delivery.consume(deliveries.get(reference)!.binding)
+                  ?? Promise.reject(Object.assign(
+                    new Error("Protected input delivery binding mismatch"),
+                    { code: "PROTECTED_INPUT_DELIVERY_BINDING_MISMATCH" },
+                  ));
             })()
           : (reference) => this.sessions.resolveProtectedInput(input.sessionId, input.operationId, reference),
         dispatchDisposition: input.dispatchDisposition ?? "execute",
@@ -819,20 +825,20 @@ function safeContinuationUrl(candidate: string | undefined, allowedOrigins: stri
   }
 }
 
-function exactProtectedInputBinding(
+function exactProtectedInputBindings(
   sessionId: string,
   operationId: string,
   action: CurrentAction,
-): ProtectedInputDeliveryBinding | undefined {
-  if (action.type !== "fill" || !action.secretRef || !action.target.authoritativeReference) {
-    return undefined;
-  }
-  return {
-    sessionId,
-    operationId,
-    protectedReferenceId: action.secretRef,
-    targetReference: action.target.authoritativeReference,
-  };
+): ProtectedInputDeliveryBinding[] {
+  if (action.type === "fill" && action.secretRef && action.target.authoritativeReference)
+    return [{ sessionId, operationId, protectedReferenceId: action.secretRef,
+      targetReference: action.target.authoritativeReference }];
+  if (action.type === "protectedAuthentication")
+    return action.fields.flatMap((field) => field.target.authoritativeReference ? [{
+      sessionId, operationId, protectedReferenceId: field.secretRef,
+      targetReference: field.target.authoritativeReference,
+    }] : []);
+  return [];
 }
 
 function observationPlan(policy: ExecutionPolicy) {

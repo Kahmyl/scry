@@ -28,6 +28,7 @@ beforeAll(async () => {
           <label>Current password <input type="password" autocomplete="current-password" /></label>
           <label>New password <input type="password" autocomplete="new-password" /></label>
           <label>Confirm password <input type="password" autocomplete="new-password" /></label>
+          <button type="button" onclick="document.body.dataset.authenticated='yes'">Login</button>
         </form>
       </main>
     ` : `
@@ -443,6 +444,57 @@ describe("persistent authoring browser session", () => {
       expect(await session.page.locator('input[autocomplete="current-password"]').inputValue()).toBe(
         "protected-reference-value",
       );
+    } finally {
+      await session.close();
+    }
+  }, 20_000);
+
+  it("composes exact protected fields and submit inside one Veil interval", async () => {
+    const policy = executionPolicySchema.parse({ allowedOrigins: [origin], allowPrivateNetwork: true });
+    const values = new Map([
+      ["66666666-6666-4666-8666-666666666666", "user@example.test"],
+      ["77777777-7777-4777-8777-777777777777", "protected-test-value"],
+    ]);
+    const session = await createAuthoringBrowserSession({
+      sessionId: "88888888-8888-4888-8888-888888888888",
+      environmentId: "authoring-test-environment",
+      veilAdmissionKey: "authoring-test-only-veil-admission-key-32-bytes",
+      browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+      policy,
+      protection: "protected",
+      openBrowser: openTestBrowser,
+      executeInteraction: kernelInteractionExecutor({
+        sessionId: "88888888-8888-4888-8888-888888888888",
+        environmentId: "authoring-test-environment",
+        policy,
+        secretResolver: async (reference) => values.get(reference)!,
+      }),
+    });
+    try {
+      await session.page.goto(`${origin}/protected-controls`, { waitUntil: "domcontentloaded" });
+      const observed = await session.observeDocument();
+      const current = observed.semanticPageContext.controls.find((control) => control.semanticPurpose === "current_password")!;
+      const next = observed.semanticPageContext.controls.find((control) => control.semanticPurpose === "new_password")!;
+      const submit = observed.semanticPageContext.controls.find((control) => control.role === "button")!;
+      const exact = (concept: string, reference: string, capabilities: InteractionTargetIntent["requiredCapabilities"]): InteractionTargetIntent => ({
+        concept, authoritativeReference: reference, requiredCapabilities: capabilities,
+        preferredEvidence: { roles: [], names: [], labels: [], descriptions: [], placeholders: [], inputTypes: [] },
+        scope: { kind: "page" }, relations: [], prohibited: ["hidden", "disabled"],
+        risk: "authentication", confidence: { requiredFamilies: [] }, matching: "exact",
+      });
+      const result = await session.interact({
+        type: "protectedAuthentication",
+        fields: [
+          { target: exact("current credential", current.reference, ["focusable", "accepts_text", "editable"]), secretRef: "66666666-6666-4666-8666-666666666666" },
+          { target: exact("new credential", next.reference, ["focusable", "accepts_text", "editable"]), secretRef: "77777777-7777-4777-8777-777777777777" },
+        ],
+        submitTarget: exact("login", submit.reference, ["focusable", "pointer_activatable"]),
+        timeoutMs: 2_000,
+      });
+      expect(result.outcome).toMatchObject({ functionalResult: "succeeded", privacyResult: "verified" });
+      expect(await session.page.locator("body").getAttribute("data-authenticated")).toBe("yes");
+      expect(JSON.stringify(result)).not.toContain("protected-test-value");
+      expect(JSON.stringify(result)).not.toContain("user@example.test");
     } finally {
       await session.close();
     }

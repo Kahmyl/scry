@@ -23,12 +23,12 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       operationId: "operation-a",
       mode: "run",
       policy: { allowedOrigins: ["https://example.test"] },
-      protectedInputBinding: {
+      protectedInputBindings: [{
         sessionId: "session-a",
         operationId: "operation-a",
         protectedReferenceId: "credential-a",
         targetReference: "context-control-a",
-      },
+      }],
     });
 
     await expect(capability.options.secretResolver("credential-a")).resolves.toBe(

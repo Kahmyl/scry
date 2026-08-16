@@ -2366,6 +2366,41 @@ any replacement credential generation. The earlier proposal for a separate
 resource-mutation adapter is rejected; cleanup remains in the agent-owned live
 Praxis session.
 
+Live qualification of that first capability checkpoint proved both exact field
+deliveries `applied` and `privacyResult=verified`, but all standalone submit
+mechanisms still failed/cancelled at the authentication navigation boundary.
+The prior successful authoritative sibling composes the protected fields and
+submit without an intervening operation boundary. Scry now exposes the same
+bounded composition as `authenticate`:
+
+```text
+one live protected Praxis Page/document
+→ 1–8 exact context-control field references + opaque credential references
+→ one exact context-control submit reference
+→ one Veil interval
+→ Praxis fills and activates those pinned entities only
+```
+
+This is authentication composition, not semantic admission or a resource
+mutation authority. It requires `authorization.kind=authentication`, exact
+fresh references for every field and submit control, `allowNonExact=false`, and
+an exact protected-reference list. Cross-session/reference substitution refuses
+before protected resolution; no selector or semantic fallback exists. The
+application layer binds capabilities, Veil owns the protected interval, Praxis
+owns all Page/ElementHandle mechanics, and the agent still interprets the
+result and chooses progression.
+
+Focused qualification:
+
+```text
+Contracts: 94/94 GREEN
+API derivation/capability/runner: 35/35 GREEN
+MCP server: 22/22 GREEN
+Praxis exact composite browser mechanics: 26/26 GREEN
+Executor live protected composition + Veil: 6/6 GREEN
+affected typechecks: GREEN
+```
+
 # Important current architectural facts
 
 ## Executor

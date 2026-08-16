@@ -7,9 +7,11 @@ import {
   PraxisMutationLease,
   selectPraxisStrategy,
 } from "../src/runtime.js";
-import { PraxisDocumentEpoch } from "../src/observation.js";
+import { PraxisDocumentEpoch, PraxisStaleTargetError } from "../src/observation.js";
 import { PraxisAdapterError, PraxisTransactionCoordinator } from "../src/transaction.js";
 import { executePraxisConsumer } from "../src/consumer.js";
+import { observeSemanticPageContext } from "../src/page-context.js";
+import { authenticateProtectedReferencedTargets } from "../src/interaction/protected-authentication.js";
 import { compileVeilPolicy } from "@scry/veil";
 import { VeilAuthority } from "@scry/veil";
 import { authorizePraxisRequest, registerPraxisVeilAuthority } from "../src/veil-bridge.js";
@@ -99,6 +101,45 @@ describe("Praxis candidate resume fencing", () => {
 });
 
 describe("Praxis strategy, dispatch, and verification", () => {
+  it("fills protected fields and activates one exact submit in the same document operation", async () => {
+    await page.setContent(`
+      <label>Email <input aria-label="Email"></label>
+      <label>Password <input aria-label="Password" type="password"></label>
+      <button onclick="document.body.dataset.authenticated='yes'">Login</button>
+    `);
+    const context = await observeSemanticPageContext(page);
+    const email = context.controls.find((control) => control.name === "Email")!;
+    const password = context.controls.find((control) => control.valueProtected)!;
+    const submit = context.controls.find((control) => control.role === "button")!;
+    const result = await authenticateProtectedReferencedTargets(page, {
+      fields: [
+        { targetReference: email.reference, resolveValue: async () => "user@example.test" },
+        { targetReference: password.reference, resolveValue: async () => "protected-test-value" },
+      ],
+      submitReference: submit.reference,
+    });
+    expect(result).toEqual({ dispatched: true });
+    expect(await page.locator("body").getAttribute("data-authenticated")).toBe("yes");
+  });
+
+  it("refuses a wrong protected-auth reference before the dispatch boundary", async () => {
+    await page.setContent(`<label>Password <input type="password"></label><button>Login</button>`);
+    const context = await observeSemanticPageContext(page);
+    const password = context.controls.find((control) => control.valueProtected)!;
+    let dispatchStarted = false;
+    let protectedInputResolved = false;
+    await expect(authenticateProtectedReferencedTargets(page, {
+      fields: [{ targetReference: password.reference, resolveValue: async () => {
+        protectedInputResolved = true;
+        return "protected-test-value";
+      } }],
+      submitReference: "context-control-00000000000000000000000000000000",
+    }, () => { dispatchStarted = true; })).rejects.toBeInstanceOf(PraxisStaleTargetError);
+    expect(dispatchStarted).toBe(false);
+    expect(protectedInputResolved).toBe(false);
+    expect(await page.locator("input").inputValue()).toBe("");
+  });
+
   it("explicitly DOM-activates only the exact grounded entity", async () => {
     await page.setContent(`<button onclick="document.body.dataset.hit='exact'">DOM action</button>`);
     const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { CurrentAction, RunEvent } from "@scry/contracts";
 import {
   executePraxisConsumer,
+  authenticateProtectedReferencedTargets,
   pressPageKey,
   PraxisConsumerError,
   wheelPage,
@@ -236,6 +237,53 @@ export async function executeAction(
           signal,
           resolveInput: async () => value!,
         });
+      }
+      return;
+    }
+    case "protectedAuthentication": {
+      if (!privacyGate) throw new InfrastructureDependencyError("PROTECTED_AUTHENTICATION_PRIVACY_GATE_REQUIRED");
+      if (!options.secretResolver) throw new InfrastructureDependencyError("PROTECTED_INPUT_RESOLVER_UNAVAILABLE");
+      const fields: Array<{ targetReference: string; resolveValue: () => Promise<string> }> = [];
+      const operationId = `protected-authentication-${randomUUID()}`;
+      try {
+        for (const field of action.fields) {
+          if (!field.target.authoritativeReference)
+            throw new Error("PROTECTED_AUTHENTICATION_EXACT_TARGET_REQUIRED");
+          fields.push({
+            targetReference: field.target.authoritativeReference,
+            resolveValue: async () => {
+              const value = await options.secretResolver!(field.secretRef);
+              redactor.add(value);
+              return value;
+            },
+          });
+        }
+        if (!action.submitTarget.authoritativeReference)
+          throw new Error("PROTECTED_AUTHENTICATION_EXACT_SUBMIT_REQUIRED");
+        await privacyGate.prepare(operationId, {
+          mode: "protected_recording_gap",
+          videoMaskEstablished: false,
+        });
+        await privacyGate.beginProtected();
+        await options.onPrivacyBoundary?.("entered");
+        await authenticateProtectedReferencedTargets(page, {
+          fields,
+          submitReference: action.submitTarget.authoritativeReference,
+        }, options.onMutationDispatch);
+        await privacyGate.markCaptured();
+        await privacyGate.beginSafeBoundary();
+        await privacyGate.confirmSafeBoundary({
+          kind: "known_secret_registered",
+          referenceType: "vault",
+        });
+        await options.onPrivacyBoundary?.("verified");
+      } catch (error) {
+        await privacyGate.seal({ code: "PROTECTED_AUTHENTICATION_FAILED" })
+          .then(() => options.onPrivacyBoundary?.("sealed"))
+          .catch(() => undefined);
+        throw error;
+      } finally {
+        fields.splice(0);
       }
       return;
     }
