@@ -58,7 +58,7 @@ describe("migration fingerprint compatibility", () => {
     expect(supportedHistoricalFingerprints(fingerprints)).toHaveLength(
       SUPPORTED_HISTORICAL_BASELINES.length,
     );
-  });
+  }, 15_000);
 
   it("requires one valid, distinct fingerprint for every supported historical baseline", () => {
     const values = Object.fromEntries(

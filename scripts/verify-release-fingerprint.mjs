@@ -95,6 +95,8 @@ const structuredSyntheticProtectedInput = await readFile(new URL("structured-syn
 const segmentedFlowSuccessorCheckpoints = await readFile(new URL("segmented-flow-successor-checkpoints.sql", migrations), "utf8");
 const adaptiveCertificationProvenance = await readFile(new URL("adaptive-certification-provenance.sql", migrations), "utf8");
 const adaptiveOperationReconciliation = await readFile(new URL("adaptive-operation-reconciliation.sql", migrations), "utf8");
+const protectedOperationAuthorizationBinding = await readFile(new URL("protected-operation-authorization-binding.sql", migrations), "utf8");
+const runPraxisSessionLedger = await readFile(new URL("run-praxis-session-ledger.sql", migrations), "utf8");
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", migrations), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -124,6 +126,8 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", migration
   ["segmented-flow-successor-checkpoints.sql", segmentedFlowSuccessorCheckpoints],
   ["adaptive-certification-provenance.sql", adaptiveCertificationProvenance],
   ["adaptive-operation-reconciliation.sql", adaptiveOperationReconciliation],
+  ["protected-operation-authorization-binding.sql", protectedOperationAuthorizationBinding],
+  ["run-praxis-session-ledger.sql", runPraxisSessionLedger],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

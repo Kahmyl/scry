@@ -1899,7 +1899,84 @@ git diff --check: GREEN
 repository topology delta: ZERO; the same six pre-existing topology findings remain
 ```
 
-R0.6 is complete. R0.7 has not begun.
+R0.6 is complete.
+
+---
+
+## R0.7 — final end-to-end qualification — IN PROGRESS / BLOCKED
+
+Starting checkpoint: `d81fdca0c6c62abd53b46a16f13d6471db423b5b`.
+
+### Controlled baseline
+
+```text
+Assurance truth/browser fixtures: 23/23 GREEN
+Contracts: 90/90 GREEN
+Praxis: 174/174 GREEN
+Veil: 37/37 GREEN
+MCP: 31/31 GREEN
+API executable suite: 455/455 GREEN (62 skipped)
+M1 real-snapshot qualification: UNAVAILABLE — M1_SNAPSHOT_REQUIRED
+```
+
+The API suite exposed one qualification-harness defect: real migration-source
+fingerprint reconstruction passed 5/5 in isolation in 2.19 seconds but crossed
+Vitest's inherited five-second default under full-suite I/O contention. The
+test now has a bounded 15-second timeout and the complete executable API suite
+is green. No production behavior changed.
+
+### Live environment diagnosis
+
+The configured `scrytest` connector targets `http://127.0.0.1:4100/mcp`.
+At the start of R0.7 that port was served by a 25-hour-old Docker stack exposing
+the retired pre-R0.6 authoring/calibration MCP surface. A repository-blind fresh
+agent therefore learned the wrong protocol. It created one execution-environment
+record, then received `AUTHORING_PROVISIONING_FAILED` / `environment_unavailable`;
+it created no Vitract order, no successful Run, and no retrieval evidence.
+
+Rebuilding current HEAD first failed the release-fingerprint gate because the
+Compose default still named the previous schema fingerprint. The mechanical
+default is now synchronized to:
+
+```text
+bda708a6d7b09d565261b082af03dac383447226677e2686cf4406cc33306d47
+```
+
+The fingerprint consumers had omitted the protected-authorization and Run/Praxis
+session-ledger migrations even though the migration runtime included them. Both
+consumers now include the complete active baseline, and
+`pnpm verify:release-fingerprint` is green. The subsequent guarded migration
+correctly refused the persistent database:
+
+```text
+installed: 913f4353d5c9fc2cd7ac4c9f98a1d2fbd963c9f462b78e4425058eafa2722e66
+supported pre-M1: 920553a13a9502d6ebc5a1b73501dd6520f1d3a26c9ed4593bc0300a320766d1
+required by migration runtime: bda708a6d7b09d565261b082af03dac383447226677e2686cf4406cc33306d47
+```
+
+The canonical guarded cutover requires:
+
+```text
+/private/tmp/scry-m1-cutover-2b9e22e42cf3/development-db.dump
+```
+
+That named snapshot is unavailable. It is required both to qualify legacy
+reconciliation and to preserve the encrypted Vitract bindings. Do not bypass
+the migration guard, invent the snapshot, reset the credential-bearing volume,
+or mark the M1 fixture PASS.
+
+### Exact continuation
+
+1. Restore the named M1 snapshot from its external retention location.
+2. Run `node scripts/verify-m1-preflight.mjs --migration-only`; require PASS.
+3. Perform the documented stopped-writer guarded cutover and run `pnpm docker:up`.
+4. Verify current agent-first MCP discovery before starting another fresh agent.
+5. Repeat Vitract Create → Retrieve with an intention-only prompt.
+6. Only after Vitract PASS, run the second independent live surface.
+7. Run the complete R0 closure regression and authority audit.
+
+R0.7 is **NOT COMPLETE**. R0 is **NOT COMPLETE**. The live acceptance claims are
+blocked by a missing external cutover artifact, not by an accepted product pass.
 
 # Important current architectural facts
 
