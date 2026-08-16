@@ -324,6 +324,14 @@ The live agent prompt should remain intention-level and use `scrytest`.
 
 A live success is task-level completion, not merely tool-call success.
 
+Historical M1 upgrade qualification is a separate Assurance claim from current
+R0 product acceptance. Its lost, non-reconstructable fixture remains explicitly
+`UNAVAILABLE`; current acceptance may use a clean database initialized directly
+at the current schema, but that environment must never be presented as evidence
+for the historical upgrade. R0.7 remains open until the required live journeys
+pass; the current external prerequisite is user-managed Vitract authentication
+material in the isolated current-release qualification project.
+
 Any app-specific failure must be generalized:
 
 ```text

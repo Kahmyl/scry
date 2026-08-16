@@ -1960,23 +1960,82 @@ The canonical guarded cutover requires:
 /private/tmp/scry-m1-cutover-2b9e22e42cf3/development-db.dump
 ```
 
-That named snapshot is unavailable. It is required both to qualify legacy
-reconciliation and to preserve the encrypted Vitract bindings. Do not bypass
-the migration guard, invent the snapshot, reset the credential-bearing volume,
-or mark the M1 fixture PASS.
+That named snapshot is irrecoverably unavailable from every retained factual
+source inspected. Historical M1 upgrade qualification therefore remains
+`UNAVAILABLE`; it is not PASS and must never be reconstructed from invented
+sessions, bindings, or fingerprints. The migration guard remains unchanged.
+
+### Historical/current qualification separation
+
+Historical M1 migration safety and current R0 product acceptance are distinct
+Assurance claims. The missing historical fixture does not require a clean
+current-release database to impersonate an M1 predecessor and does not prevent
+current product qualification.
+
+The preserved `scry` and `scrycold` database volumes remain untouched. The old
+stack was stopped without deleting its volumes. A separate `scry-r0` Compose
+project created fresh PostgreSQL, Redis, and artifact volumes and initialized
+the database directly at the current baseline. Positive evidence:
+
+```text
+current schema: bda708a6d7b09d565261b082af03dac383447226677e2686cf4406cc33306d47
+PostgreSQL / Redis / API / worker / MCP / web: HEALTHY
+MCP release/schema agreement: PASS
+livePraxisSession / factualObservation / exactReferenceRequired: advertised
+durableRunLedger / explicitRunFinalization: advertised
+automaticProgression: false
+compileCertificationRequired: false
+calibrationRequired: false
+```
+
+The existing opaque Codex MCP token was registered by hash against a new local
+qualification identity; no plaintext token was persisted and no legacy row was
+copied. Project and Vitract environment prerequisites were then created through
+authenticated public application APIs.
+
+### Fresh-agent acceptance result
+
+A fresh repository-blind agent positively discovered the current release,
+project, Mission, Objective, and Vitract environment. It then established:
+
+```text
+project credentials: 0
+authentication contracts: 0
+authenticated session leases: 0
+Vitract order mutations: 0
+retrieval evidence: none
+```
+
+Neither preserved database contains the required Vitract encrypted bindings.
+The clean current environment therefore cannot authenticate to Vitract without
+a user-managed credential prerequisite. No credential value was copied,
+invented, exposed, or admitted by weakening Veil or authentication policy.
+
+The running server's raw capability response is current. The Codex connector's
+cached tool descriptions still include historical authoring guidance, causing
+the acceptance agent to attempt optional Flow publication and encounter
+`EXECUTION_READY_COMPILATION_REQUIRED`. This is not accepted as product success
+or as evidence that compilation is required for agent-directed execution. A
+fresh connector metadata negotiation is required before the resumed live run.
 
 ### Exact continuation
 
-1. Restore the named M1 snapshot from its external retention location.
-2. Run `node scripts/verify-m1-preflight.mjs --migration-only`; require PASS.
-3. Perform the documented stopped-writer guarded cutover and run `pnpm docker:up`.
-4. Verify current agent-first MCP discovery before starting another fresh agent.
-5. Repeat Vitract Create → Retrieve with an intention-only prompt.
-6. Only after Vitract PASS, run the second independent live surface.
-7. Run the complete R0 closure regression and authority audit.
+1. User/dashboard stores the Vitract Preview login credentials in project
+   `cd9a8d5e-0afe-4eda-899d-9b0008bbb9b2` and authorizes them for environment
+   `f29adb9c-e630-4232-abc7-b88620872d6c` without exposing plaintext to the agent.
+2. Reconnect/refresh `scrytest` so the client negotiates the running current MCP
+   metadata rather than cached historical tool descriptions.
+3. Resume Mission `87df0374-f9f6-4d7a-b876-77e61d4ef703`, Objective
+   `ca5decad-0b1d-4297-9dfc-b76c1fc258d8`, and re-observe from a new live Praxis
+   session. Do not reuse references from any prior session.
+4. Repeat Vitract Create → Retrieve with an intention-only prompt.
+5. Only after Vitract PASS, run the second independent live surface.
+6. Run the complete R0 closure regression and authority audit.
 
 R0.7 is **NOT COMPLETE**. R0 is **NOT COMPLETE**. The live acceptance claims are
-blocked by a missing external cutover artifact, not by an accepted product pass.
+blocked by an external Vitract authentication prerequisite and stale connector
+metadata, not by the unavailable historical M1 claim and not by an accepted
+product pass.
 
 # Important current architectural facts
 
