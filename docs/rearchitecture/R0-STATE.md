@@ -2153,7 +2153,7 @@ no session binding retain their historical record but have no runtime authority.
 Additive schema fingerprint:
 
 ```text
-8cc6e2492e9a099b59d593a6acdbb970510b2d082b0511a63cd41e4f34936d13
+9671e3fd02b9218d1edec39a4567ba4f18b0ec7cc25ef0c90534c23d17dda7b5
 ```
 
 Focused qualification at the current working checkpoint:

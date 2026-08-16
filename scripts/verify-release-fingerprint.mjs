@@ -97,6 +97,10 @@ const adaptiveCertificationProvenance = await readFile(new URL("adaptive-certifi
 const adaptiveOperationReconciliation = await readFile(new URL("adaptive-operation-reconciliation.sql", migrations), "utf8");
 const protectedOperationAuthorizationBinding = await readFile(new URL("protected-operation-authorization-binding.sql", migrations), "utf8");
 const runPraxisSessionLedger = await readFile(new URL("run-praxis-session-ledger.sql", migrations), "utf8");
+const protectedLivePraxisSession = await readFile(
+  new URL("protected-live-praxis-session.sql", migrations),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", migrations), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -128,6 +132,7 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", migration
   ["adaptive-operation-reconciliation.sql", adaptiveOperationReconciliation],
   ["protected-operation-authorization-binding.sql", protectedOperationAuthorizationBinding],
   ["run-praxis-session-ledger.sql", runPraxisSessionLedger],
+  ["protected-live-praxis-session.sql", protectedLivePraxisSession],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);
