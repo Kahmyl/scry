@@ -479,7 +479,7 @@ function checkAbort(signal: AbortSignal) {
   if (signal.aborted) throw new PraxisCancellationError();
 }
 function mutates(request: PraxisRequest) {
-  return ["activate", "enter_text", "select_option", "set_checked", "press_key"].includes(
+  return request.dispatchSemantics !== "read_only" && ["activate", "enter_text", "select_option", "set_checked", "press_key"].includes(
     request.operation.type,
   );
 }

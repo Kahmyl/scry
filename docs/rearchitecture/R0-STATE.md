@@ -2233,6 +2233,69 @@ transaction coordinator browser suite is **23/23 GREEN** and Executor typecheck
 is GREEN. Both affected live attempts remained durably `not_started` /
 `not_applied`; no Vitract credential was created or disclosed.
 
+### R0.7 authoritative resource-effect reconciliation checkpoint
+
+The subsequently owner-authorized credential generation crossed the protected
+dispatch boundary, but protected output capture failed. Conservative mutation
+truth correctly recorded `UNKNOWN`, prohibited retry, and fenced the Mission.
+The approved general correction is now implemented:
+
+```text
+durable create intent declares a factual resource-effect identity contract
+→ registered provider performs an authoritative read-only resource observation
+→ generic reconciliation records NOT_APPLIED / APPLIED / UNKNOWN
+→ protected resource present without captured output is
+  APPLIED_BUT_OUTPUT_UNRECOVERED and remains fenced for cleanup
+```
+
+Praxis owns only the authenticated browser/JSON observation mechanics. The
+Vitract adapter owns the provider URL, response shape, exact correlation field,
+and resource projection. The reconciliation registry accepts only registered
+authoritative observations and never dispatches, retries, selects progression,
+or upgrades uncertainty using DOM/timing/semantic heuristics.
+
+Live authoritative reconciliation positively identified exactly one active
+orphan credential:
+
+```text
+resource identity: E1F9FEB5-4699-F111-9B33-00224854E25A
+resource scope: vtr_app_sandbox_6bb9b409-1699-f111-9b33-00224854e25a
+result: proven_applied_output_unrecovered
+Mission fence cleared: false
+redispatch allowed: false
+```
+
+No protected value was recovered or exposed. A second false UNKNOWN was then
+exposed on the cleanup login activation: application derivation classified the
+click as a read-only context transition, but Executor dropped that fact and
+Praxis treated every `activate` as mutation-capable. `dispatchSemantics` now
+crosses the Executor/Praxis request boundary; missing legacy values default to
+mutation. Observation-only reconciliation cleared only that false mutation
+fence as `READ_ONLY_DISPATCH_HAS_NO_MUTATION_EFFECT`; it did not claim login
+success and did not redispatch the click.
+
+Focused and live qualification at this checkpoint:
+
+```text
+Contracts: 93/93 GREEN
+Praxis transaction: 22/22 GREEN
+resource reconciliation/API: 13/13 GREEN
+external-resource target preparation (browser-backed): 28/28 GREEN
+affected package typechecks: GREEN
+release fingerprint: d647df341b454e74f0e2263dc7e54c4c41b05e440b59adceac5566ef5d7a05c3 GREEN
+isolated API/worker/MCP/web stack: healthy
+live orphan reconciliation: APPLIED_BUT_OUTPUT_UNRECOVERED, exact identity proven
+live read-only UNKNOWN reconciliation: NOT_APPLIED, no redispatch, fence cleared
+```
+
+R0.7 remains **IN PROGRESS**. The next bounded action is separately authorized
+revocation/deletion of the exact orphan credential, followed by authoritative
+cleanup verification. Credential generation remains forbidden until that proof
+exists. After cleanup: re-observe, use a fresh exact reference and fresh owner
+authorization, complete Vitract Create → Retrieve, qualify the second independent
+live surface, and run the final R0/R0.7 closure audit. Historical M1 remains
+`UNAVAILABLE`.
+
 # Important current architectural facts
 
 ## Executor

@@ -8,6 +8,7 @@ function fixture(expectedEffect: Record<string, unknown>, registry?: Record<stri
   const sessions = {
     beginUnknownReconciliation: vi.fn(async () => ({
       state: "observing", id: "attempt", attempt: 1, replayed: false, expectedEffect,
+      authority: { action: { type: "waitFor" } },
     })),
     completeUnknownReconciliation: vi.fn(async () => ({ missionFenceCleared: false })),
     prepareRuntimeRestoration: vi.fn(async () => ({ state: "provisioning", replayed: false })),
@@ -58,7 +59,10 @@ describe("authoritative UNKNOWN reconciliation", () => {
   it.each(["proven_applied", "proven_not_applied"] as const)(
     "accepts %s only from a registered authoritative resource read without browser dispatch",
     async (authoritativeResult) => {
-      const registry = { reconcile: vi.fn(async () => ({ result: authoritativeResult,
+      const registry = { reconcile: vi.fn(async () => authoritativeResult === "proven_applied" ? ({ result: authoritativeResult,
+        reasonCode: "AUTHORITATIVE_RESOURCE_READ", resource: { provider: "example", resourceKind: "order",
+          resourceScope: "orders", identity: "order-1", state: "active" }, outputState: "not_applicable",
+        evidence: { providerCorrelation: "opaque" } }) : ({ result: authoritativeResult,
         reasonCode: "AUTHORITATIVE_RESOURCE_READ", evidence: { providerCorrelation: "opaque" } })) };
       const { service, runner } = fixture({ type: "network_outcome", urlPattern: "/orders", statusMin: 200, statusMax: 299 }, registry);
       const result = await service.reconcileUnknown(principal, "00000000-0000-4000-8000-000000000001", {
@@ -70,5 +74,42 @@ describe("authoritative UNKNOWN reconciliation", () => {
       expect(runner.reconcileUnknownEffect).not.toHaveBeenCalled();
     },
   );
+
+  it("keeps applied-but-unrecovered protected output fenced and exposes only factual cleanup context", async () => {
+    const registry = { reconcile: vi.fn(async () => ({
+      result: "proven_applied_output_unrecovered", reasonCode: "RESOURCE_PRESENT_OUTPUT_UNRECOVERED",
+      resource: { provider: "vitract", resourceKind: "credential_record", resourceScope: "app",
+        identity: "credential-1", state: "active" }, outputState: "unrecovered",
+      evidence: { authoritative: true },
+    })) };
+    const { service, sessions, runner } = fixture({ type: "none" }, registry);
+    const result = await service.reconcileUnknown(principal, "00000000-0000-4000-8000-000000000001", {
+      missionId: "00000000-0000-4000-8000-000000000002", operationId: "uncertain-resource",
+      idempotencyKey: "resource-output-unrecovered",
+    });
+    expect(result).toMatchObject({ result: "proven_applied_output_unrecovered", missionFenceCleared: false,
+      redispatchAllowed: false, safeActions: ["get_flow_authoring"],
+      resourceEffect: { outputState: "unrecovered", resource: { identity: "credential-1" } } });
+    expect(runner.reconcileUnknownEffect).not.toHaveBeenCalled();
+    expect(sessions.completeUnknownReconciliation).toHaveBeenCalledWith(expect.objectContaining({
+      result: "proven_applied_output_unrecovered",
+    }));
+  });
+
+  it("mechanically clears mutation fencing for a durable read-only dispatch without claiming its functional effect", async () => {
+    const { service, sessions, runner } = fixture({ type: "navigation", url: "https://example.test/done", match: "exact" });
+    sessions.beginUnknownReconciliation.mockResolvedValueOnce({
+      state: "observing", id: "attempt", attempt: 1, replayed: false,
+      expectedEffect: { type: "navigation", url: "https://example.test/done", match: "exact" },
+      authority: { action: { type: "click", dispatchSemantics: "read_only" } as never },
+    });
+    const result = await service.reconcileUnknown(principal, "00000000-0000-4000-8000-000000000001", {
+      missionId: "00000000-0000-4000-8000-000000000002", operationId: "read-only-unknown",
+      idempotencyKey: "read-only-reconcile",
+    });
+    expect(result).toMatchObject({ result: "proven_not_applied", redispatchAllowed: false,
+      reasonCode: "READ_ONLY_DISPATCH_HAS_NO_MUTATION_EFFECT" });
+    expect(runner.reconcileUnknownEffect).not.toHaveBeenCalled();
+  });
 
 });

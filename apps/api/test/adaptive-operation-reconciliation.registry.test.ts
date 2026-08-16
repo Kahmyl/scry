@@ -16,7 +16,9 @@ describe("authoritative resource reconciliation registry", () => {
   it("requires exactly one provider supporting the complete durable correlation", async () => {
     const registry = new AdaptiveOperationReconciliationRegistry();
     const observe = vi.fn(async () => ({ result: "proven_applied" as const,
-      reasonCode: "RESOURCE_PRESENT", evidence: { authoritative: true } }));
+      reasonCode: "RESOURCE_PRESENT", resource: { provider: "example", resourceKind: "order",
+        resourceScope: "orders", identity: "order-1", state: "active" },
+      outputState: "not_applicable" as const, evidence: { authoritative: true } }));
     registry.register({ id: "orders", supports: (candidate) => candidate.projectId === "project"
       && candidate.environmentId === "environment" && candidate.missionId === "mission"
       && candidate.sessionId === "session" && candidate.operationId === "operation"
@@ -24,6 +26,24 @@ describe("authoritative resource reconciliation registry", () => {
     expect(registry.available(authority)).toBe(true);
     await expect(registry.reconcile(authority)).resolves.toMatchObject({ result: "proven_applied" });
     expect(observe).toHaveBeenCalledOnce();
+  });
+
+  it("permits a resource provider for an effectless browser operation", async () => {
+    const registry = new AdaptiveOperationReconciliationRegistry();
+    const effectless = { ...authority, expectedEffect: { type: "none" as const } };
+    registry.register({ id: "resource", supports: () => true, observe: async () => ({
+      result: "proven_not_applied", reasonCode: "AUTHORITATIVE_ABSENCE_WITH_BASELINE",
+      evidence: { authoritative: true },
+    }) });
+    await expect(registry.reconcile(effectless)).resolves.toMatchObject({ result: "proven_not_applied" });
+  });
+
+  it("rejects provider claims that omit exact resource identity", async () => {
+    const registry = new AdaptiveOperationReconciliationRegistry();
+    registry.register({ id: "invalid", supports: () => true, observe: async () => ({
+      result: "proven_applied", reasonCode: "RESOURCE_PRESENT", evidence: { authoritative: true },
+    } as never) });
+    await expect(registry.reconcile(authority)).rejects.toThrow();
   });
 
   it("does not observe for ownership mismatch or ambiguous provider authority", async () => {

@@ -176,7 +176,14 @@ export class MissionFlowAuthoringService {
       code: "UNKNOWN_RECONCILIATION_IN_PROGRESS", mutationOutcome: "unknown",
       safeActions: ["get_flow_authoring"],
     });
-    const resourceObservation = await this.reconciliationRegistry?.reconcile(claim.authority);
+    const readOnlyObservation = claim.authority.action.type === "click"
+      && claim.authority.action.dispatchSemantics === "read_only"
+      ? { result: "proven_not_applied" as const,
+          reasonCode: "READ_ONLY_DISPATCH_HAS_NO_MUTATION_EFFECT",
+          evidence: { dispatchSemantics: "read_only", functionalEffect: "unresolved" } }
+      : null;
+    const resourceObservation = readOnlyObservation
+      ?? await this.reconciliationRegistry?.reconcile(claim.authority);
     const observation = resourceObservation ?? (claim.expectedEffect.type === "none"
       ? { result: "still_unknown" as const, reasonCode: "RECONCILIATION_EXPECTED_EFFECT_UNAVAILABLE",
           evidence: { expectedEffectType: "none" } }
@@ -190,8 +197,13 @@ export class MissionFlowAuthoringService {
       result: observation.result, redispatchAllowed: false as const,
       missionFenceCleared: settled.missionFenceCleared,
       reasonCode: observation.reasonCode, replayed: false,
+      ...(observation.result === "proven_applied_output_unrecovered"
+        ? { resourceEffect: { resource: observation.resource, outputState: observation.outputState } }
+        : {}),
       safeActions: observation.result !== "still_unknown"
-        ? settled.authoringSessionState === "active"
+        ? observation.result === "proven_applied_output_unrecovered"
+          ? ["get_flow_authoring"]
+          : settled.authoringSessionState === "active"
           ? ["get_flow_authoring", "advance_flow_authoring"]
           : ["get_flow_authoring", "start_flow_authoring"]
         : ["get_flow_authoring"],

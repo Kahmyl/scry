@@ -417,3 +417,4 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir run-praxis-session-ledger.sql
 \ir protected-live-praxis-session.sql
 \ir adaptive-operation-reconciliation.sql
+\ir resource-effect-reconciliation.sql

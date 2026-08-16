@@ -118,7 +118,10 @@ export async function executeAction(
           options.expectedEffectVerificationOwner === "kernel" || action.expectedEffect.type === "new_page"
             ? { type: "none" }
             : action.expectedEffect,
-        context: praxisContextAt(praxisContext, preDispatchDeadlineAt),
+        context: {
+          ...praxisContextAt(praxisContext, preDispatchDeadlineAt),
+          dispatchSemantics: action.dispatchSemantics ?? "mutation",
+        },
         signal,
       });
       return;

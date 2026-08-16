@@ -35,6 +35,7 @@ export type PraxisConsumerContext = {
   privacy?: PraxisRequest["privacy"];
   emit?: (event: PraxisLifecycleEvent) => void | Promise<void>;
   beforeMutation?: () => void | Promise<void>;
+  dispatchSemantics?: "read_only" | "mutation";
   record?: (result: PraxisResult) => void | Promise<void>;
   onGroundingDiagnostic?: (
     diagnostic: import("./grounding.js").GroundingDiagnostic & {
@@ -122,6 +123,7 @@ async function buildPraxisRequest(
     ...(input.context.stepId ? { stepId: input.context.stepId } : {}),
     intent: input.intent,
     operation: input.operation,
+    dispatchSemantics: input.context.dispatchSemantics ?? "mutation",
     expectedEffect: input.expectedEffect ?? { type: "none" },
     risk: input.intent.risk,
     policy: {

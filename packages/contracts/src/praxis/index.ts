@@ -283,6 +283,7 @@ export const praxisRequestSchema = z
     stepId: identifier.optional(),
     intent: interactionTargetIntentSchema,
     operation: praxisOperationSchema,
+    dispatchSemantics: z.enum(["read_only", "mutation"]).optional(),
     expectedEffect: expectedEffectSchema,
     risk: z.enum([
       "read_only",

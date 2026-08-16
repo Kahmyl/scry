@@ -355,6 +355,23 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
         )
         .max(8)
         .optional(),
+      resourceEffect: z
+        .object({
+          operation: z.literal("create"),
+          provider: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+          resourceKind: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+          resourceScope: z.string().trim().min(1).max(500),
+          identityContractVersion: z.number().int().min(1).max(1_000),
+          correlation: z
+            .object({
+              field: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+              value: z.string().trim().min(1).max(500),
+              uniqueness: z.literal("resource_scope"),
+            })
+            .strict(),
+        })
+        .strict()
+        .optional(),
     })
     .strict(),
   z
@@ -551,6 +568,21 @@ export const missionAuthoringIntentSchema = z
             message: "external resource identity must reference a public output",
           });
       }
+      const resourceEffect = intent.action.resourceEffect;
+      if (
+        resourceEffect &&
+        !(intent.action.externalResourceBindings ?? []).some(
+          (binding) =>
+            binding.provider === resourceEffect.provider &&
+            binding.resourceKind === resourceEffect.resourceKind &&
+            binding.resourceScope === resourceEffect.resourceScope,
+        )
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["action", "resourceEffect"],
+          message: "resource effect requires a matching external resource binding declaration",
+        });
     }
     if (
       intent.action.kind === "fill" &&

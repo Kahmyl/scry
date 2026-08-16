@@ -113,6 +113,7 @@ const adaptiveOperationReconciliationPath = fileURLToPath(new URL("../migrations
 const protectedOperationAuthorizationBindingPath = fileURLToPath(new URL("../migrations/protected-operation-authorization-binding.sql", import.meta.url));
 const runPraxisSessionLedgerPath = fileURLToPath(new URL("../migrations/run-praxis-session-ledger.sql", import.meta.url));
 const protectedLivePraxisSessionPath = fileURLToPath(new URL("../migrations/protected-live-praxis-session.sql", import.meta.url));
+const resourceEffectReconciliationPath = fileURLToPath(new URL("../migrations/resource-effect-reconciliation.sql", import.meta.url));
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -160,6 +161,7 @@ const adaptiveOperationReconciliation = await readFile(adaptiveOperationReconcil
 const protectedOperationAuthorizationBinding = await readFile(protectedOperationAuthorizationBindingPath, "utf8");
 const runPraxisSessionLedger = await readFile(runPraxisSessionLedgerPath, "utf8");
 const protectedLivePraxisSession = await readFile(protectedLivePraxisSessionPath, "utf8");
+const resourceEffectReconciliation = await readFile(resourceEffectReconciliationPath, "utf8");
 const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
 
 const expandFoundation = (source: string) =>
@@ -198,10 +200,18 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "protected-operation-authorization-binding.sql": protectedOperationAuthorizationBinding,
   "run-praxis-session-ledger.sql": runPraxisSessionLedger,
   "protected-live-praxis-session.sql": protectedLivePraxisSession,
+  "resource-effect-reconciliation.sql": resourceEffectReconciliation,
 };
 
-const stagedBaseline = (included: readonly OptionalBaselineMigration[]) =>
-  expandFoundation(expandBaselineStage(baselineSource, optionalMigrationSources, included));
+const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
+  const current = included.length === OPTIONAL_BASELINE_MIGRATIONS.length
+    && OPTIONAL_BASELINE_MIGRATIONS.every((migration) => included.includes(migration));
+  return expandFoundation(expandBaselineStage(
+    baselineSource,
+    optionalMigrationSources,
+    current ? included : included.filter((migration) => migration !== "resource-effect-reconciliation.sql"),
+  ));
+};
 
 const baseline = stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS);
 const preAdaptiveOperationReconciliationFingerprint = createHash("sha256").update(
@@ -277,6 +287,9 @@ const preStructuredSyntheticProtectedInputFingerprint = digest(preStructuredSynt
 const preProtectedLivePraxisSessionFingerprint = digest(stagedBaseline(
   OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-live-praxis-session.sql"),
 ));
+const preResourceEffectReconciliationFingerprint = digest(stagedBaseline(
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "resource-effect-reconciliation.sql"),
+));
 
 const previousVeilFullFingerprint =
   "8c0e5ae0ae72f9a163189abe903b317e38aacf6b1674f3441b62dd7129b48c6a";
@@ -339,12 +352,24 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preProtectedLivePraxisSessionFingerprint) {
+    if (installedFingerprint === preResourceEffectReconciliationFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-resource-effect-reconciliation'))");
+        await client.query(resourceEffectReconciliation);
+        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query("COMMIT");
+        process.stdout.write(`Applied resource-effect reconciliation ${fingerprint}\n`);
+      } catch (error) { await client.query("ROLLBACK"); throw error; }
+      finally { client.release(); }
+    } else if (installedFingerprint === preProtectedLivePraxisSessionFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-protected-live-praxis-session'))");
         await client.query(protectedLivePraxisSession);
+        await client.query(resourceEffectReconciliation);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied protected live Praxis session ${fingerprint}\n`);
@@ -358,6 +383,7 @@ try {
         await client.query(adaptiveOperationReconciliation);
         await client.query(protectedOperationAuthorizationBinding);
         await client.query(runPraxisSessionLedger);
+        await client.query(resourceEffectReconciliation);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied adaptive operation reconciliation ${fingerprint}\n`);
@@ -372,6 +398,7 @@ try {
         await client.query(adaptiveOperationReconciliation);
         await client.query(protectedOperationAuthorizationBinding);
         await client.query(runPraxisSessionLedger);
+        await client.query(resourceEffectReconciliation);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied qualified draft-version provenance ${fingerprint}\n`);
@@ -386,6 +413,7 @@ try {
         await client.query(adaptiveOperationReconciliation);
         await client.query(protectedOperationAuthorizationBinding);
         await client.query(runPraxisSessionLedger);
+        await client.query(resourceEffectReconciliation);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied adaptive certification provenance ${fingerprint}\n`);
@@ -400,6 +428,7 @@ try {
         await client.query(adaptiveOperationReconciliation);
         await client.query(protectedOperationAuthorizationBinding);
         await client.query(runPraxisSessionLedger);
+        await client.query(resourceEffectReconciliation);
         await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
         await client.query("COMMIT");
         process.stdout.write(`Applied segmented Flow successor checkpoints ${fingerprint}\n`);

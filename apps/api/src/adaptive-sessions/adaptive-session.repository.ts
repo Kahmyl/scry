@@ -1539,6 +1539,9 @@ export class AdaptiveSessionRepository {
       const operation = await q<{
         projectId: string; environmentId: string; missionId: string; objectiveId: string; flowDraftId: string;
         action: AdaptiveSessionOperationInput["action"]; idempotencyKey: string; operationCreatedAt: string;
+        authoringIntent: MissionAuthoringIntent;
+        preparationFacts: Array<{ intentId: string; actionKind: string; publicValue?: string;
+          protectedReferenceId?: string; targetConcept?: string; targetPlaceholder?: string }>;
         expectedEffect: AdaptiveSessionOperationInput["expectedEffect"];
         outcome: OperationOutcome; dispatchBoundary: string;
         baseline: { url: string; documentEpoch: number; effectState: Record<string, unknown> } | null;
@@ -1548,6 +1551,18 @@ export class AdaptiveSessionRepository {
                   operation.expected_effect AS "expectedEffect",operation.safe_outcome AS outcome,
                   operation.idempotency_key AS "idempotencyKey",operation.started_at::text AS "operationCreatedAt",
                   operation.dispatch_boundary AS "dispatchBoundary",
+                  operation.authoring_intent AS "authoringIntent",
+                  COALESCE((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
+                    'intentId',preparation.authoring_intent->>'intentId',
+                    'actionKind',preparation.authoring_intent->'action'->>'kind',
+                    'publicValue',preparation.authoring_intent->'action'->>'publicValue',
+                    'protectedReferenceId',preparation.authoring_intent->'action'->>'protectedReferenceId',
+                    'targetConcept',preparation.authoring_intent->'action'->'target'->>'concept',
+                    'targetPlaceholder',preparation.authoring_intent->'action'->'target'->>'placeholder'
+                  )) ORDER BY preparation.sequence)
+                    FROM adaptive_operations preparation
+                   WHERE preparation.session_id=operation.session_id
+                     AND preparation.sequence<operation.sequence), '[]'::jsonb) AS "preparationFacts",
                   (SELECT jsonb_build_object('url',baseline.url,'documentEpoch',baseline.document_epoch,
                     'effectState',baseline.effect_state) FROM adaptive_operation_dispatch_baselines baseline
                     WHERE baseline.session_id=operation.session_id
@@ -1562,6 +1577,7 @@ export class AdaptiveSessionRepository {
         missionId: owner.missionId, objectiveId: owner.objectiveId, flowDraftId: owner.flowDraftId,
         sessionId: input.sessionId, operationId: input.operationId, action: owner.action,
         expectedEffect: owner.expectedEffect, idempotencyKey: owner.idempotencyKey,
+        authoringIntent: owner.authoringIntent, preparationFacts: owner.preparationFacts,
         dispatchBoundary: owner.dispatchBoundary,
         dispatchIdentity: { operationCreatedAt: owner.operationCreatedAt }, baseline: owner.baseline };
       if (!['dispatching','dispatched','acknowledged'].includes(owner.dispatchBoundary))
@@ -1636,6 +1652,18 @@ export class AdaptiveSessionRepository {
       operation.objective_id AS "objectiveId",operation.flow_draft_id AS "flowDraftId",
       operation.session_id AS "sessionId",operation.operation_id AS "operationId",
       operation.derived_action->'action' AS action,operation.expected_effect AS "expectedEffect",
+      operation.authoring_intent AS "authoringIntent",
+      COALESCE((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
+        'intentId',preparation.authoring_intent->>'intentId',
+        'actionKind',preparation.authoring_intent->'action'->>'kind',
+        'publicValue',preparation.authoring_intent->'action'->>'publicValue',
+        'protectedReferenceId',preparation.authoring_intent->'action'->>'protectedReferenceId',
+        'targetConcept',preparation.authoring_intent->'action'->'target'->>'concept',
+        'targetPlaceholder',preparation.authoring_intent->'action'->'target'->>'placeholder'
+      )) ORDER BY preparation.sequence)
+        FROM adaptive_operations preparation
+       WHERE preparation.session_id=operation.session_id
+         AND preparation.sequence<operation.sequence), '[]'::jsonb) AS "preparationFacts",
       operation.idempotency_key AS "idempotencyKey",operation.dispatch_boundary AS "dispatchBoundary",
       jsonb_build_object('operationCreatedAt',operation.started_at::text) AS "dispatchIdentity",
       (SELECT jsonb_build_object('url',baseline.url,'documentEpoch',baseline.document_epoch,
@@ -1649,7 +1677,7 @@ export class AdaptiveSessionRepository {
 
   completeUnknownReconciliation(input: {
     sessionId: string; missionId: string; operationId: string; idempotencyKey: string;
-    result: 'proven_applied'|'proven_not_applied'|'still_unknown'; reasonCode: string;
+    result: 'proven_applied'|'proven_applied_output_unrecovered'|'proven_not_applied'|'still_unknown'; reasonCode: string;
     evidence: Record<string, unknown>;
     runtimeOwned: boolean;
   }) {

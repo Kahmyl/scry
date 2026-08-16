@@ -59,6 +59,7 @@ const request = (operation: PraxisRequest["operation"] = { type: "activate" }): 
       },
     },
     operation,
+    dispatchSemantics: "mutation",
     expectedEffect: { type: "none" },
     risk: "ordinary",
     policy: {
@@ -302,6 +303,16 @@ describe("Praxis transaction coordinator", () => {
       expect(subject.dispatches).toBe(1);
     },
   );
+  it("never upgrades a read-only dispatch failure into unknown mutation truth", async () => {
+    const base = request();
+    releasePraxisVeilGrants(base);
+    const readOnly = authorizePraxisRequest(veilPage, { ...base, dispatchSemantics: "read_only" });
+    const result = await new PraxisTransactionCoordinator(adapter({ fail: "verifyEffect" })).execute(
+      readOnly,
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({ status: "failed", mutationOutcome: "not_started", retry: "safe" });
+  });
   it("maps grounding and unexpected errors without leaking messages", async () => {
     const grounding = adapter();
     grounding.ground = async () => {

@@ -9,11 +9,12 @@ import { MissionFlowAuthoringService } from "./mission-flow-authoring.service.js
 import { AdaptiveOperationReconciliationRegistry } from "./adaptive-operation-reconciliation.registry.js";
 import { OperationBoundProtectedInputRepository } from "./operation-bound-protected-input.repository.js";
 import { MissionProtectedQualificationRunner } from "./mission-protected-qualification.runner.js";
+import { VitractCredentialResourceEffectProvider } from "./vitract-credential-resource-effect.provider.js";
 
 @Module({
   imports: [InfrastructureModule, RuntimeModule],
   controllers: [PraxisSessionController],
-  providers: [AdaptiveSessionRepository, AdaptiveSessionKernelRunner, AdaptiveOperationReconciliationRegistry, MissionFlowAuthoringService, OperationBoundProtectedInputRepository, MissionProtectedQualificationRunner],
+  providers: [AdaptiveSessionRepository, AdaptiveSessionKernelRunner, AdaptiveOperationReconciliationRegistry, VitractCredentialResourceEffectProvider, MissionFlowAuthoringService, OperationBoundProtectedInputRepository, MissionProtectedQualificationRunner],
   exports: [AdaptiveSessionRepository, AdaptiveSessionKernelRunner, AdaptiveOperationReconciliationRegistry, MissionFlowAuthoringService, OperationBoundProtectedInputRepository, MissionProtectedQualificationRunner],
 })
 export class AdaptiveSessionsModule {}
