@@ -777,7 +777,17 @@ export class AdaptiveSessionRepository {
        ORDER BY operation.sequence`,
       [input.sessionId, input.objectiveId, input.flowDraftId],
     );
-    return selectProtectedReplayPreparation(result.rows, input.intentIds, input.entryUrl);
+    const session = await this.database.query<{ protection: "ordinary" | "protected" }>(
+      `SELECT protection FROM adaptive_sessions WHERE id=$1`,
+      [input.sessionId],
+    );
+    if (!session.rowCount) throw new NotFoundException("Adaptive session not found");
+    return selectProtectedReplayPreparation(
+      result.rows,
+      input.intentIds,
+      input.entryUrl,
+      { preserveExactReferences: session.rows[0]!.protection === "protected" },
+    );
   }
 
   async reserveMissionProtectedOperation(input: {
@@ -2875,6 +2885,7 @@ export function selectProtectedReplayPreparation(
   }>,
   intentIds: string[],
   rawEntryUrl: string,
+  options: { preserveExactReferences?: boolean } = {},
 ) {
   if (new Set(intentIds).size !== intentIds.length) {
     throw new ConflictException({ code: "MISSION_AUTHORING_PREPARATION_INVALID" });
@@ -2899,7 +2910,9 @@ export function selectProtectedReplayPreparation(
   const checkpointSequence = rows[checkpointIndex]!.sequence;
   return rows
     .filter((row) => row.sequence > checkpointSequence && selected.has(row.intentId))
-    .map((row) => portableProtectedReplayIntent(row.intent));
+    .map((row) =>
+      options.preserveExactReferences ? row.intent : portableProtectedReplayIntent(row.intent),
+    );
 }
 
 function portableProtectedReplayIntent(intent: MissionAuthoringIntent): MissionAuthoringIntent {

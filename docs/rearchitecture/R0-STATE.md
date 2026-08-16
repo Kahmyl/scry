@@ -2211,6 +2211,18 @@ this surface while leaving the live API/Praxis process undisturbed. Owner sign-i
 and the explicit grant click remain the unavoidable human trust action before
 the already pinned live Vitract mutation may dispatch.
 
+The first owner-authorized dispatch was mechanically refused before operation
+creation or browser dispatch with
+`MISSION_AUTHORING_PREPARATION_REFERENCE_NOT_REPLAYABLE`. The cause was the
+legacy capsule replay sanitizer still treating same-live-session protected
+preparation as cross-context replay. The general correction preserves exact
+preparation references only when `adaptive_sessions.protection=protected`;
+ordinary/cross-session replay continues to strip portable references or refuse
+reference-only targets. Focused replay-checkpoint and adaptive repository tests
+are **13/13 GREEN** (with unrelated integration cases skipped), and API
+typecheck is GREEN. The refused protected reservation is durably
+`failed_not_applied`, `dispatch_state=not_started`, `mutation_outcome=not_applied`.
+
 # Important current architectural facts
 
 ## Executor

@@ -91,6 +91,26 @@ describe("Mission authoring protected replay checkpoints", () => {
     }));
   });
 
+  it("preserves an exact reference for preparation in the same live protected session", () => {
+    const referenced = fill("fill-name", "Name");
+    if (referenced.action.kind !== "fill") throw new Error("test setup");
+    referenced.action.target = {
+      concept: "credential name",
+      reference: "context-control-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      exact: true,
+    };
+    const selected = selectProtectedReplayPreparation(
+      [
+        row(1, "checkpoint", navigate("checkpoint", "https://app.test/credentials"), "https://app.test/credentials"),
+        row(2, "fill-name", referenced, "https://app.test/credentials"),
+      ],
+      ["fill-name"],
+      "https://app.test/credentials",
+      { preserveExactReferences: true },
+    );
+    expect(selected).toEqual([referenced]);
+  });
+
   it("allows an empty ephemeral suffix when the imported route is already mutation-ready", () => {
     const rows = [
       row(1, "home", navigate("home", "https://app.test/home"), "https://app.test/home"),
