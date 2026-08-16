@@ -1127,6 +1127,7 @@ function privacyChannel(
 function requiresProtectedInterval(intent: MissionAuthoringIntent) {
   return (
     (intent.action.kind === "fill" && Boolean(intent.action.protectedReferenceId)) ||
+    intent.action.kind === "authenticate" ||
     intent.action.kind === "same_origin_request"
   );
 }

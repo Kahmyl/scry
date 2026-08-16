@@ -2401,6 +2401,27 @@ Executor live protected composition + Veil: 6/6 GREEN
 affected typechecks: GREEN
 ```
 
+The rebuilt isolated stack then proved the composite against live Vitract in
+protected Praxis session `a1ef5028-0716-4efa-b2a3-baecd48d5651`:
+
+```text
+exact email + password credential capabilities consumed inside Praxis
+→ authenticate functionalResult=succeeded
+→ mutationOutcome=applied (mechanical form dispatch)
+→ privacyResult=verified
+→ factual destination https://preview.vitract.com/partner
+→ exact application credential scope loaded successfully
+```
+
+No protected value appeared in the agent response, operation facts, or durable
+state. The credential page exposes one current credential row and an exact
+pinned `Revoke credential` control
+`context-control-c1e5f0069c0f9dc5f8ef32a92d1142fe` in that row. Authoritative
+reconciliation continues to identify the sole active cleanup-required resource
+as `E1F9FEB5-4699-F111-9B33-00224854E25A`; no retry, cleanup, or replacement
+generation has occurred. A separately session-bound owner authorization remains
+required before the exact revoke dispatch.
+
 # Important current architectural facts
 
 ## Executor
