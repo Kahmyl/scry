@@ -83,6 +83,7 @@ export type ProtectedTransactionDependencies = {
   redactor: SecretRedactor;
   store: ProtectedTransactionStore;
   capsuleFactory: CapsuleFactory;
+  liveProtectedSession?: ProtectedBrowserSession;
   allowedOrigins: string[];
   persistSecret(input: {
     operationId: string;
@@ -262,7 +263,7 @@ export class ProtectedTransactionKernel {
         mode: "protected_recording_gap",
         videoMaskEstablished: false,
       });
-      safeSession.provenance.transition("safe_parked");
+      if (!d.liveProtectedSession) safeSession.provenance.transition("safe_parked");
       await runProtectedStage({
         stage: "safe_context_provenance", timeoutMs: transaction.extraction.timeoutMs,
         signal: lifecycleSignal,
@@ -282,8 +283,15 @@ export class ProtectedTransactionKernel {
         fencingToken: claim.fencingToken,
         phase: "capsule_bootstrapping",
       });
-      let storageState: Awaited<ReturnType<SafeBrowserSession["context"]["storageState"]>>;
-      let sessionStorageState: { origin: string; entries: Array<[string, string]> };
+      let storageState: Awaited<ReturnType<SafeBrowserSession["context"]["storageState"]>> | undefined;
+      let sessionStorageState: { origin: string; entries: Array<[string, string]> } | undefined;
+      if (d.liveProtectedSession) {
+        if (d.liveProtectedSession.provenance.contextId !== safeSession.provenance.contextId ||
+            d.liveProtectedSession.provenance.value() !== "protected")
+          throw new PhaseError("PROTECTED_LIVE_SESSION_MISMATCH", "bootstrap", "do_not_retry");
+        capsule = d.liveProtectedSession;
+      }
+      if (!capsule) {
       try {
         // IndexedDB serialization is optional for capsule handoff. Some applications keep
         // non-serializable values there; cookies and web storage remain the portable auth state.
@@ -316,13 +324,14 @@ export class ProtectedTransactionKernel {
           signal: lifecycleSignal, timeoutCode: "PROTECTED_CAPSULE_CREATION_TIMEOUT",
           dispatchPosition: "pre_dispatch",
           work: () => d.capsuleFactory.create({
-            storageState,
-            sessionStorage: sessionStorageState,
+            storageState: storageState!,
+            ...(sessionStorageState ? { sessionStorage: sessionStorageState } : {}),
             prepare: d.prepareCapsule,
           }),
         });
       } catch {
         throw new PhaseError("PROTECTED_CAPSULE_CREATION_FAILED", "bootstrap", "safe_to_retry");
+      }
       }
       facts.capsule = "active";
       await runProtectedStage({
@@ -899,6 +908,38 @@ export class ProtectedTransactionKernel {
         terminal: true,
         result: result(facts, "aborted", ["manual_reconciliation", "abort"]),
       };
+    }
+
+    if (d.liveProtectedSession) {
+      await runProtectedStage({
+        stage: "protected_live_session_safe_boundary",
+        timeoutMs: transaction.extraction.timeoutMs,
+        signal: lifecycleSignal,
+        timeoutCode: "PROTECTED_SAFE_BOUNDARY_ESTABLISHMENT_TIMEOUT",
+        dispatchPosition: "post_dispatch",
+        work: async () => {
+          await d.gate.beginSafeBoundary();
+          await d.gate.confirmSafeBoundary({
+            kind: "protected_context_destroyed",
+            contextId: d.liveProtectedSession!.provenance.contextId,
+          });
+        },
+      });
+      facts.continuation = "terminal";
+      await this.persistFinal(transaction, claim.fencingToken, "terminal", facts);
+      if (claim.state === "reconciling") {
+        claim = await d.store.transition({
+          id: claim.id,
+          operationId: transaction.operationId,
+          version: claim.version,
+          fencingToken: claim.fencingToken,
+          expected: "reconciling",
+          next: "completed",
+          phase: "completed",
+          facts: { ...facts, diagnostics: undefined },
+        });
+      }
+      return { safeSession, terminal: true, result: result(facts, "terminal", []) };
     }
 
     const continuation = await continueAfterProtectedMutation(transaction, safeSession, lifecycleDependencies);

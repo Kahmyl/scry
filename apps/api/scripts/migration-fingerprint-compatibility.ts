@@ -47,6 +47,7 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "adaptive-operation-reconciliation.sql",
   "protected-operation-authorization-binding.sql",
   "run-praxis-session-ledger.sql",
+  "protected-live-praxis-session.sql",
 ] as const;
 
 export type OptionalBaselineMigration = (typeof OPTIONAL_BASELINE_MIGRATIONS)[number];
@@ -121,6 +122,8 @@ export function compatibilityBaseline(source: string): string {
     "adaptive-certification-provenance.sql",
     "adaptive-operation-reconciliation.sql",
     "protected-operation-authorization-binding.sql",
+    "run-praxis-session-ledger.sql",
+    "protected-live-praxis-session.sql",
   ].reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}\\r?\\n`, "g"), ""),

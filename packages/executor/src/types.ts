@@ -93,6 +93,8 @@ export type ExecuteOptions = {
   }) => void | Promise<void>;
   /** Internal authoring boundary: execute against the already-owned safe session. */
   existingSafeSession?: import("./browser-session.js").SafeBrowserSession;
+  /** The borrowed session is already a Veil-protected live Praxis session. */
+  existingProtectedSession?: boolean;
   captureBrowserState?: (state: BrowserStorageState) => void | Promise<void>;
   captureSuccessorCheckpoint?: (checkpoint: {
     schemaVersion: 1;

@@ -225,8 +225,8 @@ export class AdaptiveSessionRepository {
         `INSERT INTO adaptive_sessions(
            id,project_id,environment_id,correlation_id,state,objective,allowed_origins,
            mission_id,objective_id,flow_draft_id,active_objective_id,active_flow_draft_id,
-           agent_session_id,idempotency_key,authoring_turn_budgets,protected_reference_allowlist
-         ) VALUES($1,$2,$3,$4,'created',$5,$6::jsonb,$7,$8,$9,$8,$9,$10,$11,$12::jsonb,$13::jsonb)`,
+           agent_session_id,idempotency_key,authoring_turn_budgets,protected_reference_allowlist,protection
+         ) VALUES($1,$2,$3,$4,'created',$5,$6::jsonb,$7,$8,$9,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14)`,
         [
           id,
           input.projectId,
@@ -241,6 +241,7 @@ export class AdaptiveSessionRepository {
           input.idempotencyKey,
           JSON.stringify(input.turnBudgets ?? { maxOperations: 20, maxDurationMs: 60_000 }),
           JSON.stringify(input.initialProtectedReferenceIds ?? []),
+          input.protection,
         ],
       );
       await q(
@@ -876,9 +877,11 @@ export class AdaptiveSessionRepository {
         AND mission_authorization.environment_id=session.environment_id
         AND mission_authorization.kind='protected_mutation'
         AND mission_authorization.operation_id=operation.authoring_intent->>'intentId'
+        AND mission_authorization.praxis_session_id=session.id
         AND mission_authorization.status='approved'
         AND (mission_authorization.expires_at IS NULL OR mission_authorization.expires_at>now())
        WHERE operation.session_id=$1 AND operation.operation_id=$2
+         AND session.protection='protected'
          AND operation.semantic_intent->>'type'='protectedTransaction'`,
       [sessionId, operationId],
     );
@@ -2673,6 +2676,7 @@ export class AdaptiveSessionRepository {
       lastOperationId: string | null;
       lastDocumentEpoch: number | null;
       lastUrl: string | null;
+      protection: "ordinary" | "protected";
     }>(
       `SELECT session.id AS "sessionId",session.project_id AS "projectId",
               session.mission_id AS "missionId",session.active_objective_id AS "objectiveId",
@@ -2683,6 +2687,7 @@ export class AdaptiveSessionRepository {
               observation.operation_id AS "lastOperationId",
               observation.document_epoch AS "lastDocumentEpoch",
               observation.safe_summary->>'url' AS "lastUrl"
+              ,session.protection
        FROM adaptive_sessions session
        JOIN environments environment ON environment.id=session.environment_id
        LEFT JOIN LATERAL (
@@ -2713,6 +2718,7 @@ export class AdaptiveSessionRepository {
       correlationId: row.correlationId,
       baseOrigin: row.baseOrigin,
       policy,
+      protection: row.protection,
       lastObservation:
         row.lastOperationId && row.lastDocumentEpoch !== null && row.lastUrl
           ? {

@@ -375,6 +375,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           veilAdmissionKey: this.veilAdmissionKey,
           browserChannel: this.browserChannel,
           policy: context.policy,
+          protection: context.protection,
           openBrowser: async () => {
             const restored = await this.nativeBrowser.openBrowser(
               successorCheckpoint
@@ -401,6 +402,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
               policy: context.policy,
               mode: this.operationModes.get(`${sessionId}:${input.operationId}`) ?? "rehearse",
               fencingToken: lease.fencingToken,
+              protection: context.protection,
               ...input,
             }),
         },
@@ -514,6 +516,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     };
     leaseOwner?: string;
     privacyGate: import("@scry/veil").VeilRuntimeCoordinator;
+    protection?: "ordinary" | "protected";
   }) {
     const correlationId = input.correlationId ?? randomUUID();
     const operationKey = `${input.sessionId}:${input.operationId}`;
@@ -568,6 +571,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         page: input.page,
         provenance: input.provenance,
       },
+      existingProtectedSession: input.protection === "protected",
       action: input.action,
       ...(input.expectedEffect ? { expectedEffect: input.expectedEffect } : {}),
       ...(input.resolveEffectPage ? { resolveEffectPage: input.resolveEffectPage } : {}),

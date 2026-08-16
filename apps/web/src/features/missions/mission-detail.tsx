@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   api,
+  post,
   type MissionDetail,
   type MissionReport,
   type MissionSummary,
@@ -45,6 +46,11 @@ export function MissionDetailPage({
   const [technical, setTechnical] = useState(false);
   const [error, setError] = useState("");
   const [authoringOpen, setAuthoringOpen] = useState(false);
+  const [authorizationResult, setAuthorizationResult] = useState<{
+    id: string;
+    status: string;
+  }>();
+  const authorizationRequest = protectedAuthorizationRequest(missionId);
   const load = useCallback(() => {
     void Promise.all([
       api<MissionDetail>(`/missions/${missionId}`),
@@ -130,6 +136,40 @@ export function MissionDetailPage({
         </div>
       </section>
       {error && <div className="form-error">{error}</div>}
+      {authorizationRequest && !authorizationResult && (
+        <section className="panel">
+          <PanelHeader title="Authorize protected operation" kicker="OWNER APPROVAL" />
+          <p>
+            Review and approve this exact protected operation. This authorization binds factual
+            scope only; it does not approve target correctness or workflow progression.
+          </p>
+          <dl>
+            <dt>Objective</dt><dd>{authorizationRequest.objectiveId}</dd>
+            <dt>Environment</dt><dd>{authorizationRequest.environmentId}</dd>
+            <dt>Praxis session</dt><dd>{authorizationRequest.praxisSessionId}</dd>
+            <dt>Operation</dt><dd>{authorizationRequest.operationId}</dd>
+            <dt>Reason</dt><dd>{authorizationRequest.reason}</dd>
+          </dl>
+          <button
+            className="primary-button"
+            onClick={() => {
+              setError("");
+              void post<{ id: string; status: string }>(
+                `/missions/${missionId}/authorizations`,
+                authorizationRequest,
+              ).then(setAuthorizationResult).catch((cause) => setError(message(cause)));
+            }}
+          >
+            <ShieldCheck size={15} /> Authorize this protected operation
+          </button>
+        </section>
+      )}
+      {authorizationResult && (
+        <section className="panel">
+          <PanelHeader title="Protected operation authorized" kicker="APPROVED" />
+          <p>Authorization {authorizationResult.id} is approved for the exact displayed scope.</p>
+        </section>
+      )}
       {data.status === "awaiting_user" && data.resumePointer?.externalInput && (
         <section className="panel">
           <PanelHeader title={waitingLabel} kicker="NON-TERMINAL" />
@@ -323,6 +363,30 @@ export function MissionDetailPage({
       </section>
     </div>
   );
+}
+
+function protectedAuthorizationRequest(missionId: string) {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("authorize") !== "protected") return undefined;
+  const objectiveId = params.get("objectiveId");
+  const environmentId = params.get("environmentId");
+  const agentSessionId = params.get("agentSessionId");
+  const praxisSessionId = params.get("praxisSessionId");
+  const operationId = params.get("operationId");
+  const reason = params.get("reason");
+  if (!objectiveId || !environmentId || !agentSessionId || !praxisSessionId || !operationId || !reason)
+    return undefined;
+  return {
+    missionId,
+    objectiveId,
+    environmentId,
+    agentSessionId,
+    praxisSessionId,
+    operationId,
+    reason,
+    kind: "protected_mutation" as const,
+    confirmedUserAuthorized: true as const,
+  };
 }
 
 function message(error: unknown) {

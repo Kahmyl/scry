@@ -60,6 +60,7 @@ export const grantMissionAuthorizationSchema = missionContextSchema
     environmentId: uuidSchema,
     kind: authorizationKindSchema,
     operationId: z.string().trim().min(1).max(200).optional(),
+    praxisSessionId: uuidSchema.optional(),
     reason: z.string().trim().min(1).max(2000),
     expiresAt: z.string().datetime().optional(),
     confirmedUserAuthorized: z.literal(true),
@@ -71,6 +72,12 @@ export const grantMissionAuthorizationSchema = missionContextSchema
         code: "custom",
         path: ["operationId"],
         message: "Protected mutation authorization must name the exact operation",
+      });
+    if (value.kind === "protected_mutation" && !value.praxisSessionId)
+      context.addIssue({
+        code: "custom",
+        path: ["praxisSessionId"],
+        message: "Protected mutation authorization must bind the live protected Praxis session",
       });
   });
 export type GrantMissionAuthorizationInput = z.infer<typeof grantMissionAuthorizationSchema>;

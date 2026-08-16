@@ -112,6 +112,7 @@ const adaptiveCertificationProvenancePath = fileURLToPath(new URL("../migrations
 const adaptiveOperationReconciliationPath = fileURLToPath(new URL("../migrations/adaptive-operation-reconciliation.sql", import.meta.url));
 const protectedOperationAuthorizationBindingPath = fileURLToPath(new URL("../migrations/protected-operation-authorization-binding.sql", import.meta.url));
 const runPraxisSessionLedgerPath = fileURLToPath(new URL("../migrations/run-praxis-session-ledger.sql", import.meta.url));
+const protectedLivePraxisSessionPath = fileURLToPath(new URL("../migrations/protected-live-praxis-session.sql", import.meta.url));
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -158,6 +159,7 @@ const adaptiveCertificationProvenance = await readFile(adaptiveCertificationProv
 const adaptiveOperationReconciliation = await readFile(adaptiveOperationReconciliationPath, "utf8");
 const protectedOperationAuthorizationBinding = await readFile(protectedOperationAuthorizationBindingPath, "utf8");
 const runPraxisSessionLedger = await readFile(runPraxisSessionLedgerPath, "utf8");
+const protectedLivePraxisSession = await readFile(protectedLivePraxisSessionPath, "utf8");
 const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
 
 const expandFoundation = (source: string) =>
@@ -195,6 +197,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "adaptive-operation-reconciliation.sql": adaptiveOperationReconciliation,
   "protected-operation-authorization-binding.sql": protectedOperationAuthorizationBinding,
   "run-praxis-session-ledger.sql": runPraxisSessionLedger,
+  "protected-live-praxis-session.sql": protectedLivePraxisSession,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) =>
@@ -271,6 +274,9 @@ const preProtectedReadOnlyDispatchFingerprint = digest(preProtectedReadOnlyDispa
 const preExternalResourceBindingsFingerprint = digest(preExternalResourceBindingsBaseline);
 const preOperationBoundSyntheticProtectedInputsFingerprint = digest(preOperationBoundSyntheticProtectedInputsBaseline);
 const preStructuredSyntheticProtectedInputFingerprint = digest(preStructuredSyntheticProtectedInputBaseline);
+const preProtectedLivePraxisSessionFingerprint = digest(stagedBaseline(
+  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-live-praxis-session.sql"),
+));
 
 const previousVeilFullFingerprint =
   "8c0e5ae0ae72f9a163189abe903b317e38aacf6b1674f3441b62dd7129b48c6a";
@@ -333,7 +339,18 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preAdaptiveOperationReconciliationFingerprint) {
+    if (installedFingerprint === preProtectedLivePraxisSessionFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-protected-live-praxis-session'))");
+        await client.query(protectedLivePraxisSession);
+        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query("COMMIT");
+        process.stdout.write(`Applied protected live Praxis session ${fingerprint}\n`);
+      } catch (error) { await client.query("ROLLBACK"); throw error; }
+      finally { client.release(); }
+    } else if (installedFingerprint === preAdaptiveOperationReconciliationFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");

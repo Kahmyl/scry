@@ -358,6 +358,7 @@ export class ExecutionKernel {
     capabilities: RuntimeExecutionCapabilities;
     page: Page;
     safeSession?: SafeBrowserSession;
+    existingProtectedSession?: boolean;
     action: CurrentAction;
     expectedEffect?: import("@scry/contracts").ExpectedEffect;
     resolveEffectPage?: () => Promise<Page | undefined>;
@@ -386,6 +387,7 @@ export class ExecutionKernel {
                 options: {
                   ...input.capabilities.options,
                   existingSafeSession: input.safeSession,
+                  ...(input.existingProtectedSession ? { existingProtectedSession: true } : {}),
                 },
               }
             : input.capabilities,

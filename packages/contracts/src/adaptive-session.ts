@@ -66,6 +66,7 @@ export const startAdaptiveSessionSchema = z
       maxDurationMs: 60_000,
     }),
     initialProtectedReferenceIds: z.array(uuid).max(20).default([]),
+    protection: z.enum(["ordinary", "protected"]).default("ordinary"),
   })
   .strict();
 

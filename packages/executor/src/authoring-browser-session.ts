@@ -66,6 +66,7 @@ export async function createAuthoringBrowserSession(input: {
   veilAdmissionKey: string;
   browserChannel: string;
   policy: ExecutionPolicy;
+  protection?: "ordinary" | "protected";
   openBrowser(): Promise<{
     browser: Browser;
     context: BrowserContext;
@@ -144,7 +145,10 @@ export async function createAuthoringBrowserSession(input: {
       pageOwnership.rejectDocument(request.url());
       await route.abort("blockedbyclient");
     });
-    const provenance = new BrowserSessionProvenance(`authoring-${input.sessionId}`, "safe");
+    const provenance = new BrowserSessionProvenance(
+      `authoring-${input.sessionId}`,
+      input.protection === "protected" ? "protected" : "safe",
+    );
 
     browser.on("disconnected", () => {
       if (!closed) {

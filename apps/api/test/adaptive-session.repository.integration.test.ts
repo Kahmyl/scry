@@ -380,14 +380,17 @@ integration("adaptive session repository integration", () => {
   });
 
   it("loads an authorized protected execution context from PostgreSQL", async () => {
-    const created = await createActive(startInput("protected-context-start"));
+    const created = await createActive({
+      ...startInput("protected-context-start"),
+      protection: "protected" as const,
+    });
     sessionIds.push(created.id);
     const authorizationId = randomUUID();
     await database.query(
       `INSERT INTO mission_authorizations(
-         id,mission_id,objective_id,environment_id,kind,operation_id,reason,status,granted_by_agent_session_id
-       ) VALUES($1,$2,$3,$4,'protected_mutation','different-protected-operation','Integration qualification','approved',$5)`,
-      [authorizationId, missionId, objectiveId, environmentId, agentSessionId],
+         id,mission_id,objective_id,environment_id,kind,operation_id,praxis_session_id,reason,status,granted_by_agent_session_id
+       ) VALUES($1,$2,$3,$4,'protected_mutation','different-protected-operation',$5,'Integration qualification','approved',$6)`,
+      [authorizationId, missionId, objectiveId, environmentId, created.id, agentSessionId],
     );
     const intent = {
       intentId: "generate-protected-context",
@@ -442,6 +445,7 @@ integration("adaptive session repository integration", () => {
     await expect(
       repository.protectedExecutionContext(created.id, "protected-context-operation"),
     ).rejects.toMatchObject({ response: { code: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID" } });
+
     await database.query(
       `UPDATE mission_authorizations SET operation_id='generate-protected-context' WHERE id=$1`,
       [authorizationId],
@@ -459,6 +463,56 @@ integration("adaptive session repository integration", () => {
       authorizationId,
       dispatchDisposition: "execute",
     });
+
+    await database.query(
+      `UPDATE mission_authorizations SET praxis_session_id=NULL WHERE id=$1`,
+      [authorizationId],
+    );
+    await expect(
+      repository.protectedExecutionContext(created.id, "protected-context-operation"),
+    ).rejects.toMatchObject({ response: { code: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID" } });
+
+    await database.query(
+      `UPDATE mission_authorizations SET status='approved',revoked_at=NULL,praxis_session_id=$2 WHERE id=$1`,
+      [authorizationId, created.id],
+    );
+    await database.query(`UPDATE adaptive_sessions SET protection='ordinary' WHERE id=$1`, [created.id]);
+    await expect(
+      repository.protectedExecutionContext(created.id, "protected-context-operation"),
+    ).rejects.toMatchObject({ response: { code: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID" } });
+    await database.query(
+      `UPDATE adaptive_sessions SET protection='protected' WHERE id=$1`,
+      [created.id],
+    );
+
+    const other = await createActive({
+      ...startInput("other-protected-context-start"),
+      protection: "protected" as const,
+    });
+    sessionIds.push(other.id);
+    await database.query(
+      `UPDATE mission_authorizations SET praxis_session_id=$2 WHERE id=$1`,
+      [authorizationId, other.id],
+    );
+    await expect(
+      repository.protectedExecutionContext(created.id, "protected-context-operation"),
+    ).rejects.toMatchObject({ response: { code: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID" } });
+
+    await database.query(
+      `UPDATE mission_authorizations SET praxis_session_id=$2,expires_at=now()-interval '1 second' WHERE id=$1`,
+      [authorizationId, created.id],
+    );
+    await expect(
+      repository.protectedExecutionContext(created.id, "protected-context-operation"),
+    ).rejects.toMatchObject({ response: { code: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID" } });
+
+    await database.query(
+      `UPDATE mission_authorizations SET expires_at=NULL,status='revoked',revoked_at=now() WHERE id=$1`,
+      [authorizationId],
+    );
+    await expect(
+      repository.protectedExecutionContext(created.id, "protected-context-operation"),
+    ).rejects.toMatchObject({ response: { code: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID" } });
   });
 
   it("stores a functionally successful unknown mutation as reconciliation-required", async () => {
@@ -1320,6 +1374,7 @@ integration("adaptive session repository integration", () => {
       objective: "Inspect account details",
       allowedOrigins: ["https://example.test"],
       idempotencyKey,
+      protection: "ordinary" as const,
     };
   }
 

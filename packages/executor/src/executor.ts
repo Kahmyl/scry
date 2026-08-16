@@ -35,6 +35,7 @@ import {
   observeSemanticPageContext,
   openPraxisBrowserSession,
   visualRedactionInitScript,
+  destroyPraxisIsolatedSession,
 } from "@scry/praxis";
 import {
   registerGroundingHistoryProvider,
@@ -463,6 +464,10 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             );
           }
           let protectedAssertionOrdinal = 0;
+          const liveBrowser = browser;
+          const liveContext = context;
+          const livePage = page;
+          const liveProvenance = safeProvenance;
           const transaction: ProtectedTransactionExecution =
             await new ProtectedTransactionCoordinator({
               safeSession: { browser, context, page, provenance: safeProvenance },
@@ -474,6 +479,23 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
                   ((contextOptions) =>
                     openCompatibilityBrowser(options.browserChannel, contextOptions)),
               ),
+              ...(options.existingProtectedSession ? {
+                liveProtectedSession: {
+                  browser: liveBrowser,
+                  context: liveContext,
+                  page: livePage,
+                  provenance: liveProvenance,
+                  clipboardCollector: createVeilClipboardCollector(livePage),
+                  destroy: async () => {
+                    const outcome = await destroyPraxisIsolatedSession({
+                      context: liveContext,
+                      browser: liveBrowser,
+                    });
+                    if (liveProvenance.value() !== "destroyed") liveProvenance.transition("destroyed");
+                    return outcome;
+                  },
+                },
+              } : {}),
               allowedOrigins: options.plan.allowedOrigins,
               persistSecret: options.atomicSecretCapture,
               persistPublicValue: options.publicValueCapture,

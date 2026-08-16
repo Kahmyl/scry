@@ -2123,6 +2123,94 @@ R0.7 is **NOT COMPLETE**. R0 is **NOT COMPLETE**. Authentication and supported
 Project provisioning are no longer blockers. The blocker is the protected
 capsule's missing exact-reference handoff contract.
 
+### Protected live Praxis session correction — implemented, live owner grant pending
+
+The approved option 1 contract is now implemented:
+
+```text
+start Praxis session with protection=protected
+→ observe and pin only inside that session
+→ owner authorization binds exact praxisSessionId + Mission/Objective/Environment + operation
+→ protected preparation and dispatch borrow that same live session
+→ Veil independently permits/refuses protected handling
+→ protected session is destroyed at the terminal safe boundary
+```
+
+Mechanical enforcement now requires all of:
+
+```text
+adaptive_sessions.protection = protected
+mission_authorizations.praxis_session_id = adaptive operation session
+authorization operation, Mission, Objective, Environment, status and expiry are valid
+Praxis page/document/reference identity remains current
+```
+
+There is no state export, capsule clone, cross-session reference transfer,
+selector fallback, or semantic re-resolution on this path. Ordinary sessions
+cannot dispatch a protected transaction. Legacy protected authorizations with
+no session binding retain their historical record but have no runtime authority.
+
+Additive schema fingerprint:
+
+```text
+8cc6e2492e9a099b59d593a6acdbb970510b2d082b0511a63cd41e4f34936d13
+```
+
+Focused qualification at the current working checkpoint:
+
+```text
+Contracts: 93/93 GREEN
+adaptive session runner: 11/11 GREEN
+adaptive PostgreSQL integration, including unbound/wrong-session/ordinary/
+expired/revoked protected authorization refusals: 25/25 GREEN
+Executor protected transaction + browser-backed authoring session: 27/27 GREEN
+migration fingerprint compatibility: 5/5 GREEN
+affected package typechecks: GREEN
+```
+
+Live Vitract continuation now uses dashboard-visible Project
+`802ec170-6d18-44b0-94ab-4445ad1ef259` and protected Praxis session
+`3fd542d3-d5a8-4e3d-beed-80673b5ff575`, attached as epoch 7 to Run
+`1b3dc99c-a2e7-4e22-954b-1f847f558b0a`. Session P successfully:
+
+- navigated to the existing Vitract Test application credential page;
+- authenticated using only opaque Project credential references;
+- disclosed no protected plaintext;
+- observed and pinned the exact Add credential dialog controls;
+- filled the public label `Scry R0.7 protected session`.
+
+The exact pinned mutation target is
+`context-control-67e193f181ea904cda6ed0b8ba6a1891`. The remaining live prerequisite is an
+owner-granted `protected_mutation` authorization for operation
+`protected-generate-vitract-credential`, bound to Praxis session
+`3fd542d3-d5a8-4e3d-beed-80673b5ff575`, Mission
+`e572a9b9-37ae-4ec8-bbbc-53f506aa10bc`, Objective
+`bab216e4-d43c-446d-b1e0-5116e83b521d`, and Environment
+`44410657-d9d8-486b-9c71-87a36e67fe0d`. The available dashboard browser is
+currently signed out, and owner authorization cannot be fabricated with service
+identity. After owner sign-in/grant, dispatch the already observed target in P,
+complete Create → Retrieve, run the second independent live surface, and execute
+the final R0.7/R0 closure audit. Historical M1 remains `UNAVAILABLE`.
+
+The protected-session implementation is additionally qualified by the complete
+Praxis browser-backed suite: **175/175 GREEN** using the repository's
+Playwright-managed Chromium runtime. Subsystem, execution-kernel,
+direct-browser, production-operations, and release-fingerprint boundaries are
+GREEN; the full repository typecheck is GREEN. The release-fingerprint audit
+causally detected and corrected the Compose default to the additive fingerprint
+recorded above.
+
+Owner authorization is now available through a supported dashboard surface.
+An exact, non-secret authorization request may be opened on the Mission detail
+route. The page displays Mission, Objective, Environment, Praxis session,
+operation, and reason before the owner explicitly submits it through the normal
+authenticated API. This surface does not grant authorization from URL presence,
+does not accept a service identity, and does not confer semantic target or
+progression authority. The isolated dashboard deployment has been rebuilt with
+this surface while leaving the live API/Praxis process undisturbed. Owner sign-in
+and the explicit grant click remain the unavoidable human trust action before
+the already pinned live Vitract mutation may dispatch.
+
 # Important current architectural facts
 
 ## Executor

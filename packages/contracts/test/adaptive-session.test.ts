@@ -10,6 +10,7 @@ import {
   startAdaptiveSessionSchema,
   reconcileAdaptiveOperationSchema,
   adaptiveOperationReconciliationResultSchema,
+  grantMissionAuthorizationSchema,
 } from "../src/index.js";
 
 const ids = {
@@ -22,6 +23,37 @@ const ids = {
   authorizationId: "00000000-0000-4000-8000-000000000007",
   turnId: "00000000-0000-4000-8000-000000000008",
 };
+
+describe("protected live Praxis session binding", () => {
+  const authorization = {
+    missionId: ids.missionId,
+    objectiveId: ids.objectiveId,
+    agentSessionId: ids.turnId,
+    environmentId: ids.environmentId,
+    kind: "protected_mutation" as const,
+    operationId: "issue-secret",
+    reason: "Owner approved this exact protected operation",
+    confirmedUserAuthorized: true as const,
+  };
+
+  it("defaults sessions to ordinary and permits an explicit protected session", () => {
+    const base = {
+      projectId: ids.projectId, missionId: ids.missionId, objectiveId: ids.objectiveId,
+      flowDraftId: ids.flowDraftId, environmentId: ids.environmentId, agentSessionId: ids.turnId,
+      objective: "Issue credential", allowedOrigins: ["https://example.test"],
+      idempotencyKey: "protected-session-contract",
+    };
+    expect(startAdaptiveSessionSchema.parse(base).protection).toBe("ordinary");
+    expect(startAdaptiveSessionSchema.parse({ ...base, protection: "protected" }).protection).toBe("protected");
+  });
+
+  it("requires protected authorization to bind an exact Praxis session", () => {
+    expect(grantMissionAuthorizationSchema.safeParse(authorization).success).toBe(false);
+    expect(grantMissionAuthorizationSchema.safeParse({
+      ...authorization, praxisSessionId: ids.flowDraftId,
+    }).success).toBe(true);
+  });
+});
 
 const target = { concept: "account email field", label: "Email address" };
 const constraints = { timeoutMs: 10_000, allowNewPage: false, allowNonExact: false };
