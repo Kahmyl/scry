@@ -21,6 +21,7 @@ import {
   NativeBrowserDriver,
 } from "../runtime/index.js";
 import { AdaptiveSessionRepository } from "./adaptive-session.repository.js";
+import { bindProtectedInputDelivery, type ProtectedInputDeliveryBinding } from "./protected-input-capability.js";
 
 export type AdaptiveKernelExecutionResult = {
   outcome: OperationOutcome;
@@ -526,6 +527,11 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     const protectedContext = input.action.type === "protectedTransaction"
       ? await this.sessions.protectedExecutionContext(input.sessionId, input.operationId)
       : undefined;
+    const protectedInputBinding = exactProtectedInputBinding(
+      input.sessionId,
+      input.operationId,
+      input.action,
+    );
     const capability = this.createCapabilities({
       sessionId: input.sessionId,
       environmentId: input.environmentId,
@@ -533,6 +539,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       operationId: input.operationId,
       mode: input.mode,
       policy: input.policy,
+      ...(protectedInputBinding ? { protectedInputBinding } : {}),
       dispatchDisposition: protectedContext?.dispatchDisposition ?? "execute",
       ...(protectedContext ? {
         protectedContext,
@@ -595,6 +602,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       agentSessionId: string; flowDraftId: string; authorizationId: string;
       dispatchDisposition: "execute" | "qualification_only";
     };
+    protectedInputBinding?: ProtectedInputDeliveryBinding;
     leaseOwner?: string;
     onPraxisResult?: (result: import("@scry/contracts").PraxisResult) => void;
     onExpectedEffectVerification?: (result: { status: "succeeded" | "failed"; reasonCode?: string; durationMs: number }) => void;
@@ -613,7 +621,20 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         environmentId: input.environmentId,
         veilAdmissionKey: this.veilAdmissionKey!,
         veilPolicySnapshot: compileDefaultVeilPolicy(input.policy),
-        secretResolver: (reference) => this.sessions.resolveProtectedInput(input.sessionId, input.operationId, reference),
+        secretResolver: input.protectedInputBinding
+          ? (() => {
+              const binding = input.protectedInputBinding;
+              const delivery = bindProtectedInputDelivery(binding, () =>
+                this.sessions.resolveProtectedInput(
+                  binding.sessionId,
+                  binding.operationId,
+                  binding.protectedReferenceId,
+                ),
+              );
+              return (reference: string) =>
+                delivery.consume({ ...binding, protectedReferenceId: reference });
+            })()
+          : (reference) => this.sessions.resolveProtectedInput(input.sessionId, input.operationId, reference),
         dispatchDisposition: input.dispatchDisposition ?? "execute",
         ...(input.onMutationDispatch ? { onMutationDispatch: input.onMutationDispatch } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
@@ -796,6 +817,22 @@ function safeContinuationUrl(candidate: string | undefined, allowedOrigins: stri
   } catch {
     return undefined;
   }
+}
+
+function exactProtectedInputBinding(
+  sessionId: string,
+  operationId: string,
+  action: CurrentAction,
+): ProtectedInputDeliveryBinding | undefined {
+  if (action.type !== "fill" || !action.secretRef || !action.target.authoritativeReference) {
+    return undefined;
+  }
+  return {
+    sessionId,
+    operationId,
+    protectedReferenceId: action.secretRef,
+    targetReference: action.target.authoritativeReference,
+  };
 }
 
 function observationPlan(policy: ExecutionPolicy) {

@@ -119,6 +119,33 @@ describe("Praxis strategy, dispatch, and verification", () => {
     expect(await page.locator("body").getAttribute("data-hit")).toBe("element");
   });
 
+  for (const mechanism of ["dom", "element"] as const) {
+    it(`accepts immediate document replacement as factual ${mechanism} activation dispatch`, async () => {
+      const route = async (route: import("playwright").Route) => {
+        const authenticated = new URL(route.request().url()).pathname === "/authenticated";
+        await route.fulfill({
+          contentType: "text/html",
+          body: authenticated
+            ? "<title>Authenticated</title><main>Ready</main>"
+            : `<button onclick="location.href='https://example.test/authenticated'">Login</button>`,
+        });
+      };
+      await page.route("https://example.test/**", route);
+      try {
+        await page.goto("https://example.test/login");
+        const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(
+          request({ type: "activate", mechanism }, intent("Login")),
+          new AbortController().signal,
+        );
+        expect(result).toMatchObject({ status: "succeeded", mutationOutcome: "applied" });
+        await page.waitForURL("https://example.test/authenticated");
+        expect(page.url()).toBe("https://example.test/authenticated");
+      } finally {
+        await page.unroute("https://example.test/**", route);
+      }
+    });
+  }
+
   it("reports an absent observed target before the transaction deadline masks its cause", async () => {
     await page.setContent("<main><label>Username <input /></label></main>");
     const base = request({ type: "wait_for_state", state: "visible" }, intent("Email", "textbox"));

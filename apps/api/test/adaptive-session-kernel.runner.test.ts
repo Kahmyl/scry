@@ -4,6 +4,43 @@ import { compileDefaultVeilPolicy } from "@scry/veil";
 import { AdaptiveSessionKernelRunner } from "../src/adaptive-sessions/adaptive-session-kernel.runner.js";
 
 describe("AdaptiveSessionKernelRunner timing propagation", () => {
+  it("binds protected input resolution to the exact session, operation, reference, and target", async () => {
+    const resolveProtectedInput = vi.fn(async () => "protected-test-value");
+    const createSession = vi.fn((input) => input);
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      { createSession } as never,
+      { resolveProtectedInput } as never,
+      {} as never,
+    );
+    const createCapabilities = (runner as unknown as {
+      createCapabilities(input: Record<string, unknown>): { options: { secretResolver(reference: string): Promise<string> } };
+    }).createCapabilities.bind(runner);
+    const capability = createCapabilities({
+      sessionId: "session-a",
+      environmentId: "environment-a",
+      correlationId: "correlation-a",
+      operationId: "operation-a",
+      mode: "run",
+      policy: { allowedOrigins: ["https://example.test"] },
+      protectedInputBinding: {
+        sessionId: "session-a",
+        operationId: "operation-a",
+        protectedReferenceId: "credential-a",
+        targetReference: "context-control-a",
+      },
+    });
+
+    await expect(capability.options.secretResolver("credential-a")).resolves.toBe(
+      "protected-test-value",
+    );
+    await expect(capability.options.secretResolver("credential-b")).rejects.toMatchObject({
+      code: "PROTECTED_INPUT_DELIVERY_BINDING_MISMATCH",
+    });
+    expect(resolveProtectedInput).toHaveBeenCalledOnce();
+    expect(createSession).toHaveBeenCalledOnce();
+  });
+
   it("observes the existing live Praxis session without provisioning or dispatch", async () => {
     const runner = new AdaptiveSessionKernelRunner({} as never, {} as never, {} as never, {} as never);
     const observeDocument = vi.fn(async () => ({

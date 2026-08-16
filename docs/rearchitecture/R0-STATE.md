@@ -2326,6 +2326,46 @@ separately authorized authoritative resource mutation adapter for the exact
 reconciled identity, followed by an authoritative listing that proves revoked or
 absent state and only then resolves the original cleanup-required fence.
 
+The isolated protected-input composition diagnosis subsequently proved that the
+stored Environment bindings and exact input references were valid: each cleanup
+fill crossed the Praxis dispatch boundary, verified the exact resulting field
+value, and returned only a redacted factual outcome. The remaining ownership gap
+was that application composition exposed a generic plaintext-returning resolver
+to Executor instead of an opaque delivery capability bound to the exact live
+session operation and pinned target.
+
+That boundary is now corrected. Application composition creates an opaque
+protected-input delivery capability bound to:
+
+```text
+Praxis session + operation + protected reference + exact context-control target
+```
+
+Only the bound Executor/Praxis operation may consume it; a session, operation,
+credential-reference, or target-reference mismatch refuses before decryption.
+The capability is not returned to the agent, carries no plaintext data, and does
+not persist or log the resolved value. Praxis continues to own the exact fill
+mechanic and Veil independently owns the protected interval. Existing exact
+document/reference refusal and conservative dispatch truth are unchanged.
+
+Focused qualification at this checkpoint:
+
+```text
+protected-input capability/API runner: 17/17 GREEN
+Executor protected browser + sealed-recording secret fill: 5/5 GREEN
+Praxis exact activation/browser runtime: 25/25 GREEN
+API typecheck: GREEN
+```
+
+The next live action is a fresh protected Praxis session in the cleanup Mission,
+re-observation and exact protected login through this delivery boundary. If the
+login succeeds, the agent must locate and pin only credential
+`E1F9FEB5-4699-F111-9B33-00224854E25A`, obtain a separately session-bound owner
+authorization, revoke it once, and prove absence/revocation authoritatively before
+any replacement credential generation. The earlier proposal for a separate
+resource-mutation adapter is rejected; cleanup remains in the agent-owned live
+Praxis session.
+
 # Important current architectural facts
 
 ## Executor
