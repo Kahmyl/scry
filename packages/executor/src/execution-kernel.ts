@@ -1237,10 +1237,10 @@ function outcomeFromReport(
     qualityFindings: praxisResults.flatMap((result) => result.qualityFindings),
     ...resolvedTargetOutcome(praxisResults),
     durationMs: performance.now() - startedAt,
-    ...(report.error
-      ? { reasonCode: safeCode(report.error) }
-      : protectedTelemetryReason
-        ? { reasonCode: protectedTelemetryReason }
+    ...(protectedTelemetryReason
+      ? { reasonCode: protectedTelemetryReason }
+      : report.error
+        ? { reasonCode: safeCode(report.error) }
         : praxisFailureReason
           ? { reasonCode: praxisFailureReason }
           : {}),

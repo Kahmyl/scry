@@ -178,12 +178,36 @@ describe("agent-directed Run evidence finalization", () => {
     ).rejects.toMatchObject({
       response: {
         code: "SUCCESSOR_CHECKPOINT_ESTABLISHMENT_FAILED",
+        reasonCode: "SUCCESSOR_CHECKPOINT_CAPTURE_FAILED",
         mutationOutcome: "not_applied",
       },
     });
 
     expect(executions.stageSuccessorCheckpoint).not.toHaveBeenCalled();
     expect(executions.completeAttempt).not.toHaveBeenCalled();
+  });
+
+  it("preserves a safe exact successor-checkpoint failure code", async () => {
+    const { service, sessions } = harness(true);
+
+    sessions.captureRunSuccessorCheckpoint.mockRejectedValueOnce(
+      new Error("SUCCESSOR_CHECKPOINT_SESSION_STORAGE_TOO_LARGE"),
+    );
+
+    await expect(
+      service.finalize({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        outcome: "passed",
+        reason: "finished",
+        idempotencyKey: "finalize-checkpoint-safe-code",
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "SUCCESSOR_CHECKPOINT_ESTABLISHMENT_FAILED",
+        reasonCode: "SUCCESSOR_CHECKPOINT_SESSION_STORAGE_TOO_LARGE",
+        mutationOutcome: "not_applied",
+      },
+    });
   });
 
   it("does not manufacture a checkpoint for an explicitly failed Run", async () => {

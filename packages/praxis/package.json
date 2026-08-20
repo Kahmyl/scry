@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --maxWorkers=4",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

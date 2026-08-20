@@ -16,6 +16,8 @@ type AuthorizationRow = {
   kind: AuthorizationKind;
   status: "approved" | "revoked";
   expired: boolean;
+  operationId: string;
+  praxisSessionId: string;
 };
 
 function createHarness(authorizationKind: AuthorizationKind) {
@@ -36,6 +38,8 @@ function createHarness(authorizationKind: AuthorizationKind) {
     kind: authorizationKind,
     status: "approved",
     expired: false,
+    operationId: "r07-save-live-mutation-auth-binding",
+    praxisSessionId: ids.sessionId,
   };
 
   const query = vi.fn(
@@ -69,7 +73,15 @@ function createHarness(authorizationKind: AuthorizationKind) {
       }
 
       if (text.includes("FROM mission_authorizations WHERE id=$1")) {
-        const [authorizationId, missionId, objectiveId, environmentId, requiredKind] = values;
+        const [
+          authorizationId,
+          missionId,
+          objectiveId,
+          environmentId,
+          requiredKind,
+          operationId,
+          praxisSessionId,
+        ] = values;
 
         let matches =
           authorization.id === authorizationId &&
@@ -91,6 +103,13 @@ function createHarness(authorizationKind: AuthorizationKind) {
         if (/(?:^|\s)kind\s*=\s*\$5(?:\s|$)/m.test(text)) {
           matches = matches && authorization.kind === requiredKind;
         }
+        if (text.includes("operation_id=$6 AND praxis_session_id=$7")) {
+          matches =
+            matches &&
+            (requiredKind !== "protected_mutation" ||
+              (authorization.operationId === operationId &&
+                authorization.praxisSessionId === praxisSessionId));
+        }
 
         return {
           rowCount: matches ? 1 : 0,
@@ -106,7 +125,7 @@ function createHarness(authorizationKind: AuthorizationKind) {
     query,
   } as never);
 
-  const intent = {
+  const intent: MissionAuthoringIntent = {
     intentId: "r07-save-live-mutation-auth-binding",
     objectiveId: ids.objectiveId,
     flowDraftId: ids.flowDraftId,
@@ -132,7 +151,7 @@ function createHarness(authorizationKind: AuthorizationKind) {
       authorizationId: ids.authorizationId,
     },
     protectedInputReferences: [],
-  } satisfies MissionAuthoringIntent;
+  };
 
   return {
     ids,
@@ -167,5 +186,28 @@ describe("Mission authoring authorization kind binding", () => {
         intent,
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it("rejects protected authorization bound to a different intent", async () => {
+    const { ids, intent, repository } = createHarness("protected_mutation");
+    intent.authorization.kind = "protected_mutation";
+    intent.intentId = "different-protected-intent";
+
+    await expect(
+      repository.validateIntentAdmission({ sessionId: ids.sessionId, intent }),
+    ).rejects.toMatchObject({
+      response: { code: "MISSION_AUTHORING_AUTHORIZATION_INVALID" },
+    });
+  });
+
+  it("rejects protected authorization bound to a different Praxis session", async () => {
+    const { ids, intent, repository } = createHarness("protected_mutation");
+    intent.authorization.kind = "protected_mutation";
+
+    await expect(
+      repository.validateIntentAdmission({ sessionId: randomUUID(), intent }),
+    ).rejects.toMatchObject({
+      response: { code: "MISSION_AUTHORING_AUTHORIZATION_INVALID" },
+    });
   });
 });

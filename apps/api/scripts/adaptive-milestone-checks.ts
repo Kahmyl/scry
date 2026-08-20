@@ -136,7 +136,7 @@ export function milestoneCommands(milestone: AdaptiveMilestone): MilestoneComman
           "The strict adaptive authoring release corpus passes",
           "certification",
           ["verify:adaptive-authoring-release"],
-          ["SCRY_AUTHORING_TEST_DATABASE_URL", "SCRY_VITRACT_PREVIEW_E2E"],
+          ["SCRY_AUTHORING_TEST_DATABASE_URL"],
         ),
         releaseCommand(
           "m5-praxis-release",

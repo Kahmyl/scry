@@ -129,6 +129,7 @@ describe("MissionFlowAuthoringService grouped turns", () => {
       code: "MISSION_AUTHORING_CLOSE_RECONCILIATION_REQUIRED",
     });
     const repository = {
+      settleInvalidPredispatchProtectedAuthorizations: vi.fn().mockResolvedValue(undefined),
       closeAtSafeBoundary: vi.fn().mockRejectedValue(conflict),
     };
     const runner = { close: vi.fn().mockResolvedValue(undefined) };
@@ -144,6 +145,10 @@ describe("MissionFlowAuthoringService grouped turns", () => {
 
     expect(runner.close).toHaveBeenCalledOnce();
     expect(runner.close).toHaveBeenCalledWith(sessionId);
+    expect(repository.settleInvalidPredispatchProtectedAuthorizations).toHaveBeenCalledWith({
+      workspaceId: principal.workspaceId,
+      sessionId,
+    });
   });
 
   it("settles a turn when intent admission fails before any browser operation", async () => {

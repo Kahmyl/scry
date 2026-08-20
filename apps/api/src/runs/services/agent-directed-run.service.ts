@@ -220,9 +220,10 @@ export class AgentDirectedRunService {
         );
 
         await this.executions.stageSuccessorCheckpoint(runId, checkpoint);
-      } catch {
+      } catch (error) {
         throw new ConflictException({
           code: "SUCCESSOR_CHECKPOINT_ESTABLISHMENT_FAILED",
+          reasonCode: successorCheckpointFailureCode(error),
           mutationOutcome: "not_applied",
           safeActions: ["get_run"],
         });
@@ -508,6 +509,19 @@ export class AgentDirectedRunService {
       veilPolicySnapshot: row.veilPolicySnapshot as VeilPolicySnapshot,
     };
   }
+}
+
+function successorCheckpointFailureCode(error: unknown) {
+  const candidate =
+    typeof error === "object" && error !== null && "code" in error
+      ? String(error.code)
+      : error instanceof Error
+        ? error.message
+        : undefined;
+
+  return candidate && /^[A-Z][A-Z0-9_]*$/.test(candidate)
+    ? candidate
+    : "SUCCESSOR_CHECKPOINT_CAPTURE_FAILED";
 }
 
 function finalizeOutcomeClassification(

@@ -1645,6 +1645,37 @@ integration("protected operation repository integration", () => {
     );
     expect(activeAdaptive.rows[0]!.state).toBe("running");
 
+    const preDispatchFailureId = "project-pre-dispatch-background-failure";
+    await beginAdaptiveProtectedOperation(preDispatchFailureId);
+    await create(preDispatchFailureId);
+    const failed = await repository.projectProtectedOperationForAuthoring({
+      sessionId,
+      operationId: preDispatchFailureId,
+      missingFailureCode: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID",
+    });
+    expect(failed).toMatchObject({
+      status: "settled",
+      outcome: {
+        functionalResult: "failed",
+        mutationOutcome: "not_applied",
+        reasonCode: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID",
+      },
+    });
+    const failedDurable = await database.query<{
+      state: string;
+      mutationOutcome: string;
+      failureCode: string;
+    }>(
+      `SELECT state,mutation_outcome AS "mutationOutcome",failure_code AS "failureCode"
+         FROM protected_operations WHERE operation_id=$1`,
+      [preDispatchFailureId],
+    );
+    expect(failedDurable.rows[0]).toEqual({
+      state: "failed_not_applied",
+      mutationOutcome: "not_applied",
+      failureCode: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID",
+    });
+
     const ordinaryId = "ordinary-terminal-operation";
     const ordinaryIntent = {
       intentId: ordinaryId,
@@ -2045,5 +2076,38 @@ integration("protected operation repository integration", () => {
     expect(projection.status === "settled" && projection.outcome.generatedReferences).toHaveLength(
       2,
     );
+  });
+
+  it("scopes invalid pre-dispatch authorization settlement to the owning workspace", async () => {
+    const operationId = `selector-scope-${randomUUID()}`;
+    const repository = new AdaptiveSessionRepository(database);
+    await beginAdaptiveProtectedOperation(operationId);
+    await create(operationId);
+
+    await repository.settleInvalidPredispatchProtectedAuthorizations({
+      workspaceId: randomUUID(),
+      sessionId,
+    });
+    const before = await database.query<{ state: string }>(
+      `SELECT state FROM protected_operations WHERE operation_id=$1`,
+      [operationId],
+    );
+    expect(before.rows[0]?.state).toBe("planned");
+
+    await repository.settleInvalidPredispatchProtectedAuthorizations({ workspaceId, sessionId });
+    const after = await database.query<{
+      state: string;
+      mutationOutcome: string;
+      failureCode: string;
+    }>(
+      `SELECT state,mutation_outcome AS "mutationOutcome",failure_code AS "failureCode"
+         FROM protected_operations WHERE operation_id=$1`,
+      [operationId],
+    );
+    expect(after.rows[0]).toEqual({
+      state: "failed_not_applied",
+      mutationOutcome: "not_applied",
+      failureCode: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID",
+    });
   });
 });

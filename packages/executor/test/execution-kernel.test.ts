@@ -640,6 +640,60 @@ describe("execution kernel admission", () => {
     });
   });
 
+  it("preserves the exact protected failure reason when the sealed report is generic", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "transact", correlationId });
+    const dispatch = vi.fn(async (options: { onEvent?: (event: unknown) => Promise<void> }) => {
+      await options.onEvent?.({
+        type: "privacy.operation_completed",
+        payload: {
+          result: {
+            mutation: { outcome: "unknown" },
+            reasonCode: "PROTECTED_REQUEST_OUTSIDE_ENVELOPE",
+          },
+        },
+      });
+      return {
+        ...reportFixture(),
+        error:
+          "Protected capture could not resolve safely; recording remained sealed. outcome_unknown",
+      };
+    });
+
+    const outcome = await new ExecutionKernel(dispatch as never).execute({
+      request: {
+        sessionId: "adaptive-session",
+        operationId: "protected-envelope-failure",
+        correlationId,
+        mode: "transact",
+        plan: plan(protectedAction()),
+        policy,
+        capabilityManifestDigest: manifest.digest,
+        idempotencyKey: "protected-envelope-failure-idempotency",
+        mutationIdentity: "protected-envelope-failure-mutation",
+      },
+      capabilities: {
+        manifest,
+        journal: {
+          begin: vi.fn(async () => undefined),
+          complete: vi.fn(async () => undefined),
+          fail: vi.fn(async () => undefined),
+          settle: vi.fn(async () => undefined),
+        },
+        mutationFence: {
+          claim: vi.fn(async () => ({ state: "planned", fencingToken: 1 })),
+          transition: vi.fn(async () => true),
+        },
+        options: { outputDirectory: "/tmp/unused" },
+      },
+    });
+
+    expect(outcome.outcome).toMatchObject({
+      functionalResult: "failed",
+      reasonCode: "PROTECTED_REQUEST_OUTSIDE_ENVELOPE",
+    });
+  });
+
   it("keeps protected completion events as telemetry rather than outcome authority", async () => {
     const correlationId = randomUUID();
     const manifest = createExecutionCapabilityManifest({ mode: "transact", correlationId });

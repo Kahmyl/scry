@@ -27,7 +27,7 @@ describe("adaptive milestone campaign wiring", () => {
     expect(
       milestoneCommands("M5").find((command) => command.id === "m5-authoring-release"),
     ).toMatchObject({
-      requiredEnvironment: ["SCRY_AUTHORING_TEST_DATABASE_URL", "SCRY_VITRACT_PREVIEW_E2E"],
+      requiredEnvironment: ["SCRY_AUTHORING_TEST_DATABASE_URL"],
     });
   });
 });

@@ -1095,13 +1095,17 @@ export class AdaptiveSessionRepository {
     if (input.intent.authorization.authorizationId) {
       const authorized = await this.database.query(
         `SELECT 1 FROM mission_authorizations WHERE id=$1 AND mission_id=$2 AND objective_id=$3
-           AND environment_id=$4 AND kind=$5 AND status='approved' AND (expires_at IS NULL OR expires_at>now())`,
+           AND environment_id=$4 AND kind=$5
+           AND ($5<>'protected_mutation' OR (operation_id=$6 AND praxis_session_id=$7))
+           AND status='approved' AND (expires_at IS NULL OR expires_at>now())`,
         [
           input.intent.authorization.authorizationId,
           current.missionId,
           input.intent.objectiveId,
           current.environmentId,
           input.intent.authorization.kind,
+          input.intent.intentId,
+          input.sessionId,
         ],
       );
       if (!authorized.rowCount)
@@ -1372,6 +1376,7 @@ export class AdaptiveSessionRepository {
         dispatchState: "not_started" | "authorized" | "started" | "acknowledged";
         mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
         persistenceState: "not_started" | "running" | "committed" | "failed" | "uncertain";
+        fencingToken: number;
         failureCode: string | null;
         persistedReferences: Record<
           string,
@@ -1386,6 +1391,7 @@ export class AdaptiveSessionRepository {
         `SELECT protected.id,protected.state,COALESCE(protected.lease_expires_at>now(),false) AS "leaseActive",
                 protected.dispatch_state AS "dispatchState",protected.mutation_outcome AS "mutationOutcome",
                 protected.persistence_state AS "persistenceState",protected.failure_code AS "failureCode",
+                protected.fencing_token AS "fencingToken",
                 protected.persisted_references AS "persistedReferences"
            FROM protected_operations protected
           WHERE protected.owner_kind='authoring_session' AND protected.authoring_session_id=$1
@@ -1421,6 +1427,38 @@ export class AdaptiveSessionRepository {
         "persisted",
         "reconciling",
       ]);
+      if (
+        input.missingFailureCode &&
+        ["planned", "preparing", "ready_to_dispatch"].includes(durable.state) &&
+        ["not_started", "authorized"].includes(durable.dispatchState)
+      ) {
+        const failed = await q(
+          `UPDATE protected_operations
+              SET state='failed_not_applied',phase='execution_failed',
+                  mutation_outcome='not_applied',failure_code=$2,recovery_class='safe_to_retry',
+                  lease_owner=NULL,lease_expires_at=NULL,completed_at=now(),
+                  version=version+1,updated_at=now()
+            WHERE id=$1 AND state=$3 AND dispatch_state=$4`,
+          [durable.id, input.missingFailureCode, durable.state, durable.dispatchState],
+        );
+        if (!failed.rowCount)
+          return {
+            status: "pending" as const,
+            state: durable.state,
+            leaseActive: durable.leaseActive,
+          };
+        await q(
+          `INSERT INTO protected_operation_transitions(
+             protected_operation_id,sequence,from_state,to_state,phase,fencing_token,reason_code,safe_diagnostics
+           ) SELECT $1,COALESCE(max(sequence),0)+1,$2,'failed_not_applied','execution_failed',
+                    $3,$4,'{}'::jsonb
+               FROM protected_operation_transitions WHERE protected_operation_id=$1`,
+          [durable.id, durable.state, durable.fencingToken, input.missingFailureCode],
+        );
+        durable.state = "failed_not_applied";
+        durable.mutationOutcome = "not_applied";
+        durable.failureCode = input.missingFailureCode;
+      }
       if (activeStates.has(durable.state)) {
         return {
           status: "pending" as const,
@@ -1549,6 +1587,45 @@ export class AdaptiveSessionRepository {
       );
       return { status: "settled" as const, state: durable.state, outcome, decisionBoundary };
     });
+  }
+
+  async settleInvalidPredispatchProtectedAuthorizations(input: {
+    workspaceId: string | null;
+    sessionId: string;
+  }) {
+    const invalid = await this.database.query<{ operationId: string }>(
+      `SELECT adaptive.operation_id AS "operationId"
+         FROM adaptive_operations adaptive
+         JOIN protected_operations protected
+           ON protected.owner_kind='authoring_session'
+          AND protected.authoring_session_id=adaptive.session_id
+          AND protected.operation_id=adaptive.operation_id
+         JOIN adaptive_sessions session ON session.id=adaptive.session_id
+         JOIN projects project ON project.id=session.project_id
+         LEFT JOIN mission_authorizations authority
+           ON authority.id=protected.authorization_id
+          AND authority.mission_id=adaptive.mission_id
+          AND authority.objective_id=adaptive.objective_id
+          AND authority.environment_id=session.environment_id
+          AND authority.kind='protected_mutation'
+          AND authority.operation_id=adaptive.authoring_intent->>'intentId'
+          AND authority.praxis_session_id=adaptive.session_id
+          AND authority.status='approved'
+          AND (authority.expires_at IS NULL OR authority.expires_at>now())
+        WHERE adaptive.session_id=$1 AND ($2::uuid IS NULL OR project.workspace_id=$2)
+          AND adaptive.state='running'
+          AND protected.state IN ('planned','preparing','ready_to_dispatch')
+          AND protected.dispatch_state IN ('not_started','authorized')
+          AND authority.id IS NULL`,
+      [input.sessionId, input.workspaceId],
+    );
+    for (const operation of invalid.rows) {
+      await this.projectProtectedOperationForAuthoring({
+        sessionId: input.sessionId,
+        operationId: operation.operationId,
+        missingFailureCode: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID",
+      });
+    }
   }
 
   handoff(input: {
@@ -2612,7 +2689,7 @@ export class AdaptiveSessionRepository {
               WHERE owner_kind='authoring_session' AND authoring_session_id=$1 AND operation_id=$2 FOR UPDATE`,
             [input.sessionId, input.operationId],
           );
-          if (existing.rows[0]?.mutationOutcome !== settledOutcome)
+          if (existing.rowCount && existing.rows[0]?.mutationOutcome !== settledOutcome)
             throw new ConflictException({ code: "PROTECTED_MUTATION_OUTCOME_CONTRADICTION" });
         }
       }

@@ -1022,6 +1022,10 @@ export class MissionFlowAuthoringService {
   async close(principal: Principal, sessionId: string, idempotencyKey: string) {
     this.requireWrite(principal);
     try {
+      await this.sessions.settleInvalidPredispatchProtectedAuthorizations({
+        workspaceId: workspaceId(principal),
+        sessionId,
+      });
       return await this.sessions.closeAtSafeBoundary({
         workspaceId: workspaceId(principal),
         sessionId,
