@@ -26,11 +26,13 @@ export type PraxisBrowserOwnership = {
   events: Array<{ milestone: string; at: string }>;
 };
 
-export async function openPraxisBrowserSession(options: {
-  browserChannel?: string;
-  headless?: boolean;
-  context?: BrowserContextOptions;
-} = {}): Promise<PraxisBrowserSession> {
+export async function openPraxisBrowserSession(
+  options: {
+    browserChannel?: string;
+    headless?: boolean;
+    context?: BrowserContextOptions;
+  } = {},
+): Promise<PraxisBrowserSession> {
   const channel = playwrightBrowserChannel(options.browserChannel);
   const launchOptions: LaunchOptions = {
     headless: options.headless ?? true,
@@ -132,10 +134,7 @@ export function closePraxisBrowser(browser: Browser): Promise<void> {
   return browser.close();
 }
 
-export function openPraxisCdpSession(
-  context: BrowserContext,
-  page: Page,
-): Promise<CDPSession> {
+export function openPraxisCdpSession(context: BrowserContext, page: Page): Promise<CDPSession> {
   return context.newCDPSession(page);
 }
 
@@ -154,8 +153,7 @@ export async function destroyPraxisIsolatedSession(
   } catch {
     if (session.forceClose)
       await boundedBrowserClose(session.forceClose(), timeoutMs).catch(() => undefined);
-    else
-      await boundedBrowserClose(session.browser.close(), timeoutMs).catch(() => undefined);
+    else await boundedBrowserClose(session.browser.close(), timeoutMs).catch(() => undefined);
     return "force_terminated";
   }
 }

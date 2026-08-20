@@ -17,10 +17,7 @@ type Registration = {
 };
 type Grant = { request: VeilLeaseRequest; lease: VeilCapabilityLease };
 export type PraxisVeilBoundary =
-  | "observe"
-  | "protected_transaction"
-  | "produce_evidence"
-  | "admit_result";
+  "observe" | "protected_transaction" | "produce_evidence" | "admit_result";
 type Authorization = {
   registration: Registration;
   grants: Map<string, Grant>;

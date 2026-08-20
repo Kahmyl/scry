@@ -231,9 +231,7 @@
       "p50Ms": 55.90954199999999,
       "p95Ms": 55.90954199999999,
       "maxMs": 55.90954199999999,
-      "slowestOperationIds": [
-        "mcp-12909b88-babd-4119-a197-4abbac2a6b36-1"
-      ]
+      "slowestOperationIds": ["mcp-12909b88-babd-4119-a197-4abbac2a6b36-1"]
     },
     "native_resolution": {
       "count": 12,

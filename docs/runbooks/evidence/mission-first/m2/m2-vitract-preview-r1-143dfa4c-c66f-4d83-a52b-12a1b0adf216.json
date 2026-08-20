@@ -90,9 +90,7 @@
       "p50Ms": 1619.544,
       "p95Ms": 1619.544,
       "maxMs": 1619.544,
-      "slowestOperationIds": [
-        "m2-723484875dfc90c2d8be1e45b9720dd67b54426d"
-      ]
+      "slowestOperationIds": ["m2-723484875dfc90c2d8be1e45b9720dd67b54426d"]
     },
     "database": {
       "count": 1,
@@ -106,18 +104,14 @@
       "p50Ms": 1619.544,
       "p95Ms": 1619.544,
       "maxMs": 1619.544,
-      "slowestOperationIds": [
-        "m2-723484875dfc90c2d8be1e45b9720dd67b54426d"
-      ]
+      "slowestOperationIds": ["m2-723484875dfc90c2d8be1e45b9720dd67b54426d"]
     },
     "expected_effect_verification": {
       "count": 9,
       "p50Ms": 0.014833000022917986,
       "p95Ms": 1544.0028760000132,
       "maxMs": 1544.0028760000132,
-      "slowestOperationIds": [
-        "m2-8e9b04574cfd8fa418de51a0e0d2d177bb12ac75"
-      ]
+      "slowestOperationIds": ["m2-8e9b04574cfd8fa418de51a0e0d2d177bb12ac75"]
     },
     "interaction_execution": {
       "count": 10,
@@ -141,9 +135,7 @@
       "p50Ms": 67108.71712500001,
       "p95Ms": 67108.71712500001,
       "maxMs": 67108.71712500001,
-      "slowestOperationIds": [
-        "mcp-143dfa4c-c66f-4d83-a52b-12a1b0adf216-2"
-      ]
+      "slowestOperationIds": ["mcp-143dfa4c-c66f-4d83-a52b-12a1b0adf216-2"]
     },
     "mcp_session_start_round_trip": {
       "count": 1,

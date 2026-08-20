@@ -6,7 +6,7 @@ import {
   compileSuccessfulInteractions,
   sanitizeLearnedRecord,
   sanitizeProtectedAcquisitionEvidence,
-} from "../src/authoring/authoring.service.js";
+} from "../src/authoring/services/authoring.service.js";
 
 const passedRecord = {
   interactionId: "interaction-1",
@@ -68,7 +68,6 @@ describe("authoring transcript compiler", () => {
   });
 
   it("compiles only successful deterministic learned interactions", () => {
-
     expect(
       compileSuccessfulInteractions({
         learnedContracts: [passedRecord],
@@ -89,7 +88,6 @@ describe("authoring transcript compiler", () => {
   });
 
   it("rejects selector-hint-only and unresolved mutation records", () => {
-
     expect(
       compileSuccessfulInteractions({
         learnedContracts: [
@@ -105,7 +103,6 @@ describe("authoring transcript compiler", () => {
   });
 
   it("rejects unsafe evidence before sanitization can make it appear compilable", () => {
-
     const encodedSecret = Buffer.from("password=never-persist-this").toString("base64");
     const result = compileSuccessfulInteractions({
       learnedContracts: [
@@ -125,7 +122,6 @@ describe("authoring transcript compiler", () => {
   });
 
   it("rejects expired handles, missing effects, and unclosed Veil evidence", () => {
-
     const result = compileSuccessfulInteractions({
       learnedContracts: [
         {

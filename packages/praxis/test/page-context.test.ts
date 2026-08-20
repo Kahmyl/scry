@@ -100,7 +100,10 @@ describe("bounded semantic page context", () => {
     });
     expect(JSON.stringify(context)).not.toContain("must-not-leak");
     expect(context.sectionCompleteness).toEqual({
-      kind: "bounded", observed: 2, returned: 1, truncated: true,
+      kind: "bounded",
+      observed: 2,
+      returned: 1,
+      truncated: true,
     });
   });
 
@@ -154,16 +157,22 @@ describe("bounded semantic page context", () => {
         (candidate) => candidate.reference === control.containerReferences![0],
       );
       expect(container).toMatchObject({ kind: "row" });
-      expect(container!.controlReferences).toEqual(expect.arrayContaining([
-        control.reference,
-        context.controls.find((candidate) =>
-          candidate.name === "Revoke" &&
-          candidate.containerReferences?.[0] === container!.reference,
-        )!.reference,
-      ]));
+      expect(container!.controlReferences).toEqual(
+        expect.arrayContaining([
+          control.reference,
+          context.controls.find(
+            (candidate) =>
+              candidate.name === "Revoke" &&
+              candidate.containerReferences?.[0] === container!.reference,
+          )!.reference,
+        ]),
+      );
     }
     expect(context.containerCompleteness).toEqual({
-      kind: "bounded", observed: 2, returned: 2, truncated: false,
+      kind: "bounded",
+      observed: 2,
+      returned: 2,
+      truncated: false,
     });
     expect(JSON.stringify(context)).not.toMatch(/credential-secret|must-not-project|data-private/);
   });
@@ -183,9 +192,9 @@ describe("bounded semantic page context", () => {
     await page.locator("#b").evaluate((row) => row.parentElement!.prepend(row));
     await expect(resolveTarget(page, intent)).resolves.toMatchObject({ adapter: "native_click" });
 
-    await page.locator("#a button").evaluate((button) =>
-      document.querySelector("#b")!.append(button),
-    );
+    await page
+      .locator("#a button")
+      .evaluate((button) => document.querySelector("#b")!.append(button));
     await expect(resolveTarget(page, intent)).rejects.toThrow("TARGET_CHANGED_BEFORE_ACTION");
 
     await page.setContent(`
@@ -203,15 +212,21 @@ describe("bounded semantic page context", () => {
     const context = await observeSemanticPageContext(page);
     const intent = referenceIntent(context.controls[0]!.reference);
     intent.requiredCapabilities = ["focusable", "pointer_activatable"];
-    await page.locator("#action").evaluate((button) => { button.textContent = "Revoke"; });
-    await expect(resolveTarget(page, intent)).resolves.toMatchObject({ diagnostic: { candidateCount: 1 } });
+    await page.locator("#action").evaluate((button) => {
+      button.textContent = "Revoke";
+    });
+    await expect(resolveTarget(page, intent)).resolves.toMatchObject({
+      diagnostic: { candidateCount: 1 },
+    });
 
     await page.setContent('<div role="row" id="row"><button>Rotate</button></div>');
     const structural = await observeSemanticPageContext(page);
     const structuralIntent = referenceIntent(structural.controls[0]!.reference);
     structuralIntent.requiredCapabilities = ["focusable", "pointer_activatable"];
     await page.locator("#row").evaluate((row) => row.setAttribute("role", "group"));
-    await expect(resolveTarget(page, structuralIntent)).resolves.toMatchObject({ diagnostic: { candidateCount: 1 } });
+    await expect(resolveTarget(page, structuralIntent)).resolves.toMatchObject({
+      diagnostic: { candidateCount: 1 },
+    });
   });
 
   it("suppresses group text around protected descendants and bounds candidate relocation", async () => {
@@ -221,27 +236,53 @@ describe("bounded semantic page context", () => {
       </section>
     `);
     const protectedContext = await observeSemanticPageContext(page);
-    expect(protectedContext.controls.find((control) => control.name === "Rotate")!.group).toBeUndefined();
+    expect(
+      protectedContext.controls.find((control) => control.name === "Rotate")!.group,
+    ).toBeUndefined();
     expect(JSON.stringify(protectedContext)).not.toContain("protected-client-id-must-not-leak");
 
-    await page.setContent(`${Array.from({ length: 5_001 }, () => '<button hidden>Hidden</button>').join("")}<button>Visible after budget</button>`);
+    await page.setContent(
+      `${Array.from({ length: 5_001 }, () => "<button hidden>Hidden</button>").join("")}<button>Visible after budget</button>`,
+    );
     const bounded = await observeSemanticPageContext(page);
     expect(bounded.completeness).toMatchObject({ observed: 5_002, returned: 0, truncated: true });
     expect(bounded.controls).toHaveLength(0);
   });
 
   it.each([
-    ["email and password", '<label>Email <input type="email"></label><label>Password <input type="password"></label>', ["Password"]],
-    ["ordinary textboxes and password", '<input aria-label="First"><input aria-label="Second"><label>Password <input type="password"></label>', ["Password"]],
-    ["repeated labels in separate forms", '<form aria-label="Primary"><label>Secret <input type="password"></label></form><form aria-label="Secondary"><label>Secret <input type="password"></label></form>', ["Secret", "Secret"]],
-    ["purpose without a label", '<input type="password" autocomplete="current-password">', ["identity suppressed"]],
-    ["OTP and PIN", '<label>Code <input data-scry-redacted="true" autocomplete="one-time-code"></label><label>PIN <input data-scry-redacted="true" inputmode="numeric"></label>', ["identity suppressed", "identity suppressed"]],
+    [
+      "email and password",
+      '<label>Email <input type="email"></label><label>Password <input type="password"></label>',
+      ["Password"],
+    ],
+    [
+      "ordinary textboxes and password",
+      '<input aria-label="First"><input aria-label="Second"><label>Password <input type="password"></label>',
+      ["Password"],
+    ],
+    [
+      "repeated labels in separate forms",
+      '<form aria-label="Primary"><label>Secret <input type="password"></label></form><form aria-label="Secondary"><label>Secret <input type="password"></label></form>',
+      ["Secret", "Secret"],
+    ],
+    [
+      "purpose without a label",
+      '<input type="password" autocomplete="current-password">',
+      ["identity suppressed"],
+    ],
+    [
+      "OTP and PIN",
+      '<label>Code <input data-scry-redacted="true" autocomplete="one-time-code"></label><label>PIN <input data-scry-redacted="true" inputmode="numeric"></label>',
+      ["identity suppressed", "identity suppressed"],
+    ],
   ])("keeps privacy-safe protected identity for %s", async (_name, markup, expectedNames) => {
     await page.setContent(`<main>${markup}</main>`);
     const context = await observeSemanticPageContext(page);
     const protectedControls = context.controls.filter((control) => control.valueProtected);
     expect(protectedControls.map((control) => control.name)).toEqual(expectedNames);
-    expect(new Set(protectedControls.map((control) => control.reference)).size).toBe(expectedNames.length);
+    expect(new Set(protectedControls.map((control) => control.reference)).size).toBe(
+      expectedNames.length,
+    );
   });
 
   it("excludes a hidden protected decoy and fails stale and cross-page references closed", async () => {
@@ -292,10 +333,14 @@ describe("bounded semantic page context", () => {
     expect(refreshed.controls.find((control) => control.valueProtected)!.reference).toBe(reference);
     await expect(resolveTarget(page, intent)).resolves.toMatchObject({ adapter: "native_fill" });
 
-    await page.locator("#password").evaluate((element) => { element.setAttribute("disabled", ""); });
+    await page.locator("#password").evaluate((element) => {
+      element.setAttribute("disabled", "");
+    });
     await expect(resolveTarget(page, intent)).rejects.toThrow("TARGET_CHANGED_BEFORE_ACTION");
 
-    await page.setContent('<label>Password <input id="password" type="password" aria-label="Password"></label>');
+    await page.setContent(
+      '<label>Password <input id="password" type="password" aria-label="Password"></label>',
+    );
     await expect(resolveTarget(page, intent)).rejects.toThrow("TARGET_CHANGED_BEFORE_ACTION");
   });
 
@@ -313,7 +358,9 @@ describe("bounded semantic page context", () => {
   it("invalidates a reference when the same element changes protected purpose or capability", async () => {
     await page.setContent('<label>Account <input id="field" aria-label="Account"></label>');
     const ordinary = await observeSemanticPageContext(page);
-    const ordinaryReference = ordinary.controls.find((control) => control.name === "Account")!.reference;
+    const ordinaryReference = ordinary.controls.find(
+      (control) => control.name === "Account",
+    )!.reference;
 
     await page.locator("#field").evaluate((element) => {
       element.setAttribute("type", "password");
@@ -330,8 +377,9 @@ describe("bounded semantic page context", () => {
     const protectedReference = protectedControl.reference;
     await page.locator("#field").evaluate((element) => element.setAttribute("disabled", ""));
     const disabledContext = await observeSemanticPageContext(page);
-    expect(disabledContext.controls.find((control) => control.name === "New password")!.reference)
-      .not.toBe(protectedReference);
+    expect(
+      disabledContext.controls.find((control) => control.name === "New password")!.reference,
+    ).not.toBe(protectedReference);
   });
 
   it("authoritatively observes the exact registered handle as visible, then absent after removal", async () => {
@@ -346,13 +394,19 @@ describe("bounded semantic page context", () => {
     const reference = context.controls.find((control) => control.name === "Rotate key")!.reference;
 
     await expect(observeSemanticPageContextReferenceState(page, reference)).resolves.toEqual({
-      state: "visible", reasonCode: "CONTEXT_REFERENCE_VISIBLE",
+      state: "visible",
+      reasonCode: "CONTEXT_REFERENCE_VISIBLE",
     });
     await page.locator("#target").evaluate((element) => element.remove());
     await expect(observeSemanticPageContextReferenceState(page, reference)).resolves.toEqual({
-      state: "absent", reasonCode: "CONTEXT_REFERENCE_ABSENT",
+      state: "absent",
+      reasonCode: "CONTEXT_REFERENCE_ABSENT",
     });
-    expect(await page.evaluate(() => (window as typeof window & { actionDispatches: number }).actionDispatches)).toBe(0);
+    expect(
+      await page.evaluate(
+        () => (window as typeof window & { actionDispatches: number }).actionDispatches,
+      ),
+    ).toBe(0);
   });
 
   it("keeps a same-semantic replacement ambiguous instead of adopting it", async () => {
@@ -367,7 +421,8 @@ describe("bounded semantic page context", () => {
     });
 
     await expect(observeSemanticPageContextReferenceState(page, reference)).resolves.toEqual({
-      state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_REPLACEMENT_AMBIGUOUS",
+      state: "ambiguous_stale",
+      reasonCode: "CONTEXT_REFERENCE_REPLACEMENT_AMBIGUOUS",
     });
   });
 
@@ -378,27 +433,42 @@ describe("bounded semantic page context", () => {
     `);
     const context = await observeSemanticPageContext(page);
     const reference = context.controls.find((control) => control.name === "Rotate key")!.reference;
-    await page.locator("#target").evaluate((element) => document.querySelector("#second")!.append(element));
-    await expect(observeSemanticPageContextReferenceState(page, reference)).resolves.toMatchObject({ state: "visible" });
+    await page
+      .locator("#target")
+      .evaluate((element) => document.querySelector("#second")!.append(element));
+    await expect(observeSemanticPageContextReferenceState(page, reference)).resolves.toMatchObject({
+      state: "visible",
+    });
 
     await page.setContent('<button id="target">Rotate key</button>');
     const semanticContext = await observeSemanticPageContext(page);
     const semanticReference = semanticContext.controls[0]!.reference;
-    await page.locator("#target").evaluate((element) => { element.textContent = "Delete key"; });
-    await expect(observeSemanticPageContextReferenceState(page, semanticReference)).resolves.toEqual({
-      state: "visible", reasonCode: "CONTEXT_REFERENCE_VISIBLE",
+    await page.locator("#target").evaluate((element) => {
+      element.textContent = "Delete key";
+    });
+    await expect(
+      observeSemanticPageContextReferenceState(page, semanticReference),
+    ).resolves.toEqual({
+      state: "visible",
+      reasonCode: "CONTEXT_REFERENCE_VISIBLE",
     });
 
     await page.goto('data:text/html,<button id="new-document">Rotate key</button>');
-    await expect(observeSemanticPageContextReferenceState(page, semanticReference)).resolves.toEqual({
-      state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_DOCUMENT_CHANGED",
+    await expect(
+      observeSemanticPageContextReferenceState(page, semanticReference),
+    ).resolves.toEqual({
+      state: "ambiguous_stale",
+      reasonCode: "CONTEXT_REFERENCE_DOCUMENT_CHANGED",
     });
   });
 
   it("bounds observation when controls disappear while exact handles are pinned", async () => {
-    await page.setContent(`<main>${Array.from({ length: 80 }, (_, index) =>
-      `<button id="control-${index}">Control ${index}</button>`,
-    ).join("")}</main>`);
+    await page.setContent(
+      `<main>${Array.from(
+        { length: 80 },
+        (_, index) => `<button id="control-${index}">Control ${index}</button>`,
+      ).join("")}</main>`,
+    );
     await page.evaluate(() => {
       let index = 79;
       const timer = window.setInterval(() => {
@@ -412,7 +482,9 @@ describe("bounded semantic page context", () => {
     const context = await observeSemanticPageContext(page);
 
     expect(performance.now() - before).toBeLessThan(3_000);
-    expect(context.controls.every((control) => control.reference.startsWith("context-control-"))).toBe(true);
+    expect(
+      context.controls.every((control) => control.reference.startsWith("context-control-")),
+    ).toBe(true);
   });
 });
 
@@ -422,7 +494,12 @@ function referenceIntent(reference: string): InteractionTargetIntent {
     authoritativeReference: reference,
     requiredCapabilities: ["focusable", "accepts_text", "editable"],
     preferredEvidence: {
-      roles: [], names: [], labels: [], descriptions: [], placeholders: [], inputTypes: [],
+      roles: [],
+      names: [],
+      labels: [],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
     },
     scope: { kind: "page" },
     relations: [],
@@ -436,6 +513,8 @@ function referenceIntent(reference: string): InteractionTargetIntent {
 function withDeadline<T>(promise: Promise<T>, label: string) {
   return Promise.race([
     promise,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`fixture-timeout:${label}`)), 1_000)),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`fixture-timeout:${label}`)), 1_000),
+    ),
   ]);
 }

@@ -536,16 +536,11 @@ export class ExecutionKernel {
   }): Promise<{ report: ExecutionReport; outcome: OperationOutcome }> {
     const syntheticRequest = executionRequestSchema.parse({
       ...input.request,
-      plan: singleActionPlan(
-        input.action,
-        input.request.policy,
-        input.request.semanticContext,
-        {
-          captureEvidence: true,
-          veilPolicySnapshot: input.capabilities.options.veilPolicySnapshot,
-          expectedEffect: input.expectedEffect ?? { type: "none" },
-        },
-      ),
+      plan: singleActionPlan(input.action, input.request.policy, input.request.semanticContext, {
+        captureEvidence: true,
+        veilPolicySnapshot: input.capabilities.options.veilPolicySnapshot,
+        expectedEffect: input.expectedEffect ?? { type: "none" },
+      }),
       capabilityManifestDigest: input.capabilities.manifest.digest,
       idempotencyKey: `kernel-${input.request.operationId}`,
       ...(isMutatingAction(input.action)
@@ -873,12 +868,11 @@ export async function executeInteractionCompatibility(input: {
     return operationOutcomeSchema.parse({
       operationId: input.operationId,
       functionalResult: "succeeded",
-      mutationOutcome:
-        !isMutatingAction(input.action)
-          ? "not_applied"
-          : praxisResults.length === 0
-            ? "applied"
-            : praxisMutationOutcome(praxisResults),
+      mutationOutcome: !isMutatingAction(input.action)
+        ? "not_applied"
+        : praxisResults.length === 0
+          ? "applied"
+          : praxisMutationOutcome(praxisResults),
       privacyResult:
         (input.action.type === "fill" &&
           Boolean(input.action.secretRef || input.action.capturedSecretRef)) ||
@@ -960,7 +954,9 @@ function isMutatingAction(action: CurrentAction): boolean {
   if (action.type === "click") return action.dispatchSemantics !== "read_only";
   if (action.type === "press") return action.dispatchSemantics !== "read_only";
   return (
-    ["fill", "select", "check", "protectedAuthentication", "protectedTransaction"].includes(action.type) ||
+    ["fill", "select", "check", "protectedAuthentication", "protectedTransaction"].includes(
+      action.type,
+    ) ||
     (action.type === "sameOriginRequest" && action.method !== "GET")
   );
 }
@@ -1039,9 +1035,7 @@ function singleActionPlan(
         assertions: [],
         onFailure: "stop" as const,
         ...(evidenceReadiness ? { after: evidenceReadiness } : {}),
-        evidence: captureEvidence
-          ? requestedInteractionEvidence(options.veilPolicySnapshot)
-          : [],
+        evidence: captureEvidence ? requestedInteractionEvidence(options.veilPolicySnapshot) : [],
         captureIntent: captureEvidence ? ("final" as const) : ("transient" as const),
         ...(captureEvidence
           ? {}
@@ -1070,9 +1064,7 @@ function interactionEvidenceReadiness(
   if (!requiresSettlement) return undefined;
 
   const requestedTimeoutMs =
-    "timeoutMs" in action && typeof action.timeoutMs === "number"
-      ? action.timeoutMs
-      : 15_000;
+    "timeoutMs" in action && typeof action.timeoutMs === "number" ? action.timeoutMs : 15_000;
   const timeoutMs = Math.min(60_000, Math.max(100, requestedTimeoutMs));
 
   if (expectedEffect?.type === "navigation" && expectedEffect.url) {
@@ -1107,10 +1099,7 @@ function interactionEvidenceReadiness(
     };
   }
 
-  if (
-    expectedEffect?.type === "value_change" &&
-    typeof expectedEffect.expected === "string"
-  ) {
+  if (expectedEffect?.type === "value_change" && typeof expectedEffect.expected === "string") {
     return {
       mode: "all" as const,
       timeoutMs,
@@ -1124,10 +1113,7 @@ function interactionEvidenceReadiness(
     };
   }
 
-  if (
-    expectedEffect?.type === "state_change" &&
-    typeof expectedEffect.checked === "boolean"
-  ) {
+  if (expectedEffect?.type === "state_change" && typeof expectedEffect.checked === "boolean") {
     return {
       mode: "all" as const,
       timeoutMs,
@@ -1162,9 +1148,7 @@ function interactionEvidenceReadiness(
         {
           type: "request" as const,
           urlPattern: expectedEffect.urlPattern,
-          ...(expectedEffect.method
-            ? { method: expectedEffect.method }
-            : {}),
+          ...(expectedEffect.method ? { method: expectedEffect.method } : {}),
           status: {
             min: expectedEffect.statusMin,
             max: expectedEffect.statusMax,
@@ -1231,10 +1215,9 @@ function outcomeFromReport(
     .flatMap((result) => (result.status === "succeeded" ? [] : [result.code]))
     .at(0);
   const mutating = request.plan.steps.some((step) => isMutatingAction(step.action));
-  const mutationOutcome =
-    !mutating
-      ? "not_applied"
-      : report.state === "passed"
+  const mutationOutcome = !mutating
+    ? "not_applied"
+    : report.state === "passed"
       ? observedMutation
       : (lifecycle?.mutationFailure(mutating, observedMutation) ??
         (observedMutation === "not_applied" && mutating && praxisResults.length === 0
@@ -1274,9 +1257,7 @@ function protectedTelemetryReasonCode(event: import("@scry/contracts").RunEvent)
     : undefined;
 }
 
-function resolvedTargetOutcome(
-  results: import("@scry/contracts").PraxisResult[],
-) {
+function resolvedTargetOutcome(results: import("@scry/contracts").PraxisResult[]) {
   const resolved = [...results].reverse().find((result) => result.status === "succeeded");
   const target = resolved?.status === "succeeded" ? resolved.resolution.target : undefined;
   if (!target) return {};
@@ -1617,7 +1598,9 @@ function safeNavigationEnvironmentFailure(error: unknown) {
   if (typeof details !== "object" || details === null) return {};
   const missingAllowedOrigin = (details as Record<string, unknown>).missingAllowedOrigin;
   if (typeof missingAllowedOrigin !== "string" || !safeUrl(missingAllowedOrigin)) return {};
-  return { navigationEnvironmentFailure: { missingAllowedOrigin: new URL(missingAllowedOrigin).origin } };
+  return {
+    navigationEnvironmentFailure: { missingAllowedOrigin: new URL(missingAllowedOrigin).origin },
+  };
 }
 
 function safeUrl(value: string) {

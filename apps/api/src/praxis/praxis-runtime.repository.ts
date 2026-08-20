@@ -1,15 +1,12 @@
 import { Inject, Injectable } from "@nestjs/common";
 
-import { Database } from "../../infrastructure/index.js";
+import { Database } from "../infrastructure/index.js";
 
 @Injectable()
 export class PraxisRuntimeRepository {
   constructor(@Inject(Database) private readonly db: Database) {}
 
-  async resolveActiveBrowserLease(
-    probeSessionId: string,
-    workerId: string,
-  ) {
+  async resolveActiveBrowserLease(probeSessionId: string, workerId: string) {
     const result = await this.db.query<{
       browserLeaseId: string;
     }>(
@@ -27,11 +24,7 @@ export class PraxisRuntimeRepository {
     return result.rows[0]?.browserLeaseId;
   }
 
-  async assertOwnedBrowserLease(
-    browserLeaseId: string,
-    probeSessionId: string,
-    workerId: string,
-  ) {
+  async assertOwnedBrowserLease(browserLeaseId: string, probeSessionId: string, workerId: string) {
     const result = await this.db.query(
       `SELECT id
        FROM authoring_browser_leases

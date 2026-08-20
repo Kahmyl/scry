@@ -4,30 +4,69 @@ import { describe, expect, it } from "vitest";
 import { ExternalResourcePresentationAuthorityRepository } from "../src/runtime/repositories/external-resource-presentation-authority.repository.js";
 
 const action = {
-  concept: "revoke credential", requiredCapabilities: ["focusable", "pointer_activatable"],
-  preferredEvidence: { roles: ["button"], names: ["Revoke"], labels: [], descriptions: [], placeholders: [], inputTypes: [], testIds: [] },
-  scope: { kind: "page" }, relations: [], prohibited: ["hidden", "disabled"], risk: "destructive",
-  confidence: { requiredFamilies: [] }, matching: "exact",
+  concept: "revoke credential",
+  requiredCapabilities: ["focusable", "pointer_activatable"],
+  preferredEvidence: {
+    roles: ["button"],
+    names: ["Revoke"],
+    labels: [],
+    descriptions: [],
+    placeholders: [],
+    inputTypes: [],
+    testIds: [],
+  },
+  scope: { kind: "page" },
+  relations: [],
+  prohibited: ["hidden", "disabled"],
+  risk: "destructive",
+  confidence: { requiredFamilies: [] },
+  matching: "exact",
 } satisfies InteractionTargetIntent;
 const basePolicy = {
-  allowedOrigins: ["https://example.test"], allowPrivateNetwork: false,
-  allowDownloads: false, allowPopups: false, maxActions: 1, maxDurationMs: 10_000, maxNavigations: 1,
+  allowedOrigins: ["https://example.test"],
+  allowPrivateNetwork: false,
+  allowDownloads: false,
+  allowPopups: false,
+  maxActions: 1,
+  maxDurationMs: 10_000,
+  maxNavigations: 1,
 };
 const authority = {
-  provider: "provider", resourceKind: "credential", resourceScope: "application-a",
-  resourceCollection: "application_credentials", semanticField: "label",
-  classification: "internal_non_secret", permittedPurpose: "browser_presentation_identity",
-  browserBoundaryKind: "row", contractVersion: 1, revision: 1, status: "active",
+  provider: "provider",
+  resourceKind: "credential",
+  resourceScope: "application-a",
+  resourceCollection: "application_credentials",
+  semanticField: "label",
+  classification: "internal_non_secret",
+  permittedPurpose: "browser_presentation_identity",
+  browserBoundaryKind: "row",
+  contractVersion: 1,
+  revision: 1,
+  status: "active",
 } as const;
 const input = {
-  projectId: "project-a", environmentId: "environment-a", provider: "provider",
-  resourceKind: "credential", resourceScope: "application-a", contractVersion: 1, action,
+  projectId: "project-a",
+  environmentId: "environment-a",
+  provider: "provider",
+  resourceKind: "credential",
+  resourceScope: "application-a",
+  contractVersion: 1,
+  action,
 };
 
 function repository(authorities: unknown[], rowCount = 1) {
-  const database = { query: async () => ({ rowCount, rows: rowCount ? [{
-    policy: { ...basePolicy, externalResourcePresentationAuthorities: authorities },
-  }] : [] }) };
+  const database = {
+    query: async () => ({
+      rowCount,
+      rows: rowCount
+        ? [
+            {
+              policy: { ...basePolicy, externalResourcePresentationAuthorities: authorities },
+            },
+          ]
+        : [],
+    }),
+  };
   return new ExternalResourcePresentationAuthorityRepository(database as never);
 }
 
@@ -56,19 +95,24 @@ describe("trusted external resource presentation authority", () => {
   });
 
   it("G rejects a wrong project/environment because no owned row resolves", async () => {
-    await expect(repository([authority], 0).resolveActive({ ...input, projectId: "other" }))
-      .rejects.toMatchObject({ response: { code: "EXTERNAL_PRESENTATION_AUTHORITY_UNAVAILABLE" } });
+    await expect(
+      repository([authority], 0).resolveActive({ ...input, projectId: "other" }),
+    ).rejects.toMatchObject({ response: { code: "EXTERNAL_PRESENTATION_AUTHORITY_UNAVAILABLE" } });
   });
 
   it("H/R rejects an active revision when a newer revision exists", async () => {
-    await expect(repository([authority, { ...authority, revision: 2, status: "revoked" }]).resolveActive(input))
-      .rejects.toMatchObject({ response: { code: "EXTERNAL_PRESENTATION_AUTHORITY_STALE" } });
+    await expect(
+      repository([authority, { ...authority, revision: 2, status: "revoked" }]).resolveActive(
+        input,
+      ),
+    ).rejects.toMatchObject({ response: { code: "EXTERNAL_PRESENTATION_AUTHORITY_STALE" } });
   });
 
   it("I/S resolves only the declared semantic field and never falls back", async () => {
     const harnessClaim = { ...input, semanticField: "label" };
-    const contract = await repository([{ ...authority, semanticField: "approvedName" }])
-      .resolveActive(harnessClaim);
+    const contract = await repository([
+      { ...authority, semanticField: "approvedName" },
+    ]).resolveActive(harnessClaim);
     expect(contract.presentationIdentity.semanticField).toBe("approvedName");
     expect(contract.presentationIdentity.semanticField).not.toBe("label");
   });

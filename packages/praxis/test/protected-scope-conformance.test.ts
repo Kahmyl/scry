@@ -18,12 +18,20 @@ describe("protected scope mechanical conformance", () => {
           concept: `${kind} protected action`,
           requiredCapabilities: ["focusable", "pointer_activatable"],
           preferredEvidence: {
-            roles: ["button"], names: ["Generate"], labels: [], descriptions: [],
-            placeholders: [], inputTypes: [], testIds: [],
+            roles: ["button"],
+            names: ["Generate"],
+            labels: [],
+            descriptions: [],
+            placeholders: [],
+            inputTypes: [],
+            testIds: [],
           },
           scope: { kind, ...(kind === "page" ? {} : { name: "Protected area" }) },
-          relations: [], prohibited: ["hidden", "disabled"], risk: "protected",
-          confidence: { requiredFamilies: [] }, matching: "exact",
+          relations: [],
+          prohibited: ["hidden", "disabled"],
+          risk: "protected",
+          confidence: { requiredFamilies: [] },
+          matching: "exact",
         };
         await expect(resolveTarget(page, intent), kind).resolves.toMatchObject({
           adapter: "native_click",
@@ -45,19 +53,30 @@ describe("protected scope mechanical conformance", () => {
         <div>Credentials<div>Credentials<button>Add credential</button></div></div>
         <main aria-label="Credentials"><button aria-label="Add credential">Add credential</button></main>
       `);
-      await expect(inspectSemanticScope(page, { kind: "group", name: "Credentials" }))
-        .resolves.toEqual({ matchCount: 0 });
-      await expect(resolveTarget(page, {
-        concept: "Add credential",
-        requiredCapabilities: ["focusable", "pointer_activatable"],
-        preferredEvidence: {
-          roles: ["button"], names: ["Add credential"], labels: [], descriptions: [],
-          placeholders: [], inputTypes: [], testIds: [],
-        },
-        scope: { kind: "region", name: "Credentials" },
-        relations: [], prohibited: ["hidden", "disabled"], risk: "protected",
-        confidence: { requiredFamilies: [] }, matching: "exact",
-      })).resolves.toMatchObject({ adapter: "native_click" });
+      await expect(
+        inspectSemanticScope(page, { kind: "group", name: "Credentials" }),
+      ).resolves.toEqual({ matchCount: 0 });
+      await expect(
+        resolveTarget(page, {
+          concept: "Add credential",
+          requiredCapabilities: ["focusable", "pointer_activatable"],
+          preferredEvidence: {
+            roles: ["button"],
+            names: ["Add credential"],
+            labels: [],
+            descriptions: [],
+            placeholders: [],
+            inputTypes: [],
+            testIds: [],
+          },
+          scope: { kind: "region", name: "Credentials" },
+          relations: [],
+          prohibited: ["hidden", "disabled"],
+          risk: "protected",
+          confidence: { requiredFamilies: [] },
+          matching: "exact",
+        }),
+      ).resolves.toMatchObject({ adapter: "native_click" });
     } finally {
       await browser.close();
     }
@@ -79,19 +98,30 @@ describe("protected scope mechanical conformance", () => {
           </section>
         </section>
       `);
-      await expect(inspectSemanticScope(page, { kind: "section", name: "Credentials" }))
-        .resolves.toEqual({ matchCount: 1 });
-      await expect(resolveTarget(page, {
-        concept: "Add credential",
-        requiredCapabilities: ["focusable", "pointer_activatable"],
-        preferredEvidence: {
-          roles: ["button"], names: ["Add credential"], labels: [], descriptions: [],
-          placeholders: [], inputTypes: [], testIds: [],
-        },
-        scope: { kind: "section", name: "Credentials", direct: true },
-        relations: [], prohibited: ["hidden", "disabled"], risk: "protected",
-        confidence: { requiredFamilies: [] }, matching: "exact",
-      })).resolves.toMatchObject({ adapter: "native_click" });
+      await expect(
+        inspectSemanticScope(page, { kind: "section", name: "Credentials" }),
+      ).resolves.toEqual({ matchCount: 1 });
+      await expect(
+        resolveTarget(page, {
+          concept: "Add credential",
+          requiredCapabilities: ["focusable", "pointer_activatable"],
+          preferredEvidence: {
+            roles: ["button"],
+            names: ["Add credential"],
+            labels: [],
+            descriptions: [],
+            placeholders: [],
+            inputTypes: [],
+            testIds: [],
+          },
+          scope: { kind: "section", name: "Credentials", direct: true },
+          relations: [],
+          prohibited: ["hidden", "disabled"],
+          risk: "protected",
+          confidence: { requiredFamilies: [] },
+          matching: "exact",
+        }),
+      ).resolves.toMatchObject({ adapter: "native_click" });
     } finally {
       await browser.close();
     }
@@ -101,16 +131,27 @@ describe("protected scope mechanical conformance", () => {
 function fixture(kind: (typeof semanticScopeKinds)[number]) {
   const button = '<button aria-label="Generate">Generate</button>';
   switch (kind) {
-    case "page": return button;
-    case "dialog": return `<dialog open aria-label="Protected area">${button}</dialog>`;
-    case "form": return `<form aria-label="Protected area">${button}</form>`;
-    case "section": return `<section aria-label="Protected area">${button}</section>`;
-    case "field_group": return `<fieldset aria-label="Protected area">${button}</fieldset>`;
-    case "group": return `<div role="group" aria-label="Protected area">${button}</div>`;
-    case "table": return `<table aria-label="Protected area"><tbody><tr><td>${button}</td></tr></tbody></table>`;
-    case "row": return `<table><tbody><tr aria-label="Protected area"><td>${button}</td></tr></tbody></table>`;
-    case "region": return `<aside aria-label="Protected area">${button}</aside>`;
-    case "live_region": return `<div role="status" aria-label="Protected area">${button}</div>`;
-    case "recently_changed": return `<div data-scry-recently-changed aria-label="Protected area">${button}</div>`;
+    case "page":
+      return button;
+    case "dialog":
+      return `<dialog open aria-label="Protected area">${button}</dialog>`;
+    case "form":
+      return `<form aria-label="Protected area">${button}</form>`;
+    case "section":
+      return `<section aria-label="Protected area">${button}</section>`;
+    case "field_group":
+      return `<fieldset aria-label="Protected area">${button}</fieldset>`;
+    case "group":
+      return `<div role="group" aria-label="Protected area">${button}</div>`;
+    case "table":
+      return `<table aria-label="Protected area"><tbody><tr><td>${button}</td></tr></tbody></table>`;
+    case "row":
+      return `<table><tbody><tr aria-label="Protected area"><td>${button}</td></tr></tbody></table>`;
+    case "region":
+      return `<aside aria-label="Protected area">${button}</aside>`;
+    case "live_region":
+      return `<div role="status" aria-label="Protected area">${button}</div>`;
+    case "recently_changed":
+      return `<div data-scry-recently-changed aria-label="Protected area">${button}</div>`;
   }
 }

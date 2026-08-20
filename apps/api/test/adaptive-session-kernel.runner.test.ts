@@ -13,9 +13,13 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       { resolveProtectedInput } as never,
       {} as never,
     );
-    const createCapabilities = (runner as unknown as {
-      createCapabilities(input: Record<string, unknown>): { options: { secretResolver(reference: string): Promise<string> } };
-    }).createCapabilities.bind(runner);
+    const createCapabilities = (
+      runner as unknown as {
+        createCapabilities(input: Record<string, unknown>): {
+          options: { secretResolver(reference: string): Promise<string> };
+        };
+      }
+    ).createCapabilities.bind(runner);
     const capability = createCapabilities({
       sessionId: "session-a",
       environmentId: "environment-a",
@@ -23,12 +27,14 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       operationId: "operation-a",
       mode: "run",
       policy: { allowedOrigins: ["https://example.test"] },
-      protectedInputBindings: [{
-        sessionId: "session-a",
-        operationId: "operation-a",
-        protectedReferenceId: "credential-a",
-        targetReference: "context-control-a",
-      }],
+      protectedInputBindings: [
+        {
+          sessionId: "session-a",
+          operationId: "operation-a",
+          protectedReferenceId: "credential-a",
+          targetReference: "context-control-a",
+        },
+      ],
     });
 
     await expect(capability.options.secretResolver("credential-a")).resolves.toBe(
@@ -42,22 +48,35 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
   });
 
   it("observes the existing live Praxis session without provisioning or dispatch", async () => {
-    const runner = new AdaptiveSessionKernelRunner({} as never, {} as never, {} as never, {} as never);
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
     const observeDocument = vi.fn(async () => ({
       url: "https://example.test/current",
       documentEpoch: 4,
-      semanticPageContext: { controls: [{ reference: "context-control-0123456789abcdef0123456789abcdef" }] },
+      semanticPageContext: {
+        controls: [{ reference: "context-control-0123456789abcdef0123456789abcdef" }],
+      },
     }));
     (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set("live-session", {
-      session: { observeDocument }, fencingToken: 1, tail: Promise.resolve(),
+      session: { observeDocument },
+      fencingToken: 1,
+      tail: Promise.resolve(),
     });
 
     await expect(runner.observe("live-session")).resolves.toMatchObject({
       url: "https://example.test/current",
       documentEpoch: 4,
-      semanticPageContext: { controls: [expect.objectContaining({
-        reference: "context-control-0123456789abcdef0123456789abcdef",
-      })] },
+      semanticPageContext: {
+        controls: [
+          expect.objectContaining({
+            reference: "context-control-0123456789abcdef0123456789abcdef",
+          }),
+        ],
+      },
     });
     expect(observeDocument).toHaveBeenCalledOnce();
     await expect(runner.observe("dead-session")).rejects.toMatchObject({
@@ -68,12 +87,23 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
   it("projects the exact safe missing origin and replacement-session recovery", async () => {
     const sessionId = "11111111-1111-4111-8111-111111111111";
     const environmentId = "22222222-2222-4222-8222-222222222222";
-    const policy = { allowedOrigins: ["https://example.test"], trustedScriptOrigins: ["https://wrong.example.test"],
-      allowPrivateNetwork: false, allowDownloads: false, allowPopups: false,
-      maxActions: 2, maxDurationMs: 30_000, maxNavigations: 1 };
+    const policy = {
+      allowedOrigins: ["https://example.test"],
+      trustedScriptOrigins: ["https://wrong.example.test"],
+      allowPrivateNetwork: false,
+      allowDownloads: false,
+      allowPopups: false,
+      maxActions: 2,
+      maxDurationMs: 30_000,
+      maxNavigations: 1,
+    };
     const sessions = {
       heartbeatRuntimeLease: vi.fn(async () => undefined),
-      runtimeContextFor: vi.fn(async () => ({ environmentId, correlationId: "correlation", policy })),
+      runtimeContextFor: vi.fn(async () => ({
+        environmentId,
+        correlationId: "correlation",
+        policy,
+      })),
       recordDispatchBaseline: vi.fn(async () => undefined),
       recordVerifiedObservation: vi.fn(async () => undefined),
     };
@@ -83,21 +113,38 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       sessions as never,
       {} as never,
     );
-    const outcome = { operationId: "inspect", functionalResult: "failed" as const,
-      mutationOutcome: "not_applied" as const, privacyResult: "unverified" as const,
-      evidenceResult: [], qualityFindings: [], durationMs: 1,
+    const outcome = {
+      operationId: "inspect",
+      functionalResult: "failed" as const,
+      mutationOutcome: "not_applied" as const,
+      privacyResult: "unverified" as const,
+      evidenceResult: [],
+      qualityFindings: [],
+      durationMs: 1,
       reasonCode: "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED",
-      environmentFailure: { missingTrustedScriptOrigins: ["https://scripts.example.test"],
-        missingOriginClassification: "public" as const } };
+      environmentFailure: {
+        missingTrustedScriptOrigins: ["https://scripts.example.test"],
+        missingOriginClassification: "public" as const,
+      },
+    };
     (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
-      session: { page: { url: () => "https://example.test" }, documentEpoch: () => 1,
-        interact: vi.fn(async () => ({ documentEpoch: 1, url: "https://example.test", outcome })) },
-      fencingToken: 1, tail: Promise.resolve(),
+      session: {
+        page: { url: () => "https://example.test" },
+        documentEpoch: () => 1,
+        interact: vi.fn(async () => ({ documentEpoch: 1, url: "https://example.test", outcome })),
+      },
+      fencingToken: 1,
+      tail: Promise.resolve(),
     });
 
-    const result = await runner.execute(sessionId, { operationId: "inspect",
-      idempotencyKey: "inspect-idempotency", mode: "observe", action: { type: "waitFor" },
-      expectedEffect: { type: "none" }, protectedInputReferences: [] } as never);
+    const result = await runner.execute(sessionId, {
+      operationId: "inspect",
+      idempotencyKey: "inspect-idempotency",
+      mode: "observe",
+      action: { type: "waitFor" },
+      expectedEffect: { type: "none" },
+      protectedInputReferences: [],
+    } as never);
 
     expect(result.decisionBoundary).toMatchObject({
       safeActions: ["create_test_environment", "create_flow_draft"],
@@ -113,12 +160,23 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
   it("projects a rejected popup origin as factual document-policy recovery", async () => {
     const sessionId = "33333333-3333-4333-8333-333333333333";
     const environmentId = "44444444-4444-4444-8444-444444444444";
-    const policy = { allowedOrigins: ["https://app.example.test"], trustedScriptOrigins: [],
-      allowPrivateNetwork: false, allowDownloads: false, allowPopups: true,
-      maxActions: 2, maxDurationMs: 30_000, maxNavigations: 1 };
+    const policy = {
+      allowedOrigins: ["https://app.example.test"],
+      trustedScriptOrigins: [],
+      allowPrivateNetwork: false,
+      allowDownloads: false,
+      allowPopups: true,
+      maxActions: 2,
+      maxDurationMs: 30_000,
+      maxNavigations: 1,
+    };
     const sessions = {
       heartbeatRuntimeLease: vi.fn(async () => undefined),
-      runtimeContextFor: vi.fn(async () => ({ environmentId, correlationId: "correlation", policy })),
+      runtimeContextFor: vi.fn(async () => ({
+        environmentId,
+        correlationId: "correlation",
+        policy,
+      })),
       recordDispatchBaseline: vi.fn(async () => undefined),
       recordVerifiedObservation: vi.fn(async () => undefined),
     };
@@ -128,20 +186,39 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       sessions as never,
       {} as never,
     );
-    const outcome = { operationId: "docs", functionalResult: "failed" as const,
-      mutationOutcome: "not_applied" as const, privacyResult: "unverified" as const,
-      evidenceResult: [], qualityFindings: [], durationMs: 1,
+    const outcome = {
+      operationId: "docs",
+      functionalResult: "failed" as const,
+      mutationOutcome: "not_applied" as const,
+      privacyResult: "unverified" as const,
+      evidenceResult: [],
+      qualityFindings: [],
+      durationMs: 1,
       reasonCode: "EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED",
-      navigationEnvironmentFailure: { missingAllowedOrigin: "https://docs.example.test" } };
+      navigationEnvironmentFailure: { missingAllowedOrigin: "https://docs.example.test" },
+    };
     (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
-      session: { page: { url: () => "https://app.example.test" }, documentEpoch: () => 1,
-        interact: vi.fn(async () => ({ documentEpoch: 1, url: "https://app.example.test", outcome })) },
-      fencingToken: 1, tail: Promise.resolve(),
+      session: {
+        page: { url: () => "https://app.example.test" },
+        documentEpoch: () => 1,
+        interact: vi.fn(async () => ({
+          documentEpoch: 1,
+          url: "https://app.example.test",
+          outcome,
+        })),
+      },
+      fencingToken: 1,
+      tail: Promise.resolve(),
     });
 
-    const result = await runner.execute(sessionId, { operationId: "docs",
-      idempotencyKey: "docs-idempotency", mode: "observe", action: { type: "waitFor" },
-      expectedEffect: { type: "new_page" }, protectedInputReferences: [] } as never);
+    const result = await runner.execute(sessionId, {
+      operationId: "docs",
+      idempotencyKey: "docs-idempotency",
+      mode: "observe",
+      action: { type: "waitFor" },
+      expectedEffect: { type: "new_page" },
+      protectedInputReferences: [],
+    } as never);
 
     expect(result.decisionBoundary).toEqual({
       type: "environment_unavailable",
@@ -179,27 +256,38 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
 
     expect(cancelActiveOperation).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
-    expect(releaseRuntimeLease).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId,
-      fencingToken: 17,
-    }));
-    expect((runner as unknown as { runtimes: Map<string, unknown> }).runtimes.has(sessionId))
-      .toBe(false);
+    expect(releaseRuntimeLease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId,
+        fencingToken: 17,
+      }),
+    );
+    expect((runner as unknown as { runtimes: Map<string, unknown> }).runtimes.has(sessionId)).toBe(
+      false,
+    );
   });
 
   it("evicts a cancelled runtime so a continuation cannot reuse the closed browser", async () => {
     const sessionId = "88888888-8888-4888-8888-888888888888";
     const cancelActiveOperation = vi.fn().mockResolvedValue(undefined);
-    const runner = new AdaptiveSessionKernelRunner({} as never, {} as never, {} as never, {} as never);
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
     (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
-      session: { cancelActiveOperation }, fencingToken: 3, tail: Promise.resolve(),
+      session: { cancelActiveOperation },
+      fencingToken: 3,
+      tail: Promise.resolve(),
     });
 
     await runner.cancelActiveOperation(sessionId);
 
     expect(cancelActiveOperation).toHaveBeenCalledOnce();
-    expect((runner as unknown as { runtimes: Map<string, unknown> }).runtimes.has(sessionId))
-      .toBe(false);
+    expect((runner as unknown as { runtimes: Map<string, unknown> }).runtimes.has(sessionId)).toBe(
+      false,
+    );
   });
 
   it("retains the original fenced lease across resolution through mutation dispatch", async () => {
@@ -214,7 +302,8 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       const lifecycle: string[] = [];
       const sessions = {
         heartbeatRuntimeLease: vi.fn(async (input: Record<string, unknown>) => {
-          if (Date.now() - lastHeartbeatAt > leaseDurationMs) throw new Error("RUNTIME_LEASE_EXPIRED");
+          if (Date.now() - lastHeartbeatAt > leaseDurationMs)
+            throw new Error("RUNTIME_LEASE_EXPIRED");
           lastHeartbeatAt = Date.now();
           leaseOwners.add(input.ownerId);
           fencingTokens.add(input.fencingToken);
@@ -222,62 +311,113 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
           expect(input).toMatchObject({ sessionId, fencingToken: 7, leaseDurationMs });
         }),
         markOperationDispatching: vi.fn(async () => {
-          if (Date.now() - lastHeartbeatAt > leaseDurationMs) throw new Error("RUNTIME_LEASE_EXPIRED");
+          if (Date.now() - lastHeartbeatAt > leaseDurationMs)
+            throw new Error("RUNTIME_LEASE_EXPIRED");
           lifecycle.push("mark-dispatching");
         }),
         runtimeContextFor: vi.fn().mockResolvedValue({
-          environmentId: "environment", correlationId: "correlation",
-          policy: { allowedOrigins: ["https://example.test"], allowPrivateNetwork: false,
-            allowDownloads: false, allowPopups: false, maxActions: 2,
-            maxDurationMs: 30_000, maxNavigations: 1 },
+          environmentId: "environment",
+          correlationId: "correlation",
+          policy: {
+            allowedOrigins: ["https://example.test"],
+            allowPrivateNetwork: false,
+            allowDownloads: false,
+            allowPopups: false,
+            maxActions: 2,
+            maxDurationMs: 30_000,
+            maxNavigations: 1,
+          },
         }),
         recordDispatchBaseline: vi.fn(),
         recordVerifiedObservation: vi.fn(),
       };
-      const outcome = { operationId: "long-resolution", functionalResult: "succeeded" as const,
-        mutationOutcome: "applied" as const, privacyResult: "unverified" as const,
-        evidenceResult: [], qualityFindings: [], durationMs: 1 };
-      const kernel = {
-        interact: vi.fn(async ({ capabilities }: { capabilities: { options: {
-          onMutationDispatch: () => Promise<void>;
-        } } }) => {
-          await new Promise((resolve) => setTimeout(resolve, 1_200));
-          await capabilities.options.onMutationDispatch();
-          lifecycle.push("mutation");
-          mutationDispatch();
-          return outcome;
-        }),
+      const outcome = {
+        operationId: "long-resolution",
+        functionalResult: "succeeded" as const,
+        mutationOutcome: "applied" as const,
+        privacyResult: "unverified" as const,
+        evidenceResult: [],
+        qualityFindings: [],
+        durationMs: 1,
       };
-      const capabilities = { createSession: vi.fn((input: { options: unknown }) =>
-        ({ manifest: { digest: "a".repeat(64) }, options: input.options })) };
+      const kernel = {
+        interact: vi.fn(
+          async ({
+            capabilities,
+          }: {
+            capabilities: {
+              options: {
+                onMutationDispatch: () => Promise<void>;
+              };
+            };
+          }) => {
+            await new Promise((resolve) => setTimeout(resolve, 1_200));
+            await capabilities.options.onMutationDispatch();
+            lifecycle.push("mutation");
+            mutationDispatch();
+            return outcome;
+          },
+        ),
+      };
+      const capabilities = {
+        createSession: vi.fn((input: { options: unknown }) => ({
+          manifest: { digest: "a".repeat(64) },
+          options: input.options,
+        })),
+      };
       const runner = new AdaptiveSessionKernelRunner(
-        kernel as never, capabilities as never, sessions as never, {} as never,
+        kernel as never,
+        capabilities as never,
+        sessions as never,
+        {} as never,
       );
       (runner as unknown as { leaseDurationMs: number }).leaseDurationMs = leaseDurationMs;
       const ownedSession = {
         page: { url: () => "https://example.test/app" },
         documentEpoch: () => 1,
         interact: vi.fn(async (action: never, context: Record<string, unknown>) => ({
-          documentEpoch: 2, url: "https://example.test/app",
-          outcome: await (runner as unknown as { executeInteraction(input: unknown): Promise<typeof outcome> })
-            .executeInteraction({ sessionId, environmentId: "environment",
-              policy: (await sessions.runtimeContextFor()).policy, mode: "rehearse",
-              fencingToken: 7, browser: {}, context: {}, provenance: {}, page: {}, action,
-              ordinal: 1, operationId: context.operationId, correlationId: context.correlationId,
-              mutationIdentity: context.mutationIdentity, privacyGate: {} }),
+          documentEpoch: 2,
+          url: "https://example.test/app",
+          outcome: await (
+            runner as unknown as { executeInteraction(input: unknown): Promise<typeof outcome> }
+          ).executeInteraction({
+            sessionId,
+            environmentId: "environment",
+            policy: (await sessions.runtimeContextFor()).policy,
+            mode: "rehearse",
+            fencingToken: 7,
+            browser: {},
+            context: {},
+            provenance: {},
+            page: {},
+            action,
+            ordinal: 1,
+            operationId: context.operationId,
+            correlationId: context.correlationId,
+            mutationIdentity: context.mutationIdentity,
+            privacyGate: {},
+          }),
         })),
       };
-      (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId,
-        { session: ownedSession, fencingToken: 7, tail: Promise.resolve() });
+      (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
+        session: ownedSession,
+        fencingToken: 7,
+        tail: Promise.resolve(),
+      });
 
       const execution = runner.execute(sessionId, {
-        operationId: "long-resolution", idempotencyKey: "long-resolution-key", mode: "rehearse",
-        action: { type: "click", target: {} }, expectedEffect: { type: "none" },
+        operationId: "long-resolution",
+        idempotencyKey: "long-resolution-key",
+        mode: "rehearse",
+        action: { type: "click", target: {} },
+        expectedEffect: { type: "none" },
         protectedInputReferences: [],
       } as never);
       await vi.advanceTimersByTimeAsync(1_200);
 
-      await expect(execution).resolves.toMatchObject({ outcome: { functionalResult: "succeeded" } });
+      await expect(execution).resolves.toMatchObject({
+        outcome: { functionalResult: "succeeded" },
+      });
       expect(sessions.heartbeatRuntimeLease).toHaveBeenCalledTimes(6);
       expect(leaseOwners.size).toBe(1);
       expect([...fencingTokens]).toEqual([7]);
@@ -294,46 +434,103 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     try {
       const sessionId = "33333333-3333-4333-8333-333333333333";
       const sessions = {
-        heartbeatRuntimeLease: vi.fn()
+        heartbeatRuntimeLease: vi
+          .fn()
           .mockResolvedValueOnce(undefined)
           .mockRejectedValueOnce(new Error("RUNTIME_LEASE_OWNERSHIP_LOST")),
         markOperationDispatching: vi.fn(),
-        runtimeContextFor: vi.fn().mockResolvedValue({ environmentId: "environment",
-          correlationId: "correlation", policy: { allowedOrigins: ["https://example.test"],
-            allowPrivateNetwork: false, allowDownloads: false, allowPopups: false,
-            maxActions: 2, maxDurationMs: 30_000, maxNavigations: 1 } }),
+        runtimeContextFor: vi.fn().mockResolvedValue({
+          environmentId: "environment",
+          correlationId: "correlation",
+          policy: {
+            allowedOrigins: ["https://example.test"],
+            allowPrivateNetwork: false,
+            allowDownloads: false,
+            allowPopups: false,
+            maxActions: 2,
+            maxDurationMs: 30_000,
+            maxNavigations: 1,
+          },
+        }),
         recordDispatchBaseline: vi.fn(),
         recordVerifiedObservation: vi.fn(),
       };
-      const kernel = { interact: vi.fn(({ capabilities }: { capabilities: { options: {
-        signal: AbortSignal;
-      } } }) => new Promise((_resolve, reject) => {
-        capabilities.options.signal.addEventListener("abort", () =>
-          reject(capabilities.options.signal.reason), { once: true });
-      })) };
-      const capabilities = { createSession: vi.fn((input: { options: unknown }) =>
-        ({ manifest: { digest: "a".repeat(64) }, options: input.options })) };
+      const kernel = {
+        interact: vi.fn(
+          ({
+            capabilities,
+          }: {
+            capabilities: {
+              options: {
+                signal: AbortSignal;
+              };
+            };
+          }) =>
+            new Promise((_resolve, reject) => {
+              capabilities.options.signal.addEventListener(
+                "abort",
+                () => reject(capabilities.options.signal.reason),
+                { once: true },
+              );
+            }),
+        ),
+      };
+      const capabilities = {
+        createSession: vi.fn((input: { options: unknown }) => ({
+          manifest: { digest: "a".repeat(64) },
+          options: input.options,
+        })),
+      };
       const runner = new AdaptiveSessionKernelRunner(
-        kernel as never, capabilities as never, sessions as never, {} as never,
+        kernel as never,
+        capabilities as never,
+        sessions as never,
+        {} as never,
       );
       (runner as unknown as { leaseDurationMs: number }).leaseDurationMs = 900;
-      const ownedSession = { page: { url: () => "https://example.test" }, documentEpoch: () => 1,
+      const ownedSession = {
+        page: { url: () => "https://example.test" },
+        documentEpoch: () => 1,
         interact: vi.fn(async (action: never, context: Record<string, unknown>) => ({
-        documentEpoch: 1, url: "https://example.test",
-        outcome: await (runner as unknown as { executeInteraction(input: unknown): Promise<never> })
-          .executeInteraction({ sessionId, environmentId: "environment",
-            policy: (await sessions.runtimeContextFor()).policy, mode: "rehearse",
-            fencingToken: 9, browser: {}, context: {}, provenance: {}, page: {}, action,
-            ordinal: 1, operationId: context.operationId, correlationId: context.correlationId,
-            privacyGate: {} }),
-      })) };
-      (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId,
-        { session: ownedSession, fencingToken: 9, tail: Promise.resolve() });
-      const execution = runner.execute(sessionId, { operationId: "pre-dispatch-loss",
-        idempotencyKey: "pre-dispatch-loss-key", mode: "rehearse",
-        action: { type: "click", target: {} }, expectedEffect: { type: "none" },
-        protectedInputReferences: [] } as never);
-      const settled = execution.then(() => undefined, (error) => error);
+          documentEpoch: 1,
+          url: "https://example.test",
+          outcome: await (
+            runner as unknown as { executeInteraction(input: unknown): Promise<never> }
+          ).executeInteraction({
+            sessionId,
+            environmentId: "environment",
+            policy: (await sessions.runtimeContextFor()).policy,
+            mode: "rehearse",
+            fencingToken: 9,
+            browser: {},
+            context: {},
+            provenance: {},
+            page: {},
+            action,
+            ordinal: 1,
+            operationId: context.operationId,
+            correlationId: context.correlationId,
+            privacyGate: {},
+          }),
+        })),
+      };
+      (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
+        session: ownedSession,
+        fencingToken: 9,
+        tail: Promise.resolve(),
+      });
+      const execution = runner.execute(sessionId, {
+        operationId: "pre-dispatch-loss",
+        idempotencyKey: "pre-dispatch-loss-key",
+        mode: "rehearse",
+        action: { type: "click", target: {} },
+        expectedEffect: { type: "none" },
+        protectedInputReferences: [],
+      } as never);
+      const settled = execution.then(
+        () => undefined,
+        (error) => error,
+      );
 
       await vi.advanceTimersByTimeAsync(300);
 
@@ -354,53 +551,113 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       const sessionId = "44444444-4444-4444-8444-444444444444";
       const mutation = vi.fn();
       const sessions = {
-        heartbeatRuntimeLease: vi.fn()
+        heartbeatRuntimeLease: vi
+          .fn()
           .mockResolvedValueOnce(undefined)
           .mockResolvedValueOnce(undefined)
           .mockRejectedValueOnce(new Error("RUNTIME_LEASE_OWNERSHIP_LOST")),
         markOperationDispatching: vi.fn(async () => undefined),
-        runtimeContextFor: vi.fn().mockResolvedValue({ environmentId: "environment",
-          correlationId: "correlation", policy: { allowedOrigins: ["https://example.test"],
-            allowPrivateNetwork: false, allowDownloads: false, allowPopups: false,
-            maxActions: 2, maxDurationMs: 30_000, maxNavigations: 1 } }),
+        runtimeContextFor: vi.fn().mockResolvedValue({
+          environmentId: "environment",
+          correlationId: "correlation",
+          policy: {
+            allowedOrigins: ["https://example.test"],
+            allowPrivateNetwork: false,
+            allowDownloads: false,
+            allowPopups: false,
+            maxActions: 2,
+            maxDurationMs: 30_000,
+            maxNavigations: 1,
+          },
+        }),
         recordDispatchBaseline: vi.fn(),
         recordVerifiedObservation: vi.fn(),
       };
-      const outcome = { operationId: "post-dispatch-loss", functionalResult: "failed" as const,
-        mutationOutcome: "unknown" as const, privacyResult: "unverified" as const,
-        evidenceResult: [], qualityFindings: [], durationMs: 1,
-        reasonCode: "RUNTIME_LEASE_OWNERSHIP_LOST" };
-      const kernel = { interact: vi.fn(async ({ capabilities }: { capabilities: { options: {
-        signal: AbortSignal; onMutationDispatch: () => Promise<void>;
-      } } }) => {
-        await capabilities.options.onMutationDispatch();
-        mutation();
-        await new Promise<void>((resolve) => capabilities.options.signal.addEventListener(
-          "abort", () => resolve(), { once: true }));
-        return outcome;
-      }) };
-      const capabilities = { createSession: vi.fn((input: { options: unknown }) =>
-        ({ manifest: { digest: "a".repeat(64) }, options: input.options })) };
+      const outcome = {
+        operationId: "post-dispatch-loss",
+        functionalResult: "failed" as const,
+        mutationOutcome: "unknown" as const,
+        privacyResult: "unverified" as const,
+        evidenceResult: [],
+        qualityFindings: [],
+        durationMs: 1,
+        reasonCode: "RUNTIME_LEASE_OWNERSHIP_LOST",
+      };
+      const kernel = {
+        interact: vi.fn(
+          async ({
+            capabilities,
+          }: {
+            capabilities: {
+              options: {
+                signal: AbortSignal;
+                onMutationDispatch: () => Promise<void>;
+              };
+            };
+          }) => {
+            await capabilities.options.onMutationDispatch();
+            mutation();
+            await new Promise<void>((resolve) =>
+              capabilities.options.signal.addEventListener("abort", () => resolve(), {
+                once: true,
+              }),
+            );
+            return outcome;
+          },
+        ),
+      };
+      const capabilities = {
+        createSession: vi.fn((input: { options: unknown }) => ({
+          manifest: { digest: "a".repeat(64) },
+          options: input.options,
+        })),
+      };
       const runner = new AdaptiveSessionKernelRunner(
-        kernel as never, capabilities as never, sessions as never, {} as never,
+        kernel as never,
+        capabilities as never,
+        sessions as never,
+        {} as never,
       );
       (runner as unknown as { leaseDurationMs: number }).leaseDurationMs = 900;
-      const ownedSession = { page: { url: () => "https://example.test/app" }, documentEpoch: () => 2,
+      const ownedSession = {
+        page: { url: () => "https://example.test/app" },
+        documentEpoch: () => 2,
         interact: vi.fn(async (action: never, context: Record<string, unknown>) => ({
-        documentEpoch: 3, url: "https://example.test/app",
-        outcome: await (runner as unknown as { executeInteraction(input: unknown): Promise<typeof outcome> })
-          .executeInteraction({ sessionId, environmentId: "environment",
-            policy: (await sessions.runtimeContextFor()).policy, mode: "rehearse",
-            fencingToken: 11, browser: {}, context: {}, provenance: {}, page: {}, action,
-            ordinal: 1, operationId: context.operationId, correlationId: context.correlationId,
-            privacyGate: {} }),
-      })) };
-      (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId,
-        { session: ownedSession, fencingToken: 11, tail: Promise.resolve() });
-      const execution = runner.execute(sessionId, { operationId: "post-dispatch-loss",
-        idempotencyKey: "post-dispatch-loss-key", mode: "rehearse",
-        action: { type: "click", target: {} }, expectedEffect: { type: "none" },
-        protectedInputReferences: [] } as never);
+          documentEpoch: 3,
+          url: "https://example.test/app",
+          outcome: await (
+            runner as unknown as { executeInteraction(input: unknown): Promise<typeof outcome> }
+          ).executeInteraction({
+            sessionId,
+            environmentId: "environment",
+            policy: (await sessions.runtimeContextFor()).policy,
+            mode: "rehearse",
+            fencingToken: 11,
+            browser: {},
+            context: {},
+            provenance: {},
+            page: {},
+            action,
+            ordinal: 1,
+            operationId: context.operationId,
+            correlationId: context.correlationId,
+            privacyGate: {},
+          }),
+        })),
+      };
+      (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
+        session: ownedSession,
+        fencingToken: 11,
+        tail: Promise.resolve(),
+      });
+      const execution = runner.execute(sessionId, {
+        operationId: "post-dispatch-loss",
+        idempotencyKey: "post-dispatch-loss-key",
+        mode: "rehearse",
+        action: { type: "click", target: {} },
+        expectedEffect: { type: "none" },
+        protectedInputReferences: [],
+      } as never);
       await vi.advanceTimersByTimeAsync(300);
       const result = await execution;
 
@@ -421,21 +678,37 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     vi.useFakeTimers();
     try {
       let releaseRenewal!: () => void;
-      const pendingRenewal = new Promise<void>((resolve) => { releaseRenewal = resolve; });
-      const sessions = { heartbeatRuntimeLease: vi.fn()
-        .mockResolvedValueOnce(undefined).mockReturnValueOnce(pendingRenewal) };
+      const pendingRenewal = new Promise<void>((resolve) => {
+        releaseRenewal = resolve;
+      });
+      const sessions = {
+        heartbeatRuntimeLease: vi
+          .fn()
+          .mockResolvedValueOnce(undefined)
+          .mockReturnValueOnce(pendingRenewal),
+      };
       const runner = new AdaptiveSessionKernelRunner(
-        {} as never, {} as never, sessions as never, {} as never,
+        {} as never,
+        {} as never,
+        sessions as never,
+        {} as never,
       );
       (runner as unknown as { leaseDurationMs: number }).leaseDurationMs = 900;
-      const guard = await (runner as unknown as {
-        startOperationLeaseGuard(sessionId: string, runtime: { fencingToken: number }): Promise<{
-          stop(): Promise<void>;
-        }>;
-      }).startOperationLeaseGuard("cleanup-session", { fencingToken: 13 });
+      const guard = await (
+        runner as unknown as {
+          startOperationLeaseGuard(
+            sessionId: string,
+            runtime: { fencingToken: number },
+          ): Promise<{
+            stop(): Promise<void>;
+          }>;
+        }
+      ).startOperationLeaseGuard("cleanup-session", { fencingToken: 13 });
       await vi.advanceTimersByTimeAsync(300);
       let stopped = false;
-      const stopping = guard.stop().then(() => { stopped = true; });
+      const stopping = guard.stop().then(() => {
+        stopped = true;
+      });
       await Promise.resolve();
       expect(stopped).toBe(false);
       releaseRenewal();
@@ -451,13 +724,18 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
 
   it("composes Mission authoring with native-first fallback and the unchanged Veil policy", () => {
     const policy = {
-      allowedOrigins: ["https://example.test"], allowPrivateNetwork: false,
-      allowDownloads: false as const, allowPopups: false as const, maxActions: 2,
-      maxDurationMs: 30_000, maxNavigations: 1,
+      allowedOrigins: ["https://example.test"],
+      allowPrivateNetwork: false,
+      allowDownloads: false as const,
+      allowPopups: false as const,
+      maxActions: 2,
+      maxDurationMs: 30_000,
+      maxNavigations: 1,
     };
     const capabilities = {
       createSession: vi.fn((input: { options: Record<string, unknown> }) => ({
-        manifest: { digest: "a".repeat(64) }, options: input.options,
+        manifest: { digest: "a".repeat(64) },
+        options: input.options,
       })),
     };
     const runner = new AdaptiveSessionKernelRunner(
@@ -467,11 +745,17 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       {} as never,
     );
 
-    const capability = (runner as unknown as {
-      createCapabilities(input: Record<string, unknown>): { options: Record<string, unknown> };
-    }).createCapabilities({
-      sessionId: "session", environmentId: "environment", correlationId: "correlation",
-      operationId: "operation", mode: "rehearse", policy,
+    const capability = (
+      runner as unknown as {
+        createCapabilities(input: Record<string, unknown>): { options: Record<string, unknown> };
+      }
+    ).createCapabilities({
+      sessionId: "session",
+      environmentId: "environment",
+      correlationId: "correlation",
+      operationId: "operation",
+      mode: "rehearse",
+      policy,
     });
 
     expect(capability.options.nativeResolutionPolicy).toBeUndefined();
@@ -481,57 +765,122 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
   it("collects Praxis grounding and expected-effect timings from the capability that executes the interaction", async () => {
     const sessionId = "11111111-1111-4111-8111-111111111111";
     const operation = {
-      operationId: "m2-timed-operation", idempotencyKey: "m2-timed-operation-key",
+      operationId: "m2-timed-operation",
+      idempotencyKey: "m2-timed-operation-key",
       mode: "rehearse" as const,
       action: { type: "waitFor" as const, target: {} as never, state: "visible" as const },
-      expectedEffect: { type: "none" as const }, protectedInputReferences: [],
+      expectedEffect: { type: "none" as const },
+      protectedInputReferences: [],
     };
     const outcome = {
-      operationId: operation.operationId, functionalResult: "succeeded" as const,
-      mutationOutcome: "not_applied" as const, privacyResult: "unverified" as const,
-      evidenceResult: [], qualityFindings: [], durationMs: 1,
+      operationId: operation.operationId,
+      functionalResult: "succeeded" as const,
+      mutationOutcome: "not_applied" as const,
+      privacyResult: "unverified" as const,
+      evidenceResult: [],
+      qualityFindings: [],
+      durationMs: 1,
     };
     const kernel = {
-      interact: vi.fn(async ({ capabilities }: { capabilities: { options: {
-        onPraxisResult?: (input: import("@scry/contracts").PraxisResult) => Promise<void>;
-        onExpectedEffectVerification?: (input: { durationMs: number; status: "succeeded" }) => Promise<void>;
-      } } }) => {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        await capabilities.options.onPraxisResult?.({ timing: { groundingMs: 7 } } as never);
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        await capabilities.options.onExpectedEffectVerification?.({ status: "succeeded", durationMs: 11 });
-        return outcome;
-      }),
+      interact: vi.fn(
+        async ({
+          capabilities,
+        }: {
+          capabilities: {
+            options: {
+              onPraxisResult?: (input: import("@scry/contracts").PraxisResult) => Promise<void>;
+              onExpectedEffectVerification?: (input: {
+                durationMs: number;
+                status: "succeeded";
+              }) => Promise<void>;
+            };
+          };
+        }) => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          await capabilities.options.onPraxisResult?.({ timing: { groundingMs: 7 } } as never);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          await capabilities.options.onExpectedEffectVerification?.({
+            status: "succeeded",
+            durationMs: 11,
+          });
+          return outcome;
+        },
+      ),
     };
-    const capabilities = { createSession: vi.fn((input: { options: unknown }) => ({ manifest: { digest: "a".repeat(64) }, options: input.options })) };
+    const capabilities = {
+      createSession: vi.fn((input: { options: unknown }) => ({
+        manifest: { digest: "a".repeat(64) },
+        options: input.options,
+      })),
+    };
     const sessions = {
       heartbeatRuntimeLease: vi.fn(),
       runtimeContextFor: vi.fn().mockResolvedValue({
-        environmentId: "environment", correlationId: "correlation",
-        policy: { allowedOrigins: ["https://example.test"], allowPrivateNetwork: false, allowDownloads: false, allowPopups: false, maxActions: 2, maxDurationMs: 30_000, maxNavigations: 1 },
+        environmentId: "environment",
+        correlationId: "correlation",
+        policy: {
+          allowedOrigins: ["https://example.test"],
+          allowPrivateNetwork: false,
+          allowDownloads: false,
+          allowPopups: false,
+          maxActions: 2,
+          maxDurationMs: 30_000,
+          maxNavigations: 1,
+        },
       }),
       recordDispatchBaseline: vi.fn(),
       recordVerifiedObservation: vi.fn(),
     };
-    const runner = new AdaptiveSessionKernelRunner(kernel as never, capabilities as never, sessions as never, {} as never);
+    const runner = new AdaptiveSessionKernelRunner(
+      kernel as never,
+      capabilities as never,
+      sessions as never,
+      {} as never,
+    );
     const page = { url: () => "https://example.test/account" };
     const ownedSession = {
       page,
       documentEpoch: () => 3,
-      interact: vi.fn(async (action: never, context: { operationId: string; correlationId: string; mutationIdentity: string; expectedEffect: never }) =>
-        ({
-          documentEpoch: 4, url: page.url(),
-          outcome: await (runner as unknown as { executeInteraction(input: unknown): Promise<typeof outcome> }).executeInteraction({
-            sessionId, environmentId: "environment", policy: (await sessions.runtimeContextFor()).policy,
-            mode: "rehearse", fencingToken: 1, browser: {} as never, context: {} as never,
-            provenance: {} as never, page: page as never, action, ordinal: 1,
-            operationId: context.operationId, correlationId: context.correlationId,
-            mutationIdentity: context.mutationIdentity, expectedEffect: context.expectedEffect,
+      interact: vi.fn(
+        async (
+          action: never,
+          context: {
+            operationId: string;
+            correlationId: string;
+            mutationIdentity: string;
+            expectedEffect: never;
+          },
+        ) => ({
+          documentEpoch: 4,
+          url: page.url(),
+          outcome: await (
+            runner as unknown as { executeInteraction(input: unknown): Promise<typeof outcome> }
+          ).executeInteraction({
+            sessionId,
+            environmentId: "environment",
+            policy: (await sessions.runtimeContextFor()).policy,
+            mode: "rehearse",
+            fencingToken: 1,
+            browser: {} as never,
+            context: {} as never,
+            provenance: {} as never,
+            page: page as never,
+            action,
+            ordinal: 1,
+            operationId: context.operationId,
+            correlationId: context.correlationId,
+            mutationIdentity: context.mutationIdentity,
+            expectedEffect: context.expectedEffect,
             privacyGate: {} as never,
           }),
-        })),
+        }),
+      ),
     };
-    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, { session: ownedSession, fencingToken: 1, tail: Promise.resolve() });
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
+      session: ownedSession,
+      fencingToken: 1,
+      tail: Promise.resolve(),
+    });
 
     const result = await runner.execute(sessionId, operation as never);
 

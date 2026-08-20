@@ -86,10 +86,14 @@ export async function prepareExternalResourceDestructiveTarget(input: {
   const initialObservation = await observe(input, "initial");
   const initial = projectPresentation(input.binding, contract, initialObservation);
 
-  const boundary = await inspectSemanticScope(input.page, {
-    kind: contract.browserBoundary.kind,
-    name: initial,
-  }, { allowedOrigins: input.allowedOrigins });
+  const boundary = await inspectSemanticScope(
+    input.page,
+    {
+      kind: contract.browserBoundary.kind,
+      name: initial,
+    },
+    { allowedOrigins: input.allowedOrigins },
+  );
   if (boundary.matchCount === 0)
     throw new ExternalResourcePresentationError("BROWSER_BOUNDARY_NOT_FOUND");
   if (boundary.matchCount !== 1)
@@ -97,13 +101,17 @@ export async function prepareExternalResourceDestructiveTarget(input: {
 
   let target: GroundingResult;
   try {
-    target = await resolveTarget(input.page, {
-      ...contract.action,
-      scope: {
-        kind: contract.browserBoundary.kind,
-        name: initial,
+    target = await resolveTarget(
+      input.page,
+      {
+        ...contract.action,
+        scope: {
+          kind: contract.browserBoundary.kind,
+          name: initial,
+        },
       },
-    }, { allowedOrigins: input.allowedOrigins });
+      { allowedOrigins: input.allowedOrigins },
+    );
   } catch (error) {
     throw mapGroundingFailure(error);
   }
@@ -139,7 +147,8 @@ function assertBinding(
     binding.resourceScope !== contract.resource.scope ||
     !binding.externalIdentity ||
     binding.identityContractVersion < 1
-  ) throw new ExternalResourcePresentationError("EXTERNAL_BINDING_UNAVAILABLE");
+  )
+    throw new ExternalResourcePresentationError("EXTERNAL_BINDING_UNAVAILABLE");
 }
 
 async function observe(
@@ -158,16 +167,18 @@ async function observe(
   if (
     !observation.observationId ||
     observation.source !== "authoritative_read_only_resource_observation" ||
-    observation.resourceCollection !== input.presentationContract.presentationObservation.resourceCollection ||
+    observation.resourceCollection !==
+      input.presentationContract.presentationObservation.resourceCollection ||
     observation.projectId !== input.binding.projectId ||
     observation.environmentId !== input.binding.environmentId ||
     observation.provider !== input.binding.provider ||
     observation.resourceKind !== input.binding.resourceKind ||
     observation.resourceScope !== input.binding.resourceScope ||
     !Array.isArray(observation.records)
-  ) throw new ExternalResourcePresentationError(
-    phase === "initial" ? "RESOURCE_OBSERVATION_UNAVAILABLE" : "PROVIDER_REVALIDATION_FAILED",
-  );
+  )
+    throw new ExternalResourcePresentationError(
+      phase === "initial" ? "RESOURCE_OBSERVATION_UNAVAILABLE" : "PROVIDER_REVALIDATION_FAILED",
+    );
   return observation;
 }
 
@@ -218,7 +229,7 @@ function mapGroundingFailure(error: unknown) {
   if (candidate.code === "TARGET_SCOPE_INVALID") {
     return new ExternalResourcePresentationError(
       typeof candidate.diagnostic?.candidateCount === "number" &&
-      candidate.diagnostic.candidateCount > 1
+        candidate.diagnostic.candidateCount > 1
         ? "BROWSER_BOUNDARY_AMBIGUOUS"
         : "BROWSER_BOUNDARY_NOT_FOUND",
     );

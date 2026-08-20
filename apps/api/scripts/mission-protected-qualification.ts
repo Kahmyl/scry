@@ -62,9 +62,21 @@ try {
 
   const snapshot = context.fixture.snapshot();
   const dispatches = snapshot.protectedDispatches;
-  assertScenarioDispatch("readonlyInput", dispatches.readonlyInput, "QUALIFICATION_READONLY_DISPATCH_COUNT_INVALID");
-  assertScenarioDispatch("textOutput", dispatches.textOutput, "QUALIFICATION_TEXT_DISPATCH_COUNT_INVALID");
-  assertScenarioDispatch("interruptedAcquisition", dispatches.interruptedAcquisition, "QUALIFICATION_INTERRUPTED_DISPATCH_COUNT_INVALID");
+  assertScenarioDispatch(
+    "readonlyInput",
+    dispatches.readonlyInput,
+    "QUALIFICATION_READONLY_DISPATCH_COUNT_INVALID",
+  );
+  assertScenarioDispatch(
+    "textOutput",
+    dispatches.textOutput,
+    "QUALIFICATION_TEXT_DISPATCH_COUNT_INVALID",
+  );
+  assertScenarioDispatch(
+    "interruptedAcquisition",
+    dispatches.interruptedAcquisition,
+    "QUALIFICATION_INTERRUPTED_DISPATCH_COUNT_INVALID",
+  );
 
   const serialized = JSON.stringify(results);
   assert(!serialized.includes(context.secretValue), "QUALIFICATION_PROTECTED_VALUE_LEAK");
@@ -81,27 +93,31 @@ try {
     [provisioned.ownership.projectId],
   );
 
-  process.stdout.write(`${JSON.stringify({
-    outcome: "CONTROLLED_PROTECTED_QUALIFICATION_PASSED",
-    projectId: provisioned.ownership.projectId,
-    environmentId: provisioned.ownership.environmentId,
-    campaigns: results,
-    dispatches,
-    latency: summarizeLatency(callLatencies),
-    cleanup: {
-      completedSessionsClosed: true,
-      interruptedRecoveryRetained: true,
-      generatedCredentialsRevoked: true,
-    },
-    privacy: { protectedPlaintextObserved: false, forbiddenImplementationFieldsObserved: false },
-  })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({
+      outcome: "CONTROLLED_PROTECTED_QUALIFICATION_PASSED",
+      projectId: provisioned.ownership.projectId,
+      environmentId: provisioned.ownership.environmentId,
+      campaigns: results,
+      dispatches,
+      latency: summarizeLatency(callLatencies),
+      cleanup: {
+        completedSessionsClosed: true,
+        interruptedRecoveryRetained: true,
+        generatedCredentialsRevoked: true,
+      },
+      privacy: { protectedPlaintextObserved: false, forbiddenImplementationFieldsObserved: false },
+    })}\n`,
+  );
 } catch (error) {
-  process.stdout.write(`${JSON.stringify({
-    outcome: "CONTROLLED_PROTECTED_QUALIFICATION_FAILED",
-    reasonCode: safeCode(error),
-    dispatches: context.fixture.snapshot().protectedDispatches,
-    latency: summarizeLatency(callLatencies),
-  })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({
+      outcome: "CONTROLLED_PROTECTED_QUALIFICATION_FAILED",
+      reasonCode: safeCode(error),
+      dispatches: context.fixture.snapshot().protectedDispatches,
+      latency: summarizeLatency(callLatencies),
+    })}\n`,
+  );
   process.exitCode = 1;
 } finally {
   for (const sessionId of openSessions) await closeSession(sessionId).catch(() => undefined);
@@ -113,7 +129,10 @@ try {
 function qualificationScenarios(): Scenario[] {
   const configured = process.env.SCRY_PROTECTED_QUALIFICATION_SCENARIOS;
   if (!configured) return ["readonlyInput", "textOutput", "interruptedAcquisition"];
-  const selected = configured.split(",").map((value) => value.trim()).filter(Boolean);
+  const selected = configured
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
   const allowed = new Set<Scenario>(["readonlyInput", "textOutput", "interruptedAcquisition"]);
   if (!selected.length || selected.some((value) => !allowed.has(value as Scenario))) {
     throw new Error("QUALIFICATION_SCENARIO_INVALID");
@@ -130,11 +149,12 @@ async function runScenario(
   ownership: Awaited<ReturnType<typeof provisionM2Campaign>>["ownership"],
 ) {
   const flow = ownership.flows[scenario]!;
-  const path = scenario === "readonlyInput"
-    ? "/protected/readonly-input"
-    : scenario === "textOutput"
-      ? "/protected/text-output"
-      : "/protected/interrupted-acquisition";
+  const path =
+    scenario === "readonlyInput"
+      ? "/protected/readonly-input"
+      : scenario === "textOutput"
+        ? "/protected/text-output"
+        : "/protected/interrupted-acquisition";
   const pageUrl = `${context.fixture.origin}${path}`;
   const started = await call(scenario, "start", {
     name: "start_flow_authoring",
@@ -196,13 +216,15 @@ async function runScenario(
     arguments: {
       sessionId,
       kind: "intents",
-      intents: [acquisitionIntent({
-        scenario,
-        preparationIntentIds,
-        objectiveId: flow.objectiveId,
-        flowDraftId: flow.flowDraftId,
-        authorizationId: flow.authorizationId!,
-      })],
+      intents: [
+        acquisitionIntent({
+          scenario,
+          preparationIntentIds,
+          objectiveId: flow.objectiveId,
+          flowDraftId: flow.flowDraftId,
+          authorizationId: flow.authorizationId!,
+        }),
+      ],
       budgets: { maxOperations: 1, maxDurationMs: 15_000 },
       idempotencyKey: `protected-qualification-acquire-${scenario}-${context.campaignId}`,
     },
@@ -232,7 +254,10 @@ async function runScenario(
   if (scenario === "interruptedAcquisition") {
     assert(turn.state === "decision_required", "QUALIFICATION_INTERRUPTION_NOT_RECOVERABLE");
     assert(operation.dispatchState === "acknowledged", "QUALIFICATION_INTERRUPTION_NOT_DISPATCHED");
-    assert(operation.persistenceState !== "committed", "QUALIFICATION_INTERRUPTION_PERSISTED_OUTPUT");
+    assert(
+      operation.persistenceState !== "committed",
+      "QUALIFICATION_INTERRUPTION_PERSISTED_OUTPUT",
+    );
     assert(operation.persistedReferenceCount === 0, "QUALIFICATION_INTERRUPTION_REFERENCE_LEAK");
   } else {
     assert(turn.state === "completed", "QUALIFICATION_ACQUISITION_NOT_COMPLETED");
@@ -242,23 +267,31 @@ async function runScenario(
     assert(operation.persistedReferenceCount === 2, "QUALIFICATION_OUTPUT_SET_INCOMPLETE");
     const references = turn.completed.flatMap((entry) => entry.generatedReferences ?? []);
     assert(references.length === 2, "QUALIFICATION_OPAQUE_REFERENCES_MISSING");
-    assert(references.every((reference) => reference.credentialId || reference.valueId), "QUALIFICATION_REFERENCE_NOT_OPAQUE");
+    assert(
+      references.every((reference) => reference.credentialId || reference.valueId),
+      "QUALIFICATION_REFERENCE_NOT_OPAQUE",
+    );
 
     const continuity = await call(scenario, "post_protected_observation", {
       name: "advance_flow_authoring",
       arguments: {
         sessionId,
         kind: "intents",
-        intents: [postProtectedObservationIntent(
-          `post-protected-${scenario}`,
-          flow.objectiveId,
-          flow.flowDraftId,
-        )],
+        intents: [
+          postProtectedObservationIntent(
+            `post-protected-${scenario}`,
+            flow.objectiveId,
+            flow.flowDraftId,
+          ),
+        ],
         budgets: { maxOperations: 1, maxDurationMs: 10_000 },
         idempotencyKey: `protected-qualification-post-protected-${scenario}-${context.campaignId}`,
       },
     });
-    assert(findTurn(continuity).state === "completed", "QUALIFICATION_RETAINED_SESSION_AUTHORITY_LOST");
+    assert(
+      findTurn(continuity).state === "completed",
+      "QUALIFICATION_RETAINED_SESSION_AUTHORITY_LOST",
+    );
   }
 
   if (scenario !== "interruptedAcquisition") {
@@ -393,7 +426,9 @@ function preparationFillIntent(
   flowDraftId: string,
 ): MissionAuthoringIntent {
   return {
-    intentId, objectiveId, flowDraftId,
+    intentId,
+    objectiveId,
+    flowDraftId,
     action: {
       kind: "fill",
       target: { concept: "credential name", role: "textbox", name: "Credential name", exact: true },
@@ -412,10 +447,17 @@ function preparationSelectIntent(
   flowDraftId: string,
 ): MissionAuthoringIntent {
   return {
-    intentId, objectiveId, flowDraftId,
+    intentId,
+    objectiveId,
+    flowDraftId,
     action: {
       kind: "select",
-      target: { concept: "credential environment", role: "combobox", name: "Environment", exact: true },
+      target: {
+        concept: "credential environment",
+        role: "combobox",
+        name: "Environment",
+        exact: true,
+      },
       value: "test",
     },
     expectedEffect: { kind: "none" },
@@ -425,10 +467,18 @@ function preparationSelectIntent(
   };
 }
 
-async function call(scenario: Scenario, name: string, tool: { name: string; arguments: Record<string, unknown> }) {
+async function call(
+  scenario: Scenario,
+  name: string,
+  tool: { name: string; arguments: Record<string, unknown> },
+) {
   const startedAt = performance.now();
   const response = await mcp.call(tool);
-  callLatencies.push({ scenario, call: name, durationMs: Math.round(performance.now() - startedAt) });
+  callLatencies.push({
+    scenario,
+    call: name,
+    durationMs: Math.round(performance.now() - startedAt),
+  });
   try {
     rejectToolError(response);
   } catch {
@@ -480,17 +530,26 @@ async function operationProof(sessionId: string) {
 function findTurn(value: unknown): SafeTurn {
   const found = findNested(value, (record) =>
     typeof record.turnId === "string" &&
-    (record.state === "completed" || record.state === "pending" || record.state === "decision_required")
-      ? record as unknown as SafeTurn
+    (record.state === "completed" ||
+      record.state === "pending" ||
+      record.state === "decision_required")
+      ? (record as unknown as SafeTurn)
       : undefined,
   );
   assert(found, "QUALIFICATION_TURN_RESPONSE_MISSING");
   return found;
 }
 
-function findNested<T>(value: unknown, select: (record: Record<string, unknown>) => T | undefined): T | undefined {
+function findNested<T>(
+  value: unknown,
+  select: (record: Record<string, unknown>) => T | undefined,
+): T | undefined {
   if (typeof value === "string") {
-    try { return findNested(JSON.parse(value), select); } catch { return undefined; }
+    try {
+      return findNested(JSON.parse(value), select);
+    } catch {
+      return undefined;
+    }
   }
   if (Array.isArray(value)) {
     for (const entry of value) {
@@ -527,9 +586,11 @@ function percentile(values: number[], quantile: number) {
 }
 
 function databaseUrl() {
-  return process.env.SCRY_AUTHORING_TEST_DATABASE_URL ??
+  return (
+    process.env.SCRY_AUTHORING_TEST_DATABASE_URL ??
     process.env.DATABASE_URL ??
-    "postgres://scry:scry-local@127.0.0.1:54329/scry";
+    "postgres://scry:scry-local@127.0.0.1:54329/scry"
+  );
 }
 
 function assert(condition: unknown, code: string): asserts condition {
@@ -537,8 +598,11 @@ function assert(condition: unknown, code: string): asserts condition {
 }
 
 function safeCode(error: unknown) {
-  const value = error instanceof Error ? error.message : "CONTROLLED_PROTECTED_QUALIFICATION_FAILED";
-  return /^[A-Z0-9_:-]+$/.test(value) ? value.slice(0, 160) : "CONTROLLED_PROTECTED_QUALIFICATION_FAILED";
+  const value =
+    error instanceof Error ? error.message : "CONTROLLED_PROTECTED_QUALIFICATION_FAILED";
+  return /^[A-Z0-9_:-]+$/.test(value)
+    ? value.slice(0, 160)
+    : "CONTROLLED_PROTECTED_QUALIFICATION_FAILED";
 }
 
 function toolFailureCode(value: unknown) {

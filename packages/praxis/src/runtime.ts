@@ -40,7 +40,10 @@ import {
 } from "./interaction/form-control.js";
 import { PraxisKeyDispatchError, pressReferencedTarget } from "./interaction/keyboard.js";
 import { scrollReferencedTarget } from "./interaction/scroll.js";
-import { observeTargetReference, type PraxisTargetReference } from "./references/target-reference.js";
+import {
+  observeTargetReference,
+  type PraxisTargetReference,
+} from "./references/target-reference.js";
 import { PraxisExecutionEnvelope, type PraxisPreDispatchDeadline } from "./execution-envelope.js";
 import { PraxisStateObserver } from "./state-observer.js";
 import { validatePraxisVeilGrants } from "./veil-bridge.js";
@@ -83,7 +86,13 @@ export class PraxisGroundedTarget {
     pinnedReference: PraxisTargetReference | undefined,
     providerTimings: readonly PraxisProviderTiming[],
   ) {
-    this.handle = new PraxisTargetHandle(page, grounded.frame, grounded.locator, epoch, documentIdentity);
+    this.handle = new PraxisTargetHandle(
+      page,
+      grounded.frame,
+      grounded.locator,
+      epoch,
+      documentIdentity,
+    );
     this.resolution = resolution;
     this.strategy = strategy;
     this.pinnedReference = pinnedReference;
@@ -359,9 +368,7 @@ export class PraxisDispatcher {
     boundary: PraxisDispatchBoundary,
   ): Promise<{ mutationOutcome: PraxisMutationOutcome; output?: PraxisAcquisitionOutput }> {
     checkAbort(signal);
-    const mutating =
-      request.dispatchSemantics !== "read_only" &&
-      isMutating(request.operation);
+    const mutating = request.dispatchSemantics !== "read_only" && isMutating(request.operation);
     let output: PraxisAcquisitionOutput | undefined;
     try {
       const preparedInput = await prepareInput(request, this.resolveInput);
@@ -385,12 +392,15 @@ export class PraxisDispatcher {
         if (
           request.operation.type === "enter_text" &&
           !["known_secret", "captured_secret"].includes(request.operation.input.classification) &&
-          (await locator.evaluate((element) =>
-            Boolean(element.closest('[data-scry-redacted="true"]')) ||
-            (element instanceof HTMLInputElement &&
-              (element.type === "password" ||
-                ["current-password", "new-password", "one-time-code"].includes(element.autocomplete.toLowerCase()) ||
-                element.inputMode === "numeric")),
+          (await locator.evaluate(
+            (element) =>
+              Boolean(element.closest('[data-scry-redacted="true"]')) ||
+              (element instanceof HTMLInputElement &&
+                (element.type === "password" ||
+                  ["current-password", "new-password", "one-time-code"].includes(
+                    element.autocomplete.toLowerCase(),
+                  ) ||
+                  element.inputMode === "numeric")),
           ))
         )
           throw new PraxisAdapterError("PROTECTED_INPUT_REFERENCE_REQUIRED", {
@@ -614,10 +624,13 @@ async function dispatchOperation(
         try {
           await activationTarget.click({ timeout: options.timeout, noWaitAfter: true });
         } catch (error) {
-          const connected = await activationTarget.evaluate((node) => node.isConnected).catch(() => false);
-          if (!connected) throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
-            provenance: "application",
-          });
+          const connected = await activationTarget
+            .evaluate((node) => node.isConnected)
+            .catch(() => false);
+          if (!connected)
+            throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+              provenance: "application",
+            });
           throw error;
         }
         break;
@@ -639,7 +652,9 @@ async function dispatchOperation(
         throw error;
       }
       if (!(await activationObserved())) {
-        const currentDocumentIdentity = await readActivationDocumentIdentity(page).catch(() => undefined);
+        const currentDocumentIdentity = await readActivationDocumentIdentity(page).catch(
+          () => undefined,
+        );
         if (!currentDocumentIdentity || currentDocumentIdentity === sourceDocumentIdentity)
           throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
       }
@@ -689,9 +704,13 @@ async function dispatchOperation(
     }
     case "select_option":
       if (!target.pinnedReference)
-        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", { provenance: "application" });
+        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+          provenance: "application",
+        });
       try {
-        await selectReferencedTarget(target.pinnedReference, preparedInput!, { timeoutMs: options.timeout });
+        await selectReferencedTarget(target.pinnedReference, preparedInput!, {
+          timeoutMs: options.timeout,
+        });
       } catch (error) {
         if (error instanceof PraxisFormControlDispatchError)
           throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
@@ -700,9 +719,13 @@ async function dispatchOperation(
       break;
     case "set_checked":
       if (!target.pinnedReference)
-        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", { provenance: "application" });
+        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+          provenance: "application",
+        });
       try {
-        await setCheckedReferencedTarget(target.pinnedReference, request.operation.checked, { timeoutMs: options.timeout });
+        await setCheckedReferencedTarget(target.pinnedReference, request.operation.checked, {
+          timeoutMs: options.timeout,
+        });
       } catch (error) {
         if (error instanceof PraxisFormControlDispatchError)
           throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
@@ -711,9 +734,13 @@ async function dispatchOperation(
       break;
     case "press_key":
       if (!target.pinnedReference)
-        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", { provenance: "application" });
+        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+          provenance: "application",
+        });
       try {
-        await pressReferencedTarget(target.pinnedReference, request.operation.key, { timeoutMs: options.timeout });
+        await pressReferencedTarget(target.pinnedReference, request.operation.key, {
+          timeoutMs: options.timeout,
+        });
       } catch (error) {
         if (error instanceof PraxisKeyDispatchError)
           throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
@@ -738,8 +765,12 @@ async function dispatchOperation(
       break;
     case "scroll":
       if (!target.pinnedReference)
-        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", { provenance: "application" });
-      await scrollReferencedTarget(target.pinnedReference, request.operation.direction, { timeoutMs: options.timeout });
+        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+          provenance: "application",
+        });
+      await scrollReferencedTarget(target.pinnedReference, request.operation.direction, {
+        timeoutMs: options.timeout,
+      });
       break;
     case "read_value":
       if (request.operation.classification === "public")
@@ -750,7 +781,6 @@ async function dispatchOperation(
   }
   return undefined;
 }
-
 
 async function observationSetMatches(
   locators: readonly Locator[],
@@ -803,9 +833,11 @@ function activationReceiptState(page: Page): ActivationReceiptState {
   const waiters = new Map<string, () => void>();
   const state: ActivationReceiptState = {
     waiters,
-    ready: page.exposeBinding("__scryPraxisRecordActivation", (_source, key: unknown) => {
-      if (typeof key === "string") waiters.get(key)?.();
-    }).then(() => undefined),
+    ready: page
+      .exposeBinding("__scryPraxisRecordActivation", (_source, key: unknown) => {
+        if (typeof key === "string") waiters.get(key)?.();
+      })
+      .then(() => undefined),
   };
   activationReceiptStates.set(page, state);
   return state;
@@ -819,16 +851,27 @@ async function armActivationReceipt(
   await state.ready;
   let observed = false;
   let resolveObserved!: () => void;
-  const observation = new Promise<void>((resolve) => { resolveObserved = resolve; });
-  state.waiters.set(receipt, () => { observed = true; resolveObserved(); });
+  const observation = new Promise<void>((resolve) => {
+    resolveObserved = resolve;
+  });
+  state.waiters.set(receipt, () => {
+    observed = true;
+    resolveObserved();
+  });
   try {
     await target.evaluate((element, key) => {
-      element.addEventListener("click", () => {
-        const binding = (window as typeof window & {
-          __scryPraxisRecordActivation?: (value: string) => Promise<void>;
-        }).__scryPraxisRecordActivation;
-        void binding?.(key);
-      }, { capture: true, once: true });
+      element.addEventListener(
+        "click",
+        () => {
+          const binding = (
+            window as typeof window & {
+              __scryPraxisRecordActivation?: (value: string) => Promise<void>;
+            }
+          ).__scryPraxisRecordActivation;
+          void binding?.(key);
+        },
+        { capture: true, once: true },
+      );
     }, receipt);
   } catch (error) {
     state.waiters.delete(receipt);

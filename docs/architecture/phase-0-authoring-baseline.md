@@ -138,7 +138,7 @@ type ProbeExecutionResult = {
 Inspection-level Probe completion currently uses:
 
 ```ts
-allResolved: diagnostics.length === 0
+allResolved: diagnostics.length === 0;
 ```
 
 An unresolved Praxis interaction is appended directly to the generic diagnostics array.

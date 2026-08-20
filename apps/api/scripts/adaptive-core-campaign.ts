@@ -84,7 +84,8 @@ function environment(name: string, fallback: string) {
 }
 
 function safeCode(error: unknown) {
-  if (error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message)) return error.message.slice(0, 160);
+  if (error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message))
+    return error.message.slice(0, 160);
   return "CAMPAIGN_RUNNER_FAILED";
 }
 

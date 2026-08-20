@@ -29,25 +29,26 @@ export class ExternalResourcePresentationAuthorityRepository {
       throw new ConflictException({ code: "EXTERNAL_PRESENTATION_AUTHORITY_UNAVAILABLE" });
     const policy = executionPolicySchema.parse(result.rows[0]!.policy);
     const authorities = policy.externalResourcePresentationAuthorities ?? [];
-    const matching = authorities.filter((authority) =>
-      authority.provider === input.provider &&
-      authority.resourceKind === input.resourceKind &&
-      authority.resourceScope === input.resourceScope &&
-      authority.contractVersion === input.contractVersion &&
-      authority.status === "active",
+    const matching = authorities.filter(
+      (authority) =>
+        authority.provider === input.provider &&
+        authority.resourceKind === input.resourceKind &&
+        authority.resourceScope === input.resourceScope &&
+        authority.contractVersion === input.contractVersion &&
+        authority.status === "active",
     );
     if (matching.length !== 1)
       throw new ConflictException({ code: "EXTERNAL_PRESENTATION_AUTHORITY_UNAVAILABLE" });
     const authority = matching[0]!;
-    const newer = authorities.some((candidate) =>
-      candidate.provider === authority.provider &&
-      candidate.resourceKind === authority.resourceKind &&
-      candidate.resourceScope === authority.resourceScope &&
-      candidate.contractVersion === authority.contractVersion &&
-      candidate.revision > authority.revision,
+    const newer = authorities.some(
+      (candidate) =>
+        candidate.provider === authority.provider &&
+        candidate.resourceKind === authority.resourceKind &&
+        candidate.resourceScope === authority.resourceScope &&
+        candidate.contractVersion === authority.contractVersion &&
+        candidate.revision > authority.revision,
     );
-    if (newer)
-      throw new ConflictException({ code: "EXTERNAL_PRESENTATION_AUTHORITY_STALE" });
+    if (newer) throw new ConflictException({ code: "EXTERNAL_PRESENTATION_AUTHORITY_STALE" });
     return externalResourcePresentationContractSchema.parse({
       canonicalIdentity: { source: "external_resource_binding" },
       resource: {

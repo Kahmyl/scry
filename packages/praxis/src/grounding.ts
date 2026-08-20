@@ -21,9 +21,7 @@ import { PraxisDocumentEpoch, PraxisGroundingPolicyV1 } from "./observation.js";
 import { collectPraxisEvidence } from "./evidence.js";
 import { escalationLevel } from "./latency.js";
 import { interactionRiskPolicy } from "./risk-policy.js";
-import {
-  resolveSemanticPageContextControl,
-} from "./page-context.js";
+import { resolveSemanticPageContextControl } from "./page-context.js";
 
 type SafeAction =
   | "narrow_scope"
@@ -190,9 +188,8 @@ export async function resolveTarget(
       if (error instanceof GroundingError) throw error;
       return throwObservation(page, intentDigest, intent, count, "execution", error);
     }
-    const directBoundary = intent.scope.direct && intent.scope.kind !== "page"
-      ? await scope.elementHandle()
-      : null;
+    const directBoundary =
+      intent.scope.direct && intent.scope.kind !== "page" ? await scope.elementHandle() : null;
     const planned = await planCandidateInventory(
       scope,
       intent,
@@ -213,10 +210,12 @@ export async function resolveTarget(
     for (let index = 0; index < frameCount; index += 1) {
       const locator = controls.nth(index);
       if (directBoundary) {
-        const directlyOwned = await locator.evaluate(
-          (element, input) => element.closest(input.selector) === input.boundary,
-          { boundary: directBoundary, selector: semanticBoundarySelector },
-        ).catch(() => false);
+        const directlyOwned = await locator
+          .evaluate((element, input) => element.closest(input.selector) === input.boundary, {
+            boundary: directBoundary,
+            selector: semanticBoundarySelector,
+          })
+          .catch(() => false);
         if (!directlyOwned) continue;
       }
       let meta: ObservedControl;
@@ -232,7 +231,11 @@ export async function resolveTarget(
       } catch (error) {
         return throwObservation(page, intentDigest, intent, count, "execution", error);
       }
-      const violations = capabilityViolations(intent, meta, boundary.cardinality?.kind === "state_observation");
+      const violations = capabilityViolations(
+        intent,
+        meta,
+        boundary.cardinality?.kind === "state_observation",
+      );
       if (violations.length) {
         violations.forEach((item) => rejected.add(item));
         recordRejectedCapabilitySignature(rejectedCapabilitySignatures, meta.capabilities);
@@ -301,7 +304,9 @@ export async function resolveTarget(
     confidenceMargin: margin,
     scope: intent.scope,
     rejectedConstraints: [...rejected],
-    rejectedCapabilitySignatures: [...rejectedCapabilitySignatures.values()].sort(compareRejectedCapabilitySignatures),
+    rejectedCapabilitySignatures: [...rejectedCapabilitySignatures.values()].sort(
+      compareRejectedCapabilitySignatures,
+    ),
     drift,
     safeActions: [],
     resolutionSource: "unified",
@@ -420,7 +425,8 @@ export async function resolveTarget(
       }
       if (
         current.runtimeId !== best.meta.runtimeId ||
-        capabilityViolations(intent, current, boundary.cardinality?.kind === "state_observation").length
+        capabilityViolations(intent, current, boundary.cardinality?.kind === "state_observation")
+          .length
       )
         throw new GroundingError("TARGET_CHANGED_BEFORE_ACTION", {
           ...diagnostic,
@@ -455,7 +461,11 @@ async function resolveAuthoritativeContextReference(
   if (requested.has("toggleable")) requiredContextCapabilities.add("toggle");
   if (requested.has("selects_option")) requiredContextCapabilities.add("select_option");
   if (requiredContextCapabilities.size === 0) requiredContextCapabilities.add("observe");
-  if ([...requiredContextCapabilities].some((capability) => !entry.capabilities.includes(capability as never)))
+  if (
+    [...requiredContextCapabilities].some(
+      (capability) => !entry.capabilities.includes(capability as never),
+    )
+  )
     throw new GroundingError("NO_CAPABILITY_COMPATIBLE_CONTROL", {
       ...emptyDiagnostic(intent.scope, 1),
       rejectedConstraints: ["authoritative_reference_capability"],
@@ -465,7 +475,8 @@ async function resolveAuthoritativeContextReference(
   let currentLocator = await entry.locate();
   if (!currentLocator)
     throw new GroundingError("TARGET_CHANGED_BEFORE_ACTION", {
-      ...emptyDiagnostic(intent.scope, 1), safeActions: ["retry_after_render"],
+      ...emptyDiagnostic(intent.scope, 1),
+      safeActions: ["retry_after_render"],
     });
   const observe = async () => {
     let meta: ObservedControl;
@@ -542,7 +553,9 @@ async function resolveAuthoritativeContextReference(
   };
   return {
     frame,
-    get locator() { return currentLocator!; },
+    get locator() {
+      return currentLocator!;
+    },
     diagnostic,
     adapter,
     async revalidate() {
@@ -590,14 +603,20 @@ export async function verifyExpectedEffect(
     try {
       await Promise.race([
         armed ?? Promise.reject(),
-        ...(options.signal ? [new Promise<never>((_, reject) => {
-          if (options.signal!.aborted) reject(new ExpectedEffectError("EXPECTED_EFFECT_NOT_OBSERVED"));
-          else options.signal!.addEventListener(
-            "abort",
-            () => reject(new ExpectedEffectError("EXPECTED_EFFECT_NOT_OBSERVED")),
-            { once: true },
-          );
-        })] : []),
+        ...(options.signal
+          ? [
+              new Promise<never>((_, reject) => {
+                if (options.signal!.aborted)
+                  reject(new ExpectedEffectError("EXPECTED_EFFECT_NOT_OBSERVED"));
+                else
+                  options.signal!.addEventListener(
+                    "abort",
+                    () => reject(new ExpectedEffectError("EXPECTED_EFFECT_NOT_OBSERVED")),
+                    { once: true },
+                  );
+              }),
+            ]
+          : []),
       ]);
       return;
     } catch {
@@ -632,9 +651,16 @@ export async function verifyExpectedEffect(
             ...(options.allowedOrigins ? { allowedOrigins: options.allowedOrigins } : {}),
             cardinality: { kind: "state_observation", state: "visible" },
           });
-          if ((await Promise.all(
-            (grounded.observationLocators ?? [grounded.locator]).map((locator) => locator.isVisible()),
-          )).some(Boolean)) return;
+          if (
+            (
+              await Promise.all(
+                (grounded.observationLocators ?? [grounded.locator]).map((locator) =>
+                  locator.isVisible(),
+                ),
+              )
+            ).some(Boolean)
+          )
+            return;
         } else if (!(await (await resolveTargetLocator(page, effect.target)).isVisible())) return;
       }
       if (effect.type === "value_change") {
@@ -657,20 +683,31 @@ export async function verifyExpectedEffect(
           ...(options.allowedOrigins ? { allowedOrigins: options.allowedOrigins } : {}),
           cardinality: { kind: "state_observation", state: "visible" },
         });
-        if ((await Promise.all(
-          (grounded.observationLocators ?? [grounded.locator]).map((locator) => locator.isVisible()),
-        )).some(Boolean)) return;
+        if (
+          (
+            await Promise.all(
+              (grounded.observationLocators ?? [grounded.locator]).map((locator) =>
+                locator.isVisible(),
+              ),
+            )
+          ).some(Boolean)
+        )
+          return;
       }
     } catch {}
     await Promise.race([
       page.waitForTimeout(100),
-      ...(options.signal ? [new Promise<never>((_, reject) => {
-        options.signal!.addEventListener(
-          "abort",
-          () => reject(new ExpectedEffectError("EXPECTED_EFFECT_NOT_OBSERVED")),
-          { once: true },
-        );
-      })] : []),
+      ...(options.signal
+        ? [
+            new Promise<never>((_, reject) => {
+              options.signal!.addEventListener(
+                "abort",
+                () => reject(new ExpectedEffectError("EXPECTED_EFFECT_NOT_OBSERVED")),
+                { once: true },
+              );
+            }),
+          ]
+        : []),
     ]);
   }
   throw new ExpectedEffectError("EXPECTED_EFFECT_NOT_OBSERVED");
@@ -774,16 +811,14 @@ async function resolveScope(
   if (scope.kind === "page") return parent;
   const { options, matches } = await matchingScopeOptions(parent, scope);
   if (matches.length === 1) return options.nth(matches[0]!);
-  const code = matches.length === 0 && (await options.count()) === 0
-    ? "TARGET_SCOPE_NOT_FOUND"
-    : "TARGET_SCOPE_INVALID";
+  const code =
+    matches.length === 0 && (await options.count()) === 0
+      ? "TARGET_SCOPE_NOT_FOUND"
+      : "TARGET_SCOPE_INVALID";
   throw new GroundingError(code, scopeDiagnostic(scope, matches.length, code));
 }
 
-async function matchingScopeOptions(
-  parent: Locator,
-  scope: InteractionTargetIntent["scope"],
-) {
+async function matchingScopeOptions(parent: Locator, scope: InteractionTargetIntent["scope"]) {
   if (scope.kind === "page") throw new Error("PAGE_SCOPE_HAS_NO_SELECTOR");
   const options = parent.locator(semanticScopeSelectors[scope.kind]);
   if (!scope.name) {
@@ -796,9 +831,14 @@ async function matchingScopeOptions(
       .evaluate((element) => {
         const boundarySelector =
           "dialog,[role=dialog],[role=menu],[role=region],[role=form],nav,section,article,form,main,aside";
-        const ownedHeading = Array.from(element.querySelectorAll("h1,h2,h3,h4,h5,h6"))
-          .find((heading) => heading.closest(boundarySelector) === element);
-        return `${element.getAttribute("aria-label") ?? ""} ${element.getAttribute("title") ?? ""} ${ownedHeading?.textContent ?? ""}`
+        const ownedHeading = Array.from(element.querySelectorAll("h1,h2,h3,h4,h5,h6")).find(
+          (heading) => heading.closest(boundarySelector) === element,
+        );
+        const ownedLegend = element.matches("fieldset,[role=group]")
+          ? Array.from(element.children).find((child) => child.matches("legend"))?.textContent
+          : undefined;
+        const rowPresentation = element.matches("tr,[role=row]") ? element.textContent : undefined;
+        return `${element.getAttribute("aria-label") ?? ""} ${element.getAttribute("title") ?? ""} ${ownedHeading?.textContent ?? ""} ${ownedLegend ?? ""} ${rowPresentation ?? ""}`
           .replace(/\s+/g, " ")
           .trim();
       })
@@ -836,9 +876,7 @@ export async function inspectSemanticScope(
   let matchCount = 0;
   for (const frame of authorizedDocuments(page, options?.allowedOrigins)) {
     try {
-      const parent = scope.within
-        ? await resolveScope(frame, scope.within)
-        : frame.locator("body");
+      const parent = scope.within ? await resolveScope(frame, scope.within) : frame.locator("body");
       const result = await matchingScopeOptions(parent, scope);
       matchCount += result.matches.length;
     } catch {
@@ -983,10 +1021,10 @@ function hasExplicitSemanticIdentity(intent: InteractionTargetIntent) {
   const evidence = intent.preferredEvidence;
   return Boolean(
     evidence.names.length ||
-      evidence.labels.length ||
-      evidence.descriptions.length ||
-      evidence.placeholders.length ||
-      evidence.expectedText,
+    evidence.labels.length ||
+    evidence.descriptions.length ||
+    evidence.placeholders.length ||
+    evidence.expectedText,
   );
 }
 function candidateHasExactIdentity(intent: InteractionTargetIntent, meta: ObservedControl) {
@@ -1033,32 +1071,60 @@ function candidateDistinctionDiagnostic(
   intent: InteractionTargetIntent,
   candidates: readonly Candidate[],
 ): Pick<GroundingDiagnostic, "candidateDistinctions"> | Record<string, never> {
-  if (!interactionRiskPolicy(intent).allowsAgentCandidateChoice || candidates.length === 0) return {};
+  if (!interactionRiskPolicy(intent).allowsAgentCandidateChoice || candidates.length === 0)
+    return {};
   const clean = (value: string, limit: number) =>
-    value.normalize("NFKC").replace(/[\u0000-\u001f\u007f-\u009f]/g, "").replace(/\s+/g, " ").trim().slice(0, limit);
+    value
+      .normalize("NFKC")
+      .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, limit);
   const requestedDisplay = clean(
-    intent.preferredEvidence.names[0] ?? intent.preferredEvidence.labels[0] ??
-      intent.preferredEvidence.descriptions[0] ?? intent.preferredEvidence.placeholders[0] ??
-      intent.preferredEvidence.expectedText ?? "",
+    intent.preferredEvidence.names[0] ??
+      intent.preferredEvidence.labels[0] ??
+      intent.preferredEvidence.descriptions[0] ??
+      intent.preferredEvidence.placeholders[0] ??
+      intent.preferredEvidence.expectedText ??
+      "",
     160,
   );
   const requested = requestedDisplay.toLocaleLowerCase();
   const candidateDistinctions = candidates.slice(0, 3).flatMap(({ meta }) => {
     const semanticRole = clean(meta.accessibilityRole || meta.role, 40);
-    const kind = meta.tag === "tr" ? "table row" : meta.tag === "a" ? "link" :
-      meta.tag === "button" ? "button" : meta.tag === "input" ? "input" :
-      meta.tag === "select" ? "select control" : meta.tag === "textarea" ? "text area" : "custom control";
-    const label = semanticRole && semanticRole !== kind ? `${kind} acting as ${semanticRole}` : semanticRole || kind;
-    const identity = meta.sensitive ? "identity suppressed" : clean(
-      meta.accessibilityName || meta.name || meta.labels[0] || meta.text,
-      160,
-    );
+    const kind =
+      meta.tag === "tr"
+        ? "table row"
+        : meta.tag === "a"
+          ? "link"
+          : meta.tag === "button"
+            ? "button"
+            : meta.tag === "input"
+              ? "input"
+              : meta.tag === "select"
+                ? "select control"
+                : meta.tag === "textarea"
+                  ? "text area"
+                  : "custom control";
+    const label =
+      semanticRole && semanticRole !== kind
+        ? `${kind} acting as ${semanticRole}`
+        : semanticRole || kind;
+    const identity = meta.sensitive
+      ? "identity suppressed"
+      : clean(meta.accessibilityName || meta.name || meta.labels[0] || meta.text, 160);
     if (!identity) return [];
     const compared = identity.toLocaleLowerCase();
-    const relationship = !requested || meta.sensitive ? "identity relationship unavailable" :
-      compared === requested ? "exactly equals the requested identity" :
-      compared.includes(requested) ? "contains the requested identity rather than exactly equaling it" :
-      requested.includes(compared) ? "is contained by the requested identity" : "differs from the requested identity";
+    const relationship =
+      !requested || meta.sensitive
+        ? "identity relationship unavailable"
+        : compared === requested
+          ? "exactly equals the requested identity"
+          : compared.includes(requested)
+            ? "contains the requested identity rather than exactly equaling it"
+            : requested.includes(compared)
+              ? "is contained by the requested identity"
+              : "differs from the requested identity";
     const capabilities = [
       [meta.capabilities.canFocus, "focusable"],
       [meta.capabilities.canReceivePointer, "pointer activatable"],
@@ -1067,7 +1133,9 @@ function candidateDistinctionDiagnostic(
       [meta.capabilities.canToggle, "toggleable"],
       [meta.capabilities.canSelectOption, "selects option"],
       [meta.capabilities.canReadValue, "readable value"],
-    ].filter(([enabled]) => enabled).map(([, name]) => name);
+    ]
+      .filter(([enabled]) => enabled)
+      .map(([, name]) => name);
     const parts = [
       meta.sensitive ? identity : `accessible name "${identity}"`,
       relationship,
@@ -1398,18 +1466,24 @@ function capabilityViolations(
     failures.push("coordinate_action_risk");
   for (let index = 0; index < intent.relations.length; index += 1)
     if (!meta.relationMatches[index]) failures.push(`relation:${intent.relations[index]!.kind}`);
-  if (!stateObservation && intent.prohibited.includes("hidden") && !c.visible) failures.push("hidden");
+  if (!stateObservation && intent.prohibited.includes("hidden") && !c.visible)
+    failures.push("hidden");
   if (intent.prohibited.includes("disabled") && !c.enabled) failures.push("disabled");
   if (intent.prohibited.includes("readonly") && c.readonly) failures.push("readonly");
   if (intent.prohibited.includes("display_only_text") && !c.canAcceptText && !c.canReceivePointer)
     failures.push("display_only_text");
   return failures;
 }
-const categoricalBoolean = (value: boolean): "yes" | "no" => value ? "yes" : "no";
-export function rejectedCapabilitySignature(capabilities: ControlCapabilities): RejectedCapabilitySignature {
+const categoricalBoolean = (value: boolean): "yes" | "no" => (value ? "yes" : "no");
+export function rejectedCapabilitySignature(
+  capabilities: ControlCapabilities,
+): RejectedCapabilitySignature {
   return {
     count: 1,
-    nativeKindClass: capabilities.nativeKind === "input" || capabilities.nativeKind === "textarea" ? capabilities.nativeKind : "other",
+    nativeKindClass:
+      capabilities.nativeKind === "input" || capabilities.nativeKind === "textarea"
+        ? capabilities.nativeKind
+        : "other",
     computedRoleClass: capabilities.computedRole === "textbox" ? "textbox" : "other",
     visible: categoricalBoolean(capabilities.visible),
     enabled: categoricalBoolean(capabilities.enabled),
@@ -1420,20 +1494,36 @@ export function rejectedCapabilitySignature(capabilities: ControlCapabilities): 
   };
 }
 function rejectedCapabilitySignatureKey(signature: RejectedCapabilitySignature): string {
-  return [signature.nativeKindClass, signature.computedRoleClass, signature.visible, signature.enabled,
-    signature.readonly, signature.acceptsText, signature.focusable, signature.editable].join("|");
+  return [
+    signature.nativeKindClass,
+    signature.computedRoleClass,
+    signature.visible,
+    signature.enabled,
+    signature.readonly,
+    signature.acceptsText,
+    signature.focusable,
+    signature.editable,
+  ].join("|");
 }
-function compareRejectedCapabilitySignatures(left: RejectedCapabilitySignature, right: RejectedCapabilitySignature): number {
+function compareRejectedCapabilitySignatures(
+  left: RejectedCapabilitySignature,
+  right: RejectedCapabilitySignature,
+): number {
   return rejectedCapabilitySignatureKey(left).localeCompare(rejectedCapabilitySignatureKey(right));
 }
-function recordRejectedCapabilitySignature(target: Map<string, RejectedCapabilitySignature>, capabilities: ControlCapabilities) {
+function recordRejectedCapabilitySignature(
+  target: Map<string, RejectedCapabilitySignature>,
+  capabilities: ControlCapabilities,
+) {
   const signature = rejectedCapabilitySignature(capabilities);
   const key = rejectedCapabilitySignatureKey(signature);
   const existing = target.get(key);
   if (existing) existing.count += 1;
   else target.set(key, signature);
 }
-export function aggregateRejectedCapabilitySignatures(capabilities: readonly ControlCapabilities[]): RejectedCapabilitySignature[] {
+export function aggregateRejectedCapabilitySignatures(
+  capabilities: readonly ControlCapabilities[],
+): RejectedCapabilitySignature[] {
   const target = new Map<string, RejectedCapabilitySignature>();
   for (const item of capabilities) recordRejectedCapabilitySignature(target, item);
   return [...target.values()].sort(compareRejectedCapabilitySignatures);

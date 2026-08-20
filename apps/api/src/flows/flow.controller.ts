@@ -16,9 +16,7 @@ import { ZodValidationPipe } from "../common/validation.pipe.js";
 
 @Controller("api")
 export class FlowController {
-  constructor(
-    @Inject(FlowService) private readonly core: FlowService,
-  ) {}
+  constructor(@Inject(FlowService) private readonly core: FlowService) {}
 
   @Get("capabilities")
   @Public()
@@ -61,10 +59,7 @@ export class FlowController {
   }
 
   @Get("flows/:flowId")
-  getFlow(
-    @Param("flowId") flowId: string,
-    @CurrentPrincipal() principal: Principal,
-  ) {
+  getFlow(@Param("flowId") flowId: string, @CurrentPrincipal() principal: Principal) {
     return this.core.getFlow(principal, flowId);
   }
 

@@ -22,7 +22,8 @@ export async function pressReferencedTarget(
   await assertKeyboardActionable(element);
   await element.focus();
   await reference.assertCurrent();
-  const ownsFocus = await element.evaluate((node) => node.ownerDocument.activeElement === node)
+  const ownsFocus = await element
+    .evaluate((node) => node.ownerDocument.activeElement === node)
     .catch(() => false);
   if (!ownsFocus) throw new PraxisStaleTargetError();
   try {
@@ -36,10 +37,7 @@ export async function pressReferencedTarget(
     // emitted, but its protocol acknowledgement must not become an implicit
     // navigation wait after dispatch has already occurred.
     const release = keyboard.up(key);
-    await Promise.race([
-      release,
-      new Promise<void>((resolve) => setTimeout(resolve, 100)),
-    ]);
+    await Promise.race([release, new Promise<void>((resolve) => setTimeout(resolve, 100))]);
     void release.catch(() => undefined);
   } catch (error) {
     if (error instanceof PraxisStaleTargetError) throw error;
@@ -74,10 +72,12 @@ export async function focusReferencedTarget(
 }
 
 async function assertKeyboardActionable(element: ElementHandle<HTMLElement>): Promise<void> {
-  const state = await element.evaluate((node) => ({
-    connected: node.isConnected,
-    disabled: "disabled" in node && Boolean((node as HTMLInputElement).disabled),
-  })).catch(() => ({ connected: false, disabled: false }));
+  const state = await element
+    .evaluate((node) => ({
+      connected: node.isConnected,
+      disabled: "disabled" in node && Boolean((node as HTMLInputElement).disabled),
+    }))
+    .catch(() => ({ connected: false, disabled: false }));
   if (!state.connected) throw new PraxisStaleTargetError();
   if (state.disabled || !(await element.isVisible().catch(() => false)))
     throw new Error("Pinned keyboard target is not actionable");

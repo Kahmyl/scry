@@ -13,8 +13,6 @@ export interface AssuranceMetric {
  * A separate explicit verification may assert a real
  * performance or operational requirement.
  */
-export function metric(
-  value: AssuranceMetric,
-): AssuranceMetric {
+export function metric(value: AssuranceMetric): AssuranceMetric {
   return value;
 }

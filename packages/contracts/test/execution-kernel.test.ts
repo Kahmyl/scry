@@ -56,22 +56,35 @@ describe("execution kernel contracts", () => {
 
   it("binds pre-dispatch authoring recovery to a fresh intent turn, never pending continuation", () => {
     const id = "11111111-1111-4111-8111-111111111111";
-    expect(agentDecisionBoundarySchema.parse({
-      type: "environment_unavailable",
-      reasonCode: "BROWSER_RUNTIME_UNAVAILABLE",
-      safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+    expect(
+      agentDecisionBoundarySchema.parse({
+        type: "environment_unavailable",
+        reasonCode: "BROWSER_RUNTIME_UNAVAILABLE",
+        safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+        authoringRecovery: {
+          sessionId: id,
+          missionId: id,
+          objectiveId: id,
+          flowDraftId: id,
+          environmentId: id,
+          failedOperationId: "open",
+          sourceTurnId: id,
+          environmentResourceExists: true,
+          executionReadiness: "runtime_reprovision_required",
+          preservesCurrentFlow: true,
+          recoveryTool: "advance_flow_authoring",
+          recoveryKind: "intents",
+          requiresPendingTurn: false,
+          requiresFreshIdempotencyKey: true,
+        },
+      }),
+    ).toMatchObject({
       authoringRecovery: {
-        sessionId: id, missionId: id, objectiveId: id, flowDraftId: id,
-        environmentId: id, failedOperationId: "open", sourceTurnId: id,
-        environmentResourceExists: true,
-        executionReadiness: "runtime_reprovision_required",
+        recoveryKind: "intents",
+        requiresPendingTurn: false,
         preservesCurrentFlow: true,
-        recoveryTool: "advance_flow_authoring", recoveryKind: "intents",
-        requiresPendingTurn: false, requiresFreshIdempotencyKey: true,
       },
-    })).toMatchObject({ authoringRecovery: {
-      recoveryKind: "intents", requiresPendingTurn: false, preservesCurrentFlow: true,
-    } });
+    });
   });
 
   it("admits only bounded authoritative semantic page context", () => {
@@ -97,12 +110,19 @@ describe("execution kernel contracts", () => {
           containerReferences: ["context-container-fedcba9876543210fedcba9876543210"],
         },
       ],
-      containers: [{
-        reference: "context-container-fedcba9876543210fedcba9876543210",
-        kind: "row" as const,
-        controlReferences: ["context-control-0123456789abcdef0123456789abcdef"],
-      }],
-      containerCompleteness: { kind: "bounded" as const, observed: 1, returned: 1, truncated: false },
+      containers: [
+        {
+          reference: "context-container-fedcba9876543210fedcba9876543210",
+          kind: "row" as const,
+          controlReferences: ["context-control-0123456789abcdef0123456789abcdef"],
+        },
+      ],
+      containerCompleteness: {
+        kind: "bounded" as const,
+        observed: 1,
+        returned: 1,
+        truncated: false,
+      },
     };
     expect(
       operationOutcomeSchema.parse({
@@ -148,16 +168,21 @@ describe("execution kernel contracts", () => {
       functionalResult: "succeeded",
       mutationOutcome: "not_applied",
       privacyResult: "unverified",
-      evidenceResult: [], qualityFindings: [], durationMs: 1,
+      evidenceResult: [],
+      qualityFindings: [],
+      durationMs: 1,
       semanticPageContext: {
         schemaVersion: 1,
         authority: context.authority,
         completeness: context.completeness,
-        controls: context.controls.map(({ containerReferences: _containers, ...control }) => control),
+        controls: context.controls.map(
+          ({ containerReferences: _containers, ...control }) => control,
+        ),
       },
     });
     expect(durableV1.semanticPageContext).toMatchObject({
-      schemaVersion: 1, containers: [],
+      schemaVersion: 1,
+      containers: [],
       containerCompleteness: { observed: 0, returned: 0, truncated: false },
     });
   });

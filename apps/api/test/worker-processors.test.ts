@@ -182,12 +182,10 @@ describe("worker processor boundaries", () => {
         },
       ),
     };
-    const dispatch = vi.fn(
-      async (options: { onMutationDispatch?: () => void | Promise<void> }) => {
-        await options.onMutationDispatch?.();
-        throw new Error("WORKER_PROCESS_LOST_AFTER_DISPATCH");
-      },
-    );
+    const dispatch = vi.fn(async (options: { onMutationDispatch?: () => void | Promise<void> }) => {
+      await options.onMutationDispatch?.();
+      throw new Error("WORKER_PROCESS_LOST_AFTER_DISPATCH");
+    });
     const processor = createRunProcessor({
       ...identity,
       executions: executions as never,

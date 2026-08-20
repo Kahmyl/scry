@@ -66,7 +66,9 @@ describe("Campaign D: known-secret protected preparation", () => {
       const result = await runPraxis(page, intent);
       expect(result.status === "succeeded" ? "succeeded" : result.code).toBe(expected);
       expect(JSON.stringify(result)).not.toContain(secret);
-      expect(JSON.stringify(result)).not.toMatch(/selector|xpath|runtimeId|browserHandle|outerHTML|innerHTML/i);
+      expect(JSON.stringify(result)).not.toMatch(
+        /selector|xpath|runtimeId|browserHandle|outerHTML|innerHTML/i,
+      );
     } finally {
       await page.context().close();
     }
@@ -77,12 +79,16 @@ describe("Campaign D: known-secret protected preparation", () => {
       '<label>Password<input type="password" placeholder="Enter your password"></label>',
     );
     try {
-      await executeProtectedPreparation(page, transaction(field("login password", "Enter your password")), {
-        allowedOrigins: [origin],
-        redactor: new SecretRedactor(),
-        resolveKnownSecret: async () => secret,
-        verifyAssertions: async () => undefined,
-      } as never);
+      await executeProtectedPreparation(
+        page,
+        transaction(field("login password", "Enter your password")),
+        {
+          allowedOrigins: [origin],
+          redactor: new SecretRedactor(),
+          resolveKnownSecret: async () => secret,
+          verifyAssertions: async () => undefined,
+        } as never,
+      );
       expect(await page.getByPlaceholder("Enter your password").inputValue()).toBe(secret);
     } finally {
       await page.context().close();
@@ -184,9 +190,7 @@ async function openPage(html: string) {
 
 async function openAuthenticatedReplayPage() {
   const context = await browser.newContext();
-  await context.addCookies([
-    { name: "session", value: "authenticated", url: origin },
-  ]);
+  await context.addCookies([{ name: "session", value: "authenticated", url: origin }]);
   const page = await context.newPage();
   await page.route(`${origin}/**`, async (route) => {
     const url = new URL(route.request().url());

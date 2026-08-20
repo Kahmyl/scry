@@ -41,11 +41,9 @@ describe("Praxis HTTP contract", () => {
   beforeAll(async () => {
     const adapter = new FastifyAdapter();
 
-    app = await NestFactory.create<NestFastifyApplication>(
-      PraxisEndpointTestModule,
-      adapter,
-      { logger: false },
-    );
+    app = await NestFactory.create<NestFastifyApplication>(PraxisEndpointTestModule, adapter, {
+      logger: false,
+    });
 
     await app.init();
   });
@@ -57,11 +55,7 @@ describe("Praxis HTTP contract", () => {
   async function call(payload: unknown) {
     return (
       app.getHttpAdapter().getInstance() as unknown as {
-        inject(options: {
-          method: "POST";
-          url: string;
-          payload: unknown;
-        }): Promise<{
+        inject(options: { method: "POST"; url: string; payload: unknown }): Promise<{
           statusCode: number;
           json(): unknown;
         }>;
@@ -119,10 +113,7 @@ describe("Praxis HTTP contract", () => {
   it("reads Praxis inspection state through the authoritative service", async () => {
     const response = await (
       app.getHttpAdapter().getInstance() as unknown as {
-        inject(options: {
-          method: "GET";
-          url: string;
-        }): Promise<{
+        inject(options: { method: "GET"; url: string }): Promise<{
           statusCode: number;
           json(): unknown;
         }>;
@@ -141,9 +132,7 @@ describe("Praxis HTTP contract", () => {
       },
     });
 
-    expect(praxis.getInspection).toHaveBeenCalledWith(
-      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-    );
+    expect(praxis.getInspection).toHaveBeenCalledWith("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   });
 
   it("rejects malformed Praxis inspection ids before service execution", async () => {
@@ -151,10 +140,7 @@ describe("Praxis HTTP contract", () => {
 
     const response = await (
       app.getHttpAdapter().getInstance() as unknown as {
-        inject(options: {
-          method: "GET";
-          url: string;
-        }): Promise<{
+        inject(options: { method: "GET"; url: string }): Promise<{
           statusCode: number;
           json(): unknown;
         }>;

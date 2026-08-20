@@ -1,7 +1,4 @@
-import type {
-  AssuranceDescriptor,
-  MaybePromise,
-} from "../core/types.js";
+import type { AssuranceDescriptor, MaybePromise } from "../core/types.js";
 
 export interface FixtureSession<TValue, TTruth> {
   value: TValue;
@@ -20,54 +17,27 @@ export interface FixtureDefinition<
   TTruth,
   TContext = undefined,
 > extends AssuranceDescriptor {
-  setup(
-    context: TContext,
-  ): MaybePromise<FixtureSession<TValue, TTruth>>;
+  setup(context: TContext): MaybePromise<FixtureSession<TValue, TTruth>>;
 
-  teardown?(
-    session: FixtureSession<TValue, TTruth>,
-    context: TContext,
-  ): MaybePromise<void>;
+  teardown?(session: FixtureSession<TValue, TTruth>, context: TContext): MaybePromise<void>;
 }
 
-export function defineFixture<
-  TValue,
-  TTruth,
-  TContext = undefined,
->(
-  definition: FixtureDefinition<
-    TValue,
-    TTruth,
-    TContext
-  >,
+export function defineFixture<TValue, TTruth, TContext = undefined>(
+  definition: FixtureDefinition<TValue, TTruth, TContext>,
 ): FixtureDefinition<TValue, TTruth, TContext> {
   return definition;
 }
 
-export async function withFixture<
-  TValue,
-  TTruth,
-  TContext,
-  TResult,
->(
-  fixture: FixtureDefinition<
-    TValue,
-    TTruth,
-    TContext
-  >,
+export async function withFixture<TValue, TTruth, TContext, TResult>(
+  fixture: FixtureDefinition<TValue, TTruth, TContext>,
   context: TContext,
-  use: (
-    session: FixtureSession<TValue, TTruth>,
-  ) => MaybePromise<TResult>,
+  use: (session: FixtureSession<TValue, TTruth>) => MaybePromise<TResult>,
 ): Promise<TResult> {
   const session = await fixture.setup(context);
 
   try {
     return await use(session);
   } finally {
-    await fixture.teardown?.(
-      session,
-      context,
-    );
+    await fixture.teardown?.(session, context);
   }
 }

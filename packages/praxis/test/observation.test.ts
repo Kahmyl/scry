@@ -68,7 +68,13 @@ describe("Praxis observation and grounding foundation", () => {
     await page.setContent("<button>Save</button>");
     const epoch = await PraxisDocumentEpoch.current(page);
     const identity = await PraxisDocumentIdentity.current(page, page.mainFrame());
-    const handle = new PraxisTargetHandle(page, page.mainFrame(), page.locator("button"), epoch, identity);
+    const handle = new PraxisTargetHandle(
+      page,
+      page.mainFrame(),
+      page.locator("button"),
+      epoch,
+      identity,
+    );
     expect(JSON.stringify(handle)).not.toContain("locator");
     expect(JSON.stringify(handle)).not.toContain("button");
     await page.locator("body").evaluate((body) => body.append(document.createElement("span")));

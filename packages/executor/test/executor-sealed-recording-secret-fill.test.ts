@@ -34,9 +34,7 @@ it("continues a protected secret fill when video recording is already sealed", a
   }
 
   const origin = `http://127.0.0.1:${address.port}`;
-  const outputDirectory = await mkdtemp(
-    path.join(tmpdir(), "scry-sealed-recording-secret-fill-"),
-  );
+  const outputDirectory = await mkdtemp(path.join(tmpdir(), "scry-sealed-recording-secret-fill-"));
 
   try {
     const plan = currentPlanSchema.parse({

@@ -1,7 +1,4 @@
-import type {
-  AssuranceEvidenceRef,
-  AssuranceStatus,
-} from "./types.js";
+import type { AssuranceEvidenceRef, AssuranceStatus } from "./types.js";
 
 export interface VerificationObservation {
   status: Exclude<AssuranceStatus, "not_run">;
@@ -22,39 +19,24 @@ export function normalizeVerificationResult(
 ): VerificationResult {
   const evidence = [...(observation.evidence ?? [])];
 
-  if (
-    (observation.status === "pass" ||
-      observation.status === "fail") &&
-    evidence.length === 0
-  ) {
+  if ((observation.status === "pass" || observation.status === "fail") && evidence.length === 0) {
     return {
       status: "inconclusive",
       evidence,
-      reasonCode:
-        observation.status === "pass"
-          ? "PASS_WITHOUT_EVIDENCE"
-          : "FAIL_WITHOUT_EVIDENCE",
-      ...(observation.summary
-        ? { summary: observation.summary }
-        : {}),
+      reasonCode: observation.status === "pass" ? "PASS_WITHOUT_EVIDENCE" : "FAIL_WITHOUT_EVIDENCE",
+      ...(observation.summary ? { summary: observation.summary } : {}),
     };
   }
 
   return {
     status: observation.status,
     evidence,
-    ...(observation.summary
-      ? { summary: observation.summary }
-      : {}),
-    ...(observation.reasonCode
-      ? { reasonCode: observation.reasonCode }
-      : {}),
+    ...(observation.summary ? { summary: observation.summary } : {}),
+    ...(observation.reasonCode ? { reasonCode: observation.reasonCode } : {}),
   };
 }
 
-export function notRunResult(
-  reasonCode = "NOT_RUN",
-): VerificationResult {
+export function notRunResult(reasonCode = "NOT_RUN"): VerificationResult {
   return {
     status: "not_run",
     evidence: [],
@@ -73,7 +55,7 @@ export function aggregateRequiredStatuses(
     return "fail";
   }
 
-  if (statuses.every(status => status === "pass")) {
+  if (statuses.every((status) => status === "pass")) {
     return "pass";
   }
 

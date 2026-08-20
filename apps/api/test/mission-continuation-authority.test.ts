@@ -1,16 +1,11 @@
-import {
-  createMissionSchema,
-  startAgentSessionSchema,
-} from "@scry/contracts";
+import { createMissionSchema, startAgentSessionSchema } from "@scry/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { MissionService } from "../src/missions/mission.service.js";
 
-const projectId =
-  "11111111-1111-4111-8111-111111111111";
+const projectId = "11111111-1111-4111-8111-111111111111";
 
-const missionId =
-  "22222222-2222-4222-8222-222222222222";
+const missionId = "22222222-2222-4222-8222-222222222222";
 
 const principal = {
   kind: "service",
@@ -70,8 +65,7 @@ describe("Mission continuation authority", () => {
       provider: "codex",
       instructionSnapshot: "Perform related work.",
       idempotencyKey: "distinct-test-0001",
-      distinctReason:
-        "The user explicitly requested separate work.",
+      distinctReason: "The user explicitly requested separate work.",
     });
 
     expect(parsed.success).toBe(false);
@@ -84,8 +78,7 @@ describe("Mission continuation authority", () => {
       provider: "codex",
       instructionSnapshot: "Perform related work.",
       idempotencyKey: "distinct-test-0002",
-      distinctReason:
-        "The user explicitly requested separate work.",
+      distinctReason: "The user explicitly requested separate work.",
       distinctAuthority,
     });
 
@@ -115,23 +108,21 @@ describe("Mission continuation authority", () => {
     let code = "none";
 
     try {
-      await service.startSession(
-        principal as never,
-        missionId,
-        {
-          provider: "codex",
-          instructionSnapshot: "Silent resume",
-          idempotencyKey: "service-resume-test-0001",
-        } as never,
-      );
+      await service.startSession(principal as never, missionId, {
+        provider: "codex",
+        instructionSnapshot: "Silent resume",
+        idempotencyKey: "service-resume-test-0001",
+      } as never);
     } catch (error) {
       const response =
         typeof error === "object" &&
         error !== null &&
         "getResponse" in error &&
-        typeof (error as {
-          getResponse?: unknown;
-        }).getResponse === "function"
+        typeof (
+          error as {
+            getResponse?: unknown;
+          }
+        ).getResponse === "function"
           ? (
               error as {
                 getResponse(): unknown;
@@ -140,20 +131,18 @@ describe("Mission continuation authority", () => {
           : null;
 
       code =
-        typeof response === "object" &&
-        response !== null &&
-        "code" in response
+        typeof response === "object" && response !== null && "code" in response
           ? String(
-              (response as {
-                code: unknown;
-              }).code,
+              (
+                response as {
+                  code: unknown;
+                }
+              ).code,
             )
           : "unknown";
     }
 
-    expect(code).toBe(
-      "MISSION_CONTINUATION_AUTHORITY_REQUIRED",
-    );
+    expect(code).toBe("MISSION_CONTINUATION_AUTHORITY_REQUIRED");
 
     expect(transaction).not.toHaveBeenCalled();
   });
@@ -168,27 +157,24 @@ describe("Mission continuation authority", () => {
     let code = "none";
 
     try {
-      await service.create(
-        principal as never,
-        projectId,
-        {
-          title: "Related work",
-          originalInstruction: "Perform related work.",
-          provider: "codex",
-          instructionSnapshot: "Perform related work.",
-          idempotencyKey: "service-distinct-test-0001",
-          distinctReason:
-            "Agent invented a distinct reason.",
-        } as never,
-      );
+      await service.create(principal as never, projectId, {
+        title: "Related work",
+        originalInstruction: "Perform related work.",
+        provider: "codex",
+        instructionSnapshot: "Perform related work.",
+        idempotencyKey: "service-distinct-test-0001",
+        distinctReason: "Agent invented a distinct reason.",
+      } as never);
     } catch (error) {
       const response =
         typeof error === "object" &&
         error !== null &&
         "getResponse" in error &&
-        typeof (error as {
-          getResponse?: unknown;
-        }).getResponse === "function"
+        typeof (
+          error as {
+            getResponse?: unknown;
+          }
+        ).getResponse === "function"
           ? (
               error as {
                 getResponse(): unknown;
@@ -197,20 +183,18 @@ describe("Mission continuation authority", () => {
           : null;
 
       code =
-        typeof response === "object" &&
-        response !== null &&
-        "code" in response
+        typeof response === "object" && response !== null && "code" in response
           ? String(
-              (response as {
-                code: unknown;
-              }).code,
+              (
+                response as {
+                  code: unknown;
+                }
+              ).code,
             )
           : "unknown";
     }
 
-    expect(code).toBe(
-      "MISSION_DISTINCT_WORK_AUTHORITY_REQUIRED",
-    );
+    expect(code).toBe("MISSION_DISTINCT_WORK_AUTHORITY_REQUIRED");
 
     expect(transaction).not.toHaveBeenCalled();
   });

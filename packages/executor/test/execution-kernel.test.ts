@@ -388,21 +388,27 @@ describe("execution kernel admission", () => {
       browserContextId: "praxis-observation",
     });
     try {
-      await opened.page.setContent('<main><button>Account</button></main>');
+      await opened.page.setContent("<main><button>Account</button></main>");
       const outcome = await executeInteractionCompatibility({
-        sessionId: "session", operationId: "praxis-observation", page: opened.page,
+        sessionId: "session",
+        operationId: "praxis-observation",
+        page: opened.page,
         action: {
           type: "click",
           target: target("Account", "button", ["focusable", "pointer_activatable"]),
           expectedEffect: { type: "none" },
           timeoutMs: 1_000,
         },
-        ordinal: 1, policy,
+        ordinal: 1,
+        policy,
         options: { outputDirectory: "/tmp/unused" },
       });
 
       expect(outcome.resolvedTarget).toMatchObject({
-        version: 2, concept: "Account", scopeKind: "page", structuralPath: [],
+        version: 2,
+        concept: "Account",
+        scopeKind: "page",
+        structuralPath: [],
       });
       expect(outcome.mutationOutcome).toBe("applied");
       expect(JSON.stringify(outcome.resolvedTarget).length).toBeLessThan(500);
@@ -534,9 +540,7 @@ describe("execution kernel admission", () => {
     const manifest = createExecutionCapabilityManifest({ mode: "run", correlationId });
 
     const dispatch = vi.fn(
-      async (options: {
-        onPraxisResult?: (result: never) => Promise<void>;
-      }) => {
+      async (options: { onPraxisResult?: (result: never) => Promise<void> }) => {
         await options.onPraxisResult?.({
           status: "failed",
           code: "PRAXIS_INTERNAL_ERROR",
@@ -1325,9 +1329,7 @@ it("requires readiness before agent-directed final evidence on a reaction action
     policyViolations: [],
   }));
 
-  const kernel = new ExecutionKernel(
-    dispatch as never,
-  );
+  const kernel = new ExecutionKernel(dispatch as never);
 
   await kernel.interactWithReport({
     request: {
@@ -1360,10 +1362,7 @@ it("requires readiness before agent-directed final evidence on a reaction action
     } as never,
     action: {
       type: "click",
-      target: target("Developer", "button", [
-        "focusable",
-        "pointer_activatable",
-      ]),
+      target: target("Developer", "button", ["focusable", "pointer_activatable"]),
       expectedEffect: { type: "none" },
       dispatchSemantics: "read_only",
       timeoutMs: 30_000,
@@ -1393,8 +1392,7 @@ it("requires readiness before agent-directed final evidence on a reaction action
     >
   )[0]![0];
 
-  const step =
-    dispatchedOptions.plan.steps[0];
+  const step = dispatchedOptions.plan.steps[0];
 
   expect(step).toMatchObject({
     id: "kernel-interaction",
@@ -1403,9 +1401,7 @@ it("requires readiness before agent-directed final evidence on a reaction action
   });
 
   if (step?.after === undefined) {
-    throw new Error(
-      "AGENT_FINAL_EVIDENCE_READINESS_MISSING",
-    );
+    throw new Error("AGENT_FINAL_EVIDENCE_READINESS_MISSING");
   }
 
   expect(step.after).toEqual({

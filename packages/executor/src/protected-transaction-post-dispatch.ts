@@ -38,10 +38,13 @@ export async function reconcileProtectedMutation(
       return "succeeded";
     }
     const outcome = await runProtectedStage({
-      stage: "custom_reconciliation", timeoutMs: transaction.extraction.timeoutMs,
-      signal: dependencies.signal, timeoutCode: "PROTECTED_RECONCILIATION_TIMEOUT",
+      stage: "custom_reconciliation",
+      timeoutMs: transaction.extraction.timeoutMs,
+      signal: dependencies.signal,
+      timeoutCode: "PROTECTED_RECONCILIATION_TIMEOUT",
       dispatchPosition: "post_dispatch",
-      work: () => dependencies.reconcile?.(session, transaction) ?? Promise.resolve("unknown" as const),
+      work: () =>
+        dependencies.reconcile?.(session, transaction) ?? Promise.resolve("unknown" as const),
     });
     return outcome;
   } catch {
@@ -75,8 +78,10 @@ export async function continueAfterProtectedMutation(
       }
       if (strategy.mode === "recreate_clean_context" && dependencies.recreateCleanSession) {
         session = await runProtectedStage({
-          stage: "clean_session_recreation", timeoutMs: transaction.extraction.timeoutMs,
-          signal: dependencies.signal, timeoutCode: "PROTECTED_CLEAN_SESSION_RECREATION_TIMEOUT",
+          stage: "clean_session_recreation",
+          timeoutMs: transaction.extraction.timeoutMs,
+          signal: dependencies.signal,
+          timeoutCode: "PROTECTED_CLEAN_SESSION_RECREATION_TIMEOUT",
           dispatchPosition: "post_dispatch",
           work: () => dependencies.recreateCleanSession!(strategy.checkpointId),
         });
@@ -98,8 +103,10 @@ export async function continueAfterProtectedMutation(
       }
       if (strategy.mode === "reauthenticate" && dependencies.reauthenticate) {
         session = await runProtectedStage({
-          stage: "reauthentication", timeoutMs: transaction.extraction.timeoutMs,
-          signal: dependencies.signal, timeoutCode: "PROTECTED_REAUTHENTICATION_TIMEOUT",
+          stage: "reauthentication",
+          timeoutMs: transaction.extraction.timeoutMs,
+          signal: dependencies.signal,
+          timeoutCode: "PROTECTED_REAUTHENTICATION_TIMEOUT",
           dispatchPosition: "post_dispatch",
           work: () => dependencies.reauthenticate!(strategy.authenticationContractId),
         });

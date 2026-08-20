@@ -25,7 +25,9 @@ describe("adaptive campaign authority", () => {
     });
     try {
       for (const path of ["readonly-input", "text-output", "interrupted-acquisition"]) {
-        const page = await fetch(`${fixture.origin}/protected/${path}`).then((response) => response.text());
+        const page = await fetch(`${fixture.origin}/protected/${path}`).then((response) =>
+          response.text(),
+        );
         expect(page).toContain("Generate credential");
         expect(page).toContain("Client secret");
         await fetch(`${fixture.origin}/protected/dispatch?campaign=${path}`, { method: "POST" });

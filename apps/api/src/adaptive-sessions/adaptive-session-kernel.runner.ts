@@ -30,7 +30,7 @@ import {
   ExecutionKernelService,
   NativeBrowserDriver,
 } from "../runtime/index.js";
-import { AdaptiveSessionRepository } from "./adaptive-session.repository.js";
+import { AdaptiveSessionRepository } from "./repositories/adaptive-session.repository.js";
 import {
   bindProtectedInputDelivery,
   type ProtectedInputDeliveryBinding,
@@ -683,9 +683,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
             return {
               url: checkpointRestorePage.url(),
               title: semantic.authority.title,
-              controls: semantic.controls
-                .slice(0, 24)
-                .map(({ role, name }) => ({ role, name })),
+              controls: semantic.controls.slice(0, 24).map(({ role, name }) => ({ role, name })),
             };
           },
         });

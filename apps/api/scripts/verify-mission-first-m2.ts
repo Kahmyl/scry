@@ -9,9 +9,16 @@ const releaseId = required("SCRY_RELEASE_ID");
 const gitCommit = required("SCRY_GIT_COMMIT");
 const schemaFingerprint = required("SCRY_SCHEMA_FINGERPRINT");
 const runtimeVersion = required("SCRY_RUNTIME_VERSION");
-const runtimeConfigurationDigest = createHash("sha256").update(JSON.stringify({
-  releaseId, gitCommit, schemaFingerprint, runtimeVersion,
-})).digest("hex");
+const runtimeConfigurationDigest = createHash("sha256")
+  .update(
+    JSON.stringify({
+      releaseId,
+      gitCommit,
+      schemaFingerprint,
+      runtimeVersion,
+    }),
+  )
+  .digest("hex");
 const directory = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../../docs/runbooks/evidence/mission-first/m2",
@@ -28,7 +35,11 @@ for (const file of readdirSync(directory).filter((candidate) => candidate.endsWi
     failures.push(`M2_REPORT_SCHEMA_INVALID:${file}`);
     continue;
   }
-  reports.push({ file, report: parsed.data, mtimeMs: statSync(path.join(directory, file)).mtimeMs });
+  reports.push({
+    file,
+    report: parsed.data,
+    mtimeMs: statSync(path.join(directory, file)).mtimeMs,
+  });
 }
 
 const latest = new Map<string, (typeof reports)[number]>();
@@ -40,22 +51,32 @@ for (const candidate of reports) {
 
 for (const { file, report } of latest.values()) {
   const prefix = `M2_REPORT_INVALID:${file}`;
-  if (report.gitCommit !== gitCommit || report.schemaFingerprint !== schemaFingerprint ||
-      report.runtimeVersion !== runtimeVersion ||
-      report.runtimeConfigurationDigest !== runtimeConfigurationDigest)
+  if (
+    report.gitCommit !== gitCommit ||
+    report.schemaFingerprint !== schemaFingerprint ||
+    report.runtimeVersion !== runtimeVersion ||
+    report.runtimeConfigurationDigest !== runtimeConfigurationDigest
+  )
     failures.push(`${prefix}:RUNTIME_IDENTITY`);
   if (report.verdict !== "pass" || report.requiredChecks.some((check) => check.status !== "passed"))
     failures.push(`${prefix}:REQUIRED_CHECK`);
-  if (report.cleanup.required && report.cleanup.state !== "completed") failures.push(`${prefix}:CLEANUP`);
+  if (report.cleanup.required && report.cleanup.state !== "completed")
+    failures.push(`${prefix}:CLEANUP`);
   if (report.privacyScan.leakedCanaryCount !== 0 || report.privacyScan.checkedByteCount <= 0)
     failures.push(`${prefix}:PRIVACY`);
-  if (report.objectiveIds.length < 3 || report.flowIds.length < 3 ||
-      new Set(report.flowIds).size !== report.flowIds.length)
+  if (
+    report.objectiveIds.length < 3 ||
+    report.flowIds.length < 3 ||
+    new Set(report.flowIds).size !== report.flowIds.length
+  )
     failures.push(`${prefix}:MISSION_FLOW_COUNT`);
   if (report.resolution.nativeResolved <= 0 || report.resolution.praxisFallbacks !== 0)
     failures.push(`${prefix}:NATIVE_ONLY`);
-  if (report.reductions.decisionBoundary < 0.7 || report.reductions.mcpCalls < 0.7 ||
-      report.reductions.agentBytes < 0.6)
+  if (
+    report.reductions.decisionBoundary < 0.7 ||
+    report.reductions.mcpCalls < 0.7 ||
+    report.reductions.agentBytes < 0.6
+  )
     failures.push(`${prefix}:REDUCTION_GATE`);
   if (report.calls.repeatedStateReads !== 0 || report.calls.mcp > 4)
     failures.push(`${prefix}:CALL_BUDGET`);
@@ -106,7 +127,8 @@ process.stdout.write(
 function requirePassing(target: string, repetition: 1 | 2 | 3) {
   const candidate = latest.get(`${target}:r${repetition}`);
   if (!candidate) failures.push(`M2_REPORT_REQUIRED:${target}:r${repetition}`);
-  else if (candidate.report.verdict !== "pass") failures.push(`M2_REPORT_NOT_PASSING:${target}:r${repetition}`);
+  else if (candidate.report.verdict !== "pass")
+    failures.push(`M2_REPORT_NOT_PASSING:${target}:r${repetition}`);
 }
 
 function required(name: string) {

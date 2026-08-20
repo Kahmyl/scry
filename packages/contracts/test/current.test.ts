@@ -393,20 +393,40 @@ describe("current plan contract", () => {
     const action = transactionAction({
       inputs: { active: { classification: "public", value: true } },
       preparation: {
-        actions: [{ type: "checkPublicInput", input: "active", target: checkbox, effect: "replayable_setup" }],
+        actions: [
+          {
+            type: "checkPublicInput",
+            input: "active",
+            target: checkbox,
+            effect: "replayable_setup",
+          },
+        ],
         assertions: [
           { type: "checkedMatchesInput", target: checkbox, input: "active" },
           { type: "enabled", target: intent("Issue", "button") },
         ],
       },
     });
-    expect(currentPlanSchema.safeParse({ ...base, steps: [{ id: "issue", title: "Issue", action }] }).success).toBe(true);
+    expect(
+      currentPlanSchema.safeParse({ ...base, steps: [{ id: "issue", title: "Issue", action }] })
+        .success,
+    ).toBe(true);
     const invalid = structuredClone(action) as any;
     invalid.inputs.active.value = "true";
-    expect(currentPlanSchema.safeParse({ ...base, steps: [{ id: "issue", title: "Issue", action: invalid }] }).success).toBe(false);
+    expect(
+      currentPlanSchema.safeParse({
+        ...base,
+        steps: [{ id: "issue", title: "Issue", action: invalid }],
+      }).success,
+    ).toBe(false);
     const wrongCapability = structuredClone(action) as any;
     wrongCapability.preparation.assertions[0].target.requiredCapabilities = ["readable_value"];
-    expect(currentPlanSchema.safeParse({ ...base, steps: [{ id: "issue", title: "Issue", action: wrongCapability }] }).success).toBe(false);
+    expect(
+      currentPlanSchema.safeParse({
+        ...base,
+        steps: [{ id: "issue", title: "Issue", action: wrongCapability }],
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts one deterministic checkpoint and rejects reuse of skipped output", () => {

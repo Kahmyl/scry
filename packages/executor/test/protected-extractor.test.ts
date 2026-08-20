@@ -49,7 +49,9 @@ describe("protected semantic extraction", () => {
       await page.setContent(`<dl><dt>Client ID</dt><dd>definition-client-id</dd></dl>`);
       expect((await acquireValue(page, acquisition, 500)).value).toBe("definition-client-id");
 
-      await page.setContent(`<dl><dt>Client ID</dt><dd></dd></dl><script>setTimeout(() => document.querySelector('dd').textContent = 'delayed-client-id', 100)</script>`);
+      await page.setContent(
+        `<dl><dt>Client ID</dt><dd></dd></dl><script>setTimeout(() => document.querySelector('dd').textContent = 'delayed-client-id', 100)</script>`,
+      );
       expect((await acquireValue(page, acquisition, 800)).value).toBe("delayed-client-id");
     } finally {
       await browser.close();
@@ -90,13 +92,21 @@ describe("protected semantic extraction", () => {
       await page.setContent(`<span aria-label="Client secret">Client secret</span>`);
       const labelOnly = await acquireValue(page, acquisition, 150);
       expect(labelOnly.value).toBeUndefined();
-      expect(labelOnly.diagnostics.some((item) => item.lastFailureCode === "VALUE_MATCHES_SEMANTIC_IDENTITY")).toBe(true);
+      expect(
+        labelOnly.diagnostics.some(
+          (item) => item.lastFailureCode === "VALUE_MATCHES_SEMANTIC_IDENTITY",
+        ),
+      ).toBe(true);
 
-      await page.setContent(`<output aria-label="Client secret" hidden>hidden-decoy</output><output aria-label="Client secret">visible-secret</output>`);
+      await page.setContent(
+        `<output aria-label="Client secret" hidden>hidden-decoy</output><output aria-label="Client secret">visible-secret</output>`,
+      );
       const visible = await acquireValue(page, acquisition, 500);
       expect(visible.value, JSON.stringify(visible.diagnostics)).toBe("visible-secret");
 
-      await page.setContent(`<dl><dt>Client secret</dt><dd>secret-one</dd><dt>Client secret</dt><dd>secret-two</dd></dl>`);
+      await page.setContent(
+        `<dl><dt>Client secret</dt><dd>secret-one</dd><dt>Client secret</dt><dd>secret-two</dd></dl>`,
+      );
       const duplicate = await acquireValue(page, acquisition, 150);
       expect(duplicate.value).toBeUndefined();
       expect(JSON.stringify(duplicate.diagnostics)).not.toContain("secret-one");

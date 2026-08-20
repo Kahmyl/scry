@@ -9,12 +9,8 @@
   "target": "xyz_bank",
   "repetition": 1,
   "missionId": "5e8a01b0-7141-41aa-82a2-1a71240913f4",
-  "objectiveIds": [
-    "cdce7078-8c36-40aa-9a58-0e0961f92895"
-  ],
-  "flowIds": [
-    "89c2733c-9c1e-4ff9-b1d7-0da7df0b8fa9"
-  ],
+  "objectiveIds": ["cdce7078-8c36-40aa-9a58-0e0961f92895"],
+  "flowIds": ["89c2733c-9c1e-4ff9-b1d7-0da7df0b8fa9"],
   "runIds": [],
   "correlationId": "09718d08-a041-4e11-950e-233e46071004",
   "boundaryUnderTest": "Mission-owned native authentication with protected references and zero Praxis calls",
@@ -106,9 +102,7 @@
       "p50Ms": 11.649499999999989,
       "p95Ms": 11.649499999999989,
       "maxMs": 11.649499999999989,
-      "slowestOperationIds": [
-        "api"
-      ]
+      "slowestOperationIds": ["api"]
     },
     "artifact_retrieval": {
       "count": 1,
@@ -122,27 +116,21 @@
       "p50Ms": 2617.478,
       "p95Ms": 2617.478,
       "maxMs": 2617.478,
-      "slowestOperationIds": [
-        "xyz_bank-navigate"
-      ]
+      "slowestOperationIds": ["xyz_bank-navigate"]
     },
     "database": {
       "count": 1,
       "p50Ms": 7.8516669999999635,
       "p95Ms": 7.8516669999999635,
       "maxMs": 7.8516669999999635,
-      "slowestOperationIds": [
-        "database"
-      ]
+      "slowestOperationIds": ["database"]
     },
     "document_observation": {
       "count": 1,
       "p50Ms": 2617.478,
       "p95Ms": 2617.478,
       "maxMs": 2617.478,
-      "slowestOperationIds": [
-        "xyz_bank-navigate"
-      ]
+      "slowestOperationIds": ["xyz_bank-navigate"]
     },
     "evidence_finalization": {
       "count": 1,
@@ -180,64 +168,49 @@
       "p50Ms": 12858.226708,
       "p95Ms": 12858.226708,
       "maxMs": 12858.226708,
-      "slowestOperationIds": [
-        "mcp-09718d08-a041-4e11-950e-233e46071004-2"
-      ]
+      "slowestOperationIds": ["mcp-09718d08-a041-4e11-950e-233e46071004-2"]
     },
     "mcp_session_start_round_trip": {
       "count": 1,
       "p50Ms": 45.97612499999997,
       "p95Ms": 45.97612499999997,
       "maxMs": 45.97612499999997,
-      "slowestOperationIds": [
-        "mcp-09718d08-a041-4e11-950e-233e46071004-1"
-      ]
+      "slowestOperationIds": ["mcp-09718d08-a041-4e11-950e-233e46071004-1"]
     },
     "native_resolution": {
       "count": 2,
       "p50Ms": 23.86474999994971,
       "p95Ms": 10090.676254000049,
       "maxMs": 10090.676254000049,
-      "slowestOperationIds": [
-        "xyz_bank-success",
-        "xyz_bank-customer-login"
-      ]
+      "slowestOperationIds": ["xyz_bank-success", "xyz_bank-customer-login"]
     },
     "praxis_grounding": {
       "count": 1,
       "p50Ms": 31.238209000090137,
       "p95Ms": 31.238209000090137,
       "maxMs": 31.238209000090137,
-      "slowestOperationIds": [
-        "xyz_bank-success"
-      ]
+      "slowestOperationIds": ["xyz_bank-success"]
     },
     "queue_wait": {
       "count": 1,
       "p50Ms": 0,
       "p95Ms": 0,
       "maxMs": 0,
-      "slowestOperationIds": [
-        "09718d08-a041-4e11-950e-233e46071004"
-      ]
+      "slowestOperationIds": ["09718d08-a041-4e11-950e-233e46071004"]
     },
     "redis": {
       "count": 1,
       "p50Ms": 3.8484169999999835,
       "p95Ms": 3.8484169999999835,
       "maxMs": 3.8484169999999835,
-      "slowestOperationIds": [
-        "redis"
-      ]
+      "slowestOperationIds": ["redis"]
     },
     "worker": {
       "count": 1,
       "p50Ms": 8.388708000000008,
       "p95Ms": 8.388708000000008,
       "maxMs": 8.388708000000008,
-      "slowestOperationIds": [
-        "worker"
-      ]
+      "slowestOperationIds": ["worker"]
     }
   },
   "privacyScan": {

@@ -32,60 +32,43 @@ export interface ChronicleSink {
   append(event: ChronicleEvent): Promise<void>;
 }
 
-export function chronicleEvent(
-  event: ChronicleEvent,
-): ChronicleEvent {
+export function chronicleEvent(event: ChronicleEvent): ChronicleEvent {
   const type = event.type.trim();
 
   if (!type) {
-    throw new Error(
-      "CHRONICLE_EVENT_TYPE_REQUIRED",
-    );
+    throw new Error("CHRONICLE_EVENT_TYPE_REQUIRED");
   }
 
-  const timestamp =
-    new Date(event.occurredAt);
+  const timestamp = new Date(event.occurredAt);
 
-  if (
-    Number.isNaN(
-      timestamp.getTime(),
-    )
-  ) {
-    throw new Error(
-      "CHRONICLE_EVENT_TIME_INVALID",
-    );
+  if (Number.isNaN(timestamp.getTime())) {
+    throw new Error("CHRONICLE_EVENT_TIME_INVALID");
   }
 
   return Object.freeze({
     type,
 
-    occurredAt:
-      event.occurredAt,
+    occurredAt: event.occurredAt,
 
     ...(event.correlation
       ? {
-          correlation:
-            Object.freeze({
-              ...event.correlation,
-            }),
+          correlation: Object.freeze({
+            ...event.correlation,
+          }),
         }
       : {}),
 
     ...(event.payload
       ? {
-          payload:
-            Object.freeze({
-              ...event.payload,
-            }),
+          payload: Object.freeze({
+            ...event.payload,
+          }),
         }
       : {}),
 
     ...(event.artifactRefs
       ? {
-          artifactRefs:
-            Object.freeze([
-              ...event.artifactRefs,
-            ]),
+          artifactRefs: Object.freeze([...event.artifactRefs]),
         }
       : {}),
   });

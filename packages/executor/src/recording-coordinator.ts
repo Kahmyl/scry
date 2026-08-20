@@ -218,10 +218,7 @@ export class RecordingCoordinator {
         const transition = this.openDocumentTransition;
         this.openDocumentTransition = undefined;
         this.timelineEntries.push(
-          this.unavailable(
-            transition.startedAt,
-            "DOCUMENT_TRANSITION_PAGE_UNAVAILABLE",
-          ),
+          this.unavailable(transition.startedAt, "DOCUMENT_TRANSITION_PAGE_UNAVAILABLE"),
         );
         await this.sealUnsafe("DOCUMENT_TRANSITION_PAGE_UNAVAILABLE");
         throw new Error("DOCUMENT_TRANSITION_PAGE_UNAVAILABLE");
@@ -290,10 +287,7 @@ export class RecordingCoordinator {
         const transition = this.openDocumentTransition;
         this.openDocumentTransition = undefined;
         this.timelineEntries.push(
-          this.unavailable(
-            transition.startedAt,
-            "DOCUMENT_TRANSITION_INCOMPLETE",
-          ),
+          this.unavailable(transition.startedAt, "DOCUMENT_TRANSITION_INCOMPLETE"),
         );
         await this.sealUnsafe("DOCUMENT_TRANSITION_INCOMPLETE");
       }

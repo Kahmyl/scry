@@ -8,16 +8,12 @@ const enabled = process.env.SCRY_VITRACT_PREVIEW_E2E === "true";
 const workspaceRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
 
 describe.skipIf(!enabled)("Vitract Preview adaptive-authoring acceptance", () => {
-  it(
-    "runs protected login and read-only Developer inspection through Scry",
-    async () => {
-      const result = await runCampaign();
-      expect(result.exitCode, result.output).toBe(0);
-      expect(result.output).toContain('"verdict":"pass"');
-      expect(result.output).not.toMatch(/password|access[_-]?token|client[_-]?secret/i);
-    },
-    180_000,
-  );
+  it("runs protected login and read-only Developer inspection through Scry", async () => {
+    const result = await runCampaign();
+    expect(result.exitCode, result.output).toBe(0);
+    expect(result.output).toContain('"verdict":"pass"');
+    expect(result.output).not.toMatch(/password|access[_-]?token|client[_-]?secret/i);
+  }, 180_000);
 });
 
 function runCampaign(): Promise<{ exitCode: number; output: string }> {

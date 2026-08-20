@@ -904,7 +904,9 @@ describe("current Scry MCP surface", () => {
       vi.fn().mockImplementation((input: string | URL | Request) => {
         const path = new URL(String(input)).pathname;
         if (path.endsWith("/capabilities"))
-          return Promise.resolve(new Response(JSON.stringify(admittedCapabilities), { status: 200 }));
+          return Promise.resolve(
+            new Response(JSON.stringify(admittedCapabilities), { status: 200 }),
+          );
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -943,12 +945,14 @@ describe("current Scry MCP surface", () => {
                 reference: `context-control-${"a".repeat(32)}`,
               },
             },
-            outputs: [{
-              reference: "client-secret",
-              classification: "protected",
-              target: { concept: "client secret", role: "textbox" },
-              storageName: "Client secret",
-            }],
+            outputs: [
+              {
+                reference: "client-secret",
+                classification: "protected",
+                target: { concept: "client secret", role: "textbox" },
+                storageName: "Client secret",
+              },
+            ],
           },
           expectedEffect: { kind: "none" },
           constraints: { timeoutMs: 30_000, allowNewPage: false, allowNonExact: false },

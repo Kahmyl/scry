@@ -13,38 +13,26 @@ import {
   registerPraxisVeilAuthority,
 } from "@scry/praxis";
 
-import {
-  compileVeilPolicy,
-  VeilAuthority,
-} from "@scry/veil";
+import { compileVeilPolicy, VeilAuthority } from "@scry/veil";
 
-import type {
-  Browser,
-  BrowserContext,
-  Page,
-} from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 
-import { AdaptiveSessionRepository } from "../../src/adaptive-sessions/adaptive-session.repository.js";
+import { AdaptiveSessionRepository } from "../../src/adaptive-sessions/repositories/adaptive-session.repository.js";
 import { Database } from "../../src/infrastructure/database.js";
 import { NativeBrowserDriver } from "../../src/runtime/native-browser-driver/native-browser-driver.js";
 
 const LOGIN_URL = "https://preview.vitract.com/login";
 
-const SESSION_ID =
-  process.env.SCRY_LIVE_SESSION_ID ??
-  "0197cbc4-9560-43f7-8c47-3f69a11de8d2";
+const SESSION_ID = process.env.SCRY_LIVE_SESSION_ID ?? "0197cbc4-9560-43f7-8c47-3f69a11de8d2";
 
 const ENVIRONMENT_ID =
-  process.env.SCRY_LIVE_ENVIRONMENT_ID ??
-  "faca3dad-9ff7-4633-b058-1239d0aefb65";
+  process.env.SCRY_LIVE_ENVIRONMENT_ID ?? "faca3dad-9ff7-4633-b058-1239d0aefb65";
 
 const EMAIL_REFERENCE =
-  process.env.SCRY_LIVE_EMAIL_REFERENCE ??
-  "950c756d-c595-4f09-9f05-d64ceeab5cf9";
+  process.env.SCRY_LIVE_EMAIL_REFERENCE ?? "950c756d-c595-4f09-9f05-d64ceeab5cf9";
 
 const PASSWORD_REFERENCE =
-  process.env.SCRY_LIVE_PASSWORD_REFERENCE ??
-  "ecc3f126-9a68-4994-9869-dc63a987786c";
+  process.env.SCRY_LIVE_PASSWORD_REFERENCE ?? "ecc3f126-9a68-4994-9869-dc63a987786c";
 
 const TIMEOUT_MS = 20_000;
 
@@ -173,27 +161,19 @@ try {
     [SESSION_ID],
   );
 
-  if (fixture.rowCount !== 1)
-    throw coded("LAYER_B_SESSION_UNAVAILABLE");
+  if (fixture.rowCount !== 1) throw coded("LAYER_B_SESSION_UNAVAILABLE");
 
   const row = fixture.rows[0]!;
 
-  if (row.environmentId !== ENVIRONMENT_ID)
-    throw coded("LAYER_B_ENVIRONMENT_MISMATCH");
+  if (row.environmentId !== ENVIRONMENT_ID) throw coded("LAYER_B_ENVIRONMENT_MISMATCH");
 
-  output.sessionProtectedAllowlist =
-    [...row.protectedAllowlist];
+  output.sessionProtectedAllowlist = [...row.protectedAllowlist];
 
-  output.emailEnvironmentAuthorized =
-    row.secretRefs.includes(EMAIL_REFERENCE);
+  output.emailEnvironmentAuthorized = row.secretRefs.includes(EMAIL_REFERENCE);
 
-  output.passwordEnvironmentAuthorized =
-    row.secretRefs.includes(PASSWORD_REFERENCE);
+  output.passwordEnvironmentAuthorized = row.secretRefs.includes(PASSWORD_REFERENCE);
 
-  if (
-    !output.emailEnvironmentAuthorized ||
-    !output.passwordEnvironmentAuthorized
-  )
+  if (!output.emailEnvironmentAuthorized || !output.passwordEnvironmentAuthorized)
     throw coded("LAYER_B_ENVIRONMENT_AUTHORIZATION_MISSING");
 
   if (
@@ -249,17 +229,13 @@ try {
       control.inputSources?.includes("protected_reference"),
   );
 
-  if (emailControls.length !== 1)
-    throw coded("LAYER_B_EMAIL_REFERENCE_NOT_UNIQUE");
+  if (emailControls.length !== 1) throw coded("LAYER_B_EMAIL_REFERENCE_NOT_UNIQUE");
 
-  if (passwordControls.length !== 1)
-    throw coded("LAYER_B_PASSWORD_REFERENCE_NOT_UNIQUE");
+  if (passwordControls.length !== 1) throw coded("LAYER_B_PASSWORD_REFERENCE_NOT_UNIQUE");
 
-  const emailTargetReference =
-    emailControls[0]!.reference;
+  const emailTargetReference = emailControls[0]!.reference;
 
-  const passwordTargetReference =
-    passwordControls[0]!.reference;
+  const passwordTargetReference = passwordControls[0]!.reference;
 
   output.emailReferenceObserved = true;
   output.passwordReferenceObserved = true;
@@ -287,46 +263,23 @@ try {
 
   output.failureStage = "ADMISSION_EMAIL";
 
-  output.admissionResults.push(
-    await observeAdmission(
-      sessions,
-      "email",
-      emailIntent,
-    ),
-  );
+  output.admissionResults.push(await observeAdmission(sessions, "email", emailIntent));
 
   output.failureStage = "ADMISSION_PASSWORD";
 
-  output.admissionResults.push(
-    await observeAdmission(
-      sessions,
-      "password",
-      passwordIntent,
-    ),
-  );
+  output.admissionResults.push(await observeAdmission(sessions, "password", passwordIntent));
 
   const resolveKnownSecret = async (
     reference: string,
-    classification:
-      | "public"
-      | "known_secret"
-      | "captured_secret"
-      | "captured_public",
+    classification: "public" | "known_secret" | "captured_secret" | "captured_public",
   ) => {
-    if (classification !== "known_secret")
-      throw coded("LAYER_B_UNEXPECTED_CLASSIFICATION");
+    if (classification !== "known_secret") throw coded("LAYER_B_UNEXPECTED_CLASSIFICATION");
 
-    if (reference === EMAIL_REFERENCE)
-      output.resolverCalls.push("login_email");
-    else if (reference === PASSWORD_REFERENCE)
-      output.resolverCalls.push("login_password");
-    else
-      throw coded("LAYER_B_UNEXPECTED_PROTECTED_REFERENCE");
+    if (reference === EMAIL_REFERENCE) output.resolverCalls.push("login_email");
+    else if (reference === PASSWORD_REFERENCE) output.resolverCalls.push("login_password");
+    else throw coded("LAYER_B_UNEXPECTED_PROTECTED_REFERENCE");
 
-    return sessions.resolveCredential(
-      SESSION_ID,
-      reference,
-    );
+    return sessions.resolveCredential(SESSION_ID, reference);
   };
 
   output.failureStage = "DIRECT_PRAXIS_EMAIL";
@@ -388,9 +341,7 @@ try {
     output.admissionResults.length === 2 &&
     output.admissionResults.every(
       (result) =>
-        !result.admitted &&
-        result.code ===
-          "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+        !result.admitted && result.code === "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
     );
 
   const praxisSucceeded =
@@ -402,43 +353,30 @@ try {
         result.localVerification === "passed",
     );
 
-  output.contradictionProven =
-    admissionRejectedCorrectly &&
-    praxisSucceeded;
+  output.contradictionProven = admissionRejectedCorrectly && praxisSucceeded;
 
-  if (!output.contradictionProven)
-    throw coded("LAYER_B_CONTRADICTION_NOT_PROVEN");
+  if (!output.contradictionProven) throw coded("LAYER_B_CONTRADICTION_NOT_PROVEN");
 
   output.failureStage = "none";
   output.failureCode = "none";
 
-  output.result =
-    "LIVE_PROTECTED_ADMISSION_CONTRADICTION_PROVEN";
+  output.result = "LIVE_PROTECTED_ADMISSION_CONTRADICTION_PROVEN";
 } catch (error) {
   output.failureCode = safeCode(error);
 
-  if (page)
-    recordSafeLocation(page);
+  if (page) recordSafeLocation(page);
 } finally {
-  output.elapsedMs =
-    Math.round(performance.now() - startedAt);
+  output.elapsedMs = Math.round(performance.now() - startedAt);
 
   unregisterVeil?.();
 
-  if (browser && context)
-    await driver
-      .closeBrowser(browser, context)
-      .catch(() => undefined);
+  if (browser && context) await driver.closeBrowser(browser, context).catch(() => undefined);
 
   await database.onModuleDestroy();
 
   printOutput(output);
 
-  process.exitCode =
-    output.result ===
-    "LIVE_PROTECTED_ADMISSION_CONTRADICTION_PROVEN"
-      ? 0
-      : 1;
+  process.exitCode = output.result === "LIVE_PROTECTED_ADMISSION_CONTRADICTION_PROVEN" ? 0 : 1;
 }
 
 async function observeAdmission(
@@ -488,14 +426,11 @@ function protectedFillIntent(input: {
         concept: input.concept,
         reference: input.targetReference,
         role: input.role,
-        ...(input.placeholder
-          ? { placeholder: input.placeholder }
-          : {}),
+        ...(input.placeholder ? { placeholder: input.placeholder } : {}),
         exact: true,
       },
 
-      protectedReferenceId:
-        input.credentialReference,
+      protectedReferenceId: input.credentialReference,
     },
 
     expectedEffect: {
@@ -512,9 +447,7 @@ function protectedFillIntent(input: {
       kind: "authentication",
     },
 
-    protectedInputReferences: [
-      input.credentialReference,
-    ],
+    protectedInputReferences: [input.credentialReference],
   });
 }
 
@@ -528,20 +461,14 @@ function praxisTarget(input: {
 
     authoritativeReference: input.reference,
 
-    requiredCapabilities: [
-      "focusable",
-      "accepts_text",
-      "editable",
-    ],
+    requiredCapabilities: ["focusable", "accepts_text", "editable"],
 
     preferredEvidence: {
       roles: ["textbox"],
       names: [],
       labels: [],
       descriptions: [],
-      placeholders: input.placeholder
-        ? [input.placeholder]
-        : [],
+      placeholders: input.placeholder ? [input.placeholder] : [],
       inputTypes: [],
     },
 
@@ -549,10 +476,7 @@ function praxisTarget(input: {
 
     relations: [],
 
-    prohibited: [
-      "hidden",
-      "disabled",
-    ],
+    prohibited: ["hidden", "disabled"],
 
     risk: "authentication",
 
@@ -564,9 +488,7 @@ function praxisTarget(input: {
   };
 }
 
-function praxisContext(
-  policy: ExecutionPolicy,
-) {
+function praxisContext(policy: ExecutionPolicy) {
   return {
     channel: "protected" as const,
     ordinal: ++ordinal,
@@ -576,53 +498,31 @@ function praxisContext(
 
     privacy: {
       state: "protected",
-      allowedChannels: [
-        "public_dom",
-        "accessibility",
-      ],
-      suppressedChannels: [
-        "visual",
-        "ocr",
-      ],
+      allowedChannels: ["public_dom", "accessibility"],
+      suppressedChannels: ["visual", "ocr"],
     },
 
     beforeMutation: async () => undefined,
   };
 }
 
-async function waitForLoginControls(
-  activePage: Page,
-) {
+async function waitForLoginControls(activePage: Page) {
   const startedAt = performance.now();
 
   while (true) {
-    const observation =
-      await observeSemanticPageContext(activePage);
+    const observation = await observeSemanticPageContext(activePage);
 
-    const hasEmail =
-      observation.controls.some(
-        (control) =>
-          control.role === "textbox" &&
-          /email/i.test(control.name),
-      );
+    const hasEmail = observation.controls.some(
+      (control) => control.role === "textbox" && /email/i.test(control.name),
+    );
 
-    const hasPassword =
-      observation.controls.some(
-        (control) =>
-          control.role === "textbox" &&
-          control.semanticPurpose === "password",
-      );
+    const hasPassword = observation.controls.some(
+      (control) => control.role === "textbox" && control.semanticPurpose === "password",
+    );
 
-    if (hasEmail && hasPassword)
-      return observation;
+    if (hasEmail && hasPassword) return observation;
 
-    if (
-      performance.now() - startedAt >
-      15_000
-    )
-      throw coded(
-        "LAYER_B_LOGIN_CONTROLS_TIMEOUT",
-      );
+    if (performance.now() - startedAt > 15_000) throw coded("LAYER_B_LOGIN_CONTROLS_TIMEOUT");
 
     await activePage.waitForTimeout(250);
   }
@@ -633,23 +533,15 @@ function summarizePraxis(
   result: PraxisResult,
 ): DirectPraxisResult {
   const verification =
-    result.status === "succeeded"
-      ? result.verification
-      : result.report.verification;
+    result.status === "succeeded" ? result.verification : result.report.verification;
 
   return {
     credential,
     status: result.status,
-    code:
-      result.status === "succeeded"
-        ? "none"
-        : result.code,
-    mutationOutcome:
-      result.mutationOutcome,
-    localVerification:
-      verification.local,
-    durationMs:
-      Math.round(result.timing.totalMs),
+    code: result.status === "succeeded" ? "none" : result.code,
+    mutationOutcome: result.mutationOutcome,
+    localVerification: verification.local,
+    durationMs: Math.round(result.timing.totalMs),
   };
 }
 
@@ -658,24 +550,27 @@ function nestCode(error: unknown) {
     typeof error === "object" &&
     error !== null &&
     "getResponse" in error &&
-    typeof (error as {
-      getResponse?: unknown;
-    }).getResponse === "function"
+    typeof (
+      error as {
+        getResponse?: unknown;
+      }
+    ).getResponse === "function"
   ) {
-    const response =
-      (
-        error as {
-          getResponse(): unknown;
-        }
-      ).getResponse();
+    const response = (
+      error as {
+        getResponse(): unknown;
+      }
+    ).getResponse();
 
     if (
       typeof response === "object" &&
       response !== null &&
       "code" in response &&
-      typeof (response as {
-        code?: unknown;
-      }).code === "string"
+      typeof (
+        response as {
+          code?: unknown;
+        }
+      ).code === "string"
     )
       return (
         response as {
@@ -687,32 +582,22 @@ function nestCode(error: unknown) {
   return safeCode(error);
 }
 
-function recordSafeLocation(
-  activePage: Page,
-) {
+function recordSafeLocation(activePage: Page) {
   try {
-    const location =
-      new URL(activePage.url());
+    const location = new URL(activePage.url());
 
-    output.finalOrigin =
-      location.origin;
+    output.finalOrigin = location.origin;
 
-    output.finalPath =
-      location.pathname;
+    output.finalPath = location.pathname;
   } catch {
-    output.finalOrigin =
-      "unavailable";
+    output.finalOrigin = "unavailable";
 
-    output.finalPath =
-      "unavailable";
+    output.finalPath = "unavailable";
   }
 }
 
 function coded(code: string) {
-  return Object.assign(
-    new Error(code),
-    { code },
-  );
+  return Object.assign(new Error(code), { code });
 }
 
 function safeCode(error: unknown) {
@@ -720,9 +605,11 @@ function safeCode(error: unknown) {
     typeof error === "object" &&
     error !== null &&
     "code" in error &&
-    typeof (error as {
-      code?: unknown;
-    }).code === "string"
+    typeof (
+      error as {
+        code?: unknown;
+      }
+    ).code === "string"
       ? (
           error as {
             code: string;
@@ -732,14 +619,10 @@ function safeCode(error: unknown) {
         ? error.message
         : String(error);
 
-  return /^[A-Z][A-Z0-9_]*$/.test(candidate)
-    ? candidate
-    : "LAYER_B_UNCLASSIFIED_FAILURE";
+  return /^[A-Z][A-Z0-9_]*$/.test(candidate) ? candidate : "LAYER_B_UNCLASSIFIED_FAILURE";
 }
 
-function printOutput(
-  value: Output,
-) {
+function printOutput(value: Output) {
   process.stdout.write(
     [
       "============================================================",
@@ -756,9 +639,7 @@ function printOutput(
       `failureStage: ${value.failureStage}`,
       `failureCode: ${value.failureCode}`,
 
-      `sessionProtectedAllowlist: ${JSON.stringify(
-        value.sessionProtectedAllowlist,
-      )}`,
+      `sessionProtectedAllowlist: ${JSON.stringify(value.sessionProtectedAllowlist)}`,
 
       `emailEnvironmentAuthorized: ${value.emailEnvironmentAuthorized}`,
       `passwordEnvironmentAuthorized: ${value.passwordEnvironmentAuthorized}`,
@@ -766,17 +647,11 @@ function printOutput(
       `emailReferenceObserved: ${value.emailReferenceObserved}`,
       `passwordReferenceObserved: ${value.passwordReferenceObserved}`,
 
-      `admissionResults: ${JSON.stringify(
-        value.admissionResults,
-      )}`,
+      `admissionResults: ${JSON.stringify(value.admissionResults)}`,
 
-      `praxisResults: ${JSON.stringify(
-        value.praxisResults,
-      )}`,
+      `praxisResults: ${JSON.stringify(value.praxisResults)}`,
 
-      `resolverCalls: ${JSON.stringify(
-        value.resolverCalls,
-      )}`,
+      `resolverCalls: ${JSON.stringify(value.resolverCalls)}`,
 
       `contradictionProven: ${value.contradictionProven}`,
 

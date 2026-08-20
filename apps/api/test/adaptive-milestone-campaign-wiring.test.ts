@@ -15,17 +15,19 @@ describe("adaptive milestone campaign wiring", () => {
   );
 
   it("keeps database-backed M3 and M4 checks mandatory", () => {
-    expect(milestoneCommands("M3").find((command) => command.id === "m3-durable-repository"))
-      .toMatchObject({ requiredEnvironment: ["SCRY_AUTHORING_TEST_DATABASE_URL"] });
+    expect(
+      milestoneCommands("M3").find((command) => command.id === "m3-durable-repository"),
+    ).toMatchObject({ requiredEnvironment: ["SCRY_AUTHORING_TEST_DATABASE_URL"] });
     expect(
       milestoneCommands("M4").find((command) => command.id === "m4-certification-publication"),
     ).toMatchObject({ requiredEnvironment: ["SCRY_AUTHORING_TEST_DATABASE_URL"] });
   });
 
   it("keeps the strict corpus gate unconditional for M5", () => {
-    expect(milestoneCommands("M5").find((command) => command.id === "m5-authoring-release"))
-      .toMatchObject({
-        requiredEnvironment: ["SCRY_AUTHORING_TEST_DATABASE_URL", "SCRY_VITRACT_PREVIEW_E2E"],
-      });
+    expect(
+      milestoneCommands("M5").find((command) => command.id === "m5-authoring-release"),
+    ).toMatchObject({
+      requiredEnvironment: ["SCRY_AUTHORING_TEST_DATABASE_URL", "SCRY_VITRACT_PREVIEW_E2E"],
+    });
   });
 });

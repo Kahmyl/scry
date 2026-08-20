@@ -39,8 +39,14 @@ export async function retainMissionLiveCampaignReport(input: {
 }): Promise<string> {
   const result = missionLiveCampaignResultSchema.parse(input.result);
   await mkdir(input.directory, { recursive: true });
-  const safeTarget = result.target.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  const file = path.join(input.directory, `${result.milestone.toLowerCase()}-${safeTarget}-r${result.repetition}-${result.correlationId}.json`);
+  const safeTarget = result.target
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  const file = path.join(
+    input.directory,
+    `${result.milestone.toLowerCase()}-${safeTarget}-r${result.repetition}-${result.correlationId}.json`,
+  );
   await writeFile(file, serializeSanitizedCampaign(result, input.forbiddenValues), {
     encoding: "utf8",
     flag: "wx",

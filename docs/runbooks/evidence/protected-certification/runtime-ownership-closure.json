@@ -59840,14 +59840,8 @@
       "fetch",
       "xhr"
     ],
-    "experimental": [
-      "download_content",
-      "ocr_region"
-    ],
-    "unsupported": [
-      "eventsource",
-      "websocket"
-    ]
+    "experimental": ["download_content", "ocr_region"],
+    "unsupported": ["eventsource", "websocket"]
   },
   "timing": {
     "p50Ms": 0,

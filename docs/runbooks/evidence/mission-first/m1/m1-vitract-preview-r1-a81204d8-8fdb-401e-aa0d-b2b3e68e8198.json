@@ -9,12 +9,8 @@
   "target": "vitract_preview",
   "repetition": 1,
   "missionId": "8558243d-141c-46c7-b17f-7f52fbfab3d7",
-  "objectiveIds": [
-    "96b3b61b-d75b-4e26-be75-882063988426"
-  ],
-  "flowIds": [
-    "b32e1971-b218-4f75-a88e-20553fa70222"
-  ],
+  "objectiveIds": ["96b3b61b-d75b-4e26-be75-882063988426"],
+  "flowIds": ["b32e1971-b218-4f75-a88e-20553fa70222"],
   "runIds": [],
   "correlationId": "a81204d8-8fdb-401e-aa0d-b2b3e68e8198",
   "boundaryUnderTest": "Mission-owned native authentication with protected references and zero Praxis calls",
@@ -112,117 +108,91 @@
       "p50Ms": 6.919667000000004,
       "p95Ms": 6.919667000000004,
       "maxMs": 6.919667000000004,
-      "slowestOperationIds": [
-        "api"
-      ]
+      "slowestOperationIds": ["api"]
     },
     "artifact_retrieval": {
       "count": 1,
       "p50Ms": 0,
       "p95Ms": 0,
       "maxMs": 0,
-      "slowestOperationIds": [
-        "a81204d8-8fdb-401e-aa0d-b2b3e68e8198"
-      ]
+      "slowestOperationIds": ["a81204d8-8fdb-401e-aa0d-b2b3e68e8198"]
     },
     "browser_startup": {
       "count": 1,
       "p50Ms": 1430.452,
       "p95Ms": 1430.452,
       "maxMs": 1430.452,
-      "slowestOperationIds": [
-        "vitract-navigate"
-      ]
+      "slowestOperationIds": ["vitract-navigate"]
     },
     "database": {
       "count": 1,
       "p50Ms": 8.996083999999996,
       "p95Ms": 8.996083999999996,
       "maxMs": 8.996083999999996,
-      "slowestOperationIds": [
-        "database"
-      ]
+      "slowestOperationIds": ["database"]
     },
     "document_observation": {
       "count": 1,
       "p50Ms": 1430.452,
       "p95Ms": 1430.452,
       "maxMs": 1430.452,
-      "slowestOperationIds": [
-        "vitract-navigate"
-      ]
+      "slowestOperationIds": ["vitract-navigate"]
     },
     "evidence_finalization": {
       "count": 1,
       "p50Ms": 0,
       "p95Ms": 0,
       "maxMs": 0,
-      "slowestOperationIds": [
-        "a81204d8-8fdb-401e-aa0d-b2b3e68e8198"
-      ]
+      "slowestOperationIds": ["a81204d8-8fdb-401e-aa0d-b2b3e68e8198"]
     },
     "interaction_execution": {
       "count": 1,
       "p50Ms": 10774,
       "p95Ms": 10774,
       "maxMs": 10774,
-      "slowestOperationIds": [
-        "vitract-navigate"
-      ]
+      "slowestOperationIds": ["vitract-navigate"]
     },
     "mcp_round_trip": {
       "count": 1,
       "p50Ms": 12242.941125,
       "p95Ms": 12242.941125,
       "maxMs": 12242.941125,
-      "slowestOperationIds": [
-        "mcp-a81204d8-8fdb-401e-aa0d-b2b3e68e8198-2"
-      ]
+      "slowestOperationIds": ["mcp-a81204d8-8fdb-401e-aa0d-b2b3e68e8198-2"]
     },
     "mcp_session_start_round_trip": {
       "count": 1,
       "p50Ms": 53.00516700000003,
       "p95Ms": 53.00516700000003,
       "maxMs": 53.00516700000003,
-      "slowestOperationIds": [
-        "mcp-a81204d8-8fdb-401e-aa0d-b2b3e68e8198-1"
-      ]
+      "slowestOperationIds": ["mcp-a81204d8-8fdb-401e-aa0d-b2b3e68e8198-1"]
     },
     "praxis_grounding": {
       "count": 1,
       "p50Ms": 0,
       "p95Ms": 0,
       "maxMs": 0,
-      "slowestOperationIds": [
-        "a81204d8-8fdb-401e-aa0d-b2b3e68e8198"
-      ]
+      "slowestOperationIds": ["a81204d8-8fdb-401e-aa0d-b2b3e68e8198"]
     },
     "queue_wait": {
       "count": 1,
       "p50Ms": 0,
       "p95Ms": 0,
       "maxMs": 0,
-      "slowestOperationIds": [
-        "a81204d8-8fdb-401e-aa0d-b2b3e68e8198"
-      ]
+      "slowestOperationIds": ["a81204d8-8fdb-401e-aa0d-b2b3e68e8198"]
     },
     "redis": {
       "count": 1,
       "p50Ms": 3.6820000000000164,
       "p95Ms": 3.6820000000000164,
       "maxMs": 3.6820000000000164,
-      "slowestOperationIds": [
-        "redis"
-      ]
+      "slowestOperationIds": ["redis"]
     },
     "worker": {
       "count": 1,
       "p50Ms": 8.410957999999994,
       "p95Ms": 8.410957999999994,
       "maxMs": 8.410957999999994,
-      "slowestOperationIds": [
-        "worker"
-      ]
+      "slowestOperationIds": ["worker"]
     }
   },
   "privacyScan": {

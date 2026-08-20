@@ -42,18 +42,11 @@ export async function waitForDocumentSurface(page: Page, timeout: number) {
   }
 }
 
-export function gotoPraxisPage(
-  page: Page,
-  url: string,
-  options: Parameters<Page["goto"]>[1] = {},
-) {
+export function gotoPraxisPage(page: Page, url: string, options: Parameters<Page["goto"]>[1] = {}) {
   return page.goto(url, options);
 }
 
-export function reloadPraxisPage(
-  page: Page,
-  options: Parameters<Page["reload"]>[0] = {},
-) {
+export function reloadPraxisPage(page: Page, options: Parameters<Page["reload"]>[0] = {}) {
   return page.reload(options);
 }
 

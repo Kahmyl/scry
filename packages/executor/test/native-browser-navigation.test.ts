@@ -20,7 +20,11 @@ async function listen(handler: RequestListener) {
 afterEach(async () => {
   await browser?.close();
   browser = undefined;
-  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+  await Promise.all(
+    servers
+      .splice(0)
+      .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+  );
 });
 
 describe("native browser navigation script-origin fence", () => {
@@ -43,14 +47,17 @@ describe("native browser navigation script-origin fence", () => {
 
     await navigateAndWaitNative(page, originA, allowedOrigins, 5_000);
     await navigateAndWaitNative(page, originB, allowedOrigins, 5_000);
-    await expect(navigateAndWaitNative(page, originC, allowedOrigins, 5_000))
-      .rejects.toMatchObject({ code: "NATIVE_ORIGIN_NOT_ALLOWED" });
+    await expect(navigateAndWaitNative(page, originC, allowedOrigins, 5_000)).rejects.toMatchObject(
+      { code: "NATIVE_ORIGIN_NOT_ALLOWED" },
+    );
   });
 
   it("reproduces a loading-only page when an essential cross-origin hydration script is not trusted", async () => {
     const scriptOrigin = await listen((_request, response) => {
       response.writeHead(200, { "content-type": "text/javascript" });
-      response.end("document.body.innerHTML='<main><label>Email<input placeholder=\\\"Email\\\"></label></main>';");
+      response.end(
+        "document.body.innerHTML='<main><label>Email<input placeholder=\\\"Email\\\"></label></main>';",
+      );
     });
     const documentOrigin = await listen((_request, response) => {
       response.writeHead(200, { "content-type": "text/html" });
@@ -67,7 +74,9 @@ describe("native browser navigation script-origin fence", () => {
   it("allows the same asynchronous semantic transition when the script origin is declared trusted", async () => {
     const scriptOrigin = await listen((_request, response) => {
       response.writeHead(200, { "content-type": "text/javascript" });
-      response.end("setTimeout(() => { document.body.innerHTML='<main><label>Email<input placeholder=\\\"Email\\\"></label></main>'; }, 25);");
+      response.end(
+        "setTimeout(() => { document.body.innerHTML='<main><label>Email<input placeholder=\\\"Email\\\"></label></main>'; }, 25);",
+      );
     });
     const documentOrigin = await listen((_request, response) => {
       response.writeHead(200, { "content-type": "text/html" });

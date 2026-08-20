@@ -9,19 +9,19 @@ Do not use this file as the current product or implementation authority. Mission
 
 Set values through the deployment secret/configuration system. Do not place values in campaign reports or committed files.
 
-| Variable                                 | Required for                                               | Default                                        |
-| ---------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------- |
-| `DATABASE_URL`                           | API, worker, migration, production-shaped campaign         | Repository development default where supported |
-| `SCRY_AUTHORING_TEST_DATABASE_URL`       | Destructive integration tests and campaign isolation       | None; must identify an isolated test database  |
-| `REDIS_URL`                              | Worker and production-shaped campaign                      | Repository development default where supported |
-| `SCRY_API_BASE_URL`                      | Production-shaped API health check                         | Local API URL                                  |
-| `VEIL_ADMISSION_KEY`                     | Kernel, Probe, calibration, and campaign privacy authority | None                                           |
-| `SCRY_BROWSER_CHANNEL`                   | Browser-backed tests and campaigns                         | `chrome` in campaigns                          |
-| `SCRY_RELEASE_ID`                        | Retained campaign binding                                  | `development`                                  |
-| `SCRY_SCHEMA_FINGERPRINT`                | Retained campaign binding                                  | `development-baseline`                         |
-| `SCRY_GIT_COMMIT`                        | Retained campaign binding                                  | `working-tree`                                 |
-| `SCRY_AUTHORING_TURN_ENABLED`            | Grouped authoring command                                  | `false`                                        |
-| `SCRY_REQUIRE_VITRACT_REPORT`            | Require a passing Vitract report in milestone verification | `false`                                        |
+| Variable                           | Required for                                               | Default                                        |
+| ---------------------------------- | ---------------------------------------------------------- | ---------------------------------------------- |
+| `DATABASE_URL`                     | API, worker, migration, production-shaped campaign         | Repository development default where supported |
+| `SCRY_AUTHORING_TEST_DATABASE_URL` | Destructive integration tests and campaign isolation       | None; must identify an isolated test database  |
+| `REDIS_URL`                        | Worker and production-shaped campaign                      | Repository development default where supported |
+| `SCRY_API_BASE_URL`                | Production-shaped API health check                         | Local API URL                                  |
+| `VEIL_ADMISSION_KEY`               | Kernel, Probe, calibration, and campaign privacy authority | None                                           |
+| `SCRY_BROWSER_CHANNEL`             | Browser-backed tests and campaigns                         | `chrome` in campaigns                          |
+| `SCRY_RELEASE_ID`                  | Retained campaign binding                                  | `development`                                  |
+| `SCRY_SCHEMA_FINGERPRINT`          | Retained campaign binding                                  | `development-baseline`                         |
+| `SCRY_GIT_COMMIT`                  | Retained campaign binding                                  | `working-tree`                                 |
+| `SCRY_AUTHORING_TURN_ENABLED`      | Grouped authoring command                                  | `false`                                        |
+| `SCRY_REQUIRE_VITRACT_REPORT`      | Require a passing Vitract report in milestone verification | `false`                                        |
 
 Vitract credentials and protected values are intentionally absent from this interface. The executable Vitract campaign accepts only protected references and authorization supplied at execution time by the verification owner.
 

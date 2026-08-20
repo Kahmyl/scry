@@ -224,12 +224,7 @@ describe("Vitract credential reconciliation authentication facts", () => {
       database as never,
     );
 
-    await expect(
-      observe(
-        provider,
-        authority(preparationFacts),
-      ),
-    ).rejects.toThrow(
+    await expect(observe(provider, authority(preparationFacts))).rejects.toThrow(
       "VITRACT_RECONCILIATION_AUTHENTICATION_CONTRACT_UNAVAILABLE",
     );
 

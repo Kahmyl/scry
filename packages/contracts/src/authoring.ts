@@ -87,7 +87,10 @@ const semanticText = z.string().trim().min(1).max(500);
 export const missionAuthoringSemanticTargetSchema = z
   .object({
     concept: semanticText,
-    reference: z.string().regex(/^context-control-[a-f0-9]{32}$/).optional(),
+    reference: z
+      .string()
+      .regex(/^context-control-[a-f0-9]{32}$/)
+      .optional(),
     role: semanticRoleSchema.optional(),
     name: semanticText.optional(),
     label: semanticText.optional(),
@@ -380,13 +383,22 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
       resourceEffect: z
         .object({
           operation: z.literal("create"),
-          provider: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
-          resourceKind: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+          provider: z
+            .string()
+            .trim()
+            .regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+          resourceKind: z
+            .string()
+            .trim()
+            .regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
           resourceScope: z.string().trim().min(1).max(500),
           identityContractVersion: z.number().int().min(1).max(1_000),
           correlation: z
             .object({
-              field: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+              field: z
+                .string()
+                .trim()
+                .regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
               value: z.string().trim().min(1).max(500),
               uniqueness: z.literal("resource_scope"),
             })
@@ -527,11 +539,12 @@ export const missionAuthoringIntentSchema = z
         path: ["authorization", "kind"],
         message: "read-context transition requires explicit live_read authority",
       });
-    const protectedReferences = intent.action.kind === "fill" && intent.action.protectedReferenceId
-      ? [intent.action.protectedReferenceId]
-      : intent.action.kind === "authenticate"
-        ? intent.action.fields.map((field) => field.protectedReferenceId)
-        : [];
+    const protectedReferences =
+      intent.action.kind === "fill" && intent.action.protectedReferenceId
+        ? [intent.action.protectedReferenceId]
+        : intent.action.kind === "authenticate"
+          ? intent.action.fields.map((field) => field.protectedReferenceId)
+          : [];
     if (
       new Set(intent.protectedInputReferences).size !== intent.protectedInputReferences.length ||
       intent.protectedInputReferences.length !== protectedReferences.length ||

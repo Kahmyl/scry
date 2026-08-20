@@ -84,30 +84,53 @@ const externalResourceBindings = await readFile(
   "utf8",
 );
 const operationBoundSyntheticProtectedInputs = await readFile(
-  new URL("operation-bound-synthetic-protected-inputs.sql", root), "utf8",
+  new URL("operation-bound-synthetic-protected-inputs.sql", root),
+  "utf8",
 );
-const structuredSyntheticProtectedInput = await readFile(new URL("structured-synthetic-protected-input.sql", root), "utf8");
-const segmentedFlowSuccessorCheckpoints = await readFile(new URL("segmented-flow-successor-checkpoints.sql", root), "utf8");
-const adaptiveCertificationProvenance = await readFile(new URL("adaptive-certification-provenance.sql", root), "utf8");
-const adaptiveOperationReconciliation = await readFile(new URL("adaptive-operation-reconciliation.sql", root), "utf8");
-const protectedOperationAuthorizationBinding = await readFile(new URL("protected-operation-authorization-binding.sql", root), "utf8");
-const runPraxisSessionLedger = await readFile(new URL("run-praxis-session-ledger.sql", root), "utf8");
-const protectedLivePraxisSession = await readFile(new URL("protected-live-praxis-session.sql", root), "utf8");
-const resourceEffectReconciliation = await readFile(new URL("resource-effect-reconciliation.sql", root), "utf8");
+const structuredSyntheticProtectedInput = await readFile(
+  new URL("structured-synthetic-protected-input.sql", root),
+  "utf8",
+);
+const segmentedFlowSuccessorCheckpoints = await readFile(
+  new URL("segmented-flow-successor-checkpoints.sql", root),
+  "utf8",
+);
+const adaptiveCertificationProvenance = await readFile(
+  new URL("adaptive-certification-provenance.sql", root),
+  "utf8",
+);
+const adaptiveOperationReconciliation = await readFile(
+  new URL("adaptive-operation-reconciliation.sql", root),
+  "utf8",
+);
+const protectedOperationAuthorizationBinding = await readFile(
+  new URL("protected-operation-authorization-binding.sql", root),
+  "utf8",
+);
+const runPraxisSessionLedger = await readFile(
+  new URL("run-praxis-session-ledger.sql", root),
+  "utf8",
+);
+const protectedLivePraxisSession = await readFile(
+  new URL("protected-live-praxis-session.sql", root),
+  "utf8",
+);
+const resourceEffectReconciliation = await readFile(
+  new URL("resource-effect-reconciliation.sql", root),
+  "utf8",
+);
+const scopeUnknownFenceToResourceMutations = await readFile(
+  new URL("20260820-0910_scope_unknown_fence_to_resource_mutations.sql", root),
+  "utf8",
+);
 
 const documentTransitionGap = await readFile(
-  new URL(
-    "20260816-231045_add_document_transition_gap.sql",
-    root,
-  ),
+  new URL("20260816-231045_add_document_transition_gap.sql", root),
   "utf8",
 );
 
 const missionRecordingSelection = await readFile(
-  new URL(
-    "mission-recording-selection.sql",
-    root,
-  ),
+  new URL("mission-recording-selection.sql", root),
   "utf8",
 );
 
@@ -143,6 +166,10 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "u
   ["run-praxis-session-ledger.sql", runPraxisSessionLedger],
   ["protected-live-praxis-session.sql", protectedLivePraxisSession],
   ["resource-effect-reconciliation.sql", resourceEffectReconciliation],
+  [
+    "20260820-0910_scope_unknown_fence_to_resource_mutations.sql",
+    scopeUnknownFenceToResourceMutations,
+  ],
   ["20260816-231045_add_document_transition_gap.sql", documentTransitionGap],
   ["mission-recording-selection.sql", missionRecordingSelection],
 ])

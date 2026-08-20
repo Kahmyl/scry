@@ -49,58 +49,50 @@ describe("Project environment Mission credential admission", () => {
   it("projects only the explicit Mission-selected subset into matching Praxis sessions", async () => {
     const calls: Array<{ text: string; values: unknown[] }> = [];
 
-    const query = vi.fn(
-      async (text: string, values: unknown[] = []) => {
-        calls.push({ text, values });
+    const query = vi.fn(async (text: string, values: unknown[] = []) => {
+      calls.push({ text, values });
 
-        if (text.includes('SELECT environment.project_id AS "projectId"')) {
-          return {
-            rowCount: 1,
-            rows: [{ projectId, policy }],
-          };
-        }
+      if (text.includes('SELECT environment.project_id AS "projectId"')) {
+        return {
+          rowCount: 1,
+          rows: [{ projectId, policy }],
+        };
+      }
 
-        if (text.includes("SELECT 1 FROM missions m")) {
-          return {
-            rowCount: 1,
-            rows: [{}],
-          };
-        }
+      if (text.includes("SELECT 1 FROM missions m")) {
+        return {
+          rowCount: 1,
+          rows: [{}],
+        };
+      }
 
-        if (text.includes("SELECT id::text FROM project_credentials")) {
-          return {
-            rowCount: 2,
-            rows: [
-              { id: existingCredentialId },
-              { id: selectedCredentialId },
-            ],
-          };
-        }
+      if (text.includes("SELECT id::text FROM project_credentials")) {
+        return {
+          rowCount: 2,
+          rows: [{ id: existingCredentialId }, { id: selectedCredentialId }],
+        };
+      }
 
-        if (text.includes("WITH updated_environment AS")) {
-          return {
-            rowCount: 1,
-            rows: [
-              {
-                id: environmentId,
-                projectId,
-                name: "Environment",
-                baseOrigin: "https://example.test",
-                policy,
-                secretRefs: [
-                  existingCredentialId,
-                  selectedCredentialId,
-                ],
-                createdAt: "2026-08-16T00:00:00.000Z",
-                admittedPraxisSessionCount: 1,
-              },
-            ],
-          };
-        }
+      if (text.includes("WITH updated_environment AS")) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: environmentId,
+              projectId,
+              name: "Environment",
+              baseOrigin: "https://example.test",
+              policy,
+              secretRefs: [existingCredentialId, selectedCredentialId],
+              createdAt: "2026-08-16T00:00:00.000Z",
+              admittedPraxisSessionCount: 1,
+            },
+          ],
+        };
+      }
 
-        throw new Error(`UNEXPECTED_QUERY:${text.slice(0, 80)}`);
-      },
-    );
+      throw new Error(`UNEXPECTED_QUERY:${text.slice(0, 80)}`);
+    });
 
     const repository = new ProjectConfigurationRepository({
       query,
@@ -118,13 +110,8 @@ describe("Project environment Mission credential admission", () => {
         agentSessionId,
         baseOrigin: "https://example.test",
         policy,
-        secretRefs: [
-          existingCredentialId,
-          selectedCredentialId,
-        ],
-        missionCredentialSelectionRefs: [
-          selectedCredentialId,
-        ],
+        secretRefs: [existingCredentialId, selectedCredentialId],
+        missionCredentialSelectionRefs: [selectedCredentialId],
       },
     );
 
@@ -133,45 +120,24 @@ describe("Project environment Mission credential admission", () => {
       admittedPraxisSessionCount: 1,
     });
 
-    const mutation = calls.find(({ text }) =>
-      text.includes("WITH updated_environment AS"),
-    );
+    const mutation = calls.find(({ text }) => text.includes("WITH updated_environment AS"));
 
     expect(mutation).toBeDefined();
 
-    expect(mutation!.text).toContain(
-      "session.protected_reference_allowlist || $6::jsonb",
-    );
-    expect(mutation!.text).toContain(
-      "session.mission_id=$7",
-    );
-    expect(mutation!.text).toContain(
-      "session.active_objective_id=$8",
-    );
-    expect(mutation!.text).toContain(
-      "session.agent_session_id=$9",
-    );
-    expect(mutation!.text).toContain(
-      "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
-    );
+    expect(mutation!.text).toContain("session.protected_reference_allowlist || $6::jsonb");
+    expect(mutation!.text).toContain("session.mission_id=$7");
+    expect(mutation!.text).toContain("session.active_objective_id=$8");
+    expect(mutation!.text).toContain("session.agent_session_id=$9");
+    expect(mutation!.text).toContain("MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED");
 
-    expect(mutation!.values[3]).toBe(
-      JSON.stringify([
-        existingCredentialId,
-        selectedCredentialId,
-      ]),
-    );
+    expect(mutation!.values[3]).toBe(JSON.stringify([existingCredentialId, selectedCredentialId]));
 
-    expect(mutation!.values[5]).toBe(
-      JSON.stringify([selectedCredentialId]),
-    );
+    expect(mutation!.values[5]).toBe(JSON.stringify([selectedCredentialId]));
 
     expect(mutation!.values[6]).toBe(missionId);
     expect(mutation!.values[7]).toBe(objectiveId);
     expect(mutation!.values[8]).toBe(agentSessionId);
 
-    expect(String(mutation!.values[5])).not.toContain(
-      existingCredentialId,
-    );
+    expect(String(mutation!.values[5])).not.toContain(existingCredentialId);
   });
 });

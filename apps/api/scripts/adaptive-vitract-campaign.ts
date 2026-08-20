@@ -28,15 +28,16 @@ try {
   context.requiredChecks.push(...deployed.requiredChecks);
   await verifyMissionOwned(context);
   const retained = await retainResult(context, milestone, [], "vitract_preview");
-  const canonicalReport = milestone === "M1"
-    ? await retainCanonicalM1Result(context, {
-        target: "vitract_preview",
-        repetition: Number(process.env.SCRY_CAMPAIGN_REPETITION) as 1 | 2 | 3,
-        verdict: retained.result.verdict,
-        evidenceRefs: [retained.file],
-        cleanupRequired: true,
-      })
-    : undefined;
+  const canonicalReport =
+    milestone === "M1"
+      ? await retainCanonicalM1Result(context, {
+          target: "vitract_preview",
+          repetition: Number(process.env.SCRY_CAMPAIGN_REPETITION) as 1 | 2 | 3,
+          verdict: retained.result.verdict,
+          evidenceRefs: [retained.file],
+          cleanupRequired: true,
+        })
+      : undefined;
   process.stdout.write(
     `${JSON.stringify({ verdict: retained.result.verdict, report: retained.file, canonicalReport })}\n`,
   );

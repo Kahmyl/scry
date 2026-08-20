@@ -9,12 +9,8 @@
   "target": "the_internet",
   "repetition": 2,
   "missionId": "b4bc4779-a8cd-4041-aa4a-b4e30abfaf5e",
-  "objectiveIds": [
-    "cd8adcfe-f9a8-4664-8271-7b89930a4319"
-  ],
-  "flowIds": [
-    "206527cd-f88c-4712-8c54-56134357273a"
-  ],
+  "objectiveIds": ["cd8adcfe-f9a8-4664-8271-7b89930a4319"],
+  "flowIds": ["206527cd-f88c-4712-8c54-56134357273a"],
   "runIds": [],
   "correlationId": "3fffa4ff-037d-4e5e-a725-f90ef6c8a537",
   "boundaryUnderTest": "Mission-owned native authentication with protected references and zero Praxis calls",
@@ -106,9 +102,7 @@
       "p50Ms": 6.4125410000000045,
       "p95Ms": 6.4125410000000045,
       "maxMs": 6.4125410000000045,
-      "slowestOperationIds": [
-        "api"
-      ]
+      "slowestOperationIds": ["api"]
     },
     "artifact_retrieval": {
       "count": 1,
@@ -122,27 +116,21 @@
       "p50Ms": 3361.221,
       "p95Ms": 3361.221,
       "maxMs": 3361.221,
-      "slowestOperationIds": [
-        "the_internet-navigate"
-      ]
+      "slowestOperationIds": ["the_internet-navigate"]
     },
     "database": {
       "count": 1,
       "p50Ms": 7.444542000000013,
       "p95Ms": 7.444542000000013,
       "maxMs": 7.444542000000013,
-      "slowestOperationIds": [
-        "database"
-      ]
+      "slowestOperationIds": ["database"]
     },
     "document_observation": {
       "count": 1,
       "p50Ms": 3361.221,
       "p95Ms": 3361.221,
       "maxMs": 3361.221,
-      "slowestOperationIds": [
-        "the_internet-navigate"
-      ]
+      "slowestOperationIds": ["the_internet-navigate"]
     },
     "evidence_finalization": {
       "count": 1,
@@ -180,18 +168,14 @@
       "p50Ms": 7847.09575,
       "p95Ms": 7847.09575,
       "maxMs": 7847.09575,
-      "slowestOperationIds": [
-        "mcp-3fffa4ff-037d-4e5e-a725-f90ef6c8a537-2"
-      ]
+      "slowestOperationIds": ["mcp-3fffa4ff-037d-4e5e-a725-f90ef6c8a537-2"]
     },
     "mcp_session_start_round_trip": {
       "count": 1,
       "p50Ms": 22.42070799999999,
       "p95Ms": 22.42070799999999,
       "maxMs": 22.42070799999999,
-      "slowestOperationIds": [
-        "mcp-3fffa4ff-037d-4e5e-a725-f90ef6c8a537-1"
-      ]
+      "slowestOperationIds": ["mcp-3fffa4ff-037d-4e5e-a725-f90ef6c8a537-1"]
     },
     "native_resolution": {
       "count": 4,
@@ -224,18 +208,14 @@
       "p50Ms": 3.3424579999999935,
       "p95Ms": 3.3424579999999935,
       "maxMs": 3.3424579999999935,
-      "slowestOperationIds": [
-        "redis"
-      ]
+      "slowestOperationIds": ["redis"]
     },
     "worker": {
       "count": 1,
       "p50Ms": 10.355917000000005,
       "p95Ms": 10.355917000000005,
       "maxMs": 10.355917000000005,
-      "slowestOperationIds": [
-        "worker"
-      ]
+      "slowestOperationIds": ["worker"]
     }
   },
   "privacyScan": {

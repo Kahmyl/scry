@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { AgentDirectedRunService } from "../src/runs/agent-directed-run.service.js";
+import { AgentDirectedRunService } from "../src/runs/services/agent-directed-run.service.js";
 
 const runId = "11111111-1111-4111-8111-111111111111";
 const sessionId = "22222222-2222-4222-8222-222222222222";

@@ -1,7 +1,11 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import type { AdaptiveMilestone, CampaignCheck, CampaignMetricsCollector } from "@scry/assurance/legacy";
+import type {
+  AdaptiveMilestone,
+  CampaignCheck,
+  CampaignMetricsCollector,
+} from "@scry/assurance/legacy";
 
 export type MilestoneCommand = {
   id: string;
@@ -13,7 +17,10 @@ export type MilestoneCommand = {
   environment?: Record<string, string>;
 };
 
-const vitest = (workspace: string, files: string[]): Pick<MilestoneCommand, "command" | "args"> => ({
+const vitest = (
+  workspace: string,
+  files: string[],
+): Pick<MilestoneCommand, "command" | "args"> => ({
   command: "pnpm",
   args: ["--filter", workspace, "exec", "vitest", "run", ...files, "--maxWorkers=1"],
 });
@@ -24,7 +31,8 @@ export function milestoneCommands(milestone: AdaptiveMilestone): MilestoneComman
       return [
         {
           id: "m2-api-evidence",
-          description: "Canonical evidence outcomes, attempt isolation, and artifact compensation pass",
+          description:
+            "Canonical evidence outcomes, attempt isolation, and artifact compensation pass",
           phase: "evidence_finalization",
           ...vitest("@scry/api", [
             "test/run-observation.service.test.ts",
@@ -72,14 +80,16 @@ export function milestoneCommands(milestone: AdaptiveMilestone): MilestoneComman
         },
         {
           id: "m3-durable-repository",
-          description: "Missionless session persistence and concurrent journal ordering pass on Postgres",
+          description:
+            "Missionless session persistence and concurrent journal ordering pass on Postgres",
           phase: "queue_wait",
           requiredEnvironment: ["SCRY_AUTHORING_TEST_DATABASE_URL"],
           ...vitest("@scry/api", ["test/adaptive-session.repository.integration.test.ts"]),
         },
         {
           id: "m3-mcp-surface",
-          description: "Adaptive Session MCP tools expose typed lifecycle and grouped-turn operations",
+          description:
+            "Adaptive Session MCP tools expose typed lifecycle and grouped-turn operations",
           phase: "expected_effect_verification",
           ...vitest("@scry/mcp", ["test/server.test.ts"]),
         },
@@ -97,7 +107,8 @@ export function milestoneCommands(milestone: AdaptiveMilestone): MilestoneComman
         },
         {
           id: "m4-protected-acquisition",
-          description: "Protected acquisition adapters return semantic proof without protected bytes",
+          description:
+            "Protected acquisition adapters return semantic proof without protected bytes",
           phase: "interaction_execution",
           ...vitest("@scry/executor", ["test/protected-acquisition-adapters.test.ts"]),
         },
@@ -117,7 +128,9 @@ export function milestoneCommands(milestone: AdaptiveMilestone): MilestoneComman
       ];
     case "M5":
       return [
-        releaseCommand("m5-typecheck", "The complete workspace typechecks", "compilation", ["typecheck"]),
+        releaseCommand("m5-typecheck", "The complete workspace typechecks", "compilation", [
+          "typecheck",
+        ]),
         releaseCommand(
           "m5-authoring-release",
           "The strict adaptive authoring release corpus passes",

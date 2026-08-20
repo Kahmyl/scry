@@ -555,8 +555,6 @@
       }
     ]
   },
-  "artifactRefs": [
-    "72bd5a7d-666e-486e-a9d9-0a1cd48a1e5b"
-  ],
+  "artifactRefs": ["72bd5a7d-666e-486e-a9d9-0a1cd48a1e5b"],
   "verdict": "pass"
 }

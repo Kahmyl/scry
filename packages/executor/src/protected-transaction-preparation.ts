@@ -1,5 +1,10 @@
 import type { InteractionTargetIntent, ProtectedTransaction } from "@scry/contracts";
-import { gotoPraxisPage, PraxisConsumerError, requirePraxisSuccess, resolveTargetLocator } from "@scry/praxis";
+import {
+  gotoPraxisPage,
+  PraxisConsumerError,
+  requirePraxisSuccess,
+  resolveTargetLocator,
+} from "@scry/praxis";
 import type { Page } from "playwright";
 
 import type { ProtectedTransactionDependencies } from "./protected-transaction-coordinator.js";
@@ -10,7 +15,11 @@ export async function executeProtectedPreparation(
   transaction: ProtectedTransaction,
   dependencies: ProtectedTransactionDependencies,
 ) {
-  for (let actionIndex = 0; actionIndex < transaction.preparation.actions.length; actionIndex += 1) {
+  for (
+    let actionIndex = 0;
+    actionIndex < transaction.preparation.actions.length;
+    actionIndex += 1
+  ) {
     const action = transaction.preparation.actions[actionIndex]!;
     try {
       if (action.type === "navigate") {
@@ -202,9 +211,10 @@ export async function verifyProtectedTransactionAssertions(
         if (input.classification !== "public" || typeof input.value !== "boolean")
           throw new PhaseError("TRANSACTION_INPUT_TYPE_MISMATCH", phase, "do_not_retry");
       }
-      const expected = input.classification === "known_secret"
-        ? await dependencies.resolveKnownSecret(input.credentialRef)
-        : input.value;
+      const expected =
+        input.classification === "known_secret"
+          ? await dependencies.resolveKnownSecret(input.credentialRef)
+          : input.value;
       if (input.classification === "known_secret") dependencies.redactor.add(String(expected));
       const deadline = Date.now() + (assertion.timeoutMs ?? 10_000);
       let matches = false;
@@ -213,13 +223,16 @@ export async function verifyProtectedTransactionAssertions(
         if (assertion.type === "checkedMatchesInput") {
           matches = (await locator.isChecked({ timeout: remaining })) === expected;
         } else {
-          const actual = assertion.type === "fieldValueMatchesInput" || assertion.type === "selectedValueMatchesInput"
-            ? await locator.inputValue({ timeout: remaining })
-            : ((await locator.textContent({ timeout: remaining })) ?? "");
+          const actual =
+            assertion.type === "fieldValueMatchesInput" ||
+            assertion.type === "selectedValueMatchesInput"
+              ? await locator.inputValue({ timeout: remaining })
+              : ((await locator.textContent({ timeout: remaining })) ?? "");
           const expectedText = String(expected);
-          matches = assertion.type === "textMatchesInput" && !assertion.exact
-            ? actual.includes(expectedText)
-            : actual.trim() === expectedText;
+          matches =
+            assertion.type === "textMatchesInput" && !assertion.exact
+              ? actual.includes(expectedText)
+              : actual.trim() === expectedText;
         }
         if (!matches && Date.now() < deadline)
           await new Promise((resolve) => setTimeout(resolve, 100));

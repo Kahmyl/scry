@@ -4,7 +4,10 @@ import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PraxisStaleTargetError } from "../src/observation.js";
-import { observeTargetReference, PraxisTargetReference } from "../src/references/target-reference.js";
+import {
+  observeTargetReference,
+  PraxisTargetReference,
+} from "../src/references/target-reference.js";
 import {
   clickPinnedElement,
   clickReferencedTarget,
@@ -64,8 +67,11 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 describe("Praxis target reference and pinned click", () => {
-  it("pins the observed entity and dispatches a click against it", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "pins the observed entity and dispatches a click against it",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <button id="target">Submit order</button>
       <script>
         globalThis.clicks = [];
@@ -74,19 +80,23 @@ describe("Praxis target reference and pinned click", () => {
         });
       </script>
     `);
-    const reference = await observeTargetReference(page, page.locator("#target"));
-    expect(reference).toBeInstanceOf(PraxisTargetReference);
-    await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).resolves.toEqual({
-      dispatched: true,
-    });
-    expect(await page.evaluate(() => (globalThis as unknown as { clicks: string[] }).clicks)).toEqual([
-      "original",
-    ]);
-    await reference.dispose();
-  });
+      const reference = await observeTargetReference(page, page.locator("#target"));
+      expect(reference).toBeInstanceOf(PraxisTargetReference);
+      await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).resolves.toEqual({
+        dispatched: true,
+      });
+      expect(
+        await page.evaluate(() => (globalThis as unknown as { clicks: string[] }).clicks),
+      ).toEqual(["original"]);
+      await reference.dispose();
+    },
+  );
 
-  it("pins a same-origin iframe target and dispatches a click exactly once", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "pins a same-origin iframe target and dispatches a click exactly once",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <iframe id="target-frame" srcdoc='
         <button id="target">Submit order</button>
         <script>
@@ -97,21 +107,27 @@ describe("Praxis target reference and pinned click", () => {
         </script>
       '></iframe>
     `);
-    const reference = await observeTargetReference(
-      page,
-      page.frameLocator("#target-frame").locator("#target"),
-    );
-    await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).resolves.toEqual({
-      dispatched: true,
-    });
-    expect(await page.evaluate(() => (globalThis as unknown as { __iframeClicks?: string[] }).__iframeClicks)).toEqual([
-      "iframe",
-    ]);
-    await reference.dispose();
-  });
+      const reference = await observeTargetReference(
+        page,
+        page.frameLocator("#target-frame").locator("#target"),
+      );
+      await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).resolves.toEqual({
+        dispatched: true,
+      });
+      expect(
+        await page.evaluate(
+          () => (globalThis as unknown as { __iframeClicks?: string[] }).__iframeClicks,
+        ),
+      ).toEqual(["iframe"]);
+      await reference.dispose();
+    },
+  );
 
-  it("refuses when a parent overlay appears before button dispatch", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "refuses when a parent overlay appears before button dispatch",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <iframe id="target-frame" srcdoc='
         <button id="target">Submit order</button>
         <script>
@@ -144,15 +160,24 @@ describe("Praxis target reference and pinned click", () => {
       </script>
     `);
 
-    const reference = await observeTargetReference(
-      page,
-      page.frameLocator("#target-frame").locator("#target"),
-    );
-    await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).rejects.toThrow();
-    expect(await page.evaluate(() => (globalThis as unknown as { __overlayEvents?: string[] }).__overlayEvents)).toEqual([]);
-    expect(await page.evaluate(() => (globalThis as unknown as { __iframeClicks?: string[] }).__iframeClicks)).toEqual([]);
-    await reference.dispose();
-  });
+      const reference = await observeTargetReference(
+        page,
+        page.frameLocator("#target-frame").locator("#target"),
+      );
+      await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).rejects.toThrow();
+      expect(
+        await page.evaluate(
+          () => (globalThis as unknown as { __overlayEvents?: string[] }).__overlayEvents,
+        ),
+      ).toEqual([]);
+      expect(
+        await page.evaluate(
+          () => (globalThis as unknown as { __iframeClicks?: string[] }).__iframeClicks,
+        ),
+      ).toEqual([]);
+      await reference.dispose();
+    },
+  );
 
   it("accepts a descendant hit under the pinned target", { timeout: 30_000 }, async () => {
     await resetPage(`
@@ -170,9 +195,9 @@ describe("Praxis target reference and pinned click", () => {
     await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).resolves.toEqual({
       dispatched: true,
     });
-    expect(await page.evaluate(() => (globalThis as unknown as { clicks: string[] }).clicks)).toEqual([
-      "original",
-    ]);
+    expect(
+      await page.evaluate(() => (globalThis as unknown as { clicks: string[] }).clicks),
+    ).toEqual(["original"]);
     await reference.dispose();
   });
 
@@ -199,16 +224,15 @@ describe("Praxis target reference and pinned click", () => {
 
     const reference = await observeTargetReference(
       page,
-      page
-        .frameLocator("#outer")
-        .frameLocator("#inner")
-        .locator("#target"),
+      page.frameLocator("#outer").frameLocator("#inner").locator("#target"),
     );
     await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).resolves.toEqual({
       dispatched: true,
     });
     expect(
-      await page.evaluate(() => (globalThis as unknown as { __nestedIframeClicks: string[] }).__nestedIframeClicks),
+      await page.evaluate(
+        () => (globalThis as unknown as { __nestedIframeClicks: string[] }).__nestedIframeClicks,
+      ),
     ).toEqual(["iframe"]);
     await reference.dispose();
   });
@@ -255,8 +279,11 @@ describe("Praxis target reference and pinned click", () => {
     }
   });
 
-  it("refuses when the pinned target moves away after pointer positioning", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "refuses when the pinned target moves away after pointer positioning",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <button id="decoy" style="position:absolute;left:20px;top:20px;width:160px;height:60px">Decoy</button>
       <button id="target" style="position:absolute;left:20px;top:20px;width:160px;height:60px">Submit</button>
       <script>
@@ -270,14 +297,22 @@ describe("Praxis target reference and pinned click", () => {
         target.addEventListener("pointerover", () => { target.style.left = "320px"; }, { once: true });
       </script>
     `);
-    const reference = await observeTargetReference(page, page.locator("#target"));
-    await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).rejects.toThrow();
-    expect(await page.evaluate(() => (globalThis as unknown as { buttonEvents: string[] }).buttonEvents)).toEqual([]);
-    await reference.dispose();
-  });
+      const reference = await observeTargetReference(page, page.locator("#target"));
+      await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).rejects.toThrow();
+      expect(
+        await page.evaluate(
+          () => (globalThis as unknown as { buttonEvents: string[] }).buttonEvents,
+        ),
+      ).toEqual([]);
+      await reference.dispose();
+    },
+  );
 
-  it("reports dispatch uncertainty when mouse-up fails after mouse-down input", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "reports dispatch uncertainty when mouse-up fails after mouse-down input",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <button id="target">Submit</button>
       <script>
         globalThis.buttonEvents = [];
@@ -286,31 +321,35 @@ describe("Praxis target reference and pinned click", () => {
           target.addEventListener(type, () => globalThis.buttonEvents.push(type));
       </script>
     `);
-    const reference = await observeTargetReference(page, page.locator("#target"));
-    const mouse = page.mouse as unknown as { down: typeof page.mouse.down; up: typeof page.mouse.up };
-    const press = page.mouse.down.bind(page.mouse);
-    const release = page.mouse.up.bind(page.mouse);
-    let downResolved = false;
-    mouse.down = async (...args) => {
-      await press(...args);
-      downResolved = true;
-    };
-    mouse.up = async () => {
-      throw new Error("synthetic mouse-up transport failure");
-    };
-    try {
-      await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).rejects.toThrow(
-        PraxisClickDispatchError,
-      );
-    } finally {
-      mouse.down = press;
-      mouse.up = release;
-      await page.mouse.move(0, 0);
-      await release();
-    }
-    expect(downResolved).toBe(true);
-    await reference.dispose();
-  });
+      const reference = await observeTargetReference(page, page.locator("#target"));
+      const mouse = page.mouse as unknown as {
+        down: typeof page.mouse.down;
+        up: typeof page.mouse.up;
+      };
+      const press = page.mouse.down.bind(page.mouse);
+      const release = page.mouse.up.bind(page.mouse);
+      let downResolved = false;
+      mouse.down = async (...args) => {
+        await press(...args);
+        downResolved = true;
+      };
+      mouse.up = async () => {
+        throw new Error("synthetic mouse-up transport failure");
+      };
+      try {
+        await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).rejects.toThrow(
+          PraxisClickDispatchError,
+        );
+      } finally {
+        mouse.down = press;
+        mouse.up = release;
+        await page.mouse.move(0, 0);
+        await release();
+      }
+      expect(downResolved).toBe(true);
+      await reference.dispose();
+    },
+  );
 
   it("uses the requested element-relative click position", { timeout: 30_000 }, async () => {
     await resetPage(`
@@ -339,8 +378,11 @@ describe("Praxis target reference and pinned click", () => {
     await reference.dispose();
   });
 
-  it("refuses when only the requested click position is occluded", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "refuses when only the requested click position is occluded",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <button id="target" style="position:absolute;left:20px;top:20px;width:200px;height:80px">Target</button>
       <div id="cover" style="position:absolute;left:20px;top:20px;width:50px;height:50px;z-index:2"></div>
       <script>
@@ -351,21 +393,29 @@ describe("Praxis target reference and pinned click", () => {
         }
       </script>
     `);
-    expect(await page.evaluate(() => document.elementFromPoint(120, 60)?.id)).toBe("target");
-    const reference = await observeTargetReference(page, page.locator("#target"));
-    await expect(
-      clickPinnedElement(page, reference.element(), {
-        timeoutMs: 2_000,
-        position: { x: 15, y: 15 },
-        isCurrent: () => reference.assertCurrent(),
-      }),
-    ).rejects.toThrow(PraxisStaleTargetError);
-    expect(await page.evaluate(() => (globalThis as unknown as { buttonEvents: string[] }).buttonEvents)).toEqual([]);
-    await reference.dispose();
-  });
+      expect(await page.evaluate(() => document.elementFromPoint(120, 60)?.id)).toBe("target");
+      const reference = await observeTargetReference(page, page.locator("#target"));
+      await expect(
+        clickPinnedElement(page, reference.element(), {
+          timeoutMs: 2_000,
+          position: { x: 15, y: 15 },
+          isCurrent: () => reference.assertCurrent(),
+        }),
+      ).rejects.toThrow(PraxisStaleTargetError);
+      expect(
+        await page.evaluate(
+          () => (globalThis as unknown as { buttonEvents: string[] }).buttonEvents,
+        ),
+      ).toEqual([]);
+      await reference.dispose();
+    },
+  );
 
-  it("refuses before button input when a fixed ancestor overlay already exists", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "refuses before button input when a fixed ancestor overlay already exists",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <iframe id="target-frame" srcdoc='
         <button id="target">Submit order</button>
         <script>
@@ -400,20 +450,23 @@ describe("Praxis target reference and pinned click", () => {
       </script>
     `);
 
-    const reference = await observeTargetReference(
-      page,
-      page.frameLocator("#target-frame").locator("#target"),
-    );
-    await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).rejects.toThrow();
-    const events = await page.evaluate(
-      () => (globalThis as unknown as { __overlayEvents?: string[] }).__overlayEvents,
-    );
-    expect(events).toEqual([]);
-    expect(await page.evaluate(() => (globalThis as unknown as { __iframeClicks?: string[] }).__iframeClicks)).toEqual(
-      [],
-    );
-    await reference.dispose();
-  });
+      const reference = await observeTargetReference(
+        page,
+        page.frameLocator("#target-frame").locator("#target"),
+      );
+      await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).rejects.toThrow();
+      const events = await page.evaluate(
+        () => (globalThis as unknown as { __overlayEvents?: string[] }).__overlayEvents,
+      );
+      expect(events).toEqual([]);
+      expect(
+        await page.evaluate(
+          () => (globalThis as unknown as { __iframeClicks?: string[] }).__iframeClicks,
+        ),
+      ).toEqual([]);
+      await reference.dispose();
+    },
+  );
 
   it("serializes only opaque mechanical identity", { timeout: 30_000 }, async () => {
     await resetPage(`<button id="target">Save</button>`);
@@ -438,15 +491,17 @@ describe("Praxis target reference and pinned click", () => {
     `);
 
     const reference = await observeTargetReference(page, page.getByLabel("Email"));
-    await expect(fillReferencedTarget(reference, "alice@example.test", { timeoutMs: 2_000 })).resolves.toEqual(
-      {
-        dispatched: true,
-      },
-    );
+    await expect(
+      fillReferencedTarget(reference, "alice@example.test", { timeoutMs: 2_000 }),
+    ).resolves.toEqual({
+      dispatched: true,
+    });
     expect(await page.locator("#target").inputValue()).toBe("alice@example.test");
-    expect(await page.evaluate(() => (globalThis as unknown as { __filledValues: string[] }).__filledValues)).toEqual([
-      "alice@example.test",
-    ]);
+    expect(
+      await page.evaluate(
+        () => (globalThis as unknown as { __filledValues: string[] }).__filledValues,
+      ),
+    ).toEqual(["alice@example.test"]);
     await reference.dispose();
   });
 
@@ -462,22 +517,25 @@ describe("Praxis target reference and pinned click", () => {
     `);
 
     const reference = await observeTargetReference(page, page.locator("#target"));
-    await expect(fillReferencedTarget(reference, "line one\nline two", { timeoutMs: 2_000 })).resolves.toEqual(
-      {
-        dispatched: true,
-      },
-    );
+    await expect(
+      fillReferencedTarget(reference, "line one\nline two", { timeoutMs: 2_000 }),
+    ).resolves.toEqual({
+      dispatched: true,
+    });
     expect(await page.locator("#target").inputValue()).toBe("line one\nline two");
     expect(
-      await page.evaluate(() => (globalThis as unknown as { __filledValues: string[] }).__filledValues),
-    ).toEqual(
-      expect.arrayContaining(["line one\nline two"]),
-    );
+      await page.evaluate(
+        () => (globalThis as unknown as { __filledValues: string[] }).__filledValues,
+      ),
+    ).toEqual(expect.arrayContaining(["line one\nline two"]));
     await reference.dispose();
   });
 
-  it("replaces content on the exact pinned contenteditable entity", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "replaces content on the exact pinned contenteditable entity",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <div id="target" role="textbox" aria-label="Notes" contenteditable="true">starting</div>
       <script>
         window.__inputValues = [];
@@ -486,22 +544,31 @@ describe("Praxis target reference and pinned click", () => {
         });
       </script>
     `);
-    const reference = await observeTargetReference(page, page.getByRole("textbox", { name: "Notes" }));
-    await expect(
-      enterTextReferencedTarget(reference, "replacement text", {
-        strategy: "content_editable",
-        timeoutMs: 2_000,
-      }),
-    ).resolves.toEqual({ dispatched: true });
-    expect(await page.locator("#target").textContent()).toBe("replacement text");
-    expect(await page.evaluate(() => (globalThis as unknown as { __inputValues: string[] }).__inputValues)).toContain(
-      "replacement text",
-    );
-    await reference.dispose();
-  });
+      const reference = await observeTargetReference(
+        page,
+        page.getByRole("textbox", { name: "Notes" }),
+      );
+      await expect(
+        enterTextReferencedTarget(reference, "replacement text", {
+          strategy: "content_editable",
+          timeoutMs: 2_000,
+        }),
+      ).resolves.toEqual({ dispatched: true });
+      expect(await page.locator("#target").textContent()).toBe("replacement text");
+      expect(
+        await page.evaluate(
+          () => (globalThis as unknown as { __inputValues: string[] }).__inputValues,
+        ),
+      ).toContain("replacement text");
+      await reference.dispose();
+    },
+  );
 
-  it("refuses a contenteditable target replaced by its focus handler before keyboard input", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "refuses a contenteditable target replaced by its focus handler before keyboard input",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <div id="target" role="textbox" aria-label="Notes" contenteditable="true">starting</div>
       <script>
         window.__inputValues = [];
@@ -516,21 +583,32 @@ describe("Praxis target reference and pinned click", () => {
         }, { once: true });
       </script>
     `);
-    const reference = await observeTargetReference(page, page.getByRole("textbox", { name: "Notes" }));
-    await expect(
-      enterTextReferencedTarget(reference, "must-not-dispatch", {
-        strategy: "content_editable",
-        timeoutMs: 2_000,
-      }),
-    ).rejects.toBeInstanceOf(PraxisStaleTargetError);
-    expect(await page.evaluate(() => (globalThis as unknown as { __inputValues: string[] }).__inputValues)).toEqual([]);
-    expect(await page.locator("#replacement").textContent()).toBe("starting");
-    await page.locator("#replacement").evaluate((node) => (node as HTMLElement).blur());
-    await reference.dispose();
-  });
+      const reference = await observeTargetReference(
+        page,
+        page.getByRole("textbox", { name: "Notes" }),
+      );
+      await expect(
+        enterTextReferencedTarget(reference, "must-not-dispatch", {
+          strategy: "content_editable",
+          timeoutMs: 2_000,
+        }),
+      ).rejects.toBeInstanceOf(PraxisStaleTargetError);
+      expect(
+        await page.evaluate(
+          () => (globalThis as unknown as { __inputValues: string[] }).__inputValues,
+        ),
+      ).toEqual([]);
+      expect(await page.locator("#replacement").textContent()).toBe("starting");
+      await page.locator("#replacement").evaluate((node) => (node as HTMLElement).blur());
+      await reference.dispose();
+    },
+  );
 
-  it("does not type into a contenteditable replacement created by the select-all chord", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "does not type into a contenteditable replacement created by the select-all chord",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <div id="target" role="textbox" aria-label="Notes" contenteditable="true">starting</div>
       <script>
         window.__inputValues = [];
@@ -545,21 +623,32 @@ describe("Praxis target reference and pinned click", () => {
         }, { once: true });
       </script>
     `);
-    const reference = await observeTargetReference(page, page.getByRole("textbox", { name: "Notes" }));
-    await expect(
-      enterTextReferencedTarget(reference, "must-not-retarget", {
-        strategy: "content_editable",
-        timeoutMs: 2_000,
-      }),
-    ).rejects.toBeInstanceOf(PraxisTextEntryDispatchError);
-    expect(await page.evaluate(() => (globalThis as unknown as { __inputValues: string[] }).__inputValues)).toEqual([]);
-    expect(await page.locator("#replacement").textContent()).toBe("starting");
-    await page.locator("#replacement").evaluate((node) => (node as HTMLElement).blur());
-    await reference.dispose();
-  });
+      const reference = await observeTargetReference(
+        page,
+        page.getByRole("textbox", { name: "Notes" }),
+      );
+      await expect(
+        enterTextReferencedTarget(reference, "must-not-retarget", {
+          strategy: "content_editable",
+          timeoutMs: 2_000,
+        }),
+      ).rejects.toBeInstanceOf(PraxisTextEntryDispatchError);
+      expect(
+        await page.evaluate(
+          () => (globalThis as unknown as { __inputValues: string[] }).__inputValues,
+        ),
+      ).toEqual([]);
+      expect(await page.locator("#replacement").textContent()).toBe("starting");
+      await page.locator("#replacement").evaluate((node) => (node as HTMLElement).blur());
+      await reference.dispose();
+    },
+  );
 
-  it("refuses a stale replace-before-fill replacement for native inputs", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "refuses a stale replace-before-fill replacement for native inputs",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <input id="target" placeholder="Email" />
       <script>
         window.__fills = [];
@@ -580,37 +669,44 @@ describe("Praxis target reference and pinned click", () => {
       </script>
     `);
 
-    const reference = await observeTargetReference(page, page.getByPlaceholder("Email"));
+      const reference = await observeTargetReference(page, page.getByPlaceholder("Email"));
 
-    await page.evaluate(() => {
-      const replace = (window as unknown as { __replaceInputTarget?: () => void }).__replaceInputTarget;
-      if (typeof replace !== "function") {
-        throw new Error("TEST_FIXTURE_REPLACEMENT_HELPER_MISSING");
-      }
-      replace();
-    });
-    expect(
-      await page.evaluate(() => ({
-        replacement: !!document.querySelector("#replacement"),
-        original: !!document.querySelector("#target"),
-      })),
-    ).toMatchObject({ replacement: true, original: false });
-    expect(await reference.element().evaluate((node) => node.isConnected)).toBe(false);
+      await page.evaluate(() => {
+        const replace = (window as unknown as { __replaceInputTarget?: () => void })
+          .__replaceInputTarget;
+        if (typeof replace !== "function") {
+          throw new Error("TEST_FIXTURE_REPLACEMENT_HELPER_MISSING");
+        }
+        replace();
+      });
+      expect(
+        await page.evaluate(() => ({
+          replacement: !!document.querySelector("#replacement"),
+          original: !!document.querySelector("#target"),
+        })),
+      ).toMatchObject({ replacement: true, original: false });
+      expect(await reference.element().evaluate((node) => node.isConnected)).toBe(false);
 
-    await expect(fillReferencedTarget(reference, "should-never-fill", { timeoutMs: 1_500 })).rejects.toBeInstanceOf(
-      PraxisStaleTargetError,
-    );
-    expect(await page.evaluate(() => (globalThis as unknown as { __fills: Array<{ kind: string; value: string }> }).__fills)).toEqual([]);
-    await reference.dispose();
-  });
+      await expect(
+        fillReferencedTarget(reference, "should-never-fill", { timeoutMs: 1_500 }),
+      ).rejects.toBeInstanceOf(PraxisStaleTargetError);
+      expect(
+        await page.evaluate(
+          () =>
+            (globalThis as unknown as { __fills: Array<{ kind: string; value: string }> }).__fills,
+        ),
+      ).toEqual([]);
+      await reference.dispose();
+    },
+  );
 
   it("refuses when the document changes before native fill", { timeout: 30_000 }, async () => {
     await resetPage(`<input id="target" placeholder="Email" />`);
     const reference = await observeTargetReference(page, page.locator("#target"));
-    await page.goto("data:text/html,<input id=\"replacement\" placeholder=\"Other\" />");
-    await expect(fillReferencedTarget(reference, "late", { timeoutMs: 1_500 })).rejects.toBeInstanceOf(
-      PraxisStaleTargetError,
-    );
+    await page.goto('data:text/html,<input id="replacement" placeholder="Other" />');
+    await expect(
+      fillReferencedTarget(reference, "late", { timeoutMs: 1_500 }),
+    ).rejects.toBeInstanceOf(PraxisStaleTargetError);
     await reference.dispose();
   });
 
@@ -619,9 +715,9 @@ describe("Praxis target reference and pinned click", () => {
     const reference = await observeTargetReference(page, page.locator("#target"));
     await page.locator("#target").evaluate((element) => element.remove());
     await expect(reference.assertCurrent()).rejects.toBeInstanceOf(PraxisStaleTargetError);
-    await expect(fillReferencedTarget(reference, "late", { timeoutMs: 1_500 })).rejects.toBeInstanceOf(
-      PraxisStaleTargetError,
-    );
+    await expect(
+      fillReferencedTarget(reference, "late", { timeoutMs: 1_500 }),
+    ).rejects.toBeInstanceOf(PraxisStaleTargetError);
     await reference.dispose();
   });
 
@@ -632,92 +728,138 @@ describe("Praxis target reference and pinned click", () => {
     `);
     const select = await observeTargetReference(page, page.locator("#tier"));
     const checkbox = await observeTargetReference(page, page.locator("#enabled"));
-    await expect(selectReferencedTarget(select, "Pro", { timeoutMs: 1_500 })).resolves.toEqual({ dispatched: true });
-    await expect(setCheckedReferencedTarget(checkbox, true, { timeoutMs: 1_500 })).resolves.toEqual({ dispatched: true });
+    await expect(selectReferencedTarget(select, "Pro", { timeoutMs: 1_500 })).resolves.toEqual({
+      dispatched: true,
+    });
+    await expect(setCheckedReferencedTarget(checkbox, true, { timeoutMs: 1_500 })).resolves.toEqual(
+      { dispatched: true },
+    );
     expect(await page.locator("#tier").inputValue()).toBe("Pro");
     expect(await page.locator("#enabled").isChecked()).toBe(true);
     await select.dispose();
     await checkbox.dispose();
   });
 
-  it("refuses substituted select and checkbox controls without mutating replacements", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "refuses substituted select and checkbox controls without mutating replacements",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <select id="tier"><option>Basic</option><option>Pro</option></select>
       <input id="enabled" type="checkbox">
     `);
-    const select = await observeTargetReference(page, page.locator("#tier"));
-    const checkbox = await observeTargetReference(page, page.locator("#enabled"));
-    await page.evaluate(() => {
-      const replacementSelect = document.querySelector("#tier")!.cloneNode(true) as HTMLSelectElement;
-      const replacementCheckbox = document.querySelector("#enabled")!.cloneNode(true) as HTMLInputElement;
-      document.querySelector("#tier")!.replaceWith(replacementSelect);
-      document.querySelector("#enabled")!.replaceWith(replacementCheckbox);
-    });
-    await expect(selectReferencedTarget(select, "Pro", { timeoutMs: 1_500 })).rejects.toBeInstanceOf(PraxisStaleTargetError);
-    await expect(setCheckedReferencedTarget(checkbox, true, { timeoutMs: 1_500 })).rejects.toBeInstanceOf(PraxisStaleTargetError);
-    expect(await page.locator("#tier").inputValue()).toBe("Basic");
-    expect(await page.locator("#enabled").isChecked()).toBe(false);
-    await select.dispose();
-    await checkbox.dispose();
-  });
+      const select = await observeTargetReference(page, page.locator("#tier"));
+      const checkbox = await observeTargetReference(page, page.locator("#enabled"));
+      await page.evaluate(() => {
+        const replacementSelect = document
+          .querySelector("#tier")!
+          .cloneNode(true) as HTMLSelectElement;
+        const replacementCheckbox = document
+          .querySelector("#enabled")!
+          .cloneNode(true) as HTMLInputElement;
+        document.querySelector("#tier")!.replaceWith(replacementSelect);
+        document.querySelector("#enabled")!.replaceWith(replacementCheckbox);
+      });
+      await expect(
+        selectReferencedTarget(select, "Pro", { timeoutMs: 1_500 }),
+      ).rejects.toBeInstanceOf(PraxisStaleTargetError);
+      await expect(
+        setCheckedReferencedTarget(checkbox, true, { timeoutMs: 1_500 }),
+      ).rejects.toBeInstanceOf(PraxisStaleTargetError);
+      expect(await page.locator("#tier").inputValue()).toBe("Basic");
+      expect(await page.locator("#enabled").isChecked()).toBe(false);
+      await select.dispose();
+      await checkbox.dispose();
+    },
+  );
 
-  it("presses the exact pinned keyboard target and refuses its replacement", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "presses the exact pinned keyboard target and refuses its replacement",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <input id="target" aria-label="Search">
       <script>
         globalThis.__keys = [];
         document.querySelector("#target").addEventListener("keydown", event => globalThis.__keys.push("original:" + event.key));
       </script>
     `);
-    const original = await observeTargetReference(page, page.locator("#target"));
-    await expect(pressReferencedTarget(original, "Enter", { timeoutMs: 1_500 })).resolves.toEqual({ dispatched: true });
-    expect(await page.evaluate(() => (globalThis as unknown as { __keys: string[] }).__keys)).toEqual(["original:Enter"]);
-    await original.dispose();
+      const original = await observeTargetReference(page, page.locator("#target"));
+      await expect(pressReferencedTarget(original, "Enter", { timeoutMs: 1_500 })).resolves.toEqual(
+        { dispatched: true },
+      );
+      expect(
+        await page.evaluate(() => (globalThis as unknown as { __keys: string[] }).__keys),
+      ).toEqual(["original:Enter"]);
+      await original.dispose();
 
-    const stale = await observeTargetReference(page, page.locator("#target"));
-    await page.evaluate(() => {
-      const replacement = document.querySelector("#target")!.cloneNode(true) as HTMLInputElement;
-      replacement.addEventListener("keydown", event => (globalThis as unknown as { __keys: string[] }).__keys.push("replacement:" + event.key));
-      document.querySelector("#target")!.replaceWith(replacement);
-    });
-    await expect(pressReferencedTarget(stale, "Enter", { timeoutMs: 1_500 })).rejects.toBeInstanceOf(PraxisStaleTargetError);
-    expect(await page.evaluate(() => (globalThis as unknown as { __keys: string[] }).__keys)).toEqual(["original:Enter"]);
-    await stale.dispose();
-  });
+      const stale = await observeTargetReference(page, page.locator("#target"));
+      await page.evaluate(() => {
+        const replacement = document.querySelector("#target")!.cloneNode(true) as HTMLInputElement;
+        replacement.addEventListener("keydown", (event) =>
+          (globalThis as unknown as { __keys: string[] }).__keys.push("replacement:" + event.key),
+        );
+        document.querySelector("#target")!.replaceWith(replacement);
+      });
+      await expect(
+        pressReferencedTarget(stale, "Enter", { timeoutMs: 1_500 }),
+      ).rejects.toBeInstanceOf(PraxisStaleTargetError);
+      expect(
+        await page.evaluate(() => (globalThis as unknown as { __keys: string[] }).__keys),
+      ).toEqual(["original:Enter"]);
+      await stale.dispose();
+    },
+  );
 
-  it("scrolls the exact pinned container and refuses a substituted container", { timeout: 30_000 }, async () => {
-    await resetPage('<div id="target" style="width:100px;height:50px;overflow:auto"><div style="height:300px"></div></div>');
-    const original = await observeTargetReference(page, page.locator("#target"));
-    await expect(scrollReferencedTarget(original, "down")).resolves.toEqual({ dispatched: true });
-    expect(await page.locator("#target").evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
-    await original.dispose();
+  it(
+    "scrolls the exact pinned container and refuses a substituted container",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(
+        '<div id="target" style="width:100px;height:50px;overflow:auto"><div style="height:300px"></div></div>',
+      );
+      const original = await observeTargetReference(page, page.locator("#target"));
+      await expect(scrollReferencedTarget(original, "down")).resolves.toEqual({ dispatched: true });
+      expect(await page.locator("#target").evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+      await original.dispose();
 
-    const stale = await observeTargetReference(page, page.locator("#target"));
-    await page.evaluate(() => {
-      const replacement = document.querySelector("#target")!.cloneNode(true) as HTMLElement;
-      replacement.scrollTop = 0;
-      document.querySelector("#target")!.replaceWith(replacement);
-    });
-    await expect(scrollReferencedTarget(stale, "down")).rejects.toBeInstanceOf(PraxisStaleTargetError);
-    expect(await page.locator("#target").evaluate((node) => node.scrollTop)).toBe(0);
-    await stale.dispose();
-  });
+      const stale = await observeTargetReference(page, page.locator("#target"));
+      await page.evaluate(() => {
+        const replacement = document.querySelector("#target")!.cloneNode(true) as HTMLElement;
+        replacement.scrollTop = 0;
+        document.querySelector("#target")!.replaceWith(replacement);
+      });
+      await expect(scrollReferencedTarget(stale, "down")).rejects.toBeInstanceOf(
+        PraxisStaleTargetError,
+      );
+      expect(await page.locator("#target").evaluate((node) => node.scrollTop)).toBe(0);
+      await stale.dispose();
+    },
+  );
 
-  it("owns targetless page keyboard and wheel mechanics without inventing an element target", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "owns targetless page keyboard and wheel mechanics without inventing an element target",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <input autofocus>
       <div style="height:2000px"></div>
       <script>globalThis.__pageKeys = []; document.querySelector("input").addEventListener("keydown", event => globalThis.__pageKeys.push(event.key));</script>
     `);
-    await page.locator("input").focus();
-    await expect(pressPageKey(page, "Escape")).resolves.toEqual({ dispatched: true });
-    await expect(wheelPage(page, 500)).resolves.toEqual({ dispatched: true });
-    expect(await page.evaluate(() => (globalThis as unknown as { __pageKeys: string[] }).__pageKeys)).toEqual(["Escape"]);
-    await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0);
-  });
+      await page.locator("input").focus();
+      await expect(pressPageKey(page, "Escape")).resolves.toEqual({ dispatched: true });
+      await expect(wheelPage(page, 500)).resolves.toEqual({ dispatched: true });
+      expect(
+        await page.evaluate(() => (globalThis as unknown as { __pageKeys: string[] }).__pageKeys),
+      ).toEqual(["Escape"]);
+      await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0);
+    },
+  );
 
   it("downloads only through the exact pinned activation entity", { timeout: 30_000 }, async () => {
-    await resetPage('<a id="target" download="receipt.txt" href="data:text/plain,receipt">Download</a>');
+    await resetPage(
+      '<a id="target" download="receipt.txt" href="data:text/plain,receipt">Download</a>',
+    );
     const reference = await observeTargetReference(page, page.locator("#target"));
     const download = await downloadFromReferencedTarget(reference, { timeoutMs: 2_000 });
     expect(download.suggestedFilename()).toBe("receipt.txt");
@@ -729,7 +871,9 @@ describe("Praxis target reference and pinned click", () => {
       const replacement = document.querySelector("#target")!.cloneNode(true);
       document.querySelector("#target")!.replaceWith(replacement);
     });
-    await expect(downloadFromReferencedTarget(stale, { timeoutMs: 200 })).rejects.toBeInstanceOf(PraxisStaleTargetError);
+    await expect(downloadFromReferencedTarget(stale, { timeoutMs: 200 })).rejects.toBeInstanceOf(
+      PraxisStaleTargetError,
+    );
     await stale.dispose();
   });
 
@@ -748,14 +892,17 @@ describe("Praxis target reference and pinned click", () => {
     await expect(clickReferencedTarget(reference, { timeoutMs: 2_000 })).resolves.toEqual({
       dispatched: true,
     });
-    expect(await page.evaluate(() => (globalThis as unknown as { clicks: string[] }).clicks)).toEqual([
-      "original",
-    ]);
+    expect(
+      await page.evaluate(() => (globalThis as unknown as { clicks: string[] }).clicks),
+    ).toEqual(["original"]);
     await reference.dispose();
   });
 
-  it("refuses when the observed entity is replaced during pointer interaction", { timeout: 30_000 }, async () => {
-    await resetPage(`
+  it(
+    "refuses when the observed entity is replaced during pointer interaction",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`
       <button id="target">Submit order</button>
       <script>
         globalThis.clicks = [];
@@ -770,14 +917,17 @@ describe("Praxis target reference and pinned click", () => {
         }, { once: true });
       </script>
     `);
-    const reference = await observeTargetReference(page, page.locator("#target"));
-    await expect(clickReferencedTarget(reference, { timeoutMs: 1_500 })).rejects.toThrow(
-      PraxisStaleTargetError,
-    );
-    // Neither the stale original nor the replacement may receive the click.
-    expect(await page.evaluate(() => (globalThis as unknown as { clicks: string[] }).clicks)).toEqual([]);
-    await reference.dispose();
-  });
+      const reference = await observeTargetReference(page, page.locator("#target"));
+      await expect(clickReferencedTarget(reference, { timeoutMs: 1_500 })).rejects.toThrow(
+        PraxisStaleTargetError,
+      );
+      // Neither the stale original nor the replacement may receive the click.
+      expect(
+        await page.evaluate(() => (globalThis as unknown as { clicks: string[] }).clicks),
+      ).toEqual([]);
+      await reference.dispose();
+    },
+  );
 
   it("refuses after the document changes", { timeout: 30_000 }, async () => {
     await resetPage(`<button id="target">Save</button>`);
@@ -789,14 +939,18 @@ describe("Praxis target reference and pinned click", () => {
     await reference.dispose();
   });
 
-  it("refuses after the observed entity is detached without replacement", { timeout: 30_000 }, async () => {
-    await resetPage(`<button id="target">Save</button>`);
-    const reference = await observeTargetReference(page, page.locator("#target"));
-    await page.locator("#target").evaluate((element) => element.remove());
-    await expect(reference.assertCurrent()).rejects.toThrow(PraxisStaleTargetError);
-    await expect(clickReferencedTarget(reference, { timeoutMs: 1_500 })).rejects.toThrow(
-      PraxisStaleTargetError,
-    );
-    await reference.dispose();
-  });
+  it(
+    "refuses after the observed entity is detached without replacement",
+    { timeout: 30_000 },
+    async () => {
+      await resetPage(`<button id="target">Save</button>`);
+      const reference = await observeTargetReference(page, page.locator("#target"));
+      await page.locator("#target").evaluate((element) => element.remove());
+      await expect(reference.assertCurrent()).rejects.toThrow(PraxisStaleTargetError);
+      await expect(clickReferencedTarget(reference, { timeoutMs: 1_500 })).rejects.toThrow(
+        PraxisStaleTargetError,
+      );
+      await reference.dispose();
+    },
+  );
 });

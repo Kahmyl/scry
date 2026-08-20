@@ -397,4 +397,3 @@ That is broad enough to solve the underlying fragmentation rather than merely ad
 [7]: https://developer.chrome.com/docs/extensions/reference/api/debugger?utm_source=chatgpt.com "chrome.debugger  |  API  |  Chrome for Developers"
 [8]: https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging?hl=en&utm_source=chatgpt.com "Native messaging  |  Chrome for Developers"
 [9]: https://playwright.dev/docs/api/class-browsertype?utm_source=chatgpt.com "BrowserType | Playwright"
-

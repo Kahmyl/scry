@@ -634,7 +634,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         } else {
           const transitionOperationId = options.recordingOperationId ?? step.id;
 
-          if (documentTransitionExpected) {
+          if (documentTransitionExpected && !recording.isSealed()) {
             await recording.beginDocumentTransition({
               operationId: transitionOperationId,
             });

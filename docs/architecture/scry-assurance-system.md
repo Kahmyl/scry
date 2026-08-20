@@ -432,4 +432,3 @@ Sometimes it will say the existing architecture is fine and three small fixes ar
 **Sophistication is not the goal. Evidence-backed cohesion is.**
 
 That, I think, is the system you're describing.
-

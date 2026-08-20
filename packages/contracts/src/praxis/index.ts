@@ -79,10 +79,12 @@ export const praxisSafeActionSchema = z.enum([
   "do_not_retry",
 ]);
 export const praxisOperationSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("activate"),
-    mechanism: z.enum(["pointer", "element", "dom"]).optional(),
-  }).strict(),
+  z
+    .object({
+      type: z.literal("activate"),
+      mechanism: z.enum(["pointer", "element", "dom"]).optional(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal("enter_text"),
@@ -192,7 +194,6 @@ export const praxisResolutionSchema = z
     strategy: interactionAdapterSchema,
   })
   .strict();
-
 
 export const praxisCandidateResolutionSchema = z.enum([
   "resolved",
@@ -465,21 +466,11 @@ export type PraxisFailure = z.infer<typeof praxisFailureSchema>;
 export type PraxisResult = z.infer<typeof praxisResultSchema>;
 export type PraxisResolution = z.infer<typeof praxisResolutionSchema>;
 
-export type PraxisCandidateResolution = z.infer<
-  typeof praxisCandidateResolutionSchema
->;
-export type PraxisResumeToken = z.infer<
-  typeof praxisResumeTokenSchema
->;
-export type PraxisCandidate = z.infer<
-  typeof praxisCandidateSchema
->;
-export type PraxisCandidatePolicy = z.infer<
-  typeof praxisCandidatePolicySchema
->;
-export type PraxisCandidateResponse = z.infer<
-  typeof praxisCandidateResponseSchema
->;
+export type PraxisCandidateResolution = z.infer<typeof praxisCandidateResolutionSchema>;
+export type PraxisResumeToken = z.infer<typeof praxisResumeTokenSchema>;
+export type PraxisCandidate = z.infer<typeof praxisCandidateSchema>;
+export type PraxisCandidatePolicy = z.infer<typeof praxisCandidatePolicySchema>;
+export type PraxisCandidateResponse = z.infer<typeof praxisCandidateResponseSchema>;
 export type PraxisVerification = z.infer<typeof praxisVerificationSchema>;
 export type PraxisAcquisitionOutput = z.infer<typeof praxisAcquisitionOutputSchema>;
 export type PraxisLifecycleEvent = z.infer<typeof praxisLifecycleEventSchema>;

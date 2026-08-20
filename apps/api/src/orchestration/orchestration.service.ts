@@ -143,8 +143,11 @@ export class OrchestrationService {
         [missionId],
       );
       if (unknownMutation.rowCount)
-        throw new ConflictException({ code: "MISSION_RECONCILIATION_REQUIRED",
-          mutationOutcome: "unknown", safeActions: ["get_flow_authoring"] });
+        throw new ConflictException({
+          code: "MISSION_RECONCILIATION_REQUIRED",
+          mutationOutcome: "unknown",
+          safeActions: ["get_flow_authoring"],
+        });
       const plan = await c.query<{
         id: string;
         source_mission_revision: number;

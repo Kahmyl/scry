@@ -56,9 +56,7 @@ export class TraceCoordinator implements PrivacyCollector {
       );
       const target = path.join(this.options.outputDirectory, ...relativePath.split("/"));
       await mkdir(path.dirname(target), { recursive: true });
-      await this.bounded(
-        startPraxisTrace(this.options.context),
-      );
+      await this.bounded(startPraxisTrace(this.options.context));
       this.active = { id, startedAt: this.now(), reason, path: target, relativePath };
     });
   }

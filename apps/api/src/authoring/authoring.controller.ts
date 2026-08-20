@@ -12,7 +12,7 @@ import { z } from "zod";
 import type { Principal } from "../auth/index.js";
 import { CurrentPrincipal } from "../auth/index.js";
 import { ZodValidationPipe } from "../common/validation.pipe.js";
-import { AuthoringService } from "./authoring.service.js";
+import { AuthoringService } from "./services/authoring.service.js";
 
 const abandonSchema = z
   .object({
@@ -26,9 +26,7 @@ const abandonSchema = z
 
 @Controller("api")
 export class AuthoringController {
-  constructor(
-    @Inject(AuthoringService) private readonly authoring: AuthoringService,
-  ) {}
+  constructor(@Inject(AuthoringService) private readonly authoring: AuthoringService) {}
 
   @Post("flow-drafts")
   create(

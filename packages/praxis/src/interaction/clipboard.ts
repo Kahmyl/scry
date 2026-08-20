@@ -14,19 +14,24 @@ export async function clearAndVerifyPraxisClipboard(page: Page): Promise<void> {
     throw new Error("PRAXIS_CLIPBOARD_CLEAR_NOT_OBSERVED");
 }
 
-export async function observePraxisCopyEvent(
-  page: Page,
-  perform: () => Promise<unknown>,
-) {
+export async function observePraxisCopyEvent(page: Page, perform: () => Promise<unknown>) {
   await page.evaluate(() => {
     (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved = false;
-    document.addEventListener("copy", () => {
-      (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved = true;
-    }, { once: true });
+    document.addEventListener(
+      "copy",
+      () => {
+        (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved =
+          true;
+      },
+      { once: true },
+    );
   });
   await perform();
-  return page.evaluate(() =>
-    (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved === true);
+  return page.evaluate(
+    () =>
+      (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved ===
+      true,
+  );
 }
 
 export function readPraxisElementValue(target: Locator): Promise<string> {
@@ -35,7 +40,8 @@ export function readPraxisElementValue(target: Locator): Promise<string> {
     element instanceof HTMLTextAreaElement ||
     element instanceof HTMLSelectElement
       ? element.value
-      : (element.textContent ?? ""));
+      : (element.textContent ?? ""),
+  );
 }
 
 export function readPraxisSelectedText(target: Locator): Promise<string> {

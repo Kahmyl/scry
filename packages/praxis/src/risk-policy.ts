@@ -1,11 +1,7 @@
 import type { InteractionTargetIntent } from "@scry/contracts";
 
 export type InteractionRiskClass =
-  | "read_only"
-  | "ordinary"
-  | "authentication"
-  | "destructive"
-  | "one_time_protected";
+  "read_only" | "ordinary" | "authentication" | "destructive" | "one_time_protected";
 
 export type InteractionRiskPolicy = {
   riskClass: InteractionRiskClass;
@@ -65,9 +61,7 @@ const defaults: Record<InteractionRiskClass, InteractionRiskPolicy> = {
   },
 };
 
-export function interactionRiskClass(
-  risk: InteractionTargetIntent["risk"],
-): InteractionRiskClass {
+export function interactionRiskClass(risk: InteractionTargetIntent["risk"]): InteractionRiskClass {
   if (risk === "read_only") return "read_only";
   if (risk === "ordinary") return "ordinary";
   if (risk === "authentication" || risk === "credential") return "authentication";
@@ -75,19 +69,14 @@ export function interactionRiskClass(
   return "one_time_protected";
 }
 
-export function interactionRiskPolicy(
-  intent: InteractionTargetIntent,
-): InteractionRiskPolicy {
+export function interactionRiskPolicy(intent: InteractionTargetIntent): InteractionRiskPolicy {
   const base = defaults[interactionRiskClass(intent.risk)];
 
   return {
     ...base,
-    minimumConfidence:
-      intent.confidence.minimum ?? base.minimumConfidence,
-    minimumConfidenceMargin:
-      intent.confidence.minimumMargin ?? base.minimumConfidenceMargin,
+    minimumConfidence: intent.confidence.minimum ?? base.minimumConfidence,
+    minimumConfidenceMargin: intent.confidence.minimumMargin ?? base.minimumConfidenceMargin,
     minimumIndependentEvidenceFamilies:
-      intent.confidence.minimumFamilyCount ??
-      base.minimumIndependentEvidenceFamilies,
+      intent.confidence.minimumFamilyCount ?? base.minimumIndependentEvidenceFamilies,
   };
 }

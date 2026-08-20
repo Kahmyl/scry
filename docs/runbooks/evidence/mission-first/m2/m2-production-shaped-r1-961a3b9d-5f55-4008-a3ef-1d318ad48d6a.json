@@ -83,54 +83,42 @@
       "p50Ms": 7.4459999999999695,
       "p95Ms": 7.4459999999999695,
       "maxMs": 7.4459999999999695,
-      "slowestOperationIds": [
-        "api"
-      ]
+      "slowestOperationIds": ["api"]
     },
     "database": {
       "count": 1,
       "p50Ms": 4.382790999999997,
       "p95Ms": 4.382790999999997,
       "maxMs": 4.382790999999997,
-      "slowestOperationIds": [
-        "database"
-      ]
+      "slowestOperationIds": ["database"]
     },
     "praxis_grounding": {
       "count": 1,
       "p50Ms": 0,
       "p95Ms": 0,
       "maxMs": 0,
-      "slowestOperationIds": [
-        "961a3b9d-5f55-4008-a3ef-1d318ad48d6a"
-      ]
+      "slowestOperationIds": ["961a3b9d-5f55-4008-a3ef-1d318ad48d6a"]
     },
     "queue_wait": {
       "count": 1,
       "p50Ms": 0,
       "p95Ms": 0,
       "maxMs": 0,
-      "slowestOperationIds": [
-        "961a3b9d-5f55-4008-a3ef-1d318ad48d6a"
-      ]
+      "slowestOperationIds": ["961a3b9d-5f55-4008-a3ef-1d318ad48d6a"]
     },
     "redis": {
       "count": 1,
       "p50Ms": 2.898707999999999,
       "p95Ms": 2.898707999999999,
       "maxMs": 2.898707999999999,
-      "slowestOperationIds": [
-        "redis"
-      ]
+      "slowestOperationIds": ["redis"]
     },
     "worker": {
       "count": 1,
       "p50Ms": 5.357000000000028,
       "p95Ms": 5.357000000000028,
       "maxMs": 5.357000000000028,
-      "slowestOperationIds": [
-        "worker"
-      ]
+      "slowestOperationIds": ["worker"]
     }
   },
   "privacyScan": {

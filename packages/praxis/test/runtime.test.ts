@@ -128,22 +128,33 @@ describe("Praxis strategy, dispatch, and verification", () => {
     const password = context.controls.find((control) => control.valueProtected)!;
     let dispatchStarted = false;
     let protectedInputResolved = false;
-    await expect(authenticateProtectedReferencedTargets(page, {
-      fields: [{ targetReference: password.reference, resolveValue: async () => {
-        protectedInputResolved = true;
-        return "protected-test-value";
-      } }],
-      submitReference: "context-control-00000000000000000000000000000000",
-    }, () => { dispatchStarted = true; })).rejects.toBeInstanceOf(PraxisStaleTargetError);
+    await expect(
+      authenticateProtectedReferencedTargets(
+        page,
+        {
+          fields: [
+            {
+              targetReference: password.reference,
+              resolveValue: async () => {
+                protectedInputResolved = true;
+                return "protected-test-value";
+              },
+            },
+          ],
+          submitReference: "context-control-00000000000000000000000000000000",
+        },
+        () => {
+          dispatchStarted = true;
+        },
+      ),
+    ).rejects.toBeInstanceOf(PraxisStaleTargetError);
     expect(dispatchStarted).toBe(false);
     expect(protectedInputResolved).toBe(false);
     expect(await page.locator("input").inputValue()).toBe("");
   });
 
   it("does not relabel a pre-mutation setup error as a dispatch failure", async () => {
-    await page.setContent(
-      `<button onclick="document.body.dataset.hit='yes'">Continue</button>`,
-    );
+    await page.setContent(`<button onclick="document.body.dataset.hit='yes'">Continue</button>`);
     const canary = "sensitive pre-dispatch setup failure";
 
     const result = await new PraxisTransactionCoordinator(
@@ -152,10 +163,7 @@ describe("Praxis strategy, dispatch, and verification", () => {
       async () => {
         throw new Error(canary);
       },
-    ).execute(
-      request({ type: "activate" }, intent("Continue")),
-      new AbortController().signal,
-    );
+    ).execute(request({ type: "activate" }, intent("Continue")), new AbortController().signal);
 
     expect(result).toMatchObject({
       status: "failed",
@@ -170,7 +178,9 @@ describe("Praxis strategy, dispatch, and verification", () => {
   });
 
   it("explicitly DOM-activates only the exact grounded entity", async () => {
-    await page.setContent(`<button onclick="document.body.dataset.hit='exact'">DOM action</button>`);
+    await page.setContent(
+      `<button onclick="document.body.dataset.hit='exact'">DOM action</button>`,
+    );
     const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(
       request({ type: "activate", mechanism: "dom" }, intent("DOM action")),
       new AbortController().signal,
@@ -180,7 +190,9 @@ describe("Praxis strategy, dispatch, and verification", () => {
   });
 
   it("explicitly uses trusted element activation without selector re-resolution", async () => {
-    await page.setContent(`<button onclick="document.body.dataset.hit='element'">Element action</button>`);
+    await page.setContent(
+      `<button onclick="document.body.dataset.hit='element'">Element action</button>`,
+    );
     const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(
       request({ type: "activate", mechanism: "element" }, intent("Element action")),
       new AbortController().signal,
@@ -249,7 +261,10 @@ describe("Praxis strategy, dispatch, and verification", () => {
       input,
       new AbortController().signal,
     );
-    expect(result, JSON.stringify(result)).toMatchObject({ status: "succeeded", mutationOutcome: "not_applied" });
+    expect(result, JSON.stringify(result)).toMatchObject({
+      status: "succeeded",
+      mutationOutcome: "not_applied",
+    });
   });
 
   it("selects typed least-invasive strategies", () => {
@@ -403,7 +418,9 @@ describe("Praxis strategy, dispatch, and verification", () => {
       new AbortController().signal,
     );
     expect(result).toMatchObject({ status: "succeeded", mutationOutcome: "applied" });
-    expect(await page.getByRole("textbox", { name: "Notes" }).textContent()).toBe("replacement text");
+    expect(await page.getByRole("textbox", { name: "Notes" }).textContent()).toBe(
+      "replacement text",
+    );
   });
 
   it("dispatches protected contenteditable text through the pinned entity without serializing it", async () => {
@@ -415,7 +432,10 @@ describe("Praxis strategy, dispatch, and verification", () => {
       new PraxisAdapter(page, async () => secret),
     ).execute(
       request(
-        { type: "enter_text", input: { reference: "secret-notes", classification: "known_secret" } },
+        {
+          type: "enter_text",
+          input: { reference: "secret-notes", classification: "known_secret" },
+        },
         { ...intent("Secret notes", "textbox"), risk: "credential" },
       ),
       new AbortController().signal,
@@ -439,7 +459,8 @@ describe("Praxis strategy, dispatch, and verification", () => {
       </script>
     `);
     const target: InteractionTargetIntent = {
-      ...intent("Tier"), requiredCapabilities: ["selects_option"],
+      ...intent("Tier"),
+      requiredCapabilities: ["selects_option"],
       preferredEvidence: { ...intent("Tier").preferredEvidence, roles: ["combobox"] },
     };
     const result = await new PraxisTransactionCoordinator(
@@ -453,34 +474,49 @@ describe("Praxis strategy, dispatch, and verification", () => {
     );
     expect(await page.locator('select[data-replacement="true"]').inputValue()).toBe("Pro");
     expect(result).toMatchObject({
-      status: "failed", code: "PRAXIS_LOCAL_STATE_NOT_OBSERVED",
-      mutationOutcome: "applied", retry: "requires_reobservation", safeActions: ["inspect_artifact"],
+      status: "failed",
+      code: "PRAXIS_LOCAL_STATE_NOT_OBSERVED",
+      mutationOutcome: "applied",
+      retry: "requires_reobservation",
+      safeActions: ["inspect_artifact"],
     });
   });
 
   it("dispatches and verifies scroll through the pinned container", async () => {
-    await page.setContent('<div title="Audit scroll container" tabindex="0" style="height:50px;overflow:auto"><div style="height:300px"></div></div>');
+    await page.setContent(
+      '<div title="Audit scroll container" tabindex="0" style="height:50px;overflow:auto"><div style="height:300px"></div></div>',
+    );
     const target: InteractionTargetIntent = {
       ...intent("Audit scroll container"),
       requiredCapabilities: ["focusable", "readable_value"],
-      preferredEvidence: { ...intent("Audit scroll container").preferredEvidence, roles: [], names: ["Audit scroll container"], labels: ["Audit scroll container"] },
+      preferredEvidence: {
+        ...intent("Audit scroll container").preferredEvidence,
+        roles: [],
+        names: ["Audit scroll container"],
+        labels: ["Audit scroll container"],
+      },
       confidence: { requiredFamilies: [] },
     };
     const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(
       request({ type: "scroll", direction: "down" }, target),
       new AbortController().signal,
     );
-    expect(result, JSON.stringify(result)).toMatchObject({ status: "succeeded", mutationOutcome: "not_applied" });
-    expect(await page.locator('[tabindex="0"]').evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+    expect(result, JSON.stringify(result)).toMatchObject({
+      status: "succeeded",
+      mutationOutcome: "not_applied",
+    });
+    expect(await page.locator('[tabindex="0"]').evaluate((node) => node.scrollTop)).toBeGreaterThan(
+      0,
+    );
   });
 
   it("keeps an unexpected adapter failure after native fill unknown and unsafe", async () => {
     await page.setContent("<input aria-label=Name>");
 
     class FailingFillAdapter extends PraxisAdapter {
-      override async dispatch(...args: Parameters<PraxisAdapter["dispatch"]>): ReturnType<
-        PraxisAdapter["dispatch"]
-      > {
+      override async dispatch(
+        ...args: Parameters<PraxisAdapter["dispatch"]>
+      ): ReturnType<PraxisAdapter["dispatch"]> {
         await super.dispatch(...args);
         throw new Error("forced adapter failure after successful fill dispatch");
       }
@@ -489,7 +525,10 @@ describe("Praxis strategy, dispatch, and verification", () => {
     const result = await new PraxisTransactionCoordinator(
       new FailingFillAdapter(page, async () => "Ada"),
     ).execute(
-      request({ type: "enter_text", input: { reference: "name", classification: "public" } }, intent("Name", "textbox")),
+      request(
+        { type: "enter_text", input: { reference: "name", classification: "public" } },
+        intent("Name", "textbox"),
+      ),
       new AbortController().signal,
     );
 

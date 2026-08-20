@@ -136,11 +136,13 @@ async function establishActionability(
   isCurrent?: () => Promise<void>,
 ): Promise<{ point: { x: number; y: number }; geometry: ClickableGeometry }> {
   const deadline = performance.now() + timeoutMs;
-  await element.scrollIntoViewIfNeeded({ timeout: timeoutRemainingOrThrow(deadline) }).catch(async () => {
-    const attached = await element.evaluate((node) => node.isConnected).catch(() => false);
-    if (!attached) throw new PraxisStaleTargetError();
-    throw new Error("Target not actionable before click");
-  });
+  await element
+    .scrollIntoViewIfNeeded({ timeout: timeoutRemainingOrThrow(deadline) })
+    .catch(async () => {
+      const attached = await element.evaluate((node) => node.isConnected).catch(() => false);
+      if (!attached) throw new PraxisStaleTargetError();
+      throw new Error("Target not actionable before click");
+    });
 
   let snapshot = await readActionabilitySnapshot(element, isCurrent);
   if (!snapshot.visible || !snapshot.enabled) {
@@ -158,9 +160,7 @@ async function establishActionability(
       throw new Error("Target not actionable before click");
     }
     if (geometryEquivalent(snapshot.geometry, next.geometry)) {
-      const x = position
-        ? next.geometry.x + position.x
-        : next.geometry.x + next.geometry.width / 2;
+      const x = position ? next.geometry.x + position.x : next.geometry.x + next.geometry.width / 2;
       const y = position
         ? next.geometry.y + position.y
         : next.geometry.y + next.geometry.height / 2;

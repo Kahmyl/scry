@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { dispatchRunOperationSchema } from "../src/flow.js";
 
-const id = (digit: string) => `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
+const id = (digit: string) =>
+  `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
 
 function command(reference?: string, praxisSessionId = id("1")) {
   return {
@@ -56,12 +57,19 @@ describe("agent-directed Run live Praxis binding", () => {
           kind: "acquire_protected_outputs",
           preparationIntentIds: ["open-dialog"],
           mutation: { kind: "one_time", target: { concept: "Create", role: "button", reference } },
-          outputs: [{
-            reference: "clientSecret",
-            classification: "protected",
-            target: { concept: "generated secret", role: "textbox", name: "Client secret", exact: true },
-            storageName: "Generated client secret",
-          }],
+          outputs: [
+            {
+              reference: "clientSecret",
+              classification: "protected",
+              target: {
+                concept: "generated secret",
+                role: "textbox",
+                name: "Client secret",
+                exact: true,
+              },
+              storageName: "Generated client secret",
+            },
+          ],
         },
         expectedEffect: { kind: "none" },
         constraints: { timeoutMs: 5_000, allowNewPage: false, allowNonExact: false },

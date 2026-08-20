@@ -43,10 +43,7 @@ export function registerResumeMissionTool(server: McpServer, client: ScryApiClie
           .object({
             confirmedUserAuthorized: z.literal(true),
             selection: z.literal("continue_existing_mission"),
-            source: z.enum([
-              "current_request_explicit",
-              "followup_explicit_choice",
-            ]),
+            source: z.enum(["current_request_explicit", "followup_explicit_choice"]),
           })
           .strict(),
         idempotencyKey: z.string().trim().min(8).max(200).optional(),

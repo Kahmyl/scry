@@ -33,86 +33,61 @@ function rows(items: unknown[] = []) {
 
 function serviceFor(query: ReturnType<typeof vi.fn>) {
   return new MissionService({
-    transaction: (
-      work: (client: { query: typeof query }) => unknown,
-    ) => work({ query }),
+    transaction: (work: (client: { query: typeof query }) => unknown) => work({ query }),
   } as never);
 }
 
 function publicationQuery(
-  blocker:
-    | "authoring"
-    | "operation"
-    | "run"
-    | "attempt"
-    | "orchestration",
+  blocker: "authoring" | "operation" | "run" | "attempt" | "orchestration",
 ) {
   let requestHash = "";
 
-  return vi.fn(
-    async (
-      text: string,
-      values: unknown[] = [],
-    ) => {
-      if (text.includes("FROM missions m JOIN projects"))
-        return rows([
-          {
-            id: missionId,
-            projectId: "55555555-5555-4555-8555-555555555555",
-            status: "running",
-            revision: 4,
-          },
-        ]);
+  return vi.fn(async (text: string, values: unknown[] = []) => {
+    if (text.includes("FROM missions m JOIN projects"))
+      return rows([
+        {
+          id: missionId,
+          projectId: "55555555-5555-4555-8555-555555555555",
+          status: "running",
+          revision: 4,
+        },
+      ]);
 
-      if (text.includes("INSERT INTO idempotency_records")) {
-        requestHash = String(values[2]);
-        return rows();
-      }
-
-      if (
-        text.includes('SELECT request_hash AS "requestHash"') &&
-        text.includes("idempotency_records")
-      )
-        return rows([
-          {
-            requestHash,
-            response: null,
-          },
-        ]);
-
-      if (
-        text.includes("FROM agent_sessions") &&
-        text.includes("status='active'")
-      )
-        return rows([{}]);
-
-      if (text.includes("FROM adaptive_sessions"))
-        return blocker === "authoring" ? rows([{}]) : rows();
-
-      if (text.includes("FROM adaptive_operations o"))
-        return blocker === "operation" ? rows([{}]) : rows();
-
-      if (
-        text.includes("FROM runs") &&
-        text.includes("state NOT IN")
-      )
-        return blocker === "run" ? rows([{}]) : rows();
-
-      if (
-        text.includes("FROM attempts a") &&
-        text.includes("a.completed_at IS NULL")
-      )
-        return blocker === "attempt" ? rows([{}]) : rows();
-
-      if (
-        text.includes("FROM mission_objective_orchestration") &&
-        text.includes("state NOT IN")
-      )
-        return blocker === "orchestration" ? rows([{}]) : rows();
-
+    if (text.includes("INSERT INTO idempotency_records")) {
+      requestHash = String(values[2]);
       return rows();
-    },
-  );
+    }
+
+    if (
+      text.includes('SELECT request_hash AS "requestHash"') &&
+      text.includes("idempotency_records")
+    )
+      return rows([
+        {
+          requestHash,
+          response: null,
+        },
+      ]);
+
+    if (text.includes("FROM agent_sessions") && text.includes("status='active'")) return rows([{}]);
+
+    if (text.includes("FROM adaptive_sessions"))
+      return blocker === "authoring" ? rows([{}]) : rows();
+
+    if (text.includes("FROM adaptive_operations o"))
+      return blocker === "operation" ? rows([{}]) : rows();
+
+    if (text.includes("FROM runs") && text.includes("state NOT IN"))
+      return blocker === "run" ? rows([{}]) : rows();
+
+    if (text.includes("FROM attempts a") && text.includes("a.completed_at IS NULL"))
+      return blocker === "attempt" ? rows([{}]) : rows();
+
+    if (text.includes("FROM mission_objective_orchestration") && text.includes("state NOT IN"))
+      return blocker === "orchestration" ? rows([{}]) : rows();
+
+    return rows();
+  });
 }
 
 describe("Mission completion safety", () => {
@@ -164,9 +139,7 @@ describe("Mission completion safety", () => {
     });
 
     expect(
-      query.mock.calls.some(([text]) =>
-        String(text).includes("INSERT INTO agent_sessions"),
-      ),
+      query.mock.calls.some(([text]) => String(text).includes("INSERT INTO agent_sessions")),
     ).toBe(false);
   });
 
@@ -176,33 +149,22 @@ describe("Mission completion safety", () => {
     ["run", "MISSION_RUNS_NOT_TERMINAL"],
     ["attempt", "MISSION_ATTEMPTS_NOT_TERMINAL"],
     ["orchestration", "MISSION_ORCHESTRATION_NOT_TERMINAL"],
-  ] as const)(
-    "refuses final report publication while %s work remains",
-    async (blocker, code) => {
-      const query = publicationQuery(blocker);
-      const service = serviceFor(query);
+  ] as const)("refuses final report publication while %s work remains", async (blocker, code) => {
+    const query = publicationQuery(blocker);
+    const service = serviceFor(query);
 
-      await expect(
-        service.publishReport(
-          principal,
-          missionId,
-          publishInput,
-        ),
-      ).rejects.toMatchObject({
-        response: expect.objectContaining({
-          code,
-        }),
-      });
+    await expect(service.publishReport(principal, missionId, publishInput)).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code,
+      }),
+    });
 
-      expect(
-        query.mock.calls.some(([text]) =>
-          String(text).includes(
-            "UPDATE missions SET status='completed'",
-          ),
-        ),
-      ).toBe(false);
-    },
-  );
+    expect(
+      query.mock.calls.some(([text]) =>
+        String(text).includes("UPDATE missions SET status='completed'"),
+      ),
+    ).toBe(false);
+  });
 
   it("replays an already committed final report before terminal/session checks", async () => {
     let requestHash = "";
@@ -220,67 +182,52 @@ describe("Mission completion safety", () => {
       replayed: false,
     };
 
-    const query = vi.fn(
-      async (
-        text: string,
-        values: unknown[] = [],
-      ) => {
-        if (text.includes("FROM missions m JOIN projects"))
-          return rows([
-            {
-              id: missionId,
-              projectId: "55555555-5555-4555-8555-555555555555",
-              status: "completed",
-              revision: 5,
-            },
-          ]);
+    const query = vi.fn(async (text: string, values: unknown[] = []) => {
+      if (text.includes("FROM missions m JOIN projects"))
+        return rows([
+          {
+            id: missionId,
+            projectId: "55555555-5555-4555-8555-555555555555",
+            status: "completed",
+            revision: 5,
+          },
+        ]);
 
-        if (text.includes("INSERT INTO idempotency_records")) {
-          requestHash = String(values[2]);
-          return rows();
-        }
-
-        if (
-          text.includes('SELECT request_hash AS "requestHash"') &&
-          text.includes("idempotency_records")
-        )
-          return rows([
-            {
-              requestHash,
-              response: committed,
-            },
-          ]);
-
+      if (text.includes("INSERT INTO idempotency_records")) {
+        requestHash = String(values[2]);
         return rows();
-      },
-    );
+      }
+
+      if (
+        text.includes('SELECT request_hash AS "requestHash"') &&
+        text.includes("idempotency_records")
+      )
+        return rows([
+          {
+            requestHash,
+            response: committed,
+          },
+        ]);
+
+      return rows();
+    });
 
     const service = serviceFor(query);
 
-    await expect(
-      service.publishReport(
-        principal,
-        missionId,
-        publishInput,
-      ),
-    ).resolves.toMatchObject({
+    await expect(service.publishReport(principal, missionId, publishInput)).resolves.toMatchObject({
       id: reportId,
       missionId,
       status: "published",
       replayed: true,
     });
 
-    expect(
-      query.mock.calls.some(([text]) =>
-        String(text).includes("FROM agent_sessions"),
-      ),
-    ).toBe(false);
+    expect(query.mock.calls.some(([text]) => String(text).includes("FROM agent_sessions"))).toBe(
+      false,
+    );
 
     expect(
       query.mock.calls.some(([text]) =>
-        String(text).includes(
-          "UPDATE missions SET status='completed'",
-        ),
+        String(text).includes("UPDATE missions SET status='completed'"),
       ),
     ).toBe(false);
   });

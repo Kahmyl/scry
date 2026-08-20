@@ -22,7 +22,10 @@ export async function selectReferencedTarget(
   await assertFormControlActionable(element, "select");
   await reference.assertCurrent();
   try {
-    await element.selectOption(value, options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs });
+    await element.selectOption(
+      value,
+      options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs },
+    );
   } catch (error) {
     if (error instanceof PraxisStaleTargetError) throw error;
     throw new PraxisFormControlDispatchError({ cause: error });
@@ -40,7 +43,10 @@ export async function setCheckedReferencedTarget(
   await assertFormControlActionable(element, "check");
   await reference.assertCurrent();
   try {
-    await element.setChecked(checked, options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs });
+    await element.setChecked(
+      checked,
+      options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs },
+    );
   } catch (error) {
     if (error instanceof PraxisStaleTargetError) throw error;
     throw new PraxisFormControlDispatchError({ cause: error });
@@ -52,15 +58,18 @@ async function assertFormControlActionable(
   element: ElementHandle<HTMLElement>,
   kind: "select" | "check",
 ): Promise<void> {
-  const state = await element.evaluate((node, expectedKind) => {
-    const connected = node.isConnected;
-    const disabled = "disabled" in node && Boolean((node as HTMLInputElement).disabled);
-    const matches = expectedKind === "select"
-      ? node instanceof HTMLSelectElement
-      : node instanceof HTMLInputElement && ["checkbox", "radio"].includes(node.type);
-    return { connected, disabled, matches };
-  }, kind).catch(() => ({ connected: false, disabled: false, matches: false }));
+  const state = await element
+    .evaluate((node, expectedKind) => {
+      const connected = node.isConnected;
+      const disabled = "disabled" in node && Boolean((node as HTMLInputElement).disabled);
+      const matches =
+        expectedKind === "select"
+          ? node instanceof HTMLSelectElement
+          : node instanceof HTMLInputElement && ["checkbox", "radio"].includes(node.type);
+      return { connected, disabled, matches };
+    }, kind)
+    .catch(() => ({ connected: false, disabled: false, matches: false }));
   if (!state.connected) throw new PraxisStaleTargetError();
   if (!state.matches || state.disabled || !(await element.isVisible().catch(() => false)))
-    throw new Error("Pinned form control is not actionable");
+    throw new PraxisFormControlDispatchError();
 }

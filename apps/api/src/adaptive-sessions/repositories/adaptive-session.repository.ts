@@ -24,8 +24,8 @@ import {
   operationOutcomeSchema,
 } from "@scry/contracts";
 
-import { decryptCredential } from "../access/index.js";
-import { Database } from "../infrastructure/index.js";
+import { decryptCredential } from "../../access/index.js";
+import { Database } from "../../infrastructure/index.js";
 
 type Query = <T extends QueryResultRow = QueryResultRow>(
   text: string,
@@ -4000,18 +4000,15 @@ function portableProtectedReplayIntent(
 
   const hasPortableEvidence = Boolean(
     target.role ||
-      target.name ||
-      target.label ||
-      target.placeholder ||
-      target.text ||
-      target.testId,
+    target.name ||
+    target.label ||
+    target.placeholder ||
+    target.text ||
+    target.testId,
   );
 
   if (!hasPortableEvidence) {
-    const control = portableReplayControlForReference(
-      semanticPageContext,
-      historicalReference,
-    );
+    const control = portableReplayControlForReference(semanticPageContext, historicalReference);
 
     if (!control) {
       throw new ConflictException({
@@ -4022,13 +4019,9 @@ function portableProtectedReplayIntent(
     }
 
     const role =
-      typeof control.role === "string" && control.role.length > 0
-        ? control.role
-        : undefined;
+      typeof control.role === "string" && control.role.length > 0 ? control.role : undefined;
     const name =
-      typeof control.name === "string" && control.name.length > 0
-        ? control.name
-        : undefined;
+      typeof control.name === "string" && control.name.length > 0 ? control.name : undefined;
     const boundary = portableReplayBoundary(control.boundary);
 
     if (!role && !name) {
@@ -4043,9 +4036,7 @@ function portableProtectedReplayIntent(
       ...target,
       ...(role ? { role } : {}),
       ...(name ? { name } : {}),
-      ...(!target.scope && boundary
-        ? { scope: boundary }
-        : {}),
+      ...(!target.scope && boundary ? { scope: boundary } : {}),
     };
   }
 
@@ -4096,14 +4087,13 @@ function portableReplayControlForReference(
   const controls = (semanticPageContext as Record<string, unknown>).controls;
   if (!Array.isArray(controls)) return null;
 
-  const matches = controls.filter(
-    (control): control is Record<string, unknown> =>
-      Boolean(
-        control &&
-          typeof control === "object" &&
-          !Array.isArray(control) &&
-          (control as Record<string, unknown>).reference === reference,
-      ),
+  const matches = controls.filter((control): control is Record<string, unknown> =>
+    Boolean(
+      control &&
+      typeof control === "object" &&
+      !Array.isArray(control) &&
+      (control as Record<string, unknown>).reference === reference,
+    ),
   );
 
   return matches.length === 1 ? matches[0]! : null;

@@ -3,11 +3,12 @@ import { describe, expect, it } from "vitest";
 import { classifyPassivePreparationRequest } from "../src/protected-preparation-effects.js";
 
 describe("protected preparation passive effect policy", () => {
-  const classify = (url: string, method = "POST") => classifyPassivePreparationRequest({
-    method,
-    url: new URL(url),
-    allowedOrigins: ["https://app.example.test"],
-  });
+  const classify = (url: string, method = "POST") =>
+    classifyPassivePreparationRequest({
+      method,
+      url: new URL(url),
+      allowedOrigins: ["https://app.example.test"],
+    });
 
   it("classifies only bounded Cloudflare, Sentry, and Stripe passive endpoints", () => {
     expect(classify("https://app.example.test/cdn-cgi/rum")).toBe("telemetry");

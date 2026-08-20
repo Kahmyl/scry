@@ -10,23 +10,39 @@ const context = {
 
 describe("Project credential contracts", () => {
   it("allows Project-owned creation without Mission provenance", () => {
-    expect(createCredentialSchema.safeParse({ name: "Reusable login", value: "secret" }).success)
-      .toBe(true);
+    expect(
+      createCredentialSchema.safeParse({ name: "Reusable login", value: "secret" }).success,
+    ).toBe(true);
   });
 
   it("accepts complete optional provenance and rejects partial Mission coupling", () => {
-    expect(createCredentialSchema.safeParse({ ...context, name: "Agent supplied", value: "secret" }).success)
-      .toBe(true);
-    expect(createCredentialSchema.safeParse({ missionId: context.missionId,
-      name: "Invalid partial context", value: "secret" }).success).toBe(false);
+    expect(
+      createCredentialSchema.safeParse({ ...context, name: "Agent supplied", value: "secret" })
+        .success,
+    ).toBe(true);
+    expect(
+      createCredentialSchema.safeParse({
+        missionId: context.missionId,
+        name: "Invalid partial context",
+        value: "secret",
+      }).success,
+    ).toBe(false);
   });
 
   it("keeps credential updates Project-scoped while accepting the legacy complete context", () => {
-    expect(updateCredentialSchema.safeParse({ name: "Renamed", value: "replacement" }).success)
-      .toBe(true);
-    expect(updateCredentialSchema.safeParse({ ...context, name: "Renamed", value: "replacement" }).success)
-      .toBe(true);
-    expect(updateCredentialSchema.safeParse({ missionId: context.missionId,
-      name: "Invalid partial context", value: "replacement" }).success).toBe(false);
+    expect(
+      updateCredentialSchema.safeParse({ name: "Renamed", value: "replacement" }).success,
+    ).toBe(true);
+    expect(
+      updateCredentialSchema.safeParse({ ...context, name: "Renamed", value: "replacement" })
+        .success,
+    ).toBe(true);
+    expect(
+      updateCredentialSchema.safeParse({
+        missionId: context.missionId,
+        name: "Invalid partial context",
+        value: "replacement",
+      }).success,
+    ).toBe(false);
   });
 });

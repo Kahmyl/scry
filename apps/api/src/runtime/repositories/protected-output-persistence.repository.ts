@@ -58,14 +58,23 @@ export class ProtectedOutputPersistenceRepository {
              AND lease_owner=$5 AND fencing_token=$9 AND version=$10 AND state='dispatching'
              AND lease_expires_at>now()
          ON CONFLICT(protected_operation_id) DO NOTHING RETURNING protected_operation_id`,
-        [context.protectedOperationId,context.operationId,context.ownerKind,context.ownerId,
-          context.leaseOwner,encrypted.ciphertext,encrypted.initializationVector,
-          encrypted.authenticationTag,context.fencingToken,context.version],
+        [
+          context.protectedOperationId,
+          context.operationId,
+          context.ownerKind,
+          context.ownerId,
+          context.leaseOwner,
+          encrypted.ciphertext,
+          encrypted.initializationVector,
+          encrypted.authenticationTag,
+          context.fencingToken,
+          context.version,
+        ],
       );
       if (!result.rowCount) {
         const existing = await this.database.query(
           `SELECT 1 FROM protected_response_output_staging WHERE protected_operation_id=$1 AND operation_id=$2`,
-          [context.protectedOperationId,context.operationId],
+          [context.protectedOperationId, context.operationId],
         );
         if (!existing.rowCount) throw new ConflictException("PROTECTED_RESPONSE_STAGING_FENCED");
       }
@@ -76,7 +85,9 @@ export class ProtectedOutputPersistenceRepository {
 
   async recoverStagedResponseOutputs(context: ProtectedOutputPersistenceContext) {
     const result = await this.database.query<{
-      ciphertext: Buffer; initializationVector: Buffer; authenticationTag: Buffer;
+      ciphertext: Buffer;
+      initializationVector: Buffer;
+      authenticationTag: Buffer;
     }>(
       `SELECT staged.ciphertext,staged.initialization_vector AS "initializationVector",
          staged.authentication_tag AS "authenticationTag"
@@ -86,8 +97,15 @@ export class ProtectedOutputPersistenceRepository {
          AND (($3='authoring_session' AND operation.authoring_session_id=$4) OR ($3='run' AND operation.run_id=$4))
          AND operation.lease_owner=$5 AND operation.fencing_token=$6 AND operation.version=$7
          AND operation.state='recovery_required' AND operation.lease_expires_at>now()`,
-      [context.protectedOperationId,context.operationId,context.ownerKind,context.ownerId,
-        context.leaseOwner,context.fencingToken,context.version],
+      [
+        context.protectedOperationId,
+        context.operationId,
+        context.ownerKind,
+        context.ownerId,
+        context.leaseOwner,
+        context.fencingToken,
+        context.version,
+      ],
     );
     if (!result.rowCount) return undefined;
     const row = result.rows[0]!;
@@ -105,9 +123,11 @@ export class ProtectedOutputPersistenceRepository {
     if (new Set(outputs.map((output) => output.reference)).size !== outputs.length)
       throw new Error("PROTECTED_OUTPUT_REFERENCE_DUPLICATE");
     validateExternalResourceBindings(outputs, externalResourceBindings);
-    const encrypted = outputs.map((output) => output.classification === "protected"
-      ? { output, encrypted: encryptCredential(output.value) }
-      : { output });
+    const encrypted = outputs.map((output) =>
+      output.classification === "protected"
+        ? { output, encrypted: encryptCredential(output.value) }
+        : { output },
+    );
     try {
       return await this.database.transaction(async (client) => {
         const operation = await client.query<{
@@ -119,33 +139,69 @@ export class ProtectedOutputPersistenceRepository {
              AND (($7='authoring_session' AND authoring_session_id=$8) OR ($7='run' AND run_id=$8))
              AND operation_id=$9 AND lease_owner=$10 AND fencing_token=$11 AND version=$12
              AND lease_expires_at>now() FOR UPDATE`,
-          [context.protectedOperationId,context.projectId,context.environmentId,context.missionId,
-            context.objectiveId,context.agentSessionId,context.ownerKind,context.ownerId,
-            context.operationId,context.leaseOwner,context.fencingToken,context.version],
+          [
+            context.protectedOperationId,
+            context.projectId,
+            context.environmentId,
+            context.missionId,
+            context.objectiveId,
+            context.agentSessionId,
+            context.ownerKind,
+            context.ownerId,
+            context.operationId,
+            context.leaseOwner,
+            context.fencingToken,
+            context.version,
+          ],
         );
         if (operation.rows[0]?.state !== "persisting")
           throw new ConflictException("PROTECTED_OPERATION_PERSISTENCE_FENCED");
         const manifest = operation.rows[0].safeOutputManifest;
-        const admitted = new Map(outputs.map((output) => [output.reference, output.classification]));
-        if (manifest.length !== admitted.size || manifest.some((output) => admitted.get(output.reference) !== output.classification))
+        const admitted = new Map(
+          outputs.map((output) => [output.reference, output.classification]),
+        );
+        if (
+          manifest.length !== admitted.size ||
+          manifest.some((output) => admitted.get(output.reference) !== output.classification)
+        )
           throw new ConflictException("PROTECTED_OUTPUT_SET_INCOMPLETE");
 
-        const references: Record<string, { classification: "protected" | "public"; credentialId?: string; valueId?: string; scope: "run" | "project" }> = {};
+        const references: Record<
+          string,
+          {
+            classification: "protected" | "public";
+            credentialId?: string;
+            valueId?: string;
+            scope: "run" | "project";
+          }
+        > = {};
         const credentialIds: string[] = [];
         for (const item of encrypted) {
           const id = randomUUID();
           if (item.output.classification === "protected") {
             if (item.output.scope === "run") {
-              if (context.ownerKind !== "run") throw new ConflictException("RUN_OUTPUT_REQUIRES_RUN_OWNER");
-              const secret = (item as Extract<typeof item,{ encrypted: unknown }>).encrypted;
+              if (context.ownerKind !== "run")
+                throw new ConflictException("RUN_OUTPUT_REQUIRES_RUN_OWNER");
+              const secret = (item as Extract<typeof item, { encrypted: unknown }>).encrypted;
               await client.query(
                 `INSERT INTO run_captured_secrets(
                    id,run_id,operation_id,reference,ciphertext,initialization_vector,authentication_tag
                  ) VALUES($1,$2,$3,$4,$5,$6,$7)`,
-                [id,context.ownerId,context.operationId,item.output.reference,secret.ciphertext,
-                  secret.initializationVector,secret.authenticationTag],
+                [
+                  id,
+                  context.ownerId,
+                  context.operationId,
+                  item.output.reference,
+                  secret.ciphertext,
+                  secret.initializationVector,
+                  secret.authenticationTag,
+                ],
               );
-              references[item.output.reference] = { classification: "protected", credentialId: id, scope: "run" };
+              references[item.output.reference] = {
+                classification: "protected",
+                credentialId: id,
+                scope: "run",
+              };
               continue;
             }
             await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
@@ -153,23 +209,36 @@ export class ProtectedOutputPersistenceRepository {
             ]);
             const duplicate = await client.query(
               `SELECT 1 FROM project_credentials WHERE project_id=$1 AND name=$2 AND deleted_at IS NULL`,
-              [context.projectId,item.output.storageName],
+              [context.projectId, item.output.storageName],
             );
             const name = duplicate.rowCount
-              ? `${item.output.storageName.slice(0,185)} (${id.slice(0,8)})`
+              ? `${item.output.storageName.slice(0, 185)} (${id.slice(0, 8)})`
               : item.output.storageName;
-            const secret = (item as Extract<typeof item,{ encrypted: unknown }>).encrypted;
+            const secret = (item as Extract<typeof item, { encrypted: unknown }>).encrypted;
             await client.query(
               `INSERT INTO project_credentials(
                  id,project_id,name,ciphertext,initialization_vector,authentication_tag,
                  origin_mission_id,origin_objective_id,created_by_agent_session_id,origin_protected_operation_id
                ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-              [id,context.projectId,name,secret.ciphertext,secret.initializationVector,
-                secret.authenticationTag,context.missionId,context.objectiveId,
-                context.agentSessionId,context.protectedOperationId],
+              [
+                id,
+                context.projectId,
+                name,
+                secret.ciphertext,
+                secret.initializationVector,
+                secret.authenticationTag,
+                context.missionId,
+                context.objectiveId,
+                context.agentSessionId,
+                context.protectedOperationId,
+              ],
             );
             credentialIds.push(id);
-            references[item.output.reference] = { classification: "protected", credentialId: id, scope: "project" };
+            references[item.output.reference] = {
+              classification: "protected",
+              credentialId: id,
+              scope: "project",
+            };
           } else {
             if (item.output.scope === "run" && context.ownerKind !== "run")
               throw new ConflictException("RUN_OUTPUT_REQUIRES_RUN_OWNER");
@@ -178,13 +247,26 @@ export class ProtectedOutputPersistenceRepository {
                  id,project_id,source_run_id,source_protected_operation_id,run_id,operation_id,
                  name,reference,scope,mission_id,objective_id,value
                ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-              [id,context.projectId,context.ownerKind === "run" ? context.ownerId : null,
+              [
+                id,
+                context.projectId,
+                context.ownerKind === "run" ? context.ownerId : null,
                 context.ownerKind === "run" ? null : context.protectedOperationId,
-                item.output.scope === "run" ? context.ownerId : null,context.operationId,
-                item.output.storageName,item.output.reference,item.output.scope,
-                context.missionId,context.objectiveId,item.output.value],
+                item.output.scope === "run" ? context.ownerId : null,
+                context.operationId,
+                item.output.storageName,
+                item.output.reference,
+                item.output.scope,
+                context.missionId,
+                context.objectiveId,
+                item.output.value,
+              ],
             );
-            references[item.output.reference] = { classification: "public", valueId: id, scope: item.output.scope };
+            references[item.output.reference] = {
+              classification: "public",
+              valueId: id,
+              scope: item.output.scope,
+            };
           }
         }
         for (const binding of externalResourceBindings) {
@@ -194,9 +276,16 @@ export class ProtectedOutputPersistenceRepository {
                  source_protected_operation_id,project_id,environment_id,provider,resource_kind,
                  resource_scope,identity_contract_version,lifecycle_state,required_for_destructive_lifecycle
                ) VALUES($1,$2,$3,$4,$5,$6,$7,'unavailable',$8)`,
-              [context.protectedOperationId,context.projectId,context.environmentId,binding.provider,
-                binding.resourceKind,binding.resourceScope,binding.identityContractVersion,
-                binding.requiredForDestructiveLifecycle],
+              [
+                context.protectedOperationId,
+                context.projectId,
+                context.environmentId,
+                binding.provider,
+                binding.resourceKind,
+                binding.resourceScope,
+                binding.identityContractVersion,
+                binding.requiredForDestructiveLifecycle,
+              ],
             );
             continue;
           }
@@ -206,7 +295,7 @@ export class ProtectedOutputPersistenceRepository {
           const publicValue = await client.query<{ value: string }>(
             `SELECT value FROM generated_public_values
               WHERE id=$1 AND source_protected_operation_id=$2 AND project_id=$3 FOR SHARE`,
-            [stored.valueId,context.protectedOperationId,context.projectId],
+            [stored.valueId, context.protectedOperationId, context.projectId],
           );
           if (publicValue.rowCount !== 1)
             throw new ConflictException("EXTERNAL_RESOURCE_BINDING_PUBLIC_VALUE_REQUIRED");
@@ -216,9 +305,19 @@ export class ProtectedOutputPersistenceRepository {
                provider,resource_kind,resource_scope,canonical_external_identity,
                identity_contract_version,identity_source,lifecycle_state,required_for_destructive_lifecycle
              ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'active',$11)`,
-            [context.protectedOperationId,stored.valueId,context.projectId,context.environmentId,
-              binding.provider,binding.resourceKind,binding.resourceScope,publicValue.rows[0]!.value,
-              binding.identityContractVersion,binding.identitySource,binding.requiredForDestructiveLifecycle],
+            [
+              context.protectedOperationId,
+              stored.valueId,
+              context.projectId,
+              context.environmentId,
+              binding.provider,
+              binding.resourceKind,
+              binding.resourceScope,
+              publicValue.rows[0]!.value,
+              binding.identityContractVersion,
+              binding.identitySource,
+              binding.requiredForDestructiveLifecycle,
+            ],
           );
         }
         if (credentialIds.length) {
@@ -226,11 +325,14 @@ export class ProtectedOutputPersistenceRepository {
             `UPDATE environments SET secret_refs=(
                SELECT jsonb_agg(DISTINCT value) FROM jsonb_array_elements_text(secret_refs || $2::jsonb) value
              ) WHERE id=$1 AND project_id=$3`,
-            [context.environmentId,JSON.stringify(credentialIds),context.projectId],
+            [context.environmentId, JSON.stringify(credentialIds), context.projectId],
           );
         }
         const transitioned = await client.query<{
-          id: string; state: "persisted"; version: string; fencingToken: string;
+          id: string;
+          state: "persisted";
+          version: string;
+          fencingToken: string;
           mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
           persistedReferences: Record<string, unknown>;
         }>(
@@ -241,9 +343,16 @@ export class ProtectedOutputPersistenceRepository {
              AND lease_expires_at>now() RETURNING id,state,version,
                fencing_token AS "fencingToken",mutation_outcome AS "mutationOutcome",
                persisted_references AS "persistedReferences"`,
-          [context.protectedOperationId,context.leaseOwner,context.fencingToken,context.version,JSON.stringify(references)],
+          [
+            context.protectedOperationId,
+            context.leaseOwner,
+            context.fencingToken,
+            context.version,
+            JSON.stringify(references),
+          ],
         );
-        if (!transitioned.rowCount) throw new ConflictException("PROTECTED_OPERATION_PERSISTENCE_FENCED");
+        if (!transitioned.rowCount)
+          throw new ConflictException("PROTECTED_OPERATION_PERSISTENCE_FENCED");
         await client.query(
           `DELETE FROM protected_response_output_staging WHERE protected_operation_id=$1`,
           [context.protectedOperationId],
@@ -252,7 +361,7 @@ export class ProtectedOutputPersistenceRepository {
           `INSERT INTO protected_operation_transitions(protected_operation_id,sequence,from_state,to_state,phase,fencing_token,safe_diagnostics)
            SELECT $1,COALESCE(max(sequence),0)+1,'persisting','persisted','persistence_committed',$2,'{}'::jsonb
            FROM protected_operation_transitions WHERE protected_operation_id=$1`,
-          [context.protectedOperationId,context.fencingToken],
+          [context.protectedOperationId, context.fencingToken],
         );
         const row = transitioned.rows[0]!;
         return {
@@ -280,21 +389,28 @@ export class ProtectedOutputPersistenceRepository {
     ownerKind: "authoring_session" | "run";
     ownerId: string;
   }) {
-    if (!/^[A-Z][A-Z0-9_]*$/.test(input.reasonCode)) throw new Error("PROTECTED_OPERATION_REASON_CODE_INVALID");
+    if (!/^[A-Z][A-Z0-9_]*$/.test(input.reasonCode))
+      throw new Error("PROTECTED_OPERATION_REASON_CODE_INVALID");
     await this.database.transaction(async (client) => {
       for (const credentialId of input.credentialIds) {
         const updated = await client.query<{ project_id: string }>(
           `UPDATE project_credentials SET security_status='compromised',updated_at=now()
            WHERE id=$1 AND origin_protected_operation_id=$2 AND security_status='active'
            RETURNING project_id`,
-          [credentialId,input.protectedOperationId],
+          [credentialId, input.protectedOperationId],
         );
         if (updated.rowCount) {
           await client.query(
             `INSERT INTO credential_incidents(
                project_id,run_id,protected_operation_id,credential_id,operation_id,state,reason_code,safe_diagnostics
              ) VALUES($1,NULL,$2,$3,$4,'manual_action_required',$5,'{"manualAction":"REVOKE_IN_PROVIDER_ADMIN"}'::jsonb)`,
-            [updated.rows[0]!.project_id,input.protectedOperationId,credentialId,input.operationId,input.reasonCode],
+            [
+              updated.rows[0]!.project_id,
+              input.protectedOperationId,
+              credentialId,
+              input.operationId,
+              input.reasonCode,
+            ],
           );
           continue;
         }
@@ -302,7 +418,7 @@ export class ProtectedOutputPersistenceRepository {
         const runSecret = await client.query(
           `UPDATE run_captured_secrets SET security_status='compromised'
            WHERE id=$1 AND run_id=$2 AND security_status='active' RETURNING id`,
-          [credentialId,input.ownerId],
+          [credentialId, input.ownerId],
         );
         if (!runSecret.rowCount) continue;
         await client.query(
@@ -310,7 +426,13 @@ export class ProtectedOutputPersistenceRepository {
              project_id,run_id,protected_operation_id,run_secret_id,operation_id,state,reason_code,safe_diagnostics
            ) SELECT project_id,id,$2,$3,$4,'manual_action_required',$5,
              '{"manualAction":"REVOKE_IN_PROVIDER_ADMIN"}'::jsonb FROM runs WHERE id=$1`,
-          [input.ownerId,input.protectedOperationId,credentialId,input.operationId,input.reasonCode],
+          [
+            input.ownerId,
+            input.protectedOperationId,
+            credentialId,
+            input.operationId,
+            input.reasonCode,
+          ],
         );
       }
     });
@@ -322,8 +444,10 @@ function validateOutputs(outputs: AcquiredProtectedOutput[]) {
   if (new Set(outputs.map((output) => output.reference)).size !== outputs.length)
     throw new Error("PROTECTED_OUTPUT_REFERENCE_DUPLICATE");
   for (const output of outputs) {
-    if (!output.value || output.value.length > 64 * 1024) throw new Error("PROTECTED_OUTPUT_VALUE_INVALID");
-    if (!output.reference || !output.storageName) throw new Error("PROTECTED_OUTPUT_IDENTITY_INVALID");
+    if (!output.value || output.value.length > 64 * 1024)
+      throw new Error("PROTECTED_OUTPUT_VALUE_INVALID");
+    if (!output.reference || !output.storageName)
+      throw new Error("PROTECTED_OUTPUT_IDENTITY_INVALID");
   }
 }
 
@@ -339,7 +463,12 @@ function validateExternalResourceBindings(
     keys.add(key);
     if (binding.status === "active") {
       const output = outputs.find((candidate) => candidate.reference === binding.identityReference);
-      if (!output || output.classification !== "public" || output.scope !== "project" || !binding.identitySource)
+      if (
+        !output ||
+        output.classification !== "public" ||
+        output.scope !== "project" ||
+        !binding.identitySource
+      )
         throw new Error("EXTERNAL_RESOURCE_BINDING_PUBLIC_VALUE_REQUIRED");
     } else if (binding.identityReference || binding.identitySource) {
       throw new Error("EXTERNAL_RESOURCE_BINDING_UNAVAILABLE_HAS_IDENTITY");

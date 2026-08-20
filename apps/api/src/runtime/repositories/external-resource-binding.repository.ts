@@ -47,8 +47,14 @@ export class ExternalResourceBindingRepository {
           AND binding.resource_kind=$5 AND binding.resource_scope=$6
           AND binding.lifecycle_state='active'
           AND binding.required_for_destructive_lifecycle=true`,
-      [input.credentialId,input.projectId,input.environmentId,input.provider,
-        input.resourceKind,input.resourceScope],
+      [
+        input.credentialId,
+        input.projectId,
+        input.environmentId,
+        input.provider,
+        input.resourceKind,
+        input.resourceScope,
+      ],
     );
     if (result.rowCount !== 1)
       throw new ConflictException({ code: "EXTERNAL_RESOURCE_BINDING_UNAVAILABLE" });

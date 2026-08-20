@@ -41,15 +41,12 @@ export const updateEnvironmentSchema = createEnvironmentSchema
   })
   .superRefine((input, context) => {
     const environmentReferences = new Set(input.secretRefs);
-    for (const [index, reference] of (
-      input.missionCredentialSelectionRefs ?? []
-    ).entries()) {
+    for (const [index, reference] of (input.missionCredentialSelectionRefs ?? []).entries()) {
       if (!environmentReferences.has(reference))
         context.addIssue({
           code: "custom",
           path: ["missionCredentialSelectionRefs", index],
-          message:
-            "Mission-selected credential references must also be environment-authorized.",
+          message: "Mission-selected credential references must also be environment-authorized.",
         });
     }
   });
@@ -60,10 +57,12 @@ export const validateCredentialReferencesSchema = z
   })
   .strict();
 
-export const listCredentialsSchema = z.object({
-  referenceId: uuidSchema.optional(),
-  missionId: uuidSchema.optional(),
-}).strict();
+export const listCredentialsSchema = z
+  .object({
+    referenceId: uuidSchema.optional(),
+    missionId: uuidSchema.optional(),
+  })
+  .strict();
 
 export const createCredentialSchema = z
   .object({
@@ -75,8 +74,9 @@ export const createCredentialSchema = z
   })
   .strict()
   .refine((input) => {
-    const count = [input.missionId, input.objectiveId, input.agentSessionId]
-      .filter((value) => value !== undefined).length;
+    const count = [input.missionId, input.objectiveId, input.agentSessionId].filter(
+      (value) => value !== undefined,
+    ).length;
     return count === 0 || count === 3;
   }, "Mission provenance must be omitted or supplied as one complete context");
 
@@ -90,8 +90,9 @@ export const updateCredentialSchema = z
   })
   .strict()
   .refine((input) => {
-    const count = [input.missionId, input.objectiveId, input.agentSessionId]
-      .filter((value) => value !== undefined).length;
+    const count = [input.missionId, input.objectiveId, input.agentSessionId].filter(
+      (value) => value !== undefined,
+    ).length;
     return count === 0 || count === 3;
   }, "Deprecated Mission provenance must be omitted or supplied as one complete context");
 

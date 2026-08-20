@@ -18,7 +18,9 @@ import { MissionFlowAuthoringService } from "./mission-flow-authoring.service.js
 
 @Controller("api/mission-flow-authoring")
 export class AdaptiveSessionController {
-  constructor(@Inject(MissionFlowAuthoringService) private readonly sessions: MissionFlowAuthoringService) {}
+  constructor(
+    @Inject(MissionFlowAuthoringService) private readonly sessions: MissionFlowAuthoringService,
+  ) {}
 
   @Post()
   start(
@@ -53,7 +55,8 @@ export class AdaptiveSessionController {
   reconcileUnknown(
     @CurrentPrincipal() principal: Principal,
     @Param("sessionId") sessionId: string,
-    @Body(new ZodValidationPipe(reconcileAdaptiveOperationSchema)) input: ReconcileAdaptiveOperationInput,
+    @Body(new ZodValidationPipe(reconcileAdaptiveOperationSchema))
+    input: ReconcileAdaptiveOperationInput,
   ) {
     return this.sessions.reconcileUnknown(principal, sessionId, input);
   }
@@ -73,7 +76,9 @@ export class AdaptiveSessionController {
  */
 @Controller("api/praxis-sessions")
 export class PraxisSessionController {
-  constructor(@Inject(MissionFlowAuthoringService) private readonly sessions: MissionFlowAuthoringService) {}
+  constructor(
+    @Inject(MissionFlowAuthoringService) private readonly sessions: MissionFlowAuthoringService,
+  ) {}
 
   @Post()
   start(
@@ -97,7 +102,8 @@ export class PraxisSessionController {
   reconcileUnknown(
     @CurrentPrincipal() principal: Principal,
     @Param("sessionId") sessionId: string,
-    @Body(new ZodValidationPipe(reconcileAdaptiveOperationSchema)) input: ReconcileAdaptiveOperationInput,
+    @Body(new ZodValidationPipe(reconcileAdaptiveOperationSchema))
+    input: ReconcileAdaptiveOperationInput,
   ) {
     return this.sessions.reconcileUnknown(principal, sessionId, input);
   }

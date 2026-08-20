@@ -32,11 +32,17 @@ const target = (concept = "order id") => ({
   concept,
   requiredCapabilities: ["readable_value" as const],
   preferredEvidence: {
-    roles: ["value" as const], names: ["id"], labels: [], descriptions: [],
-    placeholders: [], inputTypes: [],
+    roles: ["value" as const],
+    names: ["id"],
+    labels: [],
+    descriptions: [],
+    placeholders: [],
+    inputTypes: [],
   },
   scope: { kind: "page" as const },
-  relations: [], prohibited: [], risk: "protected" as const,
+  relations: [],
+  prohibited: [],
+  risk: "protected" as const,
   confidence: { requiredFamilies: [] },
 });
 const locator = (overrides: Record<string, unknown> = {}) => ({
@@ -57,7 +63,16 @@ const page = {
   evaluate: vi.fn(async () => ""),
   keyboard: { press: vi.fn(async () => undefined) },
 };
-const acquisition = (methods: Array<"semantic_field_value" | "input_value" | "text_content" | "copy_control" | "protected_network_value">, prohibited = false) => ({
+const acquisition = (
+  methods: Array<
+    | "semantic_field_value"
+    | "input_value"
+    | "text_content"
+    | "copy_control"
+    | "protected_network_value"
+  >,
+  prohibited = false,
+) => ({
   target: target(),
   ...(prohibited ? { prohibitedSourceTargets: [target("protected input")] } : {}),
   classification: "public" as const,
@@ -78,17 +93,24 @@ describe("protected acquisition subordinate deadline ownership", () => {
       state.networkAvailable = true;
       return never();
     };
-    const result = await acquireValue(page as never, acquisition([
-      "semantic_field_value", "protected_network_value",
-    ]), 120);
+    const result = await acquireValue(
+      page as never,
+      acquisition(["semantic_field_value", "protected_network_value"]),
+      120,
+    );
     expect(result).toMatchObject({
       value: "NETWORK_ORDER_ID",
       result: { adapter: "protected_network_value" },
     });
     expect(state.networkCalls).toBeGreaterThan(1);
-    expect(result.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({ method: "semantic_field_value", lastFailureCode: "ACQUISITION_METHOD_TIMEOUT" }),
-    ]));
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "semantic_field_value",
+          lastFailureCode: "ACQUISITION_METHOD_TIMEOUT",
+        }),
+      ]),
+    );
   });
 
   it("rechecks protected network acquisition after prohibited-source resolution stalls", async () => {
@@ -105,19 +127,31 @@ describe("protected acquisition subordinate deadline ownership", () => {
       }
       return { locator: candidate };
     };
-    const result = await acquireValue(page as never, acquisition([
-      "semantic_field_value", "protected_network_value",
-    ], true), 120);
-    expect(result).toMatchObject({ value: "NETWORK_ORDER_ID", result: { adapter: "protected_network_value" } });
+    const result = await acquireValue(
+      page as never,
+      acquisition(["semantic_field_value", "protected_network_value"], true),
+      120,
+    );
+    expect(result).toMatchObject({
+      value: "NETWORK_ORDER_ID",
+      result: { adapter: "protected_network_value" },
+    });
     expect(state.networkCalls).toBeGreaterThan(1);
-    expect(result.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({ method: "semantic_field_value", lastFailureCode: "ACQUISITION_METHOD_TIMEOUT" }),
-    ]));
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "semantic_field_value",
+          lastFailureCode: "ACQUISITION_METHOD_TIMEOUT",
+        }),
+      ]),
+    );
   });
 
   it("rechecks protected network acquisition after input value reading stalls", async () => {
     let releaseLateInput!: (value: string) => void;
-    const lateInput = new Promise<string>((resolve) => { releaseLateInput = resolve; });
+    const lateInput = new Promise<string>((resolve) => {
+      releaseLateInput = resolve;
+    });
     const candidate = locator({
       inputValue: vi.fn(() => {
         state.networkAvailable = true;
@@ -125,14 +159,24 @@ describe("protected acquisition subordinate deadline ownership", () => {
       }),
     });
     state.resolveTarget = async () => ({ locator: candidate });
-    const result = await acquireValue(page as never, acquisition([
-      "semantic_field_value", "input_value", "protected_network_value",
-    ]), 160);
-    expect(result).toMatchObject({ value: "NETWORK_ORDER_ID", result: { adapter: "protected_network_value" } });
+    const result = await acquireValue(
+      page as never,
+      acquisition(["semantic_field_value", "input_value", "protected_network_value"]),
+      160,
+    );
+    expect(result).toMatchObject({
+      value: "NETWORK_ORDER_ID",
+      result: { adapter: "protected_network_value" },
+    });
     expect(state.networkCalls).toBeGreaterThan(1);
-    expect(result.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({ method: "input_value", lastFailureCode: "ACQUISITION_METHOD_TIMEOUT" }),
-    ]));
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "input_value",
+          lastFailureCode: "ACQUISITION_METHOD_TIMEOUT",
+        }),
+      ]),
+    );
     releaseLateInput("LATE_PROTECTED_FALLBACK_VALUE");
     await Promise.resolve();
     await Promise.resolve();
@@ -151,15 +195,30 @@ describe("protected acquisition subordinate deadline ownership", () => {
       locator: vi.fn(() => ({ getByRole: vi.fn(() => copy) })),
     });
     state.resolveTarget = async () => ({ locator: candidate });
-    const result = await acquireValue(page as never, acquisition([
-      "semantic_field_value", "input_value", "text_content", "copy_control",
-      "protected_network_value",
-    ]), 200);
-    expect(result).toMatchObject({ value: "NETWORK_ORDER_ID", result: { adapter: "protected_network_value" } });
+    const result = await acquireValue(
+      page as never,
+      acquisition([
+        "semantic_field_value",
+        "input_value",
+        "text_content",
+        "copy_control",
+        "protected_network_value",
+      ]),
+      200,
+    );
+    expect(result).toMatchObject({
+      value: "NETWORK_ORDER_ID",
+      result: { adapter: "protected_network_value" },
+    });
     expect(state.networkCalls).toBeGreaterThan(1);
-    expect(result.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({ method: "copy_control", lastFailureCode: "ACQUISITION_METHOD_TIMEOUT" }),
-    ]));
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "copy_control",
+          lastFailureCode: "ACQUISITION_METHOD_TIMEOUT",
+        }),
+      ]),
+    );
   });
 
   it("does not reserve a network retry budget when protected network is not an eligible method", async () => {
@@ -177,9 +236,9 @@ describe("protected acquisition subordinate deadline ownership", () => {
       value: "late-but-valid-secret",
       result: { adapter: "text_content" },
     });
-    expect(result.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({ method: "text_content" }),
-    ]));
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ method: "text_content" })]),
+    );
     expect(result.diagnostics[0]?.lastFailureCode).toBeUndefined();
   });
 
@@ -190,14 +249,21 @@ describe("protected acquisition subordinate deadline ownership", () => {
     process.on("unhandledRejection", onUnhandled);
     const started = performance.now();
     try {
-      const result = await acquireValue(page as never, acquisition([
-        "semantic_field_value", "protected_network_value",
-      ]), 100);
+      const result = await acquireValue(
+        page as never,
+        acquisition(["semantic_field_value", "protected_network_value"]),
+        100,
+      );
       expect(performance.now() - started).toBeLessThan(250);
       expect(result.result).toBeUndefined();
-      expect(result.diagnostics).toEqual(expect.arrayContaining([
-        expect.objectContaining({ method: "semantic_field_value", lastFailureCode: "ACQUISITION_METHOD_TIMEOUT" }),
-      ]));
+      expect(result.diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "semantic_field_value",
+            lastFailureCode: "ACQUISITION_METHOD_TIMEOUT",
+          }),
+        ]),
+      );
       await Promise.resolve();
       expect(unhandled).toEqual([]);
     } finally {

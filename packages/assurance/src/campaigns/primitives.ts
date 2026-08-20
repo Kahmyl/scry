@@ -1,10 +1,6 @@
-import {
-  aggregateRequiredStatuses,
-} from "../core/results.js";
+import { aggregateRequiredStatuses } from "../core/results.js";
 
-import type {
-  AssuranceDescriptor,
-} from "../core/types.js";
+import type { AssuranceDescriptor } from "../core/types.js";
 
 import {
   notRunVerification,
@@ -24,8 +20,7 @@ export interface CampaignCase<TContext> {
   required?: boolean;
 }
 
-export interface CampaignDefinition<TContext = undefined>
-  extends AssuranceDescriptor {
+export interface CampaignDefinition<TContext = undefined> extends AssuranceDescriptor {
   cases: readonly CampaignCase<TContext>[];
   stopOnFailure?: boolean;
 }
@@ -35,8 +30,7 @@ export interface CampaignCaseResult {
   verification: VerificationExecution;
 }
 
-export interface CampaignResult
-  extends AssuranceDescriptor {
+export interface CampaignResult extends AssuranceDescriptor {
   status: "pass" | "fail" | "inconclusive";
   cases: readonly CampaignCaseResult[];
 }
@@ -69,21 +63,14 @@ export async function runCampaign<TContext>(
       continue;
     }
 
-    const verification = await runVerification(
-      entry.verification,
-      context,
-    );
+    const verification = await runVerification(entry.verification, context);
 
     results.push({
       required,
       verification,
     });
 
-    if (
-      campaign.stopOnFailure === true &&
-      required &&
-      verification.status === "fail"
-    ) {
+    if (campaign.stopOnFailure === true && required && verification.status === "fail") {
       stopped = true;
     }
   }
@@ -96,18 +83,12 @@ export async function runCampaign<TContext>(
     id: campaign.id,
     title: campaign.title,
 
-    status: aggregateRequiredStatuses(
-      requiredStatuses,
-    ),
+    status: aggregateRequiredStatuses(requiredStatuses),
 
     cases: results,
 
-    ...(campaign.description
-      ? { description: campaign.description }
-      : {}),
+    ...(campaign.description ? { description: campaign.description } : {}),
 
-    ...(campaign.tags
-      ? { tags: campaign.tags }
-      : {}),
+    ...(campaign.tags ? { tags: campaign.tags } : {}),
   };
 }

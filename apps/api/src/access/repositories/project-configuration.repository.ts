@@ -62,57 +62,87 @@ export class ProjectConfigurationRepository {
       await query.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
       const workspaceId = principal.kind === "user" ? principal.workspaceId : null;
       const projects = await query.query<{ id: string; name: string; description: string }>(
-      `SELECT id,name,description FROM projects
+        `SELECT id,name,description FROM projects
        WHERE ($1::uuid IS NULL OR workspace_id=$1)
          AND ($2::uuid IS NULL OR id=$2)
        ORDER BY created_at DESC LIMIT 6`,
-      [workspaceId, input.projectId ?? null],
-    );
-    const projectCount = projects.rowCount ?? projects.rows.length;
-    if (input.projectId && projectCount === 0) {
-      throw new NotFoundException({ code: "PROJECT_NOT_FOUND" });
-    }
-    const selected = input.projectId
-      ? projects.rows[0]
-      : projectCount === 1 ? projects.rows[0] : undefined;
-    const projectCandidates = projects.rows.slice(0, 5);
-    const empty: OperatingContext = {
-      selection: {
-        project: null,
-        requiresProjectSelection: projectCount > 1,
-        projectCandidates: { items: projectCandidates, truncated: projectCount > 5 },
-      },
-      missions: { candidates: { items: [], truncated: false } },
-      credentials: { items: [], truncated: false },
-      environments: { items: [], truncated: false },
-      authoring: {
-        reusable: { items: [], truncated: false }, ready: false,
-        recoverable: { items: [], truncated: false },
-        uncertain: { items: [], truncated: false },
-        missing: ["project", "mission", "objective", "environment", "flow_draft", "authoring_session"],
-      },
-      continuation: {
-        deterministicPreparationAvailable: false,
-        userAuthorityRequired: projectCount > 1,
-        safeActions: projectCount > 1 ? ["get_operating_context_with_project"] : ["create_project_in_dashboard"],
-        blockerCode: projectCount > 1 ? "PROJECT_SELECTION_REQUIRED" : "NO_PROJECT",
-      },
-    };
-    if (!selected) return operatingContextSchema.parse(empty);
+        [workspaceId, input.projectId ?? null],
+      );
+      const projectCount = projects.rowCount ?? projects.rows.length;
+      if (input.projectId && projectCount === 0) {
+        throw new NotFoundException({ code: "PROJECT_NOT_FOUND" });
+      }
+      const selected = input.projectId
+        ? projects.rows[0]
+        : projectCount === 1
+          ? projects.rows[0]
+          : undefined;
+      const projectCandidates = projects.rows.slice(0, 5);
+      const empty: OperatingContext = {
+        selection: {
+          project: null,
+          requiresProjectSelection: projectCount > 1,
+          projectCandidates: { items: projectCandidates, truncated: projectCount > 5 },
+        },
+        missions: { candidates: { items: [], truncated: false } },
+        credentials: { items: [], truncated: false },
+        environments: { items: [], truncated: false },
+        authoring: {
+          reusable: { items: [], truncated: false },
+          ready: false,
+          recoverable: { items: [], truncated: false },
+          uncertain: { items: [], truncated: false },
+          missing: [
+            "project",
+            "mission",
+            "objective",
+            "environment",
+            "flow_draft",
+            "authoring_session",
+          ],
+        },
+        continuation: {
+          deterministicPreparationAvailable: false,
+          userAuthorityRequired: projectCount > 1,
+          safeActions:
+            projectCount > 1
+              ? ["get_operating_context_with_project"]
+              : ["create_project_in_dashboard"],
+          blockerCode: projectCount > 1 ? "PROJECT_SELECTION_REQUIRED" : "NO_PROJECT",
+        },
+      };
+      if (!selected) return operatingContextSchema.parse(empty);
 
       const requiredCredentialReferences = input.requiredCredentialReferences;
-      const [missions, credentials, environments, authoring, uncertainAuthoring] = await Promise.all([
-        query.query<{ id: string; title: string; status: "planning" | "running" | "blocked" | "awaiting_user"; revision: number; currentObjectiveId: string | null; resumePointer: unknown }>(
-          `SELECT id,title,status,revision,current_objective_id AS "currentObjectiveId",
+      const [missions, credentials, environments, authoring, uncertainAuthoring] =
+        await Promise.all([
+          query.query<{
+            id: string;
+            title: string;
+            status: "planning" | "running" | "blocked" | "awaiting_user";
+            revision: number;
+            currentObjectiveId: string | null;
+            resumePointer: unknown;
+          }>(
+            `SELECT id,title,status,revision,current_objective_id AS "currentObjectiveId",
                   resume_pointer AS "resumePointer"
            FROM missions WHERE project_id=$1
              AND status IN ('planning','running','blocked','awaiting_user')
              AND ($2::uuid IS NULL OR id=$2)
-           ORDER BY updated_at DESC LIMIT 6`, [selected.id, input.missionId ?? null]),
-        query.query<{ referenceId: string; name: string; securityStatus: "active" | "compromised" | "revoked";
-          eligibleForAuthorization: boolean; authorizedEnvironmentIds: string[];
-          authorizedEnvironmentIdsTruncated: boolean; createdAt: Date | string; updatedAt: Date | string }>(
-          `SELECT credential.id AS "referenceId",credential.name,
+           ORDER BY updated_at DESC LIMIT 6`,
+            [selected.id, input.missionId ?? null],
+          ),
+          query.query<{
+            referenceId: string;
+            name: string;
+            securityStatus: "active" | "compromised" | "revoked";
+            eligibleForAuthorization: boolean;
+            authorizedEnvironmentIds: string[];
+            authorizedEnvironmentIdsTruncated: boolean;
+            createdAt: Date | string;
+            updatedAt: Date | string;
+          }>(
+            `SELECT credential.id AS "referenceId",credential.name,
                   credential.security_status AS "securityStatus",
                   (credential.security_status='active') AS "eligibleForAuthorization",
                   ARRAY(SELECT environment.id::text FROM environments environment
@@ -126,10 +156,18 @@ export class ProjectConfigurationRepository {
                   credential.created_at AS "createdAt",credential.updated_at AS "updatedAt"
            FROM project_credentials credential
            WHERE credential.project_id=$1 AND credential.deleted_at IS NULL
-           ORDER BY credential.name,credential.created_at LIMIT 21`, [selected.id]),
-        query.query<{ id: string; name: string; baseOrigin: string; secretRefs: string[]; policy: Record<string, unknown>;
-          executionReadiness: "runtime_required" | "runtime_admitted" | "recovery_required" }>(
-          `SELECT environment.id,environment.name,environment.base_origin AS "baseOrigin",
+           ORDER BY credential.name,credential.created_at LIMIT 21`,
+            [selected.id],
+          ),
+          query.query<{
+            id: string;
+            name: string;
+            baseOrigin: string;
+            secretRefs: string[];
+            policy: Record<string, unknown>;
+            executionReadiness: "runtime_required" | "runtime_admitted" | "recovery_required";
+          }>(
+            `SELECT environment.id,environment.name,environment.base_origin AS "baseOrigin",
                   environment.secret_refs AS "secretRefs",environment.policy,
                   CASE
                     WHEN EXISTS (
@@ -148,13 +186,29 @@ export class ProjectConfigurationRepository {
              ($2::text IS NULL OR environment.base_origin=$2 OR environment.policy->'allowedOrigins' ? $2)
              AND (environment.secret_refs @> $3::jsonb)
            ) DESC,environment.created_at LIMIT 11`,
-          [selected.id, input.requiredOrigin ?? null, JSON.stringify(requiredCredentialReferences)]),
-        query.query<{ sessionId: string; missionId: string; objectiveId: string; flowDraftId: string;
-          environmentId: string; state: "active"; decisionBoundary: unknown; turnId: string | null;
-          turnState: string | null; operationId: string | null; mutationOutcome: string | null;
-          operationObjectiveId: string | null; operationFlowDraftId: string | null;
-          _categoryRank: number }>(
-          `SELECT * FROM (SELECT s.id AS "sessionId",s.mission_id AS "missionId",
+            [
+              selected.id,
+              input.requiredOrigin ?? null,
+              JSON.stringify(requiredCredentialReferences),
+            ],
+          ),
+          query.query<{
+            sessionId: string;
+            missionId: string;
+            objectiveId: string;
+            flowDraftId: string;
+            environmentId: string;
+            state: "active";
+            decisionBoundary: unknown;
+            turnId: string | null;
+            turnState: string | null;
+            operationId: string | null;
+            mutationOutcome: string | null;
+            operationObjectiveId: string | null;
+            operationFlowDraftId: string | null;
+            _categoryRank: number;
+          }>(
+            `SELECT * FROM (SELECT s.id AS "sessionId",s.mission_id AS "missionId",
                   s.active_objective_id AS "objectiveId",s.active_flow_draft_id AS "flowDraftId",
                   s.environment_id AS "environmentId",s.state,
                   s.decision_boundary AS "decisionBoundary",
@@ -183,10 +237,19 @@ export class ProjectConfigurationRepository {
              AND NOT EXISTS (SELECT 1 FROM adaptive_operations operation WHERE operation.session_id=s.id
                AND (operation.state='running' OR (operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id))))
            ) ranked WHERE "_categoryRank"<=6
-           ORDER BY ("decisionBoundary" ? 'authoringRecovery') DESC,"_categoryRank"`, [selected.id, input.missionId ?? null]),
-        query.query<{ sessionId: string; missionId: string; objectiveId: string; flowDraftId: string;
-          environmentId: string; operationId: string; dispatchSemantics: string | null }>(
-          `WITH candidate_missions AS (
+           ORDER BY ("decisionBoundary" ? 'authoringRecovery') DESC,"_categoryRank"`,
+            [selected.id, input.missionId ?? null],
+          ),
+          query.query<{
+            sessionId: string;
+            missionId: string;
+            objectiveId: string;
+            flowDraftId: string;
+            environmentId: string;
+            operationId: string;
+            dispatchSemantics: string | null;
+          }>(
+            `WITH candidate_missions AS (
              SELECT candidate.id FROM missions candidate
               WHERE candidate.project_id=$1
                 AND candidate.status IN ('planning','running','blocked','awaiting_user')
@@ -214,154 +277,230 @@ export class ProjectConfigurationRepository {
             WHERE session.project_id=$1 AND session.state='recovery_required'
               AND ($2::uuid IS NULL OR session.mission_id=$2)
            ) SELECT "sessionId","missionId","objectiveId","flowDraftId","environmentId","operationId","dispatchSemantics"
-               FROM ranked WHERE rank<=6 ORDER BY "missionId",rank`, [selected.id, input.missionId ?? null]),
-      ]);
+               FROM ranked WHERE rank<=6 ORDER BY "missionId",rank`,
+            [selected.id, input.missionId ?? null],
+          ),
+        ]);
       const snapshot = { missions, credentials, environments, authoring, uncertainAuthoring };
-    const missionItems = snapshot.missions.rows.slice(0, 5).map((mission) => ({
-      ...mission,
-      resumePointer: projectOperatingResumePointer(mission.resumePointer),
-    }));
-    if (input.missionId && missionItems.length === 0)
-      throw new NotFoundException({ code: "MISSION_NOT_FOUND" });
-    const selectedMissionId = input.missionId
-      ? missionItems[0]!.id
-      : undefined;
-    const environmentItems = snapshot.environments.rows.slice(0, 10).map((environment) => {
-      const allowedOrigins = Array.isArray(environment.policy.allowedOrigins)
-        ? environment.policy.allowedOrigins.filter((value): value is string => typeof value === "string") : [];
-      const originCompatible = !input.requiredOrigin || environment.baseOrigin === input.requiredOrigin
-        || allowedOrigins.includes(input.requiredOrigin);
-      const credentialsCompatible = requiredCredentialReferences.every((reference) =>
-        environment.secretRefs.includes(reference));
-      return {
-        id: environment.id, name: environment.name, baseOrigin: environment.baseOrigin,
-        resourceExists: true as const,
-        policyValid: allowedOrigins.length > 0 && allowedOrigins.includes(environment.baseOrigin),
-        executionReadiness: environment.executionReadiness,
-        compatible: originCompatible && credentialsCompatible,
-        incompatibilities: [
-          ...(!originCompatible ? ["origin_not_allowed" as const] : []),
-          ...(!credentialsCompatible ? ["credential_not_authorized" as const] : []),
-        ],
-        credentialReferenceIds: environment.secretRefs.slice(0, 20),
-      };
-    });
-    const credentialItems = snapshot.credentials.rows.slice(0, 20).map((credential) => ({
-      ...credential,
-      createdAt: credential.createdAt instanceof Date
-        ? credential.createdAt.toISOString() : credential.createdAt,
-      updatedAt: credential.updatedAt instanceof Date
-        ? credential.updatedAt.toISOString() : credential.updatedAt,
-    }));
-    const compatibleEnvironmentIds = new Set(environmentItems
-      .filter(({ compatible }) => compatible).map(({ id }) => id));
-    const reusableCandidates = snapshot.authoring.rows
-      .filter(({ decisionBoundary }) => {
-        const parsed = agentDecisionBoundarySchema.safeParse(decisionBoundary);
-        return decisionBoundary === null || (parsed.success && parsed.data.type === "objective_completed");
-      });
-    const reusable = reusableCandidates
-      .slice(0, 5)
-      .map(({ decisionBoundary: _decisionBoundary, turnId: _turnId, turnState: _turnState,
-        operationId: _operationId, mutationOutcome: _mutationOutcome,
-        operationObjectiveId: _operationObjectiveId, operationFlowDraftId: _operationFlowDraftId,
-        _categoryRank,
-        ...session }) => session);
-    const recoverableCandidates = snapshot.authoring.rows.flatMap((session) => {
-      const parsed = agentDecisionBoundarySchema.safeParse(session.decisionBoundary);
-      const boundary = parsed.success ? parsed.data : undefined;
-      const recovery = boundary?.authoringRecovery;
-      return recovery && boundary?.type === "environment_unavailable"
-        && recovery.sessionId === session.sessionId && recovery.missionId === session.missionId
-        && recovery.objectiveId === session.objectiveId && recovery.flowDraftId === session.flowDraftId
-        && recovery.environmentId === session.environmentId
-        && recovery.sourceTurnId === session.turnId && session.turnState === "decision_required"
-        && recovery.failedOperationId === session.operationId && session.mutationOutcome === "not_applied"
-        && session.operationObjectiveId === session.objectiveId
-        && session.operationFlowDraftId === session.flowDraftId ? [{ session, recovery }] : [];
-    });
-    const compatibleRecoverableCandidates = recoverableCandidates.filter(({ session }) =>
-      session.missionId === selectedMissionId && compatibleEnvironmentIds.has(session.environmentId));
-    const recoverable = compatibleRecoverableCandidates
-      .slice(0, 5)
-      .map(({ session, recovery }) => ({
-        sessionId: recovery.sessionId, missionId: recovery.missionId,
-        objectiveId: recovery.objectiveId, flowDraftId: recovery.flowDraftId,
-        environmentId: recovery.environmentId, turnId: recovery.sourceTurnId!,
-        turnState: "decision_required" as const, mutationOutcome: "not_applied" as const,
-        recoveryTool: "advance_flow_authoring" as const, recoveryKind: "intents" as const,
-        requiresPendingTurn: false as const,
-        recoveryBinding: recovery,
+      const missionItems = snapshot.missions.rows.slice(0, 5).map((mission) => ({
+        ...mission,
+        resumePointer: projectOperatingResumePointer(mission.resumePointer),
       }));
-    const uncertainCandidates = snapshot.uncertainAuthoring.rows.filter(({ missionId }) =>
-      missionId === selectedMissionId);
-    const uncertain = uncertainCandidates.slice(0, 5).map(({ dispatchSemantics, ...item }) => ({
-      ...item,
-      originalMutationOutcome: "unknown" as const,
-      redispatchAllowed: false as const,
-      inspectionTool: "get_flow_authoring" as const,
-      reconciliationAvailable: false,
-      ...(dispatchSemantics === "read_only" && input.authorizeDistinctMissionForReadOnlyUnknown
-        ? { distinctMissionAlternative: {
-        available: true as const,
-        tool: "start_mission" as const,
-        requiresExplicitUserAuthority: true as const,
-        preservesCurrentMissionFence: true as const,
-        basis: "uncertain_operation_declared_read_only" as const,
-      } } : {}),
-    }));
-    const compatibleReusable = reusable.filter(({ missionId, environmentId }) =>
-      missionId === selectedMissionId && compatibleEnvironmentIds.has(environmentId));
-    const compatibleEnvironment = environmentItems.some(({ compatible }) => compatible);
-    const missing: OperatingContext["authoring"]["missing"] = [];
-    if (!selectedMissionId) missing.push("mission");
-    if (!missionItems.some(({ id, currentObjectiveId }) => id === selectedMissionId && currentObjectiveId)) missing.push("objective");
-    if (!compatibleEnvironment) missing.push("environment");
-    if (compatibleReusable.length === 0) missing.push("flow_draft", "authoring_session");
-    const requirementBlocked = Boolean(input.requiredOrigin || requiredCredentialReferences.length) && !compatibleEnvironment;
+      if (input.missionId && missionItems.length === 0)
+        throw new NotFoundException({ code: "MISSION_NOT_FOUND" });
+      const selectedMissionId = input.missionId ? missionItems[0]!.id : undefined;
+      const environmentItems = snapshot.environments.rows.slice(0, 10).map((environment) => {
+        const allowedOrigins = Array.isArray(environment.policy.allowedOrigins)
+          ? environment.policy.allowedOrigins.filter(
+              (value): value is string => typeof value === "string",
+            )
+          : [];
+        const originCompatible =
+          !input.requiredOrigin ||
+          environment.baseOrigin === input.requiredOrigin ||
+          allowedOrigins.includes(input.requiredOrigin);
+        const credentialsCompatible = requiredCredentialReferences.every((reference) =>
+          environment.secretRefs.includes(reference),
+        );
+        return {
+          id: environment.id,
+          name: environment.name,
+          baseOrigin: environment.baseOrigin,
+          resourceExists: true as const,
+          policyValid: allowedOrigins.length > 0 && allowedOrigins.includes(environment.baseOrigin),
+          executionReadiness: environment.executionReadiness,
+          compatible: originCompatible && credentialsCompatible,
+          incompatibilities: [
+            ...(!originCompatible ? ["origin_not_allowed" as const] : []),
+            ...(!credentialsCompatible ? ["credential_not_authorized" as const] : []),
+          ],
+          credentialReferenceIds: environment.secretRefs.slice(0, 20),
+        };
+      });
+      const credentialItems = snapshot.credentials.rows.slice(0, 20).map((credential) => ({
+        ...credential,
+        createdAt:
+          credential.createdAt instanceof Date
+            ? credential.createdAt.toISOString()
+            : credential.createdAt,
+        updatedAt:
+          credential.updatedAt instanceof Date
+            ? credential.updatedAt.toISOString()
+            : credential.updatedAt,
+      }));
+      const compatibleEnvironmentIds = new Set(
+        environmentItems.filter(({ compatible }) => compatible).map(({ id }) => id),
+      );
+      const reusableCandidates = snapshot.authoring.rows.filter(({ decisionBoundary }) => {
+        const parsed = agentDecisionBoundarySchema.safeParse(decisionBoundary);
+        return (
+          decisionBoundary === null ||
+          (parsed.success && parsed.data.type === "objective_completed")
+        );
+      });
+      const reusable = reusableCandidates
+        .slice(0, 5)
+        .map(
+          ({
+            decisionBoundary: _decisionBoundary,
+            turnId: _turnId,
+            turnState: _turnState,
+            operationId: _operationId,
+            mutationOutcome: _mutationOutcome,
+            operationObjectiveId: _operationObjectiveId,
+            operationFlowDraftId: _operationFlowDraftId,
+            _categoryRank,
+            ...session
+          }) => session,
+        );
+      const recoverableCandidates = snapshot.authoring.rows.flatMap((session) => {
+        const parsed = agentDecisionBoundarySchema.safeParse(session.decisionBoundary);
+        const boundary = parsed.success ? parsed.data : undefined;
+        const recovery = boundary?.authoringRecovery;
+        return recovery &&
+          boundary?.type === "environment_unavailable" &&
+          recovery.sessionId === session.sessionId &&
+          recovery.missionId === session.missionId &&
+          recovery.objectiveId === session.objectiveId &&
+          recovery.flowDraftId === session.flowDraftId &&
+          recovery.environmentId === session.environmentId &&
+          recovery.sourceTurnId === session.turnId &&
+          session.turnState === "decision_required" &&
+          recovery.failedOperationId === session.operationId &&
+          session.mutationOutcome === "not_applied" &&
+          session.operationObjectiveId === session.objectiveId &&
+          session.operationFlowDraftId === session.flowDraftId
+          ? [{ session, recovery }]
+          : [];
+      });
+      const compatibleRecoverableCandidates = recoverableCandidates.filter(
+        ({ session }) =>
+          session.missionId === selectedMissionId &&
+          compatibleEnvironmentIds.has(session.environmentId),
+      );
+      const recoverable = compatibleRecoverableCandidates
+        .slice(0, 5)
+        .map(({ session, recovery }) => ({
+          sessionId: recovery.sessionId,
+          missionId: recovery.missionId,
+          objectiveId: recovery.objectiveId,
+          flowDraftId: recovery.flowDraftId,
+          environmentId: recovery.environmentId,
+          turnId: recovery.sourceTurnId!,
+          turnState: "decision_required" as const,
+          mutationOutcome: "not_applied" as const,
+          recoveryTool: "advance_flow_authoring" as const,
+          recoveryKind: "intents" as const,
+          requiresPendingTurn: false as const,
+          recoveryBinding: recovery,
+        }));
+      const uncertainCandidates = snapshot.uncertainAuthoring.rows.filter(
+        ({ missionId }) => missionId === selectedMissionId,
+      );
+      const uncertain = uncertainCandidates.slice(0, 5).map(({ dispatchSemantics, ...item }) => ({
+        ...item,
+        originalMutationOutcome: "unknown" as const,
+        redispatchAllowed: false as const,
+        inspectionTool: "get_flow_authoring" as const,
+        reconciliationAvailable: false,
+        ...(dispatchSemantics === "read_only" && input.authorizeDistinctMissionForReadOnlyUnknown
+          ? {
+              distinctMissionAlternative: {
+                available: true as const,
+                tool: "start_mission" as const,
+                requiresExplicitUserAuthority: true as const,
+                preservesCurrentMissionFence: true as const,
+                basis: "uncertain_operation_declared_read_only" as const,
+              },
+            }
+          : {}),
+      }));
+      const compatibleReusable = reusable.filter(
+        ({ missionId, environmentId }) =>
+          missionId === selectedMissionId && compatibleEnvironmentIds.has(environmentId),
+      );
+      const compatibleEnvironment = environmentItems.some(({ compatible }) => compatible);
+      const missing: OperatingContext["authoring"]["missing"] = [];
+      if (!selectedMissionId) missing.push("mission");
+      if (
+        !missionItems.some(
+          ({ id, currentObjectiveId }) => id === selectedMissionId && currentObjectiveId,
+        )
+      )
+        missing.push("objective");
+      if (!compatibleEnvironment) missing.push("environment");
+      if (compatibleReusable.length === 0) missing.push("flow_draft", "authoring_session");
+      const requirementBlocked =
+        Boolean(input.requiredOrigin || requiredCredentialReferences.length) &&
+        !compatibleEnvironment;
       return operatingContextSchema.parse({
-      selection: {
-        project: { id: selected.id, name: selected.name }, requiresProjectSelection: false,
-        projectCandidates: { items: projectCandidates, truncated: projectCount > 5 },
-      },
-      missions: {
-        ...(selectedMissionId ? { selectedMissionId } : {}),
-        candidates: { items: missionItems, truncated: (snapshot.missions.rowCount ?? snapshot.missions.rows.length) > 5 },
-      },
-      credentials: { items: credentialItems, truncated: (snapshot.credentials.rowCount ?? snapshot.credentials.rows.length) > 20 },
-      environments: { items: environmentItems, truncated: (snapshot.environments.rowCount ?? snapshot.environments.rows.length) > 10 },
-      authoring: {
-        reusable: { items: compatibleReusable, truncated: reusableCandidates.length > 5 },
-        recoverable: { items: recoverable, truncated: compatibleRecoverableCandidates.length > 5 },
-        uncertain: { items: uncertain, truncated: uncertainCandidates.length > 5 },
-        ready: compatibleReusable.length > 0 && missing.length === 0, missing,
-      },
-      continuation: {
-        deterministicPreparationAvailable: uncertain.length === 0 && (
-          recoverable.length > 0 || compatibleReusable.length > 0
-          || (missionItems.length === 0 && compatibleEnvironment)
-        ),
-        userAuthorityRequired: (!selectedMissionId && missionItems.length > 0)
-          || (uncertainCandidates.some(({ dispatchSemantics }) => dispatchSemantics === "read_only")
-            && !input.authorizeDistinctMissionForReadOnlyUnknown),
-        safeActions: uncertain.length > 0
-          ? ["get_flow_authoring", ...(uncertain.some((item) => item.distinctMissionAlternative)
-            ? ["start_mission"] : [])]
-          : recoverable.length > 0
-          ? ["get_flow_authoring", "advance_flow_authoring"]
-          : missing.length === 0
-          ? ["advance_flow_authoring"]
-          : !selectedMissionId && missionItems.length > 0
-            ? ["list_missions"]
+        selection: {
+          project: { id: selected.id, name: selected.name },
+          requiresProjectSelection: false,
+          projectCandidates: { items: projectCandidates, truncated: projectCount > 5 },
+        },
+        missions: {
+          ...(selectedMissionId ? { selectedMissionId } : {}),
+          candidates: {
+            items: missionItems,
+            truncated: (snapshot.missions.rowCount ?? snapshot.missions.rows.length) > 5,
+          },
+        },
+        credentials: {
+          items: credentialItems,
+          truncated: (snapshot.credentials.rowCount ?? snapshot.credentials.rows.length) > 20,
+        },
+        environments: {
+          items: environmentItems,
+          truncated: (snapshot.environments.rowCount ?? snapshot.environments.rows.length) > 10,
+        },
+        authoring: {
+          reusable: { items: compatibleReusable, truncated: reusableCandidates.length > 5 },
+          recoverable: {
+            items: recoverable,
+            truncated: compatibleRecoverableCandidates.length > 5,
+          },
+          uncertain: { items: uncertain, truncated: uncertainCandidates.length > 5 },
+          ready: compatibleReusable.length > 0 && missing.length === 0,
+          missing,
+        },
+        continuation: {
+          deterministicPreparationAvailable:
+            uncertain.length === 0 &&
+            (recoverable.length > 0 ||
+              compatibleReusable.length > 0 ||
+              (missionItems.length === 0 && compatibleEnvironment)),
+          userAuthorityRequired:
+            (!selectedMissionId && missionItems.length > 0) ||
+            (uncertainCandidates.some(
+              ({ dispatchSemantics }) => dispatchSemantics === "read_only",
+            ) &&
+              !input.authorizeDistinctMissionForReadOnlyUnknown),
+          safeActions:
+            uncertain.length > 0
+              ? [
+                  "get_flow_authoring",
+                  ...(uncertain.some((item) => item.distinctMissionAlternative)
+                    ? ["start_mission"]
+                    : []),
+                ]
+              : recoverable.length > 0
+                ? ["get_flow_authoring", "advance_flow_authoring"]
+                : missing.length === 0
+                  ? ["advance_flow_authoring"]
+                  : !selectedMissionId && missionItems.length > 0
+                    ? ["list_missions"]
+                    : requirementBlocked
+                      ? ["create_test_environment_or_authorize_credentials"]
+                      : missionItems.length === 0
+                        ? ["prepare_flow_authoring"]
+                        : ["resume_or_start_distinct_mission"],
+          ...(!selectedMissionId && missionItems.length > 0
+            ? { blockerCode: "MISSION_SELECTION_REQUIRED" as const }
             : requirementBlocked
-              ? ["create_test_environment_or_authorize_credentials"]
-              : missionItems.length === 0
-                ? ["prepare_flow_authoring"]
-                : ["resume_or_start_distinct_mission"],
-        ...(!selectedMissionId && missionItems.length > 0
-          ? { blockerCode: "MISSION_SELECTION_REQUIRED" as const }
-          : requirementBlocked ? { blockerCode: "REQUIREMENTS_UNSATISFIED" as const } : {}),
-      },
+              ? { blockerCode: "REQUIREMENTS_UNSATISFIED" as const }
+              : {}),
+        },
       });
     });
   }
@@ -380,15 +519,22 @@ export class ProjectConfigurationRepository {
 
   async listCredentials(principal: Principal, projectId: string) {
     await this.requireProject(principal, projectId);
-    return (await this.database.query(
-      `SELECT id,project_id AS "projectId",name,security_status AS "securityStatus",
+    return (
+      await this.database.query(
+        `SELECT id,project_id AS "projectId",name,security_status AS "securityStatus",
               created_at AS "createdAt",updated_at AS "updatedAt"
        FROM project_credentials WHERE project_id=$1 AND deleted_at IS NULL
-       ORDER BY name,created_at`, [projectId])).rows;
+       ORDER BY name,created_at`,
+        [projectId],
+      )
+    ).rows;
   }
 
-  async listCredentialCandidates(principal: Principal, projectId: string,
-    input: ListCredentialsInput = {}) {
+  async listCredentialCandidates(
+    principal: Principal,
+    projectId: string,
+    input: ListCredentialsInput = {},
+  ) {
     await this.requireProject(principal, projectId);
     const result = await this.database.query(
       `SELECT credential.id,credential.id AS "referenceId",
@@ -429,7 +575,7 @@ export class ProjectConfigurationRepository {
        WHERE credential.project_id=$1 AND credential.deleted_at IS NULL
          AND ($2::uuid IS NULL OR credential.id=$2)
        ORDER BY credential.name,credential.created_at LIMIT 101`,
-      [projectId,input.referenceId ?? null,input.missionId ?? null],
+      [projectId, input.referenceId ?? null, input.missionId ?? null],
     );
     return { items: result.rows.slice(0, 100), truncated: result.rows.length > 100 };
   }
@@ -462,10 +608,9 @@ export class ProjectConfigurationRepository {
             `SELECT 1 FROM missions m JOIN mission_objectives o ON o.mission_id=m.id AND o.id=$3
              JOIN agent_sessions s ON s.mission_id=m.id AND s.id=$4 AND s.status='active'
              WHERE m.id=$2 AND m.project_id=$1`,
-            [projectId,input.missionId,input.objectiveId,input.agentSessionId],
+            [projectId, input.missionId, input.objectiveId, input.agentSessionId],
           );
-          if (!context.rowCount)
-            throw new BadRequestException({ code: "MISSION_CONTEXT_INVALID" });
+          if (!context.rowCount) throw new BadRequestException({ code: "MISSION_CONTEXT_INVALID" });
         }
         const result = await client.query(
           `INSERT INTO project_credentials(project_id,name,ciphertext,initialization_vector,authentication_tag,origin_mission_id,origin_objective_id,created_by_agent_session_id)
@@ -475,16 +620,27 @@ export class ProjectConfigurationRepository {
                      ARRAY[]::text[] AS "authorizedEnvironmentIds",
                      false AS "authorizedEnvironmentIdsTruncated",
                      created_at AS "createdAt", updated_at AS "updatedAt"`,
-          [projectId,input.name,encrypted.ciphertext,encrypted.initializationVector,
-            encrypted.authenticationTag,input.missionId ?? null,input.objectiveId ?? null,
-            input.agentSessionId ?? null],
+          [
+            projectId,
+            input.name,
+            encrypted.ciphertext,
+            encrypted.initializationVector,
+            encrypted.authenticationTag,
+            input.missionId ?? null,
+            input.objectiveId ?? null,
+            input.agentSessionId ?? null,
+          ],
         );
         if (hasProvenance)
           await client.query(
-          `INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata) VALUES($1,$2,$3,'credential_created',$4,$5::jsonb)`,
-          [input.missionId,input.objectiveId,input.agentSessionId,
-            `Credential created: ${input.name}`,
-            JSON.stringify({ credentialId: result.rows[0]!.id })],
+            `INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata) VALUES($1,$2,$3,'credential_created',$4,$5::jsonb)`,
+            [
+              input.missionId,
+              input.objectiveId,
+              input.agentSessionId,
+              `Credential created: ${input.name}`,
+              JSON.stringify({ credentialId: result.rows[0]!.id }),
+            ],
           );
         return result.rows[0]!;
       });
@@ -661,15 +817,9 @@ export class ProjectConfigurationRepository {
       input.secretRefs,
     );
 
-    const missionCredentialSelectionRefs = [
-      ...new Set(input.missionCredentialSelectionRefs ?? []),
-    ];
+    const missionCredentialSelectionRefs = [...new Set(input.missionCredentialSelectionRefs ?? [])];
 
-    if (
-      missionCredentialSelectionRefs.some(
-        (reference) => !input.secretRefs.includes(reference),
-      )
-    )
+    if (missionCredentialSelectionRefs.some((reference) => !input.secretRefs.includes(reference)))
       throw new BadRequestException({
         code: "MISSION_CREDENTIAL_SELECTION_NOT_ENVIRONMENT_AUTHORIZED",
       });
@@ -763,8 +913,7 @@ export class ProjectConfigurationRepository {
       ],
     );
 
-    if (!result.rowCount)
-      throw new NotFoundException("Flow environment not found");
+    if (!result.rowCount) throw new NotFoundException("Flow environment not found");
 
     return result.rows[0]!;
   }
@@ -838,13 +987,24 @@ export class ProjectConfigurationRepository {
 function projectOperatingResumePointer(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const pointer = value as Record<string, unknown>;
-  const external = pointer.externalInput && typeof pointer.externalInput === "object"
-    && !Array.isArray(pointer.externalInput)
-    ? pointer.externalInput as Record<string, unknown> : undefined;
-  const authority = external?.authority && typeof external.authority === "object"
-    && !Array.isArray(external.authority) ? external.authority as Record<string, unknown> : undefined;
-  const continuation = external?.continuation && typeof external.continuation === "object"
-    && !Array.isArray(external.continuation) ? external.continuation as Record<string, unknown> : undefined;
+  const external =
+    pointer.externalInput &&
+    typeof pointer.externalInput === "object" &&
+    !Array.isArray(pointer.externalInput)
+      ? (pointer.externalInput as Record<string, unknown>)
+      : undefined;
+  const authority =
+    external?.authority &&
+    typeof external.authority === "object" &&
+    !Array.isArray(external.authority)
+      ? (external.authority as Record<string, unknown>)
+      : undefined;
+  const continuation =
+    external?.continuation &&
+    typeof external.continuation === "object" &&
+    !Array.isArray(external.continuation)
+      ? (external.continuation as Record<string, unknown>)
+      : undefined;
   const fulfillmentPaths = Array.isArray(external?.fulfillmentPaths)
     ? external.fulfillmentPaths.slice(0, 10)
     : [];
@@ -854,37 +1014,63 @@ function projectOperatingResumePointer(value: unknown) {
     ...(typeof pointer.flowId === "string" ? { flowId: pointer.flowId } : {}),
     ...(typeof pointer.revisionId === "string" ? { revisionId: pointer.revisionId } : {}),
     ...(typeof pointer.runId === "string" ? { runId: pointer.runId } : {}),
-    ...(typeof pointer.explanation === "string" ? { explanation: pointer.explanation.slice(0, 2_000) } : {}),
-    ...(external ? { externalInput: {
-      condition: external.condition,
-      ...(typeof external.cause === "string" ? { cause: external.cause.slice(0, 2_000) } : {}),
-      ...(typeof external.affectedOperation === "string" ? { affectedOperation: external.affectedOperation.slice(0, 500) } : {}),
-      ...(typeof external.affectedResource === "string" ? { affectedResource: external.affectedResource.slice(0, 500) } : {}),
-      effectState: external.effectState,
-      authority: {
-        required: authority?.required, type: authority?.type,
-        ...(typeof authority?.reason === "string" ? { reason: authority.reason.slice(0, 2_000) } : {}),
-      },
-      availableCapabilities: Array.isArray(external.availableCapabilities) ? external.availableCapabilities.slice(0, 20) : [],
-      fulfillmentPaths,
-      constraints: Array.isArray(external.constraints) ? external.constraints.slice(0, 50) : [],
-      consequences: Array.isArray(external.consequences) ? external.consequences.slice(0, 50) : [],
-      continuation: {
-        retryCurrentOperation: continuation?.retryCurrentOperation,
-        freshObservationRequired: continuation?.freshObservationRequired,
-        newOperationRequired: continuation?.newOperationRequired,
-        newDraftRequired: continuation?.newDraftRequired,
-        newSessionRequired: continuation?.newSessionRequired,
-      },
-      waiting: external.waiting, terminal: external.terminal,
-      lifecycle: {
-        terminal: false, taskStillActive: true, sameMissionResumable: true,
-        sameObjectiveResumable: true, shouldFinalize: false,
-        shouldPublishFinalReport: false, shouldCreateReplacementMission: false,
-        requiredNextStep: "fulfill_human_prerequisite_then_resume",
-      },
-      resumeRef: external.resumeRef,
-    } } : {}),
+    ...(typeof pointer.explanation === "string"
+      ? { explanation: pointer.explanation.slice(0, 2_000) }
+      : {}),
+    ...(external
+      ? {
+          externalInput: {
+            condition: external.condition,
+            ...(typeof external.cause === "string"
+              ? { cause: external.cause.slice(0, 2_000) }
+              : {}),
+            ...(typeof external.affectedOperation === "string"
+              ? { affectedOperation: external.affectedOperation.slice(0, 500) }
+              : {}),
+            ...(typeof external.affectedResource === "string"
+              ? { affectedResource: external.affectedResource.slice(0, 500) }
+              : {}),
+            effectState: external.effectState,
+            authority: {
+              required: authority?.required,
+              type: authority?.type,
+              ...(typeof authority?.reason === "string"
+                ? { reason: authority.reason.slice(0, 2_000) }
+                : {}),
+            },
+            availableCapabilities: Array.isArray(external.availableCapabilities)
+              ? external.availableCapabilities.slice(0, 20)
+              : [],
+            fulfillmentPaths,
+            constraints: Array.isArray(external.constraints)
+              ? external.constraints.slice(0, 50)
+              : [],
+            consequences: Array.isArray(external.consequences)
+              ? external.consequences.slice(0, 50)
+              : [],
+            continuation: {
+              retryCurrentOperation: continuation?.retryCurrentOperation,
+              freshObservationRequired: continuation?.freshObservationRequired,
+              newOperationRequired: continuation?.newOperationRequired,
+              newDraftRequired: continuation?.newDraftRequired,
+              newSessionRequired: continuation?.newSessionRequired,
+            },
+            waiting: external.waiting,
+            terminal: external.terminal,
+            lifecycle: {
+              terminal: false,
+              taskStillActive: true,
+              sameMissionResumable: true,
+              sameObjectiveResumable: true,
+              shouldFinalize: false,
+              shouldPublishFinalReport: false,
+              shouldCreateReplacementMission: false,
+              requiredNextStep: "fulfill_human_prerequisite_then_resume",
+            },
+            resumeRef: external.resumeRef,
+          },
+        }
+      : {}),
   };
   const parsed = missionResumePointerSchema.safeParse(projected);
   return parsed.success ? parsed.data : null;

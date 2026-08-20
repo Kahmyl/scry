@@ -47,10 +47,7 @@ export function registerStartMissionTool(server: McpServer, client: ScryApiClien
           .object({
             confirmedUserAuthorized: z.literal(true),
             selection: z.literal("start_distinct_mission"),
-            source: z.enum([
-              "current_request_explicit",
-              "followup_explicit_choice",
-            ]),
+            source: z.enum(["current_request_explicit", "followup_explicit_choice"]),
           })
           .strict()
           .optional(),

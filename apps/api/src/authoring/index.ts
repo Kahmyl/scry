@@ -1,6 +1,6 @@
 export { AuthoringModule } from "./authoring.module.js";
-export { AuthoringService } from "./authoring.service.js";
-export { AuthoringRuntimeCommandService } from "./authoring-runtime-command.service.js";
+export { AuthoringService } from "./services/authoring.service.js";
+export { AuthoringRuntimeCommandService } from "./services/authoring-runtime-command.service.js";
 export {
   AuthoringRuntimeCommandRepository,
   type EnqueueAuthoringRuntimeCommandInput,

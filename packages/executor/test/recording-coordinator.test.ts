@@ -282,9 +282,7 @@ describe("RecordingCoordinator", () => {
 
     for (const artifact of coordinator.artifacts()) {
       expect(artifact.availability).toBe("available");
-      expect(
-        (await readFile(path.join(root, artifact.relativePath!))).length,
-      ).toBeGreaterThan(0);
+      expect((await readFile(path.join(root, artifact.relativePath!))).length).toBeGreaterThan(0);
     }
   });
 
@@ -296,9 +294,7 @@ describe("RecordingCoordinator", () => {
       operationId: "failed-navigation-operation",
     });
 
-    await coordinator.failDocumentTransition(
-      "DOCUMENT_TRANSITION_QUALIFICATION_FAILED",
-    );
+    await coordinator.failDocumentTransition("DOCUMENT_TRANSITION_QUALIFICATION_FAILED");
 
     await coordinator.finalize();
 
@@ -306,10 +302,7 @@ describe("RecordingCoordinator", () => {
 
     const timeline = coordinator.timeline();
 
-    expect(timeline.map((entry) => entry.type)).toEqual([
-      "video_segment",
-      "unavailable_interval",
-    ]);
+    expect(timeline.map((entry) => entry.type)).toEqual(["video_segment", "unavailable_interval"]);
 
     expect(timeline[1]).toEqual(
       expect.objectContaining({
@@ -318,5 +311,4 @@ describe("RecordingCoordinator", () => {
       }),
     );
   });
-
 });

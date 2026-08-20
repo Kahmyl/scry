@@ -10,11 +10,15 @@ import { registerActOnProtectedRecoveryTool } from "./act-on-protected-recovery.
 import { registerAcceptObjectiveEvidenceTool } from "./accept-objective-evidence.tool.js";
 import { registerClassifyRunTool } from "./classify-run.tool.js";
 import { registerSetMissionResumePointerTool } from "./set-mission-resume-pointer.tool.js";
-import { registerAgentDirectedRunTools } from "./agent-directed-run.tool.js";
+import { registerAgentDirectedRunTool } from "./agent-directed-run.tool.js";
+import { registerAttachRunPraxisSessionTool } from "./attach-run-praxis-session.tool.js";
+import { registerFinalizeRunTool } from "./finalize-run.tool.js";
 
 export function registerRunsTools(server: McpServer, client: ScryApiClient) {
   registerStartRunTool(server, client);
-  registerAgentDirectedRunTools(server, client);
+  registerAgentDirectedRunTool(server, client);
+  registerAttachRunPraxisSessionTool(server, client);
+  registerFinalizeRunTool(server, client);
   registerGetRunTool(server, client);
   registerGetVeilFindingsTool(server, client);
   registerTightenVeilPreferencesTool(server, client);

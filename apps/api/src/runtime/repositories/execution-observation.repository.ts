@@ -326,8 +326,7 @@ export class ExecutionObservationRepository {
       const endedAt = "endedAt" in entry ? entry.endedAt : null;
       const artifactId = "artifactId" in entry ? (entry.artifactId ?? null) : null;
       const operationId =
-        entry.type === "protected_gap" ||
-        entry.type === "document_transition_gap"
+        entry.type === "protected_gap" || entry.type === "document_transition_gap"
           ? entry.operationId
           : entry.type === "checkpoint_boundary"
             ? entry.checkpointId

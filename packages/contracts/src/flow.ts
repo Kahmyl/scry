@@ -100,13 +100,16 @@ export const dispatchRunOperationBaseSchema = z
   })
   .strict();
 
-export const dispatchRunOperationSchema = dispatchRunOperationBaseSchema.superRefine((value, context) => {
+export const dispatchRunOperationSchema = dispatchRunOperationBaseSchema.superRefine(
+  (value, context) => {
     const references: Array<string | undefined> = [];
     const action = value.intent.action;
     if ("target" in action && action.target) references.push(action.target.reference);
     if (action.kind === "acquire_protected_outputs") {
       references.push(action.mutation.target.reference);
-      references.push(...(action.syntheticProtectedInputs ?? []).map((input) => input.target.reference));
+      references.push(
+        ...(action.syntheticProtectedInputs ?? []).map((input) => input.target.reference),
+      );
     }
     if (references.some((reference) => !reference))
       context.addIssue({
@@ -114,7 +117,8 @@ export const dispatchRunOperationSchema = dispatchRunOperationBaseSchema.superRe
         path: ["intent", "action"],
         message: "Every pre-dispatch Run target requires an exact live Praxis reference",
       });
-  });
+  },
+);
 
 export const attachRunPraxisSessionSchema = z
   .object({ praxisSessionId: uuidSchema, idempotencyKey: idempotencyKeySchema })

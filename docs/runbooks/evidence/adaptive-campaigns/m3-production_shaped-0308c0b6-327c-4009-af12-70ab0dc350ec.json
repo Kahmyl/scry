@@ -32,9 +32,7 @@
       "status": "failed",
       "reasonCode": "CAMPAIGN_ENVIRONMENT_REQUIRED",
       "safeDetail": {
-        "missing": [
-          "SCRY_AUTHORING_TEST_DATABASE_URL"
-        ]
+        "missing": ["SCRY_AUTHORING_TEST_DATABASE_URL"]
       }
     },
     {

@@ -67,17 +67,17 @@ But websites aren't really the useful unit.
 
 A website can contain:
 
-* normal buttons;
-* custom React controls;
-* strange dropdowns;
-* shadow DOM;
-* iframes;
-* long SPA state transitions;
-* downloads;
-* protected values;
-* redirects;
-* unusual authentication;
-* virtualized lists.
+- normal buttons;
+- custom React controls;
+- strange dropdowns;
+- shadow DOM;
+- iframes;
+- long SPA state transitions;
+- downloads;
+- protected values;
+- redirects;
+- unusual authentication;
+- virtualized lists.
 
 Scry might handle nine of those perfectly and fail one.
 

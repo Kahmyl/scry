@@ -128,10 +128,7 @@ export async function executeProtectedReveal(
   );
 }
 
-export async function verifyProtectedRevealTarget(
-  page: Page,
-  operation: ProtectedTransaction,
-) {
+export async function verifyProtectedRevealTarget(page: Page, operation: ProtectedTransaction) {
   const action = operation.mutation.action;
   if (action.type === "click") {
     await resolveTarget(page, action.target);
@@ -145,7 +142,10 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
   const deadline = Date.now() + timeoutMs;
   const targetVariants = acquisitionTargetVariants(acquisition.target);
   const methods = acquisition.permittedMethods.includes("protected_network_value")
-    ? ["protected_network_value" as const, ...acquisition.permittedMethods.filter((method) => method !== "protected_network_value")]
+    ? [
+        "protected_network_value" as const,
+        ...acquisition.permittedMethods.filter((method) => method !== "protected_network_value"),
+      ]
     : [...acquisition.permittedMethods];
   const diagnostics: CandidateState[] = methods.map((method, candidate) => ({
     candidate,
@@ -169,13 +169,11 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
       diagnostic.firstAttemptedAt ??= new Date(started).toISOString();
       try {
         const remainingMs = Math.max(1, deadline - Date.now());
-        const hasEligibleNetworkFallback = methods.includes("protected_network_value") &&
+        const hasEligibleNetworkFallback =
+          methods.includes("protected_network_value") &&
           method !== "protected_network_value" &&
           !exhaustedMethods.has("protected_network_value");
-        const ownershipMs = acquisitionAttemptOwnershipMs(
-          remainingMs,
-          hasEligibleNetworkFallback,
-        );
+        const ownershipMs = acquisitionAttemptOwnershipMs(remainingMs, hasEligibleNetworkFallback);
         const acquired = await ownAcquisitionAttempt(
           () => attemptAcquisitionMethod(page, acquisition, targetVariants, method, diagnostic),
           ownershipMs,
@@ -212,7 +210,8 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
             "PROTECTED_RESPONSE_OVERSIZED",
             "PROTECTED_RESPONSE_PARSE_FAILED",
           ].includes(diagnostic.lastFailureCode)
-        ) return { result: undefined, value: undefined, diagnostics };
+        )
+          return { result: undefined, value: undefined, diagnostics };
         if (error instanceof GroundingError) {
           diagnostic.matchCount = error.code === "TARGET_AMBIGUOUS" ? "many" : "none";
           diagnostic.containerResolved = error.code !== "TARGET_NOT_FOUND";
@@ -259,11 +258,13 @@ async function attemptAcquisitionMethod(
       diagnostic.matchCount = "one";
       diagnostic.visibility = "visible";
       diagnostic.accessibility = "available";
-      if (await matchesProhibitedSource(
-        page,
-        result.locator,
-        acquisition.prohibitedSourceTargets ?? [],
-      )) {
+      if (
+        await matchesProhibitedSource(
+          page,
+          result.locator,
+          acquisition.prohibitedSourceTargets ?? [],
+        )
+      ) {
         diagnostic.lastFailureCode = "ACQUISITION_SOURCE_PROHIBITED";
         continue;
       }
@@ -297,8 +298,10 @@ function validateAcquired(
     return { result: acquired, value: undefined };
   }
   const normalized = acquired.value.trim();
-  if (valid(normalized, acquisition.validation) &&
-    !isSemanticIdentityEcho(normalized, acquisition.target)) {
+  if (
+    valid(normalized, acquisition.validation) &&
+    !isSemanticIdentityEcho(normalized, acquisition.target)
+  ) {
     acquired.value = normalized;
     return { result: acquired, value: normalized };
   }
@@ -320,7 +323,9 @@ function acquisitionAttemptOwnershipMs(remainingMs: number, reservePriorityRetry
     : remainingMs;
 }
 
-async function ownAcquisitionAttempt<T extends { result: ProtectedAcquisitionResult; value: string | undefined } | undefined>(
+async function ownAcquisitionAttempt<
+  T extends { result: ProtectedAcquisitionResult; value: string | undefined } | undefined,
+>(
   work: () => Promise<T>,
   timeoutMs: number,
   method: AcquisitionIntent["permittedMethods"][number],
@@ -328,17 +333,23 @@ async function ownAcquisitionAttempt<T extends { result: ProtectedAcquisitionRes
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timedOut = false;
   const attempt = Promise.resolve().then(work);
-  attempt.then((late) => {
-    if (timedOut && late?.result.kind === "captured_value") {
-      late.result.value = "";
-      late.value = undefined;
-    }
-  }, () => undefined);
+  attempt.then(
+    (late) => {
+      if (timedOut && late?.result.kind === "captured_value") {
+        late.result.value = "";
+        late.value = undefined;
+      }
+    },
+    () => undefined,
+  );
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      timedOut = true;
-      reject(new AcquisitionAttemptTimeoutError(method));
-    }, Math.max(1, timeoutMs));
+    timer = setTimeout(
+      () => {
+        timedOut = true;
+        reject(new AcquisitionAttemptTimeoutError(method));
+      },
+      Math.max(1, timeoutMs),
+    );
     timer.unref?.();
   });
   try {
@@ -369,10 +380,13 @@ async function matchesProhibitedSource(
         const prohibitedElement = await prohibited.locator.elementHandle();
         if (!prohibitedElement) continue;
         try {
-          if (await candidateElement.evaluate(
-            (element, other) => element === other,
-            prohibitedElement,
-          )) return true;
+          if (
+            await candidateElement.evaluate(
+              (element, other) => element === other,
+              prohibitedElement,
+            )
+          )
+            return true;
         } finally {
           await prohibitedElement.dispose();
         }
@@ -386,9 +400,12 @@ async function matchesProhibitedSource(
   }
 }
 
-function acquisitionTargetVariants(target: AcquisitionIntent["target"]): AcquisitionIntent["target"][] {
+function acquisitionTargetVariants(
+  target: AcquisitionIntent["target"],
+): AcquisitionIntent["target"][] {
   const variants = [target];
-  const identity = target.preferredEvidence.names[0] ??
+  const identity =
+    target.preferredEvidence.names[0] ??
     target.preferredEvidence.labels[0] ??
     target.preferredEvidence.expectedText;
   const neutral = {
@@ -402,9 +419,8 @@ function acquisitionTargetVariants(target: AcquisitionIntent["target"]): Acquisi
     },
   };
   if (target.preferredEvidence.roles.length) variants.push(neutral);
-  const pageScoped = target.scope.kind === "page"
-    ? neutral
-    : { ...neutral, scope: { kind: "page" as const } };
+  const pageScoped =
+    target.scope.kind === "page" ? neutral : { ...neutral, scope: { kind: "page" as const } };
   if (target.scope.kind !== "page") variants.push(pageScoped);
   if (identity) {
     variants.push({
@@ -544,7 +560,9 @@ async function acquireByMethod(
     }
     case "download_content": {
       const reference = await observeTargetReference(page, target);
-      const download = await downloadFromReferencedTarget(reference).finally(() => reference.dispose());
+      const download = await downloadFromReferencedTarget(reference).finally(() =>
+        reference.dispose(),
+      );
       const stream = await download.createReadStream();
       if (!stream) throw new AcquisitionError("DOWNLOAD_STREAM_UNAVAILABLE");
       return readBoundedText(stream, acquisition.validation.maximumLength).then(capture);

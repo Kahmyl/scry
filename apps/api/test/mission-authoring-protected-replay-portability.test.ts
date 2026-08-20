@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { selectProtectedReplayPreparation } from "../src/adaptive-sessions/adaptive-session.repository.js";
+import { selectProtectedReplayPreparation } from "../src/adaptive-sessions/repositories/adaptive-session.repository.js";
 import { compileMissionAuthoringProtectedTransaction } from "../src/adaptive-sessions/mission-authoring-protected-transaction.js";
 
 const entryUrl = "https://app.test/credentials";
@@ -105,12 +105,9 @@ describe("protected replay target portability", () => {
       },
     ];
 
-    const selected = selectProtectedReplayPreparation(
-      rows,
-      ["open", "fill"],
-      entryUrl,
-      { preserveExactReferences: true },
-    );
+    const selected = selectProtectedReplayPreparation(rows, ["open", "fill"], entryUrl, {
+      preserveExactReferences: true,
+    });
 
     expect(selected).toHaveLength(2);
 
@@ -133,26 +130,30 @@ describe("protected replay target portability", () => {
     });
     expect(fillTarget).not.toHaveProperty("reference");
 
-    expect(() => compileMissionAuthoringProtectedTransaction({
-      operationId: "group-scoped-protected-acquisition",
-      entryUrl,
-      action: {
-        kind: "acquire_protected_outputs",
-        preparationIntentIds: ["open", "fill"],
-        mutation: {
-          kind: "one_time",
-          target: { concept: "Generate", role: "button", name: "Generate", exact: true },
+    expect(() =>
+      compileMissionAuthoringProtectedTransaction({
+        operationId: "group-scoped-protected-acquisition",
+        entryUrl,
+        action: {
+          kind: "acquire_protected_outputs",
+          preparationIntentIds: ["open", "fill"],
+          mutation: {
+            kind: "one_time",
+            target: { concept: "Generate", role: "button", name: "Generate", exact: true },
+          },
+          outputs: [
+            {
+              reference: "client-secret",
+              classification: "protected",
+              target: { concept: "Client secret", role: "textbox", exact: true },
+              storageName: "Client secret",
+            },
+          ],
         },
-        outputs: [{
-          reference: "client-secret",
-          classification: "protected",
-          target: { concept: "Client secret", role: "textbox", exact: true },
-          storageName: "Client secret",
-        }],
-      },
-      preparation: selected,
-      timeoutMs: 30_000,
-    })).not.toThrow();
+        preparation: selected,
+        timeoutMs: 30_000,
+      }),
+    ).not.toThrow();
   });
 
   it("fails closed when a document-bound reference has no unique durable snapshot", () => {
@@ -208,29 +209,67 @@ describe("protected replay target portability", () => {
     const reference = ref("d");
     const scoped = intent("scoped-fill", reference, "Name", "fill") as any;
     scoped.action.target.scope = { kind: "row", name: "Credential Alpha" };
-    const selected = selectProtectedReplayPreparation([
-      { sequence: 1, intentId: "checkpoint", intent: checkpoint(), observedUrl: entryUrl, semanticPageContext: { controls: [] } },
-      {
-        sequence: 2, intentId: "scoped-fill", intent: scoped, observedUrl: entryUrl,
-        semanticPageContext: { controls: [{ reference, role: "textbox", name: "Name", group: "Ignored group" }] },
-      },
-    ], ["scoped-fill"], entryUrl, { preserveExactReferences: true });
+    const selected = selectProtectedReplayPreparation(
+      [
+        {
+          sequence: 1,
+          intentId: "checkpoint",
+          intent: checkpoint(),
+          observedUrl: entryUrl,
+          semanticPageContext: { controls: [] },
+        },
+        {
+          sequence: 2,
+          intentId: "scoped-fill",
+          intent: scoped,
+          observedUrl: entryUrl,
+          semanticPageContext: {
+            controls: [{ reference, role: "textbox", name: "Name", group: "Ignored group" }],
+          },
+        },
+      ],
+      ["scoped-fill"],
+      entryUrl,
+      { preserveExactReferences: true },
+    );
     expect((selected[0]!.action as any).target).toMatchObject({
-      role: "textbox", name: "Name", scope: { kind: "row", name: "Credential Alpha" },
+      role: "textbox",
+      name: "Name",
+      scope: { kind: "row", name: "Credential Alpha" },
     });
     expect((selected[0]!.action as any).target).not.toHaveProperty("reference");
   });
 
   it("rejects an unsupported factual role during canonical reconstruction", () => {
     const reference = ref("e");
-    expect(() => selectProtectedReplayPreparation([
-      { sequence: 1, intentId: "checkpoint", intent: checkpoint(), observedUrl: entryUrl, semanticPageContext: { controls: [] } },
-      {
-        sequence: 2, intentId: "invalid", intent: intent("invalid", reference, "Unsupported"), observedUrl: entryUrl,
-        semanticPageContext: { controls: [{ reference, role: "unsupported_widget", name: "Unsupported" }] },
-      },
-    ], ["invalid"], entryUrl, { preserveExactReferences: true })).toThrowError(
-      expect.objectContaining({ response: expect.objectContaining({ code: "MISSION_AUTHORING_PREPARATION_TARGET_INVALID" }) }),
+    expect(() =>
+      selectProtectedReplayPreparation(
+        [
+          {
+            sequence: 1,
+            intentId: "checkpoint",
+            intent: checkpoint(),
+            observedUrl: entryUrl,
+            semanticPageContext: { controls: [] },
+          },
+          {
+            sequence: 2,
+            intentId: "invalid",
+            intent: intent("invalid", reference, "Unsupported"),
+            observedUrl: entryUrl,
+            semanticPageContext: {
+              controls: [{ reference, role: "unsupported_widget", name: "Unsupported" }],
+            },
+          },
+        ],
+        ["invalid"],
+        entryUrl,
+        { preserveExactReferences: true },
+      ),
+    ).toThrowError(
+      expect.objectContaining({
+        response: expect.objectContaining({ code: "MISSION_AUTHORING_PREPARATION_TARGET_INVALID" }),
+      }),
     );
   });
 });

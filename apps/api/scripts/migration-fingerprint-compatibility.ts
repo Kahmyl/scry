@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 
+export const AUTHORITATIVE_D647_FINGERPRINT =
+  "d647df341b454e74f0e2263dc7e54c4c41b05e440b59adceac5566ef5d7a05c3";
+
 export const SUPPORTED_HISTORICAL_BASELINES = [
   "base",
   "authoring",
@@ -49,6 +52,7 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "run-praxis-session-ledger.sql",
   "protected-live-praxis-session.sql",
   "resource-effect-reconciliation.sql",
+  "20260820-0910_scope_unknown_fence_to_resource_mutations.sql",
   "20260816-231045_add_document_transition_gap.sql",
   "mission-recording-selection.sql",
 ] as const;
@@ -128,6 +132,7 @@ export function compatibilityBaseline(source: string): string {
     "run-praxis-session-ledger.sql",
     "protected-live-praxis-session.sql",
     "resource-effect-reconciliation.sql",
+    "20260820-0910_scope_unknown_fence_to_resource_mutations.sql",
     "20260816-231045_add_document_transition_gap.sql",
     "mission-recording-selection.sql",
   ].reduce(

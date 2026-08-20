@@ -18,10 +18,7 @@ import type {
   PraxisVerification,
 } from "@scry/contracts";
 import { ExpectedEffectError, GroundingError } from "./grounding.js";
-import {
-  PraxisExecutionEnvelope,
-  type PraxisPreDispatchDeadline,
-} from "./execution-envelope.js";
+import { PraxisExecutionEnvelope, type PraxisPreDispatchDeadline } from "./execution-envelope.js";
 import {
   PraxisVeilAuthorizationError,
   releasePraxisVeilGrants,
@@ -207,7 +204,8 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
       effect: "unknown",
       // M2's popup ownership proof is native-only; Praxis records it as navigation
       // if a legacy caller reaches this compatibility transaction path.
-      effectType: request.expectedEffect.type === "new_page" ? "navigation" : request.expectedEffect.type,
+      effectType:
+        request.expectedEffect.type === "new_page" ? "navigation" : request.expectedEffect.type,
     };
     let providerTimings: PraxisTiming["providerTimings"] = [];
     let escalationLevel: number | null = null;
@@ -300,7 +298,10 @@ export class PraxisTransactionCoordinator<TTarget = unknown> {
             operationSignal,
             dispatchBoundary.mutationStarted()
               ? request.policy.actionTimeoutMs
-              : PraxisExecutionEnvelope.verificationBudget(deadline, request.policy.actionTimeoutMs),
+              : PraxisExecutionEnvelope.verificationBudget(
+                  deadline,
+                  request.policy.actionTimeoutMs,
+                ),
           ),
       );
       if (verification.effect === "failed" || verification.effect === "unknown") {
@@ -479,8 +480,11 @@ function checkAbort(signal: AbortSignal) {
   if (signal.aborted) throw new PraxisCancellationError();
 }
 function mutates(request: PraxisRequest) {
-  return request.dispatchSemantics !== "read_only" && ["activate", "enter_text", "select_option", "set_checked", "press_key"].includes(
-    request.operation.type,
+  return (
+    request.dispatchSemantics !== "read_only" &&
+    ["activate", "enter_text", "select_option", "set_checked", "press_key"].includes(
+      request.operation.type,
+    )
   );
 }
 function unverifiedOutcome(code: string) {
@@ -668,8 +672,8 @@ function classify(
         error.code === "TARGET_SCOPE_NOT_FOUND"
           ? ("safe" as const)
           : error.code === "TARGET_CHANGED_BEFORE_ACTION"
-          ? ("requires_reobservation" as const)
-          : ("requires_revision" as const),
+            ? ("requires_reobservation" as const)
+            : ("requires_revision" as const),
       mutationOutcome,
       safeActions,
       diagnostics: failureDiagnostics(error.code, boundary),

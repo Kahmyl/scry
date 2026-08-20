@@ -43,7 +43,15 @@ export type AtomicOutputCapture = (input: {
   externalResourceBindings: import("@scry/contracts").ProtectedTransaction["extraction"]["externalResourceBindings"];
 }) => Promise<{
   claim: import("./protected-transaction-coordinator.js").ProtectedOperationClaim;
-  references: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "run" | "project" }>;
+  references: Record<
+    string,
+    {
+      classification: "public" | "protected";
+      credentialId?: string;
+      valueId?: string;
+      scope: "run" | "project";
+    }
+  >;
 }>;
 export type PublicValueResolver = (reference: string) => Promise<string>;
 export type BrowserStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
@@ -188,7 +196,10 @@ export type ExecuteOptions = {
   onMutationDispatch?: () => void | Promise<void>;
   /** Trusted runtime-only disposition; absent from authored plans and actions. */
   dispatchDisposition?: "execute" | "qualification_only";
-  onReadyToDispatch?: (input: { operationId: string; disposition: "execute" | "qualification_only" }) => void | Promise<void>;
+  onReadyToDispatch?: (input: {
+    operationId: string;
+    disposition: "execute" | "qualification_only";
+  }) => void | Promise<void>;
   /** Internal phase signal used to derive privacy settlement from lifecycle facts. */
   onPrivacyBoundary?: (phase: "entered" | "verified" | "sealed") => void | Promise<void>;
   readinessTimeoutMultiplier?: number;

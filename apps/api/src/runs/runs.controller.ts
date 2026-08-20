@@ -11,8 +11,8 @@ import {
 import { ScryRepository } from "../access/index.js";
 import { CurrentPrincipal, type Principal } from "../auth/index.js";
 import { RunQueueService } from "../runtime/index.js";
-import { RunObservationService } from "./run-observation.service.js";
-import { AgentDirectedRunService } from "./agent-directed-run.service.js";
+import { RunObservationService } from "./services/run-observation.service.js";
+import { AgentDirectedRunService } from "./services/agent-directed-run.service.js";
 import { ZodValidationPipe } from "../common/validation.pipe.js";
 
 @Controller("api/runs")
@@ -51,7 +51,8 @@ export class RunsController {
   finalize(
     @Param("runId") runId: string,
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(finalizeAgentDirectedRunSchema)) input: FinalizeAgentDirectedRunInput,
+    @Body(new ZodValidationPipe(finalizeAgentDirectedRunSchema))
+    input: FinalizeAgentDirectedRunInput,
   ) {
     return this.agentRuns.finalize(principal, runId, input);
   }
@@ -67,5 +68,4 @@ export class RunsController {
     await this.repository.getRun(principal, runId);
     return this.queue.cancel(runId);
   }
-
 }

@@ -10,6 +10,8 @@ describe("API image workspace dependency layer", () => {
     const manifest = "COPY packages/assurance/package.json packages/assurance/package.json";
 
     expect(contents.indexOf(manifest)).toBeGreaterThanOrEqual(0);
-    expect(contents.indexOf(manifest)).toBeLessThan(contents.indexOf("pnpm install --frozen-lockfile"));
+    expect(contents.indexOf(manifest)).toBeLessThan(
+      contents.indexOf("pnpm install --frozen-lockfile"),
+    );
   });
 });

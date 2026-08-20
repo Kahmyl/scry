@@ -31,14 +31,17 @@ export function registerStartRunTool(server: McpServer, client: ScryApiClient) {
     "start_run",
     {
       title: "Start run",
-      description: "Open a durable agent-directed Run ledger bound to an existing live Praxis session. This does not create or queue a browser.",
+      description:
+        "Open a durable agent-directed Run ledger bound to an existing live Praxis session. This does not create or queue a browser.",
       inputSchema: {
         ...objectiveContext,
         projectId: uuid,
         environmentId: uuid,
         flowRevisionId: uuid,
         praxisSessionId: uuid,
-        protectedAuthorizations: z.array(z.object({ operationId: z.string().min(1), authorizationId: uuid })).default([]),
+        protectedAuthorizations: z
+          .array(z.object({ operationId: z.string().min(1), authorizationId: uuid }))
+          .default([]),
         role: runRoleSchema.default("candidate"),
         viewport: z
           .object({

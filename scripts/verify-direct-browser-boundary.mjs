@@ -34,7 +34,8 @@ const ignoredDirectories = new Set(["node_modules", "dist", "coverage", ".next",
 const sourceExtensions = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".json", ".yml", ".yaml"]);
 
 for (const candidate of deletedPaths) {
-  if (existsSync(path.join(root, candidate))) violations.push(`${candidate}: displaced M1 path still exists`);
+  if (existsSync(path.join(root, candidate)))
+    violations.push(`${candidate}: displaced M1 path still exists`);
 }
 
 for (const file of filesToScan()) {
@@ -45,41 +46,56 @@ for (const file of filesToScan()) {
       if (source.includes(flag)) violations.push(`${relative}: removed execution flag ${flag}`);
     }
   }
-  const productionSource = !relative.includes("/test/") && !relative.includes("/scripts/") &&
+  const productionSource =
+    !relative.includes("/test/") &&
+    !relative.includes("/scripts/") &&
     !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(relative);
   if (productionSource && /\b(?:chromium|firefox|webkit)\.launch\s*\(/.test(source)) {
-    const allowed = new Set([
-      "packages/praxis/src/lifecycle/browser-session.ts",
-    ]);
-    if (!allowed.has(relative)) violations.push(`${relative}: browser creation is outside an admitted owner`);
+    const allowed = new Set(["packages/praxis/src/lifecycle/browser-session.ts"]);
+    if (!allowed.has(relative))
+      violations.push(`${relative}: browser creation is outside an admitted owner`);
   }
   if (
     productionSource &&
     !relative.startsWith("packages/praxis/src/") &&
-    /\.(?:newContext|newPage|newCDPSession|goto|reload|waitForURL|waitForLoadState)\s*\(|\b(?:browser|context|page|candidate|popup|previousPage|uncertainContext)\.close\s*\(/.test(source)
+    /\.(?:newContext|newPage|newCDPSession|goto|reload|waitForURL|waitForLoadState)\s*\(|\b(?:browser|context|page|candidate|popup|previousPage|uncertainContext)\.close\s*\(/.test(
+      source,
+    )
   ) {
     violations.push(`${relative}: browser lifecycle mechanics are outside Praxis`);
   }
   if (
     productionSource &&
     !relative.startsWith("packages/praxis/src/") &&
-    /\.(?:click|dblclick|fill|type|selectOption|setChecked|check|uncheck|press|hover|dragTo|setInputFiles|waitForEvent)\s*\(|\.(?:keyboard|mouse)\.(?:press|type|down|up|click|dblclick|move|wheel)\s*\(/.test(source)
+    /\.(?:click|dblclick|fill|type|selectOption|setChecked|check|uncheck|press|hover|dragTo|setInputFiles|waitForEvent)\s*\(|\.(?:keyboard|mouse)\.(?:press|type|down|up|click|dblclick|move|wheel)\s*\(/.test(
+      source,
+    )
   ) {
     violations.push(`${relative}: browser action mechanics are outside Praxis`);
   }
   if (relative.startsWith("apps/api/src/") && !relative.includes("/native-browser-driver/")) {
-    if (/\.(?:getByRole|getByLabel|getByPlaceholder|getByText|getByTestId|locator)\s*\(/.test(source)) {
+    if (
+      /\.(?:getByRole|getByLabel|getByPlaceholder|getByText|getByTestId|locator)\s*\(/.test(source)
+    ) {
       violations.push(`${relative}: native locator execution is outside NativeBrowserDriver`);
     }
   }
-  if (productionSource && /process\.env(?:\.[A-Z0-9_]*_ENABLED|\[["'][A-Z0-9_]*_ENABLED["']\])/.test(source)) {
+  if (
+    productionSource &&
+    /process\.env(?:\.[A-Z0-9_]*_ENABLED|\[["'][A-Z0-9_]*_ENABLED["']\])/.test(source)
+  ) {
     violations.push(`${relative}: runtime path-selection *_ENABLED branch is forbidden`);
   }
-  if (relative.startsWith("apps/mcp/src/") && /\b(?:start|execute|observe|close)_direct_session\b/.test(source)) {
+  if (
+    relative.startsWith("apps/mcp/src/") &&
+    /\b(?:start|execute|observe|close)_direct_session\b/.test(source)
+  ) {
     violations.push(`${relative}: deleted direct-session MCP tool is still exposed`);
   }
-  if (relative === "apps/api/src/runtime/native-browser-driver/native-browser-driver.ts" &&
-      /\b(?:sessions\s*=\s*new Map|async (?:start|turn|observe|close)\s*\()/.test(source)) {
+  if (
+    relative === "apps/api/src/runtime/native-browser-driver/native-browser-driver.ts" &&
+    /\b(?:sessions\s*=\s*new Map|async (?:start|turn|observe|close)\s*\()/.test(source)
+  ) {
     violations.push(`${relative}: independent browser-session ownership is forbidden`);
   }
 }
@@ -104,7 +120,10 @@ function visit(candidate, result) {
     for (const child of readdirSync(candidate)) visit(path.join(candidate, child), result);
     return;
   }
-  if (sourceExtensions.has(path.extname(candidate)) || path.basename(candidate).startsWith("docker-compose")) {
+  if (
+    sourceExtensions.has(path.extname(candidate)) ||
+    path.basename(candidate).startsWith("docker-compose")
+  ) {
     result.push(candidate);
   }
 }

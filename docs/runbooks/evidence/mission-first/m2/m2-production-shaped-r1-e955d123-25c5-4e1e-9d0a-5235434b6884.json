@@ -232,9 +232,7 @@
       "p50Ms": 89.77587499999993,
       "p95Ms": 89.77587499999993,
       "maxMs": 89.77587499999993,
-      "slowestOperationIds": [
-        "mcp-e955d123-25c5-4e1e-9d0a-5235434b6884-1"
-      ]
+      "slowestOperationIds": ["mcp-e955d123-25c5-4e1e-9d0a-5235434b6884-1"]
     },
     "native_resolution": {
       "count": 14,
@@ -274,9 +272,7 @@
       "p50Ms": 42.637625000000014,
       "p95Ms": 42.637625000000014,
       "maxMs": 42.637625000000014,
-      "slowestOperationIds": [
-        "worker"
-      ]
+      "slowestOperationIds": ["worker"]
     }
   },
   "privacyScan": {

@@ -48,20 +48,13 @@ describe.skipIf(!enabled)("Praxis candidate inspection lifecycle", () => {
   });
 
   afterAll(async () => {
-    await database.query(
-      `DELETE FROM praxis_candidate_requests WHERE id=$1`,
-      [requestId],
-    );
+    await database.query(`DELETE FROM praxis_candidate_requests WHERE id=$1`, [requestId]);
 
     await database.onModuleDestroy();
   });
 
   it("claims, completes, and reads a Praxis inspection request", async () => {
-    const runtime = await repository.claim(
-      requestId,
-      "worker-1",
-      "claim-token",
-    );
+    const runtime = await repository.claim(requestId, "worker-1", "claim-token");
 
     expect(runtime).toMatchObject({
       id: requestId,
@@ -269,6 +262,4 @@ describe.skipIf(!enabled)("Praxis candidate inspection lifecycle", () => {
       status: "completed",
     });
   });
-
-
 });

@@ -1,10 +1,6 @@
 import type { OperationOutcome } from "@scry/contracts";
 
-export type InteractionPrivacyPhase =
-  | "not_started"
-  | "entered"
-  | "verified"
-  | "sealed";
+export type InteractionPrivacyPhase = "not_started" | "entered" | "verified" | "sealed";
 
 /**
  * Authoritative, per-interaction lifecycle facts.
@@ -49,7 +45,8 @@ export class InteractionLifecycleTracker {
   }
 
   privacyFailure(fallback: OperationOutcome["privacyResult"]): OperationOutcome["privacyResult"] {
-    if (this.privacyPhase === "sealed" || this.privacyPhase === "verified") return this.privacyPhase;
+    if (this.privacyPhase === "sealed" || this.privacyPhase === "verified")
+      return this.privacyPhase;
     return fallback;
   }
 
@@ -67,7 +64,11 @@ export class NativeControlResolutionError extends Error {
   }
 }
 
-export function isNativeControlResolutionError(error: unknown): error is NativeControlResolutionError {
-  return error instanceof NativeControlResolutionError ||
-    (error instanceof Error && error.name === "NativeControlResolutionError");
+export function isNativeControlResolutionError(
+  error: unknown,
+): error is NativeControlResolutionError {
+  return (
+    error instanceof NativeControlResolutionError ||
+    (error instanceof Error && error.name === "NativeControlResolutionError")
+  );
 }

@@ -95,7 +95,9 @@ describe("Praxis pinned reference against the reference-replacement fixture", ()
             .poll(async () => (await session.readGroundTruth()).mutationCount, { timeout: 5_000 })
             .toBeGreaterThanOrEqual(1);
           await expect
-            .poll(async () => (await session.readGroundTruth()).replacementDispatches, { timeout: 5_000 })
+            .poll(async () => (await session.readGroundTruth()).replacementDispatches, {
+              timeout: 5_000,
+            })
             .toBeGreaterThanOrEqual(1);
 
           const truth = await session.readGroundTruth();
@@ -120,8 +122,7 @@ describe("Praxis pinned reference against the reference-replacement fixture", ()
           const page = await context.newPage();
           await page.goto(session.value.scenarioUrl);
 
-          const reference =
-            await observeTargetReference(page, page.getByPlaceholder("Email"));
+          const reference = await observeTargetReference(page, page.getByPlaceholder("Email"));
 
           await page.evaluate(() => {
             (window as unknown as { __replaceInputTarget?: () => void }).__replaceInputTarget?.();
@@ -155,15 +156,15 @@ describe("Praxis pinned reference against the reference-replacement fixture", ()
     "negative control: semantic re-fill fills the replacement and the oracle fails",
     { timeout: 30_000 },
     async () => {
-          await withFixture(referenceReplacementFillFixture, undefined, async (session) => {
-            const context = await browser.newContext();
-            try {
-              const page = await context.newPage();
-              await page.goto(session.value.scenarioUrl);
+      await withFixture(referenceReplacementFillFixture, undefined, async (session) => {
+        const context = await browser.newContext();
+        try {
+          const page = await context.newPage();
+          await page.goto(session.value.scenarioUrl);
 
-              await page.evaluate(() => {
-                (window as unknown as { __replaceInputTarget?: () => void }).__replaceInputTarget?.();
-              });
+          await page.evaluate(() => {
+            (window as unknown as { __replaceInputTarget?: () => void }).__replaceInputTarget?.();
+          });
           await page.getByPlaceholder("Email").fill("replacement-value");
 
           await expect
@@ -171,9 +172,11 @@ describe("Praxis pinned reference against the reference-replacement fixture", ()
             .toBeGreaterThanOrEqual(1);
 
           const truth = await session.readGroundTruth();
-        await expect
-          .poll(async () => (await session.readGroundTruth()).replacementDispatches, { timeout: 5_000 })
-          .toBeGreaterThanOrEqual(1);
+          await expect
+            .poll(async () => (await session.readGroundTruth()).replacementDispatches, {
+              timeout: 5_000,
+            })
+            .toBeGreaterThanOrEqual(1);
 
           const finalTruth = await session.readGroundTruth();
           const observation = verifyFillReferenceDidNotDispatch(finalTruth);

@@ -29,11 +29,11 @@ describe("document transition gap migration authority", () => {
     expect(occurrences).toHaveLength(2);
   });
 
-  it("has a deployed predecessor branch that applies gap then selection", async () => {
+  it("uses the authoritative d647 predecessor branch to apply gap then selection", async () => {
     const migrate = await readFile(new URL("../scripts/migrate.ts", import.meta.url), "utf8");
 
     const match = migrate.match(
-      /if \(installedFingerprint === preDocumentTransitionGapFingerprint\) \{([\s\S]*?)\n\s*\} else if/,
+      /if \(installedFingerprint === AUTHORITATIVE_D647_FINGERPRINT\) \{([\s\S]*?)\n\s*\} else if/,
     );
 
     expect(match).not.toBeNull();

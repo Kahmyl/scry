@@ -1,14 +1,8 @@
-import {
-  aggregateRequiredStatuses,
-} from "../core/results.js";
+import { aggregateRequiredStatuses } from "../core/results.js";
 
-import type {
-  AssuranceDescriptor,
-} from "../core/types.js";
+import type { AssuranceDescriptor } from "../core/types.js";
 
-import {
-  type VerificationObservation,
-} from "../core/results.js";
+import { type VerificationObservation } from "../core/results.js";
 
 import {
   defineVerification,
@@ -18,22 +12,15 @@ import {
   type VerificationExecution,
 } from "../verification/primitives.js";
 
-export interface LiveJourneyStep<TContext>
-  extends AssuranceDescriptor {
+export interface LiveJourneyStep<TContext> extends AssuranceDescriptor {
   intent: string;
   capability?: string;
   required?: boolean;
 
-  execute(
-    context: TContext,
-  ):
-    | Promise<VerificationObservation>
-    | VerificationObservation;
+  execute(context: TContext): Promise<VerificationObservation> | VerificationObservation;
 }
 
-export interface LiveJourneyDefinition<
-  TContext = undefined,
-> extends AssuranceDescriptor {
+export interface LiveJourneyDefinition<TContext = undefined> extends AssuranceDescriptor {
   surface: string;
 
   steps: readonly LiveJourneyStep<TContext>[];
@@ -56,17 +43,14 @@ export interface LiveJourneyStepResult {
   verification: VerificationExecution;
 }
 
-export interface LiveJourneyResult
-  extends AssuranceDescriptor {
+export interface LiveJourneyResult extends AssuranceDescriptor {
   surface: string;
   status: "pass" | "fail" | "inconclusive";
   steps: readonly LiveJourneyStepResult[];
   completion: VerificationExecution;
 }
 
-export function defineLiveJourney<
-  TContext = undefined,
->(
+export function defineLiveJourney<TContext = undefined>(
   definition: LiveJourneyDefinition<TContext>,
 ): LiveJourneyDefinition<TContext> {
   return definition;
@@ -88,13 +72,9 @@ export async function runLiveJourney<TContext>(
       claim: step.intent,
       oracle: step.execute,
 
-      ...(step.description
-        ? { description: step.description }
-        : {}),
+      ...(step.description ? { description: step.description } : {}),
 
-      ...(step.tags
-        ? { tags: step.tags }
-        : {}),
+      ...(step.tags ? { tags: step.tags } : {}),
     });
 
     if (stopped) {
@@ -102,9 +82,7 @@ export async function runLiveJourney<TContext>(
         required,
         intent: step.intent,
 
-        ...(step.capability
-          ? { capability: step.capability }
-          : {}),
+        ...(step.capability ? { capability: step.capability } : {}),
 
         verification: notRunVerification(
           verification as VerificationCase<unknown>,
@@ -115,57 +93,37 @@ export async function runLiveJourney<TContext>(
       continue;
     }
 
-    const execution = await runVerification(
-      verification,
-      context,
-    );
+    const execution = await runVerification(verification, context);
 
     steps.push({
       required,
       intent: step.intent,
 
-      ...(step.capability
-        ? { capability: step.capability }
-        : {}),
+      ...(step.capability ? { capability: step.capability } : {}),
 
       verification: execution,
     });
 
-    if (
-      journey.stopOnNonPass !== false &&
-      required &&
-      execution.status !== "pass"
-    ) {
+    if (journey.stopOnNonPass !== false && required && execution.status !== "pass") {
       stopped = true;
     }
   }
 
-  const requiredSteps = steps.filter(
-    ({ required }) => required,
-  );
+  const requiredSteps = steps.filter(({ required }) => required);
 
   const requiredStepsPassed =
     requiredSteps.length > 0 &&
-    requiredSteps.every(
-      ({ verification }) =>
-        verification.status === "pass",
-    );
+    requiredSteps.every(({ verification }) => verification.status === "pass");
 
   const completion = requiredStepsPassed
-    ? await runVerification(
-        journey.completion,
-        context,
-      )
+    ? await runVerification(journey.completion, context)
     : notRunVerification(
         journey.completion as VerificationCase<unknown>,
         "JOURNEY_STEPS_NOT_QUALIFIED",
       );
 
   const status = aggregateRequiredStatuses([
-    ...requiredSteps.map(
-      ({ verification }) =>
-        verification.status,
-    ),
+    ...requiredSteps.map(({ verification }) => verification.status),
     completion.status,
   ]);
 
@@ -177,12 +135,8 @@ export async function runLiveJourney<TContext>(
     steps,
     completion,
 
-    ...(journey.description
-      ? { description: journey.description }
-      : {}),
+    ...(journey.description ? { description: journey.description } : {}),
 
-    ...(journey.tags
-      ? { tags: journey.tags }
-      : {}),
+    ...(journey.tags ? { tags: journey.tags } : {}),
   };
 }

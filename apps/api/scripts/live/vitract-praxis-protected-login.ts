@@ -12,27 +12,23 @@ import {
 import { compileVeilPolicy, VeilAuthority } from "@scry/veil";
 import type { Browser, BrowserContext, Page } from "playwright";
 
-import { AdaptiveSessionRepository } from "../../src/adaptive-sessions/adaptive-session.repository.js";
+import { AdaptiveSessionRepository } from "../../src/adaptive-sessions/repositories/adaptive-session.repository.js";
 import { Database } from "../../src/infrastructure/database.js";
 import { NativeBrowserDriver } from "../../src/runtime/native-browser-driver/native-browser-driver.js";
 
 const LOGIN_URL = "https://preview.vitract.com/login";
 
 const ENVIRONMENT_ID =
-  process.env.SCRY_LIVE_ENVIRONMENT_ID ??
-  "faca3dad-9ff7-4633-b058-1239d0aefb65";
+  process.env.SCRY_LIVE_ENVIRONMENT_ID ?? "faca3dad-9ff7-4633-b058-1239d0aefb65";
 
 const CREDENTIAL_RESOLUTION_SESSION_ID =
-  process.env.SCRY_LIVE_CREDENTIAL_SESSION_ID ??
-  "0197cbc4-9560-43f7-8c47-3f69a11de8d2";
+  process.env.SCRY_LIVE_CREDENTIAL_SESSION_ID ?? "0197cbc4-9560-43f7-8c47-3f69a11de8d2";
 
 const EMAIL_REFERENCE =
-  process.env.SCRY_LIVE_EMAIL_REFERENCE ??
-  "950c756d-c595-4f09-9f05-d64ceeab5cf9";
+  process.env.SCRY_LIVE_EMAIL_REFERENCE ?? "950c756d-c595-4f09-9f05-d64ceeab5cf9";
 
 const PASSWORD_REFERENCE =
-  process.env.SCRY_LIVE_PASSWORD_REFERENCE ??
-  "ecc3f126-9a68-4994-9869-dc63a987786c";
+  process.env.SCRY_LIVE_PASSWORD_REFERENCE ?? "ecc3f126-9a68-4994-9869-dc63a987786c";
 
 const TIMEOUT_MS = 20_000;
 
@@ -80,9 +76,7 @@ type Output = {
   leftLoginPage: boolean;
 
   elapsedMs: number;
-  result:
-    | "LIVE_DIRECT_PRAXIS_PROTECTED_LOGIN_PASS"
-    | "LIVE_DIRECT_PRAXIS_PROTECTED_LOGIN_FAIL";
+  result: "LIVE_DIRECT_PRAXIS_PROTECTED_LOGIN_PASS" | "LIVE_DIRECT_PRAXIS_PROTECTED_LOGIN_FAIL";
 };
 
 const output: Output = {
@@ -208,9 +202,7 @@ try {
       };
     });
 
-    const elapsedMs = Math.round(
-      performance.now() - readinessStartedAt,
-    );
+    const elapsedMs = Math.round(performance.now() - readinessStartedAt);
 
     output.readinessAttempts.push({
       elapsedMs,
@@ -220,11 +212,9 @@ try {
       semanticControlCount: loginObservation.controls.length,
     });
 
-    if (loginObservation.controls.length >= 3)
-      break;
+    if (loginObservation.controls.length >= 3) break;
 
-    if (elapsedMs >= 15_000)
-      throw coded("LIVE_PRAXIS_LOGIN_CONTROLS_INCOMPLETE");
+    if (elapsedMs >= 15_000) throw coded("LIVE_PRAXIS_LOGIN_CONTROLS_INCOMPLETE");
 
     await page.waitForTimeout(250);
     loginObservation = await observeSemanticPageContext(page);
@@ -250,9 +240,7 @@ try {
   );
 
   const loginControls = loginObservation.controls.filter(
-    (control) =>
-      control.role === "button" &&
-      control.name.trim().toLowerCase() === "login",
+    (control) => control.role === "button" && control.name.trim().toLowerCase() === "login",
   );
 
   const safeObservedControls = loginObservation.controls.map((control) => ({
@@ -286,14 +274,11 @@ try {
     ].join("\n"),
   );
 
-  if (emailControls.length !== 1)
-    throw coded("LIVE_PRAXIS_EMAIL_REFERENCE_NOT_UNIQUE");
+  if (emailControls.length !== 1) throw coded("LIVE_PRAXIS_EMAIL_REFERENCE_NOT_UNIQUE");
 
-  if (passwordControls.length !== 1)
-    throw coded("LIVE_PRAXIS_PASSWORD_REFERENCE_NOT_UNIQUE");
+  if (passwordControls.length !== 1) throw coded("LIVE_PRAXIS_PASSWORD_REFERENCE_NOT_UNIQUE");
 
-  if (loginControls.length !== 1)
-    throw coded("LIVE_PRAXIS_LOGIN_REFERENCE_NOT_UNIQUE");
+  if (loginControls.length !== 1) throw coded("LIVE_PRAXIS_LOGIN_REFERENCE_NOT_UNIQUE");
 
   const emailReference = emailControls[0]!.reference;
   const passwordReference = passwordControls[0]!.reference;
@@ -316,10 +301,7 @@ try {
 
     // Plaintext is returned directly into Praxis' input resolver call.
     // It is never written to stdout, evidence, the report, or this output structure.
-    return sessions.resolveCredential(
-      CREDENTIAL_RESOLUTION_SESSION_ID,
-      reference,
-    );
+    return sessions.resolveCredential(CREDENTIAL_RESOLUTION_SESSION_ID, reference);
   };
 
   output.failureStage = "PROTECTED_EMAIL_FILL";
@@ -341,11 +323,7 @@ try {
         },
       },
       expectedEffect: { type: "none" },
-      context: praxisContext(
-        "protected",
-        policy,
-        "protected_email_fill",
-      ),
+      context: praxisContext("protected", policy, "protected_email_fill"),
       signal: new AbortController().signal,
       resolveInput: resolveKnownSecret,
     }),
@@ -370,11 +348,7 @@ try {
         },
       },
       expectedEffect: { type: "none" },
-      context: praxisContext(
-        "protected",
-        policy,
-        "protected_password_fill",
-      ),
+      context: praxisContext("protected", policy, "protected_password_fill"),
       signal: new AbortController().signal,
       resolveInput: resolveKnownSecret,
     }),
@@ -393,11 +367,7 @@ try {
       },
       operation: { type: "activate" },
       expectedEffect: { type: "none" },
-      context: praxisContext(
-        "action",
-        policy,
-        "login_activate",
-      ),
+      context: praxisContext("action", policy, "login_activate"),
       signal: new AbortController().signal,
     }),
   );
@@ -419,16 +389,13 @@ try {
     output.finalPath !== "/login" &&
     !output.finalPath.endsWith("/login");
 
-  if (!output.leftLoginPage)
-    throw coded("LIVE_PRAXIS_AUTHENTICATED_NAVIGATION_NOT_PROVEN");
+  if (!output.leftLoginPage) throw coded("LIVE_PRAXIS_AUTHENTICATED_NAVIGATION_NOT_PROVEN");
 
   output.failureStage = "AUTHENTICATED_OBSERVATION";
 
-  const authenticatedObservation =
-    await observeSemanticPageContext(page);
+  const authenticatedObservation = await observeSemanticPageContext(page);
 
-  output.authenticatedControlCount =
-    authenticatedObservation.controls.length;
+  output.authenticatedControlCount = authenticatedObservation.controls.length;
 
   // Positive post-login proof is intentionally mechanical:
   // same approved Vitract origin + no longer on /login + observation succeeds.
@@ -446,17 +413,13 @@ try {
 
   unregisterVeil?.();
 
-  if (browser && context)
-    await driver.closeBrowser(browser, context).catch(() => undefined);
+  if (browser && context) await driver.closeBrowser(browser, context).catch(() => undefined);
 
   await database.onModuleDestroy();
 
   printOutput(output);
 
-  process.exitCode =
-    output.result === "LIVE_DIRECT_PRAXIS_PROTECTED_LOGIN_PASS"
-      ? 0
-      : 1;
+  process.exitCode = output.result === "LIVE_DIRECT_PRAXIS_PROTECTED_LOGIN_PASS" ? 0 : 1;
 }
 
 function praxisContext(
@@ -482,14 +445,9 @@ function praxisContext(
   };
 }
 
-async function requireSuccess(
-  stage: string,
-  result: PraxisResult,
-) {
+async function requireSuccess(stage: string, result: PraxisResult) {
   const verification =
-    result.status === "succeeded"
-      ? result.verification
-      : result.report.verification;
+    result.status === "succeeded" ? result.verification : result.report.verification;
 
   output.praxisResults.push({
     stage,
@@ -501,27 +459,16 @@ async function requireSuccess(
     durationMs: Math.round(result.timing.totalMs),
   });
 
-  if (result.status !== "succeeded")
-    throw coded(result.code);
+  if (result.status !== "succeeded") throw coded(result.code);
 
-  if (
-    result.verification.local !== "passed" &&
-    result.verification.local !== "not_required"
-  )
+  if (result.verification.local !== "passed" && result.verification.local !== "not_required")
     throw coded("LIVE_PRAXIS_LOCAL_VERIFICATION_NOT_PROVEN");
 }
 
-function textboxTarget(
-  concept: string,
-  placeholder: string,
-): InteractionTargetIntent {
+function textboxTarget(concept: string, placeholder: string): InteractionTargetIntent {
   return {
     concept,
-    requiredCapabilities: [
-      "focusable",
-      "accepts_text",
-      "editable",
-    ],
+    requiredCapabilities: ["focusable", "accepts_text", "editable"],
     preferredEvidence: {
       roles: ["textbox"],
       names: [],
@@ -538,16 +485,10 @@ function textboxTarget(
   };
 }
 
-function buttonTarget(
-  concept: string,
-  name: string,
-): InteractionTargetIntent {
+function buttonTarget(concept: string, name: string): InteractionTargetIntent {
   return {
     concept,
-    requiredCapabilities: [
-      "focusable",
-      "pointer_activatable",
-    ],
+    requiredCapabilities: ["focusable", "pointer_activatable"],
     preferredEvidence: {
       roles: ["button"],
       names: [name],
@@ -564,9 +505,7 @@ function buttonTarget(
   };
 }
 
-async function loadEnvironmentPolicy(
-  repository: Database,
-): Promise<ExecutionPolicy> {
+async function loadEnvironmentPolicy(repository: Database): Promise<ExecutionPolicy> {
   const result = await repository.query<{
     policy: unknown;
     baseOrigin: string;
@@ -581,8 +520,7 @@ async function loadEnvironmentPolicy(
     [ENVIRONMENT_ID],
   );
 
-  if (result.rowCount !== 1)
-    throw coded("LIVE_PRAXIS_ENVIRONMENT_UNAVAILABLE");
+  if (result.rowCount !== 1) throw coded("LIVE_PRAXIS_ENVIRONMENT_UNAVAILABLE");
 
   const row = result.rows[0]!;
   const policy = executionPolicySchema.parse(row.policy);
@@ -595,10 +533,7 @@ async function loadEnvironmentPolicy(
 
   const refs = new Set(row.secretRefs);
 
-  if (
-    !refs.has(EMAIL_REFERENCE) ||
-    !refs.has(PASSWORD_REFERENCE)
-  )
+  if (!refs.has(EMAIL_REFERENCE) || !refs.has(PASSWORD_REFERENCE))
     throw coded("LIVE_PRAXIS_ENVIRONMENT_CREDENTIALS_UNAUTHORIZED");
 
   return policy;
@@ -636,30 +571,32 @@ function safeCode(error: unknown) {
 }
 
 function printOutput(value: Output) {
-  process.stdout.write([
-    "============================================================",
-    "R0.7 LAYER A — DIRECT PRAXIS RESULT",
-    "============================================================",
-    `layer: ${value.layer}`,
-    `controlPlaneAdmissionUsed: ${value.controlPlaneAdmissionUsed}`,
-    `missionFlowUsed: ${value.missionFlowUsed}`,
-    `runUsed: ${value.runUsed}`,
-    `mcpUsed: ${value.mcpUsed}`,
-    `failureStage: ${value.failureStage}`,
-    `failureCode: ${value.failureCode}`,
-    `browserLaunchAttempted: ${value.browserLaunchAttempted}`,
-    `navigationSucceeded: ${value.navigationSucceeded}`,
-    `initialControlCount: ${value.initialControlCount}`,
-    `authenticatedControlCount: ${value.authenticatedControlCount}`,
-    `readinessAttempts: ${JSON.stringify(value.readinessAttempts)}`,
-    `resolverCalls: ${JSON.stringify(value.resolverCalls)}`,
-    `mutationBoundaryEntries: ${JSON.stringify(value.mutationBoundaryEntries)}`,
-    `praxisResults: ${JSON.stringify(value.praxisResults)}`,
-    `finalOrigin: ${value.finalOrigin}`,
-    `finalPath: ${value.finalPath}`,
-    `leftLoginPage: ${value.leftLoginPage}`,
-    `elapsedMs: ${value.elapsedMs}`,
-    `result: ${value.result}`,
-    "",
-  ].join("\n"));
+  process.stdout.write(
+    [
+      "============================================================",
+      "R0.7 LAYER A — DIRECT PRAXIS RESULT",
+      "============================================================",
+      `layer: ${value.layer}`,
+      `controlPlaneAdmissionUsed: ${value.controlPlaneAdmissionUsed}`,
+      `missionFlowUsed: ${value.missionFlowUsed}`,
+      `runUsed: ${value.runUsed}`,
+      `mcpUsed: ${value.mcpUsed}`,
+      `failureStage: ${value.failureStage}`,
+      `failureCode: ${value.failureCode}`,
+      `browserLaunchAttempted: ${value.browserLaunchAttempted}`,
+      `navigationSucceeded: ${value.navigationSucceeded}`,
+      `initialControlCount: ${value.initialControlCount}`,
+      `authenticatedControlCount: ${value.authenticatedControlCount}`,
+      `readinessAttempts: ${JSON.stringify(value.readinessAttempts)}`,
+      `resolverCalls: ${JSON.stringify(value.resolverCalls)}`,
+      `mutationBoundaryEntries: ${JSON.stringify(value.mutationBoundaryEntries)}`,
+      `praxisResults: ${JSON.stringify(value.praxisResults)}`,
+      `finalOrigin: ${value.finalOrigin}`,
+      `finalPath: ${value.finalPath}`,
+      `leftLoginPage: ${value.leftLoginPage}`,
+      `elapsedMs: ${value.elapsedMs}`,
+      `result: ${value.result}`,
+      "",
+    ].join("\n"),
+  );
 }

@@ -31,7 +31,9 @@ export class CheckpointCoordinator {
     },
   ) {}
   async establish(context: BrowserContext, checkpoint: Checkpoint) {
-    const payload = await capturePraxisStorageState(context, { indexedDB: checkpoint.state.indexedDb });
+    const payload = await capturePraxisStorageState(context, {
+      indexedDB: checkpoint.state.indexedDb,
+    });
     const bindingFingerprint = this.binding(checkpoint);
     await this.input.store.establish({
       checkpoint,
@@ -64,7 +66,9 @@ export class CheckpointCoordinator {
         serviceWorkers: "block",
         acceptDownloads: false,
       });
-      await gotoPraxisPage(restored.page, checkpoint.restorationUrl, { waitUntil: "domcontentloaded" });
+      await gotoPraxisPage(restored.page, checkpoint.restorationUrl, {
+        waitUntil: "domcontentloaded",
+      });
       if (!this.input.allowedOrigins.includes(new URL(restored.page.url()).origin))
         throw new Error("CHECKPOINT_ORIGIN_MISMATCH");
       await verify(restored.page, checkpoint);

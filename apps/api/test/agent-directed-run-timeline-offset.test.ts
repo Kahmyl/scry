@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 describe("agent-directed Run timeline append offset", () => {
   const source = readFileSync(
-    new URL("../src/runs/agent-directed-run.service.ts", import.meta.url),
+    new URL("../src/runs/services/agent-directed-run.service.ts", import.meta.url),
     "utf8",
   );
 

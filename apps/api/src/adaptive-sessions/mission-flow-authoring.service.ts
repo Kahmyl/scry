@@ -22,8 +22,8 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Principal } from "../auth/index.js";
 import { ReleaseAdmissionService } from "../runtime/index.js";
 import { AdaptiveSessionKernelRunner } from "./adaptive-session-kernel.runner.js";
-import { AdaptiveSessionRepository } from "./adaptive-session.repository.js";
-import { OperationBoundProtectedInputRepository } from "./operation-bound-protected-input.repository.js";
+import { AdaptiveSessionRepository } from "./repositories/adaptive-session.repository.js";
+import { OperationBoundProtectedInputRepository } from "./repositories/operation-bound-protected-input.repository.js";
 import { AdaptiveOperationReconciliationRegistry } from "./adaptive-operation-reconciliation.registry.js";
 import {
   deriveMissionAuthoringOperation,

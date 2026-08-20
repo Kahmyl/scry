@@ -23,7 +23,7 @@ const worker = readFileSync(
 );
 
 const agentDirected = readFileSync(
-  new URL("../src/runs/agent-directed-run.service.ts", import.meta.url),
+  new URL("../src/runs/services/agent-directed-run.service.ts", import.meta.url),
   "utf8",
 );
 
@@ -33,7 +33,7 @@ const runAttempt = readFileSync(
 );
 
 const authoring = readFileSync(
-  new URL("../src/authoring/authoring.service.ts", import.meta.url),
+  new URL("../src/authoring/services/authoring.service.ts", import.meta.url),
   "utf8",
 );
 

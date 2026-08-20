@@ -11,15 +11,15 @@ import {
   type FinalizeAgentDirectedRunInput,
 } from "@scry/contracts";
 
-import { ScryRepository } from "../access/index.js";
+import { ScryRepository } from "../../access/index.js";
 import {
   MissionFlowAuthoringService,
   type MissionRunEvidenceContext,
-} from "../adaptive-sessions/index.js";
-import type { Principal } from "../auth/index.js";
-import { Database } from "../infrastructure/index.js";
-import { ExecutionRepository, ReleaseAdmissionService } from "../runtime/index.js";
-import { commitExecutionReport } from "../runtime/report-commit.js";
+} from "../../adaptive-sessions/index.js";
+import type { Principal } from "../../auth/index.js";
+import { Database } from "../../infrastructure/index.js";
+import { ExecutionRepository, ReleaseAdmissionService } from "../../runtime/index.js";
+import { commitExecutionReport } from "../../runtime/report-commit.js";
 
 type AssociatedAgentDirectedRun = {
   objectiveId: string;

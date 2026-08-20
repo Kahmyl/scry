@@ -19,25 +19,29 @@ const provisioned = await provisionM2Campaign(context, {
   ],
 });
 
-process.stdout.write(`${JSON.stringify({
-  ready: true,
-  projectId: provisioned.ownership.projectId,
-  environmentId: provisioned.ownership.environmentId,
-  missionId: provisioned.ownership.missionId,
-  agentSessionId: provisioned.ownership.agentSessionId,
-  origin: context.fixture.origin,
-  flows: provisioned.ownership.flows,
-})}\n`);
+process.stdout.write(
+  `${JSON.stringify({
+    ready: true,
+    projectId: provisioned.ownership.projectId,
+    environmentId: provisioned.ownership.environmentId,
+    missionId: provisioned.ownership.missionId,
+    agentSessionId: provisioned.ownership.agentSessionId,
+    origin: context.fixture.origin,
+    flows: provisioned.ownership.flows,
+  })}\n`,
+);
 
 const stopped = new Promise<void>((resolve) => {
   process.once("SIGINT", resolve);
   process.once("SIGTERM", resolve);
 });
 await stopped;
-process.stdout.write(`${JSON.stringify({
-  stopped: true,
-  dispatches: context.fixture.snapshot().protectedDispatches,
-})}\n`);
+process.stdout.write(
+  `${JSON.stringify({
+    stopped: true,
+    dispatches: context.fixture.snapshot().protectedDispatches,
+  })}\n`,
+);
 await closeCampaignContext(context);
 
 function flow(key: string, label: string) {

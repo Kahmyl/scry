@@ -2,14 +2,31 @@ import { z } from "zod";
 
 export const externalResourcePresentationAuthoritySchema = z
   .object({
-    provider: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
-    resourceKind: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+    provider: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+    resourceKind: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
     resourceScope: z.string().trim().min(1).max(500),
     resourceCollection: z.string().trim().min(1).max(500),
-    semanticField: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,199}$/),
+    semanticField: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z][A-Za-z0-9_.-]{0,199}$/),
     classification: z.literal("internal_non_secret"),
     permittedPurpose: z.literal("browser_presentation_identity"),
-    browserBoundaryKind: z.enum(["dialog", "form", "section", "field_group", "table", "row", "region"]),
+    browserBoundaryKind: z.enum([
+      "dialog",
+      "form",
+      "section",
+      "field_group",
+      "table",
+      "row",
+      "region",
+    ]),
     contractVersion: z.number().int().min(1).max(1_000),
     revision: z.number().int().min(1).max(1_000_000),
     status: z.enum(["active", "revoked"]),
@@ -32,14 +49,20 @@ export const executionPolicySchema = z
       .max(20),
     trustedScriptOrigins: z
       .array(
-        z.string().url().transform((value, context) => {
-          const url = new URL(value);
-          if (!["http:", "https:"].includes(url.protocol) || value !== url.origin) {
-            context.addIssue({ code: "custom", message: "trusted script origins must be canonical HTTP(S) origins" });
-            return z.NEVER;
-          }
-          return value;
-        }),
+        z
+          .string()
+          .url()
+          .transform((value, context) => {
+            const url = new URL(value);
+            if (!["http:", "https:"].includes(url.protocol) || value !== url.origin) {
+              context.addIssue({
+                code: "custom",
+                message: "trusted script origins must be canonical HTTP(S) origins",
+              });
+              return z.NEVER;
+            }
+            return value;
+          }),
       )
       .max(20)
       .optional(),
@@ -49,25 +72,51 @@ export const executionPolicySchema = z
     maxActions: z.number().int().min(1).max(500).default(100),
     maxDurationMs: z.number().int().min(1_000).max(1_800_000).default(120_000),
     maxNavigations: z.number().int().min(1).max(50).default(10),
-    protectedSyntheticInputs: z.object({
-      enabled: z.literal(true),
-      generators: z.array(z.object({
-        contract: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
-        version: z.number().int().min(1).max(1_000),
-        purposes: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,99}$/)).min(1).max(20),
-        resourceScopes: z.array(z.object({
-          resourceKind: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
-          operation: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
-        }).strict()).min(1).max(20),
-      }).strict()).min(1).max(20).superRefine((generators, context) => {
-        const keys = new Set<string>();
-        generators.forEach((generator, index) => {
-          const key = `${generator.contract}:${generator.version}`;
-          if (keys.has(key)) context.addIssue({ code: "custom", path: [index], message: "synthetic generator declarations must be unique" });
-          keys.add(key);
-        });
-      }),
-    }).strict().optional(),
+    protectedSyntheticInputs: z
+      .object({
+        enabled: z.literal(true),
+        generators: z
+          .array(
+            z
+              .object({
+                contract: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+                version: z.number().int().min(1).max(1_000),
+                purposes: z
+                  .array(z.string().regex(/^[a-z][a-z0-9_]{0,99}$/))
+                  .min(1)
+                  .max(20),
+                resourceScopes: z
+                  .array(
+                    z
+                      .object({
+                        resourceKind: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+                        operation: z.string().regex(/^[a-z][a-z0-9_]{0,99}$/),
+                      })
+                      .strict(),
+                  )
+                  .min(1)
+                  .max(20),
+              })
+              .strict(),
+          )
+          .min(1)
+          .max(20)
+          .superRefine((generators, context) => {
+            const keys = new Set<string>();
+            generators.forEach((generator, index) => {
+              const key = `${generator.contract}:${generator.version}`;
+              if (keys.has(key))
+                context.addIssue({
+                  code: "custom",
+                  path: [index],
+                  message: "synthetic generator declarations must be unique",
+                });
+              keys.add(key);
+            });
+          }),
+      })
+      .strict()
+      .optional(),
     externalResourcePresentationAuthorities: z
       .array(externalResourcePresentationAuthoritySchema)
       .max(50)
@@ -75,11 +124,19 @@ export const executionPolicySchema = z
       .superRefine((authorities, context) => {
         const keys = new Set<string>();
         for (const [index, authority] of (authorities ?? []).entries()) {
-          const key = [authority.provider, authority.resourceKind, authority.resourceScope,
-            authority.contractVersion, authority.revision].join("\u0000");
-          if (keys.has(key)) context.addIssue({
-            code: "custom", path: [index], message: "presentation authority revisions must be unique",
-          });
+          const key = [
+            authority.provider,
+            authority.resourceKind,
+            authority.resourceScope,
+            authority.contractVersion,
+            authority.revision,
+          ].join("\u0000");
+          if (keys.has(key))
+            context.addIssue({
+              code: "custom",
+              path: [index],
+              message: "presentation authority revisions must be unique",
+            });
           keys.add(key);
         }
       }),
@@ -90,11 +147,22 @@ export type ExecutionPolicy = z.infer<typeof executionPolicySchema>;
 
 export function executionPolicyAllowsProtectedSyntheticInput(
   policy: ExecutionPolicy,
-  input: { contract: string; version: number; purpose: string; resourceKind: string; operation: string },
+  input: {
+    contract: string;
+    version: number;
+    purpose: string;
+    resourceKind: string;
+    operation: string;
+  },
 ) {
   if (!policy.protectedSyntheticInputs?.enabled) return false;
-  return policy.protectedSyntheticInputs.generators.some((generator) =>
-    generator.contract === input.contract && generator.version === input.version &&
-    generator.purposes.includes(input.purpose) && generator.resourceScopes.some((scope) =>
-      scope.resourceKind === input.resourceKind && scope.operation === input.operation));
+  return policy.protectedSyntheticInputs.generators.some(
+    (generator) =>
+      generator.contract === input.contract &&
+      generator.version === input.version &&
+      generator.purposes.includes(input.purpose) &&
+      generator.resourceScopes.some(
+        (scope) => scope.resourceKind === input.resourceKind && scope.operation === input.operation,
+      ),
+  );
 }

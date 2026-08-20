@@ -119,7 +119,10 @@ export function MissionDetailPage({
         <div className="mission-summary-strip">
           <div>
             <span>Flow Runs</span>
-            <strong>{data.flowProgress.passedRuns} passed · {data.flowProgress.needsAttentionRuns} attention</strong>
+            <strong>
+              {data.flowProgress.passedRuns} passed · {data.flowProgress.needsAttentionRuns}{" "}
+              attention
+            </strong>
           </div>
           <div>
             <span>Run evidence</span>
@@ -130,7 +133,7 @@ export function MissionDetailPage({
             <strong>
               {data.flowProgress.current
                 ? `${data.flowProgress.current.name} · ${data.flowProgress.current.phase.replaceAll("_", " ")}`
-                : data.resumePointer?.explanation ?? "No active Flow"}
+                : (data.resumePointer?.explanation ?? "No active Flow")}
             </strong>
           </div>
         </div>
@@ -144,11 +147,16 @@ export function MissionDetailPage({
             scope only; it does not approve target correctness or workflow progression.
           </p>
           <dl>
-            <dt>Objective</dt><dd>{authorizationRequest.objectiveId}</dd>
-            <dt>Environment</dt><dd>{authorizationRequest.environmentId}</dd>
-            <dt>Praxis session</dt><dd>{authorizationRequest.praxisSessionId}</dd>
-            <dt>Operation</dt><dd>{authorizationRequest.operationId}</dd>
-            <dt>Reason</dt><dd>{authorizationRequest.reason}</dd>
+            <dt>Objective</dt>
+            <dd>{authorizationRequest.objectiveId}</dd>
+            <dt>Environment</dt>
+            <dd>{authorizationRequest.environmentId}</dd>
+            <dt>Praxis session</dt>
+            <dd>{authorizationRequest.praxisSessionId}</dd>
+            <dt>Operation</dt>
+            <dd>{authorizationRequest.operationId}</dd>
+            <dt>Reason</dt>
+            <dd>{authorizationRequest.reason}</dd>
           </dl>
           <button
             className="primary-button"
@@ -157,7 +165,9 @@ export function MissionDetailPage({
               void post<{ id: string; status: string }>(
                 `/missions/${missionId}/authorizations`,
                 authorizationRequest,
-              ).then(setAuthorizationResult).catch((cause) => setError(message(cause)));
+              )
+                .then(setAuthorizationResult)
+                .catch((cause) => setError(message(cause)));
             }}
           >
             <ShieldCheck size={15} /> Authorize this protected operation
@@ -315,11 +325,14 @@ export function MissionDetailPage({
             {data.runs.map((run) => (
               <button key={run.id} onClick={() => onOpenRun(run.id)}>
                 <span>
-                  <small>{run.role ?? "run"} · {relativeTime(run.updatedAt)}</small>
+                  <small>
+                    {run.role ?? "run"} · {relativeTime(run.updatedAt)}
+                  </small>
                   <strong>{run.flowName ?? `Flow ${run.flowId?.slice(0, 8) ?? "unknown"}`}</strong>
                 </span>
                 <span>
-                  {run.state.replaceAll("_", " ")} · {run.phase?.replaceAll("_", " ") ?? "queued"} · {run.availableEvidenceCount ?? 0} evidence <ArrowRight size={14} />
+                  {run.state.replaceAll("_", " ")} · {run.phase?.replaceAll("_", " ") ?? "queued"} ·{" "}
+                  {run.availableEvidenceCount ?? 0} evidence <ArrowRight size={14} />
                 </span>
               </button>
             ))}
@@ -374,7 +387,14 @@ function protectedAuthorizationRequest(missionId: string) {
   const praxisSessionId = params.get("praxisSessionId");
   const operationId = params.get("operationId");
   const reason = params.get("reason");
-  if (!objectiveId || !environmentId || !agentSessionId || !praxisSessionId || !operationId || !reason)
+  if (
+    !objectiveId ||
+    !environmentId ||
+    !agentSessionId ||
+    !praxisSessionId ||
+    !operationId ||
+    !reason
+  )
     return undefined;
   return {
     missionId,

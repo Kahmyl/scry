@@ -9,7 +9,7 @@ import {
   AuthenticationAuthoringService,
 } from "../src/authentication-authoring/index.js";
 import { AuthoringService } from "../src/authoring/index.js";
-import { AdaptiveSessionRepository } from "../src/adaptive-sessions/adaptive-session.repository.js";
+import { AdaptiveSessionRepository } from "../src/adaptive-sessions/repositories/adaptive-session.repository.js";
 import { Database } from "../src/infrastructure/database.js";
 import { RunAttemptRepository } from "../src/runtime/repositories/run-attempt.repository.js";
 
@@ -46,15 +46,17 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       allowedOrigins: ["https://example.test"],
       budgets: { maxActions: 1, maxDurationMs: 10_000, maxNavigations: 1 },
       checkpoints: [],
-      steps: [{
-        id: "open",
-        title: "Open preview",
-        action: { type: "navigate", url: "https://example.test" },
-        assertions: [],
-        onFailure: "stop",
-        evidence: [],
-        captureIntent: "final",
-      }],
+      steps: [
+        {
+          id: "open",
+          title: "Open preview",
+          action: { type: "navigate", url: "https://example.test" },
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "final",
+        },
+      ],
     });
     const draft = await service.createDraft(principal, {
       ...context,
@@ -91,7 +93,9 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     expect(publication).toMatchObject({ revision: 1, replayed: false });
     expect(replay).toMatchObject({ revisionId: publication.revisionId, replayed: true });
     await expect(
-      database.query(`SELECT count(*)::integer count FROM flow_compilations WHERE draft_id=$1`, [draft.id]),
+      database.query(`SELECT count(*)::integer count FROM flow_compilations WHERE draft_id=$1`, [
+        draft.id,
+      ]),
     ).resolves.toMatchObject({ rows: [{ count: 0 }] });
   });
 
@@ -633,10 +637,9 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     expect(
       Number(
         (
-          await database.query(
-            `SELECT count(*) FROM flow_compilations WHERE draft_id=$1`,
-            [created.id],
-          )
+          await database.query(`SELECT count(*) FROM flow_compilations WHERE draft_id=$1`, [
+            created.id,
+          ])
         ).rows[0]!.count,
       ),
     ).toBe(0);
@@ -682,9 +685,10 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       certificationCandidate: true,
     });
 
-    const certificationRunId = "certificationRunId" in first.certification
-      ? first.certification.certificationRunId
-      : undefined;
+    const certificationRunId =
+      "certificationRunId" in first.certification
+        ? first.certification.certificationRunId
+        : undefined;
     if (!certificationRunId) throw new Error("Certification Run was not queued");
     await completeCertification(database, { certificationRunId });
     const restoreOwnerId = randomUUID();

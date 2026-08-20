@@ -68,7 +68,8 @@ export async function executeAction(
       if (!options.executeSameOriginRequest) {
         throw new InfrastructureDependencyError("SAME_ORIGIN_REQUEST_DRIVER_REQUIRED");
       }
-      if (!privacyGate) throw new InfrastructureDependencyError("SAME_ORIGIN_REQUEST_PRIVACY_GATE_REQUIRED");
+      if (!privacyGate)
+        throw new InfrastructureDependencyError("SAME_ORIGIN_REQUEST_PRIVACY_GATE_REQUIRED");
       const operationId = `browser-session-request-${randomUUID()}`;
       try {
         // Cookie/token access and dispatch are inside the Veil gap; driver callbacks receive
@@ -82,7 +83,9 @@ export async function executeAction(
         await options.executeSameOriginRequest(
           page,
           {
-            method: action.method, path: action.path, expectedStatus: action.expectedStatus,
+            method: action.method,
+            path: action.path,
+            expectedStatus: action.expectedStatus,
             ...(action.body ? { body: action.body } : {}),
             ...(action.timeoutMs === undefined ? {} : { timeoutMs: action.timeoutMs }),
           },
@@ -101,7 +104,8 @@ export async function executeAction(
         });
         await options.onPrivacyBoundary?.("verified");
       } catch (error) {
-        await privacyGate.seal({ code: "SAME_ORIGIN_REQUEST_PRIVACY_FAILED" })
+        await privacyGate
+          .seal({ code: "SAME_ORIGIN_REQUEST_PRIVACY_FAILED" })
           .then(() => options.onPrivacyBoundary?.("sealed"))
           .catch(() => undefined);
         throw error;
@@ -119,7 +123,8 @@ export async function executeAction(
         // Popup ownership is verified by the authoring session/kernel after it adopts
         // a distinct page; Praxis cannot establish that browser-session invariant.
         expectedEffect:
-          options.expectedEffectVerificationOwner === "kernel" || action.expectedEffect.type === "new_page"
+          options.expectedEffectVerificationOwner === "kernel" ||
+          action.expectedEffect.type === "new_page"
             ? { type: "none" }
             : action.expectedEffect,
         context: {
@@ -212,16 +217,19 @@ export async function executeAction(
           });
           await options.onPrivacyBoundary?.("verified");
         } catch (error) {
-          const gateState = (privacyGate as VeilRuntimeCoordinator & {
-            state?: () => unknown;
-          }).state?.();
+          const gateState = (
+            privacyGate as VeilRuntimeCoordinator & {
+              state?: () => unknown;
+            }
+          ).state?.();
           if (privacyEntered || (gateState !== undefined && gateState !== "normal")) {
-            await privacyGate.seal({ code: "KNOWN_SECRET_FILL_FAILED" })
+            await privacyGate
+              .seal({ code: "KNOWN_SECRET_FILL_FAILED" })
               .then(() => options.onPrivacyBoundary?.("sealed"))
               .catch(() => undefined);
           }
           throw error;
-      }
+        }
       } else {
         await requirePraxisWithNoCapabilityRetry({
           page,
@@ -241,8 +249,10 @@ export async function executeAction(
       return;
     }
     case "protectedAuthentication": {
-      if (!privacyGate) throw new InfrastructureDependencyError("PROTECTED_AUTHENTICATION_PRIVACY_GATE_REQUIRED");
-      if (!options.secretResolver) throw new InfrastructureDependencyError("PROTECTED_INPUT_RESOLVER_UNAVAILABLE");
+      if (!privacyGate)
+        throw new InfrastructureDependencyError("PROTECTED_AUTHENTICATION_PRIVACY_GATE_REQUIRED");
+      if (!options.secretResolver)
+        throw new InfrastructureDependencyError("PROTECTED_INPUT_RESOLVER_UNAVAILABLE");
       const fields: Array<{ targetReference: string; resolveValue: () => Promise<string> }> = [];
       const operationId = `protected-authentication-${randomUUID()}`;
       try {
@@ -266,10 +276,14 @@ export async function executeAction(
         });
         await privacyGate.beginProtected();
         await options.onPrivacyBoundary?.("entered");
-        await authenticateProtectedReferencedTargets(page, {
-          fields,
-          submitReference: action.submitTarget.authoritativeReference,
-        }, options.onMutationDispatch);
+        await authenticateProtectedReferencedTargets(
+          page,
+          {
+            fields,
+            submitReference: action.submitTarget.authoritativeReference,
+          },
+          options.onMutationDispatch,
+        );
         await privacyGate.markCaptured();
         await privacyGate.beginSafeBoundary();
         await privacyGate.confirmSafeBoundary({
@@ -278,7 +292,8 @@ export async function executeAction(
         });
         await options.onPrivacyBoundary?.("verified");
       } catch (error) {
-        await privacyGate.seal({ code: "PROTECTED_AUTHENTICATION_FAILED" })
+        await privacyGate
+          .seal({ code: "PROTECTED_AUTHENTICATION_FAILED" })
           .then(() => options.onPrivacyBoundary?.("sealed"))
           .catch(() => undefined);
         throw error;
@@ -370,10 +385,9 @@ async function requirePraxisWithNoCapabilityRetry(input: PraxisConsumerInput) {
     const result = await executePraxisConsumer(input);
     if (result.status === "succeeded") return result;
     if (
-      ![
-        "PRAXIS_NO_CAPABILITY_COMPATIBLE_CONTROL",
-        "PRAXIS_TARGET_SCOPE_NOT_FOUND",
-      ].includes(result.code) ||
+      !["PRAXIS_NO_CAPABILITY_COMPATIBLE_CONTROL", "PRAXIS_TARGET_SCOPE_NOT_FOUND"].includes(
+        result.code,
+      ) ||
       deadline === undefined ||
       performance.now() >= deadline
     )

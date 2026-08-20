@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { PraxisRuntimeRepository } from "../src/praxis/repositories/praxis-runtime.repository.js";
+import { PraxisRuntimeRepository } from "../src/praxis/praxis-runtime.repository.js";
 
 describe("PraxisRuntimeRepository", () => {
   it("claims queued requests with a worker fence", async () => {
     const client = {
-      query: vi.fn()
+      query: vi
+        .fn()
         .mockResolvedValueOnce({
           rowCount: 1,
           rows: [{ id: "request-1", status: "queued", payload: {} }],
@@ -17,18 +18,12 @@ describe("PraxisRuntimeRepository", () => {
     };
 
     const db = {
-      transaction: vi.fn(async (fn: (c: typeof client) => unknown) =>
-        fn(client),
-      ),
+      transaction: vi.fn(async (fn: (c: typeof client) => unknown) => fn(client)),
     };
 
     const repository = new PraxisRuntimeRepository(db as never);
 
-    const result = await repository.claim(
-      "request-1",
-      "worker-1",
-      "claim-1",
-    );
+    const result = await repository.claim("request-1", "worker-1", "claim-1");
 
     expect(result).toMatchObject({
       id: "request-1",
@@ -69,11 +64,7 @@ describe("PraxisRuntimeRepository", () => {
     const repository = new PraxisRuntimeRepository(db as never);
 
     await expect(
-      repository.assertOwnedBrowserLease(
-        "lease-1",
-        "probe-1",
-        "worker-1",
-      ),
+      repository.assertOwnedBrowserLease("lease-1", "probe-1", "worker-1"),
     ).resolves.toBe(true);
   });
 });

@@ -5,19 +5,15 @@ import { AuthoringRuntimeRepository } from "../src/authoring/index.js";
 function harness(responses: Array<{ rowCount: number; rows: unknown[] }>) {
   const client = {
     query: vi.fn(
-      async (_text: string, _values?: unknown[]) =>
-        responses.shift() ?? { rowCount: 1, rows: [] },
+      async (_text: string, _values?: unknown[]) => responses.shift() ?? { rowCount: 1, rows: [] },
     ),
   };
 
   const database = {
     query: vi.fn(
-      async (_text: string, _values?: unknown[]) =>
-        responses.shift() ?? { rowCount: 1, rows: [] },
+      async (_text: string, _values?: unknown[]) => responses.shift() ?? { rowCount: 1, rows: [] },
     ),
-    transaction: vi.fn(
-      async (work: (value: typeof client) => Promise<unknown>) => work(client),
-    ),
+    transaction: vi.fn(async (work: (value: typeof client) => Promise<unknown>) => work(client)),
   };
 
   return {
@@ -57,15 +53,9 @@ describe("authoring browser lease ownership", () => {
       browserLeaseId: "22222222-2222-4222-8222-222222222222",
     });
 
-    expect(String(client.query.mock.calls[0]![0])).toContain(
-      "FOR UPDATE OF lease SKIP LOCKED",
-    );
-    expect(String(client.query.mock.calls[1]![0])).toContain(
-      "runtime_owner_id=$2",
-    );
-    expect(String(client.query.mock.calls[1]![0])).toContain(
-      "state='provisioning'",
-    );
+    expect(String(client.query.mock.calls[0]![0])).toContain("FOR UPDATE OF lease SKIP LOCKED");
+    expect(String(client.query.mock.calls[1]![0])).toContain("runtime_owner_id=$2");
+    expect(String(client.query.mock.calls[1]![0])).toContain("state='provisioning'");
   });
 
   it("activates and heartbeats only the current runtime owner", async () => {
@@ -77,15 +67,9 @@ describe("authoring browser lease ownership", () => {
     await expect(repository.activate("lease-id", "worker-1")).resolves.toBe(true);
     await expect(repository.heartbeat("lease-id", "worker-1")).resolves.toBe(true);
 
-    expect(String(database.query.mock.calls[0]![0])).toContain(
-      "runtime_owner_id=$2",
-    );
-    expect(String(database.query.mock.calls[0]![0])).toContain(
-      "state='active'",
-    );
-    expect(String(database.query.mock.calls[2]![0])).toContain(
-      "heartbeat_at=now()",
-    );
+    expect(String(database.query.mock.calls[0]![0])).toContain("runtime_owner_id=$2");
+    expect(String(database.query.mock.calls[0]![0])).toContain("state='active'");
+    expect(String(database.query.mock.calls[2]![0])).toContain("heartbeat_at=now()");
   });
 
   it("releases the lease and terminalizes the authoring session atomically", async () => {
@@ -96,23 +80,12 @@ describe("authoring browser lease ownership", () => {
       { rowCount: 1, rows: [] },
     ]);
 
-    await expect(
-      repository.release("lease-id", "worker-1", "completed"),
-    ).resolves.toBe(true);
+    await expect(repository.release("lease-id", "worker-1", "completed")).resolves.toBe(true);
 
-    expect(String(client.query.mock.calls[0]![0])).toContain(
-      "runtime_owner_id=$2",
-    );
-    expect(String(client.query.mock.calls[1]![0])).toContain(
-      "state='released'",
-    );
-    expect(String(client.query.mock.calls[2]![0])).toContain(
-      "status=$2",
-    );
-    expect(client.query.mock.calls[2]![1]).toEqual([
-      "probe-id",
-      "completed",
-    ]);
+    expect(String(client.query.mock.calls[0]![0])).toContain("runtime_owner_id=$2");
+    expect(String(client.query.mock.calls[1]![0])).toContain("state='released'");
+    expect(String(client.query.mock.calls[2]![0])).toContain("status=$2");
+    expect(client.query.mock.calls[2]![1]).toEqual(["probe-id", "completed"]);
     expect(String(client.query.mock.calls[3]![0])).toContain("probe_events");
   });
 
@@ -132,21 +105,11 @@ describe("authoring browser lease ownership", () => {
       { rowCount: 1, rows: [] },
     ]);
 
-    await expect(repository.recoverStale(new Date(0))).resolves.toEqual([
-      "probe-id",
-    ]);
+    await expect(repository.recoverStale(new Date(0))).resolves.toEqual(["probe-id"]);
 
-    expect(String(client.query.mock.calls[0]![0])).toContain(
-      "FOR UPDATE OF lease SKIP LOCKED",
-    );
-    expect(String(client.query.mock.calls[1]![0])).toContain(
-      "state='crashed'",
-    );
-    expect(String(client.query.mock.calls[2]![0])).toContain(
-      "status='crashed'",
-    );
-    expect(String(client.query.mock.calls[3]![0])).toContain(
-      "authoring_runtime_crashed",
-    );
+    expect(String(client.query.mock.calls[0]![0])).toContain("FOR UPDATE OF lease SKIP LOCKED");
+    expect(String(client.query.mock.calls[1]![0])).toContain("state='crashed'");
+    expect(String(client.query.mock.calls[2]![0])).toContain("status='crashed'");
+    expect(String(client.query.mock.calls[3]![0])).toContain("authoring_runtime_crashed");
   });
 });

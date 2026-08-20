@@ -52,9 +52,17 @@ const output = {
       concept: "order id",
       requiredCapabilities: [],
       preferredEvidence: {
-        roles: [], names: ["id"], labels: [], descriptions: [], placeholders: [], inputTypes: [],
+        roles: [],
+        names: ["id"],
+        labels: [],
+        descriptions: [],
+        placeholders: [],
+        inputTypes: [],
       },
-      scope: { kind: "page" }, relations: [], prohibited: [], risk: "protected",
+      scope: { kind: "page" },
+      relations: [],
+      prohibited: [],
+      risk: "protected",
       confidence: { requiredFamilies: [] },
     },
     permittedMethods: ["protected_network_value"],
@@ -62,19 +70,27 @@ const output = {
 } as any;
 
 const servers: Array<ReturnType<typeof createServer>> = [];
-afterEach(async () => Promise.all(servers.splice(0).map((server) =>
-  new Promise<void>((resolve) => server.close(() => resolve())),
-)));
+afterEach(async () =>
+  Promise.all(
+    servers
+      .splice(0)
+      .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+  ),
+);
 
 describe("protected response redirect lifecycle characterization", () => {
   it("records real Chromium redirect event ordering over repeated natural redirects", async () => {
     const server = createServer((request, response) => {
       if (request.url === "/") {
-        response.writeHead(200, { "content-type": "text/html" }).end("<!doctype html><main>ready</main>");
+        response
+          .writeHead(200, { "content-type": "text/html" })
+          .end("<!doctype html><main>ready</main>");
       } else if (request.url?.startsWith("/start")) {
         response.writeHead(302, { location: request.url.replace("/start", "/final") }).end();
       } else if (request.url?.startsWith("/final")) {
-        response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: "FINAL" }));
+        response
+          .writeHead(200, { "content-type": "application/json" })
+          .end(JSON.stringify({ id: "FINAL" }));
       }
     });
     servers.push(server);
@@ -89,7 +105,8 @@ describe("protected response redirect lifecycle characterization", () => {
         const events: string[] = [];
         let root: Request | undefined;
         let child: Request | undefined;
-        const classify = (request: Request) => request === root ? "ROOT" : request === child ? "CHILD" : undefined;
+        const classify = (request: Request) =>
+          request === root ? "ROOT" : request === child ? "CHILD" : undefined;
         const onRequest = (request: Request) => {
           if (!request.url().includes(`run=${iteration}`)) return;
           if (!request.redirectedFrom()) root = request;
@@ -107,16 +124,21 @@ describe("protected response redirect lifecycle characterization", () => {
         page.on("request", onRequest);
         page.on("response", onResponse);
         page.on("requestfinished", onFinished);
-        await page.evaluate((run) => fetch(`/start?run=${run}`).then((response) => response.json()), iteration);
+        await page.evaluate(
+          (run) => fetch(`/start?run=${run}`).then((response) => response.json()),
+          iteration,
+        );
         page.off("request", onRequest);
         page.off("response", onResponse);
         page.off("requestfinished", onFinished);
         runs.push(events);
       }
       console.log("SAFE_REDIRECT_EVENT_ORDERS", JSON.stringify(runs));
-      expect(new Set(runs.map((events) => events.join(" -> ")))).toEqual(new Set([
-        "request(ROOT) -> response(ROOT,302) -> requestfinished(ROOT) -> request(CHILD) -> response(CHILD,200) -> requestfinished(CHILD)",
-      ]));
+      expect(new Set(runs.map((events) => events.join(" -> ")))).toEqual(
+        new Set([
+          "request(ROOT) -> response(ROOT,302) -> requestfinished(ROOT) -> request(CHILD) -> response(CHILD,200) -> requestfinished(CHILD)",
+        ]),
+      );
     } finally {
       await browser.close();
     }
@@ -124,17 +146,27 @@ describe("protected response redirect lifecycle characterization", () => {
 
   it("characterizes settlement racing natural redirected-child admission", async () => {
     let releaseFinal!: () => void;
-    const finalGate = new Promise<void>((resolve) => { releaseFinal = resolve; });
+    const finalGate = new Promise<void>((resolve) => {
+      releaseFinal = resolve;
+    });
     let finalArrivedResolve!: () => void;
-    const finalArrived = new Promise<void>((resolve) => { finalArrivedResolve = resolve; });
+    const finalArrived = new Promise<void>((resolve) => {
+      finalArrivedResolve = resolve;
+    });
     const server = createServer((request, response) => {
       if (request.url === "/") {
-        response.writeHead(200, { "content-type": "text/html" }).end("<!doctype html><main>ready</main>");
+        response
+          .writeHead(200, { "content-type": "text/html" })
+          .end("<!doctype html><main>ready</main>");
       } else if (request.url === "/start") {
         response.writeHead(302, { location: "/final" }).end();
       } else if (request.url === "/final") {
         finalArrivedResolve();
-        void finalGate.then(() => response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: "FINAL" })));
+        void finalGate.then(() =>
+          response
+            .writeHead(200, { "content-type": "application/json" })
+            .end(JSON.stringify({ id: "FINAL" })),
+        );
       }
     });
     servers.push(server);
@@ -145,7 +177,10 @@ describe("protected response redirect lifecycle characterization", () => {
       const page = await browser.newPage();
       await page.goto(origin);
       const stage = vi.fn().mockResolvedValue(undefined);
-      const envelope = beginProtectedResponseEnvelope(page, [origin], new SecretRedactor(), { outputs: [output], stage });
+      const envelope = beginProtectedResponseEnvelope(page, [origin], new SecretRedactor(), {
+        outputs: [output],
+        stage,
+      });
       envelope.beginActionCapture();
       const rootObserved = page.waitForRequest((request) => request.url().endsWith("/start"));
       const childObserved = page.waitForRequest((request) => request.url().endsWith("/final"));
@@ -153,11 +188,17 @@ describe("protected response redirect lifecycle characterization", () => {
       await rootObserved;
       envelope.endActionCapture();
       let settled = false;
-      const settlement = envelope.settle(2_000).then((result) => { settled = true; return result; });
+      const settlement = envelope.settle(2_000).then((result) => {
+        settled = true;
+        return result;
+      });
       await finalArrived;
       await childObserved;
       const settledBeforeChildAdmission = settled;
-      console.log("SAFE_PRODUCTION_SHAPED_REDIRECT_RESULT", JSON.stringify({ settledBeforeChildAdmission }));
+      console.log(
+        "SAFE_PRODUCTION_SHAPED_REDIRECT_RESULT",
+        JSON.stringify({ settledBeforeChildAdmission }),
+      );
       expect(envelope.evidence().redirectHopCount).toBe(1);
       releaseFinal();
       await fetchResult;
@@ -177,15 +218,24 @@ describe("protected response redirect lifecycle characterization", () => {
     const page = new MockPage();
     const stage = vi.fn().mockResolvedValue(undefined);
     const body = vi.fn(async () => Buffer.from(JSON.stringify({ id: "FINAL" })));
-    const envelope = beginProtectedResponseEnvelope(page as never, ["http://allowed.test"], new SecretRedactor(), {
-      outputs: [output], stage,
-    });
+    const envelope = beginProtectedResponseEnvelope(
+      page as never,
+      ["http://allowed.test"],
+      new SecretRedactor(),
+      {
+        outputs: [output],
+        stage,
+      },
+    );
     const root = mockRequest();
     envelope.beginActionCapture();
     page.emit("request", root);
     envelope.endActionCapture();
     let resolved = false;
-    const settlement = envelope.settle(500).then((result) => { resolved = true; return result; });
+    const settlement = envelope.settle(500).then((result) => {
+      resolved = true;
+      return result;
+    });
     page.emit("response", mockResponse(root, 302, vi.fn()));
     await Promise.resolve();
     expect(resolved).toBe(false);
@@ -197,8 +247,13 @@ describe("protected response redirect lifecycle characterization", () => {
     await expect(settlement).resolves.toBe(true);
     expect(envelope.evidence().redirectHopCount).toBe(1);
     expect(body).toHaveBeenCalledOnce();
-    expect(envelope.evidence()).toMatchObject({ bodyParseStatus: "success", extractionResultClass: "acquired" });
-    await expect(acquireProtectedResponseValue(page as never, output.acquisition)).resolves.toBe("FINAL");
+    expect(envelope.evidence()).toMatchObject({
+      bodyParseStatus: "success",
+      extractionResultClass: "acquired",
+    });
+    await expect(acquireProtectedResponseValue(page as never, output.acquisition)).resolves.toBe(
+      "FINAL",
+    );
     expect(stage).toHaveBeenCalledOnce();
     await envelope.close();
   });
@@ -206,17 +261,24 @@ describe("protected response redirect lifecycle characterization", () => {
   it("fails closed with a precise bounded reason when a redirect child never arrives", async () => {
     const page = new MockPage();
     const stage = vi.fn();
-    const envelope = beginProtectedResponseEnvelope(page as never, ["http://allowed.test"], new SecretRedactor(), {
-      outputs: [output], stage,
-    });
+    const envelope = beginProtectedResponseEnvelope(
+      page as never,
+      ["http://allowed.test"],
+      new SecretRedactor(),
+      {
+        outputs: [output],
+        stage,
+      },
+    );
     const root = mockRequest();
     envelope.beginActionCapture();
     page.emit("request", root);
     envelope.endActionCapture();
     page.emit("response", mockResponse(root, 302, vi.fn()));
     await expect(envelope.settle(10)).resolves.toBe(false);
-    await expect(acquireProtectedResponseValue(page as never, output.acquisition))
-      .rejects.toThrow("PROTECTED_REQUEST_REDIRECT_HANDOFF_TIMEOUT");
+    await expect(acquireProtectedResponseValue(page as never, output.acquisition)).rejects.toThrow(
+      "PROTECTED_REQUEST_REDIRECT_HANDOFF_TIMEOUT",
+    );
     expect(stage).not.toHaveBeenCalled();
     await envelope.close();
   });
@@ -224,22 +286,34 @@ describe("protected response redirect lifecycle characterization", () => {
   it("does not let requestfinished close the redirect handoff gap", async () => {
     const page = new MockPage();
     const stage = vi.fn().mockResolvedValue(undefined);
-    const envelope = beginProtectedResponseEnvelope(page as never, ["http://allowed.test"], new SecretRedactor(), {
-      outputs: [output], stage,
-    });
+    const envelope = beginProtectedResponseEnvelope(
+      page as never,
+      ["http://allowed.test"],
+      new SecretRedactor(),
+      {
+        outputs: [output],
+        stage,
+      },
+    );
     const root = mockRequest();
     envelope.beginActionCapture();
     page.emit("request", root);
     envelope.endActionCapture();
     let resolved = false;
-    const settlement = envelope.settle(500).then((result) => { resolved = true; return result; });
+    const settlement = envelope.settle(500).then((result) => {
+      resolved = true;
+      return result;
+    });
     page.emit("response", mockResponse(root, 302, vi.fn()));
     page.emit("requestfinished", root);
     await Promise.resolve();
     expect(resolved).toBe(false);
     const child = mockRequest(root);
     page.emit("request", child);
-    page.emit("response", mockResponse(child, 200, async () => Buffer.from(JSON.stringify({ id: "FINAL" }))));
+    page.emit(
+      "response",
+      mockResponse(child, 200, async () => Buffer.from(JSON.stringify({ id: "FINAL" }))),
+    );
     await expect(settlement).resolves.toBe(true);
     expect(stage).toHaveBeenCalledOnce();
     await envelope.close();
@@ -248,9 +322,15 @@ describe("protected response redirect lifecycle characterization", () => {
   it("completes an order-independent handoff when the child precedes the parent 302 response", async () => {
     const page = new MockPage();
     const stage = vi.fn().mockResolvedValue(undefined);
-    const envelope = beginProtectedResponseEnvelope(page as never, ["http://allowed.test"], new SecretRedactor(), {
-      outputs: [output], stage,
-    });
+    const envelope = beginProtectedResponseEnvelope(
+      page as never,
+      ["http://allowed.test"],
+      new SecretRedactor(),
+      {
+        outputs: [output],
+        stage,
+      },
+    );
     const root = mockRequest();
     envelope.beginActionCapture();
     page.emit("request", root);
@@ -259,7 +339,10 @@ describe("protected response redirect lifecycle characterization", () => {
     page.emit("request", child);
     const settlement = envelope.settle(500);
     page.emit("response", mockResponse(root, 302, vi.fn()));
-    page.emit("response", mockResponse(child, 200, async () => Buffer.from(JSON.stringify({ id: "FINAL" }))));
+    page.emit(
+      "response",
+      mockResponse(child, 200, async () => Buffer.from(JSON.stringify({ id: "FINAL" }))),
+    );
     await expect(settlement).resolves.toBe(true);
     expect(stage).toHaveBeenCalledOnce();
     expect(envelope.evidence().redirectHopCount).toBe(1);
@@ -269,9 +352,15 @@ describe("protected response redirect lifecycle characterization", () => {
   it("settles a three-hop exact-identity redirect chain as one semantic aggregate", async () => {
     const page = new MockPage();
     const stage = vi.fn().mockResolvedValue(undefined);
-    const envelope = beginProtectedResponseEnvelope(page as never, ["http://allowed.test"], new SecretRedactor(), {
-      outputs: [output], stage,
-    });
+    const envelope = beginProtectedResponseEnvelope(
+      page as never,
+      ["http://allowed.test"],
+      new SecretRedactor(),
+      {
+        outputs: [output],
+        stage,
+      },
+    );
     const first = mockRequest();
     envelope.beginActionCapture();
     page.emit("request", first);
@@ -286,11 +375,16 @@ describe("protected response redirect lifecycle characterization", () => {
     const final = mockRequest(third);
     page.emit("request", final);
     page.emit("response", mockResponse(third, 302, vi.fn()));
-    page.emit("response", mockResponse(final, 200, async () => Buffer.from(JSON.stringify({ id: "FINAL" }))));
+    page.emit(
+      "response",
+      mockResponse(final, 200, async () => Buffer.from(JSON.stringify({ id: "FINAL" }))),
+    );
     await expect(settlement).resolves.toBe(true);
     expect(envelope.evidence().redirectHopCount).toBe(3);
     expect(stage).toHaveBeenCalledOnce();
-    await expect(acquireProtectedResponseValue(page as never, output.acquisition)).resolves.toBe("FINAL");
+    await expect(acquireProtectedResponseValue(page as never, output.acquisition)).resolves.toBe(
+      "FINAL",
+    );
     await envelope.close();
   });
 
@@ -299,16 +393,26 @@ describe("protected response redirect lifecycle characterization", () => {
     async (outcome) => {
       const page = new MockPage();
       const stage = vi.fn().mockResolvedValue(undefined);
-      const envelope = beginProtectedResponseEnvelope(page as never, ["http://allowed.test"], new SecretRedactor(), {
-        outputs: [output], stage,
-      });
+      const envelope = beginProtectedResponseEnvelope(
+        page as never,
+        ["http://allowed.test"],
+        new SecretRedactor(),
+        {
+          outputs: [output],
+          stage,
+        },
+      );
       const root = mockRequest();
       envelope.beginActionCapture();
       page.emit("request", root);
       if (outcome === "ambiguity") page.emit("request", mockRequest());
       envelope.endActionCapture();
 
-      if (outcome === "success") page.emit("response", mockResponse(root, 200, async () => Buffer.from(JSON.stringify({ id: "FINAL" }))));
+      if (outcome === "success")
+        page.emit(
+          "response",
+          mockResponse(root, 200, async () => Buffer.from(JSON.stringify({ id: "FINAL" }))),
+        );
       if (outcome === "rejection") {
         const forbidden = { ...mockRequest(root), url: () => "http://forbidden.test/resource" };
         page.emit("request", forbidden);

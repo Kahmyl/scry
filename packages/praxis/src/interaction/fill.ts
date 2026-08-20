@@ -109,7 +109,11 @@ async function enterTextPinnedElement(
   await options.isCurrent?.();
 
   const focused = await element
-    .evaluate((node) => node === node.ownerDocument.activeElement || node.contains(node.ownerDocument.activeElement))
+    .evaluate(
+      (node) =>
+        node === node.ownerDocument.activeElement ||
+        node.contains(node.ownerDocument.activeElement),
+    )
     .catch(() => false);
   if (!focused) throw new Error("Target not focused before text entry");
 
@@ -118,7 +122,11 @@ async function enterTextPinnedElement(
       await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
       await options.isCurrent?.();
       const stillFocused = await element
-        .evaluate((node) => node === node.ownerDocument.activeElement || node.contains(node.ownerDocument.activeElement))
+        .evaluate(
+          (node) =>
+            node === node.ownerDocument.activeElement ||
+            node.contains(node.ownerDocument.activeElement),
+        )
         .catch(() => false);
       if (!stillFocused) throw new PraxisTextEntryDispatchError();
     }
@@ -145,11 +153,13 @@ async function establishActionability(
   timeoutMs: number,
 ): Promise<void> {
   const deadline = performance.now() + timeoutMs;
-  await element.scrollIntoViewIfNeeded({ timeout: timeoutRemainingOrThrow(deadline) }).catch(async () => {
-    const attached = await element.evaluate((node) => node.isConnected).catch(() => false);
-    if (!attached) throw new PraxisStaleTargetError();
-    throw new Error("Target not actionable before fill");
-  });
+  await element
+    .scrollIntoViewIfNeeded({ timeout: timeoutRemainingOrThrow(deadline) })
+    .catch(async () => {
+      const attached = await element.evaluate((node) => node.isConnected).catch(() => false);
+      if (!attached) throw new PraxisStaleTargetError();
+      throw new Error("Target not actionable before fill");
+    });
 
   let snapshot = await readActionabilitySnapshot(element);
   if (!snapshot.visible || !snapshot.enabled) {
@@ -179,11 +189,13 @@ async function establishKeyboardActionability(
   strategy: PraxisPinnedTextEntryStrategy,
 ): Promise<void> {
   const deadline = performance.now() + timeoutMs;
-  await element.scrollIntoViewIfNeeded({ timeout: timeoutRemainingOrThrow(deadline) }).catch(async () => {
-    const attached = await element.evaluate((node) => node.isConnected).catch(() => false);
-    if (!attached) throw new PraxisStaleTargetError();
-    throw new Error("Target not actionable before text entry");
-  });
+  await element
+    .scrollIntoViewIfNeeded({ timeout: timeoutRemainingOrThrow(deadline) })
+    .catch(async () => {
+      const attached = await element.evaluate((node) => node.isConnected).catch(() => false);
+      if (!attached) throw new PraxisStaleTargetError();
+      throw new Error("Target not actionable before text entry");
+    });
 
   let geometry = await readKeyboardGeometry(element, strategy);
   for (;;) {
@@ -203,10 +215,16 @@ async function readKeyboardGeometry(
   if (!attached) throw new PraxisStaleTargetError();
   const visible = await element.isVisible().catch(() => false);
   const enabled = await element.isEnabled().catch(() => false);
-  const editable =
-    strategy === "focus_keyboard" || (await element.isEditable().catch(() => false));
+  const editable = strategy === "focus_keyboard" || (await element.isEditable().catch(() => false));
   const geometry = await element.boundingBox().catch(() => null);
-  if (!visible || !enabled || !editable || !geometry || geometry.width === 0 || geometry.height === 0) {
+  if (
+    !visible ||
+    !enabled ||
+    !editable ||
+    !geometry ||
+    geometry.width === 0 ||
+    geometry.height === 0
+  ) {
     throw new Error("Target not actionable before text entry");
   }
   return geometry;

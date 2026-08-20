@@ -9,21 +9,50 @@ describe("protected output persistence routing", () => {
     const persistOutputsAtomically = vi.fn(async ({ claim, outputs }) => ({
       claim: { ...claim, state: "persisted" as const, version: claim.version + 1 },
       references: {
-        secret: { classification: "protected" as const, credentialId: "secret-id", scope: "run" as const },
+        secret: {
+          classification: "protected" as const,
+          credentialId: "secret-id",
+          scope: "run" as const,
+        },
         public: { classification: "public" as const, valueId: "value-id", scope: "run" as const },
       },
       outputs,
     }));
     const acquired = [
-      { output: { reference: "secret", classification: "protected", storage: { credentialName: "Secret", scope: "run" } }, value: "synthetic-secret", adapter: "semantic_field_value" },
-      { output: { reference: "public", classification: "public", storage: { name: "Public", scope: "run" } }, value: "public-value", adapter: "semantic_field_value" },
+      {
+        output: {
+          reference: "secret",
+          classification: "protected",
+          storage: { credentialName: "Secret", scope: "run" },
+        },
+        value: "synthetic-secret",
+        adapter: "semantic_field_value",
+      },
+      {
+        output: {
+          reference: "public",
+          classification: "public",
+          storage: { name: "Public", scope: "run" },
+        },
+        value: "public-value",
+        adapter: "semantic_field_value",
+      },
     ];
     const facts = {
-      credentialReferences: {}, publicValueReferences: {}, protectedAcquisitionEvidence: [],
-      protectedPersistence: "not_attempted", publicPersistence: "not_attempted",
+      credentialReferences: {},
+      publicValueReferences: {},
+      protectedAcquisitionEvidence: [],
+      protectedPersistence: "not_attempted",
+      publicPersistence: "not_attempted",
       credentialSecurity: "not_applicable",
     };
-    const claim = { id: "operation", state: "persisting" as const, version: 7, fencingToken: 3, mutationOutcome: "unknown" as const };
+    const claim = {
+      id: "operation",
+      state: "persisting" as const,
+      version: 7,
+      fencingToken: 3,
+      mutationOutcome: "unknown" as const,
+    };
     const result = await persistAcquiredProtectedOutputs(
       {
         operationId: "generate",
@@ -37,7 +66,11 @@ describe("protected output persistence routing", () => {
     );
     expect(result.state).toBe("persisted");
     expect(persistOutputsAtomically).toHaveBeenCalledOnce();
-    expect(persistOutputsAtomically.mock.calls[0]?.[0].outputs.map((output: { scope: string }) => output.scope)).toEqual(["run", "run"]);
+    expect(
+      persistOutputsAtomically.mock.calls[0]?.[0].outputs.map(
+        (output: { scope: string }) => output.scope,
+      ),
+    ).toEqual(["run", "run"]);
     expect(persistSecret).not.toHaveBeenCalled();
     expect(persistPublicValue).not.toHaveBeenCalled();
     expect(acquired.every(({ value }) => value === "")).toBe(true);
@@ -45,20 +78,55 @@ describe("protected output persistence routing", () => {
 
   it("fails the whole set and clears every value when atomic persistence rejects", async () => {
     const acquired = [
-      { output: { reference: "secret", classification: "protected", storage: { credentialName: "Secret", scope: "run" } }, value: "synthetic-secret", adapter: "semantic_field_value" },
-      { output: { reference: "public", classification: "public", storage: { name: "Public", scope: "run" } }, value: "public-value", adapter: "semantic_field_value" },
-    ];
-    await expect(persistAcquiredProtectedOutputs(
       {
-        operationId: "generate",
-        extraction: { outputs: acquired.map(({ output }) => output), timeoutMs: 1_000 },
-        mutation: { dispatchSemantics: "one_time" },
-      } as never,
-      { persistOutputsAtomically: vi.fn(async () => { throw new Error("database unavailable"); }) } as never,
-      { credentialReferences: {}, publicValueReferences: {}, protectedAcquisitionEvidence: [], protectedPersistence: "not_attempted", publicPersistence: "not_attempted", credentialSecurity: "not_applicable" } as never,
-      acquired as never,
-      { id: "operation", state: "persisting", version: 7, fencingToken: 3, mutationOutcome: "unknown" },
-    )).rejects.toThrow("ATOMIC_OUTPUT_PERSISTENCE_FAILED");
+        output: {
+          reference: "secret",
+          classification: "protected",
+          storage: { credentialName: "Secret", scope: "run" },
+        },
+        value: "synthetic-secret",
+        adapter: "semantic_field_value",
+      },
+      {
+        output: {
+          reference: "public",
+          classification: "public",
+          storage: { name: "Public", scope: "run" },
+        },
+        value: "public-value",
+        adapter: "semantic_field_value",
+      },
+    ];
+    await expect(
+      persistAcquiredProtectedOutputs(
+        {
+          operationId: "generate",
+          extraction: { outputs: acquired.map(({ output }) => output), timeoutMs: 1_000 },
+          mutation: { dispatchSemantics: "one_time" },
+        } as never,
+        {
+          persistOutputsAtomically: vi.fn(async () => {
+            throw new Error("database unavailable");
+          }),
+        } as never,
+        {
+          credentialReferences: {},
+          publicValueReferences: {},
+          protectedAcquisitionEvidence: [],
+          protectedPersistence: "not_attempted",
+          publicPersistence: "not_attempted",
+          credentialSecurity: "not_applicable",
+        } as never,
+        acquired as never,
+        {
+          id: "operation",
+          state: "persisting",
+          version: 7,
+          fencingToken: 3,
+          mutationOutcome: "unknown",
+        },
+      ),
+    ).rejects.toThrow("ATOMIC_OUTPUT_PERSISTENCE_FAILED");
     expect(acquired.every(({ value }) => value === "")).toBe(true);
   });
 });

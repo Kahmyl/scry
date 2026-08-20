@@ -9,12 +9,8 @@
   "target": "expand_testing",
   "repetition": 1,
   "missionId": "5d4b9dca-42f5-4d1f-8c91-6e0142c28965",
-  "objectiveIds": [
-    "1f601f4f-40ed-40e2-a867-f3923e2cb855"
-  ],
-  "flowIds": [
-    "eb9e6b94-cac3-487c-a0c6-4ab55879f051"
-  ],
+  "objectiveIds": ["1f601f4f-40ed-40e2-a867-f3923e2cb855"],
+  "flowIds": ["eb9e6b94-cac3-487c-a0c6-4ab55879f051"],
   "runIds": [],
   "correlationId": "9bd1e981-40b2-4f4e-ab2e-3674fba07b7a",
   "boundaryUnderTest": "Mission-owned native authentication with protected references and zero Praxis calls",
@@ -77,54 +73,42 @@
       "p50Ms": 8.040542000000016,
       "p95Ms": 8.040542000000016,
       "maxMs": 8.040542000000016,
-      "slowestOperationIds": [
-        "api"
-      ]
+      "slowestOperationIds": ["api"]
     },
     "database": {
       "count": 1,
       "p50Ms": 4.4643330000000105,
       "p95Ms": 4.4643330000000105,
       "maxMs": 4.4643330000000105,
-      "slowestOperationIds": [
-        "database"
-      ]
+      "slowestOperationIds": ["database"]
     },
     "mcp_round_trip": {
       "count": 1,
       "p50Ms": 30448.957416999998,
       "p95Ms": 30448.957416999998,
       "maxMs": 30448.957416999998,
-      "slowestOperationIds": [
-        "mcp-9bd1e981-40b2-4f4e-ab2e-3674fba07b7a-2"
-      ]
+      "slowestOperationIds": ["mcp-9bd1e981-40b2-4f4e-ab2e-3674fba07b7a-2"]
     },
     "mcp_session_start_round_trip": {
       "count": 1,
       "p50Ms": 45.45329099999998,
       "p95Ms": 45.45329099999998,
       "maxMs": 45.45329099999998,
-      "slowestOperationIds": [
-        "mcp-9bd1e981-40b2-4f4e-ab2e-3674fba07b7a-1"
-      ]
+      "slowestOperationIds": ["mcp-9bd1e981-40b2-4f4e-ab2e-3674fba07b7a-1"]
     },
     "redis": {
       "count": 1,
       "p50Ms": 4.537458000000015,
       "p95Ms": 4.537458000000015,
       "maxMs": 4.537458000000015,
-      "slowestOperationIds": [
-        "redis"
-      ]
+      "slowestOperationIds": ["redis"]
     },
     "worker": {
       "count": 1,
       "p50Ms": 6.016958000000045,
       "p95Ms": 6.016958000000045,
       "maxMs": 6.016958000000045,
-      "slowestOperationIds": [
-        "worker"
-      ]
+      "slowestOperationIds": ["worker"]
     }
   },
   "privacyScan": {

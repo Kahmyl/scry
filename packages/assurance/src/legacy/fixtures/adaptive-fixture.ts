@@ -56,7 +56,8 @@ export async function startAdaptiveFixture(
       const campaign = url.searchParams.get("campaign");
       if (campaign === "readonly-input") protectedDispatches.readonlyInput += 1;
       else if (campaign === "text-output") protectedDispatches.textOutput += 1;
-      else if (campaign === "interrupted-acquisition") protectedDispatches.interruptedAcquisition += 1;
+      else if (campaign === "interrupted-acquisition")
+        protectedDispatches.interruptedAcquisition += 1;
       else {
         response.statusCode = 400;
         response.end("invalid campaign");

@@ -74,9 +74,13 @@ try {
       ownership,
       verdict: "fail",
     });
-    process.stdout.write(`${JSON.stringify({ verdict: "fail", report, reasonCode: safeCode(error) })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ verdict: "fail", report, reasonCode: safeCode(error) })}\n`,
+    );
   } else {
-    process.stdout.write(`${JSON.stringify({ verdict: "blocked", reasonCode: safeCode(error) })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ verdict: "blocked", reasonCode: safeCode(error) })}\n`,
+    );
   }
   process.exitCode = 1;
 } finally {

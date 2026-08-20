@@ -1,20 +1,10 @@
-import type {
-  AssuranceEvidenceRef,
-} from "../../core/types.js";
+import type { AssuranceEvidenceRef } from "../../core/types.js";
 
-import type {
-  VerificationObservation,
-} from "../../core/results.js";
+import type { VerificationObservation } from "../../core/results.js";
 
-import {
-  defineFixture,
-  type FixtureSession,
-} from "../primitives.js";
+import { defineFixture, type FixtureSession } from "../primitives.js";
 
-import {
-  startBrowserFixtureServer,
-  type BrowserFixtureServer,
-} from "./server.js";
+import { startBrowserFixtureServer, type BrowserFixtureServer } from "./server.js";
 
 export interface ReferenceReplacementTruth {
   mutationCount: number;
@@ -32,190 +22,137 @@ export interface ReferenceReplacementFixtureValue {
   eventUrl: string;
 }
 
-const servers = new WeakMap<
-  object,
-  BrowserFixtureServer
->();
+const servers = new WeakMap<object, BrowserFixtureServer>();
 
-export const referenceReplacementFixture =
-  defineFixture<
-    ReferenceReplacementFixtureValue,
-    ReferenceReplacementTruth
-  >({
-    id: "reference-replacement",
-    title: "Reference replacement fixture",
+export const referenceReplacementFixture = defineFixture<
+  ReferenceReplacementFixtureValue,
+  ReferenceReplacementTruth
+>({
+  id: "reference-replacement",
+  title: "Reference replacement fixture",
 
-    description:
-      "Replaces a browser target after observation and records all dispatches independently on the fixture server.",
+  description:
+    "Replaces a browser target after observation and records all dispatches independently on the fixture server.",
 
-    async setup() {
-      const truth: ReferenceReplacementTruth = {
-        mutationCount: 0,
-        originalDispatches: 0,
-        replacementDispatches: 0,
-      };
+  async setup() {
+    const truth: ReferenceReplacementTruth = {
+      mutationCount: 0,
+      originalDispatches: 0,
+      replacementDispatches: 0,
+    };
 
-      let origin = "";
+    let origin = "";
 
-      const server =
-        await startBrowserFixtureServer([
-          async ({
-            request,
-            response,
-            url,
-            readJson,
-          }) => {
-            if (
-              request.method === "GET" &&
-              url.pathname ===
-                "/scenario/reference-replacement"
-            ) {
-              response.statusCode = 200;
+    const server = await startBrowserFixtureServer([
+      async ({ request, response, url, readJson }) => {
+        if (request.method === "GET" && url.pathname === "/scenario/reference-replacement") {
+          response.statusCode = 200;
 
-              response.setHeader(
-                "content-type",
-                "text/html; charset=utf-8",
-              );
+          response.setHeader("content-type", "text/html; charset=utf-8");
 
-              response.end(
-                fixtureDocument(),
-              );
+          response.end(fixtureDocument());
 
-              return true;
-            }
+          return true;
+        }
 
-            if (
-              request.method === "POST" &&
-              url.pathname ===
-                "/__assurance/reference-replacement/event"
-            ) {
-              const event =
-                await readJson<
-                  | {
-                      type: "mutated";
-                    }
-                  | {
-                      type: "dispatch";
-                      target:
-                        | "original"
-                        | "replacement";
-                    }
-                >();
-
-              if (
-                event.type === "mutated"
-              ) {
-                truth.mutationCount += 1;
-              } else if (
-                event.target === "original"
-              ) {
-                truth.originalDispatches += 1;
-              } else {
-                truth.replacementDispatches += 1;
+        if (
+          request.method === "POST" &&
+          url.pathname === "/__assurance/reference-replacement/event"
+        ) {
+          const event = await readJson<
+            | {
+                type: "mutated";
               }
+            | {
+                type: "dispatch";
+                target: "original" | "replacement";
+              }
+          >();
 
-              response.statusCode = 204;
-              response.end();
+          if (event.type === "mutated") {
+            truth.mutationCount += 1;
+          } else if (event.target === "original") {
+            truth.originalDispatches += 1;
+          } else {
+            truth.replacementDispatches += 1;
+          }
 
-              return true;
-            }
+          response.statusCode = 204;
+          response.end();
 
-            if (
-              request.method === "GET" &&
-              url.pathname ===
-                "/__assurance/reference-replacement/truth"
-            ) {
-              response.statusCode = 200;
+          return true;
+        }
 
-              response.setHeader(
-                "content-type",
-                "application/json; charset=utf-8",
-              );
+        if (
+          request.method === "GET" &&
+          url.pathname === "/__assurance/reference-replacement/truth"
+        ) {
+          response.statusCode = 200;
 
-              response.end(
-                JSON.stringify(truth),
-              );
+          response.setHeader("content-type", "application/json; charset=utf-8");
 
-              return true;
-            }
+          response.end(JSON.stringify(truth));
 
-            return false;
-          },
-        ]);
+          return true;
+        }
 
-      origin = server.origin;
+        return false;
+      },
+    ]);
 
-      const session: FixtureSession<
-        ReferenceReplacementFixtureValue,
-        ReferenceReplacementTruth
-      > = {
-        value: {
-          origin,
+    origin = server.origin;
 
-          scenarioUrl: server.url(
-            "/scenario/reference-replacement",
-          ),
+    const session: FixtureSession<ReferenceReplacementFixtureValue, ReferenceReplacementTruth> = {
+      value: {
+        origin,
 
-          eventUrl: server.url(
-            "/__assurance/reference-replacement/event",
-          ),
-        },
+        scenarioUrl: server.url("/scenario/reference-replacement"),
 
-        readGroundTruth() {
-          return {
-            ...truth,
-          };
-        },
-      };
+        eventUrl: server.url("/__assurance/reference-replacement/event"),
+      },
 
-      servers.set(
-        session,
-        server,
-      );
+      readGroundTruth() {
+        return {
+          ...truth,
+        };
+      },
+    };
 
-      return session;
-    },
+    servers.set(session, server);
 
-    async teardown(session) {
-      const server =
-        servers.get(session);
+    return session;
+  },
 
-      servers.delete(session);
+  async teardown(session) {
+    const server = servers.get(session);
 
-      await server?.close();
-    },
-  });
+    servers.delete(session);
+
+    await server?.close();
+  },
+});
 
 export function verifyStaleReferenceDidNotDispatch(
   truth: ReferenceReplacementTruth,
 ): VerificationObservation {
-  const evidence =
-    evidenceFor(truth);
+  const evidence = evidenceFor(truth);
 
-  if (
-    truth.mutationCount < 1
-  ) {
+  if (truth.mutationCount < 1) {
     return {
       status: "inconclusive",
       evidence,
-      reasonCode:
-        "REFERENCE_REPLACEMENT_NOT_OBSERVED",
+      reasonCode: "REFERENCE_REPLACEMENT_NOT_OBSERVED",
       summary:
         "The fixture never observed the target replacement, so stale-reference behavior was not exercised.",
     };
   }
 
-  if (
-    truth.originalDispatches > 0 ||
-    truth.replacementDispatches > 0
-  ) {
+  if (truth.originalDispatches > 0 || truth.replacementDispatches > 0) {
     return {
       status: "fail",
       evidence,
-      reasonCode:
-        "STALE_REFERENCE_DISPATCH_OBSERVED",
-      summary:
-        "A dispatch occurred after the observed target was replaced.",
+      reasonCode: "STALE_REFERENCE_DISPATCH_OBSERVED",
+      summary: "A dispatch occurred after the observed target was replaced.",
     };
   }
 
@@ -227,22 +164,18 @@ export function verifyStaleReferenceDidNotDispatch(
   };
 }
 
-function evidenceFor(
-  truth: ReferenceReplacementTruth,
-): readonly AssuranceEvidenceRef[] {
+function evidenceFor(truth: ReferenceReplacementTruth): readonly AssuranceEvidenceRef[] {
   return [
     {
       source: "fixture",
-      kind:
-        "reference-replacement-ground-truth",
+      kind: "reference-replacement-ground-truth",
 
       ref:
         `mutation:${truth.mutationCount}` +
         `;original:${truth.originalDispatches}` +
         `;replacement:${truth.replacementDispatches}`,
 
-      description:
-        JSON.stringify(truth),
+      description: JSON.stringify(truth),
     },
   ];
 }

@@ -186,15 +186,14 @@ export async function probeFlowPlan(input: {
     for (const [stepIndex, step] of input.plan.steps.entries()) {
       if (step.action.type === "navigate") {
         await gotoPraxisPage(page, step.action.url, {
-            waitUntil: "domcontentloaded",
-          })
-          .catch((error) => {
-            diagnostics.push({
-              code: "PROBE_NAVIGATION_FAILED",
-              stepId: step.id,
-              message: safe(error),
-            });
+          waitUntil: "domcontentloaded",
+        }).catch((error) => {
+          diagnostics.push({
+            code: "PROBE_NAVIGATION_FAILED",
+            stepId: step.id,
+            message: safe(error),
           });
+        });
 
         continue;
       }

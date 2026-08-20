@@ -24,10 +24,10 @@ import {
 } from "@scry/contracts";
 import { browserObservationRuntimeHealth } from "@scry/praxis";
 
-import type { Principal } from "../auth/index.js";
-import { Database } from "../infrastructure/index.js";
-import { ReleaseAdmissionService } from "../runtime/index.js";
-import { snapshotVeilPolicy } from "../veil/index.js";
+import type { Principal } from "../../auth/index.js";
+import { Database } from "../../infrastructure/index.js";
+import { ReleaseAdmissionService } from "../../runtime/index.js";
+import { snapshotVeilPolicy } from "../../veil/index.js";
 
 type Query = <T extends QueryResultRow = QueryResultRow>(
   text: string,

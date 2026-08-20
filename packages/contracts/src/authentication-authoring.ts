@@ -167,6 +167,4 @@ export type AuthSubmissionResolution = z.infer<typeof authSubmissionResolutionSc
 export type AuthSubmissionResult = z.infer<typeof authSubmissionResultSchema>;
 export type AuthStateResult = z.infer<typeof authStateResultSchema>;
 export type AuthenticationTranscript = z.infer<typeof authenticationTranscriptSchema>;
-export type AuthenticationContractCandidate = z.infer<
-  typeof authenticationContractCandidateSchema
->;
+export type AuthenticationContractCandidate = z.infer<typeof authenticationContractCandidateSchema>;

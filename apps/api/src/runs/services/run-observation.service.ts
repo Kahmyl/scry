@@ -7,9 +7,9 @@ import {
 } from "@scry/contracts";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 
-import type { Principal } from "../auth/index.js";
-import { Database } from "../infrastructure/index.js";
-import { ScryRepository } from "../access/index.js";
+import type { Principal } from "../../auth/index.js";
+import { Database } from "../../infrastructure/index.js";
+import { ScryRepository } from "../../access/index.js";
 
 const terminalStates = new Set([
   "passed",
@@ -285,9 +285,7 @@ export class RunObservationService {
   }
 }
 
-function normalizeObservedRun(
-  run: Record<string, any>,
-): Record<string, any> {
+function normalizeObservedRun(run: Record<string, any>): Record<string, any> {
   return {
     ...run,
     outcomeClassification: normalizeOutcomeClassification(
@@ -319,7 +317,8 @@ function normalizeOutcomeClassification(
       "execution_timeout",
       "cancelled",
     ].includes(classification)
-  ) return classification;
+  )
+    return classification;
   if (classification === "application_pass") return "passed";
   if (classification === "application_failure") {
     // Historical agent-directed writers used application_failure as a

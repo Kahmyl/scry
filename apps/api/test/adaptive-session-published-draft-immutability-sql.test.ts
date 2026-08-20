@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 const repositoryUrl = new URL(
-  "../src/adaptive-sessions/adaptive-session.repository.ts",
+  "../src/adaptive-sessions/repositories/adaptive-session.repository.ts",
   import.meta.url,
 );
 

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  defineFixture,
-  withFixture,
-} from "../src/index.js";
+import { defineFixture, withFixture } from "../src/index.js";
 
 describe("Assurance fixtures", () => {
   it("exposes out-of-band ground truth", async () => {
@@ -22,17 +19,11 @@ describe("Assurance fixtures", () => {
       }),
     });
 
-    await withFixture(
-      fixture,
-      undefined,
-      async session => {
-        expect(
-          await session.readGroundTruth(),
-        ).toEqual({
-          dispatchCount: 1,
-        });
-      },
-    );
+    await withFixture(fixture, undefined, async (session) => {
+      expect(await session.readGroundTruth()).toEqual({
+        dispatchCount: 1,
+      });
+    });
   });
 
   it("always tears down even when qualification throws", async () => {
@@ -57,20 +48,12 @@ describe("Assurance fixtures", () => {
     });
 
     await expect(
-      withFixture(
-        fixture,
-        undefined,
-        async () => {
-          lifecycle.push("use");
-          throw new Error("expected");
-        },
-      ),
+      withFixture(fixture, undefined, async () => {
+        lifecycle.push("use");
+        throw new Error("expected");
+      }),
     ).rejects.toThrow("expected");
 
-    expect(lifecycle).toEqual([
-      "setup",
-      "use",
-      "teardown",
-    ]);
+    expect(lifecycle).toEqual(["setup", "use", "teardown"]);
   });
 });

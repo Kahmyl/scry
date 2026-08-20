@@ -786,7 +786,9 @@ export const currentActionSchema = z.union([
       type: z.literal("protectedAuthentication"),
       fields: z
         .array(
-          z.object({ target: interactionTargetIntentSchema, secretRef: z.string().uuid() }).strict(),
+          z
+            .object({ target: interactionTargetIntentSchema, secretRef: z.string().uuid() })
+            .strict(),
         )
         .min(1)
         .max(8),

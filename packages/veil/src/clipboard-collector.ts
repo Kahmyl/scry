@@ -49,12 +49,18 @@ async function boundedCleanup<T>(work: Promise<T>, timeoutMs: number): Promise<T
     return await Promise.race([
       work,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("VEIL_CLIPBOARD_CLEANUP_TIMEOUT")), Math.max(0, timeoutMs));
+        timer = setTimeout(
+          () => reject(new Error("VEIL_CLIPBOARD_CLEANUP_TIMEOUT")),
+          Math.max(0, timeoutMs),
+        );
         timer.unref?.();
       }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
-    work.then(() => undefined, () => undefined);
+    work.then(
+      () => undefined,
+      () => undefined,
+    );
   }
 }

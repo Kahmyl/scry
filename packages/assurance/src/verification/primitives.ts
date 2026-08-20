@@ -12,8 +12,7 @@ import {
   type VerificationResult,
 } from "../core/results.js";
 
-export interface VerificationCase<TContext = undefined>
-  extends AssuranceDescriptor {
+export interface VerificationCase<TContext = undefined> extends AssuranceDescriptor {
   /**
    * Explicit factual claim this verification attempts to establish.
    */
@@ -25,9 +24,7 @@ export interface VerificationCase<TContext = undefined>
    * Where practical, the subsystem under test must not be the
    * sole source of truth for whether it succeeded.
    */
-  oracle(
-    context: TContext,
-  ): MaybePromise<VerificationObservation>;
+  oracle(context: TContext): MaybePromise<VerificationObservation>;
 }
 
 export interface VerificationAttempt {
@@ -35,8 +32,7 @@ export interface VerificationAttempt {
   result: VerificationResult;
 }
 
-export interface VerificationExecution
-  extends AssuranceDescriptor {
+export interface VerificationExecution extends AssuranceDescriptor {
   claim: string;
   status: AssuranceStatus;
   evidence: readonly AssuranceEvidenceRef[];
@@ -55,11 +51,7 @@ export async function runVerification<TContext>(
   verification: VerificationCase<TContext>,
   context: TContext,
 ): Promise<VerificationExecution> {
-  return runVerificationAttempts(
-    verification,
-    context,
-    1,
-  );
+  return runVerificationAttempts(verification, context, 1);
 }
 
 export async function runVerificationAttempts<TContext>(
@@ -73,22 +65,13 @@ export async function runVerificationAttempts<TContext>(
 
   const attempts: VerificationAttempt[] = [];
 
-  for (
-    let attempt = 1;
-    attempt <= attemptCount;
-    attempt += 1
-  ) {
+  for (let attempt = 1; attempt <= attemptCount; attempt += 1) {
     let result: VerificationResult;
 
     try {
-      result = normalizeVerificationResult(
-        await verification.oracle(context),
-      );
+      result = normalizeVerificationResult(await verification.oracle(context));
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : String(error);
+      const message = error instanceof Error ? error.message : String(error);
 
       result = {
         status: "inconclusive",
@@ -98,10 +81,7 @@ export async function runVerificationAttempts<TContext>(
           {
             source: "assurance",
             kind: "oracle-error",
-            ref:
-              error instanceof Error
-                ? error.name
-                : "unknown-error",
+            ref: error instanceof Error ? error.name : "unknown-error",
             description: message,
           },
         ],
@@ -114,9 +94,7 @@ export async function runVerificationAttempts<TContext>(
     });
   }
 
-  const distinctStatuses = new Set(
-    attempts.map(({ result }) => result.status),
-  );
+  const distinctStatuses = new Set(attempts.map(({ result }) => result.status));
 
   let status: AssuranceStatus;
   let reasonCode: string | undefined;
@@ -128,14 +106,9 @@ export async function runVerificationAttempts<TContext>(
     reasonCode = "MIXED_ATTEMPT_OUTCOMES";
   }
 
-  const evidence = attempts.flatMap(
-    ({ result }) => result.evidence,
-  );
+  const evidence = attempts.flatMap(({ result }) => result.evidence);
 
-  const summary =
-    attempts.length === 1
-      ? attempts[0]!.result.summary
-      : undefined;
+  const summary = attempts.length === 1 ? attempts[0]!.result.summary : undefined;
 
   return {
     id: verification.id,
@@ -145,17 +118,11 @@ export async function runVerificationAttempts<TContext>(
     evidence,
     attempts,
 
-    ...(verification.description
-      ? { description: verification.description }
-      : {}),
+    ...(verification.description ? { description: verification.description } : {}),
 
-    ...(verification.tags
-      ? { tags: verification.tags }
-      : {}),
+    ...(verification.tags ? { tags: verification.tags } : {}),
 
-    ...(summary
-      ? { summary }
-      : {}),
+    ...(summary ? { summary } : {}),
 
     ...(reasonCode
       ? { reasonCode }
@@ -180,12 +147,8 @@ export function notRunVerification(
     attempts: [],
     reasonCode,
 
-    ...(verification.description
-      ? { description: verification.description }
-      : {}),
+    ...(verification.description ? { description: verification.description } : {}),
 
-    ...(verification.tags
-      ? { tags: verification.tags }
-      : {}),
+    ...(verification.tags ? { tags: verification.tags } : {}),
   };
 }

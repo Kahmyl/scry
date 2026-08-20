@@ -7,18 +7,9 @@ export interface AssuranceDescriptor {
   tags?: readonly string[];
 }
 
-export type AssuranceStatus =
-  | "pass"
-  | "fail"
-  | "inconclusive"
-  | "skipped"
-  | "not_run";
+export type AssuranceStatus = "pass" | "fail" | "inconclusive" | "skipped" | "not_run";
 
-export type AssuranceEvidenceSource =
-  | "chronicle"
-  | "fixture"
-  | "external"
-  | "assurance";
+export type AssuranceEvidenceSource = "chronicle" | "fixture" | "external" | "assurance";
 
 export interface AssuranceEvidenceRef {
   source: AssuranceEvidenceSource;

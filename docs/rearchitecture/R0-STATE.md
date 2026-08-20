@@ -1838,19 +1838,19 @@ Starting checkpoint: `8c026982c3d17291f8ee23477f8e0f66843b7720`.
 
 ### Active public-surface inventory and disposition
 
-| Surface | Classification | Final public ownership/contract |
-|---|---|---|
-| capabilities/readiness | **CUT OVER** | advertises live Praxis session, factual observation, exact references, durable Run ledger, explicit finalization; explicitly denies automatic progression and compile/calibration prerequisites |
-| Project/Mission/Objective/Flow representation and reports | **KEEP** | durable application representation and factual history |
-| Flow drafts/publication | **KEEP** | optional representation authoring; publication copy is representation-only, never execution certification |
-| live browser session start/get/observe/close | **CUT OVER** | `/api/praxis-sessions` and `start/observe/get/close_praxis_session`; Praxis owns Page/document/reference lifetime |
-| Run create/get/dispatch/attach/finalize | **KEEP** | durable externally progressed ledger bound to an existing live Praxis session |
-| protected authorization and Veil findings/preferences/recovery | **KEEP** | explicit factual authorization plus independent privacy/trust authority |
-| artifacts and historical calibration reads | **COMPATIBILITY ONLY** | factual Chronicle/Assurance-era records remain readable; no runtime admission power |
-| calibration request/decision/retry/cancel/bind | **DELETE from public surface** | no active API route or production MCP registration |
-| execution-plan activation and Mission orchestration controls | **DELETE from public surface** | no active API route or production MCP registration; external agent creates, dispatches, and finalizes Runs explicitly |
-| semantic authoring turns, preparation/recovery progression tools | **COMPATIBILITY ONLY** | unavailable in production MCP and legacy API controller unregistered; retained only when both `NODE_ENV=test` and `SCRY_LEGACY_MCP_FIXTURES=true` for historical fixtures |
-| compiled/certified publication wording and certify capability | **DELETE** | removed from production guidance/capability discovery |
+| Surface                                                          | Classification                 | Final public ownership/contract                                                                                                                                                                 |
+| ---------------------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| capabilities/readiness                                           | **CUT OVER**                   | advertises live Praxis session, factual observation, exact references, durable Run ledger, explicit finalization; explicitly denies automatic progression and compile/calibration prerequisites |
+| Project/Mission/Objective/Flow representation and reports        | **KEEP**                       | durable application representation and factual history                                                                                                                                          |
+| Flow drafts/publication                                          | **KEEP**                       | optional representation authoring; publication copy is representation-only, never execution certification                                                                                       |
+| live browser session start/get/observe/close                     | **CUT OVER**                   | `/api/praxis-sessions` and `start/observe/get/close_praxis_session`; Praxis owns Page/document/reference lifetime                                                                               |
+| Run create/get/dispatch/attach/finalize                          | **KEEP**                       | durable externally progressed ledger bound to an existing live Praxis session                                                                                                                   |
+| protected authorization and Veil findings/preferences/recovery   | **KEEP**                       | explicit factual authorization plus independent privacy/trust authority                                                                                                                         |
+| artifacts and historical calibration reads                       | **COMPATIBILITY ONLY**         | factual Chronicle/Assurance-era records remain readable; no runtime admission power                                                                                                             |
+| calibration request/decision/retry/cancel/bind                   | **DELETE from public surface** | no active API route or production MCP registration                                                                                                                                              |
+| execution-plan activation and Mission orchestration controls     | **DELETE from public surface** | no active API route or production MCP registration; external agent creates, dispatches, and finalizes Runs explicitly                                                                           |
+| semantic authoring turns, preparation/recovery progression tools | **COMPATIBILITY ONLY**         | unavailable in production MCP and legacy API controller unregistered; retained only when both `NODE_ENV=test` and `SCRY_LEGACY_MCP_FIXTURES=true` for historical fixtures                       |
+| compiled/certified publication wording and certify capability    | **DELETE**                     | removed from production guidance/capability discovery                                                                                                                                           |
 
 ### Public contract now exposed
 

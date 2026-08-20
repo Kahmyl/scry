@@ -4,9 +4,9 @@ import type {
   CreateAuthoringRuntimeCommandInput,
 } from "@scry/contracts";
 
-import type { Principal } from "../auth/index.js";
-import { ReleaseAdmissionService } from "../runtime/index.js";
-import { AuthoringRuntimeCommandRepository } from "./repositories/authoring-runtime-command.repository.js";
+import type { Principal } from "../../auth/index.js";
+import { ReleaseAdmissionService } from "../../runtime/index.js";
+import { AuthoringRuntimeCommandRepository } from "../repositories/authoring-runtime-command.repository.js";
 
 @Injectable()
 export class AuthoringRuntimeCommandService {

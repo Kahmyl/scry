@@ -5,29 +5,21 @@ import {
 } from "@scry/contracts";
 
 import { ProjectConfigurationRepository } from "../../src/access/repositories/project-configuration.repository.js";
-import { AdaptiveSessionRepository } from "../../src/adaptive-sessions/adaptive-session.repository.js";
+import { AdaptiveSessionRepository } from "../../src/adaptive-sessions/repositories/adaptive-session.repository.js";
 import { Database } from "../../src/infrastructure/database.js";
 
-const SESSION_ID =
-  process.env.SCRY_LIVE_SESSION_ID ??
-  "0197cbc4-9560-43f7-8c47-3f69a11de8d2";
+const SESSION_ID = process.env.SCRY_LIVE_SESSION_ID ?? "0197cbc4-9560-43f7-8c47-3f69a11de8d2";
 
 const ENVIRONMENT_ID =
-  process.env.SCRY_LIVE_ENVIRONMENT_ID ??
-  "faca3dad-9ff7-4633-b058-1239d0aefb65";
+  process.env.SCRY_LIVE_ENVIRONMENT_ID ?? "faca3dad-9ff7-4633-b058-1239d0aefb65";
 
 const EMAIL_REFERENCE =
-  process.env.SCRY_LIVE_EMAIL_REFERENCE ??
-  "950c756d-c595-4f09-9f05-d64ceeab5cf9";
+  process.env.SCRY_LIVE_EMAIL_REFERENCE ?? "950c756d-c595-4f09-9f05-d64ceeab5cf9";
 
 const PASSWORD_REFERENCE =
-  process.env.SCRY_LIVE_PASSWORD_REFERENCE ??
-  "ecc3f126-9a68-4994-9869-dc63a987786c";
+  process.env.SCRY_LIVE_PASSWORD_REFERENCE ?? "ecc3f126-9a68-4994-9869-dc63a987786c";
 
-const SELECTED_REFERENCES = [
-  EMAIL_REFERENCE,
-  PASSWORD_REFERENCE,
-].sort();
+const SELECTED_REFERENCES = [EMAIL_REFERENCE, PASSWORD_REFERENCE].sort();
 
 type AdmissionFact = {
   credential: "email" | "password";
@@ -52,10 +44,8 @@ const output = {
   oldEnvironmentCredentialsNotAdmitted: false,
   authorizationBoundaryCleared: false,
 
-  result:
-    "LIVE_PROTECTED_ADMISSION_REMEDIATION_FAIL" as
-      | "LIVE_PROTECTED_ADMISSION_REMEDIATION_PASS"
-      | "LIVE_PROTECTED_ADMISSION_REMEDIATION_FAIL",
+  result: "LIVE_PROTECTED_ADMISSION_REMEDIATION_FAIL" as
+    "LIVE_PROTECTED_ADMISSION_REMEDIATION_PASS" | "LIVE_PROTECTED_ADMISSION_REMEDIATION_FAIL",
 };
 
 const database = new Database();
@@ -100,39 +90,30 @@ try {
     [SESSION_ID],
   );
 
-  if (fixture.rowCount !== 1)
-    throw coded("LAYER_B_SESSION_UNAVAILABLE");
+  if (fixture.rowCount !== 1) throw coded("LAYER_B_SESSION_UNAVAILABLE");
 
   const row = fixture.rows[0]!;
 
-  if (row.environmentId !== ENVIRONMENT_ID)
-    throw coded("LAYER_B_ENVIRONMENT_MISMATCH");
+  if (row.environmentId !== ENVIRONMENT_ID) throw coded("LAYER_B_ENVIRONMENT_MISMATCH");
 
-  output.beforeAllowlist =
-    [...row.protectedAllowlist].sort();
+  output.beforeAllowlist = [...row.protectedAllowlist].sort();
 
-  output.environmentSecretRefCount =
-    row.secretRefs.length;
+  output.environmentSecretRefCount = row.secretRefs.length;
 
   for (const reference of SELECTED_REFERENCES) {
     if (!row.secretRefs.includes(reference))
-      throw coded(
-        "LAYER_B_SELECTED_REFERENCE_NOT_ENVIRONMENT_AUTHORIZED",
-      );
+      throw coded("LAYER_B_SELECTED_REFERENCE_NOT_ENVIRONMENT_AUTHORIZED");
   }
 
   if (output.beforeAllowlist.length !== 0)
-    throw coded(
-      "LAYER_B_FIXTURE_ALREADY_HAS_PROTECTED_ADMISSION",
-    );
+    throw coded("LAYER_B_FIXTURE_ALREADY_HAS_PROTECTED_ADMISSION");
 
   const intents = {
     email: protectedFillIntent({
       intentId: "layer-b-remediation-email",
       objectiveId: row.objectiveId,
       flowDraftId: row.flowDraftId,
-      targetReference:
-        "context-control-11111111111111111111111111111111",
+      targetReference: "context-control-11111111111111111111111111111111",
       concept: "login email",
       credentialReference: EMAIL_REFERENCE,
     }),
@@ -141,8 +122,7 @@ try {
       intentId: "layer-b-remediation-password",
       objectiveId: row.objectiveId,
       flowDraftId: row.flowDraftId,
-      targetReference:
-        "context-control-22222222222222222222222222222222",
+      targetReference: "context-control-22222222222222222222222222222222",
       concept: "login password",
       credentialReference: PASSWORD_REFERENCE,
     }),
@@ -150,75 +130,48 @@ try {
 
   output.failureStage = "PROVE_PRE_FIX_REJECTION";
 
-  output.beforeAdmission.push(
-    await admissionFact(
-      adaptive,
-      "email",
-      intents.email,
-    ),
-  );
+  output.beforeAdmission.push(await admissionFact(adaptive, "email", intents.email));
 
-  output.beforeAdmission.push(
-    await admissionFact(
-      adaptive,
-      "password",
-      intents.password,
-    ),
-  );
+  output.beforeAdmission.push(await admissionFact(adaptive, "password", intents.password));
 
   if (
     !output.beforeAdmission.every(
-      (fact) =>
-        !fact.admitted &&
-        fact.code ===
-          "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+      (fact) => !fact.admitted && fact.code === "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
     )
   )
-    throw coded(
-      "LAYER_B_PRE_FIX_REJECTION_NOT_PROVEN",
-    );
+    throw coded("LAYER_B_PRE_FIX_REJECTION_NOT_PROVEN");
 
-  output.failureStage =
-    "AUTHORIZE_SELECTED_CREDENTIALS";
+  output.failureStage = "AUTHORIZE_SELECTED_CREDENTIALS";
 
-  const policy =
-    executionPolicySchema.parse(row.policy);
+  const policy = executionPolicySchema.parse(row.policy);
 
-  const updated =
-    await configuration.updateEnvironment(
-      {
-        kind: "service",
-        subject: "scry-service",
-      } as never,
-      ENVIRONMENT_ID,
-      {
-        missionId: row.missionId,
-        objectiveId: row.objectiveId,
-        agentSessionId: row.agentSessionId,
+  const updated = (await configuration.updateEnvironment(
+    {
+      kind: "service",
+      subject: "scry-service",
+    } as never,
+    ENVIRONMENT_ID,
+    {
+      missionId: row.missionId,
+      objectiveId: row.objectiveId,
+      agentSessionId: row.agentSessionId,
 
-        baseOrigin: row.baseOrigin,
-        policy,
-        secretRefs: row.secretRefs,
+      baseOrigin: row.baseOrigin,
+      policy,
+      secretRefs: row.secretRefs,
 
-        missionCredentialSelectionRefs:
-          SELECTED_REFERENCES,
-      },
-    ) as {
-      admittedPraxisSessionCount?: number;
-    };
+      missionCredentialSelectionRefs: SELECTED_REFERENCES,
+    },
+  )) as {
+    admittedPraxisSessionCount?: number;
+  };
 
-  output.admittedPraxisSessionCount =
-    updated.admittedPraxisSessionCount ?? 0;
+  output.admittedPraxisSessionCount = updated.admittedPraxisSessionCount ?? 0;
 
-  if (
-    output.admittedPraxisSessionCount < 1
-  )
-    throw coded(
-      "LAYER_B_NO_MATCHING_PRAXIS_SESSION_ADMITTED",
-    );
+  if (output.admittedPraxisSessionCount < 1)
+    throw coded("LAYER_B_NO_MATCHING_PRAXIS_SESSION_ADMITTED");
 
-  output.failureStage =
-    "VERIFY_SESSION_PROJECTION";
+  output.failureStage = "VERIFY_SESSION_PROJECTION";
 
   const after = await database.query<{
     protectedAllowlist: string[];
@@ -234,83 +187,46 @@ try {
     [SESSION_ID],
   );
 
-  if (after.rowCount !== 1)
-    throw coded(
-      "LAYER_B_SESSION_LOST_AFTER_AUTHORIZATION",
-    );
+  if (after.rowCount !== 1) throw coded("LAYER_B_SESSION_LOST_AFTER_AUTHORIZATION");
 
-  output.afterAllowlist =
-    [...after.rows[0]!.protectedAllowlist].sort();
+  output.afterAllowlist = [...after.rows[0]!.protectedAllowlist].sort();
 
   output.selectedOnly =
-    JSON.stringify(output.afterAllowlist) ===
-    JSON.stringify(SELECTED_REFERENCES);
+    JSON.stringify(output.afterAllowlist) === JSON.stringify(SELECTED_REFERENCES);
 
-  if (!output.selectedOnly)
-    throw coded(
-      "LAYER_B_SESSION_ADMISSION_SCOPE_INCORRECT",
-    );
+  if (!output.selectedOnly) throw coded("LAYER_B_SESSION_ADMISSION_SCOPE_INCORRECT");
 
-  const nonSelectedEnvironmentRefs =
-    row.secretRefs.filter(
-      (reference) =>
-        !SELECTED_REFERENCES.includes(reference),
-    );
+  const nonSelectedEnvironmentRefs = row.secretRefs.filter(
+    (reference) => !SELECTED_REFERENCES.includes(reference),
+  );
 
-  output.oldEnvironmentCredentialsNotAdmitted =
-    nonSelectedEnvironmentRefs.every(
-      (reference) =>
-        !output.afterAllowlist.includes(reference),
-    );
+  output.oldEnvironmentCredentialsNotAdmitted = nonSelectedEnvironmentRefs.every(
+    (reference) => !output.afterAllowlist.includes(reference),
+  );
 
   if (!output.oldEnvironmentCredentialsNotAdmitted)
-    throw coded(
-      "LAYER_B_UNSELECTED_ENVIRONMENT_REFERENCE_ADMITTED",
-    );
+    throw coded("LAYER_B_UNSELECTED_ENVIRONMENT_REFERENCE_ADMITTED");
 
   output.authorizationBoundaryCleared =
-    row.decisionBoundary?.reasonCode ===
-      "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED"
+    row.decisionBoundary?.reasonCode === "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED"
       ? after.rows[0]!.decisionBoundary === null
       : true;
 
   if (!output.authorizationBoundaryCleared)
-    throw coded(
-      "LAYER_B_STALE_AUTHORIZATION_BOUNDARY_REMAINED",
-    );
+    throw coded("LAYER_B_STALE_AUTHORIZATION_BOUNDARY_REMAINED");
 
-  output.failureStage =
-    "VERIFY_POST_FIX_ADMISSION";
+  output.failureStage = "VERIFY_POST_FIX_ADMISSION";
 
-  output.afterAdmission.push(
-    await admissionFact(
-      adaptive,
-      "email",
-      intents.email,
-    ),
-  );
+  output.afterAdmission.push(await admissionFact(adaptive, "email", intents.email));
 
-  output.afterAdmission.push(
-    await admissionFact(
-      adaptive,
-      "password",
-      intents.password,
-    ),
-  );
+  output.afterAdmission.push(await admissionFact(adaptive, "password", intents.password));
 
-  if (
-    !output.afterAdmission.every(
-      (fact) => fact.admitted,
-    )
-  )
-    throw coded(
-      "LAYER_B_POST_FIX_ADMISSION_FAILED",
-    );
+  if (!output.afterAdmission.every((fact) => fact.admitted))
+    throw coded("LAYER_B_POST_FIX_ADMISSION_FAILED");
 
   output.failureStage = "none";
   output.failureCode = "none";
-  output.result =
-    "LIVE_PROTECTED_ADMISSION_REMEDIATION_PASS";
+  output.result = "LIVE_PROTECTED_ADMISSION_REMEDIATION_PASS";
 } catch (error) {
   output.failureCode = safeCode(error);
 } finally {
@@ -337,11 +253,7 @@ try {
     ].join("\n"),
   );
 
-  process.exitCode =
-    output.result ===
-    "LIVE_PROTECTED_ADMISSION_REMEDIATION_PASS"
-      ? 0
-      : 1;
+  process.exitCode = output.result === "LIVE_PROTECTED_ADMISSION_REMEDIATION_PASS" ? 0 : 1;
 }
 
 function protectedFillIntent(input: {
@@ -367,8 +279,7 @@ function protectedFillIntent(input: {
         exact: true,
       },
 
-      protectedReferenceId:
-        input.credentialReference,
+      protectedReferenceId: input.credentialReference,
     },
 
     expectedEffect: {
@@ -385,9 +296,7 @@ function protectedFillIntent(input: {
       kind: "authentication",
     },
 
-    protectedInputReferences: [
-      input.credentialReference,
-    ],
+    protectedInputReferences: [input.credentialReference],
   });
 }
 
@@ -454,10 +363,7 @@ function nestCode(error: unknown) {
 }
 
 function coded(code: string) {
-  return Object.assign(
-    new Error(code),
-    { code },
-  );
+  return Object.assign(new Error(code), { code });
 }
 
 function safeCode(error: unknown) {
@@ -479,9 +385,7 @@ function safeCode(error: unknown) {
         ? error.message
         : String(error);
 
-  return /^[A-Z][A-Z0-9_]*$/.test(
-    candidate,
-  )
+  return /^[A-Z][A-Z0-9_]*$/.test(candidate)
     ? candidate
     : "LAYER_B_REMEDIATION_UNCLASSIFIED_FAILURE";
 }

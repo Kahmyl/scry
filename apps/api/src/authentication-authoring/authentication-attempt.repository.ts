@@ -1,13 +1,9 @@
 import { Inject, Injectable } from "@nestjs/common";
 
-import { Database } from "../../infrastructure/index.js";
+import { Database } from "../infrastructure/index.js";
 
 export type AuthenticationAttemptDispatchState =
-  | "created"
-  | "dispatching"
-  | "dispatched"
-  | "uncertain"
-  | "blocked";
+  "created" | "dispatching" | "dispatched" | "uncertain" | "blocked";
 
 @Injectable()
 export class AuthenticationAttemptRepository {

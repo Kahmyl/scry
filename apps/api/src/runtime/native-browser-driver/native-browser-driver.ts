@@ -53,7 +53,8 @@ export class NativeBrowserDriver {
     }
     const cookies = await page.context().cookies(url.origin);
     const token = cookies.find((cookie) =>
-      ["token", "access_token", "auth_token", "jwt"].includes(cookie.name))?.value;
+      ["token", "access_token", "auth_token", "jwt"].includes(cookie.name),
+    )?.value;
     await beforeDispatch?.();
     const response = await page.context().request.fetch(url.href, {
       method: request.method,
@@ -68,7 +69,6 @@ export class NativeBrowserDriver {
     }
     return { status, classification: "expected" as const };
   }
-
 }
 
 class NativeBrowserDriverError extends Error {

@@ -79,39 +79,57 @@ describe("ScryApiClient", () => {
   });
 
   it("does not project arbitrary or validation-derived fields into external rejection context", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      statusCode: 409,
-      message: {
-        code: "SAFE_REJECTION",
-        safeActions: ["get_flow_authoring"],
-        state: "recovery_required",
-        secret: "must-not-escape",
-        issues: [{ path: ["value"], input: "must-not-escape" }],
-      },
-    }), { status: 409 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            statusCode: 409,
+            message: {
+              code: "SAFE_REJECTION",
+              safeActions: ["get_flow_authoring"],
+              state: "recovery_required",
+              secret: "must-not-escape",
+              issues: [{ path: ["value"], input: "must-not-escape" }],
+            },
+          }),
+          { status: 409 },
+        ),
+      ),
+    );
 
-    const error = await new ScryApiClient("http://scry.test/api").get("/fixture")
-      .catch((cause: unknown) => cause) as ScryApiError;
+    const error = (await new ScryApiClient("http://scry.test/api")
+      .get("/fixture")
+      .catch((cause: unknown) => cause)) as ScryApiError;
     expect(error.context).toEqual({ state: "recovery_required" });
     expect(JSON.stringify(error)).not.toContain("must-not-escape");
     expect(error.message).not.toContain("must-not-escape");
   });
 
   it("projects only bounded factual origins for a pre-write trust recovery mismatch", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      statusCode: 409,
-      message: {
-        code: "TRUST_RECOVERY_ORIGIN_MISMATCH",
-        safeActions: ["get_flow_authoring", "recover_trusted_script_origins"],
-        disclosedOrigins: ["https://scripts.example.test"],
-        mutationOutcome: "not_applied",
-        retry: "safe_after_prerequisite",
-        secret: "must-not-escape",
-      },
-    }), { status: 409 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            statusCode: 409,
+            message: {
+              code: "TRUST_RECOVERY_ORIGIN_MISMATCH",
+              safeActions: ["get_flow_authoring", "recover_trusted_script_origins"],
+              disclosedOrigins: ["https://scripts.example.test"],
+              mutationOutcome: "not_applied",
+              retry: "safe_after_prerequisite",
+              secret: "must-not-escape",
+            },
+          }),
+          { status: 409 },
+        ),
+      ),
+    );
 
-    const error = await new ScryApiClient("http://scry.test/api").post("/fixture")
-      .catch((cause: unknown) => cause) as ScryApiError;
+    const error = (await new ScryApiClient("http://scry.test/api")
+      .post("/fixture")
+      .catch((cause: unknown) => cause)) as ScryApiError;
     expect(error).toMatchObject({
       safeActions: ["get_flow_authoring", "recover_trusted_script_origins"],
       context: {
@@ -125,27 +143,51 @@ describe("ScryApiClient", () => {
 
   it("preserves the bounded factual recovery binding for stale authoring recovery", async () => {
     const id = "11111111-1111-4111-8111-111111111111";
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      statusCode: 409, message: {
-        code: "MISSION_AUTHORING_RECOVERY_STALE", safeActions: ["get_flow_authoring"],
-        currentTurnState: "decision_required", refreshedDecisionBoundary: {
-          type: "environment_unavailable", reasonCode: "ADAPTIVE_RUNTIME_UNAVAILABLE",
-          safeActions: ["get_flow_authoring", "advance_flow_authoring"],
-          authoringRecovery: {
-            sessionId: id, missionId: id, objectiveId: id, flowDraftId: id,
-            environmentId: id, failedOperationId: "failed-operation", sourceTurnId: id,
-            environmentResourceExists: true, executionReadiness: "runtime_reprovision_required",
-            preservesCurrentFlow: true, recoveryTool: "advance_flow_authoring",
-            recoveryKind: "intents", requiresPendingTurn: false, requiresFreshIdempotencyKey: true,
-          },
-        },
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            statusCode: 409,
+            message: {
+              code: "MISSION_AUTHORING_RECOVERY_STALE",
+              safeActions: ["get_flow_authoring"],
+              currentTurnState: "decision_required",
+              refreshedDecisionBoundary: {
+                type: "environment_unavailable",
+                reasonCode: "ADAPTIVE_RUNTIME_UNAVAILABLE",
+                safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+                authoringRecovery: {
+                  sessionId: id,
+                  missionId: id,
+                  objectiveId: id,
+                  flowDraftId: id,
+                  environmentId: id,
+                  failedOperationId: "failed-operation",
+                  sourceTurnId: id,
+                  environmentResourceExists: true,
+                  executionReadiness: "runtime_reprovision_required",
+                  preservesCurrentFlow: true,
+                  recoveryTool: "advance_flow_authoring",
+                  recoveryKind: "intents",
+                  requiresPendingTurn: false,
+                  requiresFreshIdempotencyKey: true,
+                },
+              },
+            },
+          }),
+          { status: 409 },
+        ),
+      ),
+    );
+    const error = (await new ScryApiClient("http://scry.test/api")
+      .post("/fixture")
+      .catch((cause: unknown) => cause)) as ScryApiError;
+    expect(error.context).toMatchObject({
+      refreshedDecisionBoundary: {
+        authoringRecovery: { sessionId: id, recoveryKind: "intents" },
       },
-    }), { status: 409 })));
-    const error = await new ScryApiClient("http://scry.test/api").post("/fixture")
-      .catch((cause: unknown) => cause) as ScryApiError;
-    expect(error.context).toMatchObject({ refreshedDecisionBoundary: {
-      authoringRecovery: { sessionId: id, recoveryKind: "intents" },
-    } });
+    });
   });
 
   it("updates API resources with PATCH", async () => {

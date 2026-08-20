@@ -4,7 +4,10 @@ import { randomUUID } from "node:crypto";
 
 import { decryptCredential } from "../access/credential.crypto.js";
 import { Database } from "../infrastructure/index.js";
-import { AdaptiveOperationReconciliationRegistry, type UnknownOperationAuthority } from "./adaptive-operation-reconciliation.registry.js";
+import {
+  AdaptiveOperationReconciliationRegistry,
+  type UnknownOperationAuthority,
+} from "./adaptive-operation-reconciliation.registry.js";
 import {
   VitractCredentialResourceEffectAdapter,
   type VitractCredentialRecord,
@@ -23,28 +26,41 @@ export class VitractCredentialResourceEffectProvider implements OnModuleInit, On
     this.adapter = new VitractCredentialResourceEffectAdapter((input) => this.observe(input));
   }
 
-  onModuleInit() { this.unregister = this.registry.register(this.adapter); }
-  onModuleDestroy() { this.unregister?.(); }
+  onModuleInit() {
+    this.unregister = this.registry.register(this.adapter);
+  }
+  onModuleDestroy() {
+    this.unregister?.();
+  }
 
-  private async observe(input: Readonly<{ resourceScope: string; authority: Readonly<UnknownOperationAuthority> }>) {
+  private async observe(
+    input: Readonly<{ resourceScope: string; authority: Readonly<UnknownOperationAuthority> }>,
+  ) {
     const protectedAuthenticationFacts = (input.authority.preparationFacts ?? []).filter(
       (fact) =>
-        (fact.actionKind === "fill" || fact.actionKind === "authenticate")
-        && fact.protectedReferenceId,
+        (fact.actionKind === "fill" || fact.actionKind === "authenticate") &&
+        fact.protectedReferenceId,
     );
-    const email = protectedAuthenticationFacts.filter((fact) =>
-      fact.targetPlaceholder === "Enter your email"
-      || fact.targetConcept === "Vitract login email"
-      || fact.targetConcept === "login email");
-    const password = protectedAuthenticationFacts.filter((fact) =>
-      fact.targetPlaceholder === "Enter your password"
-      || fact.targetConcept === "Vitract login password"
-      || fact.targetConcept === "login password");
+    const email = protectedAuthenticationFacts.filter(
+      (fact) =>
+        fact.targetPlaceholder === "Enter your email" ||
+        fact.targetConcept === "Vitract login email" ||
+        fact.targetConcept === "login email",
+    );
+    const password = protectedAuthenticationFacts.filter(
+      (fact) =>
+        fact.targetPlaceholder === "Enter your password" ||
+        fact.targetConcept === "Vitract login password" ||
+        fact.targetConcept === "login password",
+    );
     if (email.length !== 1 || password.length !== 1)
       throw new Error("VITRACT_RECONCILIATION_AUTHENTICATION_CONTRACT_UNAVAILABLE");
     const references = [email[0]!.protectedReferenceId!, password[0]!.protectedReferenceId!];
     const rows = await this.database.query<{
-      id: string; ciphertext: Buffer; initializationVector: Buffer; authenticationTag: Buffer;
+      id: string;
+      ciphertext: Buffer;
+      initializationVector: Buffer;
+      authenticationTag: Buffer;
       policy: { allowedOrigins?: string[]; trustedScriptOrigins?: string[] };
     }>(
       `SELECT credential.id::text,credential.ciphertext,
@@ -93,7 +109,8 @@ export class VitractCredentialResourceEffectProvider implements OnModuleInit, On
         records: [...unique.values()],
       };
     } finally {
-      emailValue = ""; passwordValue = "";
+      emailValue = "";
+      passwordValue = "";
     }
   }
 }
@@ -101,12 +118,22 @@ export class VitractCredentialResourceEffectProvider implements OnModuleInit, On
 function providerRecords(value: unknown): VitractCredentialRecord[] {
   const records: VitractCredentialRecord[] = [];
   const visit = (candidate: unknown) => {
-    if (Array.isArray(candidate)) { candidate.forEach(visit); return; }
+    if (Array.isArray(candidate)) {
+      candidate.forEach(visit);
+      return;
+    }
     if (!candidate || typeof candidate !== "object") return;
     const object = candidate as Record<string, unknown>;
-    if (typeof object.id === "string" && typeof object.label === "string" && Object.hasOwn(object, "clientId"))
-      records.push({ identity: object.id, label: object.label,
-        state: typeof object.status === "string" ? object.status : "present" });
+    if (
+      typeof object.id === "string" &&
+      typeof object.label === "string" &&
+      Object.hasOwn(object, "clientId")
+    )
+      records.push({
+        identity: object.id,
+        label: object.label,
+        state: typeof object.status === "string" ? object.status : "present",
+      });
     Object.values(object).forEach(visit);
   };
   visit(value);

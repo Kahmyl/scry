@@ -67,7 +67,8 @@ try {
   });
   context.requiredChecks.push(...deployed.requiredChecks, {
     id: "m2-vitract-resource-scope",
-    description: "The Vitract journey creates one uniquely named Test application and contains no credential, order, notification, or charge creation intent",
+    description:
+      "The Vitract journey creates one uniquely named Test application and contains no credential, order, notification, or charge creation intent",
     status: "passed",
   });
   await verifyM2Ownership(context, ownership);
@@ -79,7 +80,9 @@ try {
     ownership,
     verdict,
   });
-  process.stdout.write(`${JSON.stringify({ target: "vitract_preview", repetition, verdict, report })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({ target: "vitract_preview", repetition, verdict, report })}\n`,
+  );
   if (verdict !== "pass") process.exitCode = 1;
 } catch (error) {
   recordCampaignFailure(context, error, "m2-vitract-preview");
@@ -90,9 +93,13 @@ try {
       ownership,
       verdict: "fail",
     });
-    process.stdout.write(`${JSON.stringify({ target: "vitract_preview", repetition, verdict: "fail", reasonCode: safeCode(error), report })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ target: "vitract_preview", repetition, verdict: "fail", reasonCode: safeCode(error), report })}\n`,
+    );
   } else {
-    process.stdout.write(`${JSON.stringify({ target: "vitract_preview", repetition, verdict: "blocked", reasonCode: safeCode(error) })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ target: "vitract_preview", repetition, verdict: "blocked", reasonCode: safeCode(error) })}\n`,
+    );
   }
   process.exitCode = 1;
 } finally {

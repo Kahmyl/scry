@@ -7,6 +7,7 @@ import { compileDefaultVeilPolicy } from "@scry/veil";
 import pg from "pg";
 
 import {
+  AUTHORITATIVE_D647_FINGERPRINT,
   calculateHistoricalFingerprints,
   assertReleasedFingerprintReconstruction,
   expandBaselineStage,
@@ -130,6 +131,12 @@ const protectedLivePraxisSessionPath = fileURLToPath(
 const resourceEffectReconciliationPath = fileURLToPath(
   new URL("../migrations/resource-effect-reconciliation.sql", import.meta.url),
 );
+const scopeUnknownFenceToResourceMutationsPath = fileURLToPath(
+  new URL(
+    "../migrations/20260820-0910_scope_unknown_fence_to_resource_mutations.sql",
+    import.meta.url,
+  ),
+);
 const documentTransitionGapPath = fileURLToPath(
   new URL("../migrations/20260816-231045_add_document_transition_gap.sql", import.meta.url),
 );
@@ -200,6 +207,10 @@ const protectedOperationAuthorizationBinding = await readFile(
 const runPraxisSessionLedger = await readFile(runPraxisSessionLedgerPath, "utf8");
 const protectedLivePraxisSession = await readFile(protectedLivePraxisSessionPath, "utf8");
 const resourceEffectReconciliation = await readFile(resourceEffectReconciliationPath, "utf8");
+const scopeUnknownFenceToResourceMutations = await readFile(
+  scopeUnknownFenceToResourceMutationsPath,
+  "utf8",
+);
 const documentTransitionGap = await readFile(documentTransitionGapPath, "utf8");
 const missionRecordingSelection = await readFile(missionRecordingSelectionPath, "utf8");
 const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
@@ -241,6 +252,8 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "run-praxis-session-ledger.sql": runPraxisSessionLedger,
   "protected-live-praxis-session.sql": protectedLivePraxisSession,
   "resource-effect-reconciliation.sql": resourceEffectReconciliation,
+  "20260820-0910_scope_unknown_fence_to_resource_mutations.sql":
+    scopeUnknownFenceToResourceMutations,
   "20260816-231045_add_document_transition_gap.sql": documentTransitionGap,
   "mission-recording-selection.sql": missionRecordingSelection,
 };
@@ -258,6 +271,7 @@ const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
         : included.filter(
             (migration) =>
               migration !== "resource-effect-reconciliation.sql" &&
+              migration !== "20260820-0910_scope_unknown_fence_to_resource_mutations.sql" &&
               migration !== "20260816-231045_add_document_transition_gap.sql" &&
               migration !== "mission-recording-selection.sql",
           ),
@@ -399,19 +413,6 @@ const preStructuredSyntheticProtectedInputBaseline = stagedBaseline(
 
 const fingerprint = digest(baseline);
 
-const preDocumentTransitionGapBaseline = expandFoundation(
-  expandBaselineStage(
-    baselineSource,
-    optionalMigrationSources,
-    OPTIONAL_BASELINE_MIGRATIONS.filter(
-      (name) =>
-        name !== "20260816-231045_add_document_transition_gap.sql" &&
-        name !== "mission-recording-selection.sql",
-    ),
-  ),
-);
-const preDocumentTransitionGapFingerprint = digest(preDocumentTransitionGapBaseline);
-
 const preMissionRecordingSelectionBaseline = expandFoundation(
   expandBaselineStage(
     baselineSource,
@@ -516,16 +517,16 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preDocumentTransitionGapFingerprint) {
+    if (installedFingerprint === AUTHORITATIVE_D647_FINGERPRINT) {
       const client = await pool.connect();
 
       try {
         await client.query("BEGIN");
 
-        await client.query(
-          "SELECT pg_advisory_xact_lock(hashtext('scry-document-transition-gap-recording-selection'))",
-        );
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-d647-terminal-r0.7'))");
 
+        await client.query(protectedOperationAuthoritativeProjection);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
 
@@ -540,7 +541,7 @@ try {
         await client.query("COMMIT");
 
         process.stdout.write(
-          `Applied document transition gap + Mission recording selection ${fingerprint}\n`,
+          `Applied authoritative d647 terminal R0.7 migrations ${fingerprint}\n`,
         );
       } catch (error) {
         await client.query("ROLLBACK");
@@ -578,6 +579,7 @@ try {
           "SELECT pg_advisory_xact_lock(hashtext('scry-resource-effect-reconciliation'))",
         );
         await client.query(resourceEffectReconciliation);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -601,6 +603,7 @@ try {
         );
         await client.query(protectedLivePraxisSession);
         await client.query(resourceEffectReconciliation);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -626,6 +629,7 @@ try {
         await client.query(protectedOperationAuthorizationBinding);
         await client.query(runPraxisSessionLedger);
         await client.query(resourceEffectReconciliation);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -656,6 +660,7 @@ try {
         await client.query(protectedOperationAuthorizationBinding);
         await client.query(runPraxisSessionLedger);
         await client.query(resourceEffectReconciliation);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -682,6 +687,7 @@ try {
         await client.query(protectedOperationAuthorizationBinding);
         await client.query(runPraxisSessionLedger);
         await client.query(resourceEffectReconciliation);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -708,6 +714,7 @@ try {
         await client.query(protectedOperationAuthorizationBinding);
         await client.query(runPraxisSessionLedger);
         await client.query(resourceEffectReconciliation);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -731,6 +738,7 @@ try {
         );
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -755,6 +763,7 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -780,6 +789,7 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -806,6 +816,7 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -833,6 +844,7 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -861,6 +873,7 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -892,6 +905,7 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -922,6 +936,7 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -954,6 +969,7 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -987,6 +1003,7 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -1019,6 +1036,7 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -1068,6 +1086,7 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -1123,6 +1142,7 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
         await client.query(
@@ -1226,6 +1246,8 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+
+        await client.query(scopeUnknownFenceToResourceMutations);
 
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);

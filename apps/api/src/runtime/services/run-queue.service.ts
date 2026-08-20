@@ -1,9 +1,4 @@
-import {
-  Inject,
-  Injectable,
-  OnModuleInit,
-  OnModuleDestroy,
-} from "@nestjs/common";
+import { Inject, Injectable, OnModuleInit, OnModuleDestroy } from "@nestjs/common";
 import { Queue } from "bullmq";
 
 import { Database, RedisConnection } from "../../infrastructure/index.js";
@@ -65,10 +60,7 @@ export class RunQueueService implements OnModuleDestroy, OnModuleInit {
 
   async onModuleInit() {
     await this.dispatchPending().catch(() => undefined);
-    this.dispatcher = setInterval(
-      () => void this.dispatchPending().catch(() => undefined),
-      1_000,
-    );
+    this.dispatcher = setInterval(() => void this.dispatchPending().catch(() => undefined), 1_000);
   }
 
   async dispatchPending(limit = 100) {

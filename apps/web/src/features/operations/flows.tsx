@@ -140,13 +140,19 @@ export function Flows({
       )}
       <div className="spec-grid">
         {pagedSpecs.map((spec) => (
-          <button className="spec-card" key={spec.id} onClick={() => onOpenFlow(spec.recordKind, spec.id)}>
+          <button
+            className="spec-card"
+            key={spec.id}
+            onClick={() => onOpenFlow(spec.recordKind, spec.id)}
+          >
             <div className="spec-top">
               <div className="spec-icon">
                 <Code2 size={19} />
               </div>
               <span className={spec.recordKind === "published" ? "ready-tag" : "draft-tag"}>
-                {spec.recordKind === "published" ? "Published" : spec.lifecycleState.replaceAll("_", " ")}
+                {spec.recordKind === "published"
+                  ? "Published"
+                  : spec.lifecycleState.replaceAll("_", " ")}
               </span>
             </div>
             <h3>{spec.name}</h3>
@@ -168,11 +174,14 @@ export function Flows({
                 <FileCode2 size={14} /> v{spec.latestVersion ?? "—"}
               </span>
               <span>
-                <Activity size={14} /> {spec.stepCount ?? spec.latestPlan?.steps.length ?? 0} actions
+                <Activity size={14} /> {spec.stepCount ?? spec.latestPlan?.steps.length ?? 0}{" "}
+                actions
               </span>
               <span>
                 <Network size={14} />{" "}
-                {spec.navigationCount ?? spec.latestPlan?.steps.filter((item) => item.action?.type === "navigate").length ??
+                {spec.navigationCount ??
+                  spec.latestPlan?.steps.filter((item) => item.action?.type === "navigate")
+                    .length ??
                   0}{" "}
                 destinations
               </span>

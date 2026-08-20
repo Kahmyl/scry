@@ -43,16 +43,23 @@ try {
     evidenceRefs: [retained.file],
     cleanupRequired: true,
   });
-  process.stdout.write(`${JSON.stringify({ target, repetition, verdict: retained.result.verdict, canonicalReport })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({ target, repetition, verdict: retained.result.verdict, canonicalReport })}\n`,
+  );
   if (retained.result.verdict !== "pass") process.exitCode = 1;
 } catch (error) {
   recordCampaignFailure(context, error, `m1-${target}`);
   const retained = await retainResult(context, "M1", [], target);
   const canonicalReport = await retainCanonicalM1Result(context, {
-    target, repetition: repetition as 1 | 2 | 3, verdict: "blocked",
-    evidenceRefs: [retained.file], cleanupRequired: Boolean(context.campaignProjectId),
+    target,
+    repetition: repetition as 1 | 2 | 3,
+    verdict: "blocked",
+    evidenceRefs: [retained.file],
+    cleanupRequired: Boolean(context.campaignProjectId),
   });
-  process.stdout.write(`${JSON.stringify({ target, repetition, verdict: "blocked", reasonCode: safeCode(error), canonicalReport })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({ target, repetition, verdict: "blocked", reasonCode: safeCode(error), canonicalReport })}\n`,
+  );
   process.exitCode = 1;
 } finally {
   await closeCampaignContext(context);

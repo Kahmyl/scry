@@ -34,9 +34,7 @@ beforeAll(async () => {
     `);
   });
 
-  await new Promise<void>((resolve) =>
-    server.listen(0, "127.0.0.1", resolve),
-  );
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 
   const address = server.address();
 
@@ -51,9 +49,7 @@ afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 
   await Promise.all(
-    directories.map((directory) =>
-      rm(directory, { recursive: true, force: true }),
-    ),
+    directories.map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -63,18 +59,25 @@ describe("probe Veil composition boundary", () => {
     const result = await probeFlowPlan({
       ...base,
       plan: planWithNavigationOnly(),
-      execute: async () => ({
-        state: "infrastructure_error",
-        outcomeClassification: "infrastructure_error",
-        error: "BROWSER_RUNTIME_DISCONNECTED: unsafe raw detail omitted",
-        steps: [{ id: "navigate", action: { status: "unevaluated" }, assertions: [], evidence: [] }],
-        artifacts: [],
-      } as never),
+      execute: async () =>
+        ({
+          state: "infrastructure_error",
+          outcomeClassification: "infrastructure_error",
+          error: "BROWSER_RUNTIME_DISCONNECTED: unsafe raw detail omitted",
+          steps: [
+            { id: "navigate", action: { status: "unevaluated" }, assertions: [], evidence: [] },
+          ],
+          artifacts: [],
+        }) as never,
     });
     expect(result.runtimeHealthy).toBe(false);
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: "BROWSER_RUNTIME_DISCONNECTED", phase: "execution", mutationOutcome: "not_started",
-    }));
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "BROWSER_RUNTIME_DISCONNECTED",
+        phase: "execution",
+        mutationOutcome: "not_started",
+      }),
+    );
     expect(JSON.stringify(result.diagnostics)).not.toContain("unsafe raw detail");
   });
 
@@ -184,9 +187,7 @@ describe("probe Veil composition boundary", () => {
 });
 
 async function probeInput(level: "inspection" | "reversible") {
-  const outputDirectory = await mkdtemp(
-    path.join(tmpdir(), "scry-probe-veil-test-"),
-  );
+  const outputDirectory = await mkdtemp(path.join(tmpdir(), "scry-probe-veil-test-"));
 
   directories.push(outputDirectory);
 
@@ -217,11 +218,7 @@ function planWithInspectionTarget() {
       title: "Inspect documentation control",
       action: {
         type: "waitFor",
-        target: target(
-          "open_documentation",
-          "button",
-          "Open documentation",
-        ),
+        target: target("open_documentation", "button", "Open documentation"),
         state: "visible",
       },
       assertions: [],
@@ -273,14 +270,9 @@ function planWithAlreadyExpandedNavigation() {
   ]);
 }
 
-type InteractionRole =
-  InteractionTargetIntent["preferredEvidence"]["roles"][number];
+type InteractionRole = InteractionTargetIntent["preferredEvidence"]["roles"][number];
 
-function target(
-  concept: string,
-  role: InteractionRole,
-  name: string,
-): InteractionTargetIntent {
+function target(concept: string, role: InteractionRole, name: string): InteractionTargetIntent {
   return {
     concept,
     requiredCapabilities: ["pointer_activatable"],

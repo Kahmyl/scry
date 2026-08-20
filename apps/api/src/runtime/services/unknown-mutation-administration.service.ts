@@ -50,7 +50,8 @@ export class UnknownMutationAdministrationService {
           FOR UPDATE OF protected,adaptive,session`,
         [input.sessionId, input.operationId],
       );
-      if (selected.rowCount !== 1) throw new NotFoundException("UNKNOWN_MUTATION_OPERATION_NOT_FOUND");
+      if (selected.rowCount !== 1)
+        throw new NotFoundException("UNKNOWN_MUTATION_OPERATION_NOT_FOUND");
       const row = selected.rows[0]!;
       const alreadyClosed =
         row.protectedState === "abandoned" &&
@@ -60,7 +61,8 @@ export class UnknownMutationAdministrationService {
         row.sessionState === "cancelled" &&
         row.adaptiveReason === CLOSED_REASON &&
         row.sessionReason === CLOSED_REASON;
-      if (alreadyClosed) return { classification: "unknown_historical_closed" as const, replayed: true };
+      if (alreadyClosed)
+        return { classification: "unknown_historical_closed" as const, replayed: true };
 
       if (
         row.protectedState !== "recovery_required" ||
@@ -70,7 +72,8 @@ export class UnknownMutationAdministrationService {
         row.adaptiveState !== "failed" ||
         row.adaptiveOutcome !== "unknown" ||
         row.sessionState !== "recovery_required"
-      ) throw new ConflictException("UNKNOWN_MUTATION_ADMINISTRATIVE_STATE_INVALID");
+      )
+        throw new ConflictException("UNKNOWN_MUTATION_ADMINISTRATIVE_STATE_INVALID");
 
       const safeEvidence = JSON.stringify({
         classification: "unknown_historical_closed",
@@ -94,7 +97,8 @@ export class UnknownMutationAdministrationService {
           RETURNING id`,
         [row.protectedOperationId, CLOSED_REASON],
       );
-      if (transitioned.rowCount !== 1) throw new ConflictException("UNKNOWN_MUTATION_ADMINISTRATIVE_FENCE_LOST");
+      if (transitioned.rowCount !== 1)
+        throw new ConflictException("UNKNOWN_MUTATION_ADMINISTRATIVE_FENCE_LOST");
       await client.query(
         `INSERT INTO protected_operation_transitions(
            protected_operation_id,sequence,from_state,to_state,phase,fencing_token,reason_code,safe_diagnostics
@@ -122,7 +126,8 @@ export class UnknownMutationAdministrationService {
           RETURNING id`,
         [input.sessionId, boundary],
       );
-      if (session.rowCount !== 1) throw new ConflictException("UNKNOWN_MUTATION_SESSION_FENCE_LOST");
+      if (session.rowCount !== 1)
+        throw new ConflictException("UNKNOWN_MUTATION_SESSION_FENCE_LOST");
       await client.query(
         `INSERT INTO adaptive_session_events(session_id,sequence,type,safe_facts)
          SELECT $1,COALESCE(max(sequence),0)+1,'session_cancelled',$2::jsonb

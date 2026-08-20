@@ -150,7 +150,10 @@ export const visualEvidenceSchema = z
 export const interactionTargetIntentSchema = z
   .object({
     concept: semanticText,
-    authoritativeReference: z.string().regex(/^context-control-[a-f0-9]{32}$/).optional(),
+    authoritativeReference: z
+      .string()
+      .regex(/^context-control-[a-f0-9]{32}$/)
+      .optional(),
     requiredCapabilities: z.array(capabilitySchema).min(1).max(10),
     preferredEvidence: z
       .object({
@@ -196,9 +199,7 @@ export const interactionTargetIntentSchema = z
         identity.placeholders,
         identity.inputTypes,
         identity.testIds ?? [],
-      ].some(
-        (items) => items.length,
-      ) &&
+      ].some((items) => items.length) &&
       !identity.expectedText &&
       !identity.visual?.expectedText &&
       !identity.visual?.icon
@@ -229,11 +230,7 @@ export const interactionTargetIntentSchema = z
       });
   });
 
-const externalResourceIdentifier = z
-  .string()
-  .trim()
-  .min(1)
-  .max(500);
+const externalResourceIdentifier = z.string().trim().min(1).max(500);
 
 /**
  * Declares how an authoritative provider resource may be projected onto a
@@ -243,9 +240,7 @@ const externalResourceIdentifier = z
  */
 export const externalResourcePresentationContractSchema = z
   .object({
-    canonicalIdentity: z
-      .object({ source: z.literal("external_resource_binding") })
-      .strict(),
+    canonicalIdentity: z.object({ source: z.literal("external_resource_binding") }).strict(),
     resource: z
       .object({
         provider: externalResourceIdentifier.regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
