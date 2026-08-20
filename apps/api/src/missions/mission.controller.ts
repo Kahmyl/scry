@@ -9,6 +9,7 @@ import {
   endAgentSessionSchema,
   missionTransitionSchema,
   publishMissionReportSchema,
+  setMissionRecordingSelectionSchema,
   startAgentSessionSchema,
   updateMissionSchema,
   updateObjectiveSchema,
@@ -24,6 +25,7 @@ import {
   type EndAgentSessionInput,
   type MissionTransitionInput,
   type PublishMissionReportInput,
+  type SetMissionRecordingSelectionInput,
   type StartAgentSessionInput,
   type UpdateMissionInput,
   type UpdateObjectiveInput,
@@ -173,6 +175,15 @@ export class MissionController {
   ) {
     return this.missions.transition(p, id, "reopen", i);
   }
+  @Post("missions/:missionId/recording-selection") recordingSelection(
+    @Param("missionId") id: string,
+    @CurrentPrincipal() p: Principal,
+    @Body(new ZodValidationPipe(setMissionRecordingSelectionSchema))
+    i: SetMissionRecordingSelectionInput,
+  ) {
+    return this.missions.setRecordingSelection(p, id, i);
+  }
+
   @Get("missions/:missionId/report-preview") preview(
     @Param("missionId") id: string,
     @CurrentPrincipal() p: Principal,

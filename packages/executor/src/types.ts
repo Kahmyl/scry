@@ -54,6 +54,16 @@ export type ExecuteOptions = {
   outputDirectory: string;
   /** Internal ownership of external expected-effect verification. */
   expectedEffectVerificationOwner?: "kernel" | "praxis";
+  /**
+   * Runtime-only operation identity for recording-boundary provenance.
+   * This is not authored progression authority.
+   */
+  recordingOperationId?: string;
+  /**
+   * Runtime-only hint that this single-operation execution is expected to
+   * cross an ordinary navigation/document boundary.
+   */
+  expectedDocumentTransition?: boolean;
   runId?: string;
   attemptId?: string;
   browserChannel?: string;

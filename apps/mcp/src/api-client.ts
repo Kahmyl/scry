@@ -32,6 +32,7 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "currentTurnState", "type", "reasonCode", "authoringRecovery",
   "idempotencyKey",
   "operationId", "reconciliation", "redispatchAllowed", "missionFenceCleared",
+  "validationIssueCount",
   "safeActions",
 ]);
 
@@ -137,15 +138,47 @@ export class ScryApiClient {
     if (!response.ok) {
       const envelope = asRecord(body);
       const detail = asRecord(envelope?.message) ?? envelope;
+
+      const detailCode = stringField(detail, "code");
+      const envelopeCode = stringField(envelope, "code");
+      const validationMessages = stringArrayField(envelope, "message") ?? [];
+
+      const inferredValidationFailure =
+        response.status === 400 &&
+        !detailCode &&
+        !envelopeCode &&
+        validationMessages.length > 0;
+
       const code =
-        stringField(detail, "code") ??
-        stringField(envelope, "code") ??
+        detailCode ??
+        envelopeCode ??
         (typeof envelope?.message === "string" ? envelope.message : undefined) ??
-        `HTTP_${response.status}`;
+        (inferredValidationFailure
+          ? "SCRY_API_REQUEST_VALIDATION_FAILED"
+          : `HTTP_${response.status}`);
+
       const safeActions =
-        stringArrayField(detail, "safeActions") ?? stringArrayField(envelope, "safeActions") ?? [];
-      const { safeActions: _safeActions, code: _code, ...safeDetail } = detail ?? {};
-      throw new ScryApiError(code, response.status, safeActions, safeRejectionContext(safeDetail));
+        stringArrayField(detail, "safeActions") ??
+        stringArrayField(envelope, "safeActions") ??
+        [];
+
+      const { safeActions: _safeActions, code: _code, ...safeDetail } =
+        detail ?? {};
+
+      throw new ScryApiError(
+        code,
+        response.status,
+        safeActions,
+        {
+          ...safeRejectionContext(safeDetail),
+          ...(inferredValidationFailure
+            ? {
+                mutationOutcome: "not_applied",
+                validationIssueCount: validationMessages.length,
+              }
+            : {}),
+        },
+      );
     }
     return body as T;
   }

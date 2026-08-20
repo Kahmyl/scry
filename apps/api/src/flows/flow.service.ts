@@ -228,11 +228,7 @@ export class FlowService {
 
   async validate(principal: Principal, input: ValidatePlanInput) {
     await this.admission.assertAcceptingWork();
-    return this.validateWith(
-      (text, values) => this.database.query(text, values),
-      principal,
-      input,
-    );
+    return this.validateWith((text, values) => this.database.query(text, values), principal, input);
   }
 
   async createFlow(principal: Principal, projectId: string, input: CreateFlowInput) {
@@ -255,11 +251,11 @@ export class FlowService {
         hash(input),
       );
       if (replay) return replay;
-      const validation = await this.validateWith(
-        query,
-        principal,
-        { projectId, environmentId: input.environmentId, plan: input.plan },
-      );
+      const validation = await this.validateWith(query, principal, {
+        projectId,
+        environmentId: input.environmentId,
+        plan: input.plan,
+      });
       this.requireValid(validation);
       const flowId = randomUUID();
       const revisionId = randomUUID();
@@ -362,11 +358,11 @@ export class FlowService {
           message: "The Flow changed after it was read.",
           actualRevisionId: flow.latestRevisionId,
         });
-      const validation = await this.validateWith(
-        query,
-        principal,
-        { projectId: flow.projectId, environmentId: input.environmentId, plan: input.plan },
-      );
+      const validation = await this.validateWith(query, principal, {
+        projectId: flow.projectId,
+        environmentId: input.environmentId,
+        plan: input.plan,
+      });
       this.requireValid(validation);
       const revisionId = randomUUID();
       const revision = flow.revision + 1;
@@ -456,11 +452,11 @@ export class FlowService {
           code: matches ? "CALIBRATION_OPERATION_AMBIGUOUS" : "CALIBRATION_OPERATION_MISMATCH",
           message: "The Flow must contain exactly one matching protected operation.",
         });
-      const validation = await this.validateWith(
-        query,
-        principal,
-        { projectId: flow.projectId, environmentId: input.environmentId, plan },
-      );
+      const validation = await this.validateWith(query, principal, {
+        projectId: flow.projectId,
+        environmentId: input.environmentId,
+        plan,
+      });
       this.requireValid(validation);
       const revisionId = randomUUID();
       const nextRevision = flow.revision + 1;
@@ -550,7 +546,7 @@ export class FlowService {
         `SELECT 1 FROM adaptive_sessions
          WHERE id=$1 AND project_id=$2 AND mission_id=$3 AND objective_id=$4
            AND environment_id=$5 AND state IN ('created','provisioning','active','suspended')`,
-        [input.praxisSessionId,projectId,input.missionId,input.objectiveId,input.environmentId],
+        [input.praxisSessionId, projectId, input.missionId, input.objectiveId, input.environmentId],
       );
       if (!praxisSession.rowCount)
         throw new ConflictException({ code: "RUN_PRAXIS_SESSION_SCOPE_MISMATCH" });
@@ -558,12 +554,18 @@ export class FlowService {
         step.action.type === "protectedTransaction" ? [step.action.operationId] : [],
       );
       const authorizationByOperation = new Map(
-        input.protectedAuthorizations.map((binding) => [binding.operationId, binding.authorizationId]),
+        input.protectedAuthorizations.map((binding) => [
+          binding.operationId,
+          binding.authorizationId,
+        ]),
       );
       for (const operationId of protectedOperations) {
         const authorizationId = authorizationByOperation.get(operationId);
         if (!authorizationId)
-          throw new ConflictException({ code: "PROTECTED_OPERATION_AUTHORIZATION_REQUIRED", operationId });
+          throw new ConflictException({
+            code: "PROTECTED_OPERATION_AUTHORIZATION_REQUIRED",
+            operationId,
+          });
         const authorized = await query(
           `SELECT 1 FROM mission_authorizations
            WHERE id=$1 AND mission_id=$2 AND objective_id=$3 AND environment_id=$4
@@ -572,7 +574,10 @@ export class FlowService {
           [authorizationId, input.missionId, input.objectiveId, input.environmentId, operationId],
         );
         if (!authorized.rowCount)
-          throw new ConflictException({ code: "PROTECTED_OPERATION_AUTHORIZATION_INVALID", operationId });
+          throw new ConflictException({
+            code: "PROTECTED_OPERATION_AUTHORIZATION_INVALID",
+            operationId,
+          });
       }
       const runtime = browserObservationRuntimeHealth();
       if (!runtime.healthy)
@@ -580,15 +585,11 @@ export class FlowService {
           code: "BROWSER_RUNTIME_UNHEALTHY",
           diagnostics: runtime.diagnostics,
         });
-      const validation = await this.validateWith(
-        query,
-        principal,
-        {
-          projectId,
-          environmentId: input.environmentId,
-          plan: revision.rows[0]!.plan,
-        },
-      );
+      const validation = await this.validateWith(query, principal, {
+        projectId,
+        environmentId: input.environmentId,
+        plan: revision.rows[0]!.plan,
+      });
       this.requireValid(validation);
       const environment = await query<{
         name: string;
@@ -643,14 +644,34 @@ export class FlowService {
       await query(
         `INSERT INTO run_praxis_sessions(run_id,praxis_session_id,epoch,idempotency_key)
          VALUES($1,$2,1,$3)`,
-        [run.rows[0]!.id,input.praxisSessionId,input.idempotencyKey],
+        [run.rows[0]!.id, input.praxisSessionId, input.idempotencyKey],
       );
+      await query(
+        `INSERT INTO attempts(
+           run_id,
+           attempt_number,
+           state,
+           claim_token,
+           heartbeat_at,
+           started_at
+         )
+         VALUES(
+           $1,
+           1,
+           'running',
+           gen_random_uuid(),
+           now(),
+           now()
+         )`,
+        [run.rows[0]!.id],
+      );
+
       await query(
         `INSERT INTO mission_run_links(run_id,mission_id,objective_id,role,reason,classified_by_agent_session_id) VALUES($1,$2,$3,$4,'Run created',$5)`,
         [run.rows[0]!.id, input.missionId, input.objectiveId, input.role, input.agentSessionId],
       );
       await query(
-        `UPDATE mission_objective_orchestration SET state='queued',active_run_id=$2,lease_token=gen_random_uuid(),lease_expires_at=now()+interval '2 minutes',updated_at=now() WHERE objective_id=$1`,
+        `UPDATE mission_objective_orchestration SET state='running',active_run_id=$2,lease_token=gen_random_uuid(),lease_expires_at=now()+interval '2 minutes',updated_at=now() WHERE objective_id=$1`,
         [input.objectiveId, run.rows[0]!.id],
       );
       await query(
@@ -662,7 +683,7 @@ export class FlowService {
         [input.missionId],
       );
       await query(
-        `INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata) VALUES($1,$2,$3,'run_started','Run queued',$4::jsonb)`,
+        `INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata) VALUES($1,$2,$3,'run_started','Agent-directed Run started',$4::jsonb)`,
         [
           input.missionId,
           input.objectiveId,
@@ -674,14 +695,7 @@ export class FlowService {
           }),
         ],
       );
-      await query(
-        `INSERT INTO run_outbox(run_id, release_id, schema_fingerprint) VALUES ($1, $2, $3)`,
-        [
-          run.rows[0]!.id,
-          process.env.SCRY_RELEASE_ID ?? "development",
-          process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline",
-        ],
-      );
+
       const response = {
         runId: run.rows[0]!.id,
         state: run.rows[0]!.state,
@@ -698,11 +712,7 @@ export class FlowService {
     });
   }
 
-  private async validateWith(
-    query: Query,
-    principal: Principal,
-    input: ValidatePlanInput,
-  ) {
+  private async validateWith(query: Query, principal: Principal, input: ValidatePlanInput) {
     await this.requireProject(query, principal, input.projectId);
     const environment = await query<{ policy: unknown; secretRefs: string[] }>(
       `SELECT policy, secret_refs AS "secretRefs" FROM environments WHERE id = $1 AND project_id = $2`,

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { flowRevisionContentSchema } from "./api.js";
 import { currentPlanSchema } from "./current.js";
 import { objectiveContextSchema } from "./mission.js";
-import { semanticRoleSchema } from "./grounding.js";
+import { semanticRoleSchema, semanticScopeKindSchema } from "./grounding.js";
 
 const uuid = z.string().uuid();
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -96,8 +96,9 @@ export const missionAuthoringSemanticTargetSchema = z
     testId: semanticText.optional(),
     scope: z
       .object({
-        kind: z.enum(["page", "dialog", "form", "section", "row", "region", "live_region"]),
+        kind: semanticScopeKindSchema,
         name: semanticText.optional(),
+        direct: z.boolean().optional(),
       })
       .strict()
       .superRefine((scope, context) => {

@@ -10,7 +10,8 @@ export async function executeProtectedPreparation(
   transaction: ProtectedTransaction,
   dependencies: ProtectedTransactionDependencies,
 ) {
-  for (const action of transaction.preparation.actions) {
+  for (let actionIndex = 0; actionIndex < transaction.preparation.actions.length; actionIndex += 1) {
+    const action = transaction.preparation.actions[actionIndex]!;
     try {
       if (action.type === "navigate") {
         await gotoPraxisPage(page, action.url, {
@@ -20,11 +21,21 @@ export async function executeProtectedPreparation(
         continue;
       }
       if (action.type === "clickNavigation") {
+        const successor = transaction.preparation.actions[actionIndex + 1];
+        if (successor && "target" in successor) {
+          const successorAlreadyVisible = await resolveTargetLocator(page, successor.target)
+            .then((locator) => locator.isVisible())
+            .catch(() => false);
+          if (successorAlreadyVisible) continue;
+        }
         await requirePraxisSuccess({
           page,
           intent: action.target,
-          operation: { type: "activate" },
-          context: protectedContext(transaction, action.timeoutMs, dependencies.allowedOrigins),
+          operation: { type: "activate", mechanism: "element" },
+          context: {
+            ...protectedContext(transaction, action.timeoutMs, dependencies.allowedOrigins),
+            dispatchSemantics: "read_only",
+          },
           signal: dependencies.signal ?? new AbortController().signal,
         });
         continue;
@@ -131,8 +142,9 @@ export async function executeProtectedPreparation(
     } catch (error) {
       if (error instanceof PhaseError) throw error;
       if (error instanceof PraxisConsumerError) {
+        const actionType = action.type.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase();
         throw new PhaseError(
-          `PREPARATION_${error.result.code}`,
+          `PREPARATION_${actionType}_${error.result.code}`,
           "preparation",
           error.result.mutationOutcome === "unknown"
             ? "retry_requires_reconciliation"

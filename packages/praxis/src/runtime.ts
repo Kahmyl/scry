@@ -359,7 +359,9 @@ export class PraxisDispatcher {
     boundary: PraxisDispatchBoundary,
   ): Promise<{ mutationOutcome: PraxisMutationOutcome; output?: PraxisAcquisitionOutput }> {
     checkAbort(signal);
-    const mutating = isMutating(request.operation);
+    const mutating =
+      request.dispatchSemantics !== "read_only" &&
+      isMutating(request.operation);
     let output: PraxisAcquisitionOutput | undefined;
     try {
       const preparedInput = await prepareInput(request, this.resolveInput);
@@ -454,8 +456,7 @@ export class PraxisDispatcher {
         });
       if (signal.aborted || error instanceof PraxisDispatchCancellation)
         throw new PraxisAdapterError("PRAXIS_CANCELLED", { provenance: "cancelled" });
-      if (error instanceof PraxisAdapterError) throw error;
-      throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+      throw error;
     }
   }
 

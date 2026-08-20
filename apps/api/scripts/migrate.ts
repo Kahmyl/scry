@@ -106,14 +106,37 @@ const externalResourceBindingsPath = fileURLToPath(
 const operationBoundSyntheticProtectedInputsPath = fileURLToPath(
   new URL("../migrations/operation-bound-synthetic-protected-inputs.sql", import.meta.url),
 );
-const structuredSyntheticProtectedInputPath = fileURLToPath(new URL("../migrations/structured-synthetic-protected-input.sql", import.meta.url));
-const segmentedFlowSuccessorCheckpointsPath = fileURLToPath(new URL("../migrations/segmented-flow-successor-checkpoints.sql", import.meta.url));
-const adaptiveCertificationProvenancePath = fileURLToPath(new URL("../migrations/adaptive-certification-provenance.sql", import.meta.url));
-const adaptiveOperationReconciliationPath = fileURLToPath(new URL("../migrations/adaptive-operation-reconciliation.sql", import.meta.url));
-const protectedOperationAuthorizationBindingPath = fileURLToPath(new URL("../migrations/protected-operation-authorization-binding.sql", import.meta.url));
-const runPraxisSessionLedgerPath = fileURLToPath(new URL("../migrations/run-praxis-session-ledger.sql", import.meta.url));
-const protectedLivePraxisSessionPath = fileURLToPath(new URL("../migrations/protected-live-praxis-session.sql", import.meta.url));
-const resourceEffectReconciliationPath = fileURLToPath(new URL("../migrations/resource-effect-reconciliation.sql", import.meta.url));
+const structuredSyntheticProtectedInputPath = fileURLToPath(
+  new URL("../migrations/structured-synthetic-protected-input.sql", import.meta.url),
+);
+const segmentedFlowSuccessorCheckpointsPath = fileURLToPath(
+  new URL("../migrations/segmented-flow-successor-checkpoints.sql", import.meta.url),
+);
+const adaptiveCertificationProvenancePath = fileURLToPath(
+  new URL("../migrations/adaptive-certification-provenance.sql", import.meta.url),
+);
+const adaptiveOperationReconciliationPath = fileURLToPath(
+  new URL("../migrations/adaptive-operation-reconciliation.sql", import.meta.url),
+);
+const protectedOperationAuthorizationBindingPath = fileURLToPath(
+  new URL("../migrations/protected-operation-authorization-binding.sql", import.meta.url),
+);
+const runPraxisSessionLedgerPath = fileURLToPath(
+  new URL("../migrations/run-praxis-session-ledger.sql", import.meta.url),
+);
+const protectedLivePraxisSessionPath = fileURLToPath(
+  new URL("../migrations/protected-live-praxis-session.sql", import.meta.url),
+);
+const resourceEffectReconciliationPath = fileURLToPath(
+  new URL("../migrations/resource-effect-reconciliation.sql", import.meta.url),
+);
+const documentTransitionGapPath = fileURLToPath(
+  new URL("../migrations/20260816-231045_add_document_transition_gap.sql", import.meta.url),
+);
+
+const missionRecordingSelectionPath = fileURLToPath(
+  new URL("../migrations/mission-recording-selection.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -149,19 +172,36 @@ const missionFirstM1 = await readFile(missionFirstM1Path, "utf8");
 const missionAuthoringGroupedTurnsM2 = await readFile(missionAuthoringGroupedTurnsM2Path, "utf8");
 const protectedOperationStateMachine = await readFile(protectedOperationStateMachinePath, "utf8");
 const protectedOperationCompletion = await readFile(protectedOperationCompletionPath, "utf8");
-const protectedOperationAuthoritativeProjection = await readFile(protectedOperationAuthoritativeProjectionPath, "utf8");
+const protectedOperationAuthoritativeProjection = await readFile(
+  protectedOperationAuthoritativeProjectionPath,
+  "utf8",
+);
 const protectedResponseOutputStaging = await readFile(protectedResponseOutputStagingPath, "utf8");
 const protectedReadOnlyDispatch = await readFile(protectedReadOnlyDispatchPath, "utf8");
 const externalResourceBindings = await readFile(externalResourceBindingsPath, "utf8");
-const operationBoundSyntheticProtectedInputs = await readFile(operationBoundSyntheticProtectedInputsPath, "utf8");
-const structuredSyntheticProtectedInput = await readFile(structuredSyntheticProtectedInputPath, "utf8");
-const segmentedFlowSuccessorCheckpoints = await readFile(segmentedFlowSuccessorCheckpointsPath, "utf8");
+const operationBoundSyntheticProtectedInputs = await readFile(
+  operationBoundSyntheticProtectedInputsPath,
+  "utf8",
+);
+const structuredSyntheticProtectedInput = await readFile(
+  structuredSyntheticProtectedInputPath,
+  "utf8",
+);
+const segmentedFlowSuccessorCheckpoints = await readFile(
+  segmentedFlowSuccessorCheckpointsPath,
+  "utf8",
+);
 const adaptiveCertificationProvenance = await readFile(adaptiveCertificationProvenancePath, "utf8");
 const adaptiveOperationReconciliation = await readFile(adaptiveOperationReconciliationPath, "utf8");
-const protectedOperationAuthorizationBinding = await readFile(protectedOperationAuthorizationBindingPath, "utf8");
+const protectedOperationAuthorizationBinding = await readFile(
+  protectedOperationAuthorizationBindingPath,
+  "utf8",
+);
 const runPraxisSessionLedger = await readFile(runPraxisSessionLedgerPath, "utf8");
 const protectedLivePraxisSession = await readFile(protectedLivePraxisSessionPath, "utf8");
 const resourceEffectReconciliation = await readFile(resourceEffectReconciliationPath, "utf8");
+const documentTransitionGap = await readFile(documentTransitionGapPath, "utf8");
+const missionRecordingSelection = await readFile(missionRecordingSelectionPath, "utf8");
 const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
 
 const expandFoundation = (source: string) =>
@@ -201,28 +241,60 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "run-praxis-session-ledger.sql": runPraxisSessionLedger,
   "protected-live-praxis-session.sql": protectedLivePraxisSession,
   "resource-effect-reconciliation.sql": resourceEffectReconciliation,
+  "20260816-231045_add_document_transition_gap.sql": documentTransitionGap,
+  "mission-recording-selection.sql": missionRecordingSelection,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
-  const current = included.length === OPTIONAL_BASELINE_MIGRATIONS.length
-    && OPTIONAL_BASELINE_MIGRATIONS.every((migration) => included.includes(migration));
-  return expandFoundation(expandBaselineStage(
-    baselineSource,
-    optionalMigrationSources,
-    current ? included : included.filter((migration) => migration !== "resource-effect-reconciliation.sql"),
-  ));
+  const current =
+    included.length === OPTIONAL_BASELINE_MIGRATIONS.length &&
+    OPTIONAL_BASELINE_MIGRATIONS.every((migration) => included.includes(migration));
+  return expandFoundation(
+    expandBaselineStage(
+      baselineSource,
+      optionalMigrationSources,
+      current
+        ? included
+        : included.filter(
+            (migration) =>
+              migration !== "resource-effect-reconciliation.sql" &&
+              migration !== "20260816-231045_add_document_transition_gap.sql" &&
+              migration !== "mission-recording-selection.sql",
+          ),
+    ),
+  );
 };
 
 const baseline = stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS);
-const preAdaptiveOperationReconciliationFingerprint = createHash("sha256").update(
-  stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "adaptive-operation-reconciliation.sql")),
-).digest("hex");
-const preSegmentedFlowSuccessorCheckpointsFingerprint = createHash("sha256").update(
-  stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "segmented-flow-successor-checkpoints.sql" && name !== "adaptive-certification-provenance.sql")),
-).digest("hex");
-const preAdaptiveCertificationProvenanceFingerprint = createHash("sha256").update(
-  stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "adaptive-certification-provenance.sql")),
-).digest("hex");
+const preAdaptiveOperationReconciliationFingerprint = createHash("sha256")
+  .update(
+    stagedBaseline(
+      OPTIONAL_BASELINE_MIGRATIONS.filter(
+        (name) => name !== "adaptive-operation-reconciliation.sql",
+      ),
+    ),
+  )
+  .digest("hex");
+const preSegmentedFlowSuccessorCheckpointsFingerprint = createHash("sha256")
+  .update(
+    stagedBaseline(
+      OPTIONAL_BASELINE_MIGRATIONS.filter(
+        (name) =>
+          name !== "segmented-flow-successor-checkpoints.sql" &&
+          name !== "adaptive-certification-provenance.sql",
+      ),
+    ),
+  )
+  .digest("hex");
+const preAdaptiveCertificationProvenanceFingerprint = createHash("sha256")
+  .update(
+    stagedBaseline(
+      OPTIONAL_BASELINE_MIGRATIONS.filter(
+        (name) => name !== "adaptive-certification-provenance.sql",
+      ),
+    ),
+  )
+  .digest("hex");
 const preQualifiedDraftVersionFingerprint =
   "ab026810c7b0421eb118e16ffb746d1e080424c753c4cfac5bf8428f0f8dfe43";
 const preVerifiedAttestationFingerprint =
@@ -234,62 +306,154 @@ const preMissionFirstM1Baseline = stagedBaseline(
       name !== "mission-authoring-grouped-turns-m2.sql" &&
       name !== "protected-operation-authoritative-projection.sql" &&
       name !== "protected-response-output-staging.sql" &&
-      name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql",
+      name !== "protected-read-only-dispatch.sql" &&
+      name !== "external-resource-bindings.sql",
   ),
 );
 const preAdaptiveSessionsBaseline = stagedBaseline(
   OPTIONAL_BASELINE_MIGRATIONS.filter(
-    (name) => name !== "adaptive-sessions-m3.sql" && name !== "mission-authoring-grouped-turns-m2.sql" && name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql",
+    (name) =>
+      name !== "adaptive-sessions-m3.sql" &&
+      name !== "mission-authoring-grouped-turns-m2.sql" &&
+      name !== "protected-operation-authoritative-projection.sql" &&
+      name !== "protected-response-output-staging.sql" &&
+      name !== "protected-read-only-dispatch.sql" &&
+      name !== "external-resource-bindings.sql",
   ),
 );
 const preMissionAuthoringGroupedTurnsM2Baseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "mission-authoring-grouped-turns-m2.sql" && name !== "protected-operation-state-machine.sql" && name !== "protected-operation-completion.sql" && name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter(
+    (name) =>
+      name !== "mission-authoring-grouped-turns-m2.sql" &&
+      name !== "protected-operation-state-machine.sql" &&
+      name !== "protected-operation-completion.sql" &&
+      name !== "protected-operation-authoritative-projection.sql" &&
+      name !== "protected-response-output-staging.sql" &&
+      name !== "protected-read-only-dispatch.sql" &&
+      name !== "external-resource-bindings.sql",
+  ),
 );
 const preProtectedOperationStateMachineBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-operation-state-machine.sql" && name !== "protected-operation-completion.sql" && name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter(
+    (name) =>
+      name !== "protected-operation-state-machine.sql" &&
+      name !== "protected-operation-completion.sql" &&
+      name !== "protected-operation-authoritative-projection.sql" &&
+      name !== "protected-response-output-staging.sql" &&
+      name !== "protected-read-only-dispatch.sql" &&
+      name !== "external-resource-bindings.sql",
+  ),
 );
 const preProtectedOperationCompletionBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-operation-completion.sql" && name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter(
+    (name) =>
+      name !== "protected-operation-completion.sql" &&
+      name !== "protected-operation-authoritative-projection.sql" &&
+      name !== "protected-response-output-staging.sql" &&
+      name !== "protected-read-only-dispatch.sql" &&
+      name !== "external-resource-bindings.sql",
+  ),
 );
 const preProtectedOperationAuthoritativeProjectionBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-operation-authoritative-projection.sql" && name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter(
+    (name) =>
+      name !== "protected-operation-authoritative-projection.sql" &&
+      name !== "protected-response-output-staging.sql" &&
+      name !== "protected-read-only-dispatch.sql" &&
+      name !== "external-resource-bindings.sql",
+  ),
 );
 const preProtectedResponseOutputStagingBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-response-output-staging.sql" && name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter(
+    (name) =>
+      name !== "protected-response-output-staging.sql" &&
+      name !== "protected-read-only-dispatch.sql" &&
+      name !== "external-resource-bindings.sql",
+  ),
 );
 const preProtectedReadOnlyDispatchBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter(
+    (name) =>
+      name !== "protected-read-only-dispatch.sql" && name !== "external-resource-bindings.sql",
+  ),
 );
 const preExternalResourceBindingsBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "external-resource-bindings.sql" && name !== "operation-bound-synthetic-protected-inputs.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter(
+    (name) =>
+      name !== "external-resource-bindings.sql" &&
+      name !== "operation-bound-synthetic-protected-inputs.sql",
+  ),
 );
 const preOperationBoundSyntheticProtectedInputsBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "operation-bound-synthetic-protected-inputs.sql" && name !== "structured-synthetic-protected-input.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter(
+    (name) =>
+      name !== "operation-bound-synthetic-protected-inputs.sql" &&
+      name !== "structured-synthetic-protected-input.sql",
+  ),
 );
 const preStructuredSyntheticProtectedInputBaseline = stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "structured-synthetic-protected-input.sql"),
+  OPTIONAL_BASELINE_MIGRATIONS.filter(
+    (name) => name !== "structured-synthetic-protected-input.sql",
+  ),
 );
 
 const fingerprint = digest(baseline);
+
+const preDocumentTransitionGapBaseline = expandFoundation(
+  expandBaselineStage(
+    baselineSource,
+    optionalMigrationSources,
+    OPTIONAL_BASELINE_MIGRATIONS.filter(
+      (name) =>
+        name !== "20260816-231045_add_document_transition_gap.sql" &&
+        name !== "mission-recording-selection.sql",
+    ),
+  ),
+);
+const preDocumentTransitionGapFingerprint = digest(preDocumentTransitionGapBaseline);
+
+const preMissionRecordingSelectionBaseline = expandFoundation(
+  expandBaselineStage(
+    baselineSource,
+    optionalMigrationSources,
+    OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "mission-recording-selection.sql"),
+  ),
+);
+
+const preMissionRecordingSelectionFingerprint = digest(preMissionRecordingSelectionBaseline);
 const preMissionFirstM1Fingerprint = digest(preMissionFirstM1Baseline);
 const preAdaptiveSessionsFingerprint = digest(preAdaptiveSessionsBaseline);
 const preMissionAuthoringGroupedTurnsM2Fingerprint = digest(
   preMissionAuthoringGroupedTurnsM2Baseline,
 );
-const preProtectedOperationStateMachineFingerprint = digest(preProtectedOperationStateMachineBaseline);
+const preProtectedOperationStateMachineFingerprint = digest(
+  preProtectedOperationStateMachineBaseline,
+);
 const preProtectedOperationCompletionFingerprint = digest(preProtectedOperationCompletionBaseline);
-const preProtectedOperationAuthoritativeProjectionFingerprint = digest(preProtectedOperationAuthoritativeProjectionBaseline);
-const preProtectedResponseOutputStagingFingerprint = digest(preProtectedResponseOutputStagingBaseline);
+const preProtectedOperationAuthoritativeProjectionFingerprint = digest(
+  preProtectedOperationAuthoritativeProjectionBaseline,
+);
+const preProtectedResponseOutputStagingFingerprint = digest(
+  preProtectedResponseOutputStagingBaseline,
+);
 const preProtectedReadOnlyDispatchFingerprint = digest(preProtectedReadOnlyDispatchBaseline);
 const preExternalResourceBindingsFingerprint = digest(preExternalResourceBindingsBaseline);
-const preOperationBoundSyntheticProtectedInputsFingerprint = digest(preOperationBoundSyntheticProtectedInputsBaseline);
-const preStructuredSyntheticProtectedInputFingerprint = digest(preStructuredSyntheticProtectedInputBaseline);
-const preProtectedLivePraxisSessionFingerprint = digest(stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-live-praxis-session.sql"),
-));
-const preResourceEffectReconciliationFingerprint = digest(stagedBaseline(
-  OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "resource-effect-reconciliation.sql"),
-));
+const preOperationBoundSyntheticProtectedInputsFingerprint = digest(
+  preOperationBoundSyntheticProtectedInputsBaseline,
+);
+const preStructuredSyntheticProtectedInputFingerprint = digest(
+  preStructuredSyntheticProtectedInputBaseline,
+);
+const preProtectedLivePraxisSessionFingerprint = digest(
+  stagedBaseline(
+    OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "protected-live-praxis-session.sql"),
+  ),
+);
+const preResourceEffectReconciliationFingerprint = digest(
+  stagedBaseline(
+    OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "resource-effect-reconciliation.sql"),
+  ),
+);
 
 const previousVeilFullFingerprint =
   "8c0e5ae0ae72f9a163189abe903b317e38aacf6b1674f3441b62dd7129b48c6a";
@@ -352,109 +516,251 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preResourceEffectReconciliationFingerprint) {
+    if (installedFingerprint === preDocumentTransitionGapFingerprint) {
+      const client = await pool.connect();
+
+      try {
+        await client.query("BEGIN");
+
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-document-transition-gap-recording-selection'))",
+        );
+
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+
+        await client.query(
+          `UPDATE schema_baseline
+           SET schema_fingerprint=$1,
+               applied_at=now()
+           WHERE singleton=true`,
+          [fingerprint],
+        );
+
+        await client.query("COMMIT");
+
+        process.stdout.write(
+          `Applied document transition gap + Mission recording selection ${fingerprint}\n`,
+        );
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preMissionRecordingSelectionFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-resource-effect-reconciliation'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-mission-recording-selection'))",
+        );
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline
+           SET schema_fingerprint=$1,applied_at=now()
+           WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied Mission recording selection ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preResourceEffectReconciliationFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-resource-effect-reconciliation'))",
+        );
         await client.query(resourceEffectReconciliation);
-        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
         await client.query("COMMIT");
         process.stdout.write(`Applied resource-effect reconciliation ${fingerprint}\n`);
-      } catch (error) { await client.query("ROLLBACK"); throw error; }
-      finally { client.release(); }
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     } else if (installedFingerprint === preProtectedLivePraxisSessionFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-protected-live-praxis-session'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-protected-live-praxis-session'))",
+        );
         await client.query(protectedLivePraxisSession);
         await client.query(resourceEffectReconciliation);
-        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
         await client.query("COMMIT");
         process.stdout.write(`Applied protected live Praxis session ${fingerprint}\n`);
-      } catch (error) { await client.query("ROLLBACK"); throw error; }
-      finally { client.release(); }
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     } else if (installedFingerprint === preAdaptiveOperationReconciliationFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-operation-reconciliation'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-operation-reconciliation'))",
+        );
         await client.query(adaptiveOperationReconciliation);
         await client.query(protectedOperationAuthorizationBinding);
         await client.query(runPraxisSessionLedger);
         await client.query(resourceEffectReconciliation);
-        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
         await client.query("COMMIT");
         process.stdout.write(`Applied adaptive operation reconciliation ${fingerprint}\n`);
-      } catch (error) { await client.query("ROLLBACK"); throw error; }
-      finally { client.release(); }
-    } else if ([preQualifiedDraftVersionFingerprint, preVerifiedAttestationFingerprint].includes(installedFingerprint)) {
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (
+      [preQualifiedDraftVersionFingerprint, preVerifiedAttestationFingerprint].includes(
+        installedFingerprint,
+      )
+    ) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-certification-provenance'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-certification-provenance'))",
+        );
         await client.query(adaptiveCertificationProvenance);
         await client.query(adaptiveOperationReconciliation);
         await client.query(protectedOperationAuthorizationBinding);
         await client.query(runPraxisSessionLedger);
         await client.query(resourceEffectReconciliation);
-        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
         await client.query("COMMIT");
         process.stdout.write(`Applied qualified draft-version provenance ${fingerprint}\n`);
-      } catch (error) { await client.query("ROLLBACK"); throw error; }
-      finally { client.release(); }
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     } else if (installedFingerprint === preAdaptiveCertificationProvenanceFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-certification-provenance'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-certification-provenance'))",
+        );
         await client.query(adaptiveCertificationProvenance);
         await client.query(adaptiveOperationReconciliation);
         await client.query(protectedOperationAuthorizationBinding);
         await client.query(runPraxisSessionLedger);
         await client.query(resourceEffectReconciliation);
-        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
         await client.query("COMMIT");
         process.stdout.write(`Applied adaptive certification provenance ${fingerprint}\n`);
-      } catch (error) { await client.query("ROLLBACK"); throw error; }
-      finally { client.release(); }
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     } else if (installedFingerprint === preSegmentedFlowSuccessorCheckpointsFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-segmented-flow-successor-checkpoints'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-segmented-flow-successor-checkpoints'))",
+        );
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
         await client.query(adaptiveOperationReconciliation);
         await client.query(protectedOperationAuthorizationBinding);
         await client.query(runPraxisSessionLedger);
         await client.query(resourceEffectReconciliation);
-        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
         await client.query("COMMIT");
         process.stdout.write(`Applied segmented Flow successor checkpoints ${fingerprint}\n`);
-      } catch (error) { await client.query("ROLLBACK"); throw error; }
-      finally { client.release(); }
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     } else if (installedFingerprint === preStructuredSyntheticProtectedInputFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-structured-synthetic-protected-input'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-structured-synthetic-protected-input'))",
+        );
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
-        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
         await client.query("COMMIT");
         process.stdout.write(`Applied structured synthetic protected input ${fingerprint}\n`);
-      } catch (error) { await client.query("ROLLBACK"); throw error; }
-      finally { client.release(); }
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     } else if (installedFingerprint === preOperationBoundSyntheticProtectedInputsFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-operation-bound-synthetic-protected-inputs'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-operation-bound-synthetic-protected-inputs'))",
+        );
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
-        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
         await client.query("COMMIT");
         process.stdout.write(`Applied operation-bound synthetic protected inputs ${fingerprint}\n`);
       } catch (error) {
@@ -467,12 +773,19 @@ try {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-external-resource-bindings'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-external-resource-bindings'))",
+        );
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
-        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
         await client.query("COMMIT");
         process.stdout.write(`Applied external resource bindings ${fingerprint}\n`);
       } catch (error) {
@@ -485,13 +798,20 @@ try {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-protected-read-only-dispatch'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-protected-read-only-dispatch'))",
+        );
         await client.query(protectedReadOnlyDispatch);
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
-        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
         await client.query("COMMIT");
         process.stdout.write(`Applied protected read-only dispatch ${fingerprint}\n`);
       } catch (error) {
@@ -504,14 +824,21 @@ try {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-protected-response-output-staging'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-protected-response-output-staging'))",
+        );
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
         await client.query(externalResourceBindings);
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
-        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
         await client.query("COMMIT");
         process.stdout.write(`Applied protected response output staging ${fingerprint}\n`);
       } catch (error) {
@@ -524,7 +851,9 @@ try {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-protected-operation-authoritative-projection'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-protected-operation-authoritative-projection'))",
+        );
         await client.query(protectedOperationAuthoritativeProjection);
         await client.query(protectedResponseOutputStaging);
         await client.query(protectedReadOnlyDispatch);
@@ -532,9 +861,16 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
-        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
         await client.query("COMMIT");
-        process.stdout.write(`Applied protected operation authoritative projection ${fingerprint}\n`);
+        process.stdout.write(
+          `Applied protected operation authoritative projection ${fingerprint}\n`,
+        );
       } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -545,7 +881,9 @@ try {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-protected-operation-completion'))");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-protected-operation-completion'))",
+        );
         await client.query(protectedOperationCompletion);
         await client.query(protectedOperationAuthoritativeProjection);
         await client.query(protectedResponseOutputStaging);
@@ -554,7 +892,12 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
-        await client.query(`UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`, [fingerprint]);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
         await client.query("COMMIT");
         process.stdout.write(`Applied protected operation completion ${fingerprint}\n`);
       } catch (error) {
@@ -579,6 +922,8 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -609,6 +954,8 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -640,6 +987,8 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -657,9 +1006,7 @@ try {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query(
-          "SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-sessions-m3'))",
-        );
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-adaptive-sessions-m3'))");
         await client.query(adaptiveSessions);
         await client.query(missionFirstM1);
         await client.query(missionAuthoringGroupedTurnsM2);
@@ -672,6 +1019,8 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -719,6 +1068,8 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -772,6 +1123,8 @@ try {
         await client.query(operationBoundSyntheticProtectedInputs);
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
         await client.query(
           `UPDATE schema_baseline
            SET schema_fingerprint=$1,applied_at=now()
@@ -874,6 +1227,8 @@ try {
         await client.query(structuredSyntheticProtectedInput);
         await client.query(segmentedFlowSuccessorCheckpointsUpgrade);
 
+        await client.query(documentTransitionGap);
+        await client.query(missionRecordingSelection);
         await client.query(
           `UPDATE schema_baseline
            SET schema_fingerprint=$1,

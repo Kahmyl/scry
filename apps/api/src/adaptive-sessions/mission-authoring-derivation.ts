@@ -173,7 +173,11 @@ export function deriveMissionAuthoringTarget(
       ...(text ? { expectedText: text } : {}),
     },
     scope: target.scope
-      ? { kind: target.scope.kind, ...(target.scope.name ? { name: target.scope.name } : {}) }
+      ? {
+          kind: target.scope.kind,
+          ...(target.scope.name ? { name: target.scope.name } : {}),
+          ...(target.scope.direct !== undefined ? { direct: target.scope.direct } : {}),
+        }
       : { kind: "page" },
     relations: [],
     prohibited: ["hidden", "disabled"],

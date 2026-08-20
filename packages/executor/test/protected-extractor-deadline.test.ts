@@ -162,6 +162,27 @@ describe("protected acquisition subordinate deadline ownership", () => {
     ]));
   });
 
+  it("does not reserve a network retry budget when protected network is not an eligible method", async () => {
+    const candidate = locator({
+      textContent: vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        return "late-but-valid-secret";
+      }),
+    });
+    state.resolveTarget = async () => ({ locator: candidate });
+
+    const result = await acquireValue(page as never, acquisition(["text_content"]), 200);
+
+    expect(result).toMatchObject({
+      value: "late-but-valid-secret",
+      result: { adapter: "text_content" },
+    });
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ method: "text_content" }),
+    ]));
+    expect(result.diagnostics[0]?.lastFailureCode).toBeUndefined();
+  });
+
   it("terminates boundedly with method-specific diagnostics when network and fallback never settle", async () => {
     state.resolveTarget = async () => never();
     const unhandled: unknown[] = [];

@@ -10,7 +10,6 @@ import { registerActOnProtectedRecoveryTool } from "./act-on-protected-recovery.
 import { registerAcceptObjectiveEvidenceTool } from "./accept-objective-evidence.tool.js";
 import { registerClassifyRunTool } from "./classify-run.tool.js";
 import { registerSetMissionResumePointerTool } from "./set-mission-resume-pointer.tool.js";
-import { registerPublishMissionReportTool } from "./publish-mission-report.tool.js";
 import { registerAgentDirectedRunTools } from "./agent-directed-run.tool.js";
 
 export function registerRunsTools(server: McpServer, client: ScryApiClient) {
@@ -24,5 +23,4 @@ export function registerRunsTools(server: McpServer, client: ScryApiClient) {
   registerAcceptObjectiveEvidenceTool(server, client);
   registerClassifyRunTool(server, client);
   registerSetMissionResumePointerTool(server, client);
-  registerPublishMissionReportTool(server, client);
 }

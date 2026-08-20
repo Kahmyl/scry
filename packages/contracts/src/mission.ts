@@ -72,44 +72,73 @@ const humanFulfillmentPathBase = {
   humanAction: z.string().trim().min(1).max(1_000),
   result: z.string().trim().min(1).max(1_000),
   availableCapabilities: z.array(missionContinuationCapabilitySchema).min(1).max(10),
-  continuation: z.object({
-    sameMission: z.literal(true),
-    sameObjective: z.literal(true),
-    replacementMissionRequired: z.literal(false),
-    resumeWith: z.literal("resume_mission"),
-  }).strict(),
+  continuation: z
+    .object({
+      sameMission: z.literal(true),
+      sameObjective: z.literal(true),
+      replacementMissionRequired: z.literal(false),
+      resumeWith: z.literal("resume_mission"),
+    })
+    .strict(),
 };
 export const humanFulfillmentPathSchema = z.discriminatedUnion("kind", [
-  z.object({ ...humanFulfillmentPathBase, kind: z.literal("dashboard_managed"),
-    agentExposure: z.literal("none"),
-    dashboardPath: z.array(z.string().trim().min(1).max(100)).min(1).max(10),
-  }).strict(),
-  z.object({ ...humanFulfillmentPathBase, kind: z.literal("agent_assisted"),
-    agentExposure: z.literal("protected_plaintext_before_encrypted_storage"),
-    availableCapabilities: z.array(missionContinuationCapabilitySchema).min(1).max(10)
-      .refine((items) => items.includes("create_project_credential"),
-        "Agent-assisted credential input requires create_project_credential"),
-  }).strict(),
-  z.object({ ...humanFulfillmentPathBase, kind: z.literal("approval"),
-    agentExposure: z.literal("authorization_only"),
-  }).strict(),
-  z.object({ ...humanFulfillmentPathBase, kind: z.literal("selection"),
-    agentExposure: z.literal("public_input"),
-  }).strict(),
-  z.object({ ...humanFulfillmentPathBase, kind: z.literal("public_input"),
-    agentExposure: z.literal("public_input"),
-  }).strict(),
+  z
+    .object({
+      ...humanFulfillmentPathBase,
+      kind: z.literal("dashboard_managed"),
+      agentExposure: z.literal("none"),
+      dashboardPath: z.array(z.string().trim().min(1).max(100)).min(1).max(10),
+    })
+    .strict(),
+  z
+    .object({
+      ...humanFulfillmentPathBase,
+      kind: z.literal("agent_assisted"),
+      agentExposure: z.literal("protected_plaintext_before_encrypted_storage"),
+      availableCapabilities: z
+        .array(missionContinuationCapabilitySchema)
+        .min(1)
+        .max(10)
+        .refine(
+          (items) => items.includes("create_project_credential"),
+          "Agent-assisted credential input requires create_project_credential",
+        ),
+    })
+    .strict(),
+  z
+    .object({
+      ...humanFulfillmentPathBase,
+      kind: z.literal("approval"),
+      agentExposure: z.literal("authorization_only"),
+    })
+    .strict(),
+  z
+    .object({
+      ...humanFulfillmentPathBase,
+      kind: z.literal("selection"),
+      agentExposure: z.literal("public_input"),
+    })
+    .strict(),
+  z
+    .object({
+      ...humanFulfillmentPathBase,
+      kind: z.literal("public_input"),
+      agentExposure: z.literal("public_input"),
+    })
+    .strict(),
 ]);
-export const awaitingUserLifecycleSchema = z.object({
-  terminal: z.literal(false),
-  taskStillActive: z.literal(true),
-  sameMissionResumable: z.literal(true),
-  sameObjectiveResumable: z.literal(true),
-  shouldFinalize: z.literal(false),
-  shouldPublishFinalReport: z.literal(false),
-  shouldCreateReplacementMission: z.literal(false),
-  requiredNextStep: z.literal("fulfill_human_prerequisite_then_resume"),
-}).strict();
+export const awaitingUserLifecycleSchema = z
+  .object({
+    terminal: z.literal(false),
+    taskStillActive: z.literal(true),
+    sameMissionResumable: z.literal(true),
+    sameObjectiveResumable: z.literal(true),
+    shouldFinalize: z.literal(false),
+    shouldPublishFinalReport: z.literal(false),
+    shouldCreateReplacementMission: z.literal(false),
+    requiredNextStep: z.literal("fulfill_human_prerequisite_then_resume"),
+  })
+  .strict();
 export const missionExternalInputSchema = z
   .object({
     condition: externalInputConditionSchema,
@@ -178,6 +207,7 @@ export const missionActivityTypeSchema = z.enum([
   "evidence_superseded",
   "evidence_invalidated",
   "objective_completed",
+  "recording_selection_updated",
   "report_published",
 ]);
 
@@ -231,6 +261,27 @@ export const objectiveCriterionSchema = z
   })
   .strict();
 
+export const missionUserChoiceSourceSchema = z.enum([
+  "current_request_explicit",
+  "followup_explicit_choice",
+]);
+
+export const missionContinuationAuthoritySchema = z
+  .object({
+    confirmedUserAuthorized: z.literal(true),
+    selection: z.literal("continue_existing_mission"),
+    source: missionUserChoiceSourceSchema,
+  })
+  .strict();
+
+export const missionDistinctWorkAuthoritySchema = z
+  .object({
+    confirmedUserAuthorized: z.literal(true),
+    selection: z.literal("start_distinct_mission"),
+    source: missionUserChoiceSourceSchema,
+  })
+  .strict();
+
 export const createMissionSchema = z
   .object({
     title: nameSchema,
@@ -240,8 +291,25 @@ export const createMissionSchema = z
     connectionId: z.string().trim().min(1).max(500).optional(),
     idempotencyKey: missionIdempotencyKeySchema,
     distinctReason: z.string().trim().min(1).max(2_000).optional(),
+    distinctAuthority: missionDistinctWorkAuthoritySchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.distinctReason && !value.distinctAuthority)
+      context.addIssue({
+        code: "custom",
+        path: ["distinctAuthority"],
+        message:
+          "Starting distinct work after a Mission collision requires explicit current-user authority.",
+      });
+
+    if (!value.distinctReason && value.distinctAuthority)
+      context.addIssue({
+        code: "custom",
+        path: ["distinctAuthority"],
+        message: "Distinct-work authority may only accompany an intentional distinctReason.",
+      });
+  });
 
 export const updateMissionSchema = missionContextSchema
   .extend({
@@ -260,6 +328,7 @@ export const startAgentSessionSchema = z
     instructionSnapshot: z.string().trim().min(1).max(20_000),
     connectionId: z.string().trim().min(1).max(500).optional(),
     idempotencyKey: missionIdempotencyKeySchema,
+    continuationAuthority: missionContinuationAuthoritySchema,
   })
   .strict();
 
@@ -268,37 +337,43 @@ export const endAgentSessionSchema = z
   .strict();
 
 export const finalizeAgentWorkSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("terminal_objective"),
-    missionId: uuidSchema,
-    objectiveId: uuidSchema,
-    agentSessionId: uuidSchema,
-    objectiveStatus: objectiveStatusSchema.extract(["passed", "failed", "blocked", "skipped"]),
-    conclusion: z.string().trim().min(1).max(5_000),
-    sessionStatus: agentSessionStatusSchema.extract(["completed", "failed"]),
-    expectedMissionRevision: z.number().int().nonnegative(),
-    idempotencyKey: missionIdempotencyKeySchema,
-  }).strict(),
-  z.object({
-    kind: z.literal("await_user"),
-    missionId: uuidSchema,
-    objectiveId: uuidSchema,
-    agentSessionId: uuidSchema,
-    pointer: missionResumePointerSchema,
-    expectedMissionRevision: z.number().int().nonnegative(),
-    idempotencyKey: missionIdempotencyKeySchema,
-  }).strict(),
+  z
+    .object({
+      kind: z.literal("terminal_objective"),
+      missionId: uuidSchema,
+      objectiveId: uuidSchema,
+      agentSessionId: uuidSchema,
+      objectiveStatus: objectiveStatusSchema.extract(["passed", "failed", "blocked", "skipped"]),
+      conclusion: z.string().trim().min(1).max(5_000),
+      sessionStatus: agentSessionStatusSchema.extract(["completed", "failed"]),
+      expectedMissionRevision: z.number().int().nonnegative(),
+      idempotencyKey: missionIdempotencyKeySchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("await_user"),
+      missionId: uuidSchema,
+      objectiveId: uuidSchema,
+      agentSessionId: uuidSchema,
+      pointer: missionResumePointerSchema,
+      expectedMissionRevision: z.number().int().nonnegative(),
+      idempotencyKey: missionIdempotencyKeySchema,
+    })
+    .strict(),
 ]);
 
-export const finalizedAgentWorkSchema = z.object({
-  replayed: z.boolean(),
-  missionId: uuidSchema,
-  objectiveId: uuidSchema,
-  missionStatus: missionStatusSchema,
-  objectiveStatus: objectiveStatusSchema,
-  agentSessionStatus: agentSessionStatusSchema.exclude(["active"]),
-  awaitingUser: awaitingUserLifecycleSchema.optional(),
-}).strict();
+export const finalizedAgentWorkSchema = z
+  .object({
+    replayed: z.boolean(),
+    missionId: uuidSchema,
+    objectiveId: uuidSchema,
+    missionStatus: missionStatusSchema,
+    objectiveStatus: objectiveStatusSchema,
+    agentSessionStatus: agentSessionStatusSchema.exclude(["active"]),
+    awaitingUser: awaitingUserLifecycleSchema.optional(),
+  })
+  .strict();
 
 export const createObjectiveSchema = missionContextSchema
   .extend({
@@ -364,12 +439,29 @@ export const createActivityRelationSchema = missionContextSchema
   })
   .strict();
 
+export const setMissionRecordingSelectionSchema = missionContextSchema
+  .extend({
+    expectedMissionRevision: z.number().int().nonnegative(),
+    orderedRunIds: z.array(uuidSchema).max(500),
+    idempotencyKey: missionIdempotencyKeySchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (new Set(value.orderedRunIds).size !== value.orderedRunIds.length)
+      context.addIssue({
+        code: "custom",
+        path: ["orderedRunIds"],
+        message: "Recording selection cannot contain duplicate Run IDs",
+      });
+  });
+
 export const publishMissionReportSchema = missionContextSchema
   .extend({
     overallConclusion: z.string().trim().min(1).max(20_000),
     journeySummary: z.array(z.string().trim().min(1).max(2_000)).min(1).max(500),
     remainingActions: z.array(z.string().trim().min(1).max(2_000)).max(100).default([]),
     expectedRevision: z.number().int().nonnegative(),
+    idempotencyKey: missionIdempotencyKeySchema,
   })
   .strict();
 
@@ -395,4 +487,5 @@ export type AttachFlowInput = z.infer<typeof attachFlowSchema>;
 export type ClassifyRunInput = z.infer<typeof classifyRunSchema>;
 export type AcceptEvidenceInput = z.infer<typeof acceptEvidenceSchema>;
 export type CreateActivityRelationInput = z.infer<typeof createActivityRelationSchema>;
+export type SetMissionRecordingSelectionInput = z.infer<typeof setMissionRecordingSelectionSchema>;
 export type PublishMissionReportInput = z.infer<typeof publishMissionReportSchema>;

@@ -35,7 +35,7 @@ export function registerAuthorizeEnvironmentCredentialsTool(
     {
       title: "Authorize environment credentials",
       description:
-        "After a user-managed or agent-assisted credential exists, explicitly authorize its opaque reference for an environment, then clear/advance the durable prerequisite and resume the same Mission. This never exposes credential values and never infers authorization from names or Flow contents.",
+        "Authorize explicitly selected opaque Project credential references for an environment and admit only those selected references into matching non-terminal Praxis sessions for this exact Mission/Objective/agent-session context. Use this only after Mission credential-selection authority already exists. If list_project_credentials for the selected missionId reports usedInMission=false or null, the user must explicitly choose that existing credential before this call. usedInMission=true may be reused when active and applicable. Environment secret_refs, credentials selected for another Mission, or semantic name matches are not authority. User-managed and agent-assisted credentials remain opaque here; this never exposes credential values.",
       inputSchema: {
         ...objectiveContext,
         projectId: uuid,
@@ -55,6 +55,13 @@ export function registerAuthorizeEnvironmentCredentialsTool(
       >(`/projects/${projectId}/environments`);
       const environment = environments.find((candidate) => candidate.id === environmentId);
       if (!environment) throw new Error("Environment not found in the selected project.");
+
+      const {
+        externalResourcePresentationAuthorities: serverManagedPresentationAuthorities,
+        ...writablePolicy
+      } = environment.policy;
+      void serverManagedPresentationAuthorities;
+
       const secretRefs = [...new Set([...environment.secretRefs, ...credentialIds])];
       const updated = await client.patch<{
         id: string;
@@ -62,17 +69,19 @@ export function registerAuthorizeEnvironmentCredentialsTool(
         name: string;
         baseOrigin: string;
         secretRefs: string[];
+        admittedPraxisSessionCount: number;
       }>(`/environments/${environmentId}`, {
         baseOrigin: environment.baseOrigin,
-        policy: environment.policy,
+        policy: writablePolicy,
         missionId,
         objectiveId,
         agentSessionId,
+        missionCredentialSelectionRefs: credentialIds,
         secretRefs,
       });
       return result(
         { environment: updated },
-        `Authorized ${credentialIds.length} credential reference(s) for the environment.`,
+        `Authorized ${credentialIds.length} selected credential reference(s) for the environment and admitted them into ${updated.admittedPraxisSessionCount ?? 0} matching Praxis session(s).`,
       );
     },
   );

@@ -124,6 +124,19 @@ export const finalizeAgentDirectedRunSchema = z
   .object({
     praxisSessionId: uuidSchema,
     outcome: z.enum(["passed", "failed", "cancelled"]),
+    outcomeClassification: z
+      .enum([
+        "assertion_failure",
+        "readiness_timeout",
+        "transient_observation",
+        "inconclusive_plan",
+        "confirmed_product_failure",
+        "non_reproduced_failure",
+        "infrastructure_failure",
+        "policy_failure",
+        "execution_timeout",
+      ])
+      .optional(),
     reason: z.string().trim().min(1).max(2_000),
     idempotencyKey: idempotencyKeySchema,
   })

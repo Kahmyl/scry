@@ -169,9 +169,12 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
       diagnostic.firstAttemptedAt ??= new Date(started).toISOString();
       try {
         const remainingMs = Math.max(1, deadline - Date.now());
+        const hasEligibleNetworkFallback = methods.includes("protected_network_value") &&
+          method !== "protected_network_value" &&
+          !exhaustedMethods.has("protected_network_value");
         const ownershipMs = acquisitionAttemptOwnershipMs(
           remainingMs,
-          method !== "protected_network_value" && !exhaustedMethods.has("protected_network_value"),
+          hasEligibleNetworkFallback,
         );
         const acquired = await ownAcquisitionAttempt(
           () => attemptAcquisitionMethod(page, acquisition, targetVariants, method, diagnostic),

@@ -119,11 +119,29 @@ async function semanticIdentityForLocator(locator: Locator) {
     const name = sensitive ? safeProtectedLabel || "identity suppressed" :
       element.getAttribute("aria-label") || label || element.getAttribute("title") ||
       element.getAttribute("placeholder") || html.innerText || element.textContent || "";
-    const boundary = element.closest("[role=dialog],[role=menu],[role=region],nav,section,form,main");
-    const heading = boundary?.querySelector("h1,h2,h3,h4,h5,h6");
+    const boundary = element.closest(
+      "dialog,[role=dialog],[role=menu],[role=region],[role=form],nav,section,article,form,main,aside",
+    );
+    const heading = boundary
+      ? Array.from(boundary.querySelectorAll("h1,h2,h3,h4,h5,h6"))
+          .find((candidate) => candidate.closest(
+            "dialog,[role=dialog],[role=menu],[role=region],[role=form],nav,section,article,form,main,aside",
+          ) === boundary)
+      : undefined;
     const groupSensitive = Boolean(boundary?.closest('[data-scry-redacted="true"]') ||
       boundary?.querySelector('[data-scry-redacted="true"],input[type=password],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]'));
     const group = groupSensitive ? "" : boundary?.getAttribute("aria-label") || heading?.textContent || "";
+    const boundaryRole = boundary?.getAttribute("role") ?? "";
+    const boundaryTag = boundary?.tagName.toLowerCase() ?? "";
+    const boundaryKind = boundaryRole === "dialog" || boundaryTag === "dialog"
+      ? "dialog"
+      : boundaryRole === "form" || boundaryTag === "form"
+        ? "form"
+        : boundaryTag === "section" || boundaryTag === "article"
+          ? "section"
+          : boundaryRole === "region" || ["nav", "main", "aside"].includes(boundaryTag)
+            ? "region"
+            : undefined;
     const autocomplete = tag === "input" ? input.autocomplete.toLowerCase() : "";
     const semanticPurpose = sensitive ? autocomplete === "one-time-code" ? "one_time_code" :
       autocomplete === "current-password" ? "current_password" : autocomplete === "new-password" ?
@@ -135,13 +153,16 @@ async function semanticIdentityForLocator(locator: Locator) {
       ...(["checkbox", "radio", "switch"].includes(role) ? ["toggle"] : []),
       ...(tag === "select" || ["combobox", "listbox"].includes(role) ? ["select_option"] : []),
     ].sort();
-    return { role, name, group, capabilities, semanticPurpose, valueProtected: sensitive,
+    return { role, name, group, boundaryKind, capabilities, semanticPurpose, valueProtected: sensitive,
       disabled: Boolean(("disabled" in input && input.disabled) || element.getAttribute("aria-disabled") === "true") };
   });
   return JSON.stringify({
     role: cleanContextText(identity.role, 40),
     name: cleanContextText(identity.name, 160),
     group: cleanContextText(identity.group, 120),
+    boundary: identity.boundaryKind
+      ? { kind: identity.boundaryKind, ...(cleanContextText(identity.group, 120) ? { name: cleanContextText(identity.group, 120) } : {}) }
+      : undefined,
     capabilities: identity.capabilities,
     semanticPurpose: identity.semanticPurpose,
     valueProtected: identity.valueProtected,
@@ -214,6 +235,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       role: string;
       name: string;
       group?: string;
+      boundary?: { kind: "dialog" | "form" | "section" | "region"; name?: string };
       capabilities: string[];
       selected?: boolean;
       expanded?: boolean;
@@ -300,9 +322,14 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
           ).slice(0, 500);
       if (!name) continue;
       const boundary = element.closest(
-        "[role=dialog],[role=menu],[role=region],nav,section,form,main",
+        "dialog,[role=dialog],[role=menu],[role=region],[role=form],nav,section,article,form,main,aside",
       );
-      const heading = boundary?.querySelector("h1,h2,h3,h4,h5,h6");
+      const heading = boundary
+        ? Array.from(boundary.querySelectorAll("h1,h2,h3,h4,h5,h6"))
+            .find((candidate) => candidate.closest(
+              "dialog,[role=dialog],[role=menu],[role=region],[role=form],nav,section,article,form,main,aside",
+            ) === boundary)
+        : undefined;
       const groupSensitive = Boolean(
         boundary?.closest('[data-scry-redacted="true"]') ||
         boundary?.querySelector(
@@ -312,6 +339,17 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       const group = groupSensitive
         ? ""
         : (boundary?.getAttribute("aria-label") || heading?.textContent || "").slice(0, 500);
+      const boundaryRole = boundary?.getAttribute("role") ?? "";
+      const boundaryTag = boundary?.tagName.toLowerCase() ?? "";
+      const boundaryKind = boundaryRole === "dialog" || boundaryTag === "dialog"
+        ? "dialog"
+        : boundaryRole === "form" || boundaryTag === "form"
+          ? "form"
+          : boundaryTag === "section" || boundaryTag === "article"
+            ? "section"
+            : boundaryRole === "region" || ["nav", "main", "aside"].includes(boundaryTag)
+              ? "region"
+              : undefined;
       const autocomplete = tag === "input" ? input.autocomplete.toLowerCase() : "";
       const semanticPurpose = sensitive
         ? autocomplete === "one-time-code"
@@ -387,6 +425,9 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         name,
         ...(semanticPurpose ? { semanticPurpose, valueProtected: true } : {}),
         ...(group ? { group } : {}),
+        ...(boundaryKind
+          ? { boundary: { kind: boundaryKind, ...(group ? { name: group } : {}) } }
+          : {}),
         capabilities,
         ...(inputSources ? { inputSources } : {}),
         ...(selected === undefined ? {} : { selected }),
@@ -456,7 +497,8 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
     if (!role || !name) continue;
     const locator = page.locator(CONTEXT_CONTROL_SELECTOR).nth(control.candidateIndex);
     const semanticIdentity = JSON.stringify({
-      role, name, group, capabilities: [...control.capabilities].sort(),
+      role, name, group, boundary: control.boundary ?? null,
+      capabilities: [...control.capabilities].sort(),
       semanticPurpose: control.semanticPurpose ?? null,
       valueProtected: Boolean(control.valueProtected),
       disabled: Boolean(control.disabled),

@@ -175,12 +175,43 @@ export class RunAttemptRepository {
         [attemptId, claimToken, state, error ?? null],
       );
       if (!attempt.rowCount) throw new ConflictException("Attempt claim was lost");
-      const structural = await client.query<{ structural: boolean }>(
-        `SELECT EXISTS(SELECT 1 FROM grounding_diagnostics WHERE run_id=$1 AND failure_code IN ('TARGET_AMBIGUOUS','NO_CAPABILITY_COMPATIBLE_CONTROL','INSUFFICIENT_EVIDENCE','GROUNDING_DRIFT_REQUIRES_CALIBRATION','TARGET_SCOPE_INVALID','TARGET_CHANGED_BEFORE_ACTION')) structural`,
+      const structural = await client.query<{
+        structural: boolean;
+        executionModel: string | null;
+      }>(
+        `SELECT
+           EXISTS(
+             SELECT 1
+             FROM grounding_diagnostics
+             WHERE run_id=$1
+               AND failure_code IN (
+                 'TARGET_AMBIGUOUS',
+                 'NO_CAPABILITY_COMPATIBLE_CONTROL',
+                 'INSUFFICIENT_EVIDENCE',
+                 'GROUNDING_DRIFT_REQUIRES_CALIBRATION',
+                 'TARGET_SCOPE_INVALID',
+                 'TARGET_CHANGED_BEFORE_ACTION'
+               )
+           ) AS structural,
+           (
+             SELECT execution_snapshot->>'executionModel'
+             FROM runs
+             WHERE id=$1
+           ) AS "executionModel"`,
         [runId],
       );
-      const resultClassification =
-        state === "passed" && outcomeClassification === "passed"
+
+      const agentDirected = structural.rows[0]!.executionModel === "agent_directed_v1";
+
+      const resultClassification = agentDirected
+        ? state === "passed" && outcomeClassification === "passed"
+          ? "application_pass"
+          : state === "cancelled"
+            ? "cancelled"
+            : state === "failed"
+              ? "application_failure"
+              : "environment_failure"
+        : state === "passed" && outcomeClassification === "passed"
           ? "application_pass"
           : state === "cancelled"
             ? "cancelled"
@@ -218,7 +249,13 @@ export class RunAttemptRepository {
                LEFT JOIN artifact_timeline_entries timeline ON timeline.attempt_id=a.id
                LEFT JOIN privacy_intervals privacy ON privacy.attempt_id=a.id
                WHERE a.id=$2 AND (artifact.availability IN ('failed','incomplete','quarantined')
-                 OR timeline.entry_type IN ('unavailable_interval','quarantine_record')
+                 OR (
+timeline.entry_type IN ('unavailable_interval','quarantine_record')
+OR (
+  timeline.entry_type IN ('video_segment','trace_segment')
+  AND timeline.reason_code IS NOT NULL
+)
+)
                  OR (privacy.id IS NOT NULL AND privacy.ended_at IS NULL))
              )
            RETURNING checkpoint.id`,
@@ -258,7 +295,13 @@ export class RunAttemptRepository {
                      LEFT JOIN privacy_intervals privacy ON privacy.attempt_id=a.id
                      WHERE a.id=$4
                        AND (artifact.availability IN ('failed','incomplete','quarantined')
-                         OR timeline.entry_type IN ('unavailable_interval','quarantine_record')
+                         OR (
+timeline.entry_type IN ('unavailable_interval','quarantine_record')
+OR (
+  timeline.entry_type IN ('video_segment','trace_segment')
+  AND timeline.reason_code IS NOT NULL
+)
+)
                          OR (privacy.id IS NOT NULL AND privacy.ended_at IS NULL))
                    )
                  THEN 'certified' ELSE 'rejected' END,
@@ -279,7 +322,13 @@ export class RunAttemptRepository {
                    LEFT JOIN privacy_intervals privacy ON privacy.attempt_id=a.id
                    WHERE a.id=$4
                      AND (artifact.availability IN ('failed','incomplete','quarantined')
-                       OR timeline.entry_type IN ('unavailable_interval','quarantine_record')
+                       OR (
+timeline.entry_type IN ('unavailable_interval','quarantine_record')
+OR (
+  timeline.entry_type IN ('video_segment','trace_segment')
+  AND timeline.reason_code IS NOT NULL
+)
+)
                        OR (privacy.id IS NOT NULL AND privacy.ended_at IS NULL))
                  ) THEN jsonb_build_array('CERTIFICATION_EVIDENCE_NOT_VERIFIED')
                  WHEN $2='passed' AND $3='application_pass' THEN '[]'::jsonb
@@ -429,12 +478,23 @@ export class RunAttemptRepository {
   async recoverStaleAttempts(staleBefore: Date) {
     return this.database.transaction(async (client) => {
       const stale = await client.query(
-        `UPDATE attempts
-         SET state = 'infrastructure_error', completed_at = now(),
+        `UPDATE attempts attempt
+         SET state = 'infrastructure_error',
+             completed_at = now(),
              error = 'Worker heartbeat expired'
-         WHERE state IN ('preparing','running','finalizing')
-           AND heartbeat_at < $1
-         RETURNING run_id`,
+         FROM runs run
+         WHERE attempt.run_id=run.id
+           AND attempt.state IN (
+             'preparing',
+             'running',
+             'finalizing'
+           )
+           AND attempt.heartbeat_at < $1
+           AND COALESCE(
+             run.execution_snapshot->>'executionModel',
+             ''
+           ) <> 'agent_directed_v1'
+         RETURNING attempt.run_id`,
         [staleBefore],
       );
       const runIds = [...new Set(stale.rows.map((row) => String(row.run_id)))];

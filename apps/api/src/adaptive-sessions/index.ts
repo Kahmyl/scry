@@ -7,3 +7,5 @@ export * from "./mission-flow-authoring.service.js";
 export * from "./operation-bound-protected-input.repository.js";
 export * from "./mission-protected-qualification.runner.js";
 export * from "./adaptive-sessions.module.js";
+
+export type { MissionRunEvidenceContext } from "./mission-flow-authoring.service.js";

@@ -190,6 +190,9 @@ export async function resolveTarget(
       if (error instanceof GroundingError) throw error;
       return throwObservation(page, intentDigest, intent, count, "execution", error);
     }
+    const directBoundary = intent.scope.direct && intent.scope.kind !== "page"
+      ? await scope.elementHandle()
+      : null;
     const planned = await planCandidateInventory(
       scope,
       intent,
@@ -209,6 +212,13 @@ export async function resolveTarget(
     }
     for (let index = 0; index < frameCount; index += 1) {
       const locator = controls.nth(index);
+      if (directBoundary) {
+        const directlyOwned = await locator.evaluate(
+          (element, input) => element.closest(input.selector) === input.boundary,
+          { boundary: directBoundary, selector: semanticBoundarySelector },
+        ).catch(() => false);
+        if (!directlyOwned) continue;
+      }
       let meta: ObservedControl;
       try {
         meta = await locator.evaluate(observeControlInPage, intent.relations);
@@ -772,19 +782,10 @@ async function resolveScope(
 
 async function matchingScopeOptions(
   parent: Locator,
-  scope: Exclude<InteractionTargetIntent["scope"], { kind: "page" }>,
+  scope: InteractionTargetIntent["scope"],
 ) {
-  const selector: { [key: string]: string } = {
-    dialog: "dialog,[role=dialog]",
-    form: "form,[role=form]",
-    section: "section,article,[role=region]",
-    field_group: "fieldset,[role=group],div",
-    table: "table,[role=table]",
-    row: "tr,[role=row]",
-    region: "section,main,aside,[role=region]",
-    recently_changed: "[data-scry-recently-changed]",
-  };
-  const options = parent.locator(selector[scope.kind] ?? "*");
+  if (scope.kind === "page") throw new Error("PAGE_SCOPE_HAS_NO_SELECTOR");
+  const options = parent.locator(semanticScopeSelectors[scope.kind]);
   if (!scope.name) {
     return { options, matches: Array.from({ length: await options.count() }, (_, index) => index) };
   }
@@ -792,16 +793,38 @@ async function matchingScopeOptions(
   for (let index = 0, count = Math.min(await options.count(), 500); index < count; index += 1) {
     const candidate = options.nth(index);
     const identity = await candidate
-      .evaluate((element) =>
-        `${element.getAttribute("aria-label") ?? ""} ${element.getAttribute("title") ?? ""} ${element.textContent ?? ""}`
+      .evaluate((element) => {
+        const boundarySelector =
+          "dialog,[role=dialog],[role=menu],[role=region],[role=form],nav,section,article,form,main,aside";
+        const ownedHeading = Array.from(element.querySelectorAll("h1,h2,h3,h4,h5,h6"))
+          .find((heading) => heading.closest(boundarySelector) === element);
+        return `${element.getAttribute("aria-label") ?? ""} ${element.getAttribute("title") ?? ""} ${ownedHeading?.textContent ?? ""}`
           .replace(/\s+/g, " ")
-          .trim(),
-      )
+          .trim();
+      })
       .catch(() => "");
     if (normalize(identity).includes(normalize(scope.name))) matches.push(index);
   }
   return { options, matches };
 }
+
+const semanticScopeSelectors: Record<
+  Exclude<InteractionTargetIntent["scope"]["kind"], "page">,
+  string
+> = {
+  dialog: "dialog,[role=dialog]",
+  form: "form,[role=form]",
+  section: "section,article,[role=region]",
+  field_group: "fieldset,[role=group]",
+  group: "fieldset,[role=group]",
+  table: "table,[role=table]",
+  row: "tr,[role=row]",
+  region: "section,main,aside,nav,[role=region]",
+  live_region: "[aria-live],[role=status],[role=alert],[role=log],[role=marquee],[role=timer]",
+  recently_changed: "[data-scry-recently-changed]",
+};
+
+const semanticBoundarySelector = Object.values(semanticScopeSelectors).join(",");
 
 /** Returns only a categorical scope count; the scope value itself is never emitted. */
 export async function inspectSemanticScope(

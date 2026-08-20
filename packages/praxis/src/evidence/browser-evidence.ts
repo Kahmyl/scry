@@ -20,6 +20,34 @@ export async function observeAndMaskPraxisVisualRegions(
       __scryVeilVisualObserver?: MutationObserver;
     };
     const maskAttribute = "data-scry-veil-capture-mask";
+
+    const isMasked = (element: Element) => {
+      const style = getComputedStyle(element);
+      return (
+        element.getAttribute(maskAttribute) === "true" &&
+        style.filter !== "none" &&
+        style.visibility !== "hidden"
+      );
+    };
+
+    const applyMask = (element: Element) => {
+      element.setAttribute(maskAttribute, "true");
+
+      const inlineStyle = "style" in element ? (element as HTMLElement).style : undefined;
+
+      if (!inlineStyle) return;
+
+      inlineStyle.setProperty("color", "transparent", "important");
+      inlineStyle.setProperty("-webkit-text-fill-color", "transparent", "important");
+      inlineStyle.setProperty("background", "#000", "important");
+      inlineStyle.setProperty("border-color", "#000", "important");
+      inlineStyle.setProperty("caret-color", "transparent", "important");
+      inlineStyle.setProperty("text-shadow", "none", "important");
+      inlineStyle.setProperty("filter", "brightness(0)", "important");
+      inlineStyle.setProperty("opacity", "1", "important");
+      inlineStyle.setProperty("visibility", "visible", "important");
+    };
+
     if (!document.getElementById("scry-veil-capture-mask-style")) {
       const style = document.createElement("style");
       style.id = "scry-veil-capture-mask-style";
@@ -35,15 +63,20 @@ export async function observeAndMaskPraxisVisualRegions(
         for (const record of relevant) {
           const target =
             record.target instanceof Element ? record.target : record.target.parentElement;
-          if (target && !["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"].includes(target.tagName))
-            target.setAttribute(maskAttribute, "true");
+          if (
+            target &&
+            !["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"].includes(target.tagName) &&
+            !isMasked(target)
+          )
+            applyMask(target);
           if (record.type === "childList")
             for (const node of record.addedNodes)
               if (
                 node instanceof Element &&
-                !["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"].includes(node.tagName)
+                !["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"].includes(node.tagName) &&
+                !isMasked(node)
               )
-                node.setAttribute(maskAttribute, "true");
+                applyMask(node);
         }
         if (relevant.length)
           root.__scryVeilVisualRevision = (root.__scryVeilVisualRevision ?? 0) + 1;
@@ -116,7 +149,7 @@ export async function observeAndMaskPraxisVisualRegions(
       documentIdentity: `${location.origin}${location.pathname}${location.search}`,
       revision: root.__scryVeilVisualRevision ?? 0,
       regions: entries.map((entry, index) => {
-        entry.element.setAttribute(maskAttribute, "true");
+        applyMask(entry.element);
         const rect = entry.element.getBoundingClientRect();
         const style = getComputedStyle(entry.element);
         return {

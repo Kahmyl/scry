@@ -19,6 +19,7 @@ import type { SafeBrowserSession } from "./browser-session.js";
 import { executeAction } from "./action-runtime.js";
 import { InteractionLifecycleTracker } from "./interaction-lifecycle.js";
 import { executePlan } from "./executor.js";
+import { classifyOutcome } from "./execution-outcome.js";
 import { probeFlowPlan, type ProbeExecutionLevel, type ProbeExecutionResult } from "./probe.js";
 import type { ExecuteOptions, ExecutionReport } from "./types.js";
 
@@ -476,7 +477,7 @@ export class ExecutionKernel {
                       safeCode(error) === "EXECUTION_KERNEL_FAILED"
                         ? "EXPECTED_EFFECT_NOT_OBSERVED"
                         : safeCode(error),
-                    safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+                    safeActions: ["get_run", "get_praxis_session", "observe_praxis_session"],
                   },
                 }
               : {}),
@@ -495,6 +496,190 @@ export class ExecutionKernel {
       const outcome = failureOutcome(
         request,
         [],
+        startedAt,
+        error,
+        isMutatingAction(input.action),
+        lifecycle,
+      );
+      await settleOperation(input.capabilities.journal, {
+        request,
+        outcome,
+        reasonCode: safeCode(error),
+        completedAt: new Date().toISOString(),
+        state: "failed",
+        ...(fence ? { mutation: mutationSettlement(fence, outcome.mutationOutcome) } : {}),
+      });
+      throw error;
+    }
+  }
+
+  async interactWithReport(input: {
+    request: Pick<
+      ExecutionRequest,
+      | "sessionId"
+      | "operationId"
+      | "correlationId"
+      | "mode"
+      | "policy"
+      | "semanticContext"
+      | "mutationIdentity"
+    >;
+    capabilities: RuntimeExecutionCapabilities;
+    page: Page;
+    safeSession?: SafeBrowserSession;
+    existingProtectedSession?: boolean;
+    action: CurrentAction;
+    expectedEffect?: import("@scry/contracts").ExpectedEffect;
+    resolveEffectPage?: () => Promise<Page | undefined>;
+    ordinal: number;
+    privacyGate?: import("@scry/veil").VeilRuntimeCoordinator;
+  }): Promise<{ report: ExecutionReport; outcome: OperationOutcome }> {
+    const syntheticRequest = executionRequestSchema.parse({
+      ...input.request,
+      plan: singleActionPlan(
+        input.action,
+        input.request.policy,
+        input.request.semanticContext,
+        {
+          captureEvidence: true,
+          veilPolicySnapshot: input.capabilities.options.veilPolicySnapshot,
+          expectedEffect: input.expectedEffect ?? { type: "none" },
+        },
+      ),
+      capabilityManifestDigest: input.capabilities.manifest.digest,
+      idempotencyKey: `kernel-${input.request.operationId}`,
+      ...(isMutatingAction(input.action)
+        ? {
+            mutationIdentity:
+              input.request.mutationIdentity ?? `mutation-${input.request.operationId}`,
+          }
+        : {}),
+    });
+    const request = this.admit(syntheticRequest, input.capabilities);
+    await input.capabilities.journal.begin({
+      request,
+      manifest: input.capabilities.manifest,
+      startedAt: new Date().toISOString(),
+    });
+    const startedAt = performance.now();
+    const praxisResults: import("@scry/contracts").PraxisResult[] = [];
+    const lifecycle = new InteractionLifecycleTracker();
+    let protectedTelemetryReason: string | undefined;
+    const originalPraxisResult = input.capabilities.options.onPraxisResult;
+    const originalEvent = input.capabilities.options.onEvent;
+    const originalMutationDispatch = input.capabilities.options.onMutationDispatch;
+    const originalPrivacyBoundary = input.capabilities.options.onPrivacyBoundary;
+    let fence: ActiveMutationFence | undefined;
+    try {
+      fence = await this.beginMutationFence(request, input.capabilities);
+      const beforeUrl = input.page.url();
+      const expectedEffect = input.expectedEffect ?? { type: "none" };
+      const armedEffect = armExpectedEffect(
+        input.page,
+        expectedEffect,
+        "timeoutMs" in input.action ? input.action.timeoutMs : undefined,
+      );
+      let report = await this.dispatchPlan({
+        ...input.capabilities.options,
+        plan: request.plan,
+        policy: request.policy,
+        ...(input.safeSession ? { existingSafeSession: input.safeSession } : {}),
+        ...(input.existingProtectedSession ? { existingProtectedSession: true } : {}),
+        expectedEffectVerificationOwner: "kernel",
+        recordingOperationId: request.operationId,
+        expectedDocumentTransition:
+          input.action.type === "navigate" || expectedEffect.type === "navigation",
+        onPraxisResult: async (result) => {
+          praxisResults.push(result);
+          await originalPraxisResult?.(result);
+        },
+        onMutationDispatch: async () => lifecycle.beforeDispatch(originalMutationDispatch),
+        onPrivacyBoundary: async (phase) => {
+          lifecycle.recordPrivacy(phase);
+          await originalPrivacyBoundary?.(phase);
+        },
+        onEvent: async (event) => {
+          protectedTelemetryReason =
+            protectedTelemetryReasonCode(event) ?? protectedTelemetryReason;
+          await originalEvent?.(event);
+        },
+      });
+      let outcome = outcomeFromReport(
+        request,
+        report,
+        praxisResults,
+        protectedTelemetryReason,
+        startedAt,
+        lifecycle,
+      );
+      if (outcome.functionalResult === "succeeded") {
+        const effectStartedAt = performance.now();
+        try {
+          const resolvedEffectPage = await input.resolveEffectPage?.();
+          if (
+            expectedEffect.type === "new_page" &&
+            (!resolvedEffectPage || resolvedEffectPage === input.page)
+          ) {
+            throw new Error("EXPECTED_NEW_PAGE_NOT_OBSERVED");
+          }
+          const effectPage = resolvedEffectPage ?? input.page;
+          const timeoutMs =
+            ("timeoutMs" in input.action ? input.action.timeoutMs : undefined) ?? 10_000;
+          if (expectedEffect.type === "new_page") {
+            verifyAdoptedPopup(effectPage, beforeUrl, expectedEffect.origin);
+          } else {
+            await verifyExpectedEffect(
+              effectPage,
+              expectedEffect,
+              beforeUrl,
+              timeoutMs,
+              effectPage === input.page ? armedEffect : undefined,
+            );
+          }
+          await input.capabilities.options.onExpectedEffectVerification?.({
+            status: "succeeded",
+            durationMs: performance.now() - effectStartedAt,
+          });
+        } catch (error) {
+          const reasonCode =
+            safeCode(error) === "EXECUTION_KERNEL_FAILED"
+              ? "EXPECTED_EFFECT_NOT_OBSERVED"
+              : safeCode(error);
+          await input.capabilities.options.onExpectedEffectVerification?.({
+            status: "failed",
+            reasonCode,
+            durationMs: performance.now() - effectStartedAt,
+          });
+          outcome = operationOutcomeSchema.parse({
+            ...outcome,
+            functionalResult: "failed",
+            reasonCode,
+            ...safeNavigationEnvironmentFailure(error),
+            ...(outcome.mutationOutcome === "applied"
+              ? {
+                  nextDecisionBoundary: {
+                    type: "effect_observation_required",
+                    reasonCode,
+                    safeActions: ["get_run", "get_praxis_session", "observe_praxis_session"],
+                  },
+                }
+              : {}),
+          });
+          report = applyExpectedEffectFailure(report, reasonCode);
+        }
+      }
+      await settleOperation(input.capabilities.journal, {
+        request,
+        outcome,
+        completedAt: new Date().toISOString(),
+        state: "completed",
+        ...(fence ? { mutation: mutationSettlement(fence, outcome.mutationOutcome) } : {}),
+      });
+      return { report, outcome };
+    } catch (error) {
+      const outcome = failureOutcome(
+        request,
+        praxisResults,
         startedAt,
         error,
         isMutatingAction(input.action),
@@ -726,7 +911,7 @@ export async function executeInteractionCompatibility(input: {
             nextDecisionBoundary: {
               type: "ambiguous_candidate",
               reasonCode,
-              safeActions: ["advance_flow_authoring"],
+              safeActions: ["observe_praxis_session"],
               candidateDistinctions: rejectedCandidateDistinctions,
             },
           }
@@ -793,7 +978,16 @@ function singleActionPlan(
   action: CurrentAction,
   policy: ExecutionRequest["policy"],
   semanticContext?: string,
+  options: {
+    captureEvidence?: boolean;
+    veilPolicySnapshot?: ExecuteOptions["veilPolicySnapshot"];
+    expectedEffect?: import("@scry/contracts").ExpectedEffect;
+  } = {},
 ) {
+  const captureEvidence = options.captureEvidence === true;
+  const evidenceReadiness = captureEvidence
+    ? interactionEvidenceReadiness(action, options.expectedEffect)
+    : undefined;
   const continuationSteps =
     action.type === "protectedTransaction"
       ? action.continuation.strategies.flatMap((strategy) => {
@@ -844,13 +1038,183 @@ function singleActionPlan(
         action,
         assertions: [],
         onFailure: "stop" as const,
-        evidence: [],
-        captureIntent: "transient" as const,
-        transientJustification: "Internal kernel operation contract.",
+        ...(evidenceReadiness ? { after: evidenceReadiness } : {}),
+        evidence: captureEvidence
+          ? requestedInteractionEvidence(options.veilPolicySnapshot)
+          : [],
+        captureIntent: captureEvidence ? ("final" as const) : ("transient" as const),
+        ...(captureEvidence
+          ? {}
+          : {
+              transientJustification: "Internal kernel operation contract.",
+            }),
       },
       ...continuationSteps,
     ],
   };
+}
+
+function interactionEvidenceReadiness(
+  action: CurrentAction,
+  expectedEffect?: import("@scry/contracts").ExpectedEffect,
+) {
+  const requiresSettlement = [
+    "navigate",
+    "click",
+    "press",
+    "select",
+    "check",
+    "protectedAuthentication",
+  ].includes(action.type);
+
+  if (!requiresSettlement) return undefined;
+
+  const requestedTimeoutMs =
+    "timeoutMs" in action && typeof action.timeoutMs === "number"
+      ? action.timeoutMs
+      : 15_000;
+  const timeoutMs = Math.min(60_000, Math.max(100, requestedTimeoutMs));
+
+  if (expectedEffect?.type === "navigation" && expectedEffect.url) {
+    return {
+      mode: "all" as const,
+      timeoutMs,
+      conditions: [
+        {
+          type: "url" as const,
+          expected: expectedEffect.url,
+          match: expectedEffect.match,
+        },
+      ],
+    };
+  }
+
+  if (expectedEffect?.type === "visibility_change") {
+    return {
+      mode: "all" as const,
+      timeoutMs,
+      conditions: [
+        expectedEffect.visible
+          ? {
+              type: "visible" as const,
+              target: expectedEffect.target,
+            }
+          : {
+              type: "hidden" as const,
+              target: expectedEffect.target,
+            },
+      ],
+    };
+  }
+
+  if (
+    expectedEffect?.type === "value_change" &&
+    typeof expectedEffect.expected === "string"
+  ) {
+    return {
+      mode: "all" as const,
+      timeoutMs,
+      conditions: [
+        {
+          type: "value" as const,
+          target: expectedEffect.target,
+          expected: expectedEffect.expected,
+        },
+      ],
+    };
+  }
+
+  if (
+    expectedEffect?.type === "state_change" &&
+    typeof expectedEffect.checked === "boolean"
+  ) {
+    return {
+      mode: "all" as const,
+      timeoutMs,
+      conditions: [
+        {
+          type: "checked" as const,
+          target: expectedEffect.target,
+          expected: expectedEffect.checked,
+        },
+      ],
+    };
+  }
+
+  if (expectedEffect?.type === "new_region") {
+    return {
+      mode: "all" as const,
+      timeoutMs,
+      conditions: [
+        {
+          type: "visible" as const,
+          target: expectedEffect.target,
+        },
+      ],
+    };
+  }
+
+  if (expectedEffect?.type === "network_outcome") {
+    return {
+      mode: "all" as const,
+      timeoutMs,
+      conditions: [
+        {
+          type: "request" as const,
+          urlPattern: expectedEffect.urlPattern,
+          ...(expectedEffect.method
+            ? { method: expectedEffect.method }
+            : {}),
+          status: {
+            min: expectedEffect.statusMin,
+            max: expectedEffect.statusMax,
+          },
+        },
+      ],
+    };
+  }
+
+  /*
+   * Agent-directed read-context clicks and protected authentication
+   * currently may have no semantic ExpectedEffect. They still must
+   * settle before final evidence. This is deliberately DOM quiescence,
+   * not a fixed delay; Veil remains the final capture authority.
+   */
+  return {
+    mode: "all" as const,
+    timeoutMs,
+    conditions: [
+      {
+        type: "domStable" as const,
+        quietWindowMs: 500,
+      },
+    ],
+  };
+}
+
+function requestedInteractionEvidence(
+  veilPolicySnapshot?: ExecuteOptions["veilPolicySnapshot"],
+): Array<"screenshot" | "dom" | "network"> {
+  if (!veilPolicySnapshot) return [];
+  const evidence: Array<"screenshot" | "dom" | "network"> = [];
+  if (veilPolicySnapshot.controls.screenshots) evidence.push("screenshot");
+  if (veilPolicySnapshot.controls.dom) evidence.push("dom");
+  if (veilPolicySnapshot.controls.network) evidence.push("network");
+  return evidence;
+}
+
+function applyExpectedEffectFailure(report: ExecutionReport, reasonCode: string): ExecutionReport {
+  const next = structuredClone(report);
+  const step = next.steps.at(-1);
+  if (step) {
+    step.status = "failed";
+    step.error = reasonCode;
+    step.action = { status: "failed", error: reasonCode };
+  }
+  next.state = "failed";
+  next.error = reasonCode;
+  next.outcomeClassification = classifyOutcome(next.state, next.steps, next.policyViolations);
+  return next;
 }
 
 function outcomeFromReport(
@@ -862,6 +1226,10 @@ function outcomeFromReport(
   lifecycle?: InteractionLifecycleTracker,
 ): OperationOutcome {
   const observedMutation = praxisMutationOutcome(praxisResults);
+  const praxisFailureReason = [...praxisResults]
+    .reverse()
+    .flatMap((result) => (result.status === "succeeded" ? [] : [result.code]))
+    .at(0);
   const mutating = request.plan.steps.some((step) => isMutatingAction(step.action));
   const mutationOutcome =
     !mutating
@@ -890,7 +1258,9 @@ function outcomeFromReport(
       ? { reasonCode: safeCode(report.error) }
       : protectedTelemetryReason
         ? { reasonCode: protectedTelemetryReason }
-        : {}),
+        : praxisFailureReason
+          ? { reasonCode: praxisFailureReason }
+          : {}),
   });
 }
 

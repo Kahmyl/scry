@@ -162,4 +162,111 @@ describe("operating context repository", () => {
     expect(withoutAuthority.continuation.safeActions).toEqual(["get_flow_authoring"]);
     expect(withoutAuthority.continuation.userAuthorityRequired).toBe(true);
   });
+
+  it("does not auto-select a sole Mission without explicit user authority", async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text.includes("FROM projects"))
+        return { rowCount: 1, rows: [{ id: projectId, name: "One", description: "" }] };
+      if (text.includes("session.state='recovery_required'"))
+        return { rowCount: 0, rows: [] };
+      if (text.includes("FROM missions"))
+        return { rowCount: 1, rows: [{
+          id: missionId,
+          title: "Potentially related Mission",
+          status: "running",
+          revision: 1,
+          currentObjectiveId: objectiveId,
+          resumePointer: null,
+        }] };
+      if (text.includes("project_credentials"))
+        return { rowCount: 0, rows: [] };
+      if (text.includes("FROM environments"))
+        return { rowCount: 0, rows: [] };
+      if (text.includes("FROM adaptive_sessions"))
+        return { rowCount: 0, rows: [] };
+      return { rowCount: 0, rows: [] };
+    });
+
+    const repository = new ProjectConfigurationRepository({
+      transaction: (work: any) => work({ query }),
+    } as never);
+
+    const result = await repository.operatingContext(
+      { kind: "service", subject: "scry-service" },
+      {
+        projectId,
+        requiredCredentialReferences: [],
+        authorizeDistinctMissionForReadOnlyUnknown: false,
+      },
+    );
+
+    expect(result.missions.selectedMissionId).toBeUndefined();
+    expect(result.continuation.userAuthorityRequired).toBe(true);
+    expect(result.continuation.safeActions).toEqual(["list_missions"]);
+    expect(result.continuation.blockerCode).toBe("MISSION_SELECTION_REQUIRED");
+  });
+
+  it("projects factual Mission credential use without treating environment authorization as Mission authority", async () => {
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      if (text.includes("FROM projects"))
+        return { rowCount: 1, rows: [{ id: projectId }] };
+
+      if (text.includes('AS "usedInMission"')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: objectiveId,
+            referenceId: objectiveId,
+            projectId,
+            name: "Preview password",
+            securityStatus: "active",
+            eligibleForAuthorization: true,
+            authorizedEnvironmentIds: [environmentId],
+            authorizedEnvironmentIdsTruncated: false,
+            usedInMission: values?.[2] ? true : null,
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          }],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    });
+
+    const repository = new ProjectConfigurationRepository({ query } as never);
+
+    const missionScoped = await repository.listCredentialCandidates(
+      { kind: "service", subject: "scry-service" },
+      projectId,
+      { missionId },
+    );
+
+    expect(missionScoped.items[0]).toMatchObject({
+      referenceId: objectiveId,
+      usedInMission: true,
+      authorizedEnvironmentIds: [environmentId],
+    });
+
+    const unscoped = await repository.listCredentialCandidates(
+      { kind: "service", subject: "scry-service" },
+      projectId,
+      {},
+    );
+
+    expect(unscoped.items[0]).toMatchObject({
+      referenceId: objectiveId,
+      usedInMission: null,
+    });
+
+    const candidateCall = query.mock.calls.find(
+      (call) => String(call[0]).includes('AS "usedInMission"'),
+    );
+
+    expect(candidateCall).toBeDefined();
+    expect(String(candidateCall![0])).toContain("origin_mission_id");
+    expect(String(candidateCall![0])).toContain("adaptive_operations");
+    expect(String(candidateCall![0])).toContain("protectedInputReferences");
+    expect(candidateCall![1]).toEqual([projectId, null, missionId]);
+  });
+
 });

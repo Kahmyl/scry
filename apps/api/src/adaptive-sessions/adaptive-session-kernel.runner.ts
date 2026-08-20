@@ -11,8 +11,18 @@ import type {
   ExpectedEffect,
   OperationOutcome,
 } from "@scry/contracts";
-import { runProtectedStage, type AuthoringBrowserSession } from "@scry/executor";
-import { observeSemanticPageContext, observeSemanticPageContextReferenceState, resolveTargetLocator } from "@scry/praxis";
+import {
+  captureSuccessorCheckpointPayload,
+  runProtectedStage,
+  type AuthoringBrowserSession,
+  type ExecutionReport,
+} from "@scry/executor";
+import {
+  observeSemanticPageContext,
+  observeSemanticPageContextReferenceState,
+  resolveTargetLocator,
+} from "@scry/praxis";
+import { waitForSuccessorCheckpointSemanticMatch } from "./successor-checkpoint-semantic.js";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 
 import {
@@ -21,7 +31,10 @@ import {
   NativeBrowserDriver,
 } from "../runtime/index.js";
 import { AdaptiveSessionRepository } from "./adaptive-session.repository.js";
-import { bindProtectedInputDelivery, type ProtectedInputDeliveryBinding } from "./protected-input-capability.js";
+import {
+  bindProtectedInputDelivery,
+  type ProtectedInputDeliveryBinding,
+} from "./protected-input-capability.js";
 
 export type AdaptiveKernelExecutionResult = {
   outcome: OperationOutcome;
@@ -29,6 +42,7 @@ export type AdaptiveKernelExecutionResult = {
   decisionBoundary: AgentDecisionBoundary;
   timings: { resolveMs: number; executeMs: number; verifyMs: number };
   safeState: { url: string; documentEpoch: number };
+  report?: ExecutionReport;
 };
 
 type TestRuntimeBinding = (
@@ -44,7 +58,11 @@ type OwnedRuntime = {
 
 type OperationTimingCollector = {
   onPraxisResult: (result: import("@scry/contracts").PraxisResult) => void;
-  onExpectedEffectVerification: (result: { status: "succeeded" | "failed"; reasonCode?: string; durationMs: number }) => void;
+  onExpectedEffectVerification: (result: {
+    status: "succeeded" | "failed";
+    reasonCode?: string;
+    durationMs: number;
+  }) => void;
 };
 
 type OperationLeaseGuard = {
@@ -62,6 +80,12 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
   private readonly operationModes = new Map<string, ExecutionMode>();
   private readonly operationTimingCollectors = new Map<string, OperationTimingCollector>();
   private readonly operationLeaseGuards = new Map<string, OperationLeaseGuard>();
+  private readonly operationCaptureReports = new Set<string>();
+  private readonly operationOutputDirectories = new Map<string, string>();
+  private readonly operationVeilPolicies = new Map<
+    string,
+    import("@scry/contracts").VeilPolicySnapshot
+  >();
   private readonly ownerId = randomUUID();
   private readonly leaseDurationMs = Number(
     process.env.ADAPTIVE_SESSION_RUNTIME_LEASE_MS ?? 30_000,
@@ -80,7 +104,6 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     @Inject(NativeBrowserDriver) private readonly nativeBrowser: NativeBrowserDriver,
   ) {}
 
-
   /** Test seam only. Production execution always provisions from durable session state. */
   async bindForTest(sessionId: string, binding: TestRuntimeBinding) {
     if (process.env.NODE_ENV !== "test") {
@@ -93,11 +116,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     return () => this.testBindings.delete(sessionId);
   }
 
-  async execute(
-    sessionId: string,
-    operation: AdaptiveSessionOperationInput,
-    signal?: AbortSignal,
-  ) {
+  async execute(sessionId: string, operation: AdaptiveSessionOperationInput, signal?: AbortSignal) {
     const testBinding = this.testBindings.get(sessionId);
     if (testBinding) return testBinding(this.kernel, { sessionId, operation });
 
@@ -105,9 +124,10 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     return this.exclusive(owned, async () => {
       const leaseGuard = await this.startOperationLeaseGuard(sessionId, owned);
       const context = await this.sessions.runtimeContextFor(sessionId);
-      const protectedContext = operation.action.type === "protectedTransaction"
-        ? await this.sessions.protectedExecutionContext(sessionId, operation.operationId)
-        : undefined;
+      const protectedContext =
+        operation.action.type === "protectedTransaction"
+          ? await this.sessions.protectedExecutionContext(sessionId, operation.operationId)
+          : undefined;
       let resolveMs = 0;
       let verifyMs = 0;
       const capability = this.createCapabilities({
@@ -117,22 +137,35 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         operationId: operation.operationId,
         mode: operation.mode,
         policy: context.policy,
-        ...(protectedContext ? { protectedContext, leaseOwner: `${this.ownerId}:${owned.fencingToken}` } : {}),
-        onPraxisResult: (result) => { resolveMs += result.timing.groundingMs ?? 0; },
-        onExpectedEffectVerification: (result) => { verifyMs += result.durationMs; },
+        ...(protectedContext
+          ? { protectedContext, leaseOwner: `${this.ownerId}:${owned.fencingToken}` }
+          : {}),
+        onPraxisResult: (result) => {
+          resolveMs += result.timing.groundingMs ?? 0;
+        },
+        onExpectedEffectVerification: (result) => {
+          verifyMs += result.durationMs;
+        },
       });
       const modeKey = `${sessionId}:${operation.operationId}`;
       this.operationModes.set(modeKey, operation.mode);
       this.operationTimingCollectors.set(modeKey, {
-        onPraxisResult: (result) => { resolveMs += result.timing.groundingMs ?? 0; },
-        onExpectedEffectVerification: (result) => { verifyMs += result.durationMs; },
+        onPraxisResult: (result) => {
+          resolveMs += result.timing.groundingMs ?? 0;
+        },
+        onExpectedEffectVerification: (result) => {
+          verifyMs += result.durationMs;
+        },
       });
       this.operationLeaseGuards.set(modeKey, leaseGuard);
       try {
         await this.sessions.recordDispatchBaseline({
-          sessionId,operationId: operation.operationId,expectedEffect: operation.expectedEffect,
-          documentEpoch: owned.session.documentEpoch(),url: owned.session.page.url(),
-          effectState: await observeEffectState(owned.session.page,operation.expectedEffect),
+          sessionId,
+          operationId: operation.operationId,
+          expectedEffect: operation.expectedEffect,
+          documentEpoch: owned.session.documentEpoch(),
+          url: owned.session.page.url(),
+          effectState: await observeEffectState(owned.session.page, operation.expectedEffect),
         });
         const executeStartedAt = performance.now();
         const result = await owned.session.interact(operation.action, {
@@ -159,8 +192,114 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           }),
           timings: { resolveMs, executeMs: performance.now() - executeStartedAt, verifyMs },
           safeState: { url: result.url, documentEpoch: result.documentEpoch },
+          ...(result.report ? { report: result.report } : {}),
         };
       } finally {
+        this.operationLeaseGuards.delete(modeKey);
+        this.operationModes.delete(modeKey);
+        this.operationTimingCollectors.delete(modeKey);
+        await leaseGuard.stop();
+      }
+    });
+  }
+
+  async executeForRun(input: {
+    sessionId: string;
+    operation: AdaptiveSessionOperationInput;
+    outputDirectory: string;
+    veilPolicySnapshot: import("@scry/contracts").VeilPolicySnapshot;
+    signal?: AbortSignal;
+  }) {
+    const testBinding = this.testBindings.get(input.sessionId);
+    if (testBinding)
+      return testBinding(this.kernel, { sessionId: input.sessionId, operation: input.operation });
+
+    const owned = await this.runtime(input.sessionId, input.operation);
+    return this.exclusive(owned, async () => {
+      const leaseGuard = await this.startOperationLeaseGuard(input.sessionId, owned);
+      const context = await this.sessions.runtimeContextFor(input.sessionId);
+      const protectedContext =
+        input.operation.action.type === "protectedTransaction"
+          ? await this.sessions.protectedExecutionContext(
+              input.sessionId,
+              input.operation.operationId,
+            )
+          : undefined;
+      let resolveMs = 0;
+      let verifyMs = 0;
+      const capability = this.createCapabilities({
+        sessionId: input.sessionId,
+        environmentId: context.environmentId,
+        correlationId: context.correlationId,
+        operationId: input.operation.operationId,
+        mode: input.operation.mode,
+        policy: context.policy,
+        outputDirectory: input.outputDirectory,
+        veilPolicySnapshot: input.veilPolicySnapshot,
+        ...(protectedContext
+          ? { protectedContext, leaseOwner: `${this.ownerId}:${owned.fencingToken}` }
+          : {}),
+        onPraxisResult: (result) => {
+          resolveMs += result.timing.groundingMs ?? 0;
+        },
+        onExpectedEffectVerification: (result) => {
+          verifyMs += result.durationMs;
+        },
+      });
+      const modeKey = `${input.sessionId}:${input.operation.operationId}`;
+      this.operationModes.set(modeKey, input.operation.mode);
+      this.operationTimingCollectors.set(modeKey, {
+        onPraxisResult: (result) => {
+          resolveMs += result.timing.groundingMs ?? 0;
+        },
+        onExpectedEffectVerification: (result) => {
+          verifyMs += result.durationMs;
+        },
+      });
+      this.operationLeaseGuards.set(modeKey, leaseGuard);
+      this.operationCaptureReports.add(modeKey);
+      this.operationOutputDirectories.set(modeKey, input.outputDirectory);
+      this.operationVeilPolicies.set(modeKey, input.veilPolicySnapshot);
+      try {
+        await this.sessions.recordDispatchBaseline({
+          sessionId: input.sessionId,
+          operationId: input.operation.operationId,
+          expectedEffect: input.operation.expectedEffect,
+          documentEpoch: owned.session.documentEpoch(),
+          url: owned.session.page.url(),
+          effectState: await observeEffectState(owned.session.page, input.operation.expectedEffect),
+        });
+        const executeStartedAt = performance.now();
+        const result = await owned.session.interact(input.operation.action, {
+          operationId: input.operation.operationId,
+          correlationId: context.correlationId,
+          mutationIdentity: `adaptive-${input.sessionId}-${input.operation.idempotencyKey}`,
+          expectedEffect: input.operation.expectedEffect,
+          ...(input.signal ? { signal: input.signal } : {}),
+        });
+        if (result.outcome.mutationOutcome !== "unknown") leaseGuard.assertOwned();
+        await this.sessions.recordVerifiedObservation({
+          sessionId: input.sessionId,
+          operationId: input.operation.operationId,
+          documentEpoch: result.documentEpoch,
+          url: result.url,
+        });
+        return {
+          outcome: result.outcome,
+          capabilityManifestDigest: capability.manifest.digest,
+          decisionBoundary: decisionBoundary(result.outcome, {
+            environmentId: context.environmentId,
+            allowedOrigins: context.policy.allowedOrigins,
+            trustedScriptOrigins: context.policy.trustedScriptOrigins ?? [],
+          }),
+          timings: { resolveMs, executeMs: performance.now() - executeStartedAt, verifyMs },
+          safeState: { url: result.url, documentEpoch: result.documentEpoch },
+          ...(result.report ? { report: result.report } : {}),
+        };
+      } finally {
+        this.operationVeilPolicies.delete(modeKey);
+        this.operationOutputDirectories.delete(modeKey);
+        this.operationCaptureReports.delete(modeKey);
         this.operationLeaseGuards.delete(modeKey);
         this.operationModes.delete(modeKey);
         this.operationTimingCollectors.delete(modeKey);
@@ -182,10 +321,15 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
 
   /** Observation-only reconciliation. Never provisions, navigates, or dispatches. */
   reconciliationAvailable(sessionId: string, expectedEffect: ExpectedEffect) {
-    return this.runtimes.has(sessionId) && ["navigation","visibility_change"].includes(expectedEffect.type);
+    return (
+      this.runtimes.has(sessionId) &&
+      ["navigation", "visibility_change"].includes(expectedEffect.type)
+    );
   }
 
-  hasRuntime(sessionId: string) { return this.runtimes.has(sessionId); }
+  hasRuntime(sessionId: string) {
+    return this.runtimes.has(sessionId);
+  }
 
   /** Factual observation of the already-owned live session. Never provisions or dispatches. */
   async observe(sessionId: string) {
@@ -194,36 +338,95 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     return this.exclusive(runtime, () => runtime.session.observeDocument());
   }
 
-  async reconcileUnknownEffect(sessionId: string, expectedEffect: ExpectedEffect,
-    baseline: { url: string; documentEpoch: number; effectState: Record<string, unknown> } | null) {
+  /**
+   * Capture factual portable state from the already-owned live Praxis runtime.
+   * This does not stage, seal, select, restore, or close a checkpoint.
+   */
+  async captureSuccessorCheckpoint(sessionId: string) {
     const runtime = this.runtimes.get(sessionId);
-    if (!runtime) return {
-      result: "still_unknown" as const,
-      reasonCode: "RECONCILIATION_RUNTIME_UNAVAILABLE",
-      evidence: { runtimeAvailable: false },
-    };
+
+    if (!runtime) {
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    }
+
     return this.exclusive(runtime, async () => {
-      if (!baseline) return { result: "still_unknown" as const,
-        reasonCode: "RECONCILIATION_PRE_DISPATCH_BASELINE_UNAVAILABLE", evidence: { runtimeAvailable: true } };
+      await this.sessions.heartbeatRuntimeLease({
+        sessionId,
+        ownerId: this.ownerId,
+        fencingToken: runtime.fencingToken,
+        leaseDurationMs: this.leaseDurationMs,
+      });
+
+      const context = await this.sessions.runtimeContextFor(sessionId);
+
+      return captureSuccessorCheckpointPayload(
+        runtime.session.page.context(),
+        runtime.session.page,
+        context.policy,
+      );
+    });
+  }
+
+  async reconcileUnknownEffect(
+    sessionId: string,
+    expectedEffect: ExpectedEffect,
+    baseline: { url: string; documentEpoch: number; effectState: Record<string, unknown> } | null,
+  ) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime)
+      return {
+        result: "still_unknown" as const,
+        reasonCode: "RECONCILIATION_RUNTIME_UNAVAILABLE",
+        evidence: { runtimeAvailable: false },
+      };
+    return this.exclusive(runtime, async () => {
+      if (!baseline)
+        return {
+          result: "still_unknown" as const,
+          reasonCode: "RECONCILIATION_PRE_DISPATCH_BASELINE_UNAVAILABLE",
+          evidence: { runtimeAvailable: true },
+        };
       const url = runtime.session.page.url();
       if (expectedEffect.type === "navigation") {
-        if (!expectedEffect.url) return { result: "still_unknown" as const,
-          reasonCode: "RECONCILIATION_EXPECTED_DESTINATION_MISSING", evidence: { runtimeAvailable: true } };
-        const beforeMatched = navigationMatches(baseline.url, expectedEffect.url, expectedEffect.match);
+        if (!expectedEffect.url)
+          return {
+            result: "still_unknown" as const,
+            reasonCode: "RECONCILIATION_EXPECTED_DESTINATION_MISSING",
+            evidence: { runtimeAvailable: true },
+          };
+        const beforeMatched = navigationMatches(
+          baseline.url,
+          expectedEffect.url,
+          expectedEffect.match,
+        );
         const matches = navigationMatches(url, expectedEffect.url, expectedEffect.match);
         const applied = matches && !beforeMatched;
-        return { result: applied ? "proven_applied" as const : "still_unknown" as const,
-          reasonCode: applied ? "RECONCILIATION_NAVIGATION_TRANSITION_PROVEN" :
-            beforeMatched ? "RECONCILIATION_EFFECT_ALREADY_SATISFIED_BEFORE_DISPATCH" : "RECONCILIATION_NAVIGATION_INSUFFICIENT",
-          evidence: { runtimeAvailable: true, observedUrl: url, expectedEffectType: expectedEffect.type } };
+        return {
+          result: applied ? ("proven_applied" as const) : ("still_unknown" as const),
+          reasonCode: applied
+            ? "RECONCILIATION_NAVIGATION_TRANSITION_PROVEN"
+            : beforeMatched
+              ? "RECONCILIATION_EFFECT_ALREADY_SATISFIED_BEFORE_DISPATCH"
+              : "RECONCILIATION_NAVIGATION_INSUFFICIENT",
+          evidence: {
+            runtimeAvailable: true,
+            observedUrl: url,
+            expectedEffectType: expectedEffect.type,
+          },
+        };
       }
       if (expectedEffect.type === "visibility_change") {
         const currentEpoch = runtime.session.documentEpoch();
-        if (baseline.documentEpoch !== currentEpoch) return {
-          result: "still_unknown" as const,
-          reasonCode: "RECONCILIATION_VISIBILITY_DOCUMENT_CHANGED",
-          evidence: { runtimeAvailable: true, expectedEffectType: expectedEffect.type, documentEpoch: currentEpoch },
-        };
+        if (baseline.documentEpoch !== currentEpoch)
+          return {
+            result: "still_unknown" as const,
+            reasonCode: "RECONCILIATION_VISIBILITY_DOCUMENT_CHANGED",
+            evidence: {
+              runtimeAvailable: true,
+              expectedEffectType: expectedEffect.type,
+              documentEpoch: currentEpoch,
+            },
+          };
         const baselineVisibility = baseline.effectState.visibility;
         const explicitInverse = expectedEffect.visible
           ? baselineVisibility === "hidden_or_absent"
@@ -231,43 +434,74 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         const baselineSatisfied = expectedEffect.visible
           ? baselineVisibility === "visible"
           : baselineVisibility === "hidden_or_absent";
-        if (!explicitInverse) return {
-          result: "still_unknown" as const,
-          reasonCode: baselineSatisfied ? "RECONCILIATION_EFFECT_ALREADY_SATISFIED_BEFORE_DISPATCH"
-            : "RECONCILIATION_PRE_DISPATCH_VISIBILITY_UNRESOLVED",
-          evidence: { runtimeAvailable: true, expectedEffectType: expectedEffect.type, documentEpoch: currentEpoch },
-        };
+        if (!explicitInverse)
+          return {
+            result: "still_unknown" as const,
+            reasonCode: baselineSatisfied
+              ? "RECONCILIATION_EFFECT_ALREADY_SATISFIED_BEFORE_DISPATCH"
+              : "RECONCILIATION_PRE_DISPATCH_VISIBILITY_UNRESOLVED",
+            evidence: {
+              runtimeAvailable: true,
+              expectedEffectType: expectedEffect.type,
+              documentEpoch: currentEpoch,
+            },
+          };
         let visible = false;
         let targetAbsent = false;
         let targetResolved = false;
         const reference = expectedEffect.target.authoritativeReference;
         if (reference) {
-          const state = await observeSemanticPageContextReferenceState(runtime.session.page, reference);
-          if (state.state === "ambiguous_stale") return { result: "still_unknown" as const,
-            reasonCode: state.reasonCode, evidence: { runtimeAvailable: true,
-              expectedEffectType: expectedEffect.type, documentEpoch: currentEpoch } };
+          const state = await observeSemanticPageContextReferenceState(
+            runtime.session.page,
+            reference,
+          );
+          if (state.state === "ambiguous_stale")
+            return {
+              result: "still_unknown" as const,
+              reasonCode: state.reasonCode,
+              evidence: {
+                runtimeAvailable: true,
+                expectedEffectType: expectedEffect.type,
+                documentEpoch: currentEpoch,
+              },
+            };
           visible = state.state === "visible";
           targetAbsent = state.state === "absent";
           targetResolved = state.state === "visible" || state.state === "hidden";
-        } else return {
-          result: "still_unknown" as const,
-          reasonCode: "RECONCILIATION_AUTHORITATIVE_REFERENCE_REQUIRED",
-          evidence: { runtimeAvailable: true, expectedEffectType: expectedEffect.type,
-            documentEpoch: currentEpoch },
-        };
+        } else
+          return {
+            result: "still_unknown" as const,
+            reasonCode: "RECONCILIATION_AUTHORITATIVE_REFERENCE_REQUIRED",
+            evidence: {
+              runtimeAvailable: true,
+              expectedEffectType: expectedEffect.type,
+              documentEpoch: currentEpoch,
+            },
+          };
         if (targetResolved || targetAbsent) {
           const effectSatisfied = expectedEffect.visible ? visible : targetAbsent || !visible;
           const applied = effectSatisfied && explicitInverse;
-          return { result: applied ? "proven_applied" as const : "still_unknown" as const,
-            reasonCode: applied ? "RECONCILIATION_VISIBILITY_TRANSITION_PROVEN" :
-              baselineSatisfied ? "RECONCILIATION_EFFECT_ALREADY_SATISFIED_BEFORE_DISPATCH" : "RECONCILIATION_VISIBILITY_INSUFFICIENT",
-            evidence: { runtimeAvailable: true, documentEpoch: currentEpoch,
+          return {
+            result: applied ? ("proven_applied" as const) : ("still_unknown" as const),
+            reasonCode: applied
+              ? "RECONCILIATION_VISIBILITY_TRANSITION_PROVEN"
+              : baselineSatisfied
+                ? "RECONCILIATION_EFFECT_ALREADY_SATISFIED_BEFORE_DISPATCH"
+                : "RECONCILIATION_VISIBILITY_INSUFFICIENT",
+            evidence: {
+              runtimeAvailable: true,
+              documentEpoch: currentEpoch,
               expectedEffectType: expectedEffect.type,
-              targetState: visible ? "visible" : targetAbsent ? "absent" : "hidden" } };
+              targetState: visible ? "visible" : targetAbsent ? "absent" : "hidden",
+            },
+          };
         }
       }
-      return { result: "still_unknown" as const, reasonCode: "RECONCILIATION_EVIDENCE_INSUFFICIENT",
-        evidence: { runtimeAvailable: true, expectedEffectType: expectedEffect.type } };
+      return {
+        result: "still_unknown" as const,
+        reasonCode: "RECONCILIATION_EVIDENCE_INSUFFICIENT",
+        evidence: { runtimeAvailable: true, expectedEffectType: expectedEffect.type },
+      };
     });
   }
 
@@ -332,7 +566,10 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     return provisioning;
   }
 
-  private async provision(sessionId: string, operation: AdaptiveSessionOperationInput): Promise<OwnedRuntime> {
+  private async provision(
+    sessionId: string,
+    operation: AdaptiveSessionOperationInput,
+  ): Promise<OwnedRuntime> {
     if (!this.veilAdmissionKey) throw new Error("VEIL_ADMISSION_KEY_REQUIRED");
     const context = await this.sessions.runtimeContextFor(sessionId);
     const lease = await this.sessions.claimRuntimeLease({
@@ -360,7 +597,9 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       idempotencyKey: operationId,
     });
     let browser: AuthoringBrowserSession | undefined;
-    let successorCheckpoint: Awaited<ReturnType<AdaptiveSessionRepository["claimSuccessorCheckpoint"]>>;
+    let successorCheckpoint: Awaited<
+      ReturnType<AdaptiveSessionRepository["claimSuccessorCheckpoint"]>
+    >;
     try {
       successorCheckpoint = await this.sessions.claimSuccessorCheckpoint(
         sessionId,
@@ -380,19 +619,19 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           openBrowser: async () => {
             const restored = await this.nativeBrowser.openBrowser(
               successorCheckpoint
-                ? { storageState: successorCheckpoint.payload.storageState, serviceWorkers: "block" }
+                ? {
+                    storageState: successorCheckpoint.payload.storageState,
+                    serviceWorkers: "block",
+                  }
                 : {},
               { kind: "safe_browser", ownerId: sessionId },
             );
             if (successorCheckpoint) {
               const sessionState = successorCheckpoint.payload.sessionStorage;
-              await restored.context.addInitScript(
-                ({ origin, entries }) => {
-                  if (location.origin !== origin) return;
-                  for (const [key, value] of entries) sessionStorage.setItem(key, value);
-                },
-                sessionState,
-              );
+              await restored.context.addInitScript(({ origin, entries }) => {
+                if (location.origin !== origin) return;
+                for (const [key, value] of entries) sessionStorage.setItem(key, value);
+              }, sessionState);
             }
             return restored;
           },
@@ -412,12 +651,16 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         context.lastObservation?.url,
         context.policy.allowedOrigins,
       );
-      const admittedFirstNavigation = operation.action.type === "navigate"
-        ? safeContinuationUrl(operation.action.url, context.policy.allowedOrigins)
-        : undefined;
+      const admittedFirstNavigation =
+        operation.action.type === "navigate"
+          ? safeContinuationUrl(operation.action.url, context.policy.allowedOrigins)
+          : undefined;
       await this.nativeBrowser.navigateAndWait(
         browser.page,
-        successorCheckpoint?.payload.restorationUrl ?? continuationUrl ?? admittedFirstNavigation ?? context.baseOrigin,
+        successorCheckpoint?.payload.restorationUrl ??
+          continuationUrl ??
+          admittedFirstNavigation ??
+          context.baseOrigin,
         context.policy.allowedOrigins,
         30_000,
         context.policy.trustedScriptOrigins ?? [],
@@ -428,20 +671,24 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           createHash("sha256").update(JSON.stringify(context.policy)).digest("hex")
         )
           throw new Error("SUCCESSOR_CHECKPOINT_POLICY_CHANGED");
-        if (browser.page.url() !== successorCheckpoint.payload.restorationUrl)
-          throw new Error("SUCCESSOR_CHECKPOINT_LOCATION_MISMATCH");
-        const semantic = await observeSemanticPageContext(browser.page);
         const expected = successorCheckpoint.payload.safeSemanticContext;
-        if (expected.title && semantic.authority.title !== expected.title)
-          throw new Error("SUCCESSOR_CHECKPOINT_SEMANTIC_MISMATCH");
-        const actualControls = semantic.controls
-          .slice(0, 24)
-          .map(({ role, name }) => ({ role, name }));
-        if (
-          expected.controls.length > 0 &&
-          JSON.stringify(actualControls) !== JSON.stringify(expected.controls)
-        )
-          throw new Error("SUCCESSOR_CHECKPOINT_SEMANTIC_MISMATCH");
+        const checkpointRestorePage = browser.page;
+
+        await waitForSuccessorCheckpointSemanticMatch({
+          restorationUrl: successorCheckpoint.payload.restorationUrl,
+          expected,
+          observe: async () => {
+            const semantic = await observeSemanticPageContext(checkpointRestorePage);
+
+            return {
+              url: checkpointRestorePage.url(),
+              title: semantic.authority.title,
+              controls: semantic.controls
+                .slice(0, 24)
+                .map(({ role, name }) => ({ role, name })),
+            };
+          },
+        });
         await this.sessions.heartbeatRuntimeLease({
           sessionId,
           ownerId: this.ownerId,
@@ -477,7 +724,9 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
             this.ownerId,
             lease.fencingToken,
             "failed",
-            error instanceof Error ? safeCheckpointFailure(error.message) : "SUCCESSOR_CHECKPOINT_RESTORE_FAILED",
+            error instanceof Error
+              ? safeCheckpointFailure(error.message)
+              : "SUCCESSOR_CHECKPOINT_RESTORE_FAILED",
           )
           .catch(() => undefined);
       await browser?.close().catch(() => undefined);
@@ -512,8 +761,13 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     objectiveDelta?: string;
     signal?: AbortSignal;
     protectedContext?: {
-      projectId: string; environmentId: string; missionId: string; objectiveId: string;
-      agentSessionId: string; flowDraftId: string; authorizationId: string;
+      projectId: string;
+      environmentId: string;
+      missionId: string;
+      objectiveId: string;
+      agentSessionId: string;
+      flowDraftId: string;
+      authorizationId: string;
     };
     leaseOwner?: string;
     privacyGate: import("@scry/veil").VeilRuntimeCoordinator;
@@ -524,9 +778,10 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     const collector = this.operationTimingCollectors.get(operationKey);
     const leaseGuard = this.operationLeaseGuards.get(operationKey);
     const signal = composeSignals(input.signal, leaseGuard?.signal);
-    const protectedContext = input.action.type === "protectedTransaction"
-      ? await this.sessions.protectedExecutionContext(input.sessionId, input.operationId)
-      : undefined;
+    const protectedContext =
+      input.action.type === "protectedTransaction"
+        ? await this.sessions.protectedExecutionContext(input.sessionId, input.operationId)
+        : undefined;
     const protectedInputBindings = exactProtectedInputBindings(
       input.sessionId,
       input.operationId,
@@ -540,11 +795,19 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       mode: input.mode,
       policy: input.policy,
       ...(protectedInputBindings.length ? { protectedInputBindings } : {}),
+      ...(this.operationOutputDirectories.has(operationKey)
+        ? { outputDirectory: this.operationOutputDirectories.get(operationKey)! }
+        : {}),
+      ...(this.operationVeilPolicies.has(operationKey)
+        ? { veilPolicySnapshot: this.operationVeilPolicies.get(operationKey)! }
+        : {}),
       dispatchDisposition: protectedContext?.dispatchDisposition ?? "execute",
-      ...(protectedContext ? {
-        protectedContext,
-        leaseOwner: `${this.ownerId}:${input.fencingToken}`,
-      } : {}),
+      ...(protectedContext
+        ? {
+            protectedContext,
+            leaseOwner: `${this.ownerId}:${input.fencingToken}`,
+          }
+        : {}),
       onMutationDispatch: async () => {
         await leaseGuard?.heartbeat();
         await this.sessions.markOperationDispatching({
@@ -555,36 +818,64 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         });
       },
       ...(signal ? { signal } : {}),
-      ...(collector ? {
-        onPraxisResult: collector.onPraxisResult,
-        onExpectedEffectVerification: collector.onExpectedEffectVerification,
-      } : {}),
+      ...(collector
+        ? {
+            onPraxisResult: collector.onPraxisResult,
+            onExpectedEffectVerification: collector.onExpectedEffectVerification,
+          }
+        : {}),
     });
-    return this.kernel.interact({
-      request: {
-        sessionId: input.sessionId,
-        operationId: input.operationId,
-        correlationId,
-        mode: input.mode,
-        policy: input.policy,
-        ...(input.mutationIdentity ? { mutationIdentity: input.mutationIdentity } : {}),
-        ...(input.objectiveDelta ? { semanticContext: input.objectiveDelta } : {}),
-      },
-      capabilities: capability,
-      page: input.page,
-      safeSession: {
-        browser: input.browser,
-        context: input.context,
-        page: input.page,
-        provenance: input.provenance,
-      },
-      existingProtectedSession: input.protection === "protected",
-      action: input.action,
-      ...(input.expectedEffect ? { expectedEffect: input.expectedEffect } : {}),
-      ...(input.resolveEffectPage ? { resolveEffectPage: input.resolveEffectPage } : {}),
-      ordinal: input.ordinal,
-      privacyGate: input.privacyGate,
-    });
+    return this.operationCaptureReports.has(operationKey)
+      ? this.kernel.interactWithReport({
+          request: {
+            sessionId: input.sessionId,
+            operationId: input.operationId,
+            correlationId,
+            mode: input.mode,
+            policy: input.policy,
+            ...(input.mutationIdentity ? { mutationIdentity: input.mutationIdentity } : {}),
+            ...(input.objectiveDelta ? { semanticContext: input.objectiveDelta } : {}),
+          },
+          capabilities: capability,
+          page: input.page,
+          safeSession: {
+            browser: input.browser,
+            context: input.context,
+            page: input.page,
+            provenance: input.provenance,
+          },
+          existingProtectedSession: input.protection === "protected",
+          action: input.action,
+          ...(input.expectedEffect ? { expectedEffect: input.expectedEffect } : {}),
+          ...(input.resolveEffectPage ? { resolveEffectPage: input.resolveEffectPage } : {}),
+          ordinal: input.ordinal,
+          privacyGate: input.privacyGate,
+        })
+      : this.kernel.interact({
+          request: {
+            sessionId: input.sessionId,
+            operationId: input.operationId,
+            correlationId,
+            mode: input.mode,
+            policy: input.policy,
+            ...(input.mutationIdentity ? { mutationIdentity: input.mutationIdentity } : {}),
+            ...(input.objectiveDelta ? { semanticContext: input.objectiveDelta } : {}),
+          },
+          capabilities: capability,
+          page: input.page,
+          safeSession: {
+            browser: input.browser,
+            context: input.context,
+            page: input.page,
+            provenance: input.provenance,
+          },
+          existingProtectedSession: input.protection === "protected",
+          action: input.action,
+          ...(input.expectedEffect ? { expectedEffect: input.expectedEffect } : {}),
+          ...(input.resolveEffectPage ? { resolveEffectPage: input.resolveEffectPage } : {}),
+          ordinal: input.ordinal,
+          privacyGate: input.privacyGate,
+        });
   }
 
   private createCapabilities(input: {
@@ -594,18 +885,29 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     operationId: string;
     mode: ExecutionMode;
     policy: ExecutionPolicy;
+    outputDirectory?: string;
+    veilPolicySnapshot?: import("@scry/contracts").VeilPolicySnapshot;
     dispatchDisposition?: "execute" | "qualification_only";
     onMutationDispatch?: () => Promise<void>;
     signal?: AbortSignal;
     protectedContext?: {
-      projectId: string; environmentId: string; missionId: string; objectiveId: string;
-      agentSessionId: string; flowDraftId: string; authorizationId: string;
+      projectId: string;
+      environmentId: string;
+      missionId: string;
+      objectiveId: string;
+      agentSessionId: string;
+      flowDraftId: string;
+      authorizationId: string;
       dispatchDisposition: "execute" | "qualification_only";
     };
     protectedInputBindings?: ProtectedInputDeliveryBinding[];
     leaseOwner?: string;
     onPraxisResult?: (result: import("@scry/contracts").PraxisResult) => void;
-    onExpectedEffectVerification?: (result: { status: "succeeded" | "failed"; reasonCode?: string; durationMs: number }) => void;
+    onExpectedEffectVerification?: (result: {
+      status: "succeeded" | "failed";
+      reasonCode?: string;
+      durationMs: number;
+    }) => void;
   }) {
     const create = input.protectedContext
       ? this.capabilities.createMissionAuthoringSession.bind(this.capabilities)
@@ -616,38 +918,50 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       correlationId: input.correlationId,
       mode: input.mode,
       options: {
-        outputDirectory: path.join(this.artifactRoot, "adaptive", input.sessionId),
+        outputDirectory:
+          input.outputDirectory ?? path.join(this.artifactRoot, "adaptive", input.sessionId),
         browserChannel: this.browserChannel,
         environmentId: input.environmentId,
         veilAdmissionKey: this.veilAdmissionKey!,
-        veilPolicySnapshot: compileDefaultVeilPolicy(input.policy),
+        veilPolicySnapshot: input.veilPolicySnapshot ?? compileDefaultVeilPolicy(input.policy),
         secretResolver: input.protectedInputBindings
           ? (() => {
-              const deliveries = new Map(input.protectedInputBindings.map((binding) => [
-                binding.protectedReferenceId,
-                { binding, delivery: bindProtectedInputDelivery(binding, () =>
-                  this.sessions.resolveProtectedInput(
-                    binding.sessionId,
-                    binding.operationId,
-                    binding.protectedReferenceId,
-                  ),
-                ) },
-              ]));
+              const deliveries = new Map(
+                input.protectedInputBindings.map((binding) => [
+                  binding.protectedReferenceId,
+                  {
+                    binding,
+                    delivery: bindProtectedInputDelivery(binding, () =>
+                      this.sessions.resolveProtectedInput(
+                        binding.sessionId,
+                        binding.operationId,
+                        binding.protectedReferenceId,
+                      ),
+                    ),
+                  },
+                ]),
+              );
               return (reference: string) =>
-                deliveries.get(reference)?.delivery.consume(deliveries.get(reference)!.binding)
-                  ?? Promise.reject(Object.assign(
-                    new Error("Protected input delivery binding mismatch"),
-                    { code: "PROTECTED_INPUT_DELIVERY_BINDING_MISMATCH" },
-                  ));
+                deliveries.get(reference)?.delivery.consume(deliveries.get(reference)!.binding) ??
+                Promise.reject(
+                  Object.assign(new Error("Protected input delivery binding mismatch"), {
+                    code: "PROTECTED_INPUT_DELIVERY_BINDING_MISMATCH",
+                  }),
+                );
             })()
-          : (reference) => this.sessions.resolveProtectedInput(input.sessionId, input.operationId, reference),
+          : (reference) =>
+              this.sessions.resolveProtectedInput(input.sessionId, input.operationId, reference),
         dispatchDisposition: input.dispatchDisposition ?? "execute",
         ...(input.onMutationDispatch ? { onMutationDispatch: input.onMutationDispatch } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
         ...(input.onPraxisResult ? { onPraxisResult: input.onPraxisResult } : {}),
-        ...(input.onExpectedEffectVerification ? { onExpectedEffectVerification: input.onExpectedEffectVerification } : {}),
+        ...(input.onExpectedEffectVerification
+          ? { onExpectedEffectVerification: input.onExpectedEffectVerification }
+          : {}),
       },
-      ...(input.protectedContext ? { ...input.protectedContext, leaseOwner: input.leaseOwner! } : {}),
+      ...(input.protectedContext
+        ? { ...input.protectedContext, leaseOwner: input.leaseOwner! }
+        : {}),
     });
   }
 
@@ -683,12 +997,13 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           signal: controller.signal,
           timeoutCode: "ADAPTIVE_RUNTIME_HEARTBEAT_TIMEOUT",
           dispatchPosition: "post_dispatch",
-          work: () => this.sessions.heartbeatRuntimeLease({
-          sessionId,
-          ownerId: this.ownerId,
-          fencingToken: runtime.fencingToken,
-          leaseDurationMs: this.leaseDurationMs,
-          }),
+          work: () =>
+            this.sessions.heartbeatRuntimeLease({
+              sessionId,
+              ownerId: this.ownerId,
+              fencingToken: runtime.fencingToken,
+              leaseDurationMs: this.leaseDurationMs,
+            }),
         });
       });
       renewalTail = renewal.catch((error) => {
@@ -701,7 +1016,9 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     };
     await renew(true);
     const timer = setInterval(
-      () => { if (!stopped) void renew(false); },
+      () => {
+        if (!stopped) void renew(false);
+      },
       Math.max(250, Math.floor(this.leaseDurationMs / 3)),
     );
     return {
@@ -728,18 +1045,31 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
 async function observeEffectState(page: import("playwright").Page, effect: ExpectedEffect) {
   if (effect.type === "navigation") return { navigationUrl: page.url() };
   if (effect.type === "visibility_change") {
-    try { return { visibility: await (await resolveTargetLocator(page,effect.target)).isVisible() ? "visible" : "hidden_or_absent" }; }
-    catch (error) { return { visibility: /TARGET_NOT_FOUND/.test(error instanceof Error ? error.message : "")
-      ? "hidden_or_absent" : "unresolved" }; }
+    try {
+      return {
+        visibility: (await (await resolveTargetLocator(page, effect.target)).isVisible())
+          ? "visible"
+          : "hidden_or_absent",
+      };
+    } catch (error) {
+      return {
+        visibility: /TARGET_NOT_FOUND/.test(error instanceof Error ? error.message : "")
+          ? "hidden_or_absent"
+          : "unresolved",
+      };
+    }
   }
   return { state: "unsupported" };
 }
 
-function navigationMatches(actual: string, expected: string, match: "exact"|"path"|"contains") {
+function navigationMatches(actual: string, expected: string, match: "exact" | "path" | "contains") {
   if (match === "contains") return actual.includes(expected);
   if (match === "exact") return actual === expected;
-  try { return new URL(actual).pathname === new URL(expected, actual).pathname; }
-  catch { return false; }
+  try {
+    return new URL(actual).pathname === new URL(expected, actual).pathname;
+  } catch {
+    return false;
+  }
 }
 
 function safeCheckpointFailure(message: string) {
@@ -754,40 +1084,48 @@ function composeSignals(...signals: Array<AbortSignal | undefined>) {
   return present.length === 1 ? present[0] : AbortSignal.any(present);
 }
 
-function decisionBoundary(outcome: OperationOutcome, environment?: {
-  environmentId: string;
-  allowedOrigins: string[];
-  trustedScriptOrigins: string[];
-}): AgentDecisionBoundary {
+function decisionBoundary(
+  outcome: OperationOutcome,
+  environment?: {
+    environmentId: string;
+    allowedOrigins: string[];
+    trustedScriptOrigins: string[];
+  },
+): AgentDecisionBoundary {
   if (outcome.nextDecisionBoundary) return outcome.nextDecisionBoundary;
   if (outcome.reasonCode === "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED") {
     return {
       type: "environment_unavailable",
       reasonCode: outcome.reasonCode,
-      safeActions: ["recover_trusted_script_origins"],
-      ...(environment && outcome.environmentFailure ? {
-        environmentRecovery: {
-          environmentId: environment.environmentId,
-          missingTrustedScriptOrigins: outcome.environmentFailure.missingTrustedScriptOrigins,
-          missingOriginClassification: outcome.environmentFailure.missingOriginClassification,
-          currentTrustedScriptOrigins: environment.trustedScriptOrigins,
-          recoveryTool: "recover_trusted_script_origins" as const,
-          requiresNewFlowDraftAndAuthoringSession: true as const,
-        },
-      } : {}),
+      safeActions: ["create_test_environment", "create_flow_draft"],
+      ...(environment && outcome.environmentFailure
+        ? {
+            environmentRecovery: {
+              environmentId: environment.environmentId,
+              missingTrustedScriptOrigins: outcome.environmentFailure.missingTrustedScriptOrigins,
+              missingOriginClassification: outcome.environmentFailure.missingOriginClassification,
+              currentTrustedScriptOrigins: environment.trustedScriptOrigins,
+              recoveryTool: "create_test_environment" as const,
+              requiresNewFlowDraftAndAuthoringSession: true as const,
+            },
+          }
+        : {}),
     };
   }
-  if (outcome.reasonCode === "EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED"
-      && environment && outcome.navigationEnvironmentFailure) {
+  if (
+    outcome.reasonCode === "EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED" &&
+    environment &&
+    outcome.navigationEnvironmentFailure
+  ) {
     return {
       type: "environment_unavailable",
       reasonCode: outcome.reasonCode,
-      safeActions: ["create_test_environment", "create_flow_draft", "start_flow_authoring"],
+      safeActions: ["create_test_environment", "create_flow_draft"],
       navigationRecovery: {
         environmentId: environment.environmentId,
         missingAllowedOrigin: outcome.navigationEnvironmentFailure.missingAllowedOrigin,
         currentAllowedOrigins: environment.allowedOrigins,
-        recoveryTools: ["create_test_environment", "create_flow_draft", "start_flow_authoring"],
+        recoveryTools: ["create_test_environment", "create_flow_draft"],
         requiresNewFlowDraftAndAuthoringSession: true,
       },
     };
@@ -796,14 +1134,14 @@ function decisionBoundary(outcome: OperationOutcome, environment?: {
     return {
       type: "mutation_reconciliation_required",
       reasonCode: "MUTATION_OUTCOME_UNKNOWN",
-      safeActions: ["get_flow_authoring"],
+      safeActions: ["get_run", "get_praxis_session", "reconcile_unknown_operation"],
     };
   }
   if (outcome.mutationOutcome === "applied" && outcome.functionalResult !== "succeeded") {
     return {
       type: "effect_observation_required",
       reasonCode: outcome.reasonCode ?? "EXPECTED_EFFECT_NOT_OBSERVED",
-      safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+      safeActions: ["get_run", "get_praxis_session", "observe_praxis_session"],
     };
   }
   return outcome.functionalResult === "succeeded"
@@ -811,7 +1149,7 @@ function decisionBoundary(outcome: OperationOutcome, environment?: {
     : {
         type: "environment_unavailable",
         reasonCode: outcome.reasonCode ?? "ADAPTIVE_OPERATION_FAILED",
-        safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+        safeActions: ["get_run", "get_praxis_session", "observe_praxis_session"],
       };
 }
 
@@ -831,13 +1169,27 @@ function exactProtectedInputBindings(
   action: CurrentAction,
 ): ProtectedInputDeliveryBinding[] {
   if (action.type === "fill" && action.secretRef && action.target.authoritativeReference)
-    return [{ sessionId, operationId, protectedReferenceId: action.secretRef,
-      targetReference: action.target.authoritativeReference }];
+    return [
+      {
+        sessionId,
+        operationId,
+        protectedReferenceId: action.secretRef,
+        targetReference: action.target.authoritativeReference,
+      },
+    ];
   if (action.type === "protectedAuthentication")
-    return action.fields.flatMap((field) => field.target.authoritativeReference ? [{
-      sessionId, operationId, protectedReferenceId: field.secretRef,
-      targetReference: field.target.authoritativeReference,
-    }] : []);
+    return action.fields.flatMap((field) =>
+      field.target.authoritativeReference
+        ? [
+            {
+              sessionId,
+              operationId,
+              protectedReferenceId: field.secretRef,
+              targetReference: field.target.authoritativeReference,
+            },
+          ]
+        : [],
+    );
   return [];
 }
 

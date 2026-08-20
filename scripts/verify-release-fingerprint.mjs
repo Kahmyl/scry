@@ -106,6 +106,22 @@ const resourceEffectReconciliation = await readFile(
   "utf8",
 );
 
+const documentTransitionGap = await readFile(
+  new URL(
+    "20260816-231045_add_document_transition_gap.sql",
+    migrations,
+  ),
+  "utf8",
+);
+
+const missionRecordingSelection = await readFile(
+  new URL(
+    "mission-recording-selection.sql",
+    migrations,
+  ),
+  "utf8",
+);
+
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", migrations), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
   ["praxis-reporting.sql", reporting],
@@ -138,6 +154,8 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", migration
   ["run-praxis-session-ledger.sql", runPraxisSessionLedger],
   ["protected-live-praxis-session.sql", protectedLivePraxisSession],
   ["resource-effect-reconciliation.sql", resourceEffectReconciliation],
+  ["20260816-231045_add_document_transition_gap.sql", documentTransitionGap],
+  ["mission-recording-selection.sql", missionRecordingSelection],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

@@ -32,7 +32,7 @@ export function registerListMissionsTool(server: McpServer, client: ScryApiClien
     {
       title: "List project Missions",
       description:
-        "List newest-created Missions before starting work so related non-terminal work can be resumed or edited.",
+        "List newest-created Missions before starting work. The external agent owns semantic comparison: ignore clearly unrelated Missions. If an existing non-terminal Mission plausibly overlaps the current request and the user has not already selected it, do not resume it automatically; tell the user what related Mission was found and ask whether to continue it or start distinct work.",
       inputSchema: { projectId: uuid },
       annotations: readOnly,
     },

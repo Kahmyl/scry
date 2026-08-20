@@ -107,7 +107,7 @@ describe("Campaign D: known-secret protected preparation", () => {
           verifyAssertions: async () => undefined,
         } as never),
       ).rejects.toMatchObject({
-        code: "PREPARATION_PRAXIS_NO_CAPABILITY_COMPATIBLE_CONTROL",
+        code: "PREPARATION_FILL_KNOWN_SECRET_PRAXIS_NO_CAPABILITY_COMPATIBLE_CONTROL",
         retryClass: "safe_to_retry",
       });
       expect(page.url()).toBe(`${origin}/login`);

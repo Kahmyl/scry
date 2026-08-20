@@ -1153,10 +1153,10 @@ export class AuthoringService {
 
       const adaptive = input.authoringSessionId
         ? await q<{
-          state: string;
-          decisionBoundary: Record<string, unknown> | null;
-          completedAt: Date | null;
-          qualifiedFlowDraftVersion: number | null;
+            state: string;
+            decisionBoundary: Record<string, unknown> | null;
+            completedAt: Date | null;
+            qualifiedFlowDraftVersion: number | null;
           }>(
             `SELECT state,decision_boundary AS "decisionBoundary",completed_at AS "completedAt",
                     qualified_flow_draft_version AS "qualifiedFlowDraftVersion"
@@ -1272,7 +1272,8 @@ export class AuthoringService {
             [input.authoringSessionId, draftId],
           )
         : { rowCount: 0, rows: [] };
-      const probeResult: ProbeResult | null = probe.rows[0]?.result ??
+      const probeResult: ProbeResult | null =
+        probe.rows[0]?.result ??
         (adaptive.rowCount
           ? {
               targets: [],
@@ -1625,8 +1626,18 @@ export class AuthoringService {
              origin_mission_id,origin_objective_id,owner_mission_id,owner_objective_id,
              created_by_agent_session_id)
            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$8,$9,$10)`,
-          [flowId,d.projectId,d.name,d.description,revisionId,input.visibility,input.purpose,
-           input.missionId,input.objectiveId,input.agentSessionId],
+          [
+            flowId,
+            d.projectId,
+            d.name,
+            d.description,
+            revisionId,
+            input.visibility,
+            input.purpose,
+            input.missionId,
+            input.objectiveId,
+            input.agentSessionId,
+          ],
         );
       }
 
@@ -1634,30 +1645,55 @@ export class AuthoringService {
         `INSERT INTO flow_revisions(
            id,flow_id,revision,content,plan,validation,created_by_agent_session_id,reason)
          VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,$8)`,
-        [revisionId,flowId,revision,JSON.stringify(d.content),JSON.stringify(plan),
-         JSON.stringify({ valid: true, representationOnly: true, sourceDraftVersion: d.version,
-           sourcePlanDigest: hash(d.plan) }),input.agentSessionId,input.reason],
+        [
+          revisionId,
+          flowId,
+          revision,
+          JSON.stringify(d.content),
+          JSON.stringify(plan),
+          JSON.stringify({
+            valid: true,
+            representationOnly: true,
+            sourceDraftVersion: d.version,
+            sourcePlanDigest: hash(d.plan),
+          }),
+          input.agentSessionId,
+          input.reason,
+        ],
       );
       await q(
         `UPDATE flows SET latest_revision_id=$2,publication_state='published',visibility=$3,
            purpose=$4,name=$5,description=$6,updated_at=now() WHERE id=$1`,
-        [flowId,revisionId,input.visibility,input.purpose,d.name,d.description],
+        [flowId, revisionId, input.visibility, input.purpose, d.name, d.description],
       );
       await q(
         `INSERT INTO mission_flow_links(
            mission_id,objective_id,flow_id,visibility,purpose,reason,created_by_agent_session_id)
          VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,
-        [input.missionId,input.objectiveId,flowId,input.visibility,input.purpose,input.reason,
-         input.agentSessionId],
+        [
+          input.missionId,
+          input.objectiveId,
+          flowId,
+          input.visibility,
+          input.purpose,
+          input.reason,
+          input.agentSessionId,
+        ],
       );
       await q(
         `UPDATE flow_drafts SET flow_id=$2,state='published',published_revision_id=$3,
            updated_at=now() WHERE id=$1`,
-        [draftId,flowId,revisionId],
+        [draftId, flowId, revisionId],
       );
-      await this.event(q,draftId,d.version,"published",input.agentSessionId,
+      await this.event(
+        q,
+        draftId,
+        d.version,
+        "published",
+        input.agentSessionId,
         `Published representation-only Flow revision ${revision}`,
-        { flowId,revisionId,idempotencyKey: input.idempotencyKey });
+        { flowId, revisionId, idempotencyKey: input.idempotencyKey },
+      );
       return { flowId, revisionId, revision, replayed: false };
     });
   }
@@ -2722,13 +2758,7 @@ export class AuthoringService {
          AND checkpoint.state='verified'
          AND checkpoint.expires_at>now()
          AND checkpoint.claimed_by_authoring_session_id=session.id`,
-      [
-        draft.predecessorRunId,
-        draft.missionId,
-        draft.environmentId,
-        authoringSessionId,
-        draft.id,
-      ],
+      [draft.predecessorRunId, draft.missionId, draft.environmentId, authoringSessionId, draft.id],
     );
     if (!predecessor.rowCount) {
       throw new ConflictException({
@@ -3231,7 +3261,13 @@ async function certificationSatisfied(q: Query, compilationId: string) {
              SELECT max(latest.attempt_number) FROM attempts latest WHERE latest.run_id=r.id
            )
            AND (artifact.availability IN ('failed','incomplete','quarantined')
-             OR timeline.entry_type IN ('unavailable_interval','quarantine_record')
+             OR (
+timeline.entry_type IN ('unavailable_interval','quarantine_record')
+OR (
+  timeline.entry_type IN ('video_segment','trace_segment')
+  AND timeline.reason_code IS NOT NULL
+)
+)
              OR (privacy.id IS NOT NULL AND privacy.ended_at IS NULL))
        )
      LIMIT 1`,

@@ -295,15 +295,44 @@ integration("adaptive session repository integration", () => {
     expect(prior.rowCount).toBe(1);
   });
 
-  it("rejects a Flow draft outside the supplied Mission and Objective chain", async () => {
+  it("classifies an invalid Mission agent session as not applied without inferring continuation authority", async () => {
+    const before = await controlPlaneCounts();
+
+    await expect(
+      repository.create(workspaceId, {
+        ...startInput("invalid-agent-session"),
+        agentSessionId: randomUUID(),
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "MISSION_AGENT_SESSION_OWNERSHIP_INVALID",
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+        safeActions: ["list_missions"],
+      },
+    });
+
+    expect(await controlPlaneCounts()).toEqual(before);
+  });
+
+  it("rejects a Flow draft outside the supplied Mission and Objective chain as not applied", async () => {
+    const before = await controlPlaneCounts();
+
     await expect(
       repository.create(workspaceId, {
         ...startInput("invalid-owner-chain"),
         objectiveId: randomUUID(),
       }),
     ).rejects.toMatchObject({
-      response: { code: "MISSION_FLOW_AUTHORING_OWNERSHIP_INVALID" },
+      response: {
+        code: "MISSION_FLOW_AUTHORING_OWNERSHIP_INVALID",
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+        safeActions: ["get_operating_context"],
+      },
     });
+
+    expect(await controlPlaneCounts()).toEqual(before);
   });
 
   it("atomically replaces environment, draft, and session only for the disclosed approved origins", async () => {
@@ -1009,6 +1038,192 @@ integration("adaptive session repository integration", () => {
     expect(operation.rows[0]!.state).toBe("running");
   });
 
+
+  it("projects canonical authenticate fields into UNKNOWN reconciliation authority without plaintext", async () => {
+    const created = await createActive(startInput(`authenticate-recovery-${randomUUID()}`));
+    sessionIds.push(created.id);
+
+    const preparationOperationId = `authenticate-${randomUUID()}`;
+    const unknownOperationId = `unknown-${randomUUID()}`;
+    const emailReference = randomUUID();
+    const passwordReference = randomUUID();
+
+    const authenticateIntent = {
+      intentId: preparationOperationId,
+      objectiveId,
+      flowDraftId,
+      action: {
+        kind: "authenticate",
+        fields: [
+          {
+            target: { concept: "login email", exact: true },
+            protectedReferenceId: emailReference,
+          },
+          {
+            target: { concept: "login password", exact: true },
+            protectedReferenceId: passwordReference,
+          },
+        ],
+      },
+      expectedEffect: { kind: "none" },
+      constraints: {
+        timeoutMs: 1_000,
+        allowNewPage: false,
+        allowNonExact: false,
+      },
+      authorization: { kind: "authentication" },
+      protectedInputReferences: [emailReference, passwordReference],
+    };
+
+    const unknownIntent = {
+      intentId: unknownOperationId,
+      objectiveId,
+      flowDraftId,
+      action: {
+        kind: "acquire_protected_outputs",
+        preparationIntentIds: [preparationOperationId],
+      },
+      expectedEffect: { kind: "none" },
+      constraints: {
+        timeoutMs: 1_000,
+        allowNewPage: false,
+        allowNonExact: false,
+      },
+      authorization: { kind: "protected_mutation" },
+      protectedInputReferences: [],
+    };
+
+    const preparationOutcome = {
+      operationId: preparationOperationId,
+      functionalResult: "succeeded",
+      mutationOutcome: "not_applied",
+      privacyResult: "verified",
+      evidenceResult: [],
+      qualityFindings: [],
+      durationMs: 1,
+    };
+
+    const unknownOutcome = {
+      operationId: unknownOperationId,
+      functionalResult: "inconclusive",
+      mutationOutcome: "unknown",
+      privacyResult: "unverified",
+      evidenceResult: [],
+      qualityFindings: [],
+      durationMs: 1,
+    };
+
+    await database.query(
+      `INSERT INTO adaptive_operations(
+         session_id,operation_id,sequence,mode,state,
+         semantic_intent,expected_effect,policy_digest,
+         dispatch_boundary,mutation_outcome,functional_result,
+         privacy_result,evidence_result,quality_findings,
+         safe_outcome,decision_boundary,idempotency_key,
+         mission_id,objective_id,flow_draft_id,
+         authoring_intent,derived_action,completed_at
+       ) VALUES
+       (
+         $1,$2,1,'observe','completed',
+         $3::jsonb,'{"type":"none"}'::jsonb,$4,
+         'acknowledged','not_applied','succeeded',
+         'verified','[]'::jsonb,'[]'::jsonb,
+         $5::jsonb,$6::jsonb,$7,
+         $8,$9,$10,$3::jsonb,$11::jsonb,now()
+       ),
+       (
+         $1,$12,2,'transact','failed',
+         $13::jsonb,'{"type":"none"}'::jsonb,$4,
+         'dispatching','unknown','inconclusive',
+         'unverified','[]'::jsonb,'[]'::jsonb,
+         $14::jsonb,$15::jsonb,$16,
+         $8,$9,$10,$13::jsonb,$11::jsonb,now()
+       )`,
+      [
+        created.id,
+        preparationOperationId,
+        JSON.stringify(authenticateIntent),
+        "a".repeat(64),
+        JSON.stringify(preparationOutcome),
+        JSON.stringify({
+          type: "operation_completed",
+          reasonCode: "TEST_AUTHENTICATE_PREPARATION",
+          safeActions: [],
+        }),
+        `${preparationOperationId}-key`,
+        missionId,
+        objectiveId,
+        flowDraftId,
+        JSON.stringify({
+          action: { type: "waitFor", timeoutMs: 1 },
+          expectedEffect: { type: "none" },
+          mode: "observe",
+        }),
+        unknownOperationId,
+        JSON.stringify(unknownIntent),
+        JSON.stringify(unknownOutcome),
+        JSON.stringify({
+          type: "mutation_reconciliation_required",
+          reasonCode: "TEST_UNKNOWN",
+          safeActions: ["get_flow_authoring"],
+        }),
+        `${unknownOperationId}-key`,
+      ],
+    );
+
+    const expectedFacts = [
+      {
+        intentId: preparationOperationId,
+        actionKind: "authenticate",
+        protectedReferenceId: emailReference,
+        targetConcept: "login email",
+      },
+      {
+        intentId: preparationOperationId,
+        actionKind: "authenticate",
+        protectedReferenceId: passwordReference,
+        targetConcept: "login password",
+      },
+    ];
+
+    const readAuthority = await repository.getUnknownReconciliationAuthority(
+      workspaceId,
+      created.id,
+      unknownOperationId,
+    );
+
+    expect(readAuthority?.preparationFacts).toEqual(expectedFacts);
+    expect(JSON.stringify(readAuthority?.preparationFacts)).not.toContain(
+      "opaque-protected-fixture",
+    );
+
+    const begun = await repository.beginUnknownReconciliation({
+      workspaceId,
+      sessionId: created.id,
+      missionId,
+      operationId: unknownOperationId,
+      idempotencyKey: `${unknownOperationId}-reconcile`,
+    });
+
+    expect(begun.authority.preparationFacts).toEqual(expectedFacts);
+    expect(JSON.stringify(begun.authority.preparationFacts)).not.toContain(
+      "opaque-protected-fixture",
+    );
+
+    const cleanup = await repository.completeUnknownReconciliation({
+      sessionId: created.id,
+      missionId,
+      operationId: unknownOperationId,
+      idempotencyKey: `${unknownOperationId}-reconcile`,
+      result: "proven_not_applied",
+      reasonCode: "TEST_FIXTURE_RECONCILIATION_CLEANUP",
+      evidence: { fixtureCleanup: true },
+      runtimeOwned: false,
+    });
+
+    expect(cleanup).toMatchObject({ missionFenceCleared: true });
+  });
+
   it("fails closed on uncertain revocation and preserves active status when not applied", async () => {
     const authorizationId = randomUUID();
     await database.query(
@@ -1527,4 +1742,278 @@ integration("adaptive session repository integration", () => {
     );
     return result.rows[0]!;
   }
+  it("keeps a published draft immutable across ordinary settlement and proven-applied reconciliation", async () => {
+    const immutableMissionId = randomUUID();
+    const immutableObjectiveId = randomUUID();
+    const immutableAgentSessionId = randomUUID();
+    const immutableDraftId = randomUUID();
+
+    await database.query(
+      `INSERT INTO missions(
+         id,project_id,title,original_instruction
+       ) VALUES($1,$2,'Published immutability','Behavioral isolation')`,
+      [immutableMissionId, projectId],
+    );
+
+    await database.query(
+      `INSERT INTO mission_objectives(
+         id,mission_id,title,completion_criteria,objective_order
+       ) VALUES($1,$2,'Published immutability','{}'::jsonb,0)`,
+      [immutableObjectiveId, immutableMissionId],
+    );
+
+    await database.query(
+      `INSERT INTO agent_sessions(
+         id,mission_id,provider,instruction_snapshot,idempotency_key
+       ) VALUES($1,$2,'scry_agent','Published immutability',$3)`,
+      [
+        immutableAgentSessionId,
+        immutableMissionId,
+        `published-immutability-agent-${immutableAgentSessionId}`,
+      ],
+    );
+
+    await database.query(
+      `INSERT INTO flow_drafts(
+         id,project_id,mission_id,objective_id,environment_id,name,content,plan,
+         created_by_agent_session_id
+       ) VALUES($1,$2,$3,$4,$5,$6,'{}'::jsonb,$7::jsonb,$8)`,
+      [
+        immutableDraftId,
+        projectId,
+        immutableMissionId,
+        immutableObjectiveId,
+        environmentId,
+        `Published immutable ${immutableDraftId}`,
+        JSON.stringify({ steps: [] }),
+        immutableAgentSessionId,
+      ],
+    );
+
+    const created = await createActive({
+      ...startInput(`published-immutability-${randomUUID()}`),
+      missionId: immutableMissionId,
+      objectiveId: immutableObjectiveId,
+      agentSessionId: immutableAgentSessionId,
+      flowDraftId: immutableDraftId,
+    });
+    sessionIds.push(created.id);
+
+    await database.query(
+      `UPDATE flow_drafts
+          SET state='published'
+        WHERE id=$1`,
+      [immutableDraftId],
+    );
+
+    const readDraft = async () => {
+      const result = await database.query<{
+        state: string;
+        version: number;
+        plan: unknown;
+        updatedAt: string;
+      }>(
+        `SELECT state,version,plan,updated_at::text AS "updatedAt"
+           FROM flow_drafts
+          WHERE id=$1`,
+        [immutableDraftId],
+      );
+
+      expect(result.rowCount).toBe(1);
+      return result.rows[0]!;
+    };
+
+    const appendedEventCount = async (operationId: string) => {
+      const result = await database.query<{ count: number }>(
+        `SELECT count(*)::int AS count
+           FROM flow_draft_events
+          WHERE draft_id=$1
+            AND type='authoring_step_appended'
+            AND safe_metadata->>'operationId'=$2`,
+        [immutableDraftId, operationId],
+      );
+
+      return result.rows[0]!.count;
+    };
+
+    const publishedBaseline = await readDraft();
+
+    expect(publishedBaseline.state).toBe("published");
+
+    const ordinaryId = `published-ordinary-${randomUUID()}`;
+    const ordinaryIntent = {
+      ...missionIntent(ordinaryId),
+      objectiveId: immutableObjectiveId,
+      flowDraftId: immutableDraftId,
+    };
+    const ordinaryOperation = operation(ordinaryId);
+
+    await repository.beginMissionOperation({
+      workspaceId,
+      sessionId: created.id,
+      operationId: ordinaryId,
+      idempotencyKey: `idempotency-${ordinaryId}`,
+      intent: ordinaryIntent,
+      action: ordinaryOperation.action,
+      expectedEffect: ordinaryOperation.expectedEffect,
+      mode: ordinaryOperation.mode,
+    });
+
+    const ordinarySettled = await repository.settleMissionOperation({
+      sessionId: created.id,
+      operationId: ordinaryId,
+      intent: ordinaryIntent,
+      action: ordinaryOperation.action,
+      outcome: {
+        operationId: ordinaryId,
+        functionalResult: "succeeded",
+        mutationOutcome: "not_applied",
+        privacyResult: "verified",
+        evidenceResult: [],
+        qualityFindings: [],
+        durationMs: 1,
+      },
+      capabilityManifestDigest: "a".repeat(64),
+      decisionBoundary: {
+        type: "objective_completed",
+        reasonCode: "OPERATION_COMPLETED",
+        safeActions: [],
+      },
+    });
+
+    expect(ordinarySettled.state).toBe("completed");
+
+    const ordinaryDurable = await database.query<{
+      state: string;
+      functionalResult: string;
+      mutationOutcome: string;
+    }>(
+      `SELECT state,
+              functional_result AS "functionalResult",
+              mutation_outcome AS "mutationOutcome"
+         FROM adaptive_operations
+        WHERE session_id=$1
+          AND operation_id=$2`,
+      [created.id, ordinaryId],
+    );
+
+    expect(ordinaryDurable.rows[0]).toEqual({
+      state: "completed",
+      functionalResult: "succeeded",
+      mutationOutcome: "not_applied",
+    });
+
+    expect(await readDraft()).toEqual(publishedBaseline);
+    expect(await appendedEventCount(ordinaryId)).toBe(0);
+
+    const unknownId = `published-unknown-${randomUUID()}`;
+    const unknownIntent = {
+      ...missionIntent(unknownId),
+      objectiveId: immutableObjectiveId,
+      flowDraftId: immutableDraftId,
+    };
+    const unknownOperation = operation(unknownId);
+
+    await repository.beginMissionOperation({
+      workspaceId,
+      sessionId: created.id,
+      operationId: unknownId,
+      idempotencyKey: `idempotency-${unknownId}`,
+      intent: unknownIntent,
+      action: unknownOperation.action,
+      expectedEffect: unknownOperation.expectedEffect,
+      mode: unknownOperation.mode,
+    });
+
+    await database.query(
+      `UPDATE adaptive_operations
+          SET dispatch_boundary='dispatching'
+        WHERE session_id=$1
+          AND operation_id=$2`,
+      [created.id, unknownId],
+    );
+
+    const unknownBoundary = {
+      type: "mutation_reconciliation_required" as const,
+      reasonCode: "MUTATION_OUTCOME_UNKNOWN",
+      safeActions: ["get_flow_authoring", "reconcile_unknown_operation"],
+    };
+
+    const unknownSettled = await repository.settleMissionOperation({
+      sessionId: created.id,
+      operationId: unknownId,
+      intent: unknownIntent,
+      action: unknownOperation.action,
+      outcome: {
+        operationId: unknownId,
+        functionalResult: "succeeded",
+        mutationOutcome: "unknown",
+        privacyResult: "verified",
+        evidenceResult: [],
+        qualityFindings: [],
+        durationMs: 1,
+      },
+      capabilityManifestDigest: "b".repeat(64),
+      decisionBoundary: unknownBoundary,
+    });
+
+    expect(unknownSettled.state).toBe("failed");
+
+    await repository.recordDispatchBaseline({
+      sessionId: created.id,
+      operationId: unknownId,
+      expectedEffect: unknownOperation.expectedEffect,
+      documentEpoch: 1,
+      url: "https://example.test/before",
+      effectState: { state: "unsupported" },
+    });
+
+    const reconciliation = await repository.beginUnknownReconciliation({
+      workspaceId,
+      sessionId: created.id,
+      missionId: immutableMissionId,
+      operationId: unknownId,
+      idempotencyKey: `reconcile-${unknownId}`,
+    });
+
+    expect(reconciliation).toMatchObject({
+      state: "observing",
+      replayed: false,
+    });
+
+    await expect(
+      repository.completeUnknownReconciliation({
+        sessionId: created.id,
+        missionId: immutableMissionId,
+        operationId: unknownId,
+        idempotencyKey: `reconcile-${unknownId}`,
+        result: "proven_applied",
+        reasonCode: "TEST_AUTHORITATIVE_APPLIED",
+        evidence: { fixture: true },
+        runtimeOwned: false,
+      }),
+    ).resolves.toBeDefined();
+
+    const reconciliationTruth = await database.query<{
+      state: string;
+      result: string;
+    }>(
+      `SELECT state,result
+         FROM adaptive_operation_reconciliations
+        WHERE session_id=$1
+          AND operation_id=$2
+        ORDER BY attempt DESC
+        LIMIT 1`,
+      [created.id, unknownId],
+    );
+
+    expect(reconciliationTruth.rows[0]).toEqual({
+      state: "completed",
+      result: "proven_applied",
+    });
+
+    expect(await readDraft()).toEqual(publishedBaseline);
+    expect(await appendedEventCount(unknownId)).toBe(0);
+  });
+
 });

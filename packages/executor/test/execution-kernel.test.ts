@@ -529,6 +529,63 @@ describe("execution kernel admission", () => {
     expect(outcome.functionalResult).toBe("succeeded");
   });
 
+  it("preserves a failed Praxis reason when the report has no top-level error", async () => {
+    const correlationId = randomUUID();
+    const manifest = createExecutionCapabilityManifest({ mode: "run", correlationId });
+
+    const dispatch = vi.fn(
+      async (options: {
+        onPraxisResult?: (result: never) => Promise<void>;
+      }) => {
+        await options.onPraxisResult?.({
+          status: "failed",
+          code: "PRAXIS_INTERNAL_ERROR",
+          mutationOutcome: "not_applied",
+          qualityFindings: [],
+        } as never);
+
+        return reportFixture();
+      },
+    );
+
+    const result = await new ExecutionKernel(dispatch as never).execute({
+      request: {
+        sessionId: "praxis-reason-session",
+        operationId: "praxis-reason-operation",
+        correlationId,
+        mode: "run",
+        plan: plan({
+          type: "click",
+          target: target("Developer", "link", ["pointer_activatable"]),
+        }),
+        policy,
+        capabilityManifestDigest: manifest.digest,
+        idempotencyKey: "praxis-reason-operation",
+        mutationIdentity: "praxis-reason-mutation",
+      },
+      capabilities: {
+        manifest,
+        journal: {
+          begin: vi.fn(async () => undefined),
+          complete: vi.fn(async () => undefined),
+          fail: vi.fn(async () => undefined),
+          settle: vi.fn(async () => undefined),
+        },
+        mutationFence: {
+          claim: vi.fn(async () => ({ state: "planned", fencingToken: 1 })),
+          transition: vi.fn(async () => true),
+        },
+        options: { outputDirectory: "/tmp/praxis-reason-propagation" },
+      },
+    });
+
+    expect(result.outcome).toMatchObject({
+      functionalResult: "failed",
+      mutationOutcome: "not_applied",
+      reasonCode: "PRAXIS_INTERNAL_ERROR",
+    });
+  });
+
   it("preserves protected failure telemetry without treating it as mutation authority", async () => {
     const correlationId = randomUUID();
     const manifest = createExecutionCapabilityManifest({ mode: "transact", correlationId });
@@ -1244,3 +1301,121 @@ function target(
     },
   };
 }
+
+it("requires readiness before agent-directed final evidence on a reaction action", async () => {
+  const correlationId = "11111111-1111-4111-8111-111111111111";
+  const manifest = createExecutionCapabilityManifest({
+    mode: "observe",
+    correlationId,
+  });
+
+  const dispatch = vi.fn(async () => ({
+    ...reportFixture(),
+    state: "passed" as const,
+    outcomeClassification: "passed" as const,
+    requiredAssertions: {
+      passed: 0,
+      failed: 0,
+      unevaluated: 0,
+    },
+    steps: [],
+    artifacts: [],
+    artifactTimeline: [],
+    diagnostics: [],
+    policyViolations: [],
+  }));
+
+  const kernel = new ExecutionKernel(
+    dispatch as never,
+  );
+
+  await kernel.interactWithReport({
+    request: {
+      sessionId: "readiness-regression-session",
+      operationId: "readiness-regression-operation",
+      correlationId,
+      mode: "observe",
+      policy,
+    },
+    capabilities: {
+      manifest,
+      journal: {
+        begin: vi.fn(async () => undefined),
+        complete: vi.fn(async () => undefined),
+        fail: vi.fn(async () => undefined),
+      },
+      options: {
+        outputDirectory: "/tmp/unused",
+        veilPolicySnapshot: {
+          controls: {
+            screenshots: true,
+            dom: false,
+            network: false,
+          },
+        } as never,
+      },
+    },
+    page: {
+      url: () => "https://example.test/login",
+    } as never,
+    action: {
+      type: "click",
+      target: target("Developer", "button", [
+        "focusable",
+        "pointer_activatable",
+      ]),
+      expectedEffect: { type: "none" },
+      dispatchSemantics: "read_only",
+      timeoutMs: 30_000,
+    },
+    expectedEffect: {
+      type: "none",
+    },
+    ordinal: 1,
+  });
+
+  expect(dispatch).toHaveBeenCalledOnce();
+
+  const dispatchedOptions = (
+    dispatch.mock.calls as unknown as Array<
+      [
+        {
+          plan: {
+            steps: Array<{
+              id: string;
+              evidence: string[];
+              captureIntent: string;
+              after?: unknown;
+            }>;
+          };
+        },
+      ]
+    >
+  )[0]![0];
+
+  const step =
+    dispatchedOptions.plan.steps[0];
+
+  expect(step).toMatchObject({
+    id: "kernel-interaction",
+    evidence: ["screenshot"],
+    captureIntent: "final",
+  });
+
+  if (step?.after === undefined) {
+    throw new Error(
+      "AGENT_FINAL_EVIDENCE_READINESS_MISSING",
+    );
+  }
+
+  expect(step.after).toEqual({
+    mode: "all",
+    timeoutMs: 30_000,
+    conditions: [
+      {
+        type: "domStable",
+        quietWindowMs: 500,
+      },
+    ],
+  });
+});

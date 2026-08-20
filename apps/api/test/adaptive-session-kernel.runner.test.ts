@@ -100,7 +100,7 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       expectedEffect: { type: "none" }, protectedInputReferences: [] } as never);
 
     expect(result.decisionBoundary).toMatchObject({
-      safeActions: ["recover_trusted_script_origins"],
+      safeActions: ["create_test_environment", "create_flow_draft"],
       environmentRecovery: {
         environmentId,
         missingTrustedScriptOrigins: ["https://scripts.example.test"],
@@ -146,12 +146,12 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     expect(result.decisionBoundary).toEqual({
       type: "environment_unavailable",
       reasonCode: "EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED",
-      safeActions: ["create_test_environment", "create_flow_draft", "start_flow_authoring"],
+      safeActions: ["create_test_environment", "create_flow_draft"],
       navigationRecovery: {
         environmentId,
         missingAllowedOrigin: "https://docs.example.test",
         currentAllowedOrigins: ["https://app.example.test"],
-        recoveryTools: ["create_test_environment", "create_flow_draft", "start_flow_authoring"],
+        recoveryTools: ["create_test_environment", "create_flow_draft"],
         requiresNewFlowDraftAndAuthoringSession: true,
       },
     });
@@ -407,7 +407,10 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       expect(sessions.markOperationDispatching).toHaveBeenCalledOnce();
       expect(mutation).toHaveBeenCalledOnce();
       expect(result.outcome.mutationOutcome).toBe("unknown");
-      expect(result.decisionBoundary.type).toBe("mutation_reconciliation_required");
+      expect(result.decisionBoundary).toMatchObject({
+        type: "mutation_reconciliation_required",
+        safeActions: ["get_run", "get_praxis_session", "reconcile_unknown_operation"],
+      });
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();

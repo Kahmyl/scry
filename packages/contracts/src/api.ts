@@ -34,7 +34,25 @@ export const createEnvironmentSchema = z
   })
   .strict();
 
-export const updateEnvironmentSchema = createEnvironmentSchema.omit({ name: true });
+export const updateEnvironmentSchema = createEnvironmentSchema
+  .omit({ name: true })
+  .extend({
+    missionCredentialSelectionRefs: z.array(uuidSchema).max(100).optional(),
+  })
+  .superRefine((input, context) => {
+    const environmentReferences = new Set(input.secretRefs);
+    for (const [index, reference] of (
+      input.missionCredentialSelectionRefs ?? []
+    ).entries()) {
+      if (!environmentReferences.has(reference))
+        context.addIssue({
+          code: "custom",
+          path: ["missionCredentialSelectionRefs", index],
+          message:
+            "Mission-selected credential references must also be environment-authorized.",
+        });
+    }
+  });
 export const validateCredentialReferencesSchema = z
   .object({
     projectId: uuidSchema,
@@ -44,6 +62,7 @@ export const validateCredentialReferencesSchema = z
 
 export const listCredentialsSchema = z.object({
   referenceId: uuidSchema.optional(),
+  missionId: uuidSchema.optional(),
 }).strict();
 
 export const createCredentialSchema = z

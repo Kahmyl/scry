@@ -140,6 +140,35 @@ describe("Praxis strategy, dispatch, and verification", () => {
     expect(await page.locator("input").inputValue()).toBe("");
   });
 
+  it("does not relabel a pre-mutation setup error as a dispatch failure", async () => {
+    await page.setContent(
+      `<button onclick="document.body.dataset.hit='yes'">Continue</button>`,
+    );
+    const canary = "sensitive pre-dispatch setup failure";
+
+    const result = await new PraxisTransactionCoordinator(
+      new PraxisAdapter(page),
+      undefined,
+      async () => {
+        throw new Error(canary);
+      },
+    ).execute(
+      request({ type: "activate" }, intent("Continue")),
+      new AbortController().signal,
+    );
+
+    expect(result).toMatchObject({
+      status: "failed",
+      code: "PRAXIS_INTERNAL_ERROR",
+      mutationOutcome: "not_applied",
+    });
+    if (result.status !== "succeeded")
+      expect(result.diagnostics.mutationBoundaryCrossed).toBe(false);
+
+    expect(JSON.stringify(result)).not.toContain(canary);
+    expect(await page.locator("body").getAttribute("data-hit")).toBeNull();
+  });
+
   it("explicitly DOM-activates only the exact grounded entity", async () => {
     await page.setContent(`<button onclick="document.body.dataset.hit='exact'">DOM action</button>`);
     const result = await new PraxisTransactionCoordinator(new PraxisAdapter(page)).execute(

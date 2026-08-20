@@ -1,7 +1,11 @@
 import { z } from "zod";
 
 import { currentActionSchema, currentPlanSchema } from "./current.js";
-import { expectedEffectSchema, semanticFingerprintSchema } from "./grounding.js";
+import {
+  expectedEffectSchema,
+  semanticFingerprintSchema,
+  semanticScopeKindSchema,
+} from "./grounding.js";
 import { executionPolicySchema } from "./policy.js";
 
 const uuid = z.string().uuid();
@@ -118,8 +122,7 @@ export const agentDecisionBoundarySchema = z
         recoveryTools: z.tuple([
           z.literal("create_test_environment"),
           z.literal("create_flow_draft"),
-          z.literal("start_flow_authoring"),
-        ]),
+          ]),
         requiresNewFlowDraftAndAuthoringSession: z.literal(true),
       })
       .strict()
@@ -214,6 +217,13 @@ export const operationOutcomeSchema = z
                 semanticPurpose: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/).optional(),
                 valueProtected: z.boolean().optional(),
                 group: z.string().trim().min(1).max(120).optional(),
+                boundary: z
+                  .object({
+                    kind: semanticScopeKindSchema,
+                    name: z.string().trim().min(1).max(120).optional(),
+                  })
+                  .strict()
+                  .optional(),
                 capabilities: z
                   .array(z.enum(["observe", "activate", "enter_text", "toggle", "select_option"]))
                   .max(5),

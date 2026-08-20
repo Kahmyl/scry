@@ -19,6 +19,7 @@ import {
   agentDecisionBoundarySchema,
   executionPolicySchema,
   missionAuthoringIntentSchema,
+  missionAuthoringSemanticTargetSchema,
   missionAuthoringTurnResultSchema,
   operationOutcomeSchema,
 } from "@scry/contracts";
@@ -61,26 +62,36 @@ const transitions: Readonly<Record<AdaptiveSessionState, readonly AdaptiveSessio
 export class AdaptiveSessionRepository {
   constructor(@Inject(Database) private readonly database: Database) {}
 
-  prepare(workspaceId: string | null, input: PrepareFlowAuthoringInput): Promise<PreparedFlowAuthoring> {
+  prepare(
+    workspaceId: string | null,
+    input: PrepareFlowAuthoringInput,
+  ): Promise<PreparedFlowAuthoring> {
     return this.database.transaction(async (client) => {
       const q = bind(client);
       const digest = stableDigest(input);
       const idempotencyKey = input.idempotencyKey ?? `prepare-${digest}`;
       const scope = `authoring:prepare:${input.projectId}`;
-      await q(`INSERT INTO idempotency_records(scope,key,request_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
-        [scope, idempotencyKey, digest]);
+      await q(
+        `INSERT INTO idempotency_records(scope,key,request_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+        [scope, idempotencyKey, digest],
+      );
       const record = await q<{ requestHash: string; response: PreparedFlowAuthoring | null }>(
         `SELECT request_hash AS "requestHash",response FROM idempotency_records WHERE scope=$1 AND key=$2 FOR UPDATE`,
-        [scope, idempotencyKey]);
+        [scope, idempotencyKey],
+      );
       if (record.rows[0]!.requestHash !== digest)
         throw new ConflictException({ code: "AUTHORING_PREPARATION_IDEMPOTENCY_CONFLICT" });
       if (record.rows[0]!.response) return { ...record.rows[0]!.response, replayed: true };
 
-      const project = await q(`SELECT id FROM projects WHERE id=$1 AND ($2::uuid IS NULL OR workspace_id=$2) FOR UPDATE`,
-        [input.projectId, workspaceId]);
+      const project = await q(
+        `SELECT id FROM projects WHERE id=$1 AND ($2::uuid IS NULL OR workspace_id=$2) FOR UPDATE`,
+        [input.projectId, workspaceId],
+      );
       if (!project.rowCount) throw new ConflictException({ code: "PROJECT_NOT_FOUND" });
       if (input.kind === "reuse") {
-        const reusable = await q<Omit<PreparedFlowAuthoring, "replayed" | "reused" | "authoringReady" | "continuation">>(
+        const reusable = await q<
+          Omit<PreparedFlowAuthoring, "replayed" | "reused" | "authoringReady" | "continuation">
+        >(
           `SELECT s.mission_id AS "missionId",s.agent_session_id AS "agentSessionId",
                   s.active_objective_id AS "objectiveId",s.environment_id AS "environmentId",
                   s.active_flow_draft_id AS "flowDraftId",s.id AS "authoringSessionId"
@@ -94,84 +105,186 @@ export class AdaptiveSessionRepository {
              AND NOT EXISTS (SELECT 1 FROM adaptive_operations operation WHERE operation.session_id=s.id
                AND (operation.state='running' OR (operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id))))
            FOR UPDATE OF s`,
-          [input.authoringSessionId, input.projectId]);
-        if (!reusable.rowCount) throw new ConflictException({ code: "AUTHORING_PREPARATION_REUSE_UNAVAILABLE" });
+          [input.authoringSessionId, input.projectId],
+        );
+        if (!reusable.rowCount)
+          throw new ConflictException({ code: "AUTHORING_PREPARATION_REUSE_UNAVAILABLE" });
         const unknownMutation = await q(
           `SELECT 1 FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
            WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id) LIMIT 1`,
           [reusable.rows[0]!.missionId],
         );
         if (unknownMutation.rowCount)
-          throw new ConflictException({ code: "MISSION_RECONCILIATION_REQUIRED",
-            mutationOutcome: "unknown", safeActions: ["get_flow_authoring"] });
-        const response: PreparedFlowAuthoring = { ...reusable.rows[0]!, replayed: false, reused: true,
-          authoringReady: true, continuation: { nextSafeCapability: "advance_flow_authoring" } };
-        await q(`UPDATE idempotency_records SET response=$3::jsonb,completed_at=now() WHERE scope=$1 AND key=$2`,
-          [scope, idempotencyKey, JSON.stringify(response)]);
+          throw new ConflictException({
+            code: "MISSION_RECONCILIATION_REQUIRED",
+            mutationOutcome: "unknown",
+            safeActions: ["get_flow_authoring"],
+          });
+        const response: PreparedFlowAuthoring = {
+          ...reusable.rows[0]!,
+          replayed: false,
+          reused: true,
+          authoringReady: true,
+          continuation: { nextSafeCapability: "advance_flow_authoring" },
+        };
+        await q(
+          `UPDATE idempotency_records SET response=$3::jsonb,completed_at=now() WHERE scope=$1 AND key=$2`,
+          [scope, idempotencyKey, JSON.stringify(response)],
+        );
         return response;
       }
 
       const environment = await q<{ policy: unknown; secretRefs: unknown }>(
         `SELECT policy,secret_refs AS "secretRefs" FROM environments WHERE id=$1 AND project_id=$2`,
-        [input.environmentId, input.projectId]);
+        [input.environmentId, input.projectId],
+      );
       if (!environment.rowCount) throw new ConflictException({ code: "ENVIRONMENT_NOT_FOUND" });
       const allowedOrigins = requireEnvironmentCapabilities(environment.rows[0]!, {
         allowedOrigins: input.authoring.allowedOrigins,
         initialProtectedReferenceIds: input.authoring.initialProtectedReferenceIds,
       });
-      await this.requireActiveProtectedReferences(q, input.projectId, input.environmentId,
-        input.authoring.initialProtectedReferenceIds);
+      await this.requireActiveProtectedReferences(
+        q,
+        input.projectId,
+        input.environmentId,
+        input.authoring.initialProtectedReferenceIds,
+      );
       if (!input.mission.distinctReason) {
-        const duplicate = await q(`SELECT id FROM missions WHERE project_id=$1
+        const duplicate = await q(
+          `SELECT id FROM missions WHERE project_id=$1
           AND status NOT IN ('completed','failed','cancelled')
           AND (lower(title)=lower($2) OR lower(original_instruction)=lower($3))`,
-          [input.projectId, input.mission.title, input.mission.originalInstruction]);
-        if (duplicate.rowCount) throw new ConflictException({ code: "MISSION_CONTINUATION_REQUIRED" });
+          [input.projectId, input.mission.title, input.mission.originalInstruction],
+        );
+        if (duplicate.rowCount)
+          throw new ConflictException({ code: "MISSION_CONTINUATION_REQUIRED" });
       }
       const missionId = randomUUID();
       const agentSessionId = randomUUID();
       const objectiveId = randomUUID();
       const flowDraftId = randomUUID();
       const authoringSessionId = randomUUID();
-      await q(`INSERT INTO missions(id,project_id,title,original_instruction,status,current_objective_id,revision)
-        VALUES($1,$2,$3,$4,'planning',$5,1)`, [missionId,input.projectId,input.mission.title,input.mission.originalInstruction,objectiveId]);
-      await q(`INSERT INTO agent_sessions(id,mission_id,provider,connection_id,instruction_snapshot,idempotency_key)
-        VALUES($1,$2,$3,$4,$5,$6)`, [agentSessionId,missionId,input.mission.provider,input.mission.connectionId ?? null,
-        input.mission.instructionSnapshot,`prepare:${idempotencyKey}`]);
-      await q(`INSERT INTO mission_objectives(id,mission_id,title,description,dependencies,completion_criteria,objective_order)
-        VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7)`, [objectiveId,missionId,input.objective.title,input.objective.description,
-        JSON.stringify(input.objective.dependencies),JSON.stringify(input.objective.completionCriteria),input.objective.order]);
-      await q(`INSERT INTO flow_drafts(id,project_id,mission_id,objective_id,environment_id,name,description,purpose,content,state,version,plan,created_by_agent_session_id)
+      await q(
+        `INSERT INTO missions(id,project_id,title,original_instruction,status,current_objective_id,revision)
+        VALUES($1,$2,$3,$4,'planning',$5,1)`,
+        [
+          missionId,
+          input.projectId,
+          input.mission.title,
+          input.mission.originalInstruction,
+          objectiveId,
+        ],
+      );
+      await q(
+        `INSERT INTO agent_sessions(id,mission_id,provider,connection_id,instruction_snapshot,idempotency_key)
+        VALUES($1,$2,$3,$4,$5,$6)`,
+        [
+          agentSessionId,
+          missionId,
+          input.mission.provider,
+          input.mission.connectionId ?? null,
+          input.mission.instructionSnapshot,
+          `prepare:${idempotencyKey}`,
+        ],
+      );
+      await q(
+        `INSERT INTO mission_objectives(id,mission_id,title,description,dependencies,completion_criteria,objective_order)
+        VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7)`,
+        [
+          objectiveId,
+          missionId,
+          input.objective.title,
+          input.objective.description,
+          JSON.stringify(input.objective.dependencies),
+          JSON.stringify(input.objective.completionCriteria),
+          input.objective.order,
+        ],
+      );
+      await q(
+        `INSERT INTO flow_drafts(id,project_id,mission_id,objective_id,environment_id,name,description,purpose,content,state,version,plan,created_by_agent_session_id)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,'editing',1,$10::jsonb,$11)`,
-        [flowDraftId,input.projectId,missionId,objectiveId,input.environmentId,input.draft.name,input.draft.description,input.draft.purpose,
-          JSON.stringify(input.draft.content),JSON.stringify(input.draft.plan),agentSessionId]);
-      await q(`INSERT INTO flow_draft_events(draft_id,version,type,agent_session_id,summary,safe_metadata)
+        [
+          flowDraftId,
+          input.projectId,
+          missionId,
+          objectiveId,
+          input.environmentId,
+          input.draft.name,
+          input.draft.description,
+          input.draft.purpose,
+          JSON.stringify(input.draft.content),
+          JSON.stringify(input.draft.plan),
+          agentSessionId,
+        ],
+      );
+      await q(
+        `INSERT INTO flow_draft_events(draft_id,version,type,agent_session_id,summary,safe_metadata)
         VALUES($1,1,'created',$2,'Flow draft created by deterministic preparation',$3::jsonb)`,
-        [flowDraftId,agentSessionId,JSON.stringify({ idempotencyKey })]);
-      await q(`INSERT INTO adaptive_sessions(id,project_id,environment_id,correlation_id,state,objective,allowed_origins,
+        [flowDraftId, agentSessionId, JSON.stringify({ idempotencyKey })],
+      );
+      await q(
+        `INSERT INTO adaptive_sessions(id,project_id,environment_id,correlation_id,state,objective,allowed_origins,
         mission_id,objective_id,flow_draft_id,active_objective_id,active_flow_draft_id,agent_session_id,idempotency_key,
         authoring_turn_budgets,protected_reference_allowlist)
         VALUES($1,$2,$3,$4,'provisioning',$5,$6::jsonb,$7,$8,$9,$8,$9,$10,$11,$12::jsonb,$13::jsonb)`,
-        [authoringSessionId,input.projectId,input.environmentId,randomUUID(),input.authoring.objective,JSON.stringify(allowedOrigins),
-          missionId,objectiveId,flowDraftId,agentSessionId,`prepare:${idempotencyKey}`,
-          JSON.stringify(input.authoring.turnBudgets),JSON.stringify(input.authoring.initialProtectedReferenceIds)]);
-      await q(`INSERT INTO mission_authoring_session_flows(session_id,mission_id,objective_id,flow_draft_id,purpose,sequence)
-        VALUES($1,$2,$3,$4,$5,1)`, [authoringSessionId,missionId,objectiveId,flowDraftId,input.draft.purpose]);
-      await q(`INSERT INTO adaptive_session_events(session_id,sequence,type,safe_facts,idempotency_key) VALUES
+        [
+          authoringSessionId,
+          input.projectId,
+          input.environmentId,
+          randomUUID(),
+          input.authoring.objective,
+          JSON.stringify(allowedOrigins),
+          missionId,
+          objectiveId,
+          flowDraftId,
+          agentSessionId,
+          `prepare:${idempotencyKey}`,
+          JSON.stringify(input.authoring.turnBudgets),
+          JSON.stringify(input.authoring.initialProtectedReferenceIds),
+        ],
+      );
+      await q(
+        `INSERT INTO mission_authoring_session_flows(session_id,mission_id,objective_id,flow_draft_id,purpose,sequence)
+        VALUES($1,$2,$3,$4,$5,1)`,
+        [authoringSessionId, missionId, objectiveId, flowDraftId, input.draft.purpose],
+      );
+      await q(
+        `INSERT INTO adaptive_session_events(session_id,sequence,type,safe_facts,idempotency_key) VALUES
         ($1,1,'session_created','{}'::jsonb,$2),($1,2,'provisioning_started','{}'::jsonb,NULL)`,
-        [authoringSessionId,`prepare:${idempotencyKey}`]);
+        [authoringSessionId, `prepare:${idempotencyKey}`],
+      );
       await q(`UPDATE adaptive_sessions SET version=2 WHERE id=$1`, [authoringSessionId]);
-      await q(`INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata) VALUES
+      await q(
+        `INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata) VALUES
         ($1,NULL,$2,'mission_created',$3,$4::jsonb),
         ($1,$5,$2,'objective_created',$6,'{}'::jsonb),
         ($1,$5,$2,'authoring','Flow authoring prepared atomically',$7::jsonb)`,
-        [missionId,agentSessionId,`Mission created: ${input.mission.title}`,JSON.stringify({ projectId: input.projectId }),
-          objectiveId,`Objective created: ${input.objective.title}`,JSON.stringify({ flowDraftId, authoringSessionId })]);
-      const response: PreparedFlowAuthoring = { replayed:false,reused:false,missionId,agentSessionId,objectiveId,
-        environmentId:input.environmentId,flowDraftId,authoringSessionId,authoringReady:true,
-        continuation:{nextSafeCapability:"advance_flow_authoring"} };
-      await q(`UPDATE idempotency_records SET response=$3::jsonb,completed_at=now() WHERE scope=$1 AND key=$2`,
-        [scope,idempotencyKey,JSON.stringify(response)]);
+        [
+          missionId,
+          agentSessionId,
+          `Mission created: ${input.mission.title}`,
+          JSON.stringify({ projectId: input.projectId }),
+          objectiveId,
+          `Objective created: ${input.objective.title}`,
+          JSON.stringify({ flowDraftId, authoringSessionId }),
+        ],
+      );
+      const response: PreparedFlowAuthoring = {
+        replayed: false,
+        reused: false,
+        missionId,
+        agentSessionId,
+        objectiveId,
+        environmentId: input.environmentId,
+        flowDraftId,
+        authoringSessionId,
+        authoringReady: true,
+        continuation: { nextSafeCapability: "advance_flow_authoring" },
+      };
+      await q(
+        `UPDATE idempotency_records SET response=$3::jsonb,completed_at=now() WHERE scope=$1 AND key=$2`,
+        [scope, idempotencyKey, JSON.stringify(response)],
+      );
       return response;
     });
   }
@@ -179,18 +292,37 @@ export class AdaptiveSessionRepository {
   create(workspaceId: string | null, input: StartAdaptiveSessionInput) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
-      const lifecycle = await q<{ missionStatus: string; objectiveStatus: string; agentStatus: string }>(
-        `SELECT m.status AS "missionStatus",o.status AS "objectiveStatus",a.status AS "agentStatus"
+      const lifecycle = await q<{ missionStatus: string; objectiveStatus: string }>(
+        `SELECT m.status AS "missionStatus",o.status AS "objectiveStatus"
          FROM missions m JOIN mission_objectives o ON o.mission_id=m.id AND o.id=$2
-         JOIN agent_sessions a ON a.mission_id=m.id AND a.id=$3
-         WHERE m.id=$1 AND m.project_id=$4 FOR UPDATE OF m,o,a`,
-        [input.missionId,input.objectiveId,input.agentSessionId,input.projectId]);
+         WHERE m.id=$1 AND m.project_id=$3 FOR UPDATE OF m,o`,
+        [input.missionId, input.objectiveId, input.projectId],
+      );
       if (!lifecycle.rowCount)
-        throw new ConflictException({ code: "MISSION_FLOW_AUTHORING_OWNERSHIP_INVALID" });
-      if (!["planning","running"].includes(lifecycle.rows[0]!.missionStatus)
-          || !["pending","running"].includes(lifecycle.rows[0]!.objectiveStatus)
-          || lifecycle.rows[0]!.agentStatus !== "active")
+        throw new ConflictException({
+          code: "MISSION_FLOW_AUTHORING_OWNERSHIP_INVALID",
+          mutationOutcome: "not_applied",
+          retry: "safe_after_prerequisite",
+          safeActions: ["get_operating_context"],
+        });
+      if (
+        !["planning", "running"].includes(lifecycle.rows[0]!.missionStatus) ||
+        !["pending", "running"].includes(lifecycle.rows[0]!.objectiveStatus)
+      )
         throw new ConflictException({ code: "MISSION_FLOW_AUTHORING_LIFECYCLE_CLOSED" });
+
+      const agentSession = await q<{ status: string }>(
+        `SELECT status FROM agent_sessions
+         WHERE id=$1 AND mission_id=$2 FOR UPDATE`,
+        [input.agentSessionId, input.missionId],
+      );
+      if (!agentSession.rowCount || agentSession.rows[0]!.status !== "active")
+        throw new ConflictException({
+          code: "MISSION_AGENT_SESSION_OWNERSHIP_INVALID",
+          mutationOutcome: "not_applied",
+          retry: "safe_after_prerequisite",
+          safeActions: ["list_missions"],
+        });
       const environment = await this.requireProjectEnvironment(
         q,
         workspaceId,
@@ -217,8 +349,11 @@ export class AdaptiveSessionRepository {
         [input.missionId],
       );
       if (unknownMutation.rowCount)
-        throw new ConflictException({ code: "MISSION_RECONCILIATION_REQUIRED",
-          mutationOutcome: "unknown", safeActions: ["get_flow_authoring"] });
+        throw new ConflictException({
+          code: "MISSION_RECONCILIATION_REQUIRED",
+          mutationOutcome: "unknown",
+          safeActions: ["get_flow_authoring"],
+        });
 
       const id = randomUUID();
       await q(
@@ -241,7 +376,7 @@ export class AdaptiveSessionRepository {
           input.idempotencyKey,
           JSON.stringify(input.turnBudgets ?? { maxOperations: 20, maxDurationMs: 60_000 }),
           JSON.stringify(input.initialProtectedReferenceIds ?? []),
-          input.protection,
+          input.protection ?? "ordinary",
         ],
       );
       await q(
@@ -261,23 +396,47 @@ export class AdaptiveSessionRepository {
       const q = bind(client);
       const digest = stableDigest(input);
       const scope = `authoring:trust-recovery:${input.projectId}`;
-      await q(`INSERT INTO idempotency_records(scope,key,request_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
-        [scope,input.idempotencyKey,digest]);
+      await q(
+        `INSERT INTO idempotency_records(scope,key,request_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+        [scope, input.idempotencyKey, digest],
+      );
       const record = await q<{ requestHash: string; response: TrustedOriginRecoveryResult | null }>(
         `SELECT request_hash AS "requestHash",response FROM idempotency_records
-         WHERE scope=$1 AND key=$2 FOR UPDATE`, [scope,input.idempotencyKey]);
+         WHERE scope=$1 AND key=$2 FOR UPDATE`,
+        [scope, input.idempotencyKey],
+      );
       if (record.rows[0]!.requestHash !== digest)
-        throw new ConflictException({ code: "TRUST_RECOVERY_IDEMPOTENCY_CONFLICT",
-          mutationOutcome: "not_applied", retry: "not_safe", safeActions: ["get_flow_authoring"] });
-      if (record.rows[0]!.response)
-        return { ...record.rows[0]!.response, replayed: true };
+        throw new ConflictException({
+          code: "TRUST_RECOVERY_IDEMPOTENCY_CONFLICT",
+          mutationOutcome: "not_applied",
+          retry: "not_safe",
+          safeActions: ["get_flow_authoring"],
+        });
+      if (record.rows[0]!.response) return { ...record.rows[0]!.response, replayed: true };
 
       const source = await q<{
-        sessionId: string; state: string; projectId: string; missionId: string; objectiveId: string;
-        environmentId: string; flowDraftId: string; decisionBoundary: AgentDecisionBoundary | null;
-        objective: string; allowedOrigins: string[]; turnBudgets: unknown; protectedReferences: string[];
-        environmentName: string; baseOrigin: string; policy: ExecutionPolicy; secretRefs: string[];
-        draftName: string; draftState: string; description: string; purpose: string; content: unknown; plan: unknown;
+        sessionId: string;
+        state: string;
+        projectId: string;
+        missionId: string;
+        objectiveId: string;
+        environmentId: string;
+        flowDraftId: string;
+        decisionBoundary: AgentDecisionBoundary | null;
+        objective: string;
+        allowedOrigins: string[];
+        turnBudgets: unknown;
+        protectedReferences: string[];
+        environmentName: string;
+        baseOrigin: string;
+        policy: ExecutionPolicy;
+        secretRefs: string[];
+        draftName: string;
+        draftState: string;
+        description: string;
+        purpose: string;
+        content: unknown;
+        plan: unknown;
         flowId: string | null;
       }>(
         `SELECT s.id AS "sessionId",s.state,s.project_id AS "projectId",s.mission_id AS "missionId",
@@ -297,8 +456,16 @@ export class AdaptiveSessionRepository {
            AND s.environment_id=$5 AND s.flow_draft_id=$6
            AND ($8::uuid IS NULL OR p.workspace_id=$8)
          FOR UPDATE OF s,d`,
-        [input.sourceAuthoringSessionId, input.projectId, input.missionId, input.objectiveId,
-          input.sourceEnvironmentId, input.sourceFlowDraftId, input.agentSessionId, workspaceId],
+        [
+          input.sourceAuthoringSessionId,
+          input.projectId,
+          input.missionId,
+          input.objectiveId,
+          input.sourceEnvironmentId,
+          input.sourceFlowDraftId,
+          input.agentSessionId,
+          workspaceId,
+        ],
       );
       if (!source.rowCount)
         throw new ConflictException({ code: "TRUST_RECOVERY_CONTEXT_MISMATCH" });
@@ -307,32 +474,48 @@ export class AdaptiveSessionRepository {
         throw new ConflictException({ code: "TRUST_RECOVERY_SOURCE_STALE" });
       if (current.draftState !== "editing")
         throw new ConflictException({ code: "TRUST_RECOVERY_DRAFT_STALE" });
-      const completedPrefix = await q(`SELECT 1 FROM runs WHERE mission_id=$1 LIMIT 1`, [input.missionId]);
+      const completedPrefix = await q(`SELECT 1 FROM runs WHERE mission_id=$1 LIMIT 1`, [
+        input.missionId,
+      ]);
       if (completedPrefix.rowCount)
         throw new ConflictException({
           code: "TRUST_RECOVERY_REQUIRES_EXPLICIT_CHECKPOINT_REPLAY",
           safeActions: ["get_mission", "create_flow_draft", "start_flow_authoring"],
         });
       const recovery = current.decisionBoundary?.environmentRecovery;
-      if (current.decisionBoundary?.reasonCode !== "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED" ||
-          !recovery || recovery.environmentId !== input.sourceEnvironmentId)
+      if (
+        current.decisionBoundary?.reasonCode !== "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED" ||
+        !recovery ||
+        recovery.environmentId !== input.sourceEnvironmentId
+      )
         throw new ConflictException({ code: "TRUST_RECOVERY_CONDITION_UNAVAILABLE" });
       const approved = [...new Set(input.approvedOrigins)].sort();
       const disclosed = [...new Set(recovery.missingTrustedScriptOrigins)].sort();
       if (JSON.stringify(approved) !== JSON.stringify(disclosed))
-        throw new ConflictException({ code: "TRUST_RECOVERY_ORIGIN_MISMATCH", disclosedOrigins: disclosed,
-          mutationOutcome: "not_applied", retry: "safe_after_prerequisite",
-          safeActions: ["get_flow_authoring", "recover_trusted_script_origins"] });
+        throw new ConflictException({
+          code: "TRUST_RECOVERY_ORIGIN_MISMATCH",
+          disclosedOrigins: disclosed,
+          mutationOutcome: "not_applied",
+          retry: "safe_after_prerequisite",
+          safeActions: ["get_flow_authoring", "recover_trusted_script_origins"],
+        });
 
       const environmentId = randomUUID();
-      const trusted = [...new Set([...(current.policy.trustedScriptOrigins ?? []), ...approved])].sort();
+      const trusted = [
+        ...new Set([...(current.policy.trustedScriptOrigins ?? []), ...approved]),
+      ].sort();
       const policy = { ...current.policy, trustedScriptOrigins: trusted };
       await q(
         `INSERT INTO environments(id,project_id,name,base_origin,policy,secret_refs)
          VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb)`,
-        [environmentId, input.projectId,
-          `${current.environmentName.slice(0, 181)} recovery ${environmentId.slice(0, 8)}`, current.baseOrigin,
-          JSON.stringify(policy), JSON.stringify(current.secretRefs)],
+        [
+          environmentId,
+          input.projectId,
+          `${current.environmentName.slice(0, 181)} recovery ${environmentId.slice(0, 8)}`,
+          current.baseOrigin,
+          JSON.stringify(policy),
+          JSON.stringify(current.secretRefs),
+        ],
       );
       await this.requireActiveProtectedReferences(
         q,
@@ -346,16 +529,32 @@ export class AdaptiveSessionRepository {
         `INSERT INTO flow_drafts(id,project_id,mission_id,objective_id,environment_id,flow_id,name,
           description,purpose,content,state,version,plan,created_by_agent_session_id)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,'editing',1,$11::jsonb,$12)`,
-        [flowDraftId, input.projectId, input.missionId, input.objectiveId, environmentId,
+        [
+          flowDraftId,
+          input.projectId,
+          input.missionId,
+          input.objectiveId,
+          environmentId,
           current.flowId,
           `${current.draftName.slice(0, 181)} recovery ${flowDraftId.slice(0, 8)}`,
-          current.description, current.purpose,
-          JSON.stringify(current.content), JSON.stringify(current.plan), input.agentSessionId],
+          current.description,
+          current.purpose,
+          JSON.stringify(current.content),
+          JSON.stringify(current.plan),
+          input.agentSessionId,
+        ],
       );
       await q(
         `INSERT INTO flow_draft_events(draft_id,version,type,agent_session_id,summary,safe_metadata)
          VALUES($1,1,'created',$2,'Flow draft cloned for trusted-origin recovery',$3::jsonb)`,
-        [flowDraftId, input.agentSessionId, JSON.stringify({ sourceFlowDraftId: input.sourceFlowDraftId, idempotencyKey: input.idempotencyKey })],
+        [
+          flowDraftId,
+          input.agentSessionId,
+          JSON.stringify({
+            sourceFlowDraftId: input.sourceFlowDraftId,
+            idempotencyKey: input.idempotencyKey,
+          }),
+        ],
       );
 
       const sessionId = randomUUID();
@@ -364,24 +563,58 @@ export class AdaptiveSessionRepository {
           mission_id,objective_id,flow_draft_id,active_objective_id,active_flow_draft_id,agent_session_id,
           idempotency_key,authoring_turn_budgets,protected_reference_allowlist)
          VALUES($1,$2,$3,$4,'created',$5,$6::jsonb,$7,$8,$9,$8,$9,$10,$11,$12::jsonb,$13::jsonb)`,
-        [sessionId, input.projectId, environmentId, randomUUID(), current.objective,
-          JSON.stringify(current.allowedOrigins), input.missionId, input.objectiveId, flowDraftId,
-          input.agentSessionId, `trust-recovery:${input.idempotencyKey}`, JSON.stringify(current.turnBudgets),
-          JSON.stringify(current.protectedReferences)],
+        [
+          sessionId,
+          input.projectId,
+          environmentId,
+          randomUUID(),
+          current.objective,
+          JSON.stringify(current.allowedOrigins),
+          input.missionId,
+          input.objectiveId,
+          flowDraftId,
+          input.agentSessionId,
+          `trust-recovery:${input.idempotencyKey}`,
+          JSON.stringify(current.turnBudgets),
+          JSON.stringify(current.protectedReferences),
+        ],
       );
       await q(
         `INSERT INTO mission_authoring_session_flows(session_id,mission_id,objective_id,flow_draft_id,purpose,sequence)
          VALUES($1,$2,$3,$4,$5,1)`,
         [sessionId, input.missionId, input.objectiveId, flowDraftId, current.purpose],
       );
-      await this.appendEvent(q, sessionId, "session_created", { sourceAuthoringSessionId: current.sessionId }, `trust-recovery:${input.idempotencyKey}`);
-      await this.transitionLocked(q, sessionId, "created", "provisioning", "provisioning_started", {});
+      await this.appendEvent(
+        q,
+        sessionId,
+        "session_created",
+        { sourceAuthoringSessionId: current.sessionId },
+        `trust-recovery:${input.idempotencyKey}`,
+      );
+      await this.transitionLocked(
+        q,
+        sessionId,
+        "created",
+        "provisioning",
+        "provisioning_started",
+        {},
+      );
       await this.transitionLocked(q, sessionId, "provisioning", "active", "session_activated", {});
-      await this.transitionLocked(q, current.sessionId, "active", "recovery_required", "recovery_required", {
-        replacementEnvironmentId: environmentId, replacementFlowDraftId: flowDraftId,
-        replacementAuthoringSessionId: sessionId, approvedOrigins: approved,
-        approvalKind: input.approval.kind, approvalReason: input.approval.reason,
-      });
+      await this.transitionLocked(
+        q,
+        current.sessionId,
+        "active",
+        "recovery_required",
+        "recovery_required",
+        {
+          replacementEnvironmentId: environmentId,
+          replacementFlowDraftId: flowDraftId,
+          replacementAuthoringSessionId: sessionId,
+          approvedOrigins: approved,
+          approvalKind: input.approval.kind,
+          approvalReason: input.approval.reason,
+        },
+      );
       await q(
         `UPDATE missions SET status=CASE WHEN status='awaiting_user' THEN 'running' ELSE status END,
           resume_pointer=CASE WHEN resume_pointer->>'objectiveId'=$2 THEN NULL ELSE resume_pointer END,
@@ -391,23 +624,39 @@ export class AdaptiveSessionRepository {
       await q(
         `INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata)
          VALUES($1,$2,$3,'authoring','Trusted-script-origin recovery applied atomically',$4::jsonb)`,
-        [input.missionId, input.objectiveId, input.agentSessionId, JSON.stringify({
-          sourceEnvironmentId: input.sourceEnvironmentId,
-          replacementEnvironmentId: environmentId,
-          replacementFlowDraftId: flowDraftId,
-          replacementAuthoringSessionId: sessionId,
-          approvedOrigins: approved,
-          approvalKind: input.approval.kind,
-        })],
+        [
+          input.missionId,
+          input.objectiveId,
+          input.agentSessionId,
+          JSON.stringify({
+            sourceEnvironmentId: input.sourceEnvironmentId,
+            replacementEnvironmentId: environmentId,
+            replacementFlowDraftId: flowDraftId,
+            replacementAuthoringSessionId: sessionId,
+            approvedOrigins: approved,
+            approvalKind: input.approval.kind,
+          }),
+        ],
       );
       const response: TrustedOriginRecoveryResult = {
-        recoveryApplied: true, replayed: false, environmentId, flowDraftId, sessionId,
-        approvedOrigins: approved, remainingKnownBlockedOrigins: [],
-        continuation: { navigationRequired: true, navigationAutomaticallyPerformed: false,
-          nextSafeCapability: "advance_flow_authoring" },
+        recoveryApplied: true,
+        replayed: false,
+        environmentId,
+        flowDraftId,
+        sessionId,
+        approvedOrigins: approved,
+        remainingKnownBlockedOrigins: [],
+        continuation: {
+          navigationRequired: true,
+          navigationAutomaticallyPerformed: false,
+          nextSafeCapability: "advance_flow_authoring",
+        },
       };
-      await q(`UPDATE idempotency_records SET response=$3::jsonb,completed_at=now()
-        WHERE scope=$1 AND key=$2`, [scope,input.idempotencyKey,JSON.stringify(response)]);
+      await q(
+        `UPDATE idempotency_records SET response=$3::jsonb,completed_at=now()
+        WHERE scope=$1 AND key=$2`,
+        [scope, input.idempotencyKey, JSON.stringify(response)],
+      );
       return response;
     });
   }
@@ -417,12 +666,12 @@ export class AdaptiveSessionRepository {
       const q = bind(client);
       const session = await this.requireSession(q, workspaceId, sessionId, false);
       const events = await q(
-          `SELECT sequence,type,safe_facts AS "safeFacts",occurred_at AS "occurredAt"
+        `SELECT sequence,type,safe_facts AS "safeFacts",occurred_at AS "occurredAt"
            FROM adaptive_session_events WHERE session_id=$1 ORDER BY sequence`,
-          [sessionId],
-        );
+        [sessionId],
+      );
       const operations = await q(
-          `SELECT operation_id AS "operationId",sequence,mode,state,
+        `SELECT operation_id AS "operationId",sequence,mode,state,
                   semantic_intent AS action,expected_effect AS "expectedEffect",
                   observation_epoch AS "observationEpoch",
                   candidate_decision_digest AS "candidateDecisionDigest",
@@ -444,18 +693,25 @@ export class AdaptiveSessionRepository {
                   started_at AS "startedAt",
                   completed_at AS "completedAt"
            FROM adaptive_operations WHERE session_id=$1 ORDER BY sequence`,
-          [sessionId],
-        );
+        [sessionId],
+      );
       const linkedFlows = await q(
-          `SELECT objective_id AS "objectiveId",flow_draft_id AS "flowDraftId",purpose,sequence
-           FROM mission_authoring_session_flows WHERE session_id=$1 ORDER BY sequence`, [sessionId],
-        );
+        `SELECT objective_id AS "objectiveId",flow_draft_id AS "flowDraftId",purpose,sequence
+           FROM mission_authoring_session_flows WHERE session_id=$1 ORDER BY sequence`,
+        [sessionId],
+      );
       const latestTurn = await q<{ safeResponse: MissionAuthoringTurnResult | null }>(
-          `SELECT safe_response AS "safeResponse" FROM mission_authoring_turns
-           WHERE session_id=$1 AND safe_response IS NOT NULL ORDER BY updated_at DESC LIMIT 1`, [sessionId],
-        );
-      return { ...session, operations: operations.rows, events: events.rows, linkedFlows: linkedFlows.rows,
-        latestTurn: latestTurn.rows[0]?.safeResponse ?? null };
+        `SELECT safe_response AS "safeResponse" FROM mission_authoring_turns
+           WHERE session_id=$1 AND safe_response IS NOT NULL ORDER BY updated_at DESC LIMIT 1`,
+        [sessionId],
+      );
+      return {
+        ...session,
+        operations: operations.rows,
+        events: events.rows,
+        linkedFlows: linkedFlows.rows,
+        latestTurn: latestTurn.rows[0]?.safeResponse ?? null,
+      };
     });
   }
 
@@ -471,14 +727,18 @@ export class AdaptiveSessionRepository {
     return this.database.transaction(async (client) => {
       const q = bind(client);
       const session = await this.requireSession(q, input.workspaceId, input.sessionId, true);
-      if (session.state !== "active") throw new ConflictException({ code: "ADAPTIVE_SESSION_NOT_ACTIVE" });
+      if (session.state !== "active")
+        throw new ConflictException({ code: "ADAPTIVE_SESSION_NOT_ACTIVE" });
       const durableBoundary = agentDecisionBoundarySchema.safeParse(session.decisionBoundary);
-      const requiredRecovery = durableBoundary.success ? durableBoundary.data.authoringRecovery : undefined;
-      if (requiredRecovery && !input.recoveryBinding) throw new ConflictException({
-        code: "MISSION_AUTHORING_RECOVERY_BINDING_REQUIRED",
-        refreshedDecisionBoundary: durableBoundary.data,
-        safeActions: ["get_flow_authoring"],
-      });
+      const requiredRecovery = durableBoundary.success
+        ? durableBoundary.data.authoringRecovery
+        : undefined;
+      if (requiredRecovery && !input.recoveryBinding)
+        throw new ConflictException({
+          code: "MISSION_AUTHORING_RECOVERY_BINDING_REQUIRED",
+          refreshedDecisionBoundary: durableBoundary.data,
+          safeActions: ["get_flow_authoring"],
+        });
       if (input.recoveryBinding) {
         const boundary = durableBoundary;
         const current = requiredRecovery;
@@ -505,22 +765,45 @@ export class AdaptiveSessionRepository {
                AND session.mission_id=$4 AND session.active_objective_id=$5
                AND session.active_flow_draft_id=$6 AND session.environment_id=$7
                AND operation.objective_id=$5 AND operation.flow_draft_id=$6`,
-          [input.sessionId, current.failedOperationId, current.sourceTurnId ?? null,
-            current.missionId, current.objectiveId, current.flowDraftId, current.environmentId],
+          [
+            input.sessionId,
+            current.failedOperationId,
+            current.sourceTurnId ?? null,
+            current.missionId,
+            current.objectiveId,
+            current.flowDraftId,
+            current.environmentId,
+          ],
         );
         const sourceIntent = bound.rowCount
-          ? missionAuthoringIntentSchema.safeParse(bound.rows[0]!.sourceIntent) : null;
-        const requestedIntents = input.intents.map((intent) => missionAuthoringIntentSchema.parse(intent));
-        if (!sourceIntent?.success || stableDigest(requestedIntents) !== stableDigest([sourceIntent.data]))
+          ? missionAuthoringIntentSchema.safeParse(bound.rows[0]!.sourceIntent)
+          : null;
+        const requestedIntents = input.intents.map((intent) =>
+          missionAuthoringIntentSchema.parse(intent),
+        );
+        if (
+          !sourceIntent?.success ||
+          stableDigest(requestedIntents) !== stableDigest([sourceIntent.data])
+        )
           throw new ConflictException({
-          code: "MISSION_AUTHORING_RECOVERY_STALE",
-          refreshedDecisionBoundary: boundary.success ? boundary.data : null,
-          safeActions: ["get_flow_authoring"],
-        });
-        await q(`UPDATE adaptive_sessions SET decision_boundary=NULL,version=version+1,updated_at=now()
-          WHERE id=$1`, [input.sessionId]);
+            code: "MISSION_AUTHORING_RECOVERY_STALE",
+            refreshedDecisionBoundary: boundary.success ? boundary.data : null,
+            safeActions: ["get_flow_authoring"],
+          });
+        await q(
+          `UPDATE adaptive_sessions SET decision_boundary=NULL,version=version+1,updated_at=now()
+          WHERE id=$1`,
+          [input.sessionId],
+        );
       }
-      const existing = await q<{ id: string; inputDigest: string; state: string; safeResponse: MissionAuthoringTurnResult | null; currentPhase: string; stale: boolean }>(
+      const existing = await q<{
+        id: string;
+        inputDigest: string;
+        state: string;
+        safeResponse: MissionAuthoringTurnResult | null;
+        currentPhase: string;
+        stale: boolean;
+      }>(
         `SELECT id,input_digest AS "inputDigest",state,safe_response AS "safeResponse",current_phase AS "currentPhase",
                 updated_at < now()-(($3::int+5000)*interval '1 millisecond') AS stale
          FROM mission_authoring_turns WHERE session_id=$1 AND idempotency_key=$2 FOR UPDATE`,
@@ -536,16 +819,33 @@ export class AdaptiveSessionRepository {
             `SELECT COALESCE(bool_or(lease.lease_expires_at>now()),false) AS "leaseHealthy"
              FROM adaptive_operations operation
              LEFT JOIN adaptive_session_runtime_leases lease ON lease.session_id=operation.session_id
-             WHERE operation.session_id=$1 AND operation.state='running'`, [input.sessionId]);
+             WHERE operation.session_id=$1 AND operation.state='running'`,
+            [input.sessionId],
+          );
           const disposition = recovery.rows[0]!;
           if (turn.stale && !disposition.leaseHealthy) {
-            await q(`UPDATE mission_authoring_turns SET current_phase='resume',updated_at=now()
-              WHERE id=$1`, [turn.id]);
-            return { turnId: turn.id, replayed: false, state: turn.state,
-              response: turn.safeResponse, phase: "resume", recovered: true };
+            await q(
+              `UPDATE mission_authoring_turns SET current_phase='resume',updated_at=now()
+              WHERE id=$1`,
+              [turn.id],
+            );
+            return {
+              turnId: turn.id,
+              replayed: false,
+              state: turn.state,
+              response: turn.safeResponse,
+              phase: "resume",
+              recovered: true,
+            };
           }
         }
-        return { turnId: turn.id, replayed: true, state: turn.state, response: turn.safeResponse, phase: turn.currentPhase };
+        return {
+          turnId: turn.id,
+          replayed: true,
+          state: turn.state,
+          response: turn.safeResponse,
+          phase: turn.currentPhase,
+        };
       }
       const active = await q<{ id: string; state: "running" | "pending"; currentPhase: string }>(
         `SELECT id,state,current_phase AS "currentPhase" FROM mission_authoring_turns
@@ -565,26 +865,67 @@ export class AdaptiveSessionRepository {
         `INSERT INTO mission_authoring_turns(
            id,session_id,idempotency_key,input_digest,safe_input,state,budgets,current_phase
          ) VALUES($1,$2,$3,$4,$5::jsonb,'running',$6::jsonb,'resolve')`,
-        [turnId, input.sessionId, input.idempotencyKey, input.inputDigest, JSON.stringify({ intents: input.intents }), JSON.stringify(input.budgets)],
+        [
+          turnId,
+          input.sessionId,
+          input.idempotencyKey,
+          input.inputDigest,
+          JSON.stringify({ intents: input.intents }),
+          JSON.stringify(input.budgets),
+        ],
       );
-      await this.appendEvent(q, input.sessionId, "turn_started", { turnId, maxOperations: input.budgets.maxOperations });
-      return { turnId, replayed: false, state: "running" as const, response: null, phase: "resolve" };
+      await this.appendEvent(q, input.sessionId, "turn_started", {
+        turnId,
+        maxOperations: input.budgets.maxOperations,
+      });
+      return {
+        turnId,
+        replayed: false,
+        state: "running" as const,
+        response: null,
+        phase: "resolve",
+      };
     });
   }
 
-  continueTurn(input: { workspaceId: string | null; sessionId: string; turnId: string; idempotencyKey: string; budgets: { maxOperations: number; maxDurationMs: number } }) {
+  continueTurn(input: {
+    workspaceId: string | null;
+    sessionId: string;
+    turnId: string;
+    idempotencyKey: string;
+    budgets: { maxOperations: number; maxDurationMs: number };
+  }) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
       const session = await this.requireSession(q, input.workspaceId, input.sessionId, true);
-      const turn = await q<{ id: string; state: string; safeInput: { intents?: MissionAuthoringIntent[] }; safeResponse: MissionAuthoringTurnResult | null; currentPhase: string; nextIntentIndex: number }>(
+      const turn = await q<{
+        id: string;
+        state: string;
+        safeInput: { intents?: MissionAuthoringIntent[] };
+        safeResponse: MissionAuthoringTurnResult | null;
+        currentPhase: string;
+        nextIntentIndex: number;
+      }>(
         `SELECT id,state,safe_input AS "safeInput",safe_response AS "safeResponse",current_phase AS "currentPhase",
                 next_intent_index AS "nextIntentIndex"
-         FROM mission_authoring_turns WHERE id=$1 AND session_id=$2 FOR UPDATE`, [input.turnId, input.sessionId],
+         FROM mission_authoring_turns WHERE id=$1 AND session_id=$2 FOR UPDATE`,
+        [input.turnId, input.sessionId],
       );
       if (!turn.rowCount) throw new NotFoundException("Mission authoring turn not found");
       const current = turn.rows[0]!;
-      const continuationInputDigest = stableDigest({ turnId: input.turnId, budgets: input.budgets });
-      const replay = await q<{ id: string; state: string; safeResponse: MissionAuthoringTurnResult | null; currentPhase: string; safeInput: { intents?: MissionAuthoringIntent[] }; continuationInputDigest: string; nextIntentIndex: number }>(
+      const continuationInputDigest = stableDigest({
+        turnId: input.turnId,
+        budgets: input.budgets,
+      });
+      const replay = await q<{
+        id: string;
+        state: string;
+        safeResponse: MissionAuthoringTurnResult | null;
+        currentPhase: string;
+        safeInput: { intents?: MissionAuthoringIntent[] };
+        continuationInputDigest: string;
+        nextIntentIndex: number;
+      }>(
         `SELECT id,state,safe_response AS "safeResponse",current_phase AS "currentPhase",safe_input AS "safeInput",
                 continuation_input_digest AS "continuationInputDigest",next_intent_index AS "nextIntentIndex"
          FROM mission_authoring_turns WHERE session_id=$1 AND continuation_idempotency_key=$2`,
@@ -593,7 +934,9 @@ export class AdaptiveSessionRepository {
       if (replay.rowCount) {
         const stored = replay.rows[0]!;
         if (stored.id !== current.id || stored.continuationInputDigest !== continuationInputDigest)
-          throw new ConflictException({ code: "MISSION_AUTHORING_CONTINUATION_IDEMPOTENCY_CONFLICT" });
+          throw new ConflictException({
+            code: "MISSION_AUTHORING_CONTINUATION_IDEMPOTENCY_CONFLICT",
+          });
         return { ...stored, replayed: true };
       }
       if (current.state !== "pending") {
@@ -602,13 +945,21 @@ export class AdaptiveSessionRepository {
           requestedTurnId: input.turnId,
           currentTurnState: current.state,
           refreshedDecisionBoundary: current.safeResponse?.decisionBoundary ?? null,
-          safeActions: current.safeResponse?.decisionBoundary?.safeActions ?? ["get_flow_authoring"],
+          safeActions: current.safeResponse?.decisionBoundary?.safeActions ?? [
+            "get_flow_authoring",
+          ],
         });
       }
       await q(
         `UPDATE mission_authoring_turns SET state='running',budgets=$3::jsonb,current_phase='resume',updated_at=now(),safe_response=NULL,
            continuation_idempotency_key=$4,continuation_input_digest=$5 WHERE id=$1 AND session_id=$2`,
-        [input.turnId, input.sessionId, JSON.stringify(input.budgets), input.idempotencyKey, continuationInputDigest],
+        [
+          input.turnId,
+          input.sessionId,
+          JSON.stringify(input.budgets),
+          input.idempotencyKey,
+          continuationInputDigest,
+        ],
       );
       return { ...current, state: "running", replayed: false };
     });
@@ -622,7 +973,8 @@ export class AdaptiveSessionRepository {
     nextIntentIndex: number;
   }) {
     const result = missionAuthoringTurnResultSchema.parse(input.result);
-    if (result.state !== "pending") throw new ConflictException({ code: "MISSION_AUTHORING_PENDING_RESULT_REQUIRED" });
+    if (result.state !== "pending")
+      throw new ConflictException({ code: "MISSION_AUTHORING_PENDING_RESULT_REQUIRED" });
     return this.database.transaction(async (client) => {
       const q = bind(client);
       const updated = await q(
@@ -631,10 +983,18 @@ export class AdaptiveSessionRepository {
          WHERE id=$1 AND session_id=$2 AND state='running'`,
         [input.turnId, input.sessionId, JSON.stringify(result), input.phase, input.nextIntentIndex],
       );
-      if (!updated.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_TURN_NOT_RUNNING" });
+      if (!updated.rowCount)
+        throw new ConflictException({ code: "MISSION_AUTHORING_TURN_NOT_RUNNING" });
       await q(
         `UPDATE adaptive_sessions SET decision_boundary=$2::jsonb,version=version+1,updated_at=now() WHERE id=$1`,
-        [input.sessionId, JSON.stringify({ type: "turn_budget_exhausted", reasonCode: "MISSION_AUTHORING_TURN_PENDING", safeActions: [] })],
+        [
+          input.sessionId,
+          JSON.stringify({
+            type: "turn_budget_exhausted",
+            reasonCode: "MISSION_AUTHORING_TURN_PENDING",
+            safeActions: [],
+          }),
+        ],
       );
       return result;
     });
@@ -642,7 +1002,8 @@ export class AdaptiveSessionRepository {
 
   settleTurn(input: { sessionId: string; turnId: string; result: MissionAuthoringTurnResult }) {
     const result = missionAuthoringTurnResultSchema.parse(input.result);
-    if (result.state === "pending") throw new ConflictException({ code: "MISSION_AUTHORING_TERMINAL_RESULT_REQUIRED" });
+    if (result.state === "pending")
+      throw new ConflictException({ code: "MISSION_AUTHORING_TERMINAL_RESULT_REQUIRED" });
     return this.database.transaction(async (client) => {
       const q = bind(client);
       const settled = await q(
@@ -650,23 +1011,41 @@ export class AdaptiveSessionRepository {
          WHERE id=$1 AND session_id=$2 AND state='running'`,
         [input.turnId, input.sessionId, result.state, JSON.stringify(result)],
       );
-      if (!settled.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_TURN_NOT_RUNNING" });
+      if (!settled.rowCount)
+        throw new ConflictException({ code: "MISSION_AUTHORING_TURN_NOT_RUNNING" });
       await q(
         `UPDATE adaptive_sessions SET decision_boundary=$2::jsonb,version=version+1,updated_at=now() WHERE id=$1`,
-        [input.sessionId, JSON.stringify(result.decisionBoundary ?? {
-          type: "objective_completed", reasonCode: "MISSION_AUTHORING_TURN_COMPLETED", safeActions: [],
-        })],
+        [
+          input.sessionId,
+          JSON.stringify(
+            result.decisionBoundary ?? {
+              type: "objective_completed",
+              reasonCode: "MISSION_AUTHORING_TURN_COMPLETED",
+              safeActions: [],
+            },
+          ),
+        ],
       );
-      await this.appendEvent(q, input.sessionId, "turn_completed", { turnId: input.turnId, state: result.state });
+      await this.appendEvent(q, input.sessionId, "turn_completed", {
+        turnId: input.turnId,
+        state: result.state,
+      });
       return result;
     });
   }
 
   async validateIntentAdmission(input: { sessionId: string; intent: MissionAuthoringIntent }) {
-    const session = await this.database.query<{ environmentId: string; missionId: string; activeObjectiveId: string; protectedAllowlist: string[]; allowedOrigins: string[] }>(
+    const session = await this.database.query<{
+      environmentId: string;
+      missionId: string;
+      activeObjectiveId: string;
+      protectedAllowlist: string[];
+      allowedOrigins: string[];
+    }>(
       `SELECT environment_id AS "environmentId",mission_id AS "missionId",active_objective_id AS "activeObjectiveId",
               protected_reference_allowlist AS "protectedAllowlist",allowed_origins AS "allowedOrigins"
-       FROM adaptive_sessions WHERE id=$1`, [input.sessionId],
+       FROM adaptive_sessions WHERE id=$1`,
+      [input.sessionId],
     );
     if (!session.rowCount) throw new NotFoundException("Adaptive session not found");
     const current = session.rows[0]!;
@@ -676,18 +1055,22 @@ export class AdaptiveSessionRepository {
            AND authoring_session_id=$1 AND state IN ('dispatching','dispatched','acquiring','persisting','persisted','reconciling','recovery_required','compromised')
            AND operation_id<>(SELECT COALESCE((SELECT operation_id FROM adaptive_operations WHERE session_id=$1 AND authoring_intent->>'intentId'=$2 LIMIT 1),'') )
          LIMIT 1`,
-        [input.sessionId,input.intent.intentId],
+        [input.sessionId, input.intent.intentId],
       );
-      if (unresolved.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_OPERATION_UNRESOLVED" });
+      if (unresolved.rowCount)
+        throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_OPERATION_UNRESOLVED" });
     }
-    if (input.intent.protectedInputReferences.some((reference) => !current.protectedAllowlist.includes(reference))) {
+    if (
+      input.intent.protectedInputReferences.some(
+        (reference) => !current.protectedAllowlist.includes(reference),
+      )
+    ) {
       throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED" });
     }
     const lifecycleReferences = input.intent.credentialLifecycle?.credentialReferenceIds ?? [];
-    const statusCheckedReferences = [...new Set([
-      ...input.intent.protectedInputReferences,
-      ...lifecycleReferences,
-    ])];
+    const statusCheckedReferences = [
+      ...new Set([...input.intent.protectedInputReferences, ...lifecycleReferences]),
+    ];
     if (lifecycleReferences.some((reference) => !current.protectedAllowlist.includes(reference))) {
       throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED" });
     }
@@ -700,7 +1083,11 @@ export class AdaptiveSessionRepository {
     );
     if (input.intent.expectedEffect.kind === "new_page" && input.intent.expectedEffect.origin) {
       let origin: string;
-      try { origin = new URL(input.intent.expectedEffect.origin).origin; } catch { throw new ConflictException({ code: "MISSION_AUTHORING_NEW_PAGE_ORIGIN_INVALID" }); }
+      try {
+        origin = new URL(input.intent.expectedEffect.origin).origin;
+      } catch {
+        throw new ConflictException({ code: "MISSION_AUTHORING_NEW_PAGE_ORIGIN_INVALID" });
+      }
       if (!current.allowedOrigins.includes(origin)) {
         throw new ConflictException({ code: "MISSION_AUTHORING_NEW_PAGE_ORIGIN_NOT_ALLOWED" });
       }
@@ -708,10 +1095,17 @@ export class AdaptiveSessionRepository {
     if (input.intent.authorization.authorizationId) {
       const authorized = await this.database.query(
         `SELECT 1 FROM mission_authorizations WHERE id=$1 AND mission_id=$2 AND objective_id=$3
-           AND environment_id=$4 AND status='approved' AND (expires_at IS NULL OR expires_at>now())`,
-        [input.intent.authorization.authorizationId, current.missionId, input.intent.objectiveId, current.environmentId],
+           AND environment_id=$4 AND kind=$5 AND status='approved' AND (expires_at IS NULL OR expires_at>now())`,
+        [
+          input.intent.authorization.authorizationId,
+          current.missionId,
+          input.intent.objectiveId,
+          current.environmentId,
+          input.intent.authorization.kind,
+        ],
       );
-      if (!authorized.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_AUTHORIZATION_INVALID" });
+      if (!authorized.rowCount)
+        throw new ConflictException({ code: "MISSION_AUTHORING_AUTHORIZATION_INVALID" });
     }
   }
 
@@ -752,9 +1146,11 @@ export class AdaptiveSessionRepository {
       intentId: string;
       intent: MissionAuthoringIntent;
       observedUrl: string;
+      semanticPageContext: unknown;
     }>(
       `SELECT operation.sequence,operation.authoring_intent->>'intentId' AS "intentId",
-              operation.authoring_intent AS intent,observation.safe_summary->>'url' AS "observedUrl"
+              operation.authoring_intent AS intent,observation.safe_summary->>'url' AS "observedUrl",
+              operation.safe_outcome->'semanticPageContext' AS "semanticPageContext"
        FROM adaptive_operations operation
        JOIN adaptive_sessions session ON session.id=operation.session_id
        JOIN environments environment ON environment.id=session.environment_id
@@ -782,12 +1178,9 @@ export class AdaptiveSessionRepository {
       [input.sessionId],
     );
     if (!session.rowCount) throw new NotFoundException("Adaptive session not found");
-    return selectProtectedReplayPreparation(
-      result.rows,
-      input.intentIds,
-      input.entryUrl,
-      { preserveExactReferences: session.rows[0]!.protection === "protected" },
-    );
+    return selectProtectedReplayPreparation(result.rows, input.intentIds, input.entryUrl, {
+      preserveExactReferences: session.rows[0]!.protection === "protected",
+    });
   }
 
   async reserveMissionProtectedOperation(input: {
@@ -806,14 +1199,26 @@ export class AdaptiveSessionRepository {
            authorization_id,program_digest,state,phase,safe_output_manifest
          ) VALUES($1,$1,'authoring_session',$2,$3,$4,$5,$6,$7,$8,$9,NULL,'reserved','reserved','[]'::jsonb)
          ON CONFLICT DO NOTHING RETURNING id`,
-        [input.operationId,input.sessionId,runtime.projectId,runtime.environmentId,
-         session.missionId,input.intent.objectiveId,runtime.agentSessionId,input.intent.flowDraftId,
-         input.intent.authorization.authorizationId],
+        [
+          input.operationId,
+          input.sessionId,
+          runtime.projectId,
+          runtime.environmentId,
+          session.missionId,
+          input.intent.objectiveId,
+          runtime.agentSessionId,
+          input.intent.flowDraftId,
+          input.intent.authorization.authorizationId,
+        ],
       );
-      if (!result.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_OPERATION_ALREADY_RESERVED" });
+      if (!result.rowCount)
+        throw new ConflictException({
+          code: "MISSION_AUTHORING_PROTECTED_OPERATION_ALREADY_RESERVED",
+        });
       await q(
         `INSERT INTO protected_operation_transitions(protected_operation_id,sequence,from_state,to_state,phase,fencing_token,safe_diagnostics)
-         VALUES($1,1,NULL,'reserved','reserved',0,'{}'::jsonb)`, [result.rows[0]!.id],
+         VALUES($1,1,NULL,'reserved','reserved',0,'{}'::jsonb)`,
+        [result.rows[0]!.id],
       );
       return { protectedOperationId: result.rows[0]!.id };
     });
@@ -845,32 +1250,43 @@ export class AdaptiveSessionRepository {
     } satisfies AdaptiveSessionOperationInput;
   }
 
-  async closeReservedMissionProtectedOperation(input: { protectedOperationId: string; reasonCode: string }) {
+  async closeReservedMissionProtectedOperation(input: {
+    protectedOperationId: string;
+    reasonCode: string;
+  }) {
     await this.database.transaction(async (client) => {
       const result = await client.query<{ version: string }>(
         `UPDATE protected_operations SET state='failed_not_applied',phase='compilation_failed',
            mutation_outcome='not_applied',failure_code=$2,recovery_class='do_not_retry',
            completed_at=now(),updated_at=now(),version=version+1
-         WHERE id=$1 AND state='reserved' RETURNING version`, [input.protectedOperationId,input.reasonCode],
+         WHERE id=$1 AND state='reserved' RETURNING version`,
+        [input.protectedOperationId, input.reasonCode],
       );
       if (!result.rowCount) return;
       await client.query(
         `UPDATE operation_bound_protected_inputs SET ciphertext=NULL,initialization_vector=NULL,
            authentication_tag=NULL,lifecycle='destroyed',destroyed_at=now()
-         WHERE protected_operation_id=$1 AND lifecycle='active'`, [input.protectedOperationId],
+         WHERE protected_operation_id=$1 AND lifecycle='active'`,
+        [input.protectedOperationId],
       );
       await client.query(
         `INSERT INTO protected_operation_transitions(protected_operation_id,sequence,from_state,to_state,phase,fencing_token,reason_code,safe_diagnostics)
          SELECT $1,COALESCE(max(sequence),0)+1,'reserved','failed_not_applied','compilation_failed',0,$2,'{}'::jsonb
-         FROM protected_operation_transitions WHERE protected_operation_id=$1`, [input.protectedOperationId,input.reasonCode],
+         FROM protected_operation_transitions WHERE protected_operation_id=$1`,
+        [input.protectedOperationId, input.reasonCode],
       );
     });
   }
 
   async protectedExecutionContext(sessionId: string, operationId: string) {
     const result = await this.database.query<{
-      projectId: string; environmentId: string; missionId: string; objectiveId: string;
-      agentSessionId: string; flowDraftId: string; authorizationId: string;
+      projectId: string;
+      environmentId: string;
+      missionId: string;
+      objectiveId: string;
+      agentSessionId: string;
+      flowDraftId: string;
+      authorizationId: string;
       dispatchDisposition: "execute" | "qualification_only";
     }>(
       `SELECT session.project_id AS "projectId",session.environment_id AS "environmentId",
@@ -895,7 +1311,8 @@ export class AdaptiveSessionRepository {
          AND operation.semantic_intent->>'type'='protectedTransaction'`,
       [sessionId, operationId],
     );
-    if (!result.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID" });
+    if (!result.rowCount)
+      throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID" });
     return result.rows[0]!;
   }
 
@@ -904,9 +1321,11 @@ export class AdaptiveSessionRepository {
       `UPDATE adaptive_sessions SET trusted_dispatch_disposition='qualification_only',updated_at=now(),version=version+1
        WHERE id=$1 AND state='active' AND NOT EXISTS(
          SELECT 1 FROM adaptive_operations WHERE session_id=$1 AND dispatch_boundary<>'not_dispatched'
-       ) RETURNING id`, [sessionId],
+       ) RETURNING id`,
+      [sessionId],
     );
-    if (!result.rowCount) throw new ConflictException({ code: "QUALIFICATION_DISPOSITION_NOT_ADMISSIBLE" });
+    if (!result.rowCount)
+      throw new ConflictException({ code: "QUALIFICATION_DISPOSITION_NOT_ADMISSIBLE" });
   }
 
   projectProtectedOperationForAuthoring(input: {
@@ -943,7 +1362,8 @@ export class AdaptiveSessionRepository {
           FOR UPDATE OF operation,session`,
         [input.sessionId, input.operationId],
       );
-      if (!adaptive.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_OPERATION_MISSING" });
+      if (!adaptive.rowCount)
+        throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_OPERATION_MISSING" });
       const owner = adaptive.rows[0]!;
       const protectedResult = await q<{
         id: string;
@@ -953,7 +1373,15 @@ export class AdaptiveSessionRepository {
         mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
         persistenceState: "not_started" | "running" | "committed" | "failed" | "uncertain";
         failureCode: string | null;
-        persistedReferences: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "project" }>;
+        persistedReferences: Record<
+          string,
+          {
+            classification: "public" | "protected";
+            credentialId?: string;
+            valueId?: string;
+            scope: "project";
+          }
+        >;
       }>(
         `SELECT protected.id,protected.state,COALESCE(protected.lease_expires_at>now(),false) AS "leaseActive",
                 protected.dispatch_state AS "dispatchState",protected.mutation_outcome AS "mutationOutcome",
@@ -965,8 +1393,15 @@ export class AdaptiveSessionRepository {
             AND protected.flow_draft_id=$5 AND protected.environment_id=$6
             AND protected.authorization_id=$7::uuid
           FOR UPDATE`,
-        [input.sessionId, input.operationId, owner.missionId, owner.objectiveId,
-          owner.flowDraftId, owner.environmentId, owner.authorizationId],
+        [
+          input.sessionId,
+          input.operationId,
+          owner.missionId,
+          owner.objectiveId,
+          owner.flowDraftId,
+          owner.environmentId,
+          owner.authorizationId,
+        ],
       );
       if (!protectedResult.rowCount) {
         throw new ConflictException({
@@ -976,16 +1411,29 @@ export class AdaptiveSessionRepository {
       }
       const durable = protectedResult.rows[0]!;
       const activeStates = new Set([
-        "planned", "preparing", "ready_to_dispatch", "dispatching", "dispatched",
-        "acquiring", "persisting", "persisted", "reconciling",
+        "planned",
+        "preparing",
+        "ready_to_dispatch",
+        "dispatching",
+        "dispatched",
+        "acquiring",
+        "persisting",
+        "persisted",
+        "reconciling",
       ]);
       if (activeStates.has(durable.state)) {
-        return { status: "pending" as const, state: durable.state, leaseActive: durable.leaseActive };
+        return {
+          status: "pending" as const,
+          state: durable.state,
+          leaseActive: durable.leaseActive,
+        };
       }
-      const generatedReferences = Object.entries(durable.persistedReferences).map(([reference, stored]) => ({
-        reference,
-        ...stored,
-      }));
+      const generatedReferences = Object.entries(durable.persistedReferences).map(
+        ([reference, stored]) => ({
+          reference,
+          ...stored,
+        }),
+      );
       let outcome: OperationOutcome;
       let decisionBoundary: AgentDecisionBoundary;
       if (durable.state === "completed") {
@@ -1005,7 +1453,10 @@ export class AdaptiveSessionRepository {
           safeActions: [],
         };
       } else if (durable.state === "failed_not_applied") {
-        const reasonCode = safeReasonCode(durable.failureCode, "PROTECTED_OPERATION_FAILED_NOT_APPLIED");
+        const reasonCode = safeReasonCode(
+          durable.failureCode,
+          "PROTECTED_OPERATION_FAILED_NOT_APPLIED",
+        );
         outcome = operationOutcomeSchema.parse({
           operationId: input.operationId,
           functionalResult: "failed",
@@ -1088,7 +1539,13 @@ export class AdaptiveSessionRepository {
         }
       }
       await this.writeProtectedProjection(
-        q, input, owner, outcome, decisionBoundary, adaptiveState, generatedCredentialIds,
+        q,
+        input,
+        owner,
+        outcome,
+        decisionBoundary,
+        adaptiveState,
+        generatedCredentialIds,
       );
       return { status: "settled" as const, state: durable.state, outcome, decisionBoundary };
     });
@@ -1105,28 +1562,41 @@ export class AdaptiveSessionRepository {
     return this.database.transaction(async (client) => {
       const q = bind(client);
       const session = await this.requireSession(q, input.workspaceId, input.sessionId, true);
-      if (session.activeObjectiveId === input.objectiveId && session.activeFlowDraftId === input.flowDraftId) return { handedOff: false };
+      if (
+        session.activeObjectiveId === input.objectiveId &&
+        session.activeFlowDraftId === input.flowDraftId
+      )
+        return { handedOff: false };
       const running = await q(
         `SELECT 1 FROM adaptive_operations WHERE session_id=$1 AND state='running'
            AND (objective_id<>$2 OR flow_draft_id<>$3) FOR UPDATE`,
         [input.sessionId, input.objectiveId, input.flowDraftId],
       );
-      if (running.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_HANDOFF_OPERATION_RUNNING" });
+      if (running.rowCount)
+        throw new ConflictException({ code: "MISSION_AUTHORING_HANDOFF_OPERATION_RUNNING" });
       const target = await q<{ purpose: string; predecessorRunId: string | null }>(
         `SELECT d.purpose,d.predecessor_run_id AS "predecessorRunId"
          FROM flow_drafts d JOIN environments e ON e.id=d.environment_id
          WHERE d.id=$1 AND d.objective_id=$2 AND d.mission_id=$3 AND d.project_id=$4
            AND e.id=$5`,
-        [input.flowDraftId, input.objectiveId, session.missionId, session.projectId, session.environmentId],
+        [
+          input.flowDraftId,
+          input.objectiveId,
+          session.missionId,
+          session.projectId,
+          session.environmentId,
+        ],
       );
-      if (!target.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_HANDOFF_OWNERSHIP_INVALID" });
+      if (!target.rowCount)
+        throw new ConflictException({ code: "MISSION_AUTHORING_HANDOFF_OWNERSHIP_INVALID" });
       if (target.rows[0]!.predecessorRunId)
         throw new ConflictException({
           code: "SUCCESSOR_FLOW_REQUIRES_NEW_AUTHORING_SESSION",
           safeActions: ["start_flow_authoring"],
         });
       const sequence = await q<{ sequence: number }>(
-        `SELECT COALESCE(max(sequence),0)+1 AS sequence FROM mission_authoring_handoffs WHERE session_id=$1`, [input.sessionId],
+        `SELECT COALESCE(max(sequence),0)+1 AS sequence FROM mission_authoring_handoffs WHERE session_id=$1`,
+        [input.sessionId],
       );
       const handoffId = randomUUID();
       await q(
@@ -1134,28 +1604,61 @@ export class AdaptiveSessionRepository {
            id,session_id,mission_id,sequence,idempotency_key,source_objective_id,source_flow_draft_id,
            target_objective_id,target_flow_draft_id,reason,state
          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'started')`,
-        [handoffId, input.sessionId, session.missionId, sequence.rows[0]!.sequence, input.idempotencyKey,
-          session.activeObjectiveId, session.activeFlowDraftId, input.objectiveId, input.flowDraftId, input.reason],
+        [
+          handoffId,
+          input.sessionId,
+          session.missionId,
+          sequence.rows[0]!.sequence,
+          input.idempotencyKey,
+          session.activeObjectiveId,
+          session.activeFlowDraftId,
+          input.objectiveId,
+          input.flowDraftId,
+          input.reason,
+        ],
       );
-      await this.appendEvent(q, input.sessionId, "flow_handoff_started", { handoffId, targetObjectiveId: input.objectiveId, targetFlowDraftId: input.flowDraftId });
+      await this.appendEvent(q, input.sessionId, "flow_handoff_started", {
+        handoffId,
+        targetObjectiveId: input.objectiveId,
+        targetFlowDraftId: input.flowDraftId,
+      });
       const linkSequence = await q<{ sequence: number }>(
-        `SELECT COALESCE(max(sequence),0)+1 AS sequence FROM mission_authoring_session_flows WHERE session_id=$1`, [input.sessionId],
+        `SELECT COALESCE(max(sequence),0)+1 AS sequence FROM mission_authoring_session_flows WHERE session_id=$1`,
+        [input.sessionId],
       );
       await q(
         `INSERT INTO mission_authoring_session_flows(session_id,mission_id,objective_id,flow_draft_id,purpose,sequence)
          VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(session_id,flow_draft_id) DO NOTHING`,
-        [input.sessionId, session.missionId, input.objectiveId, input.flowDraftId, target.rows[0]!.purpose, linkSequence.rows[0]!.sequence],
+        [
+          input.sessionId,
+          session.missionId,
+          input.objectiveId,
+          input.flowDraftId,
+          target.rows[0]!.purpose,
+          linkSequence.rows[0]!.sequence,
+        ],
       );
       await q(
         `UPDATE adaptive_sessions SET active_objective_id=$2,active_flow_draft_id=$3,updated_at=now(),version=version+1 WHERE id=$1`,
         [input.sessionId, input.objectiveId, input.flowDraftId],
       );
-      await q(`UPDATE mission_authoring_handoffs SET state='completed',completed_at=now() WHERE id=$1`, [handoffId]);
-      await this.appendEvent(q, input.sessionId, "flow_handoff_completed", { handoffId, targetObjectiveId: input.objectiveId, targetFlowDraftId: input.flowDraftId });
+      await q(
+        `UPDATE mission_authoring_handoffs SET state='completed',completed_at=now() WHERE id=$1`,
+        [handoffId],
+      );
+      await this.appendEvent(q, input.sessionId, "flow_handoff_completed", {
+        handoffId,
+        targetObjectiveId: input.objectiveId,
+        targetFlowDraftId: input.flowDraftId,
+      });
       await q(
         `INSERT INTO mission_activities(mission_id,objective_id,type,summary,safe_metadata,technical)
          VALUES($1,$2,'authoring','Flow handoff completed',$3::jsonb,true)`,
-        [session.missionId, input.objectiveId, JSON.stringify({ sessionId: input.sessionId, flowDraftId: input.flowDraftId })],
+        [
+          session.missionId,
+          input.objectiveId,
+          JSON.stringify({ sessionId: input.sessionId, flowDraftId: input.flowDraftId }),
+        ],
       );
       return { handedOff: true };
     });
@@ -1185,9 +1688,14 @@ export class AdaptiveSessionRepository {
     return this.database.transaction(async (client) => {
       const q = bind(client);
       const session = await this.requireSession(q, input.workspaceId, input.sessionId, true);
-      const existing = await q<{ operationId: string; state: string; outcome: OperationOutcome | null }>(
+      const existing = await q<{
+        operationId: string;
+        state: string;
+        outcome: OperationOutcome | null;
+      }>(
         `SELECT operation_id AS "operationId",state,safe_outcome AS outcome FROM adaptive_operations
-         WHERE session_id=$1 AND idempotency_key=$2`, [input.sessionId, input.idempotencyKey],
+         WHERE session_id=$1 AND idempotency_key=$2`,
+        [input.sessionId, input.idempotencyKey],
       );
       if (existing.rowCount) return { ...existing.rows[0]!, replayed: true };
       const runtime = await this.runtimeContext(q, input.sessionId);
@@ -1197,10 +1705,25 @@ export class AdaptiveSessionRepository {
            session_id,operation_id,sequence,mode,state,semantic_intent,expected_effect,policy_digest,
            observation_epoch,idempotency_key,mission_id,objective_id,flow_draft_id,authoring_intent,derived_action
          ) VALUES($1,$2,$3,$4,'running',$5::jsonb,$6::jsonb,$7,NULL,$8,$9,$10,$11,$12::jsonb,$13::jsonb)`,
-        [input.sessionId, input.operationId, sequence, input.mode, JSON.stringify(input.action), JSON.stringify(input.expectedEffect),
-          policyDigest(runtime.policy), input.idempotencyKey,
-          session.missionId, input.intent.objectiveId, input.intent.flowDraftId,
-          JSON.stringify(input.intent), JSON.stringify({ action: input.action, expectedEffect: input.expectedEffect, mode: input.mode })],
+        [
+          input.sessionId,
+          input.operationId,
+          sequence,
+          input.mode,
+          JSON.stringify(input.action),
+          JSON.stringify(input.expectedEffect),
+          policyDigest(runtime.policy),
+          input.idempotencyKey,
+          session.missionId,
+          input.intent.objectiveId,
+          input.intent.flowDraftId,
+          JSON.stringify(input.intent),
+          JSON.stringify({
+            action: input.action,
+            expectedEffect: input.expectedEffect,
+            mode: input.mode,
+          }),
+        ],
       );
       if (input.protectedReservation) {
         if (
@@ -1212,62 +1735,78 @@ export class AdaptiveSessionRepository {
         }
         const syntheticCommitments = input.earlyProtectedOperationId
           ? await q<{ semantic: string; commitment: string }>(
-            `SELECT semantic,commitment FROM operation_bound_protected_inputs
+              `SELECT semantic,commitment FROM operation_bound_protected_inputs
              WHERE protected_operation_id=$1 AND lifecycle='active' ORDER BY semantic`,
-            [input.earlyProtectedOperationId],
-          ) : { rows: [] };
+              [input.earlyProtectedOperationId],
+            )
+          : { rows: [] };
         const syntheticInputSetCommitment = syntheticCommitments.rows.length
           ? stableDigest(syntheticCommitments.rows)
           : null;
-        const providerIdempotencyCommitment = syntheticCommitments.rows.find(
-          (row) => row.semantic === "provider_idempotency_key",
-        )?.commitment ?? null;
+        const providerIdempotencyCommitment =
+          syntheticCommitments.rows.find((row) => row.semantic === "provider_idempotency_key")
+            ?.commitment ?? null;
         const reserved = input.earlyProtectedOperationId
           ? await q<{ id: string }>(
-          `UPDATE protected_operations SET program_digest=$2,dispatch_semantics=$3,
+              `UPDATE protected_operations SET program_digest=$2,dispatch_semantics=$3,
              state='planned',phase='planned',safe_output_manifest=$4::jsonb,
              synthetic_input_set_commitment=$5,payload_commitment=$6,
              provider_idempotency_commitment=$7,version=version+1,updated_at=now()
            WHERE id=$1 AND state='reserved' AND program_digest IS NULL RETURNING id`,
-          [input.earlyProtectedOperationId,input.protectedReservation.programDigest,
-           input.protectedReservation.dispatchSemantics ?? "mutation",
-           JSON.stringify(input.protectedReservation.safeOutputManifest),syntheticInputSetCommitment,
-           stableDigest({ programDigest: input.protectedReservation.programDigest, syntheticInputSetCommitment }),
-           providerIdempotencyCommitment],
-        ) : await q<{ id: string }>(
-          `INSERT INTO protected_operations(
+              [
+                input.earlyProtectedOperationId,
+                input.protectedReservation.programDigest,
+                input.protectedReservation.dispatchSemantics ?? "mutation",
+                JSON.stringify(input.protectedReservation.safeOutputManifest),
+                syntheticInputSetCommitment,
+                stableDigest({
+                  programDigest: input.protectedReservation.programDigest,
+                  syntheticInputSetCommitment,
+                }),
+                providerIdempotencyCommitment,
+              ],
+            )
+          : await q<{ id: string }>(
+              `INSERT INTO protected_operations(
              operation_id,mutation_identity,owner_kind,authoring_session_id,project_id,
              environment_id,mission_id,objective_id,agent_session_id,flow_draft_id,
              authorization_id,program_digest,dispatch_semantics,state,phase,safe_output_manifest
            ) VALUES($1,$2,'authoring_session',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'planned','planned',$13::jsonb)
            RETURNING id`,
-          [
-            input.operationId,
-            input.protectedReservation.mutationIdentity,
-            input.sessionId,
-            runtime.projectId,
-            runtime.environmentId,
-            session.missionId,
-            input.intent.objectiveId,
-            runtime.agentSessionId,
-            input.intent.flowDraftId,
-            input.intent.authorization.authorizationId,
-            input.protectedReservation.programDigest,
-            input.protectedReservation.dispatchSemantics ?? "mutation",
-            JSON.stringify(input.protectedReservation.safeOutputManifest),
-          ],
-        );
-        if (!reserved.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_RESERVATION_BIND_FAILED" });
+              [
+                input.operationId,
+                input.protectedReservation.mutationIdentity,
+                input.sessionId,
+                runtime.projectId,
+                runtime.environmentId,
+                session.missionId,
+                input.intent.objectiveId,
+                runtime.agentSessionId,
+                input.intent.flowDraftId,
+                input.intent.authorization.authorizationId,
+                input.protectedReservation.programDigest,
+                input.protectedReservation.dispatchSemantics ?? "mutation",
+                JSON.stringify(input.protectedReservation.safeOutputManifest),
+              ],
+            );
+        if (!reserved.rowCount)
+          throw new ConflictException({
+            code: "MISSION_AUTHORING_PROTECTED_RESERVATION_BIND_FAILED",
+          });
         await q(
           `INSERT INTO protected_operation_transitions(
              protected_operation_id,sequence,from_state,to_state,phase,fencing_token,safe_diagnostics
            ) SELECT $1,COALESCE(max(sequence),0)+1,
                     CASE WHEN $2::boolean THEN 'reserved' ELSE NULL END,'planned','planned',0,'{}'::jsonb
              FROM protected_operation_transitions WHERE protected_operation_id=$1`,
-          [reserved.rows[0]!.id,Boolean(input.earlyProtectedOperationId)],
+          [reserved.rows[0]!.id, Boolean(input.earlyProtectedOperationId)],
         );
       }
-      await this.appendEvent(q, input.sessionId, "operation_started", { operationId: input.operationId, objectiveId: input.intent.objectiveId, flowDraftId: input.intent.flowDraftId });
+      await this.appendEvent(q, input.sessionId, "operation_started", {
+        operationId: input.operationId,
+        objectiveId: input.intent.objectiveId,
+        flowDraftId: input.intent.flowDraftId,
+      });
       return { operationId: input.operationId, state: "running" as const, replayed: false };
     });
   }
@@ -1291,7 +1830,9 @@ export class AdaptiveSessionRepository {
     adaptiveState: "completed" | "failed",
     generatedCredentialIds: string[],
   ) {
-    const capabilityManifestDigest = createHash("sha256").update("durable-protected-operation").digest("hex");
+    const capabilityManifestDigest = createHash("sha256")
+      .update("durable-protected-operation")
+      .digest("hex");
     const projected = await q(
       `UPDATE adaptive_operations SET state=$3,
          capability_manifest_digest=COALESCE(capability_manifest_digest,$4),
@@ -1319,30 +1860,54 @@ export class AdaptiveSessionRepository {
            OR safe_outcome IS DISTINCT FROM $10::jsonb
            OR decision_boundary IS DISTINCT FROM $11::jsonb)
        RETURNING operation_id`,
-      [input.sessionId, input.operationId, adaptiveState,
+      [
+        input.sessionId,
+        input.operationId,
+        adaptiveState,
         capabilityManifestDigest,
-        outcome.mutationOutcome, outcome.functionalResult, outcome.privacyResult,
-        JSON.stringify(outcome.evidenceResult), JSON.stringify(outcome.qualityFindings),
-        JSON.stringify(outcome), JSON.stringify(decisionBoundary)],
+        outcome.mutationOutcome,
+        outcome.functionalResult,
+        outcome.privacyResult,
+        JSON.stringify(outcome.evidenceResult),
+        JSON.stringify(outcome.qualityFindings),
+        JSON.stringify(outcome),
+        JSON.stringify(decisionBoundary),
+      ],
     );
     const projectionChanged = (projected.rowCount ?? 0) > 0;
     let stepAppended = false;
     if (adaptiveState === "completed") {
-      const draft = await q<{ version: number; createdByAgentSessionId: string; stepExists: boolean }>(
-        `SELECT version,created_by_agent_session_id AS "createdByAgentSessionId",
+      const draft = await q<{
+        version: number;
+        state: string;
+        createdByAgentSessionId: string;
+        stepExists: boolean;
+      }>(
+        `SELECT version,state,created_by_agent_session_id AS "createdByAgentSessionId",
                 COALESCE(plan->'steps','[]'::jsonb) @> $4::jsonb AS "stepExists"
            FROM flow_drafts WHERE id=$1 AND mission_id=$2 AND objective_id=$3 FOR UPDATE`,
-        [owner.flowDraftId, owner.missionId, owner.objectiveId,
-          JSON.stringify([{ id: input.operationId }])],
+        [
+          owner.flowDraftId,
+          owner.missionId,
+          owner.objectiveId,
+          JSON.stringify([{ id: input.operationId }]),
+        ],
       );
-      if (!draft.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_FLOW_DRAFT_MISSING" });
-      if (!draft.rows[0]!.stepExists) {
+      if (!draft.rowCount)
+        throw new ConflictException({ code: "MISSION_AUTHORING_FLOW_DRAFT_MISSING" });
+      if (
+        !["published", "abandoned"].includes(draft.rows[0]!.state) &&
+        !draft.rows[0]!.stepExists
+      ) {
         const nextVersion = draft.rows[0]!.version + 1;
         const step = {
           id: input.operationId,
           title: `Authoring ${owner.intent.action.kind}: ${safeIntentTitle(owner.intent)}`,
           action: owner.action,
-          assertions: [], onFailure: "stop", evidence: [], captureIntent: "final",
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "final",
         };
         await q(
           `UPDATE flow_drafts SET plan=jsonb_set(plan,'{steps}',COALESCE(plan->'steps','[]'::jsonb) || $2::jsonb,true),
@@ -1357,8 +1922,16 @@ export class AdaptiveSessionRepository {
         await q(
           `INSERT INTO flow_draft_events(draft_id,version,type,agent_session_id,summary,safe_metadata)
            VALUES($1,$2,'authoring_step_appended',$3,'Durable protected operation projected',$4::jsonb)`,
-          [owner.flowDraftId, nextVersion, draft.rows[0]!.createdByAgentSessionId,
-            JSON.stringify({ operationId: input.operationId, intentId: owner.intent.intentId, outcome: "completed" })],
+          [
+            owner.flowDraftId,
+            nextVersion,
+            draft.rows[0]!.createdByAgentSessionId,
+            JSON.stringify({
+              operationId: input.operationId,
+              intentId: owner.intent.intentId,
+              outcome: "completed",
+            }),
+          ],
         );
         stepAppended = true;
       }
@@ -1395,23 +1968,38 @@ export class AdaptiveSessionRepository {
                  ) AS value
              ) distinct_refs
          ))`,
-      [input.sessionId, JSON.stringify(decisionBoundary), outcome.mutationOutcome,
-        JSON.stringify(generatedCredentialIds)],
+      [
+        input.sessionId,
+        JSON.stringify(decisionBoundary),
+        outcome.mutationOutcome,
+        JSON.stringify(generatedCredentialIds),
+      ],
     );
     if (projectionChanged) {
-      await this.appendEvent(q, input.sessionId,
-        adaptiveState === "completed" ? "operation_completed" : "operation_failed", {
+      await this.appendEvent(
+        q,
+        input.sessionId,
+        adaptiveState === "completed" ? "operation_completed" : "operation_failed",
+        {
           operationId: input.operationId,
           functionalResult: outcome.functionalResult,
           mutationOutcome: outcome.mutationOutcome,
           authority: "protected_operations",
-        });
+        },
+      );
       await q(
         `INSERT INTO mission_activities(mission_id,objective_id,type,summary,safe_metadata,technical)
          VALUES($1,$2,'authoring','Durable protected operation projected',$3::jsonb,true)`,
-        [owner.missionId, owner.objectiveId,
-          JSON.stringify({ flowDraftId: owner.flowDraftId, operationId: input.operationId,
-            outcome: adaptiveState, stepAppended })],
+        [
+          owner.missionId,
+          owner.objectiveId,
+          JSON.stringify({
+            flowDraftId: owner.flowDraftId,
+            operationId: input.operationId,
+            outcome: adaptiveState,
+            stepAppended,
+          }),
+        ],
       );
     }
   }
@@ -1446,37 +2034,51 @@ export class AdaptiveSessionRepository {
             AND operation.state='running' FOR UPDATE OF operation`,
         [input.sessionId, input.operationId],
       );
-      if (!operation.rowCount) throw new ConflictException({ code: "ADAPTIVE_OPERATION_NOT_RUNNING" });
+      if (!operation.rowCount)
+        throw new ConflictException({ code: "ADAPTIVE_OPERATION_NOT_RUNNING" });
       const durableIntent = missionAuthoringIntentSchema.parse(operation.rows[0]!.authoringIntent);
       if (durableIntent.intentId !== input.intent.intentId) {
         throw new ConflictException({ code: "MISSION_AUTHORING_INTENT_MISMATCH" });
       }
-      const state = input.outcome.functionalResult === "succeeded" && input.outcome.mutationOutcome !== "unknown"
-        ? "completed"
-        : "failed";
+      const state =
+        input.outcome.functionalResult === "succeeded" &&
+        input.outcome.mutationOutcome !== "unknown"
+          ? "completed"
+          : "failed";
       const owner = operation.rows[0]!;
-      const decisionBoundary = input.outcome.mutationOutcome === "not_applied"
-          && input.decisionBoundary.type === "environment_unavailable"
-          && isRuntimeReprovisionReason(input.decisionBoundary.reasonCode)
-        ? withAuthoringRecovery(input.decisionBoundary, {
-            sessionId: input.sessionId,
-            missionId: owner.missionId,
-            objectiveId: owner.objectiveId,
-            flowDraftId: owner.flowDraftId,
-            environmentId: owner.environmentId,
-            failedOperationId: input.operationId,
-            ...(input.turnId ? { sourceTurnId: input.turnId } : {}),
-          })
-        : input.decisionBoundary;
+      const decisionBoundary =
+        input.outcome.mutationOutcome === "not_applied" &&
+        input.decisionBoundary.type === "environment_unavailable" &&
+        isRuntimeReprovisionReason(input.decisionBoundary.reasonCode)
+          ? withAuthoringRecovery(input.decisionBoundary, {
+              sessionId: input.sessionId,
+              missionId: owner.missionId,
+              objectiveId: owner.objectiveId,
+              flowDraftId: owner.flowDraftId,
+              environmentId: owner.environmentId,
+              failedOperationId: input.operationId,
+              ...(input.turnId ? { sourceTurnId: input.turnId } : {}),
+            })
+          : input.decisionBoundary;
       await q(
         `UPDATE adaptive_operations SET state=$3,capability_manifest_digest=$4,
            dispatch_boundary=CASE WHEN dispatch_boundary='dispatching' THEN 'acknowledged' ELSE dispatch_boundary END,
            mutation_outcome=$5,functional_result=$6,privacy_result=$7,evidence_result=$8::jsonb,
            quality_findings=$9::jsonb,safe_outcome=$10::jsonb,decision_boundary=$11::jsonb,completed_at=now()
          WHERE session_id=$1 AND operation_id=$2 AND state='running'`,
-        [input.sessionId, input.operationId, state, input.capabilityManifestDigest, input.outcome.mutationOutcome,
-          input.outcome.functionalResult, input.outcome.privacyResult, JSON.stringify(input.outcome.evidenceResult),
-          JSON.stringify(input.outcome.qualityFindings), JSON.stringify(input.outcome), JSON.stringify(decisionBoundary)],
+        [
+          input.sessionId,
+          input.operationId,
+          state,
+          input.capabilityManifestDigest,
+          input.outcome.mutationOutcome,
+          input.outcome.functionalResult,
+          input.outcome.privacyResult,
+          JSON.stringify(input.outcome.evidenceResult),
+          JSON.stringify(input.outcome.qualityFindings),
+          JSON.stringify(input.outcome),
+          JSON.stringify(decisionBoundary),
+        ],
       );
       await this.projectCredentialLifecycle(q, {
         projectId: owner.projectId,
@@ -1488,39 +2090,62 @@ export class AdaptiveSessionRepository {
         outcome: input.outcome,
       });
       if (state === "completed" && input.outcome.mutationOutcome !== "unknown") {
-        const draft = await q<{ version: number; createdByAgentSessionId: string }>(
-          `SELECT version,created_by_agent_session_id AS "createdByAgentSessionId" FROM flow_drafts WHERE id=$1
-           AND mission_id=$2 AND objective_id=$3 FOR UPDATE`, [owner.flowDraftId, owner.missionId, owner.objectiveId],
+        const draft = await q<{ version: number; state: string; createdByAgentSessionId: string }>(
+          `SELECT version,state,created_by_agent_session_id AS "createdByAgentSessionId" FROM flow_drafts WHERE id=$1
+           AND mission_id=$2 AND objective_id=$3 FOR UPDATE`,
+          [owner.flowDraftId, owner.missionId, owner.objectiveId],
         );
-        if (!draft.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_FLOW_DRAFT_MISSING" });
-        const nextVersion = draft.rows[0]!.version + 1;
-        const step = {
-          id: input.operationId,
-          title: `Authoring ${input.intent.action.kind}: ${safeIntentTitle(input.intent)}`,
-          action: input.action,
-          assertions: [], onFailure: "stop", evidence: [], captureIntent: "final",
-        };
-        await q(
-          `UPDATE flow_drafts SET plan=jsonb_set(plan,'{steps}',COALESCE(plan->'steps','[]'::jsonb) || $2::jsonb,true),
-             version=$3,state='editing',updated_at=now() WHERE id=$1`,
-          [owner.flowDraftId, JSON.stringify(step), nextVersion],
-        );
-        await q(
-          `UPDATE flow_compilations SET status='stale',invalidated_at=now() WHERE draft_id=$1
-             AND status IN ('pending','execution_ready','calibration_required')`, [owner.flowDraftId],
-        );
-        await q(
-          `INSERT INTO flow_draft_events(draft_id,version,type,agent_session_id,summary,safe_metadata)
-           VALUES($1,$2,'authoring_step_appended',$3,'Server-owned authoring step appended',$4::jsonb)`,
-          [owner.flowDraftId, nextVersion, draft.rows[0]!.createdByAgentSessionId,
-            JSON.stringify({ operationId: input.operationId, intentId: input.intent.intentId, outcome: input.outcome.functionalResult })],
-        );
+        if (!draft.rowCount)
+          throw new ConflictException({ code: "MISSION_AUTHORING_FLOW_DRAFT_MISSING" });
+        if (!["published", "abandoned"].includes(draft.rows[0]!.state)) {
+          const nextVersion = draft.rows[0]!.version + 1;
+          const step = {
+            id: input.operationId,
+            title: `Authoring ${input.intent.action.kind}: ${safeIntentTitle(input.intent)}`,
+            action: input.action,
+            assertions: [],
+            onFailure: "stop",
+            evidence: [],
+            captureIntent: "final",
+          };
+          await q(
+            `UPDATE flow_drafts SET plan=jsonb_set(plan,'{steps}',COALESCE(plan->'steps','[]'::jsonb) || $2::jsonb,true),
+               version=$3,state='editing',updated_at=now() WHERE id=$1`,
+            [owner.flowDraftId, JSON.stringify(step), nextVersion],
+          );
+          await q(
+            `UPDATE flow_compilations SET status='stale',invalidated_at=now() WHERE draft_id=$1
+               AND status IN ('pending','execution_ready','calibration_required')`,
+            [owner.flowDraftId],
+          );
+          await q(
+            `INSERT INTO flow_draft_events(draft_id,version,type,agent_session_id,summary,safe_metadata)
+             VALUES($1,$2,'authoring_step_appended',$3,'Server-owned authoring step appended',$4::jsonb)`,
+            [
+              owner.flowDraftId,
+              nextVersion,
+              draft.rows[0]!.createdByAgentSessionId,
+              JSON.stringify({
+                operationId: input.operationId,
+                intentId: input.intent.intentId,
+                outcome: input.outcome.functionalResult,
+              }),
+            ],
+          );
+        }
       }
-      await this.appendEvent(q, input.sessionId, state === "completed" ? "operation_completed" : "operation_failed", {
-        operationId: input.operationId, functionalResult: input.outcome.functionalResult, mutationOutcome: input.outcome.mutationOutcome,
-      });
+      await this.appendEvent(
+        q,
+        input.sessionId,
+        state === "completed" ? "operation_completed" : "operation_failed",
+        {
+          operationId: input.operationId,
+          functionalResult: input.outcome.functionalResult,
+          mutationOutcome: input.outcome.mutationOutcome,
+        },
+      );
       if (input.outcome.mutationOutcome === "unknown") {
-        await q(`SELECT id FROM missions WHERE id=$1 FOR UPDATE`,[owner.missionId]);
+        await q(`SELECT id FROM missions WHERE id=$1 FOR UPDATE`, [owner.missionId]);
         await q(
           `UPDATE adaptive_sessions SET state='recovery_required',decision_boundary=$2::jsonb,
              version=version+1,updated_at=now() WHERE id=$1 AND state='active'`,
@@ -1534,25 +2159,48 @@ export class AdaptiveSessionRepository {
       await q(
         `INSERT INTO mission_activities(mission_id,objective_id,type,summary,safe_metadata,technical)
          VALUES($1,$2,'authoring','Server-owned authoring operation settled',$3::jsonb,true)`,
-        [owner.missionId, owner.objectiveId, JSON.stringify({ flowDraftId: owner.flowDraftId, operationId: input.operationId, outcome: state })],
+        [
+          owner.missionId,
+          owner.objectiveId,
+          JSON.stringify({
+            flowDraftId: owner.flowDraftId,
+            operationId: input.operationId,
+            outcome: state,
+          }),
+        ],
       );
       return { state, outcome: input.outcome, decisionBoundary };
     });
   }
 
   beginUnknownReconciliation(input: {
-    workspaceId: string | null; sessionId: string; missionId: string;
-    operationId: string; idempotencyKey: string;
+    workspaceId: string | null;
+    sessionId: string;
+    missionId: string;
+    operationId: string;
+    idempotencyKey: string;
   }) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
       const session = await this.requireSession(q, input.workspaceId, input.sessionId, true);
       const operation = await q<{
-        projectId: string; environmentId: string; missionId: string; objectiveId: string; flowDraftId: string;
-        action: AdaptiveSessionOperationInput["action"]; idempotencyKey: string; operationCreatedAt: string;
+        projectId: string;
+        environmentId: string;
+        missionId: string;
+        objectiveId: string;
+        flowDraftId: string;
+        action: AdaptiveSessionOperationInput["action"];
+        idempotencyKey: string;
+        operationCreatedAt: string;
         authoringIntent: MissionAuthoringIntent;
-        preparationFacts: Array<{ intentId: string; actionKind: string; publicValue?: string;
-          protectedReferenceId?: string; targetConcept?: string; targetPlaceholder?: string }>;
+        preparationFacts: Array<{
+          intentId: string;
+          actionKind: string;
+          publicValue?: string;
+          protectedReferenceId?: string;
+          targetConcept?: string;
+          targetPlaceholder?: string;
+        }>;
         expectedEffect: AdaptiveSessionOperationInput["expectedEffect"];
         outcome: OperationOutcome;
         dispatchBoundary: string;
@@ -1617,8 +2265,43 @@ export class AdaptiveSessionRepository {
                       ORDER BY preparation.sequence, fact.ordinal
                     )
                     FROM adaptive_operations preparation
-                   WHERE preparation.session_id=operation.session_id
-                     AND preparation.sequence<operation.sequence), '[]'::jsonb) AS "preparationFacts",
+                    CROSS JOIN LATERAL (
+                      SELECT
+                        0::bigint AS ordinal,
+                        jsonb_strip_nulls(jsonb_build_object(
+                          'intentId',preparation.authoring_intent->>'intentId',
+                          'actionKind',preparation.authoring_intent->'action'->>'kind',
+                          'publicValue',preparation.authoring_intent->'action'->>'publicValue',
+                          'protectedReferenceId',preparation.authoring_intent->'action'->>'protectedReferenceId',
+                          'targetConcept',preparation.authoring_intent->'action'->'target'->>'concept',
+                          'targetPlaceholder',preparation.authoring_intent->'action'->'target'->>'placeholder'
+                        )) AS payload
+                      WHERE preparation.authoring_intent->'action'->>'kind'
+                        IS DISTINCT FROM 'authenticate'
+
+                      UNION ALL
+
+                      SELECT
+                        field.ordinality AS ordinal,
+                        jsonb_strip_nulls(jsonb_build_object(
+                          'intentId',preparation.authoring_intent->>'intentId',
+                          'actionKind','authenticate',
+                          'protectedReferenceId',field.value->>'protectedReferenceId',
+                          'targetConcept',field.value->'target'->>'concept',
+                          'targetPlaceholder',field.value->'target'->>'placeholder'
+                        )) AS payload
+                      FROM jsonb_array_elements(
+                        COALESCE(
+                          preparation.authoring_intent->'action'->'fields',
+                          '[]'::jsonb
+                        )
+                      ) WITH ORDINALITY AS field(value, ordinality)
+                      WHERE preparation.authoring_intent->'action'->>'kind'
+                        = 'authenticate'
+                    ) fact
+                    WHERE preparation.session_id=operation.session_id
+                      AND preparation.sequence<operation.sequence
+                  ), '[]'::jsonb) AS "preparationFacts",
                   (SELECT jsonb_build_object('url',baseline.url,'documentEpoch',baseline.document_epoch,
                     'effectState',baseline.effect_state) FROM adaptive_operation_dispatch_baselines baseline
                     WHERE baseline.session_id=operation.session_id
@@ -1626,14 +2309,24 @@ export class AdaptiveSessionRepository {
              FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
              WHERE operation.session_id=$1 AND operation.operation_id=$2
                AND operation.mission_id=$3 AND operation.mutation_outcome='unknown' FOR UPDATE OF operation`,
-        [input.sessionId,input.operationId,input.missionId]);
-      if (!operation.rowCount) throw new ConflictException({ code: "UNKNOWN_OPERATION_NOT_FOUND_OR_RESOLVED" });
+        [input.sessionId, input.operationId, input.missionId],
+      );
+      if (!operation.rowCount)
+        throw new ConflictException({ code: "UNKNOWN_OPERATION_NOT_FOUND_OR_RESOLVED" });
       const owner = operation.rows[0]!;
-      const authority = { projectId: owner.projectId, environmentId: owner.environmentId,
-        missionId: owner.missionId, objectiveId: owner.objectiveId, flowDraftId: owner.flowDraftId,
-        sessionId: input.sessionId, operationId: input.operationId, action: owner.action,
-        expectedEffect: owner.expectedEffect, idempotencyKey: owner.idempotencyKey,
-        authoringIntent: owner.authoringIntent, preparationFacts: owner.preparationFacts,
+      const authority = {
+        projectId: owner.projectId,
+        environmentId: owner.environmentId,
+        missionId: owner.missionId,
+        objectiveId: owner.objectiveId,
+        flowDraftId: owner.flowDraftId,
+        sessionId: input.sessionId,
+        operationId: input.operationId,
+        action: owner.action,
+        expectedEffect: owner.expectedEffect,
+        idempotencyKey: owner.idempotencyKey,
+        authoringIntent: owner.authoringIntent,
+        preparationFacts: owner.preparationFacts,
         dispatchBoundary: owner.dispatchBoundary,
         dispatchIdentity: { operationCreatedAt: owner.operationCreatedAt },
         baseline: owner.baseline,
@@ -1641,88 +2334,193 @@ export class AdaptiveSessionRepository {
       };
       if (!["dispatching", "dispatched", "acknowledged"].includes(owner.dispatchBoundary))
         throw new ConflictException({ code: "UNKNOWN_OPERATION_NOT_DISPATCHED" });
-      const requestDigest = stableDigest({ sessionId: input.sessionId, missionId: input.missionId, operationId: input.operationId });
-      const stale = await q<{ attempt: number }>(`UPDATE adaptive_operation_reconciliations SET state='completed',result='still_unknown',
+      const requestDigest = stableDigest({
+        sessionId: input.sessionId,
+        missionId: input.missionId,
+        operationId: input.operationId,
+      });
+      const stale = await q<{ attempt: number }>(
+        `UPDATE adaptive_operation_reconciliations SET state='completed',result='still_unknown',
           reason_code='RECONCILIATION_OBSERVER_LOST',evidence='{"runtimeObservation":"lost"}'::jsonb,
           completed_at=now(),fencing_token=fencing_token+1
         WHERE session_id=$1 AND operation_id=$2 AND state='observing'
-          AND started_at < now()-interval '60 seconds' RETURNING attempt`,[input.sessionId,input.operationId]);
-      for (const recovered of stale.rows) await this.appendEvent(q,input.sessionId,'reconciliation_completed',{
-        operationId: input.operationId, attempt: recovered.attempt,
-        reconciliationResult: 'still_unknown', reasonCode: 'RECONCILIATION_OBSERVER_LOST',
-      });
+          AND started_at < now()-interval '60 seconds' RETURNING attempt`,
+        [input.sessionId, input.operationId],
+      );
+      for (const recovered of stale.rows)
+        await this.appendEvent(q, input.sessionId, "reconciliation_completed", {
+          operationId: input.operationId,
+          attempt: recovered.attempt,
+          reconciliationResult: "still_unknown",
+          reasonCode: "RECONCILIATION_OBSERVER_LOST",
+        });
       const existing = await q<{ state: string; result: string | null; reasonCode: string | null }>(
         `SELECT state,result,reason_code AS "reasonCode" FROM adaptive_operation_reconciliations
           WHERE session_id=$1 AND operation_id=$2 AND idempotency_key=$3 FOR UPDATE`,
-        [input.sessionId,input.operationId,input.idempotencyKey]);
+        [input.sessionId, input.operationId, input.idempotencyKey],
+      );
       if (existing.rowCount) {
-        const remaining = await q(`SELECT 1 FROM unresolved_adaptive_unknown_operations WHERE mission_id=$1 LIMIT 1`,[input.missionId]);
-        return { ...existing.rows[0]!, replayed: true, expectedEffect: owner.expectedEffect, baseline: owner.baseline, authority,
-          missionFenceCleared: !remaining.rowCount, authoringSessionState: session.state };
+        const remaining = await q(
+          `SELECT 1 FROM unresolved_adaptive_unknown_operations WHERE mission_id=$1 LIMIT 1`,
+          [input.missionId],
+        );
+        return {
+          ...existing.rows[0]!,
+          replayed: true,
+          expectedEffect: owner.expectedEffect,
+          baseline: owner.baseline,
+          authority,
+          missionFenceCleared: !remaining.rowCount,
+          authoringSessionState: session.state,
+        };
       }
       const resolved = await q<{ result: string; reasonCode: string }>(
         `SELECT result,reason_code AS "reasonCode" FROM adaptive_operation_reconciliations
           WHERE session_id=$1 AND operation_id=$2 AND state='completed'
             AND result IN ('proven_applied','proven_not_applied') ORDER BY attempt DESC LIMIT 1`,
-        [input.sessionId,input.operationId]);
+        [input.sessionId, input.operationId],
+      );
       if (resolved.rowCount) {
-        const remaining = await q(`SELECT 1 FROM unresolved_adaptive_unknown_operations WHERE mission_id=$1 LIMIT 1`,[input.missionId]);
-        return { state: 'completed', ...resolved.rows[0]!, replayed: true,
-          expectedEffect: owner.expectedEffect, baseline: owner.baseline, authority, missionFenceCleared: !remaining.rowCount,
-          authoringSessionState: session.state };
+        const remaining = await q(
+          `SELECT 1 FROM unresolved_adaptive_unknown_operations WHERE mission_id=$1 LIMIT 1`,
+          [input.missionId],
+        );
+        return {
+          state: "completed",
+          ...resolved.rows[0]!,
+          replayed: true,
+          expectedEffect: owner.expectedEffect,
+          baseline: owner.baseline,
+          authority,
+          missionFenceCleared: !remaining.rowCount,
+          authoringSessionState: session.state,
+        };
       }
-      const observing = await q(`SELECT 1 FROM adaptive_operation_reconciliations
+      const observing = await q(
+        `SELECT 1 FROM adaptive_operation_reconciliations
         WHERE session_id=$1 AND operation_id=$2 AND state='observing' LIMIT 1`,
-        [input.sessionId,input.operationId]);
-      if (observing.rowCount) throw new ConflictException({
-        code: 'UNKNOWN_RECONCILIATION_IN_PROGRESS', mutationOutcome: 'unknown',
-        safeActions: ['get_flow_authoring'],
-      });
+        [input.sessionId, input.operationId],
+      );
+      if (observing.rowCount)
+        throw new ConflictException({
+          code: "UNKNOWN_RECONCILIATION_IN_PROGRESS",
+          mutationOutcome: "unknown",
+          safeActions: ["get_flow_authoring"],
+        });
       const inserted = await q<{ id: string; attempt: number }>(
         `INSERT INTO adaptive_operation_reconciliations(session_id,operation_id,mission_id,objective_id,
            flow_draft_id,idempotency_key,request_digest,attempt,state,strategy,expected_effect,original_outcome)
          SELECT $1,$2,$3,$4,$5,$6,$7,COALESCE(max(attempt),0)+1,'observing',
            CASE WHEN $8::jsonb->>'type'='none' THEN 'unavailable' ELSE 'browser_effect' END,$8::jsonb,$9::jsonb
            FROM adaptive_operation_reconciliations WHERE session_id=$1 AND operation_id=$2 RETURNING id,attempt`,
-        [input.sessionId,input.operationId,owner.missionId,owner.objectiveId,owner.flowDraftId,
-          input.idempotencyKey,requestDigest,JSON.stringify(owner.expectedEffect),JSON.stringify(owner.outcome)]);
-      await this.appendEvent(q,input.sessionId,'reconciliation_started',{
-        operationId: input.operationId, attempt: inserted.rows[0]!.attempt, redispatchAllowed: false,
+        [
+          input.sessionId,
+          input.operationId,
+          owner.missionId,
+          owner.objectiveId,
+          owner.flowDraftId,
+          input.idempotencyKey,
+          requestDigest,
+          JSON.stringify(owner.expectedEffect),
+          JSON.stringify(owner.outcome),
+        ],
+      );
+      await this.appendEvent(q, input.sessionId, "reconciliation_started", {
+        operationId: input.operationId,
+        attempt: inserted.rows[0]!.attempt,
+        redispatchAllowed: false,
       });
-      return { state: 'observing', id: inserted.rows[0]!.id, attempt: inserted.rows[0]!.attempt,
-        replayed: false, expectedEffect: owner.expectedEffect, baseline: owner.baseline, authority };
+      return {
+        state: "observing",
+        id: inserted.rows[0]!.id,
+        attempt: inserted.rows[0]!.attempt,
+        replayed: false,
+        expectedEffect: owner.expectedEffect,
+        baseline: owner.baseline,
+        authority,
+      };
     });
   }
 
-  async recordDispatchBaseline(input: { sessionId: string; operationId: string;
-    expectedEffect: AdaptiveSessionOperationInput['expectedEffect']; documentEpoch: number; url: string;
-    effectState: Record<string, unknown> }) {
-    await this.database.query(`INSERT INTO adaptive_operation_dispatch_baselines(
+  async recordDispatchBaseline(input: {
+    sessionId: string;
+    operationId: string;
+    expectedEffect: AdaptiveSessionOperationInput["expectedEffect"];
+    documentEpoch: number;
+    url: string;
+    effectState: Record<string, unknown>;
+  }) {
+    await this.database.query(
+      `INSERT INTO adaptive_operation_dispatch_baselines(
       session_id,operation_id,expected_effect,document_epoch,url,effect_state)
       VALUES($1,$2,$3::jsonb,$4,$5,$6::jsonb) ON CONFLICT DO NOTHING`,
-      [input.sessionId,input.operationId,JSON.stringify(input.expectedEffect),input.documentEpoch,input.url,
-        JSON.stringify(input.effectState)]);
+      [
+        input.sessionId,
+        input.operationId,
+        JSON.stringify(input.expectedEffect),
+        input.documentEpoch,
+        input.url,
+        JSON.stringify(input.effectState),
+      ],
+    );
   }
 
-  async getUnknownReconciliationAuthority(workspaceId: string | null, sessionId: string, operationId: string) {
+  async getUnknownReconciliationAuthority(
+    workspaceId: string | null,
+    sessionId: string,
+    operationId: string,
+  ) {
     await this.get(workspaceId, sessionId);
-    const result = await this.database.query<any>(`SELECT session.project_id AS "projectId",
+    const result = await this.database.query<any>(
+      `SELECT session.project_id AS "projectId",
       session.environment_id AS "environmentId",operation.mission_id AS "missionId",
       operation.objective_id AS "objectiveId",operation.flow_draft_id AS "flowDraftId",
       operation.session_id AS "sessionId",operation.operation_id AS "operationId",
       operation.derived_action->'action' AS action,operation.expected_effect AS "expectedEffect",
       operation.authoring_intent AS "authoringIntent",
-      COALESCE((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
-        'intentId',preparation.authoring_intent->>'intentId',
-        'actionKind',preparation.authoring_intent->'action'->>'kind',
-        'publicValue',preparation.authoring_intent->'action'->>'publicValue',
-        'protectedReferenceId',preparation.authoring_intent->'action'->>'protectedReferenceId',
-        'targetConcept',preparation.authoring_intent->'action'->'target'->>'concept',
-        'targetPlaceholder',preparation.authoring_intent->'action'->'target'->>'placeholder'
-      )) ORDER BY preparation.sequence)
-        FROM adaptive_operations preparation
-       WHERE preparation.session_id=operation.session_id
-         AND preparation.sequence<operation.sequence), '[]'::jsonb) AS "preparationFacts",
+      COALESCE((
+                    SELECT jsonb_agg(
+                      fact.payload
+                      ORDER BY preparation.sequence, fact.ordinal
+                    )
+                    FROM adaptive_operations preparation
+                    CROSS JOIN LATERAL (
+                      SELECT
+                        0::bigint AS ordinal,
+                        jsonb_strip_nulls(jsonb_build_object(
+                          'intentId',preparation.authoring_intent->>'intentId',
+                          'actionKind',preparation.authoring_intent->'action'->>'kind',
+                          'publicValue',preparation.authoring_intent->'action'->>'publicValue',
+                          'protectedReferenceId',preparation.authoring_intent->'action'->>'protectedReferenceId',
+                          'targetConcept',preparation.authoring_intent->'action'->'target'->>'concept',
+                          'targetPlaceholder',preparation.authoring_intent->'action'->'target'->>'placeholder'
+                        )) AS payload
+                      WHERE preparation.authoring_intent->'action'->>'kind'
+                        IS DISTINCT FROM 'authenticate'
+
+                      UNION ALL
+
+                      SELECT
+                        field.ordinality AS ordinal,
+                        jsonb_strip_nulls(jsonb_build_object(
+                          'intentId',preparation.authoring_intent->>'intentId',
+                          'actionKind','authenticate',
+                          'protectedReferenceId',field.value->>'protectedReferenceId',
+                          'targetConcept',field.value->'target'->>'concept',
+                          'targetPlaceholder',field.value->'target'->>'placeholder'
+                        )) AS payload
+                      FROM jsonb_array_elements(
+                        COALESCE(
+                          preparation.authoring_intent->'action'->'fields',
+                          '[]'::jsonb
+                        )
+                      ) WITH ORDINALITY AS field(value, ordinality)
+                      WHERE preparation.authoring_intent->'action'->>'kind'
+                        = 'authenticate'
+                    ) fact
+                    WHERE preparation.session_id=operation.session_id
+                      AND preparation.sequence<operation.sequence
+                  ), '[]'::jsonb) AS "preparationFacts",
       operation.idempotency_key AS "idempotencyKey",operation.dispatch_boundary AS "dispatchBoundary",
       jsonb_build_object('operationCreatedAt',operation.started_at::text) AS "dispatchIdentity",
       (SELECT jsonb_build_object(
@@ -1759,21 +2557,31 @@ export class AdaptiveSessionRepository {
         WHERE baseline.session_id=operation.session_id AND baseline.operation_id=operation.operation_id) AS baseline
       FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
       WHERE operation.session_id=$1 AND operation.operation_id=$2 AND operation.mutation_outcome='unknown'`,
-      [sessionId,operationId]);
+      [sessionId, operationId],
+    );
     return result.rows[0] ?? null;
   }
 
   completeUnknownReconciliation(input: {
-    sessionId: string; missionId: string; operationId: string; idempotencyKey: string;
-    result: 'proven_applied'|'proven_applied_output_unrecovered'|'proven_not_applied'|'still_unknown'; reasonCode: string;
+    sessionId: string;
+    missionId: string;
+    operationId: string;
+    idempotencyKey: string;
+    result:
+      | "proven_applied"
+      | "proven_applied_output_unrecovered"
+      | "proven_not_applied"
+      | "still_unknown";
+    reasonCode: string;
     evidence: Record<string, unknown>;
     runtimeOwned: boolean;
   }) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
-      const mission = await q(`SELECT id FROM missions WHERE id=$1 FOR UPDATE`,[input.missionId]);
-      if (!mission.rowCount) throw new ConflictException({ code: 'MISSION_NOT_FOUND' });
-      const completed = await q(`UPDATE adaptive_operation_reconciliations SET state='completed',result=$4,
+      const mission = await q(`SELECT id FROM missions WHERE id=$1 FOR UPDATE`, [input.missionId]);
+      if (!mission.rowCount) throw new ConflictException({ code: "MISSION_NOT_FOUND" });
+      const completed = await q(
+        `UPDATE adaptive_operation_reconciliations SET state='completed',result=$4,
           reason_code=$5,evidence=$6::jsonb,completed_at=now(),fencing_token=fencing_token+1
         WHERE session_id=$1 AND operation_id=$2 AND idempotency_key=$3 AND state='observing' RETURNING id`,
         [
@@ -1819,36 +2627,76 @@ export class AdaptiveSessionRepository {
           `SELECT flow_draft_id AS "flowDraftId",mission_id AS "missionId",objective_id AS "objectiveId",
                   derived_action->'action' AS action,authoring_intent AS intent
              FROM adaptive_operations WHERE session_id=$1 AND operation_id=$2 FOR UPDATE`,
-          [input.sessionId,input.operationId]);
+          [input.sessionId, input.operationId],
+        );
         const owner = operation.rows[0]!;
-        const draft = await q<{ version: number; agentSessionId: string; stepExists: boolean }>(
-          `SELECT version,created_by_agent_session_id AS "agentSessionId",
+        const draft = await q<{
+          version: number;
+          state: string;
+          agentSessionId: string;
+          stepExists: boolean;
+        }>(
+          `SELECT version,state,created_by_agent_session_id AS "agentSessionId",
                   COALESCE(plan->'steps','[]'::jsonb) @> $4::jsonb AS "stepExists"
              FROM flow_drafts WHERE id=$1 AND mission_id=$2 AND objective_id=$3 FOR UPDATE`,
-          [owner.flowDraftId,owner.missionId,owner.objectiveId,JSON.stringify([{ id: input.operationId }])]);
-        if (draft.rowCount && !draft.rows[0]!.stepExists) {
+          [
+            owner.flowDraftId,
+            owner.missionId,
+            owner.objectiveId,
+            JSON.stringify([{ id: input.operationId }]),
+          ],
+        );
+        if (
+          draft.rowCount &&
+          !["published", "abandoned"].includes(draft.rows[0]!.state) &&
+          !draft.rows[0]!.stepExists
+        ) {
           const nextVersion = draft.rows[0]!.version + 1;
-          const step = { id: input.operationId,
-            title: `Authoring reconciled: ${safeIntentTitle(owner.intent)}`, action: owner.action,
-            assertions: [], onFailure: 'stop', evidence: [], captureIntent: 'final' };
-          await q(`UPDATE flow_drafts SET plan=jsonb_set(plan,'{steps}',COALESCE(plan->'steps','[]'::jsonb) || $2::jsonb,true),
+          const step = {
+            id: input.operationId,
+            title: `Authoring reconciled: ${safeIntentTitle(owner.intent)}`,
+            action: owner.action,
+            assertions: [],
+            onFailure: "stop",
+            evidence: [],
+            captureIntent: "final",
+          };
+          await q(
+            `UPDATE flow_drafts SET plan=jsonb_set(plan,'{steps}',COALESCE(plan->'steps','[]'::jsonb) || $2::jsonb,true),
               version=$3,state='editing',updated_at=now() WHERE id=$1`,
-            [owner.flowDraftId,JSON.stringify(step),nextVersion]);
-          await q(`UPDATE flow_compilations SET status='stale',invalidated_at=now() WHERE draft_id=$1
-            AND status IN ('pending','execution_ready','calibration_required')`,[owner.flowDraftId]);
-          await q(`INSERT INTO flow_draft_events(draft_id,version,type,agent_session_id,summary,safe_metadata)
+            [owner.flowDraftId, JSON.stringify(step), nextVersion],
+          );
+          await q(
+            `UPDATE flow_compilations SET status='stale',invalidated_at=now() WHERE draft_id=$1
+            AND status IN ('pending','execution_ready','calibration_required')`,
+            [owner.flowDraftId],
+          );
+          await q(
+            `INSERT INTO flow_draft_events(draft_id,version,type,agent_session_id,summary,safe_metadata)
             VALUES($1,$2,'authoring_step_appended',$3,'Authoritative UNKNOWN reconciliation appended step',$4::jsonb)`,
-            [owner.flowDraftId,nextVersion,draft.rows[0]!.agentSessionId,JSON.stringify({ operationId: input.operationId })]);
+            [
+              owner.flowDraftId,
+              nextVersion,
+              draft.rows[0]!.agentSessionId,
+              JSON.stringify({ operationId: input.operationId }),
+            ],
+          );
         }
       }
-      await this.appendEvent(q,input.sessionId,'reconciliation_completed',{
-        operationId: input.operationId, reconciliationResult: input.result, reasonCode: input.reasonCode,
+      await this.appendEvent(q, input.sessionId, "reconciliation_completed", {
+        operationId: input.operationId,
+        reconciliationResult: input.result,
+        reasonCode: input.reasonCode,
       });
-      const remaining = await q(`SELECT 1 FROM unresolved_adaptive_unknown_operations
-        WHERE mission_id=$1 LIMIT 1`,[input.missionId]);
+      const remaining = await q(
+        `SELECT 1 FROM unresolved_adaptive_unknown_operations
+        WHERE mission_id=$1 LIMIT 1`,
+        [input.missionId],
+      );
       const missionFenceCleared = !remaining.rowCount;
       if (missionFenceCleared) {
-        await q(`UPDATE adaptive_sessions SET state=CASE WHEN id=$1 AND $3::boolean AND EXISTS(
+        await q(
+          `UPDATE adaptive_sessions SET state=CASE WHEN id=$1 AND $3::boolean AND EXISTS(
             SELECT 1 FROM adaptive_session_runtime_leases lease
              WHERE lease.session_id=adaptive_sessions.id AND lease.lease_expires_at>now()) THEN 'active'
             WHEN id=$1 THEN 'failed' ELSE state END,
@@ -1864,10 +2712,17 @@ export class AdaptiveSessionRepository {
              WHERE lease.session_id=adaptive_sessions.id AND lease.lease_expires_at>now()) THEN NULL
             WHEN id=$1 THEN COALESCE(completed_at,now()) ELSE completed_at END,
           version=version+1,updated_at=now() WHERE mission_id=$2 AND state='recovery_required'`,
-          [input.sessionId,input.missionId,input.runtimeOwned]);
+          [input.sessionId, input.missionId, input.runtimeOwned],
+        );
       }
-      const current = await q<{ state: string }>(`SELECT state FROM adaptive_sessions WHERE id=$1`,[input.sessionId]);
-      return { missionFenceCleared, authoringSessionState: current.rows[0]?.state ?? 'recovery_required' };
+      const current = await q<{ state: string }>(
+        `SELECT state FROM adaptive_sessions WHERE id=$1`,
+        [input.sessionId],
+      );
+      return {
+        missionFenceCleared,
+        authoringSessionState: current.rows[0]?.state ?? "recovery_required",
+      };
     });
   }
 
@@ -1927,7 +2782,10 @@ export class AdaptiveSessionRepository {
     if (!lifecycle || input.outcome.mutationOutcome === "not_applied") return false;
 
     const references = lifecycle.credentialReferenceIds;
-    const credentials = await q<{ id: string; securityStatus: "active" | "compromised" | "revoked" }>(
+    const credentials = await q<{
+      id: string;
+      securityStatus: "active" | "compromised" | "revoked";
+    }>(
       `SELECT credential.id::text,credential.security_status AS "securityStatus"
          FROM environments environment
          JOIN project_credentials credential ON credential.project_id=environment.project_id
@@ -1937,13 +2795,15 @@ export class AdaptiveSessionRepository {
         FOR UPDATE OF credential`,
       [input.environmentId, input.projectId, references],
     );
-    if (credentials.rows.length !== references.length ||
-        references.some((reference) => !credentials.rows.some(({ id }) => id === reference))) {
+    if (
+      credentials.rows.length !== references.length ||
+      references.some((reference) => !credentials.rows.some(({ id }) => id === reference))
+    ) {
       throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED" });
     }
 
-    const confirmed = input.outcome.mutationOutcome === "applied" &&
-      input.outcome.functionalResult === "succeeded";
+    const confirmed =
+      input.outcome.mutationOutcome === "applied" && input.outcome.functionalResult === "succeeded";
     const targetStatus = confirmed ? "revoked" : "compromised";
     const updated = await q<{ id: string }>(
       `UPDATE project_credentials
@@ -1951,38 +2811,59 @@ export class AdaptiveSessionRepository {
         WHERE id=ANY($1::uuid[])
           AND security_status = ANY($3::text[])
         RETURNING id::text`,
-      [references, targetStatus,
-        confirmed ? ["active", "compromised"] : ["active"]],
+      [references, targetStatus, confirmed ? ["active", "compromised"] : ["active"]],
     );
     if (!updated.rowCount) return false;
     await q(
       `INSERT INTO mission_activities(mission_id,objective_id,type,summary,safe_metadata,technical)
        VALUES($1,$2,'authoring','Protected credential lifecycle projected',$3::jsonb,true)`,
-      [input.missionId, input.objectiveId, JSON.stringify({
-        operationId: input.operationId,
-        effect: lifecycle.effect,
-        result: targetStatus,
-        credentialCount: references.length,
-      })],
+      [
+        input.missionId,
+        input.objectiveId,
+        JSON.stringify({
+          operationId: input.operationId,
+          effect: lifecycle.effect,
+          result: targetStatus,
+          credentialCount: references.length,
+        }),
+      ],
     );
     return true;
   }
 
-  async closeAtSafeBoundary(input: { workspaceId: string | null; sessionId: string; idempotencyKey: string }) {
+  async closeAtSafeBoundary(input: {
+    workspaceId: string | null;
+    sessionId: string;
+    idempotencyKey: string;
+  }) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
       const session = await this.requireSession(q, input.workspaceId, input.sessionId, true);
       const unsafe = await q(
         `SELECT 1 FROM adaptive_operations WHERE session_id=$1 AND
-          (state='running' OR (mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(session_id,operation_id))) LIMIT 1 FOR UPDATE`, [input.sessionId],
+          (state='running' OR (mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(session_id,operation_id))) LIMIT 1 FOR UPDATE`,
+        [input.sessionId],
       );
-      if (unsafe.rowCount) throw new ConflictException({ code: "MISSION_AUTHORING_CLOSE_RECONCILIATION_REQUIRED" });
+      if (unsafe.rowCount)
+        throw new ConflictException({ code: "MISSION_AUTHORING_CLOSE_RECONCILIATION_REQUIRED" });
       if (session.state === "completed") return { replayed: true };
-      await this.transitionLocked(q, input.sessionId, session.state, "completed", "session_closed", {}, input.idempotencyKey);
+      await this.transitionLocked(
+        q,
+        input.sessionId,
+        session.state,
+        "completed",
+        "session_closed",
+        {},
+        input.idempotencyKey,
+      );
       await q(
         `INSERT INTO mission_activities(mission_id,objective_id,type,summary,safe_metadata,technical)
          VALUES($1,$2,'authoring','Mission authoring session closed',$3::jsonb,true)`,
-        [session.missionId, session.activeObjectiveId, JSON.stringify({ sessionId: input.sessionId })],
+        [
+          session.missionId,
+          session.activeObjectiveId,
+          JSON.stringify({ sessionId: input.sessionId }),
+        ],
       );
       return { replayed: false };
     });
@@ -2081,7 +2962,11 @@ export class AdaptiveSessionRepository {
           session.activeObjectiveId,
           session.activeFlowDraftId,
           JSON.stringify({ action: input.action, expectedEffect: input.expectedEffect }),
-          JSON.stringify({ action: input.action, expectedEffect: input.expectedEffect, mode: input.mode }),
+          JSON.stringify({
+            action: input.action,
+            expectedEffect: input.expectedEffect,
+            mode: input.mode,
+          }),
         ],
       );
       await this.appendEvent(q, sessionId, "operation_started", {
@@ -2114,9 +2999,7 @@ export class AdaptiveSessionRepository {
       if (!continuity.rowCount)
         throw new ConflictException({ code: "ADAPTIVE_SESSION_NOT_PROVISIONING" });
       const row = continuity.rows[0]!;
-      if (
-        row.predecessorRunId && row.checkpointState !== "verified"
-      )
+      if (row.predecessorRunId && row.checkpointState !== "verified")
         throw new ConflictException({ code: "SUCCESSOR_CHECKPOINT_NOT_VERIFIED" });
       await this.transitionLocked(q, sessionId, "provisioning", "active", "session_activated", {});
     });
@@ -2140,11 +3023,7 @@ export class AdaptiveSessionRepository {
     });
   }
 
-  async claimSuccessorCheckpoint(
-    sessionId: string,
-    ownerId: string,
-    fencingToken: number,
-  ) {
+  async claimSuccessorCheckpoint(sessionId: string, ownerId: string, fencingToken: number) {
     const claimed = await this.database.transaction(async (client) => {
       await client.query(
         `UPDATE run_successor_checkpoints SET state='destroyed',ciphertext=NULL,
@@ -2247,16 +3126,30 @@ export class AdaptiveSessionRepository {
         return { errorCode: "SUCCESSOR_CHECKPOINT_PAYLOAD_INVALID" as const };
       }
       const expectedBinding = createHash("sha256")
-        .update(JSON.stringify({
-          schemaVersion: payload.schemaVersion,
-          policyDigest: payload.policyDigest,
-          runId: row.runId,
-          missionId: (await client.query(`SELECT mission_id FROM adaptive_sessions WHERE id=$1`, [sessionId])).rows[0]!.mission_id,
-          objectiveId: (await client.query(`SELECT objective_id FROM runs WHERE id=$1`, [row.runId])).rows[0]!.objective_id,
-          flowRevisionId: (await client.query(`SELECT flow_revision_id FROM runs WHERE id=$1`, [row.runId])).rows[0]!.flow_revision_id,
-          environmentId: (await client.query(`SELECT environment_id FROM adaptive_sessions WHERE id=$1`, [sessionId])).rows[0]!.environment_id,
-          restorationUrl: payload.restorationUrl,
-        }))
+        .update(
+          JSON.stringify({
+            schemaVersion: payload.schemaVersion,
+            policyDigest: payload.policyDigest,
+            runId: row.runId,
+            missionId: (
+              await client.query(`SELECT mission_id FROM adaptive_sessions WHERE id=$1`, [
+                sessionId,
+              ])
+            ).rows[0]!.mission_id,
+            objectiveId: (
+              await client.query(`SELECT objective_id FROM runs WHERE id=$1`, [row.runId])
+            ).rows[0]!.objective_id,
+            flowRevisionId: (
+              await client.query(`SELECT flow_revision_id FROM runs WHERE id=$1`, [row.runId])
+            ).rows[0]!.flow_revision_id,
+            environmentId: (
+              await client.query(`SELECT environment_id FROM adaptive_sessions WHERE id=$1`, [
+                sessionId,
+              ])
+            ).rows[0]!.environment_id,
+            restorationUrl: payload.restorationUrl,
+          }),
+        )
         .digest("hex");
       if (expectedBinding !== row.bindingFingerprint) {
         await client.query(
@@ -2273,8 +3166,7 @@ export class AdaptiveSessionRepository {
       );
       return { checkpointId: row.checkpointId, payload };
     });
-    if (claimed && "errorCode" in claimed)
-      throw new ConflictException({ code: claimed.errorCode });
+    if (claimed && "errorCode" in claimed) throw new ConflictException({ code: claimed.errorCode });
     return claimed;
   }
 
@@ -2301,7 +3193,8 @@ export class AdaptiveSessionRepository {
        RETURNING checkpoint.id`,
       [sessionId, checkpointId, ownerId, fencingToken, outcome, reasonCode ?? null],
     );
-    if (!result.rowCount) throw new ConflictException({ code: "SUCCESSOR_CHECKPOINT_STATE_CONFLICT" });
+    if (!result.rowCount)
+      throw new ConflictException({ code: "SUCCESSOR_CHECKPOINT_STATE_CONFLICT" });
   }
 
   async recordVerifiedObservation(input: {
@@ -2355,7 +3248,9 @@ export class AdaptiveSessionRepository {
       if (!(error instanceof ConflictException)) throw error;
     }
     const result = await this.database.query<{
-      ciphertext: string; initializationVector: string; authenticationTag: string;
+      ciphertext: string;
+      initializationVector: string;
+      authenticationTag: string;
     }>(
       `SELECT source.ciphertext,source.initialization_vector AS "initializationVector",
               source.authentication_tag AS "authenticationTag"
@@ -2363,9 +3258,10 @@ export class AdaptiveSessionRepository {
        JOIN protected_operations operation ON operation.id=source.protected_operation_id
        WHERE source.id=$1 AND operation.authoring_session_id=$2 AND operation.operation_id=$3
          AND source.lifecycle='active' AND operation.state IN ('planned','preparing','ready_to_dispatch')`,
-      [reference,sessionId,operationId],
+      [reference, sessionId, operationId],
     );
-    if (!result.rowCount) throw new ConflictException({ code: "ADAPTIVE_PROTECTED_INPUT_UNAVAILABLE" });
+    if (!result.rowCount)
+      throw new ConflictException({ code: "ADAPTIVE_PROTECTED_INPUT_UNAVAILABLE" });
     const encrypted = result.rows[0]!;
     return decryptCredential({
       ciphertext: Buffer.from(encrypted.ciphertext, "base64"),
@@ -2480,9 +3376,11 @@ export class AdaptiveSessionRepository {
     return this.database.transaction(async (client) => {
       const q = bind(client);
       await this.requireSession(q, null, input.sessionId, true);
-      const state = input.outcome.functionalResult === "succeeded" && input.outcome.mutationOutcome !== "unknown"
-        ? "completed"
-        : "failed";
+      const state =
+        input.outcome.functionalResult === "succeeded" &&
+        input.outcome.mutationOutcome !== "unknown"
+          ? "completed"
+          : "failed";
       const updated = await q(
         `UPDATE adaptive_operations SET
            state=$3,capability_manifest_digest=$4,
@@ -2576,7 +3474,8 @@ export class AdaptiveSessionRepository {
         [sessionId, operationId],
       );
       if (!operation.rowCount) return null;
-      const crossedDispatch = operation.rows[0]!.dispatchBoundary !== "not_dispatched";
+      const interruption = interruptedOperationTruth(operation.rows[0]!.dispatchBoundary);
+      const crossedDispatch = interruption.crossedDispatch;
       const current = operation.rows[0]!;
       const policyRefused = reasonCode === "EXECUTION_MODE_POLICY_DENIED";
       const boundary: AgentDecisionBoundary = crossedDispatch
@@ -2588,27 +3487,31 @@ export class AdaptiveSessionRepository {
         : {
             type: policyRefused ? "policy_refused" : "environment_unavailable",
             reasonCode,
-            safeActions: policyRefused ? [] : sourceTurnId
-              ? ["get_flow_authoring", "advance_flow_authoring"]
-              : ["get_flow_authoring"],
-            ...(!policyRefused && sourceTurnId ? {
-              authoringRecovery: {
-                sessionId,
-                missionId: current.missionId,
-                objectiveId: current.objectiveId,
-                flowDraftId: current.flowDraftId,
-                environmentId: current.environmentId,
-                failedOperationId: operationId,
-                ...(sourceTurnId ? { sourceTurnId } : {}),
-                environmentResourceExists: true as const,
-                executionReadiness: "runtime_reprovision_required" as const,
-                preservesCurrentFlow: true as const,
-                recoveryTool: "advance_flow_authoring" as const,
-                recoveryKind: "intents" as const,
-                requiresPendingTurn: false as const,
-                requiresFreshIdempotencyKey: true as const,
-              },
-            } : {}),
+            safeActions: policyRefused
+              ? []
+              : sourceTurnId
+                ? ["get_flow_authoring", "advance_flow_authoring"]
+                : ["get_flow_authoring"],
+            ...(!policyRefused && sourceTurnId
+              ? {
+                  authoringRecovery: {
+                    sessionId,
+                    missionId: current.missionId,
+                    objectiveId: current.objectiveId,
+                    flowDraftId: current.flowDraftId,
+                    environmentId: current.environmentId,
+                    failedOperationId: operationId,
+                    ...(sourceTurnId ? { sourceTurnId } : {}),
+                    environmentResourceExists: true as const,
+                    executionReadiness: "runtime_reprovision_required" as const,
+                    preservesCurrentFlow: true as const,
+                    recoveryTool: "advance_flow_authoring" as const,
+                    recoveryKind: "intents" as const,
+                    requiresPendingTurn: false as const,
+                    requiresFreshIdempotencyKey: true as const,
+                  },
+                }
+              : {}),
           };
       const failed = await q(
         `UPDATE adaptive_operations SET state='failed',functional_result='failed',
@@ -2649,7 +3552,7 @@ export class AdaptiveSessionRepository {
         outcome: {
           operationId,
           functionalResult: "failed" as const,
-          mutationOutcome: crossedDispatch ? "unknown" as const : "not_applied" as const,
+          mutationOutcome: crossedDispatch ? ("unknown" as const) : ("not_applied" as const),
           privacyResult: "unverified" as const,
           evidenceResult: [],
           qualityFindings: [],
@@ -2959,15 +3862,24 @@ export class AdaptiveSessionRepository {
       [input.missionId, input.objectiveId, input.flowDraftId, input.projectId],
     );
     if (!ownership.rowCount) {
-      throw new ConflictException({ code: "MISSION_FLOW_AUTHORING_OWNERSHIP_INVALID" });
+      throw new ConflictException({
+        code: "MISSION_FLOW_AUTHORING_OWNERSHIP_INVALID",
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+        safeActions: ["get_operating_context"],
+      });
     }
     return ownership.rows[0]!;
   }
 }
 
 function isAuthoringMutation(intent: MissionAuthoringIntent) {
-  return ["activate", "fill", "select", "set_checked", "press", "acquire_protected_outputs"].includes(intent.action.kind) ||
-    (intent.action.kind === "same_origin_request" && intent.action.method !== "GET");
+  return (
+    ["activate", "fill", "select", "set_checked", "press", "acquire_protected_outputs"].includes(
+      intent.action.kind,
+    ) ||
+    (intent.action.kind === "same_origin_request" && intent.action.method !== "GET")
+  );
 }
 
 function safeReasonCode(value: string | null | undefined, fallback: string) {
@@ -2986,7 +3898,9 @@ function canonicalReplayUrl(value: string) {
   try {
     return new URL(value).href;
   } catch {
-    throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REPLAY_CHECKPOINT_UNAVAILABLE" });
+    throw new ConflictException({
+      code: "MISSION_AUTHORING_PROTECTED_REPLAY_CHECKPOINT_UNAVAILABLE",
+    });
   }
 }
 
@@ -3033,6 +3947,7 @@ export function selectProtectedReplayPreparation(
     intentId: string;
     intent: MissionAuthoringIntent;
     observedUrl: string;
+    semanticPageContext?: unknown;
   }>,
   intentIds: string[],
   rawEntryUrl: string,
@@ -3050,7 +3965,9 @@ export function selectProtectedReplayPreparation(
   const entryUrl = canonicalReplayUrl(rawEntryUrl);
   let checkpointIndex = rows.length - 1;
   if (checkpointIndex < 0 || canonicalReplayUrl(rows[checkpointIndex]!.observedUrl) !== entryUrl) {
-    throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_REPLAY_CHECKPOINT_UNAVAILABLE" });
+    throw new ConflictException({
+      code: "MISSION_AUTHORING_PROTECTED_REPLAY_CHECKPOINT_UNAVAILABLE",
+    });
   }
   while (
     checkpointIndex > 0 &&
@@ -3062,29 +3979,151 @@ export function selectProtectedReplayPreparation(
   return rows
     .filter((row) => row.sequence > checkpointSequence && selected.has(row.intentId))
     .map((row) =>
-      options.preserveExactReferences ? row.intent : portableProtectedReplayIntent(row.intent),
+      portableProtectedReplayIntent(
+        row.intent,
+        options.preserveExactReferences ? row.semanticPageContext : undefined,
+      ),
     );
 }
 
-function portableProtectedReplayIntent(intent: MissionAuthoringIntent): MissionAuthoringIntent {
+function portableProtectedReplayIntent(
+  intent: MissionAuthoringIntent,
+  semanticPageContext?: unknown,
+): MissionAuthoringIntent {
   const action = intent.action;
   if (!("target" in action) || !action.target?.reference) return intent;
+
   const target = action.target;
+  const historicalReference = target.reference;
+  if (!historicalReference) return intent;
+  let portableTarget: Record<string, unknown> = { ...target };
+
   const hasPortableEvidence = Boolean(
-    target.role || target.name || target.label || target.placeholder || target.text || target.testId,
+    target.role ||
+      target.name ||
+      target.label ||
+      target.placeholder ||
+      target.text ||
+      target.testId,
   );
+
   if (!hasPortableEvidence) {
+    const control = portableReplayControlForReference(
+      semanticPageContext,
+      historicalReference,
+    );
+
+    if (!control) {
+      throw new ConflictException({
+        code: "MISSION_AUTHORING_PREPARATION_REFERENCE_NOT_REPLAYABLE",
+        mutationOutcome: "not_applied",
+        safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+      });
+    }
+
+    const role =
+      typeof control.role === "string" && control.role.length > 0
+        ? control.role
+        : undefined;
+    const name =
+      typeof control.name === "string" && control.name.length > 0
+        ? control.name
+        : undefined;
+    const boundary = portableReplayBoundary(control.boundary);
+
+    if (!role && !name) {
+      throw new ConflictException({
+        code: "MISSION_AUTHORING_PREPARATION_REFERENCE_NOT_REPLAYABLE",
+        mutationOutcome: "not_applied",
+        safeActions: ["get_flow_authoring", "advance_flow_authoring"],
+      });
+    }
+
+    portableTarget = {
+      ...target,
+      ...(role ? { role } : {}),
+      ...(name ? { name } : {}),
+      ...(!target.scope && boundary
+        ? { scope: boundary }
+        : {}),
+    };
+  }
+
+  const { reference: _ephemeralReference, ...withoutReference } = portableTarget;
+  const validatedTarget = missionAuthoringSemanticTargetSchema.safeParse(withoutReference);
+  if (!validatedTarget.success) {
     throw new ConflictException({
-      code: "MISSION_AUTHORING_PREPARATION_REFERENCE_NOT_REPLAYABLE",
+      code: "MISSION_AUTHORING_PREPARATION_TARGET_INVALID",
       mutationOutcome: "not_applied",
       safeActions: ["get_flow_authoring", "advance_flow_authoring"],
     });
   }
-  const { reference: _ephemeralReference, ...portableTarget } = target;
-  return {
+
+  return missionAuthoringIntentSchema.parse({
     ...intent,
-    action: { ...action, target: portableTarget },
-  } as MissionAuthoringIntent;
+    action: {
+      ...action,
+      target: validatedTarget.data,
+    },
+  });
+}
+
+function portableReplayBoundary(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as { kind?: unknown; name?: unknown };
+  const parsed = missionAuthoringSemanticTargetSchema.shape.scope.safeParse({
+    kind: candidate.kind,
+    direct: true,
+    ...(typeof candidate.name === "string" && candidate.name.length > 0
+      ? { name: candidate.name }
+      : {}),
+  });
+  return parsed.success ? parsed.data : undefined;
+}
+
+function portableReplayControlForReference(
+  semanticPageContext: unknown,
+  reference: string,
+): Record<string, unknown> | null {
+  if (
+    !semanticPageContext ||
+    typeof semanticPageContext !== "object" ||
+    Array.isArray(semanticPageContext)
+  ) {
+    return null;
+  }
+
+  const controls = (semanticPageContext as Record<string, unknown>).controls;
+  if (!Array.isArray(controls)) return null;
+
+  const matches = controls.filter(
+    (control): control is Record<string, unknown> =>
+      Boolean(
+        control &&
+          typeof control === "object" &&
+          !Array.isArray(control) &&
+          (control as Record<string, unknown>).reference === reference,
+      ),
+  );
+
+  return matches.length === 1 ? matches[0]! : null;
+}
+
+export function interruptedOperationTruth(dispatchBoundary: string) {
+  const crossedDispatch = dispatchBoundary !== "not_dispatched";
+  return crossedDispatch
+    ? {
+        crossedDispatch,
+        mutationOutcome: "unknown" as const,
+        boundaryType: "mutation_reconciliation_required" as const,
+        reasonCode: "ADAPTIVE_OPERATION_OUTCOME_UNKNOWN" as const,
+      }
+    : {
+        crossedDispatch,
+        mutationOutcome: "not_applied" as const,
+        boundaryType: "environment_unavailable" as const,
+        reasonCode: "ADAPTIVE_OPERATION_INTERRUPTED_BEFORE_DISPATCH" as const,
+      };
 }
 
 function bind(client: PoolClient): Query {
@@ -3120,9 +4159,11 @@ function withAuthoringRecovery(
 }
 
 function isRuntimeReprovisionReason(reasonCode: string) {
-  return reasonCode === "ADAPTIVE_SESSION_EXECUTION_FAILED"
-    || reasonCode === "ADAPTIVE_RUNTIME_UNAVAILABLE"
-    || reasonCode === "ADAPTIVE_RUNTIME_LEASE_LOST";
+  return (
+    reasonCode === "ADAPTIVE_SESSION_EXECUTION_FAILED" ||
+    reasonCode === "ADAPTIVE_RUNTIME_UNAVAILABLE" ||
+    reasonCode === "ADAPTIVE_RUNTIME_LEASE_LOST"
+  );
 }
 
 const forbiddenKeys =

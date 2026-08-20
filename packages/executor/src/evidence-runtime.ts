@@ -14,6 +14,7 @@ import type { SecretRedactor } from "@scry/policy";
 import {
   type VeilChannelCollector,
   type VeilRuntimeCoordinator,
+  VeilVisualCaptureError,
   type VeilVisualCaptureAuthority,
 } from "@scry/veil";
 import type { BrowserContext, Page } from "playwright";
@@ -27,6 +28,55 @@ type CaptureBinding = {
   frameId: string;
   documentEpoch: number;
 };
+
+const VISUAL_CAPTURE_STABILIZATION_ATTEMPTS = 3;
+
+export async function captureWithStableVisualPermit<T>(input: {
+  visualCapture: VeilVisualCaptureAuthority;
+  captureBinding: () => CaptureBinding;
+  observe: () => Promise<Awaited<ReturnType<typeof observeAndMaskPraxisVisualRegions>>>;
+  capture: () => Promise<T>;
+}) {
+  let lastDocumentChanged: VeilVisualCaptureError | undefined;
+
+  for (let attempt = 1; attempt <= VISUAL_CAPTURE_STABILIZATION_ATTEMPTS; attempt += 1) {
+    const binding = input.captureBinding();
+    const observation = await input.observe();
+    const { permit } = input.visualCapture.issue(observation, binding);
+    const validatedObservation = await input.observe();
+
+    try {
+      const result = await input.visualCapture.capture(
+        validatedObservation,
+        permit,
+        binding,
+        input.capture,
+      );
+
+      return {
+        permit,
+        observation: validatedObservation,
+        result,
+        stabilizationAttempts: attempt,
+      };
+    } catch (error) {
+      if (
+        !(error instanceof VeilVisualCaptureError) ||
+        error.code !== "VEIL_CAPTURE_DOCUMENT_CHANGED"
+      ) {
+        throw error;
+      }
+
+      lastDocumentChanged = error;
+
+      if (attempt === VISUAL_CAPTURE_STABILIZATION_ATTEMPTS) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastDocumentChanged ?? new Error("VEIL_VISUAL_CAPTURE_STABILIZATION_EXHAUSTED");
+}
 
 export async function captureRequestedEvidence(
   page: Page,
@@ -64,13 +114,16 @@ export async function captureRequestedEvidence(
       try {
         if (!visualCapture || !captureBinding)
           throw new Error("VEIL_VISUAL_CAPTURE_AUTHORITY_REQUIRED");
-        const binding = captureBinding();
-        const observation = await observeAndMaskPraxisVisualRegions(page);
-        const { permit } = visualCapture.issue(observation, binding);
-        const validatedObservation = await observeAndMaskPraxisVisualRegions(page);
-        const fallback = await visualCapture.capture(validatedObservation, permit, binding, () =>
-          captureScreenshotWithFallback(page, file, true),
-        );
+        const {
+          permit,
+          observation,
+          result: fallback,
+        } = await captureWithStableVisualPermit({
+          visualCapture,
+          captureBinding,
+          observe: () => observeAndMaskPraxisVisualRegions(page),
+          capture: () => captureScreenshotWithFallback(page, file, true),
+        });
         const artifact = await availableArtifact(
           "screenshot",
           "image/png",
@@ -225,13 +278,12 @@ export async function captureFailureScreenshot(
   try {
     const file = path.join(root, "screenshots", `${stepId}.failure.png`);
     if (!visualCapture || !captureBinding) return;
-    const binding = captureBinding();
-    const observation = await observeAndMaskPraxisVisualRegions(page);
-    const { permit } = visualCapture.issue(observation, binding);
-    const validatedObservation = await observeAndMaskPraxisVisualRegions(page);
-    await visualCapture.capture(validatedObservation, permit, binding, () =>
-      capturePraxisScreenshot(page, file, { fullPage: true }),
-    );
+    const { permit } = await captureWithStableVisualPermit({
+      visualCapture,
+      captureBinding,
+      observe: () => observeAndMaskPraxisVisualRegions(page),
+      capture: () => capturePraxisScreenshot(page, file, { fullPage: true }),
+    });
     result.artifacts.push(
       await availableArtifact(
         "screenshot",

@@ -27,13 +27,19 @@ export class VitractCredentialResourceEffectProvider implements OnModuleInit, On
   onModuleDestroy() { this.unregister?.(); }
 
   private async observe(input: Readonly<{ resourceScope: string; authority: Readonly<UnknownOperationAuthority> }>) {
-    const protectedFills = (input.authority.preparationFacts ?? []).filter(
-      (fact) => fact.actionKind === "fill" && fact.protectedReferenceId,
+    const protectedAuthenticationFacts = (input.authority.preparationFacts ?? []).filter(
+      (fact) =>
+        (fact.actionKind === "fill" || fact.actionKind === "authenticate")
+        && fact.protectedReferenceId,
     );
-    const email = protectedFills.filter((fact) =>
-      fact.targetPlaceholder === "Enter your email" || fact.targetConcept === "Vitract login email");
-    const password = protectedFills.filter((fact) =>
-      fact.targetPlaceholder === "Enter your password" || fact.targetConcept === "Vitract login password");
+    const email = protectedAuthenticationFacts.filter((fact) =>
+      fact.targetPlaceholder === "Enter your email"
+      || fact.targetConcept === "Vitract login email"
+      || fact.targetConcept === "login email");
+    const password = protectedAuthenticationFacts.filter((fact) =>
+      fact.targetPlaceholder === "Enter your password"
+      || fact.targetConcept === "Vitract login password"
+      || fact.targetConcept === "login password");
     if (email.length !== 1 || password.length !== 1)
       throw new Error("VITRACT_RECONCILIATION_AUTHENTICATION_CONTRACT_UNAVAILABLE");
     const references = [email[0]!.protectedReferenceId!, password[0]!.protectedReferenceId!];

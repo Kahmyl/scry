@@ -27,7 +27,6 @@ import {
   writeJson,
 } from "./artifacts.js";
 import {
-  capturePraxisSessionStorage,
   capturePraxisStorageState,
   closePraxisBrowser,
   closePraxisContext,
@@ -35,6 +34,7 @@ import {
   observeSemanticPageContext,
   openPraxisBrowserSession,
   visualRedactionInitScript,
+  waitForPraxisLoadState,
   destroyPraxisIsolatedSession,
 } from "@scry/praxis";
 import {
@@ -45,6 +45,7 @@ import {
 import { requirePraxisSuccess, type PraxisConsumerContext } from "@scry/praxis";
 import { registerPraxisVeilAuthority } from "@scry/praxis";
 import { RecordingCoordinator } from "./recording-coordinator.js";
+import { captureSuccessorCheckpointPayload } from "./successor-checkpoint.js";
 import { VeilRuntimeCoordinator, type PrivacyCollector, type PrivacyPreparation } from "@scry/veil";
 import { VeilChannelCollector } from "@scry/veil";
 import { VeilVisualCaptureAuthority } from "@scry/veil";
@@ -451,6 +452,11 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         const policyEpochBeforeStep = policyEpoch;
         let protectedTerminal = false;
         let protectedContinuationStepId: string | undefined;
+        let documentTransitionOpen = false;
+        const documentTransitionExpected =
+          step.action.type === "navigate" ||
+          (options.plan.steps.length === 1 && options.expectedDocumentTransition === true) ||
+          (step.action.type === "click" && step.action.expectedEffect.type === "navigation");
         if (step.action.type === "protectedTransaction") {
           if (
             !browser ||
@@ -483,15 +489,10 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
                   ((contextOptions) =>
                     openCompatibilityBrowser(options.browserChannel, contextOptions)),
               ),
-              ...(options.existingProtectedSession ? {
-                liveProtectedSession: {
-                  browser: liveBrowser,
-                  context: liveContext,
-                  page: livePage,
-                  provenance: liveProvenance,
-                  clipboardCollector: createVeilClipboardCollector(livePage),
-                  destroy: async () => {
-                    const outcome = await destroyPraxisIsolatedSession({
+              ...(options.existingProtectedSession
+                ? {
+                    liveProtectedSession: {
+                      browser: liveBrowser,
                       context: liveContext,
                       page: livePage,
                       provenance: liveProvenance,
@@ -631,28 +632,76 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           )
             throw new UnsafeProtectedCaptureError(transaction.result.status);
         } else {
-          await executeAction(
-            page,
-            step.action,
-            options,
-            timeoutController.signal,
-            redactor,
-            capturedSecrets,
-            capturedValues,
-            privacyGate,
-            emit,
-            {
-              runId,
-              attemptId,
-              stepId: step.id,
-              channel: "action",
-              ordinal: index,
-              allowedOrigins: options.plan.allowedOrigins,
-              timeoutMs: "timeoutMs" in step.action ? (step.action.timeoutMs ?? 10_000) : 10_000,
-              ...(options.onMutationDispatch ? { beforeMutation: options.onMutationDispatch } : {}),
-              ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}),
-            },
-          );
+          const transitionOperationId = options.recordingOperationId ?? step.id;
+
+          if (documentTransitionExpected) {
+            await recording.beginDocumentTransition({
+              operationId: transitionOperationId,
+            });
+            documentTransitionOpen = true;
+          }
+
+          try {
+            await executeAction(
+              page,
+              step.action,
+              options,
+              timeoutController.signal,
+              redactor,
+              capturedSecrets,
+              capturedValues,
+              privacyGate,
+              emit,
+              {
+                runId,
+                attemptId,
+                stepId: step.id,
+                channel: "action",
+                ordinal: index,
+                allowedOrigins: options.plan.allowedOrigins,
+                timeoutMs: "timeoutMs" in step.action ? (step.action.timeoutMs ?? 10_000) : 10_000,
+                ...(options.onMutationDispatch
+                  ? { beforeMutation: options.onMutationDispatch }
+                  : {}),
+                ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}),
+              },
+            );
+          } catch (error) {
+            if (documentTransitionOpen) {
+              await recording
+                .failDocumentTransition("DOCUMENT_TRANSITION_ACTION_FAILED")
+                .catch(() => undefined);
+              documentTransitionOpen = false;
+            }
+            throw error;
+          }
+
+          if (documentTransitionOpen) {
+            try {
+              const transitionTimeoutMs =
+                "timeoutMs" in step.action && typeof step.action.timeoutMs === "number"
+                  ? Math.min(10_000, step.action.timeoutMs)
+                  : 10_000;
+
+              await waitForPraxisLoadState(page, "domcontentloaded", {
+                timeout: transitionTimeoutMs,
+              });
+
+              // Qualification is an independent factual check on the new
+              // document. Recording resumes only after this succeeds.
+              await observeAndMaskPraxisVisualRegions(page);
+              await recording.completeDocumentTransition(page);
+              documentTransitionOpen = false;
+            } catch (error) {
+              if (documentTransitionOpen) {
+                await recording
+                  .failDocumentTransition("DOCUMENT_TRANSITION_QUALIFICATION_FAILED")
+                  .catch(() => undefined);
+                documentTransitionOpen = false;
+              }
+              throw error;
+            }
+          }
         }
         result.action = { status: "passed" };
         const actionCompletedAt = new Date();
@@ -945,47 +994,10 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     }
     if (context && page && state.terminalState === "passed" && options.captureSuccessorCheckpoint) {
       try {
-        const [storageState, sessionEntries, semantic] = await Promise.all([
-          capturePraxisStorageState(context, { indexedDB: true }),
-          capturePraxisSessionStorage(page),
-          observeSemanticPageContext(page),
-        ]);
-        const restorationUrl = page.url();
-        if (!options.policy.allowedOrigins.includes(new URL(restorationUrl).origin))
-          throw new Error("SUCCESSOR_CHECKPOINT_ORIGIN_NOT_ALLOWED");
-        const admittedOrigins = new Set(options.policy.allowedOrigins);
-        const admittedHosts = new Set(
-          options.policy.allowedOrigins.map((origin) => new URL(origin).hostname),
+        await options.captureSuccessorCheckpoint(
+          await captureSuccessorCheckpointPayload(context, page, options.policy),
         );
-        storageState.origins = storageState.origins.filter((entry) =>
-          admittedOrigins.has(entry.origin),
-        );
-        storageState.cookies = storageState.cookies.filter((cookie) => {
-          const cookieDomain = cookie.domain.replace(/^\./, "");
-          return [...admittedHosts].some(
-            (host) => host === cookieDomain || host.endsWith(`.${cookieDomain}`),
-          );
-        });
-        const sessionBytes = sessionEntries.reduce(
-          (total, [key, value]) => total + Buffer.byteLength(key) + Buffer.byteLength(value),
-          0,
-        );
-        if (sessionEntries.length > 512 || sessionBytes > 512 * 1024)
-          throw new Error("SUCCESSOR_CHECKPOINT_SESSION_STORAGE_TOO_LARGE");
-        if (Buffer.byteLength(JSON.stringify(storageState)) > 2 * 1024 * 1024)
-          throw new Error("SUCCESSOR_CHECKPOINT_STORAGE_STATE_TOO_LARGE");
-        await options.captureSuccessorCheckpoint({
-          schemaVersion: 1,
-          policyDigest: createHash("sha256").update(JSON.stringify(options.policy)).digest("hex"),
-          storageState,
-          sessionStorage: { origin: new URL(page.url()).origin, entries: sessionEntries },
-          restorationUrl,
-          safeSemanticContext: {
-            title: semantic.authority.title,
-            controls: semantic.controls.slice(0, 24).map(({ role, name }) => ({ role, name })),
-          },
-        });
-      } catch (error) {
+      } catch {
         state.terminalState = "infrastructure_error";
         state.fatalError = "SUCCESSOR_CHECKPOINT_ESTABLISHMENT_FAILED";
       }

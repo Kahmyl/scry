@@ -46,21 +46,24 @@ export const semanticRoleSchema = z.enum([
   "text",
   "value",
 ]);
-const semanticScopeKindSchema = z.enum([
+export const semanticScopeKinds = [
   "page",
   "dialog",
   "form",
   "section",
   "field_group",
+  "group",
   "table",
   "row",
   "region",
   "live_region",
   "recently_changed",
-]);
+] as const;
+export const semanticScopeKindSchema = z.enum(semanticScopeKinds);
 export type SemanticScopeInput = {
   kind: z.infer<typeof semanticScopeKindSchema>;
   name?: string | undefined;
+  direct?: boolean | undefined;
   within?: SemanticScopeInput | undefined;
 };
 export const semanticScopeSchema: z.ZodType<SemanticScopeInput> = z.lazy(() =>
@@ -68,6 +71,7 @@ export const semanticScopeSchema: z.ZodType<SemanticScopeInput> = z.lazy(() =>
     .object({
       kind: semanticScopeKindSchema,
       name: semanticText.optional(),
+      direct: z.boolean().optional(),
       within: semanticScopeSchema.optional(),
     })
     .strict(),

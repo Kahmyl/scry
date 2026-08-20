@@ -27,7 +27,7 @@ export class RunObservationService {
   ) {}
 
   async observe(principal: Principal, runId: string): Promise<RunObservation> {
-    const run = await this.repository.getRun(principal, runId);
+    const run = normalizeObservedRun(await this.repository.getRun(principal, runId));
     const attempts = (
       await this.database.query(
         `SELECT id, attempt_number AS "attemptNumber", state, started_at AS "startedAt",
@@ -283,6 +283,52 @@ export class RunObservationService {
       },
     });
   }
+}
+
+function normalizeObservedRun(
+  run: Record<string, any>,
+): Record<string, any> {
+  return {
+    ...run,
+    outcomeClassification: normalizeOutcomeClassification(
+      run.outcomeClassification,
+      run.resultClassification,
+      run.state,
+    ),
+  };
+}
+
+function normalizeOutcomeClassification(
+  value: unknown,
+  resultClassification: unknown,
+  state: unknown,
+) {
+  const classification = String(value ?? "");
+  if (!classification) return null;
+  if (
+    [
+      "passed",
+      "assertion_failure",
+      "readiness_timeout",
+      "transient_observation",
+      "inconclusive_plan",
+      "confirmed_product_failure",
+      "non_reproduced_failure",
+      "infrastructure_failure",
+      "policy_failure",
+      "execution_timeout",
+      "cancelled",
+    ].includes(classification)
+  ) return classification;
+  if (classification === "application_pass") return "passed";
+  if (classification === "application_failure") {
+    // Historical agent-directed writers used application_failure as a
+    // product-level result class, not as proof of assertion provenance.
+    // Preserve the result classification separately and normalize the
+    // public outcome conservatively.
+    return "inconclusive_plan";
+  }
+  return null;
 }
 
 const evidenceChannels = [

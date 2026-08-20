@@ -102,6 +102,7 @@ export class ScryRepository {
               runs.mission_id AS "missionId",runs.objective_id AS "objectiveId",runs.agent_session_id AS "agentSessionId",
               runs.flow_revision_id AS "flowRevisionId", runs.state, runs.phase,
               runs.outcome_classification AS "outcomeClassification",
+              runs.result_classification AS "resultClassification",
               runs.rerun_of_run_id AS "rerunOfRunId",
               (runs.state IN ('failed','timed_out','infrastructure_error')) AS "needsAttention",
               runs.plan_snapshot AS "planSnapshot",

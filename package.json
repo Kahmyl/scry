@@ -5,6 +5,7 @@
   "packageManager": "pnpm@10.29.3",
   "scripts": {
     "db:migrate": "pnpm --filter @scry/api db:migrate",
+    "qualify:live": "pnpm --filter @scry/api qualify:live",
     "dev:api": "pnpm --filter @scry/api dev",
     "docker:up": "pnpm verify:release-fingerprint && docker compose up --build --wait",
     "docker:dev": "docker compose up --build --watch",
@@ -22,6 +23,7 @@
     "verify:adaptive-authoring-release": "node scripts/verify-adaptive-authoring-release.mjs",
     "verify:execution-kernel-boundary": "node scripts/verify-execution-kernel-boundary.mjs",
     "verify:direct-browser-boundary": "node scripts/verify-direct-browser-boundary.mjs",
+    "verify:protected-interaction-conformance": "pnpm --filter @scry/api exec vitest run test/protected-interaction-conformance.test.ts test/mission-authoring-protected-replay-portability.test.ts && pnpm --filter @scry/praxis exec vitest run test/protected-scope-conformance.test.ts",
     "verify:dashboard-read-only": "pnpm --filter @scry/web build && node scripts/verify-dashboard-read-only.mjs",
     "schema:fingerprint": "node scripts/schema-fingerprint.mjs",
     "verify:release-fingerprint": "node scripts/verify-release-fingerprint.mjs",

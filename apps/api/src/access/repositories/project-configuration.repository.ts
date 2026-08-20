@@ -225,7 +225,7 @@ export class ProjectConfigurationRepository {
       throw new NotFoundException({ code: "MISSION_NOT_FOUND" });
     const selectedMissionId = input.missionId
       ? missionItems[0]!.id
-      : missionItems.length === 1 ? missionItems[0]?.id : undefined;
+      : undefined;
     const environmentItems = snapshot.environments.rows.slice(0, 10).map((environment) => {
       const allowedOrigins = Array.isArray(environment.policy.allowedOrigins)
         ? environment.policy.allowedOrigins.filter((value): value is string => typeof value === "string") : [];
@@ -341,7 +341,7 @@ export class ProjectConfigurationRepository {
           recoverable.length > 0 || compatibleReusable.length > 0
           || (missionItems.length === 0 && compatibleEnvironment)
         ),
-        userAuthorityRequired: (!selectedMissionId && missionItems.length > 1)
+        userAuthorityRequired: (!selectedMissionId && missionItems.length > 0)
           || (uncertainCandidates.some(({ dispatchSemantics }) => dispatchSemantics === "read_only")
             && !input.authorizeDistinctMissionForReadOnlyUnknown),
         safeActions: uncertain.length > 0
@@ -351,14 +351,14 @@ export class ProjectConfigurationRepository {
           ? ["get_flow_authoring", "advance_flow_authoring"]
           : missing.length === 0
           ? ["advance_flow_authoring"]
-          : !selectedMissionId && missionItems.length > 1
-            ? ["get_operating_context_with_mission"]
+          : !selectedMissionId && missionItems.length > 0
+            ? ["list_missions"]
             : requirementBlocked
               ? ["create_test_environment_or_authorize_credentials"]
               : missionItems.length === 0
                 ? ["prepare_flow_authoring"]
                 : ["resume_or_start_distinct_mission"],
-        ...(!selectedMissionId && missionItems.length > 1
+        ...(!selectedMissionId && missionItems.length > 0
           ? { blockerCode: "MISSION_SELECTION_REQUIRED" as const }
           : requirementBlocked ? { blockerCode: "REQUIREMENTS_UNSATISFIED" as const } : {}),
       },
@@ -403,12 +403,33 @@ export class ProjectConfigurationRepository {
                 WHERE environment.project_id=credential.project_id
                   AND environment.secret_refs ? credential.id::text) > 20)
                 AS "authorizedEnvironmentIdsTruncated",
+              CASE
+                WHEN $3::uuid IS NULL THEN NULL
+                ELSE (
+                  credential.origin_mission_id = $3::uuid
+                  OR EXISTS (
+                    SELECT 1
+                    FROM adaptive_operations operation
+                    JOIN adaptive_sessions session
+                      ON session.id=operation.session_id
+                    WHERE session.mission_id=$3::uuid
+                      AND (
+                        COALESCE(
+                          operation.authoring_intent->'protectedInputReferences',
+                          '[]'::jsonb
+                        ) ? credential.id::text
+                        OR operation.authoring_intent->'action'->>'protectedReferenceId'
+                          = credential.id::text
+                      )
+                  )
+                )
+              END AS "usedInMission",
               credential.created_at AS "createdAt",credential.updated_at AS "updatedAt"
        FROM project_credentials credential
        WHERE credential.project_id=$1 AND credential.deleted_at IS NULL
          AND ($2::uuid IS NULL OR credential.id=$2)
        ORDER BY credential.name,credential.created_at LIMIT 101`,
-      [projectId,input.referenceId ?? null],
+      [projectId,input.referenceId ?? null,input.missionId ?? null],
     );
     return { items: result.rows.slice(0, 100), truncated: result.rows.length > 100 };
   }
@@ -639,6 +660,20 @@ export class ProjectConfigurationRepository {
       environment.rows[0]!.projectId,
       input.secretRefs,
     );
+
+    const missionCredentialSelectionRefs = [
+      ...new Set(input.missionCredentialSelectionRefs ?? []),
+    ];
+
+    if (
+      missionCredentialSelectionRefs.some(
+        (reference) => !input.secretRefs.includes(reference),
+      )
+    )
+      throw new BadRequestException({
+        code: "MISSION_CREDENTIAL_SELECTION_NOT_ENVIRONMENT_AUTHORIZED",
+      });
+
     const currentPolicy = executionPolicySchema.parse(environment.rows[0]!.policy);
     const policy = executionPolicySchema.parse({
       ...input.policy,
@@ -647,24 +682,90 @@ export class ProjectConfigurationRepository {
       protectedSyntheticInputs: currentPolicy.protectedSyntheticInputs,
     });
     const result = await this.database.query(
-      `UPDATE environments environment
-       SET base_origin = $2, policy = $3::jsonb, secret_refs = $4::jsonb
-       FROM projects p
-       WHERE environment.id = $1 AND p.id = environment.project_id
-         AND ($5::uuid IS NULL OR p.workspace_id = $5)
-       RETURNING environment.id, environment.project_id AS "projectId",
-                 environment.name, environment.base_origin AS "baseOrigin",
-                 environment.policy, environment.secret_refs AS "secretRefs",
-                 environment.created_at AS "createdAt"`,
+      `WITH updated_environment AS (
+         UPDATE environments environment
+            SET base_origin = $2,
+                policy = $3::jsonb,
+                secret_refs = $4::jsonb
+           FROM projects project
+          WHERE environment.id = $1
+            AND project.id = environment.project_id
+            AND ($5::uuid IS NULL OR project.workspace_id = $5)
+          RETURNING
+            environment.id,
+            environment.project_id,
+            environment.name,
+            environment.base_origin,
+            environment.policy,
+            environment.secret_refs,
+            environment.created_at
+       ),
+       admitted_sessions AS (
+         UPDATE adaptive_sessions session
+            SET protected_reference_allowlist=(
+                  SELECT COALESCE(
+                    jsonb_agg(value ORDER BY value),
+                    '[]'::jsonb
+                  )
+                    FROM (
+                      SELECT DISTINCT value
+                        FROM jsonb_array_elements_text(
+                          session.protected_reference_allowlist || $6::jsonb
+                        ) AS value
+                    ) distinct_refs
+                ),
+                decision_boundary=CASE
+                  WHEN session.decision_boundary->>'reasonCode' =
+                    'MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED'
+                    THEN NULL
+                  ELSE session.decision_boundary
+                END,
+                updated_at=now(),
+                version=version+1
+           FROM updated_environment environment
+          WHERE session.project_id=environment.project_id
+            AND session.environment_id=environment.id
+            AND session.mission_id=$7
+            AND session.active_objective_id=$8
+            AND session.agent_session_id=$9
+            AND session.state IN (
+              'created',
+              'provisioning',
+              'active',
+              'suspended'
+            )
+            AND jsonb_array_length($6::jsonb)>0
+          RETURNING session.id
+       )
+       SELECT
+         environment.id,
+         environment.project_id AS "projectId",
+         environment.name,
+         environment.base_origin AS "baseOrigin",
+         environment.policy,
+         environment.secret_refs AS "secretRefs",
+         environment.created_at AS "createdAt",
+         COALESCE(
+           (SELECT count(*)::int FROM admitted_sessions),
+           0
+         ) AS "admittedPraxisSessionCount"
+       FROM updated_environment environment`,
       [
         environmentId,
         input.baseOrigin,
         JSON.stringify(policy),
         JSON.stringify(input.secretRefs),
         workspaceId,
+        JSON.stringify(missionCredentialSelectionRefs),
+        input.missionId,
+        input.objectiveId,
+        input.agentSessionId,
       ],
     );
-    if (!result.rowCount) throw new NotFoundException("Flow environment not found");
+
+    if (!result.rowCount)
+      throw new NotFoundException("Flow environment not found");
+
     return result.rows[0]!;
   }
 

@@ -3,14 +3,111 @@ import { OrchestrationService } from "../src/orchestration/index.js";
 import { MissionService } from "../src/missions/index.js";
 
 describe("Mission lifecycle regression", () => {
-  const waitingContextQuery = () => vi.fn(async (text: string) => {
-    if (text.includes("FROM missions m JOIN projects"))
-      return { rowCount: 1, rows: [{ id: "11111111-1111-4111-8111-111111111111",
-        status: "awaiting_user", revision: 7 }] };
-    if (text.includes("FROM agent_sessions")) return { rowCount: 1, rows: [{}] };
-    if (text.includes("SELECT 1 FROM mission_objectives")) return { rowCount: 1, rows: [{}] };
-    return { rowCount: 0, rows: [] };
+  it("marks an idempotent Mission creation replay as replayed", async () => {
+    const missionId = "11111111-1111-4111-8111-111111111111";
+    const agentSessionId = "22222222-2222-4222-8222-222222222222";
+    let requestHash = "";
+
+    const query = vi.fn(async (text: string, values: unknown[] = []) => {
+      if (text.includes("SELECT 1 FROM projects"))
+        return {
+          rowCount: 1,
+          rows: [{}],
+        };
+
+      if (text.includes("INSERT INTO idempotency_records")) {
+        requestHash = String(values[2]);
+        return {
+          rowCount: 0,
+          rows: [],
+        };
+      }
+
+      if (
+        text.includes('SELECT request_hash AS "requestHash",response') &&
+        text.includes("FROM idempotency_records")
+      )
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              requestHash,
+              response: {
+                missionId,
+                agentSessionId,
+                status: "planning",
+                replayed: false,
+              },
+            },
+          ],
+        };
+
+      throw new Error(`UNEXPECTED_QUERY: ${text}`);
+    });
+
+    const service = new MissionService({
+      transaction: (work: (client: { query: typeof query }) => unknown) => work({ query }),
+    } as never);
+
+    await expect(
+      service.create(
+        {
+          kind: "service",
+          subject: "scry-service",
+        },
+        "33333333-3333-4333-8333-333333333333",
+        {
+          title: "Replay",
+          originalInstruction: "Replay Mission creation.",
+          provider: "codex",
+          instructionSnapshot: "Replay Mission creation.",
+          idempotencyKey: "mission-create-replay",
+        },
+      ),
+    ).resolves.toEqual({
+      missionId,
+      agentSessionId,
+      status: "planning",
+      replayed: true,
+    });
+
+    expect(query.mock.calls.some(([text]) => String(text).includes("INSERT INTO missions"))).toBe(
+      false,
+    );
+
+    expect(
+      query.mock.calls.some(([text]) => String(text).includes("INSERT INTO agent_sessions")),
+    ).toBe(false);
   });
+
+  const waitingContextQuery = () => {
+    let requestHash = "";
+    return vi.fn(async (text: string, values: unknown[] = []) => {
+      if (text.includes("INSERT INTO idempotency_records")) {
+        requestHash = String(values[2]);
+        return { rowCount: 0, rows: [] };
+      }
+      if (text.includes("idempotency_records") && text.includes("SELECT"))
+        return {
+          rowCount: 1,
+          rows: [{ requestHash, response: null }],
+        };
+      if (text.includes("FROM missions m JOIN projects"))
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: "11111111-1111-4111-8111-111111111111",
+              status: "awaiting_user",
+              revision: 7,
+            },
+          ],
+        };
+      if (text.includes("FROM agent_sessions")) return { rowCount: 1, rows: [{}] };
+      if (text.includes("SELECT 1 FROM mission_objectives")) return { rowCount: 1, rows: [{}] };
+      return { rowCount: 0, rows: [] };
+    });
+  };
 
   it("does not terminalize an Objective while its Mission is awaiting user input", async () => {
     let requestHash = "";
@@ -23,49 +120,86 @@ describe("Mission lifecycle regression", () => {
       return { rowCount: 1, rows: [] };
     });
     const service = new MissionService({ transaction: (work: any) => work({ query }) } as never);
-    await expect(service.finalizeAgentWork({ kind: "service", subject: "scry-service" }, {
-      kind: "terminal_objective", missionId: "11111111-1111-4111-8111-111111111111",
-      objectiveId: "22222222-2222-4222-8222-222222222222",
-      agentSessionId: "33333333-3333-4333-8333-333333333333",
-      objectiveStatus: "failed", conclusion: "Input was unavailable", sessionStatus: "failed",
-      expectedMissionRevision: 7, idempotencyKey: "do-not-terminalize-waiting",
-    })).rejects.toMatchObject({ response: expect.objectContaining({
-      code: "AWAITING_USER_IS_NON_TERMINAL", terminal: false,
-      sameMissionResumable: true, sameObjectiveResumable: true,
-      shouldPublishFinalReport: false,
-    }) });
-    expect(query.mock.calls.some(([text]) => String(text).includes("UPDATE mission_objectives")))
-      .toBe(false);
+    await expect(
+      service.finalizeAgentWork(
+        { kind: "service", subject: "scry-service" },
+        {
+          kind: "terminal_objective",
+          missionId: "11111111-1111-4111-8111-111111111111",
+          objectiveId: "22222222-2222-4222-8222-222222222222",
+          agentSessionId: "33333333-3333-4333-8333-333333333333",
+          objectiveStatus: "failed",
+          conclusion: "Input was unavailable",
+          sessionStatus: "failed",
+          expectedMissionRevision: 7,
+          idempotencyKey: "do-not-terminalize-waiting",
+        },
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: "AWAITING_USER_IS_NON_TERMINAL",
+        terminal: false,
+        sameMissionResumable: true,
+        sameObjectiveResumable: true,
+        shouldPublishFinalReport: false,
+      }),
+    });
+    expect(
+      query.mock.calls.some(([text]) => String(text).includes("UPDATE mission_objectives")),
+    ).toBe(false);
   });
 
   it("blocks the update-objective sibling path while awaiting user input", async () => {
     const query = waitingContextQuery();
     const service = new MissionService({ transaction: (work: any) => work({ query }) } as never);
-    await expect(service.updateObjective({ kind: "service", subject: "scry-service" },
-      "22222222-2222-4222-8222-222222222222", {
-        missionId: "11111111-1111-4111-8111-111111111111",
-        agentSessionId: "33333333-3333-4333-8333-333333333333",
-        status: "failed", conclusion: "Input is pending",
-      })).rejects.toMatchObject({ response: expect.objectContaining({
-        code: "AWAITING_USER_IS_NON_TERMINAL", shouldPublishFinalReport: false,
-      }) });
-    expect(query.mock.calls.some(([text]) => String(text).includes("UPDATE mission_objectives")))
-      .toBe(false);
+    await expect(
+      service.updateObjective(
+        { kind: "service", subject: "scry-service" },
+        "22222222-2222-4222-8222-222222222222",
+        {
+          missionId: "11111111-1111-4111-8111-111111111111",
+          agentSessionId: "33333333-3333-4333-8333-333333333333",
+          status: "failed",
+          conclusion: "Input is pending",
+        },
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: "AWAITING_USER_IS_NON_TERMINAL",
+        shouldPublishFinalReport: false,
+      }),
+    });
+    expect(
+      query.mock.calls.some(([text]) => String(text).includes("UPDATE mission_objectives")),
+    ).toBe(false);
   });
 
   it("rejects a final report while the Mission is awaiting user input", async () => {
     const query = waitingContextQuery();
     const service = new MissionService({ transaction: (work: any) => work({ query }) } as never);
-    await expect(service.publishReport({ kind: "service", subject: "scry-service" },
-      "11111111-1111-4111-8111-111111111111", {
-        missionId: "11111111-1111-4111-8111-111111111111",
-        agentSessionId: "33333333-3333-4333-8333-333333333333",
-        overallConclusion: "Final", journeySummary: [], remainingActions: [], expectedRevision: 7,
-      })).rejects.toMatchObject({ response: expect.objectContaining({
-        code: "AWAITING_USER_REPORT_NOT_FINAL", shouldPublishFinalReport: false,
-      }) });
-    expect(query.mock.calls.some(([text]) => String(text).includes("FROM mission_objectives o")))
-      .toBe(false);
+    await expect(
+      service.publishReport(
+        { kind: "service", subject: "scry-service" },
+        "11111111-1111-4111-8111-111111111111",
+        {
+          missionId: "11111111-1111-4111-8111-111111111111",
+          agentSessionId: "33333333-3333-4333-8333-333333333333",
+          overallConclusion: "Final",
+          journeySummary: [],
+          remainingActions: [],
+          expectedRevision: 7,
+          idempotencyKey: "awaiting-user-report-must-remain-non-terminal",
+        },
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: "AWAITING_USER_REPORT_NOT_FINAL",
+        shouldPublishFinalReport: false,
+      }),
+    });
+    expect(
+      query.mock.calls.some(([text]) => String(text).includes("FROM mission_objectives o")),
+    ).toBe(false);
   });
 
   it("does not attach an awaiting-user pointer to an already terminal Objective", async () => {
@@ -79,33 +213,56 @@ describe("Mission lifecycle regression", () => {
       return { rowCount: 0, rows: [] };
     });
     const service = new MissionService({ transaction: (work: any) => work({ query }) } as never);
-    await expect(service.updateResumePointer({ kind: "service", subject: "scry-service" },
-      "11111111-1111-4111-8111-111111111111", {
-        missionId: "11111111-1111-4111-8111-111111111111",
-        agentSessionId: "33333333-3333-4333-8333-333333333333",
-        pointer: { objectiveId: "22222222-2222-4222-8222-222222222222",
-          recommendedAction: "await_user", explanation: "Wait",
-          externalInput: { fulfillmentPaths: [{}] } },
-      } as never)).rejects.toMatchObject({ response: expect.objectContaining({
+    await expect(
+      service.updateResumePointer(
+        { kind: "service", subject: "scry-service" },
+        "11111111-1111-4111-8111-111111111111",
+        {
+          missionId: "11111111-1111-4111-8111-111111111111",
+          agentSessionId: "33333333-3333-4333-8333-333333333333",
+          pointer: {
+            objectiveId: "22222222-2222-4222-8222-222222222222",
+            recommendedAction: "await_user",
+            explanation: "Wait",
+            externalInput: { fulfillmentPaths: [{}] },
+          },
+        } as never,
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
         code: "TERMINAL_OBJECTIVE_CANNOT_AWAIT_USER",
-      }) });
-    expect(query.mock.calls.some(([text]) => String(text).includes("UPDATE missions SET resume_pointer")))
-      .toBe(false);
+      }),
+    });
+    expect(
+      query.mock.calls.some(([text]) =>
+        String(text).includes("UPDATE missions SET resume_pointer"),
+      ),
+    ).toBe(false);
   });
 
   it("requires a supported fulfillment path on newly written human waits", async () => {
     const query = waitingContextQuery();
     const service = new MissionService({ transaction: (work: any) => work({ query }) } as never);
-    await expect(service.updateResumePointer({ kind: "service", subject: "scry-service" },
-      "11111111-1111-4111-8111-111111111111", {
-        missionId: "11111111-1111-4111-8111-111111111111",
-        agentSessionId: "33333333-3333-4333-8333-333333333333",
-        pointer: { objectiveId: "22222222-2222-4222-8222-222222222222",
-          recommendedAction: "await_user", explanation: "Wait",
-          externalInput: { fulfillmentPaths: [] } },
-      } as never)).rejects.toMatchObject({ response: expect.objectContaining({
+    await expect(
+      service.updateResumePointer(
+        { kind: "service", subject: "scry-service" },
+        "11111111-1111-4111-8111-111111111111",
+        {
+          missionId: "11111111-1111-4111-8111-111111111111",
+          agentSessionId: "33333333-3333-4333-8333-333333333333",
+          pointer: {
+            objectiveId: "22222222-2222-4222-8222-222222222222",
+            recommendedAction: "await_user",
+            explanation: "Wait",
+            externalInput: { fulfillmentPaths: [] },
+          },
+        } as never,
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
         code: "HUMAN_FULFILLMENT_PATH_REQUIRED",
-      }) });
+      }),
+    });
   });
 
   it("refuses finalization while authoring can still dispatch", async () => {
@@ -123,14 +280,27 @@ describe("Mission lifecycle regression", () => {
       return { rowCount: 1, rows: [] };
     });
     const service = new MissionService({ transaction: (work: any) => work({ query }) } as never);
-    await expect(service.finalizeAgentWork({ kind: "service", subject: "scry-service" }, {
-      kind: "terminal_objective", missionId: "11111111-1111-4111-8111-111111111111",
-      objectiveId: "22222222-2222-4222-8222-222222222222",
-      agentSessionId: "33333333-3333-4333-8333-333333333333",
-      objectiveStatus: "passed", conclusion: "Verified", sessionStatus: "completed",
-      expectedMissionRevision: 1, idempotencyKey: "finalize-active-authoring",
-    })).rejects.toMatchObject({ response: expect.objectContaining({ code: "MISSION_AUTHORING_CLOSE_REQUIRED" }) });
-    expect(query.mock.calls.some(([text]) => String(text).includes("UPDATE mission_objectives"))).toBe(false);
+    await expect(
+      service.finalizeAgentWork(
+        { kind: "service", subject: "scry-service" },
+        {
+          kind: "terminal_objective",
+          missionId: "11111111-1111-4111-8111-111111111111",
+          objectiveId: "22222222-2222-4222-8222-222222222222",
+          agentSessionId: "33333333-3333-4333-8333-333333333333",
+          objectiveStatus: "passed",
+          conclusion: "Verified",
+          sessionStatus: "completed",
+          expectedMissionRevision: 1,
+          idempotencyKey: "finalize-active-authoring",
+        },
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "MISSION_AUTHORING_CLOSE_REQUIRED" }),
+    });
+    expect(
+      query.mock.calls.some(([text]) => String(text).includes("UPDATE mission_objectives")),
+    ).toBe(false);
   });
 
   it("atomically enters and leaves durable non-terminal user waiting", async () => {
@@ -164,15 +334,24 @@ describe("Mission lifecycle regression", () => {
         "resume_mission" as const,
         "cancel_mission_orchestration" as const,
       ],
-      fulfillmentPaths: [{
-        kind: "approval" as const,
-        humanAction: "Approve the requested authority.",
-        agentExposure: "authorization_only" as const,
-        result: "Authority becomes available to the same task.",
-        availableCapabilities: ["grant_mission_execution_authorization" as const, "resume_mission" as const],
-        continuation: { sameMission: true as const, sameObjective: true as const,
-          replacementMissionRequired: false as const, resumeWith: "resume_mission" as const },
-      }],
+      fulfillmentPaths: [
+        {
+          kind: "approval" as const,
+          humanAction: "Approve the requested authority.",
+          agentExposure: "authorization_only" as const,
+          result: "Authority becomes available to the same task.",
+          availableCapabilities: [
+            "grant_mission_execution_authorization" as const,
+            "resume_mission" as const,
+          ],
+          continuation: {
+            sameMission: true as const,
+            sameObjective: true as const,
+            replacementMissionRequired: false as const,
+            resumeWith: "resume_mission" as const,
+          },
+        },
+      ],
       constraints: ["Do not retry until authoritative state is observed."],
       consequences: ["Approval permits revalidation only."],
       continuation: {
@@ -184,11 +363,16 @@ describe("Mission lifecycle regression", () => {
       },
       waiting: true as const,
       terminal: false as const,
-      lifecycle: { terminal: false as const, taskStillActive: true as const,
-        sameMissionResumable: true as const, sameObjectiveResumable: true as const,
-        shouldFinalize: false as const, shouldPublishFinalReport: false as const,
+      lifecycle: {
+        terminal: false as const,
+        taskStillActive: true as const,
+        sameMissionResumable: true as const,
+        sameObjectiveResumable: true as const,
+        shouldFinalize: false as const,
+        shouldPublishFinalReport: false as const,
         shouldCreateReplacementMission: false as const,
-        requiredNextStep: "fulfill_human_prerequisite_then_resume" as const },
+        requiredNextStep: "fulfill_human_prerequisite_then_resume" as const,
+      },
       resumeRef: objectiveId,
     };
     await service.updateResumePointer({ kind: "service", subject: "scry-service" }, missionId, {
@@ -466,11 +650,45 @@ describe("Mission lifecycle regression", () => {
 
   it("writes the final completed state into an immutable report snapshot", async () => {
     const responses = [
-      { rows: [{ title: "Mission", originalInstruction: "Test", status: "blocked" }] },
+      {
+        rows: [
+          {
+            id: "44444444-4444-4444-8444-444444444444",
+            revision: 7,
+            title: "Mission",
+            originalInstruction: "Test",
+            status: "blocked",
+          },
+        ],
+      },
+
+      // Mission objectives.
       { rows: [] },
+
+      // Accepted evidence.
+      { rows: [] },
+
+      // Superseded Attempt count.
+      { rows: [{ count: 0 }] },
+
+      // No active explicit recording selection.
+      { rows: [] },
+
+      // This synthetic lifecycle fixture is genuinely Run-free,
+      // so recording=null is valid rather than auto-selecting Runs.
       { rows: [{ count: 0 }] },
     ];
-    const query = vi.fn(async () => ({ rowCount: 0, ...responses.shift() }));
+
+    const query = vi.fn(async () => {
+      const response = responses.shift();
+
+      if (!response) throw new Error("UNEXPECTED_QUERY_AFTER_REPORT_SNAPSHOT_FIXTURE_EXHAUSTED");
+
+      return {
+        rowCount: response.rows.length,
+        ...response,
+      };
+    });
     const snapshot = await (
       new MissionService({} as never) as unknown as {
         buildReportSnapshot(

@@ -8,6 +8,7 @@
     "worker": "tsx src/worker.ts",
     "start": "tsx src/main.ts",
     "db:migrate": "tsx scripts/migrate.ts",
+    "qualify:live": "tsx scripts/live/qualify-live.ts",
     "campaign:veil:worker-crash": "tsx scripts/veil-worker-crash-recovery-campaign.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

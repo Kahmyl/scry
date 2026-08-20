@@ -22,9 +22,14 @@ import type {
   VeilVideoSegmentBinding,
 } from "@scry/veil";
 
-type SegmentReason = "run_started" | "safe_resume" | "page_switch";
+type SegmentReason = "run_started" | "safe_resume" | "page_switch" | "document_resume";
 type StopReason =
-  "protected_operation" | "page_switch" | "run_completed" | "run_failed" | "browser_closed";
+  | "protected_operation"
+  | "page_switch"
+  | "document_transition"
+  | "run_completed"
+  | "run_failed"
+  | "browser_closed";
 type RecordingEvent =
   | "recording.segment_started"
   | "recording.segment_stopped"
@@ -58,6 +63,13 @@ type OpenGap = {
   startedAt: string;
 };
 
+type OpenDocumentTransition = {
+  id: string;
+  sequence: number;
+  operationId: string;
+  startedAt: string;
+};
+
 export type RecordingCoordinatorOptions = {
   outputDirectory: string;
   emit?: (type: RecordingEvent, payload: Record<string, unknown>) => Promise<void>;
@@ -78,6 +90,7 @@ export class RecordingCoordinator {
   private activePage: Page | undefined;
   private activeSegment: ActiveSegment | undefined;
   private openGap: OpenGap | undefined;
+  private openDocumentTransition: OpenDocumentTransition | undefined;
   private sealed = false;
   private finalized = false;
 
@@ -160,6 +173,93 @@ export class RecordingCoordinator {
     });
   }
 
+  beginDocumentTransition(input: { operationId: string }) {
+    return this.serial(async () => {
+      this.requireOpen();
+      if (this.openGap) {
+        throw new Error("DOCUMENT_TRANSITION_DURING_PROTECTED_GAP");
+      }
+      if (this.openDocumentTransition) {
+        throw new Error("DOCUMENT_TRANSITION_ALREADY_OPEN");
+      }
+
+      // The final Veil checkpoint for the old document must happen before
+      // browser navigation can destroy its execution context.
+      await this.stopActive("document_transition", false);
+
+      if (this.sealed) {
+        throw new Error("DOCUMENT_TRANSITION_RECORDING_STOP_FAILED");
+      }
+
+      this.openDocumentTransition = {
+        id: this.options.createId?.() ?? randomUUID(),
+        sequence: this.timelineEntries.length,
+        operationId: input.operationId,
+        startedAt: this.now(),
+      };
+
+      await this.emit("recording.gap_started", {
+        type: "document_transition_gap",
+        ...this.openDocumentTransition,
+        reason: "navigation_boundary",
+      });
+    });
+  }
+
+  completeDocumentTransition(page: Page) {
+    return this.serial(async () => {
+      this.requireOpen();
+
+      if (!this.openDocumentTransition) {
+        throw new Error("DOCUMENT_TRANSITION_NOT_OPEN");
+      }
+
+      if (page.isClosed()) {
+        const transition = this.openDocumentTransition;
+        this.openDocumentTransition = undefined;
+        this.timelineEntries.push(
+          this.unavailable(
+            transition.startedAt,
+            "DOCUMENT_TRANSITION_PAGE_UNAVAILABLE",
+          ),
+        );
+        await this.sealUnsafe("DOCUMENT_TRANSITION_PAGE_UNAVAILABLE");
+        throw new Error("DOCUMENT_TRANSITION_PAGE_UNAVAILABLE");
+      }
+
+      // The caller must independently qualify the new document through
+      // Praxis/Veil before invoking this method.
+      this.activePage = page;
+      await this.closeDocumentTransitionGap();
+
+      if (!this.sealed) {
+        await this.startInternal(page, "document_resume");
+      }
+
+      if (this.sealed) {
+        throw new Error("DOCUMENT_TRANSITION_RECORDING_RESUME_FAILED");
+      }
+    });
+  }
+
+  failDocumentTransition(failureCode: string) {
+    return this.serial(async () => {
+      const transition = this.openDocumentTransition;
+      if (transition) {
+        this.openDocumentTransition = undefined;
+        const entry = this.unavailable(transition.startedAt, failureCode);
+        this.timelineEntries.push(entry);
+        await this.emit("recording.gap_ended", {
+          type: "document_transition_gap",
+          failureCode,
+          entry,
+        });
+      }
+
+      await this.sealUnsafe(failureCode);
+    });
+  }
+
   switchActivePage(page: Page) {
     return this.serial(async () => {
       this.requireOpen();
@@ -185,6 +285,19 @@ export class RecordingCoordinator {
     return this.serial(async () => {
       if (this.finalized) return;
       if (this.activeSegment) await this.stopActive("run_completed", this.sealed);
+
+      if (this.openDocumentTransition) {
+        const transition = this.openDocumentTransition;
+        this.openDocumentTransition = undefined;
+        this.timelineEntries.push(
+          this.unavailable(
+            transition.startedAt,
+            "DOCUMENT_TRANSITION_INCOMPLETE",
+          ),
+        );
+        await this.sealUnsafe("DOCUMENT_TRANSITION_INCOMPLETE");
+      }
+
       await this.closeGap();
       this.finalized = true;
     });
@@ -408,6 +521,24 @@ export class RecordingCoordinator {
     );
   }
 
+  private async closeDocumentTransitionGap() {
+    const gap = this.openDocumentTransition;
+    if (!gap) return;
+
+    this.openDocumentTransition = undefined;
+
+    const entry: RecordingTimelineEntry = {
+      type: "document_transition_gap",
+      ...gap,
+      endedAt: this.now(),
+      reason: "navigation_boundary",
+      captureStatus: "intentionally_suppressed",
+    };
+
+    this.timelineEntries.push(entry);
+    await this.emit("recording.gap_ended", { entry });
+  }
+
   private async closeGap() {
     const gap = this.openGap;
     if (!gap) return;
@@ -492,6 +623,9 @@ function segmentFailureCode(error: unknown): string {
   if (error instanceof Error) {
     if (error.message === "SEGMENT_FILE_MISSING") return error.message;
     if (error.message === "VEIL_VIDEO_FINALIZATION_FAILED") return error.message;
+    if (error.message.includes("Execution context was destroyed")) {
+      return "VEIL_VIDEO_DOCUMENT_CONTEXT_LOST";
+    }
     if (error.message.includes("VEIL_VIDEO")) return "VEIL_VIDEO_ADMISSION_FAILED";
   }
   return "SEGMENT_MEDIA_VALIDATION_FAILED";
