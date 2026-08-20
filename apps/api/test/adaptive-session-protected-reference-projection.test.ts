@@ -60,10 +60,10 @@ describe("adaptive protected-output reference projection", () => {
         if (text.includes("SELECT credential.id::text")) {
           return { rowCount: 1, rows: [{ id: credentialId }] };
         }
-        if (text.includes("SELECT version,created_by_agent_session_id")) {
+        if (text.includes("SELECT version,state,created_by_agent_session_id")) {
           return {
             rowCount: 1,
-            rows: [{ version: 1, createdByAgentSessionId: randomUUID(), stepExists: true }],
+            rows: [{ version: 1, state: "editing", createdByAgentSessionId: randomUUID(), stepExists: true }],
           };
         }
         return { rowCount: 1, rows: [] };

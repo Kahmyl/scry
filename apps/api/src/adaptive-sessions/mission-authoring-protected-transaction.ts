@@ -95,18 +95,33 @@ export function compileMissionAuthoringProtectedTransaction(input: {
   }
   const mutationTarget = targetForAcquisition(input.action.mutation.target, ["focusable", "pointer_activatable"]);
   assertions.push({ type: "enabled", target: mutationTarget, timeoutMs: input.timeoutMs });
+  const responseIdentityReferences = new Set(
+    (input.action.externalResourceBindings ?? []).flatMap((binding) =>
+      binding.status === "active" && binding.identitySource === "response"
+        ? [binding.identityReference]
+        : [],
+    ),
+  );
+  for (const reference of responseIdentityReferences) {
+    if (!input.action.outputs.some((output) => output.reference === reference))
+      throw new Error("RESPONSE_IDENTITY_OUTPUT_UNDECLARED");
+    if (!input.action.request || !input.action.response)
+      throw new Error("RESPONSE_IDENTITY_NETWORK_CONTRACT_REQUIRED");
+  }
   const outputs = input.action.outputs.map((output) => {
     const outputTarget = targetForAcquisition(output.target, ["readable_value"]);
     // Output semantics describe the value, not the page's implementation. A generated value may
     // be rendered as a field, static text, a definition value, or a copy-enabled control. Keep the
     // adapter set bounded while allowing the protected extractor to resolve those equivalent shapes.
-    const permittedMethods = [
-      "semantic_field_value",
-      "input_value",
-      "text_content",
-      "copy_control",
-      "protected_network_value",
-    ] as const;
+    const permittedMethods = responseIdentityReferences.has(output.reference)
+      ? (["protected_network_value"] as const)
+      : ([
+          "semantic_field_value",
+          "input_value",
+          "text_content",
+          "copy_control",
+          "protected_network_value",
+        ] as const);
     return output.classification === "protected"
       ? { classification: "protected" as const, reference: output.reference, acquisition: { target: outputTarget, prohibitedSourceTargets: protectedInputTargets, classification: "unknown_secret" as const, permittedMethods: [...permittedMethods], objective: { kind: "capture_value" as const, expectedValueType: "unknown_secret" as const }, validation: { minimumLength: 1, maximumLength: 20_000 } }, storage: { credentialName: output.storageName, scope: "project" as const } }
       : { classification: "public" as const, reference: output.reference, acquisition: { target: outputTarget, prohibitedSourceTargets: protectedInputTargets, classification: "public" as const, permittedMethods: [...permittedMethods], objective: { kind: "capture_value" as const, expectedValueType: "public" as const }, validation: { minimumLength: 1, maximumLength: 20_000 } }, storage: { name: output.storageName, scope: "project" as const } };

@@ -109,6 +109,13 @@ export class ProtectedCertificationDatabase {
         current = await this.operations.transition({ ...input, leaseOwner: this.leaseOwner });
         return current;
       },
+      settleMutationOutcome: async (input) => {
+        current = await this.operations.settleMutationOutcome({
+          ...input,
+          leaseOwner: this.leaseOwner,
+        });
+        return current;
+      },
       record: async (input) => {
         if (!current) throw new Error("PROTECTED_OPERATION_NOT_CLAIMED");
         await this.operations.record({ id: current.id, leaseOwner: this.leaseOwner,

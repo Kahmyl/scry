@@ -87,13 +87,23 @@ describe.each([
         environmentId: "protected-kernel-composition",
         veilAdmissionKey: "a".repeat(32),
         veilPolicySnapshot: compileDefaultVeilPolicy(policy),
-        protectedTransactionStore: {
-          claim: async () => ({ id: "protected-child-operation", state: "planned", version: 1, fencingToken: 1 }),
-          transition: async ({ id, next, version, fencingToken }) => ({ id, state: next, version: version + 1, fencingToken }),
+        protectedTransactionStore: (() => {
+          let mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown" = "not_attempted";
+          return {
+          claim: async () => ({ id: "protected-child-operation", state: "planned" as const, version: 1, fencingToken: 1, mutationOutcome }),
+          transition: async ({ id, next, version, fencingToken }) => ({ id, state: next, version: version + 1, fencingToken, mutationOutcome }),
+          settleMutationOutcome: async ({ id, version, fencingToken, outcome }) => ({
+            id,
+            state: "reconciling",
+            version: version + 1,
+            fencingToken,
+            mutationOutcome: (mutationOutcome = outcome),
+          }),
           record: async (record) => {
             await kernelRepository.recordMutation("session", parent, record);
           },
-        },
+        };
+        })(),
         ...(mode === "certify"
           ? { calibrationVerifier: vi.fn(async () => true) }
           : {}),

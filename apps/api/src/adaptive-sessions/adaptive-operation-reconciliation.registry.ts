@@ -43,6 +43,19 @@ export type UnknownOperationAuthority = {
   expectedEffect: ExpectedEffect; idempotencyKey: string; dispatchBoundary: string;
   dispatchIdentity: { operationCreatedAt: string };
   baseline: { url: string; documentEpoch: number; effectState: Record<string, unknown> } | null;
+  localEvidence?: {
+    mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
+    acquisitionState: "not_started" | "running" | "complete" | "failed";
+    persistenceState: "not_started" | "running" | "committed" | "failed" | "uncertain";
+    requiredOutputReferences: string[];
+    persistedReferences: Record<string, unknown>;
+    activeBinding: {
+      provider: string;
+      resourceKind: string;
+      resourceScope: string;
+      canonicalExternalIdentity: string;
+    } | null;
+  } | null;
 };
 
 export type AuthoritativeResourceReconciliation = z.infer<typeof authoritativeResourceReconciliationSchema>;
@@ -68,9 +81,32 @@ export class AdaptiveOperationReconciliationRegistry {
   async reconcile(authority: UnknownOperationAuthority) {
     const supporting = this.supporting(authority);
     if (supporting.length !== 1) return null;
-    return authoritativeResourceReconciliationSchema.parse(
+    const providerResult = authoritativeResourceReconciliationSchema.parse(
       await supporting[0]!.observe(Object.freeze(authority)),
     );
+    if (providerResult.result !== "proven_applied_output_unrecovered")
+      return providerResult;
+    const local = authority.localEvidence;
+    const binding = local?.activeBinding;
+    const completeOutputs = local?.requiredOutputReferences.every(
+      (reference) => Object.hasOwn(local.persistedReferences, reference),
+    );
+    if (
+      local?.persistenceState !== "committed" ||
+      !completeOutputs ||
+      !binding ||
+      binding.provider !== providerResult.resource.provider ||
+      binding.resourceKind !== providerResult.resource.resourceKind ||
+      binding.resourceScope !== providerResult.resource.resourceScope ||
+      binding.canonicalExternalIdentity !== providerResult.resource.identity
+    ) return providerResult;
+    return authoritativeResourceReconciliationSchema.parse({
+      result: "proven_applied",
+      reasonCode: "AUTHORITATIVE_RESOURCE_AND_LOCAL_OUTPUTS_PRESENT",
+      resource: providerResult.resource,
+      outputState: "usable",
+      evidence: { ...providerResult.evidence, localPersistenceQualification: true },
+    });
   }
 
   /** Server-owned adapter seam; callers cannot supply outcomes or evidence. */

@@ -391,11 +391,14 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       veilPolicy.digest,
       `${runId}:${attemptId}`,
     );
+    let protectedContextTeardownOwned = false;
     page.once("close", () => {
-      void privacyGate?.seal({ code: "ACTIVE_PAGE_CLOSED" }).catch(() => undefined);
+      if (!protectedContextTeardownOwned)
+        void privacyGate?.seal({ code: "ACTIVE_PAGE_CLOSED" }).catch(() => undefined);
     });
     browser.once("disconnected", () => {
-      void privacyGate?.seal({ code: "BROWSER_DISCONNECTED" }).catch(() => undefined);
+      if (!protectedContextTeardownOwned)
+        void privacyGate?.seal({ code: "BROWSER_DISCONNECTED" }).catch(() => undefined);
     });
     state.startCaptureEpoch("run_started", safeProvenance?.contextId ?? randomUUID());
     await recording.startSegment({ page, reason: "run_started" });
@@ -490,13 +493,25 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
                   destroy: async () => {
                     const outcome = await destroyPraxisIsolatedSession({
                       context: liveContext,
-                      browser: liveBrowser,
-                    });
-                    if (liveProvenance.value() !== "destroyed") liveProvenance.transition("destroyed");
-                    return outcome;
-                  },
-                },
-              } : {}),
+                      page: livePage,
+                      provenance: liveProvenance,
+                      clipboardCollector: createVeilClipboardCollector(livePage),
+                      destroy: async () => {
+                        // This close is the coordinator's verified terminal boundary for an
+                        // existing protected session, not an unexpected privacy incident.
+                        // A failed teardown is still handled fail-closed by the coordinator.
+                        protectedContextTeardownOwned = true;
+                        const outcome = await destroyPraxisIsolatedSession({
+                          context: liveContext,
+                          browser: liveBrowser,
+                        });
+                        if (liveProvenance.value() !== "destroyed")
+                          liveProvenance.transition("destroyed");
+                        return outcome;
+                      },
+                    },
+                  }
+                : {}),
               allowedOrigins: options.plan.allowedOrigins,
               persistSecret: options.atomicSecretCapture,
               persistPublicValue: options.publicValueCapture,

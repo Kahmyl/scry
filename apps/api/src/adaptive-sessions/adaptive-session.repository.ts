@@ -1022,31 +1022,42 @@ export class AdaptiveSessionRepository {
           safeActions: ["get_flow_authoring", "advance_flow_authoring"],
         };
       } else {
-        const reasonCode = safeReasonCode(durable.failureCode, "PROTECTED_OPERATION_RECOVERY_REQUIRED");
+        const reasonCode = safeReasonCode(
+          durable.failureCode,
+          "PROTECTED_OPERATION_RECOVERY_REQUIRED",
+        );
+        const mutationApplied = durable.mutationOutcome === "applied";
         outcome = operationOutcomeSchema.parse({
           operationId: input.operationId,
           functionalResult: "inconclusive",
-          mutationOutcome: "unknown",
+          mutationOutcome: mutationApplied ? "applied" : "unknown",
           privacyResult: "sealed",
           evidenceResult: [],
           qualityFindings: [],
           durationMs: 0,
           reasonCode,
+          ...(mutationApplied ? { generatedReferences } : {}),
         });
         decisionBoundary = {
-          type: "mutation_reconciliation_required",
+          type: mutationApplied
+            ? "effect_observation_required"
+            : "mutation_reconciliation_required",
           reasonCode,
           safeActions: ["get_flow_authoring"],
         };
       }
       const adaptiveState = durable.state === "completed" ? "completed" : "failed";
       let generatedCredentialIds: string[] = [];
-      if (durable.state === "completed") {
-        generatedCredentialIds = [...new Set(generatedReferences.flatMap((reference) =>
-          reference.classification === "protected" && reference.credentialId
-            ? [reference.credentialId]
-            : [],
-        ))];
+      if (durable.state === "completed" || durable.mutationOutcome === "applied") {
+        generatedCredentialIds = [
+          ...new Set(
+            generatedReferences.flatMap((reference) =>
+              reference.classification === "protected" && reference.credentialId
+                ? [reference.credentialId]
+                : [],
+            ),
+          ),
+        ];
         if (generatedCredentialIds.length) {
           const admissible = await q<{ id: string }>(
             `SELECT credential.id::text
@@ -1543,23 +1554,68 @@ export class AdaptiveSessionRepository {
         preparationFacts: Array<{ intentId: string; actionKind: string; publicValue?: string;
           protectedReferenceId?: string; targetConcept?: string; targetPlaceholder?: string }>;
         expectedEffect: AdaptiveSessionOperationInput["expectedEffect"];
-        outcome: OperationOutcome; dispatchBoundary: string;
-        baseline: { url: string; documentEpoch: number; effectState: Record<string, unknown> } | null;
-      }>(`SELECT session.project_id AS "projectId",session.environment_id AS "environmentId",
+        outcome: OperationOutcome;
+        dispatchBoundary: string;
+        baseline: {
+          url: string;
+          documentEpoch: number;
+          effectState: Record<string, unknown>;
+        } | null;
+        localEvidence: {
+          mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
+          acquisitionState: "not_started" | "running" | "complete" | "failed";
+          persistenceState: "not_started" | "running" | "committed" | "failed" | "uncertain";
+          requiredOutputReferences: string[];
+          persistedReferences: Record<string, unknown>;
+          activeBinding: {
+            provider: string;
+            resourceKind: string;
+            resourceScope: string;
+            canonicalExternalIdentity: string;
+          } | null;
+        } | null;
+      }>(
+        `SELECT session.project_id AS "projectId",session.environment_id AS "environmentId",
                   operation.mission_id AS "missionId",operation.objective_id AS "objectiveId",
                   operation.flow_draft_id AS "flowDraftId",operation.derived_action->'action' AS action,
                   operation.expected_effect AS "expectedEffect",operation.safe_outcome AS outcome,
                   operation.idempotency_key AS "idempotencyKey",operation.started_at::text AS "operationCreatedAt",
                   operation.dispatch_boundary AS "dispatchBoundary",
                   operation.authoring_intent AS "authoringIntent",
-                  COALESCE((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
-                    'intentId',preparation.authoring_intent->>'intentId',
-                    'actionKind',preparation.authoring_intent->'action'->>'kind',
-                    'publicValue',preparation.authoring_intent->'action'->>'publicValue',
-                    'protectedReferenceId',preparation.authoring_intent->'action'->>'protectedReferenceId',
-                    'targetConcept',preparation.authoring_intent->'action'->'target'->>'concept',
-                    'targetPlaceholder',preparation.authoring_intent->'action'->'target'->>'placeholder'
-                  )) ORDER BY preparation.sequence)
+                  (SELECT jsonb_build_object(
+                      'mutationOutcome',protected.mutation_outcome,
+                      'acquisitionState',protected.acquisition_state,
+                      'persistenceState',protected.persistence_state,
+                      'requiredOutputReferences',COALESCE((
+                        SELECT jsonb_agg(manifest.value->>'reference')
+                          FROM jsonb_array_elements(protected.safe_output_manifest) manifest(value)
+                      ),'[]'::jsonb),
+                      'persistedReferences',protected.persisted_references,
+                      'activeBinding',(
+                        SELECT jsonb_build_object(
+                          'provider',binding.provider,
+                          'resourceKind',binding.resource_kind,
+                          'resourceScope',binding.resource_scope,
+                          'canonicalExternalIdentity',binding.canonical_external_identity
+                        )
+                          FROM external_resource_bindings binding
+                         WHERE binding.source_protected_operation_id=protected.id
+                           AND binding.lifecycle_state='active'
+                         ORDER BY binding.created_at DESC
+                         LIMIT 1
+                      )
+                    )
+                     FROM protected_operations protected
+                    WHERE protected.owner_kind='authoring_session'
+                      AND protected.authoring_session_id=operation.session_id
+                      AND protected.operation_id=operation.operation_id
+                    ORDER BY protected.created_at DESC
+                    LIMIT 1) AS "localEvidence",
+                  COALESCE((
+                    SELECT jsonb_agg(
+                      fact.payload
+                      ORDER BY preparation.sequence, fact.ordinal
+                    )
                     FROM adaptive_operations preparation
                    WHERE preparation.session_id=operation.session_id
                      AND preparation.sequence<operation.sequence), '[]'::jsonb) AS "preparationFacts",
@@ -1579,8 +1635,11 @@ export class AdaptiveSessionRepository {
         expectedEffect: owner.expectedEffect, idempotencyKey: owner.idempotencyKey,
         authoringIntent: owner.authoringIntent, preparationFacts: owner.preparationFacts,
         dispatchBoundary: owner.dispatchBoundary,
-        dispatchIdentity: { operationCreatedAt: owner.operationCreatedAt }, baseline: owner.baseline };
-      if (!['dispatching','dispatched','acknowledged'].includes(owner.dispatchBoundary))
+        dispatchIdentity: { operationCreatedAt: owner.operationCreatedAt },
+        baseline: owner.baseline,
+        localEvidence: owner.localEvidence,
+      };
+      if (!["dispatching", "dispatched", "acknowledged"].includes(owner.dispatchBoundary))
         throw new ConflictException({ code: "UNKNOWN_OPERATION_NOT_DISPATCHED" });
       const requestDigest = stableDigest({ sessionId: input.sessionId, missionId: input.missionId, operationId: input.operationId });
       const stale = await q<{ attempt: number }>(`UPDATE adaptive_operation_reconciliations SET state='completed',result='still_unknown',
@@ -1666,6 +1725,35 @@ export class AdaptiveSessionRepository {
          AND preparation.sequence<operation.sequence), '[]'::jsonb) AS "preparationFacts",
       operation.idempotency_key AS "idempotencyKey",operation.dispatch_boundary AS "dispatchBoundary",
       jsonb_build_object('operationCreatedAt',operation.started_at::text) AS "dispatchIdentity",
+      (SELECT jsonb_build_object(
+          'mutationOutcome',protected.mutation_outcome,
+          'acquisitionState',protected.acquisition_state,
+          'persistenceState',protected.persistence_state,
+          'requiredOutputReferences',COALESCE((
+            SELECT jsonb_agg(manifest.value->>'reference')
+              FROM jsonb_array_elements(protected.safe_output_manifest) manifest(value)
+          ),'[]'::jsonb),
+          'persistedReferences',protected.persisted_references,
+          'activeBinding',(
+            SELECT jsonb_build_object(
+              'provider',binding.provider,
+              'resourceKind',binding.resource_kind,
+              'resourceScope',binding.resource_scope,
+              'canonicalExternalIdentity',binding.canonical_external_identity
+            )
+              FROM external_resource_bindings binding
+             WHERE binding.source_protected_operation_id=protected.id
+               AND binding.lifecycle_state='active'
+             ORDER BY binding.created_at DESC
+             LIMIT 1
+          )
+        )
+         FROM protected_operations protected
+        WHERE protected.owner_kind='authoring_session'
+          AND protected.authoring_session_id=operation.session_id
+          AND protected.operation_id=operation.operation_id
+        ORDER BY protected.created_at DESC
+        LIMIT 1) AS "localEvidence",
       (SELECT jsonb_build_object('url',baseline.url,'documentEpoch',baseline.document_epoch,
         'effectState',baseline.effect_state) FROM adaptive_operation_dispatch_baselines baseline
         WHERE baseline.session_id=operation.session_id AND baseline.operation_id=operation.operation_id) AS baseline
@@ -1688,11 +1776,46 @@ export class AdaptiveSessionRepository {
       const completed = await q(`UPDATE adaptive_operation_reconciliations SET state='completed',result=$4,
           reason_code=$5,evidence=$6::jsonb,completed_at=now(),fencing_token=fencing_token+1
         WHERE session_id=$1 AND operation_id=$2 AND idempotency_key=$3 AND state='observing' RETURNING id`,
-        [input.sessionId,input.operationId,input.idempotencyKey,input.result,input.reasonCode,JSON.stringify(input.evidence)]);
-      if (!completed.rowCount) throw new ConflictException({ code: "UNKNOWN_RECONCILIATION_FENCE_LOST" });
-      if (input.result === 'proven_applied') {
-        const operation = await q<{ flowDraftId: string; missionId: string; objectiveId: string;
-          action: AdaptiveSessionOperationInput['action']; intent: MissionAuthoringIntent }>(
+        [
+          input.sessionId,
+          input.operationId,
+          input.idempotencyKey,
+          input.result,
+          input.reasonCode,
+          JSON.stringify(input.evidence),
+        ],
+      );
+      if (!completed.rowCount)
+        throw new ConflictException({ code: "UNKNOWN_RECONCILIATION_FENCE_LOST" });
+      if (input.result === "proven_applied" || input.result === "proven_not_applied") {
+        const settledOutcome = input.result === "proven_applied" ? "applied" : "not_applied";
+        const settled = await q(
+          `UPDATE protected_operations
+              SET mutation_outcome=$3,version=version+1,updated_at=now()
+            WHERE owner_kind='authoring_session' AND authoring_session_id=$1
+              AND operation_id=$2 AND state='recovery_required'
+              AND mutation_outcome NOT IN ('applied','not_applied')
+            RETURNING id`,
+          [input.sessionId, input.operationId, settledOutcome],
+        );
+        if (!settled.rowCount) {
+          const existing = await q<{ mutationOutcome: string }>(
+            `SELECT mutation_outcome AS "mutationOutcome" FROM protected_operations
+              WHERE owner_kind='authoring_session' AND authoring_session_id=$1 AND operation_id=$2 FOR UPDATE`,
+            [input.sessionId, input.operationId],
+          );
+          if (existing.rows[0]?.mutationOutcome !== settledOutcome)
+            throw new ConflictException({ code: "PROTECTED_MUTATION_OUTCOME_CONTRADICTION" });
+        }
+      }
+      if (input.result === "proven_applied") {
+        const operation = await q<{
+          flowDraftId: string;
+          missionId: string;
+          objectiveId: string;
+          action: AdaptiveSessionOperationInput["action"];
+          intent: MissionAuthoringIntent;
+        }>(
           `SELECT flow_draft_id AS "flowDraftId",mission_id AS "missionId",objective_id AS "objectiveId",
                   derived_action->'action' AS action,authoring_intent AS intent
              FROM adaptive_operations WHERE session_id=$1 AND operation_id=$2 FOR UPDATE`,

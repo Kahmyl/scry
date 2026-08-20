@@ -227,12 +227,18 @@ function planFor(operation: ProtectedTransaction) {
 function memoryStore() {
   let state: MutationLedgerState = "planned";
   let version = 1;
-  const claim = (): ProtectedOperationClaim => ({ id: "protected-operation", state, version, fencingToken: 1 });
+  let mutationOutcome: NonNullable<ProtectedOperationClaim["mutationOutcome"]> = "not_attempted";
+  const claim = (): ProtectedOperationClaim => ({ id: "protected-operation", state, version, fencingToken: 1, mutationOutcome });
   const store: ProtectedTransactionStore = {
     claim: async () => claim(),
     transition: async (input) => {
       if (state !== input.expected) throw new Error("PROTECTED_OPERATION_TRANSITION_FENCED");
       state = input.next; version += 1; return claim();
+    },
+    settleMutationOutcome: async ({ outcome }) => {
+      if ((mutationOutcome === "applied" || mutationOutcome === "not_applied") && mutationOutcome !== outcome)
+        throw new Error("PROTECTED_MUTATION_OUTCOME_SETTLEMENT_FENCED");
+      mutationOutcome = outcome; version += 1; return claim();
     },
     record: async () => undefined,
   };

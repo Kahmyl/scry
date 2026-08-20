@@ -506,7 +506,7 @@ describe("protected acquisition adapter registry", () => {
           persistPublicValue,
         } as unknown as ProtectedTransactionDependencies,
         facts,
-        { id: "protected-operation", state: "persisting", version: 1, fencingToken: 1 },
+        { id: "protected-operation", state: "persisting", version: 1, fencingToken: 1, mutationOutcome: "unknown" },
       );
 
       expect(persistSecret).not.toHaveBeenCalled();

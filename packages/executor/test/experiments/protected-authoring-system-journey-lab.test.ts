@@ -527,15 +527,21 @@ function planFor(transaction: ProtectedTransaction) {
 function memoryStore() {
   let stateValue: MutationLedgerState = "planned";
   let version = 1;
-  const claim = (): ProtectedOperationClaim => ({ id: randomUUID(), state: stateValue, version, fencingToken: 1 });
+  const claim = (): ProtectedOperationClaim => ({ id: randomUUID(), state: stateValue, version, fencingToken: 1, mutationOutcome: "not_attempted" });
   const stableId = randomUUID();
+  let mutationOutcome: NonNullable<ProtectedOperationClaim["mutationOutcome"]> = "not_attempted";
   let persistedReferences: ProtectedOperationClaim["persistedReferences"];
-  const stableClaim = (): ProtectedOperationClaim => ({ id: stableId, state: stateValue, version, fencingToken: 1, ...(persistedReferences ? { persistedReferences } : {}) });
+  const stableClaim = (): ProtectedOperationClaim => ({ id: stableId, state: stateValue, version, fencingToken: 1, mutationOutcome, ...(persistedReferences ? { persistedReferences } : {}) });
   const store: ProtectedTransactionStore = {
     claim: async () => stableClaim(),
     transition: async (input) => {
       if (stateValue !== input.expected) throw new Error("PROTECTED_OPERATION_TRANSITION_FENCED");
       stateValue = input.next; version += 1; return stableClaim();
+    },
+    settleMutationOutcome: async ({ outcome }) => {
+      if ((mutationOutcome === "applied" || mutationOutcome === "not_applied") && mutationOutcome !== outcome)
+        throw new Error("PROTECTED_MUTATION_OUTCOME_SETTLEMENT_FENCED");
+      mutationOutcome = outcome; version += 1; return stableClaim();
     },
     record: async () => undefined,
   };

@@ -359,6 +359,10 @@ describe("worker calibration attestation", () => {
 
 function calibrationExecutor() {
   const states = new Map<string, MutationLedgerState>();
+  const mutationOutcomes = new Map<
+    string,
+    "not_attempted" | "not_applied" | "applied" | "unknown"
+  >();
   return async (input: {
     plan: Parameters<typeof executePlan>[0]["plan"];
     policy: Parameters<typeof executePlan>[0]["policy"];
@@ -375,12 +379,19 @@ function calibrationExecutor() {
         await page.locator("body").waitFor({ state: "visible", ...timeout });
       },
       protectedTransactionStore: {
-        claim: async ({ operationId }) => ({ id: operationId, state: states.get(operationId) ?? "planned", version: 1, fencingToken: 1 }),
+        claim: async ({ operationId }) => ({ id: operationId, state: states.get(operationId) ?? "planned", version: 1, fencingToken: 1, mutationOutcome: mutationOutcomes.get(operationId) ?? "not_attempted" }),
         transition: async ({ operationId, expected, next }) => {
           if ((states.get(operationId) ?? "planned") !== expected) throw new Error("PROTECTED_OPERATION_TRANSITION_FENCED");
           if (!(await input.beforeMutationTransition({ expected, next }))) throw new Error("PROTECTED_OPERATION_TRANSITION_FENCED");
           states.set(operationId, next);
-          return { id: operationId, state: next, version: 2, fencingToken: 1 };
+          return { id: operationId, state: next, version: 2, fencingToken: 1, mutationOutcome: mutationOutcomes.get(operationId) ?? "not_attempted" };
+        },
+        settleMutationOutcome: async ({ id, version, fencingToken, outcome }) => {
+          const current = mutationOutcomes.get(id);
+          if ((current === "applied" || current === "not_applied") && current !== outcome)
+            throw new Error("PROTECTED_MUTATION_OUTCOME_SETTLEMENT_CONTRADICTION");
+          mutationOutcomes.set(id, outcome);
+          return { id, state: states.get(id) ?? "reconciling", version: version + 1, fencingToken, mutationOutcome: outcome };
         },
         record: async () => undefined,
       },

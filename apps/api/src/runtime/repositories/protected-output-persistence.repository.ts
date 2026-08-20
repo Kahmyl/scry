@@ -231,13 +231,16 @@ export class ProtectedOutputPersistenceRepository {
         }
         const transitioned = await client.query<{
           id: string; state: "persisted"; version: string; fencingToken: string;
+          mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
           persistedReferences: Record<string, unknown>;
         }>(
           `UPDATE protected_operations SET state='persisted',phase='persistence_committed',
-             persistence_state='committed',persisted_references=$5::jsonb,version=version+1,updated_at=now()
+             acquisition_state='complete',persistence_state='committed',
+             persisted_references=$5::jsonb,version=version+1,updated_at=now()
            WHERE id=$1 AND state='persisting' AND lease_owner=$2 AND fencing_token=$3 AND version=$4
              AND lease_expires_at>now() RETURNING id,state,version,
-               fencing_token AS "fencingToken",persisted_references AS "persistedReferences"`,
+               fencing_token AS "fencingToken",mutation_outcome AS "mutationOutcome",
+               persisted_references AS "persistedReferences"`,
           [context.protectedOperationId,context.leaseOwner,context.fencingToken,context.version,JSON.stringify(references)],
         );
         if (!transitioned.rowCount) throw new ConflictException("PROTECTED_OPERATION_PERSISTENCE_FENCED");
@@ -259,6 +262,7 @@ export class ProtectedOutputPersistenceRepository {
             state: row.state,
             version: Number(row.version),
             fencingToken: Number(row.fencingToken),
+            mutationOutcome: row.mutationOutcome,
             persistedReferences: row.persistedReferences as typeof references,
           },
         };

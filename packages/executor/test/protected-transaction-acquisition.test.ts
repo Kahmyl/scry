@@ -23,7 +23,7 @@ describe("protected output persistence routing", () => {
       protectedPersistence: "not_attempted", publicPersistence: "not_attempted",
       credentialSecurity: "not_applicable",
     };
-    const claim = { id: "operation", state: "persisting" as const, version: 7, fencingToken: 3 };
+    const claim = { id: "operation", state: "persisting" as const, version: 7, fencingToken: 3, mutationOutcome: "unknown" as const };
     const result = await persistAcquiredProtectedOutputs(
       {
         operationId: "generate",
@@ -57,7 +57,7 @@ describe("protected output persistence routing", () => {
       { persistOutputsAtomically: vi.fn(async () => { throw new Error("database unavailable"); }) } as never,
       { credentialReferences: {}, publicValueReferences: {}, protectedAcquisitionEvidence: [], protectedPersistence: "not_attempted", publicPersistence: "not_attempted", credentialSecurity: "not_applicable" } as never,
       acquired as never,
-      { id: "operation", state: "persisting", version: 7, fencingToken: 3 },
+      { id: "operation", state: "persisting", version: 7, fencingToken: 3, mutationOutcome: "unknown" },
     )).rejects.toThrow("ATOMIC_OUTPUT_PERSISTENCE_FAILED");
     expect(acquired.every(({ value }) => value === "")).toBe(true);
   });

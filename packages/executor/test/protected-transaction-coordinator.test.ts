@@ -210,10 +210,13 @@ const transaction = (origin: string): ProtectedTransaction => ({
 function memoryStore(initial: MutationLedgerState = "planned", persistedReferences?: import("../src/protected-transaction-coordinator.js").ProtectedOperationClaim["persistedReferences"]) {
   let state = initial;
   let version = 1;
+  let mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown" =
+    initial === "failed_not_applied" ? "not_applied" : "not_attempted";
+  const claim = () => ({ id: "protected-operation", state, version, fencingToken: 1, mutationOutcome, ...(persistedReferences ? { persistedReferences } : {}) });
   return {
     state: () => state,
     store: {
-      claim: async () => ({ id: "protected-operation", state, version, fencingToken: 1, ...(persistedReferences ? { persistedReferences } : {}) }),
+      claim: async () => claim(),
       transition: async ({
         expected,
         next,
@@ -223,8 +226,18 @@ function memoryStore(initial: MutationLedgerState = "planned", persistedReferenc
       }) => {
         if (state !== expected) throw new Error("PROTECTED_OPERATION_TRANSITION_FENCED");
         state = next;
+        if (next === "failed_not_applied") mutationOutcome = "not_applied";
         version += 1;
-        return { id: "protected-operation", state, version, fencingToken: 1, ...(persistedReferences ? { persistedReferences } : {}) };
+        return claim();
+      },
+      settleMutationOutcome: async ({ outcome }: { outcome: "applied" | "not_applied" }) => {
+        if (
+          (mutationOutcome === "applied" || mutationOutcome === "not_applied") &&
+          mutationOutcome !== outcome
+        ) throw new Error("PROTECTED_MUTATION_OUTCOME_SETTLEMENT_FENCED");
+        mutationOutcome = outcome;
+        version += 1;
+        return claim();
       },
       record: async () => undefined,
     },
@@ -310,6 +323,10 @@ describe("protected transaction capsule", () => {
         storage: { credentialName: "Secret", scope: "project" },
       },
     ];
+    operation.mutation.reconciliation = {
+      strategy: "persisted_outputs",
+      requiredReferences: ["clientSecret"],
+    };
     operation.acquisitionReadiness.approvedMethods = ["copy_control"];
     const gate = new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]);
     const authority = new VeilAuthority(

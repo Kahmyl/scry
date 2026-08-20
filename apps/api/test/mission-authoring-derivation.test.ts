@@ -305,6 +305,16 @@ describe("Mission authoring semantic derivation", () => {
           transports: ["fetch"],
         },
         response: { confirmedNotAppliedStatuses: [400, 401, 403, 404, 409, 429] },
+        externalResourceBindings: [{
+          status: "active",
+          identityReference: "clientId",
+          provider: "example",
+          resourceKind: "credential",
+          resourceScope: "application-1",
+          identityContractVersion: 1,
+          identitySource: "response",
+          requiredForDestructiveLifecycle: true,
+        }],
       },
       expectedEffect: { kind: "none" },
       constraints: { timeoutMs: 2_000, allowNewPage: false, allowNonExact: false },
@@ -340,19 +350,16 @@ describe("Mission authoring semantic derivation", () => {
     expect(
       transaction.extraction.outputs.every((output) => output.storage.scope === "project"),
     ).toBe(true);
-    expect(
-      transaction.extraction.outputs.every(
-        (output) =>
-          JSON.stringify(output.acquisition.permittedMethods) ===
-          JSON.stringify([
-            "semantic_field_value",
-            "input_value",
-            "text_content",
-            "copy_control",
-            "protected_network_value",
-          ]),
-      ),
-    ).toBe(true);
+    expect(transaction.extraction.outputs.find((output) => output.reference === "clientId")
+      ?.acquisition.permittedMethods).toEqual(["protected_network_value"]);
+    expect(transaction.extraction.outputs.find((output) => output.reference === "clientSecret")
+      ?.acquisition.permittedMethods).toEqual([
+        "semantic_field_value",
+        "input_value",
+        "text_content",
+        "copy_control",
+        "protected_network_value",
+      ]);
     expect(JSON.stringify(transaction)).not.toMatch(
       /selector|javascript|coordinates|adapterId|plaintext/i,
     );

@@ -844,4 +844,270 @@ integration("protected operation repository integration", () => {
       [sessionId],
     )).rejects.toThrow("Adaptive operation identity is immutable");
   });
+  it("keeps a published draft immutable when completed protected truth is projected", async () => {
+    const sessionProtection = await database.query<{ protection: string }>(
+      `SELECT protection FROM adaptive_sessions WHERE id=$1`,
+      [sessionId],
+    );
+
+    expect(sessionProtection.rows[0]?.protection).toBe("ordinary");
+
+    const operationId = "published-protected-immutability";
+
+    await beginAdaptiveProtectedOperation(operationId);
+    await create(operationId);
+
+    let claim = await claimOperation(operationId, "published-owner");
+
+    for (const next of [
+      "preparing",
+      "ready_to_dispatch",
+      "dispatching",
+      "dispatched",
+      "acquiring",
+      "persisting",
+    ] as const) {
+      claim = await operations.transition({
+        id: claim.id,
+        leaseOwner: "published-owner",
+        fencingToken: claim.fencingToken,
+        version: claim.version,
+        expected: claim.state,
+        next,
+        phase: next,
+      });
+    }
+
+    const persisted = await outputs.persistOutputsAtomically(
+      {
+        protectedOperationId: claim.id,
+        projectId,
+        environmentId,
+        missionId,
+        objectiveId,
+        agentSessionId,
+        ownerKind: "authoring_session",
+        ownerId: sessionId,
+        operationId,
+        leaseOwner: "published-owner",
+        fencingToken: claim.fencingToken,
+        version: claim.version,
+      },
+      [
+        {
+          reference: "clientId",
+          classification: "public",
+          storageName: "Client ID",
+          value: "published-public-value",
+          scope: "project",
+        },
+        {
+          reference: "clientSecret",
+          classification: "protected",
+          storageName: "Client secret",
+          value: "published-protected-canary",
+          scope: "project",
+        },
+      ],
+    );
+
+    claim = await operations.transition({
+      id: persisted.claim.id,
+      leaseOwner: "published-owner",
+      fencingToken: persisted.claim.fencingToken,
+      version: persisted.claim.version,
+      expected: "persisted",
+      next: "reconciling",
+      phase: "reconciling",
+    });
+
+    claim = await operations.transition({
+      id: claim.id,
+      leaseOwner: "published-owner",
+      fencingToken: claim.fencingToken,
+      version: claim.version,
+      expected: "reconciling",
+      next: "completed",
+      phase: "completed",
+    });
+
+    await database.query(
+      `UPDATE flow_drafts
+          SET state='published'
+        WHERE id=$1`,
+      [flowDraftId],
+    );
+
+    const readDraft = async () => {
+      const result = await database.query<{
+        state: string;
+        version: number;
+        plan: unknown;
+        updatedAt: string;
+      }>(
+        `SELECT state,version,plan,updated_at::text AS "updatedAt"
+           FROM flow_drafts
+          WHERE id=$1`,
+        [flowDraftId],
+      );
+
+      expect(result.rowCount).toBe(1);
+      return result.rows[0]!;
+    };
+
+    const before = await readDraft();
+
+    expect(before.state).toBe("published");
+
+    const eventsBefore = await database.query<{ count: number }>(
+      `SELECT count(*)::int AS count
+         FROM flow_draft_events
+        WHERE draft_id=$1
+          AND type='authoring_step_appended'
+          AND safe_metadata->>'operationId'=$2`,
+      [flowDraftId, operationId],
+    );
+
+    const projection = await new AdaptiveSessionRepository(
+      database,
+    ).projectProtectedOperationForAuthoring({
+      sessionId,
+      operationId,
+    });
+
+    expect(projection).toMatchObject({
+      status: "settled",
+      state: "completed",
+      outcome: {
+        functionalResult: "succeeded",
+        mutationOutcome: "applied",
+      },
+    });
+
+    const durable = await database.query<{
+      state: string;
+      functionalResult: string;
+      mutationOutcome: string;
+    }>(
+      `SELECT state,
+              functional_result AS "functionalResult",
+              mutation_outcome AS "mutationOutcome"
+         FROM adaptive_operations
+        WHERE session_id=$1
+          AND operation_id=$2`,
+      [sessionId, operationId],
+    );
+
+    expect(durable.rows[0]).toEqual({
+      state: "completed",
+      functionalResult: "succeeded",
+      mutationOutcome: "applied",
+    });
+
+    expect(await readDraft()).toEqual(before);
+
+    const eventsAfter = await database.query<{ count: number }>(
+      `SELECT count(*)::int AS count
+         FROM flow_draft_events
+        WHERE draft_id=$1
+          AND type='authoring_step_appended'
+          AND safe_metadata->>'operationId'=$2`,
+      [flowDraftId, operationId],
+    );
+
+    expect(eventsAfter.rows[0]!.count).toBe(eventsBefore.rows[0]!.count);
+    expect(eventsAfter.rows[0]!.count).toBe(0);
+  });
+
+  it("settles mutation truth monotonically and permits post-dispatch not-applied only after proof", async () => {
+    const appliedId = `monotonic-applied-${randomUUID()}`;
+    await create(appliedId);
+    let applied = await claimOperation(appliedId, "monotonic-applied-owner");
+    for (const next of ["preparing", "ready_to_dispatch", "dispatching"] as const) {
+      applied = await operations.transition({
+        id: applied.id, leaseOwner: "monotonic-applied-owner", fencingToken: applied.fencingToken,
+        version: applied.version, expected: applied.state, next, phase: next,
+      });
+    }
+    applied = await operations.settleMutationOutcome({
+      id: applied.id, leaseOwner: "monotonic-applied-owner", fencingToken: applied.fencingToken,
+      version: applied.version, outcome: "applied",
+    });
+    await expect(operations.settleMutationOutcome({
+      id: applied.id, leaseOwner: "monotonic-applied-owner", fencingToken: applied.fencingToken,
+      version: applied.version, outcome: "not_applied",
+    })).rejects.toThrow("PROTECTED_MUTATION_OUTCOME_SETTLEMENT_FENCED");
+    const recovery = await operations.transition({
+      id: applied.id, leaseOwner: "monotonic-applied-owner", fencingToken: applied.fencingToken,
+      version: applied.version, expected: "dispatching", next: "recovery_required",
+      phase: "privacy_failed", reasonCode: "VEIL_CLIPBOARD_CLEANUP_FAILED",
+    });
+    expect(recovery.mutationOutcome).toBe("applied");
+
+    const rejectedId = `monotonic-not-applied-${randomUUID()}`;
+    await create(rejectedId);
+    let rejected = await claimOperation(rejectedId, "monotonic-rejected-owner");
+    for (const next of ["preparing", "ready_to_dispatch", "dispatching"] as const) {
+      rejected = await operations.transition({
+        id: rejected.id, leaseOwner: "monotonic-rejected-owner", fencingToken: rejected.fencingToken,
+        version: rejected.version, expected: rejected.state, next, phase: next,
+      });
+    }
+    await expect(operations.transition({
+      id: rejected.id, leaseOwner: "monotonic-rejected-owner", fencingToken: rejected.fencingToken,
+      version: rejected.version, expected: "dispatching", next: "failed_not_applied",
+      phase: "generic_failure",
+    })).rejects.toThrow("PROTECTED_MUTATION_CANNOT_SETTLE_NOT_APPLIED_AFTER_DISPATCH");
+    rejected = await operations.settleMutationOutcome({
+      id: rejected.id, leaseOwner: "monotonic-rejected-owner", fencingToken: rejected.fencingToken,
+      version: rejected.version, outcome: "not_applied",
+    });
+    rejected = await operations.transition({
+      id: rejected.id, leaseOwner: "monotonic-rejected-owner", fencingToken: rejected.fencingToken,
+      version: rejected.version, expected: "dispatching", next: "failed_not_applied",
+      phase: "authoritative_rejection",
+    });
+    expect(rejected.mutationOutcome).toBe("not_applied");
+  });
+
+  it("projects applied recovery with committed references and an observation boundary", async () => {
+    const operationId = `applied-recovery-${randomUUID()}`;
+    await beginAdaptiveProtectedOperation(operationId);
+    await create(operationId);
+    let claim = await claimOperation(operationId, "applied-recovery-owner");
+    for (const next of ["preparing", "ready_to_dispatch", "dispatching", "dispatched", "acquiring", "persisting"] as const) {
+      claim = await operations.transition({
+        id: claim.id, leaseOwner: "applied-recovery-owner", fencingToken: claim.fencingToken,
+        version: claim.version, expected: claim.state, next, phase: next,
+      });
+    }
+    const persisted = await outputs.persistOutputsAtomically({
+      protectedOperationId: claim.id, projectId, environmentId, missionId, objectiveId,
+      agentSessionId, ownerKind: "authoring_session", ownerId: sessionId, operationId,
+      leaseOwner: "applied-recovery-owner", fencingToken: claim.fencingToken, version: claim.version,
+    }, [
+      { reference: "clientId", classification: "public", storageName: "Client ID", value: `public-${randomUUID()}`, scope: "project" },
+      { reference: "clientSecret", classification: "protected", storageName: "Client secret", value: `secret-${randomUUID()}`, scope: "project" },
+    ]);
+    claim = await operations.settleMutationOutcome({
+      id: persisted.claim.id, leaseOwner: "applied-recovery-owner", fencingToken: persisted.claim.fencingToken,
+      version: persisted.claim.version, outcome: "applied",
+    });
+    claim = await operations.transition({
+      id: claim.id, leaseOwner: "applied-recovery-owner", fencingToken: claim.fencingToken,
+      version: claim.version, expected: "persisted", next: "recovery_required",
+      phase: "continuation_failed", reasonCode: "PROTECTED_CONTINUATION_FAILED",
+    });
+    expect(claim.mutationOutcome).toBe("applied");
+    const projection = await new AdaptiveSessionRepository(database).projectProtectedOperationForAuthoring({
+      sessionId, operationId,
+    });
+    expect(projection).toMatchObject({
+      status: "settled", state: "recovery_required",
+      outcome: { functionalResult: "inconclusive", mutationOutcome: "applied" },
+      decisionBoundary: { type: "effect_observation_required", reasonCode: "PROTECTED_CONTINUATION_FAILED" },
+    });
+    expect(projection.status === "settled" && projection.outcome.generatedReferences).toHaveLength(2);
+  });
+
 });

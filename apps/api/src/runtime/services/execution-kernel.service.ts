@@ -351,6 +351,16 @@ export class ExecutionCapabilityFactory {
           });
           phaseStartedAt = now;
         },
+        settleMutationOutcome: async (settlement) => {
+          current = await operations.settleMutationOutcome({
+            id: settlement.id,
+            leaseOwner: context.leaseOwner,
+            fencingToken: settlement.fencingToken,
+            version: settlement.version,
+            outcome: settlement.outcome,
+          });
+          return current;
+        },
         heartbeat: async (claim) => {
           await operations.heartbeat({
             id: claim.id, leaseOwner: context.leaseOwner,
@@ -431,18 +441,30 @@ function calibrationProtectedCapabilities(
 ): Pick<ExecuteOptions, "protectedTransactionStore" | "atomicOutputCapture"> {
   let state: import("@scry/contracts").ProtectedOperationState = "planned";
   let version = 1;
+  let mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown" = "not_attempted";
   const transition = async (expected: import("@scry/contracts").ProtectedOperationState, next: import("@scry/contracts").ProtectedOperationState) => {
     if (state !== expected || !(await beforeTransition({ expected, next })))
       throw new Error("PROTECTED_OPERATION_TRANSITION_FENCED");
     state = next;
     version += 1;
-    return { id: operationId, state, version, fencingToken: 1 };
+    return { id: operationId, state, version, fencingToken: 1, mutationOutcome };
   };
   return {
     protectedTransactionStore: {
-      claim: async () => ({ id: operationId, state, version, fencingToken: 1 }),
+      claim: async () => ({ id: operationId, state, version, fencingToken: 1, mutationOutcome }),
       transition: async ({ expected, next }) => transition(expected, next),
       record: async () => undefined,
+      settleMutationOutcome: async ({ outcome }) => {
+        if (
+          (mutationOutcome === "applied" || mutationOutcome === "not_applied") &&
+          mutationOutcome !== outcome
+        ) {
+          throw new Error("PROTECTED_MUTATION_OUTCOME_SETTLEMENT_CONTRADICTION");
+        }
+        mutationOutcome = outcome;
+        version += 1;
+        return { id: operationId, state, version, fencingToken: 1, mutationOutcome };
+      },
     },
     atomicOutputCapture: async ({ outputs }) => {
       const references: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "run" | "project" }> = {};

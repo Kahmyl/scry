@@ -46,6 +46,55 @@ describe("authoritative resource reconciliation registry", () => {
     await expect(registry.reconcile(authority)).rejects.toThrow();
   });
 
+  it("upgrades provider output recovery only from complete committed identity-matched local evidence", async () => {
+    const registry = new AdaptiveOperationReconciliationRegistry();
+    registry.register({ id: "orders", supports: () => true, observe: async () => ({
+      result: "proven_applied_output_unrecovered",
+      reasonCode: "RESOURCE_PRESENT_OUTPUT_UNRECOVERED",
+      resource: { provider: "example", resourceKind: "order", resourceScope: "orders", identity: "order-1", state: "active" },
+      outputState: "unrecovered",
+      evidence: { authoritative: true },
+    }) });
+    const qualified = {
+      ...authority,
+      localEvidence: {
+        mutationOutcome: "applied" as const,
+        acquisitionState: "complete" as const,
+        persistenceState: "committed" as const,
+        requiredOutputReferences: ["orderId", "secret"],
+        persistedReferences: { orderId: {}, secret: {} },
+        activeBinding: {
+          provider: "example", resourceKind: "order", resourceScope: "orders",
+          canonicalExternalIdentity: "order-1",
+        },
+      },
+    };
+    await expect(registry.reconcile(qualified)).resolves.toMatchObject({
+      result: "proven_applied",
+      outputState: "usable",
+      reasonCode: "AUTHORITATIVE_RESOURCE_AND_LOCAL_OUTPUTS_PRESENT",
+    });
+  });
+
+  it("preserves unrecovered provider truth when local persistence or binding identity is incomplete", async () => {
+    const registry = new AdaptiveOperationReconciliationRegistry();
+    registry.register({ id: "orders", supports: () => true, observe: async () => ({
+      result: "proven_applied_output_unrecovered",
+      reasonCode: "RESOURCE_PRESENT_OUTPUT_UNRECOVERED",
+      resource: { provider: "example", resourceKind: "order", resourceScope: "orders", identity: "order-1", state: "active" },
+      outputState: "unrecovered",
+      evidence: { authoritative: true },
+    }) });
+    await expect(registry.reconcile({
+      ...authority,
+      localEvidence: {
+        mutationOutcome: "applied", acquisitionState: "complete", persistenceState: "committed",
+        requiredOutputReferences: ["orderId", "secret"], persistedReferences: { orderId: {} },
+        activeBinding: { provider: "example", resourceKind: "order", resourceScope: "orders", canonicalExternalIdentity: "different" },
+      },
+    })).resolves.toMatchObject({ result: "proven_applied_output_unrecovered" });
+  });
+
   it("does not observe for ownership mismatch or ambiguous provider authority", async () => {
     const registry = new AdaptiveOperationReconciliationRegistry();
     const first = vi.fn(); const second = vi.fn();

@@ -191,7 +191,12 @@ export class ProtectedOperationRepository {
         `UPDATE protected_operations SET state=$2,phase=CASE WHEN $2='recovery_required' THEN 'lease_expired' ELSE phase END,
            version=version+1,fencing_token=fencing_token+1,lease_owner=$3,
            lease_expires_at=now()+($4::text||' milliseconds')::interval,
-           mutation_outcome=CASE WHEN $2='failed_not_applied' THEN 'not_applied' WHEN $5::boolean THEN 'unknown' ELSE mutation_outcome END,
+           mutation_outcome=CASE
+             WHEN mutation_outcome IN ('applied','not_applied') THEN mutation_outcome
+             WHEN $2='failed_not_applied' THEN 'not_applied'
+             WHEN $5::boolean AND mutation_outcome NOT IN ('applied','not_applied') THEN 'unknown'
+             ELSE mutation_outcome
+           END,
            failure_code=CASE WHEN $2 IN ('recovery_required','failed_not_applied') THEN 'PROTECTED_OPERATION_LEASE_EXPIRED' ELSE failure_code END,
            recovery_class=CASE WHEN $2='recovery_required' THEN 'reconciliation_required' WHEN $2='failed_not_applied' THEN 'safe_to_retry' ELSE recovery_class END,
            updated_at=now() WHERE id=$1
@@ -230,12 +235,14 @@ export class ProtectedOperationRepository {
     assertProtectedOperationTransition(input.expected, input.next);
     return this.database.transaction(async (client) => {
       if (input.next === "failed_not_applied" && ["dispatching", "dispatched", "acquiring", "persisting", "persisted", "reconciling"].includes(input.expected)) {
-        const semantics = await client.query<{ dispatchSemantics: string }>(
-          `SELECT dispatch_semantics AS "dispatchSemantics" FROM protected_operations
+        const semantics = await client.query<{ dispatchSemantics: string; mutationOutcome: string }>(
+          `SELECT dispatch_semantics AS "dispatchSemantics",mutation_outcome AS "mutationOutcome" FROM protected_operations
            WHERE id=$1 AND lease_owner=$2 AND fencing_token=$3 AND version=$4 AND state=$5 FOR UPDATE`,
           [input.id,input.leaseOwner,input.fencingToken,input.version,input.expected],
         );
-        if (semantics.rows[0]?.dispatchSemantics !== "read_only")
+        if (semantics.rows[0]?.mutationOutcome === "applied")
+          throw new ConflictException("PROTECTED_MUTATION_OUTCOME_CONTRADICTION");
+        if (semantics.rows[0]?.dispatchSemantics !== "read_only" && semantics.rows[0]?.mutationOutcome !== "not_applied")
           throw new ConflictException("PROTECTED_MUTATION_CANNOT_SETTLE_NOT_APPLIED_AFTER_DISPATCH");
       }
       const dispatchState = protectedOperationDispatchMayBegin(input.expected, input.next)
@@ -247,7 +254,12 @@ export class ProtectedOperationRepository {
             ? "unknown" : null;
       const result = await client.query<OperationRow>(
         `UPDATE protected_operations SET state=$6,phase=$7,version=version+1,
-           dispatch_state=COALESCE($8,dispatch_state),mutation_outcome=COALESCE($9,mutation_outcome),
+           dispatch_state=COALESCE($8,dispatch_state),
+           mutation_outcome=CASE
+             WHEN $9::text IS NULL THEN mutation_outcome
+             WHEN mutation_outcome IN ('applied','not_applied') THEN mutation_outcome
+             ELSE $9::text
+           END,
            failure_code=COALESCE($10,failure_code),safe_diagnostics=COALESCE($11::jsonb,safe_diagnostics),
            recovery_class=CASE WHEN $6='recovery_required' THEN 'reconciliation_required' ELSE recovery_class END,
            completed_at=CASE WHEN $6=ANY($12::text[]) THEN now() ELSE completed_at END,
@@ -277,6 +289,39 @@ export class ProtectedOperationRepository {
       await appendTransition(client,input.id,input.expected,input.next,input.phase,input.fencingToken,input.reasonCode,input.safeDiagnostics);
       return normalize(result.rows[0]!);
     });
+  }
+
+  async settleMutationOutcome(input: {
+    id: string;
+    leaseOwner: string;
+    fencingToken: number;
+    version: number;
+    outcome: "applied" | "not_applied";
+  }) {
+    const result = await this.database.query<OperationRow>(
+      `UPDATE protected_operations
+          SET mutation_outcome=CASE
+                WHEN mutation_outcome IN ('applied','not_applied') THEN mutation_outcome
+                ELSE $5
+              END,
+              version=version+1,
+              updated_at=now()
+        WHERE id=$1
+          AND lease_owner=$2
+          AND fencing_token=$3
+          AND version=$4
+          AND lease_expires_at>now()
+          AND state IN ('dispatching','dispatched','acquiring','persisting','persisted','reconciling')
+          AND (mutation_outcome NOT IN ('applied','not_applied') OR mutation_outcome=$5)
+        RETURNING id,state,phase,version,fencing_token AS "fencingToken",
+          lease_owner AS "leaseOwner",lease_expires_at AS "leaseExpiresAt",
+          dispatch_state AS "dispatchState",mutation_outcome AS "mutationOutcome",
+          persisted_references AS "persistedReferences"`,
+      [input.id,input.leaseOwner,input.fencingToken,input.version,input.outcome],
+    );
+    if (!result.rowCount)
+      throw new ConflictException("PROTECTED_MUTATION_OUTCOME_SETTLEMENT_FENCED");
+    return normalize(result.rows[0]!);
   }
 
   async record(input: {
