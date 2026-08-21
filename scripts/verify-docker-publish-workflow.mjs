@@ -8,7 +8,7 @@ const invokedScripts = [...workflow.matchAll(/^\s+pnpm ([a-z][a-z0-9:_-]+)(?:\s|
   (match) => match[1],
 );
 for (const script of invokedScripts) {
-  if (script === "install") continue;
+  if (script === "install" || script === "exec") continue;
   if (!manifest.scripts?.[script]) fail(`workflow invokes missing root script: ${script}`);
 }
 
@@ -28,6 +28,7 @@ for (const required of [
   'COMPOSE_PROFILES: ""',
   "docker/build-push-action@v6",
   "docker compose -f compose.deploy.yml publish",
+  "pnpm --filter @scry/api exec playwright install --with-deps chromium",
   "pnpm test:beta",
 ]) {
   if (!workflow.includes(required)) fail(`beta publication contract missing: ${required}`);
@@ -38,6 +39,14 @@ const loginIndex = workflow.indexOf("Log in to Docker Hub");
 const publishIndex = workflow.indexOf("Build and publish the qualified Scry image");
 if (!(qualificationIndex < loginIndex && loginIndex < publishIndex))
   fail("Docker publication must occur only after beta topology qualification");
+
+const browserInstallIndex = workflow.indexOf(
+  "pnpm --filter @scry/api exec playwright install --with-deps chromium",
+);
+const browserGateIndex = workflow.indexOf("pnpm verify:protected-interaction-conformance");
+const betaTestsIndex = workflow.indexOf("pnpm test:beta");
+if (!(browserInstallIndex < browserGateIndex && browserInstallIndex < betaTestsIndex))
+  fail("the matching Playwright Chromium binary must be installed before browser-backed gates");
 
 const environment = {
   ...process.env,
