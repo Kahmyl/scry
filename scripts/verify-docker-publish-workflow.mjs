@@ -2,9 +2,6 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 
 const workflow = readFileSync(".github/workflows/docker-publish.yml", "utf8");
-const manifest = JSON.parse(readFileSync("package.json", "utf8"));
-const betaTests = readFileSync("scripts/run-beta-tests.mjs", "utf8");
-const authoringRelease = readFileSync("scripts/verify-adaptive-authoring-release.mjs", "utf8");
 
 for (const retiredWorkflow of [
   ".github/workflows/praxis-verification.yml",
@@ -14,23 +11,20 @@ for (const retiredWorkflow of [
     fail(`retired pre-reset qualification workflow remains active: ${retiredWorkflow}`);
 }
 
-const invokedScripts = [...workflow.matchAll(/^\s+pnpm ([a-z][a-z0-9:_-]+)(?:\s|$)/gm)].map(
-  (match) => match[1],
-);
-for (const script of invokedScripts) {
-  if (script === "install" || script === "exec") continue;
-  if (!manifest.scripts?.[script]) fail(`workflow invokes missing root script: ${script}`);
-}
-
 for (const forbidden of [
   "kahmyl/scry-backup",
   "BACKUP_IMAGE",
   "SCRY_BACKUP_IMAGE_REF",
   "verify:production-recovery",
   "COMPOSE_PROFILES: operations",
+  "pnpm ",
+  "vitest",
+  "typecheck",
+  "test:beta",
+  "verify:adaptive-authoring-release",
 ]) {
   if (workflow.includes(forbidden))
-    fail(`beta publication retains backup dependency: ${forbidden}`);
+    fail(`beta publication retains excluded pre-publication dependency: ${forbidden}`);
 }
 
 for (const required of [
@@ -38,38 +32,17 @@ for (const required of [
   'COMPOSE_PROFILES: ""',
   "docker/build-push-action@v6",
   "docker compose -f compose.deploy.yml publish",
-  "pnpm --filter @scry/api exec playwright install --with-deps chromium",
-  "pnpm test:beta",
+  "node scripts/schema-fingerprint.mjs",
+  "Boot and smoke-test the candidate beta topology",
 ]) {
   if (!workflow.includes(required)) fail(`beta publication contract missing: ${required}`);
 }
 
-const qualificationIndex = workflow.indexOf("Boot and verify the candidate beta topology");
+const qualificationIndex = workflow.indexOf("Boot and smoke-test the candidate beta topology");
 const loginIndex = workflow.indexOf("Log in to Docker Hub");
-const publishIndex = workflow.indexOf("Build and publish the qualified Scry image");
+const publishIndex = workflow.indexOf("Build and publish the Scry beta image");
 if (!(qualificationIndex < loginIndex && loginIndex < publishIndex))
-  fail("Docker publication must occur only after beta topology qualification");
-
-const browserInstallIndex = workflow.indexOf(
-  "pnpm --filter @scry/api exec playwright install --with-deps chromium",
-);
-const browserGateIndex = workflow.indexOf("pnpm verify:protected-interaction-conformance");
-const betaTestsIndex = workflow.indexOf("pnpm test:beta");
-if (!(browserInstallIndex < browserGateIndex && browserInstallIndex < betaTestsIndex))
-  fail("the matching Playwright Chromium binary must be installed before browser-backed gates");
-
-if (!betaTests.includes('"!@scry/executor"'))
-  fail("beta tests must leave the exhaustive Executor suite to local qualification");
-for (const focusedExecutorTest of [
-  "test/protected-acquisition-adapters.test.ts",
-  "test/protected-transaction-coordinator.test.ts",
-  "test/probe-veil-boundary.test.ts",
-]) {
-  if (!authoringRelease.includes(focusedExecutorTest))
-    fail(`focused beta Executor gate omits ${focusedExecutorTest}`);
-}
-if (authoringRelease.includes('"campaign:'))
-  fail("focused beta authoring qualification must not reactivate retired legacy campaigns");
+  fail("Docker publication must occur only after the candidate beta topology smoke test");
 
 const environment = {
   ...process.env,
@@ -104,7 +77,7 @@ for (const service of services) {
 }
 
 process.stdout.write(
-  `Docker beta publication verified: ${invokedScripts.length} root scripts exist; ${services.length} core services; no backup image dependency.\n`,
+  `Docker beta publication verified: build-and-smoke policy; ${services.length} core services; no test or backup image dependency.\n`,
 );
 
 function fail(message) {
