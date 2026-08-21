@@ -31,8 +31,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Record beta schema identity
+      - name: Render self-contained beta stack and record schema identity
         run: |
+          node scripts/render-compose-oci.mjs "$RUNNER_TEMP/scry-compose-oci.yml"
+          echo "SCRY_COMPOSE_FILE=$RUNNER_TEMP/scry-compose-oci.yml" >> "$GITHUB_ENV"
           echo "SCRY_SCHEMA_FINGERPRINT=$(node scripts/schema-fingerprint.mjs)" >> "$GITHUB_ENV"
 
       - name: Generate application image metadata
@@ -73,12 +75,12 @@ jobs:
           SCRY_IMAGE_REF: scry-beta-ci:${{ github.sha }}
           SCRY_RELEASE_ID: ${{ github.sha }}
         run: |
-          trap 'docker compose -f compose.deploy.yml down -v' EXIT
-          docker compose -f compose.deploy.yml up -d --wait postgres redis migrate api worker mcp web
-          docker compose -f compose.deploy.yml exec -T api wget -qO- http://127.0.0.1:4000/api/ready
-          docker compose -f compose.deploy.yml exec -T mcp wget -qO- http://127.0.0.1:4100/health
-          docker compose -f compose.deploy.yml exec -T web wget -qO- http://127.0.0.1:3000/
-          test -z "$(docker compose -f compose.deploy.yml ps --services --filter status=running | grep -E 'backup|restore-drill|prometheus|alertmanager' || true)"
+          trap 'docker compose -f "$SCRY_COMPOSE_FILE" down -v' EXIT
+          docker compose -f "$SCRY_COMPOSE_FILE" up -d --wait postgres redis migrate api worker mcp web
+          docker compose -f "$SCRY_COMPOSE_FILE" exec -T api wget -qO- http://127.0.0.1:4000/api/ready
+          docker compose -f "$SCRY_COMPOSE_FILE" exec -T mcp wget -qO- http://127.0.0.1:4100/health
+          docker compose -f "$SCRY_COMPOSE_FILE" exec -T web wget -qO- http://127.0.0.1:3000/
+          test -z "$(docker compose -f "$SCRY_COMPOSE_FILE" ps --services --filter status=running | grep -E 'backup|restore-drill|prometheus|alertmanager' || true)"
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -136,5 +138,5 @@ jobs:
           SCRY_IMAGE_REF: ${{ env.APP_IMAGE }}@${{ steps.build.outputs.digest }}
           SCRY_RELEASE_ID: ${{ github.sha }}
         run: |
-          docker compose -f compose.deploy.yml publish -y \
+          docker compose -f "$SCRY_COMPOSE_FILE" publish -y \
             "${STACK_IMAGE}:${{ steps.stack.outputs.tag }}"
