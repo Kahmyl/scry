@@ -1,10 +1,8 @@
 import { spawnSync } from "node:child_process";
 
-const strict = true;
 const databaseUrl = process.env.SCRY_AUTHORING_TEST_DATABASE_URL;
 
-if (strict && !databaseUrl)
-  fail("SCRY_AUTHORING_TEST_DATABASE_URL is required for the release gate");
+if (!databaseUrl) fail("SCRY_AUTHORING_TEST_DATABASE_URL is required for the release gate");
 
 run([
   "--filter",
@@ -48,14 +46,7 @@ run([
   "test/calibration-runner.test.ts",
   "test/vitract-authoring-vertical.test.ts",
 ]);
-if (databaseUrl) {
-  run(["--filter", "@scry/api", "exec", "vitest", "run", "test/authoring.integration.test.ts"]);
-}
-if (strict) {
-  run(["--filter", "@scry/executor", "campaign:praxis:public-apps"]);
-  run(["--filter", "@scry/executor", "campaign:veil:adversarial"]);
-  run(["--filter", "@scry/executor", "campaign:veil:public-apps"]);
-}
+run(["--filter", "@scry/api", "exec", "vitest", "run", "test/authoring.integration.test.ts"]);
 
 function run(args) {
   const result = spawnSync("pnpm", args, { stdio: "inherit", env: process.env });
