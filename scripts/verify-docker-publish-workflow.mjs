@@ -1,8 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const workflow = readFileSync(".github/workflows/docker-publish.yml", "utf8");
 const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+
+for (const retiredWorkflow of [
+  ".github/workflows/praxis-verification.yml",
+  ".github/workflows/veil-verification.yml",
+]) {
+  if (existsSync(retiredWorkflow))
+    fail(`retired pre-reset qualification workflow remains active: ${retiredWorkflow}`);
+}
 
 const invokedScripts = [...workflow.matchAll(/^\s+pnpm ([a-z][a-z0-9:_-]+)(?:\s|$)/gm)].map(
   (match) => match[1],
