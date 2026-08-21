@@ -47,6 +47,7 @@ jobs:
           pnpm format:check
           pnpm verify:privacy-foundation
           pnpm verify:playwright
+          pnpm --filter @scry/api exec playwright install --with-deps chromium
           pnpm verify:subsystem-boundaries
           pnpm verify:repository-topology
           pnpm verify:execution-kernel-boundary
