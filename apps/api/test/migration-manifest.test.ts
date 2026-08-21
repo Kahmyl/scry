@@ -19,7 +19,9 @@ describe("schema migration manifest", () => {
     const missionAuthoringM2 = baseline.indexOf("\\ir mission-authoring-grouped-turns-m2.sql");
     const protectedStateMachine = baseline.indexOf("\\ir protected-operation-state-machine.sql");
     const protectedCompletion = baseline.indexOf("\\ir protected-operation-completion.sql");
-    const protectedProjection = baseline.indexOf("\\ir protected-operation-authoritative-projection.sql");
+    const protectedProjection = baseline.indexOf(
+      "\\ir protected-operation-authoritative-projection.sql",
+    );
     const protectedResponseStaging = baseline.indexOf("\\ir protected-response-output-staging.sql");
     const protectedReadOnlyDispatch = baseline.indexOf("\\ir protected-read-only-dispatch.sql");
     const externalResourceBindings = baseline.indexOf("\\ir external-resource-bindings.sql");
@@ -81,6 +83,7 @@ describe("schema migration manifest", () => {
       expect(source).toContain("protected-read-only-dispatch.sql");
       expect(source).toContain("external-resource-bindings.sql");
       expect(source).toContain("segmented-flow-successor-checkpoints.sql");
+      expect(source).toContain("20260820-0910_scope_unknown_fence_to_resource_mutations.sql");
     }
   });
 
@@ -93,7 +96,9 @@ describe("schema migration manifest", () => {
     expect(migration).toContain("Terminal adaptive operations are immutable");
     expect(migration).toContain("owner_kind='authoring_session'");
     expect(migration).toContain("durable_count<>1");
-    expect(migration).toContain("Completed adaptive protected projection disagrees with durable operation");
+    expect(migration).toContain(
+      "Completed adaptive protected projection disagrees with durable operation",
+    );
     expect(migration).not.toContain("current_setting");
   });
 

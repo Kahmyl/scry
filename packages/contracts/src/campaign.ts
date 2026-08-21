@@ -2,7 +2,12 @@ import { z } from "zod";
 
 export const adaptiveMilestoneSchema = z.enum(["M0", "M1", "M2", "M3", "M4", "M5"]);
 export const campaignTargetSchema = z.enum([
-  "production_shaped", "vitract_preview", "orangehrm", "expand_testing", "the_internet", "xyz_bank",
+  "production_shaped",
+  "vitract_preview",
+  "orangehrm",
+  "expand_testing",
+  "the_internet",
+  "xyz_bank",
 ]);
 
 export const campaignCheckSchema = z

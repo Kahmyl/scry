@@ -278,6 +278,9 @@ function actionIntents(action: CurrentAction) {
   if (action.type === "capturePublicValue") {
     return [action.capture.acquisition.target];
   }
+  if (action.type === "protectedAuthentication") {
+    return [...action.fields.map((field) => field.target), action.submitTarget];
+  }
   if (
     action.type === "navigate" ||
     action.type === "sameOriginRequest" ||

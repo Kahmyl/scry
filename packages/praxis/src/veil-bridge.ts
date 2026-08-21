@@ -17,12 +17,7 @@ type Registration = {
 };
 type Grant = { request: VeilLeaseRequest; lease: VeilCapabilityLease };
 export type PraxisVeilBoundary =
-  | "schedule"
-  | "observe"
-  | "interact"
-  | "protected_transaction"
-  | "produce_evidence"
-  | "admit_result";
+  "observe" | "protected_transaction" | "produce_evidence" | "admit_result";
 type Authorization = {
   registration: Registration;
   grants: Map<string, Grant>;
@@ -67,7 +62,7 @@ export function registerPraxisVeilAuthority(page: Page, registration: Registrati
 export function authorizePraxisRequest(page: Page, request: PraxisRequest): PraxisRequest {
   const registration = registrations.get(page)?.at(-1)?.registration;
   if (!registration)
-    throw new PraxisVeilAuthorizationError("schedule", new Error("VEIL_PRAXIS_AUTHORITY_REQUIRED"));
+    throw new PraxisVeilAuthorizationError("observe", new Error("VEIL_PRAXIS_AUTHORITY_REQUIRED"));
   const allowed: string[] = [];
   const suppressed = new Set(request.privacy.suppressedChannels);
   const authorized = {
@@ -77,9 +72,8 @@ export function authorizePraxisRequest(page: Page, request: PraxisRequest): Prax
   const state: Authorization = { registration, grants: new Map(), released: false };
   authorizations.set(authorized, state);
 
-  // Scheduling is mandatory. Evidence channels are optional and explicitly
-  // degrade when Veil refuses them.
-  requireGrant(authorized, "schedule", "metadata", "public", "operation");
+  // Veil constrains observation/disclosure channels. It does not authorize
+  // scheduling or ordinary browser interaction.
   for (const praxisChannel of request.privacy.allowedChannels) {
     const channel = veilChannel(praxisChannel);
     if (!channel) {
@@ -124,9 +118,8 @@ export function validatePraxisVeilBoundary(
   }
 }
 
-/** Compatibility validator now proves both mandatory pre-observation boundaries. */
+/** Validate the disclosure grants attached to the request. */
 export function validatePraxisVeilGrants(request: PraxisRequest): void {
-  validatePraxisVeilBoundary(request, "schedule");
   validateObservationGrants(request);
 }
 
@@ -157,7 +150,7 @@ function requireGrant(
   channel: VeilEvidenceChannel,
   classification: VeilLeaseRequest["classification"],
   scope: VeilLeaseRequest["scope"],
-  boundary: PraxisVeilBoundary = operation === "observe" ? "observe" : "schedule",
+  boundary: PraxisVeilBoundary = operation === "observe" ? "observe" : "protected_transaction",
 ): Grant {
   const state = authorization(request, boundary);
   const key = `${operation}:${channel}:${classification}:${scope}`;
@@ -204,8 +197,7 @@ function operationFor(boundary: PraxisVeilBoundary): VeilOperation {
   return boundary;
 }
 function channelFor(boundary: PraxisVeilBoundary): VeilEvidenceChannel {
-  if (boundary === "schedule") return "metadata";
-  if (boundary === "interact" || boundary === "protected_transaction") return "event";
+  if (boundary === "protected_transaction") return "event";
   return "report";
 }
 function veilChannel(channel: string): VeilEvidenceChannel | undefined {

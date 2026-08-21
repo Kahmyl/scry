@@ -8,14 +8,28 @@ import {
   type RecordingTimelineEntry,
 } from "@scry/contracts";
 import type { Page } from "playwright";
+import {
+  observeAndMaskPraxisVisualRegions,
+  startPraxisScreencast,
+  stopPraxisScreencast,
+} from "@scry/praxis";
 import type { VeilVideoSegmentFinalization, VeilVideoSegmentPermit } from "@scry/contracts";
 
 import { availableArtifact } from "./artifacts.js";
-import type { VeilVideoSegmentAuthority, VeilVideoSegmentBinding } from "@scry/veil";
+import type {
+  VeilVisualMaskObservation,
+  VeilVideoSegmentAuthority,
+  VeilVideoSegmentBinding,
+} from "@scry/veil";
 
-type SegmentReason = "run_started" | "safe_resume" | "page_switch";
+type SegmentReason = "run_started" | "safe_resume" | "page_switch" | "document_resume";
 type StopReason =
-  "protected_operation" | "page_switch" | "run_completed" | "run_failed" | "browser_closed";
+  | "protected_operation"
+  | "page_switch"
+  | "document_transition"
+  | "run_completed"
+  | "run_failed"
+  | "browser_closed";
 type RecordingEvent =
   | "recording.segment_started"
   | "recording.segment_stopped"
@@ -49,6 +63,13 @@ type OpenGap = {
   startedAt: string;
 };
 
+type OpenDocumentTransition = {
+  id: string;
+  sequence: number;
+  operationId: string;
+  startedAt: string;
+};
+
 export type RecordingCoordinatorOptions = {
   outputDirectory: string;
   emit?: (type: RecordingEvent, payload: Record<string, unknown>) => Promise<void>;
@@ -56,6 +77,7 @@ export type RecordingCoordinatorOptions = {
   createId?: () => string;
   videoAuthority?: VeilVideoSegmentAuthority;
   videoBinding?: () => VeilVideoSegmentBinding;
+  observeVisualMask?: (page: Page) => Promise<VeilVisualMaskObservation>;
   transitionTimeoutMs?: number;
   abortCapture?: () => Promise<void>;
 };
@@ -68,6 +90,7 @@ export class RecordingCoordinator {
   private activePage: Page | undefined;
   private activeSegment: ActiveSegment | undefined;
   private openGap: OpenGap | undefined;
+  private openDocumentTransition: OpenDocumentTransition | undefined;
   private sealed = false;
   private finalized = false;
 
@@ -113,7 +136,7 @@ export class RecordingCoordinator {
         // active screencast negotiate its own dimensions so the WebM canvas
         // always matches the incoming frames. Forcing the run viewport here
         // makes Playwright pad smaller shared frames with gray pixels.
-        await this.bounded(page.screencast.start({ path: filePath }), "SCREENCAST_START_TIMEOUT");
+        await this.bounded(startPraxisScreencast(page, filePath), "SCREENCAST_START_TIMEOUT");
       } catch (error) {
         this.timelineEntries.push(this.unavailable(segment.startedAt, "SCREENCAST_START_FAILED"));
         await this.sealUnsafe("SCREENCAST_START_FAILED");
@@ -150,6 +173,90 @@ export class RecordingCoordinator {
     });
   }
 
+  beginDocumentTransition(input: { operationId: string }) {
+    return this.serial(async () => {
+      this.requireOpen();
+      if (this.openGap) {
+        throw new Error("DOCUMENT_TRANSITION_DURING_PROTECTED_GAP");
+      }
+      if (this.openDocumentTransition) {
+        throw new Error("DOCUMENT_TRANSITION_ALREADY_OPEN");
+      }
+
+      // The final Veil checkpoint for the old document must happen before
+      // browser navigation can destroy its execution context.
+      await this.stopActive("document_transition", false);
+
+      if (this.sealed) {
+        throw new Error("DOCUMENT_TRANSITION_RECORDING_STOP_FAILED");
+      }
+
+      this.openDocumentTransition = {
+        id: this.options.createId?.() ?? randomUUID(),
+        sequence: this.timelineEntries.length,
+        operationId: input.operationId,
+        startedAt: this.now(),
+      };
+
+      await this.emit("recording.gap_started", {
+        type: "document_transition_gap",
+        ...this.openDocumentTransition,
+        reason: "navigation_boundary",
+      });
+    });
+  }
+
+  completeDocumentTransition(page: Page) {
+    return this.serial(async () => {
+      this.requireOpen();
+
+      if (!this.openDocumentTransition) {
+        throw new Error("DOCUMENT_TRANSITION_NOT_OPEN");
+      }
+
+      if (page.isClosed()) {
+        const transition = this.openDocumentTransition;
+        this.openDocumentTransition = undefined;
+        this.timelineEntries.push(
+          this.unavailable(transition.startedAt, "DOCUMENT_TRANSITION_PAGE_UNAVAILABLE"),
+        );
+        await this.sealUnsafe("DOCUMENT_TRANSITION_PAGE_UNAVAILABLE");
+        throw new Error("DOCUMENT_TRANSITION_PAGE_UNAVAILABLE");
+      }
+
+      // The caller must independently qualify the new document through
+      // Praxis/Veil before invoking this method.
+      this.activePage = page;
+      await this.closeDocumentTransitionGap();
+
+      if (!this.sealed) {
+        await this.startInternal(page, "document_resume");
+      }
+
+      if (this.sealed) {
+        throw new Error("DOCUMENT_TRANSITION_RECORDING_RESUME_FAILED");
+      }
+    });
+  }
+
+  failDocumentTransition(failureCode: string) {
+    return this.serial(async () => {
+      const transition = this.openDocumentTransition;
+      if (transition) {
+        this.openDocumentTransition = undefined;
+        const entry = this.unavailable(transition.startedAt, failureCode);
+        this.timelineEntries.push(entry);
+        await this.emit("recording.gap_ended", {
+          type: "document_transition_gap",
+          failureCode,
+          entry,
+        });
+      }
+
+      await this.sealUnsafe(failureCode);
+    });
+  }
+
   switchActivePage(page: Page) {
     return this.serial(async () => {
       this.requireOpen();
@@ -175,6 +282,16 @@ export class RecordingCoordinator {
     return this.serial(async () => {
       if (this.finalized) return;
       if (this.activeSegment) await this.stopActive("run_completed", this.sealed);
+
+      if (this.openDocumentTransition) {
+        const transition = this.openDocumentTransition;
+        this.openDocumentTransition = undefined;
+        this.timelineEntries.push(
+          this.unavailable(transition.startedAt, "DOCUMENT_TRANSITION_INCOMPLETE"),
+        );
+        await this.sealUnsafe("DOCUMENT_TRANSITION_INCOMPLETE");
+      }
+
       await this.closeGap();
       this.finalized = true;
     });
@@ -218,7 +335,7 @@ export class RecordingCoordinator {
     };
     try {
       await this.armVideoVeil(segment);
-      await this.bounded(page.screencast.start({ path: filePath }), "SCREENCAST_START_TIMEOUT");
+      await this.bounded(startPraxisScreencast(page, filePath), "SCREENCAST_START_TIMEOUT");
       this.activeSegment = segment;
       await this.emit("recording.segment_started", {
         id,
@@ -240,7 +357,7 @@ export class RecordingCoordinator {
     await segment.veilCheckpoint?.catch(() => undefined);
     let stopFailed = false;
     try {
-      await this.bounded(segment.page.screencast.stop(), "SCREENCAST_STOP_TIMEOUT");
+      await this.bounded(stopPraxisScreencast(segment.page), "SCREENCAST_STOP_TIMEOUT");
     } catch {
       stopFailed = true;
     }
@@ -270,11 +387,9 @@ export class RecordingCoordinator {
       if (segment.veilFailure) throw segment.veilFailure;
       let videoFinalization: VeilVideoSegmentFinalization | undefined;
       if (segment.veilPermit && segment.veilBinding && this.options.videoAuthority) {
-        await this.options.videoAuthority
-          .checkpoint(segment.page, segment.veilPermit, segment.veilBinding)
-          .catch(() => {
-            throw new Error("VEIL_VIDEO_FINALIZATION_FAILED");
-          });
+        await this.checkpointVideoVeil(segment).catch(() => {
+          throw new Error("VEIL_VIDEO_FINALIZATION_FAILED");
+        });
         videoFinalization = this.options.videoAuthority.finalize(
           segment.veilPermit,
           segment.veilBinding,
@@ -372,20 +487,50 @@ export class RecordingCoordinator {
     const permit = this.options.videoAuthority.issue(segment.id, binding);
     segment.veilBinding = binding;
     segment.veilPermit = permit;
-    await this.options.videoAuthority.checkpoint(segment.page, permit, binding);
+    await this.checkpointVideoVeil(segment);
     segment.veilPoll = setInterval(() => {
       if (segment.veilCheckpoint || segment.veilFailure) return;
-      segment.veilCheckpoint = this.options
-        .videoAuthority!.checkpoint(segment.page, permit, binding)
+      segment.veilCheckpoint = this.checkpointVideoVeil(segment)
         .then(() => undefined)
         .catch((error) => {
           segment.veilFailure = error;
-          void segment.page.screencast.stop().catch(() => undefined);
+          void stopPraxisScreencast(segment.page).catch(() => undefined);
         })
         .finally(() => {
           segment.veilCheckpoint = undefined;
         });
     }, 100);
+  }
+
+  private async checkpointVideoVeil(segment: ActiveSegment) {
+    if (!this.options.videoAuthority || !segment.veilPermit || !segment.veilBinding)
+      throw new Error("VEIL_VIDEO_AUTHORITY_REQUIRED");
+    const observation = await (this.options.observeVisualMask ?? observeAndMaskPraxisVisualRegions)(
+      segment.page,
+    );
+    return this.options.videoAuthority.checkpoint(
+      observation,
+      segment.veilPermit,
+      segment.veilBinding,
+    );
+  }
+
+  private async closeDocumentTransitionGap() {
+    const gap = this.openDocumentTransition;
+    if (!gap) return;
+
+    this.openDocumentTransition = undefined;
+
+    const entry: RecordingTimelineEntry = {
+      type: "document_transition_gap",
+      ...gap,
+      endedAt: this.now(),
+      reason: "navigation_boundary",
+      captureStatus: "intentionally_suppressed",
+    };
+
+    this.timelineEntries.push(entry);
+    await this.emit("recording.gap_ended", { entry });
   }
 
   private async closeGap() {
@@ -472,6 +617,9 @@ function segmentFailureCode(error: unknown): string {
   if (error instanceof Error) {
     if (error.message === "SEGMENT_FILE_MISSING") return error.message;
     if (error.message === "VEIL_VIDEO_FINALIZATION_FAILED") return error.message;
+    if (error.message.includes("Execution context was destroyed")) {
+      return "VEIL_VIDEO_DOCUMENT_CONTEXT_LOST";
+    }
     if (error.message.includes("VEIL_VIDEO")) return "VEIL_VIDEO_ADMISSION_FAILED";
   }
   return "SEGMENT_MEDIA_VALIDATION_FAILED";

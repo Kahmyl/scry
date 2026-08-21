@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ArtifactStore, VeilEvidenceAdmissionProof } from "@scry/artifact";
+import type { ArtifactStore, VeilEvidenceAdmissionProof } from "@scry/chronicle/legacy";
 import { ArtifactRetentionService } from "../src/artifacts/index.js";
 
 const manifest = {

@@ -219,12 +219,12 @@ Normal observation refresh, candidate ranking, safe readiness waits, and durable
 
 ### 7.1 Harness location and ownership
 
-Create a reusable workspace package at `packages/campaigns` unless repository constraints discovered during M0 prove that an existing package can own the same boundary without circular dependencies.
+Create a reusable workspace package at `packages/assurance` unless repository constraints discovered during M0 prove that an existing package can own the same boundary without circular dependencies.
 
 Minimum structure:
 
 ```text
-packages/campaigns/
+packages/assurance/
   package.json
   src/contracts.ts
   src/runner.ts
@@ -328,7 +328,7 @@ M0 does not claim to improve execution. It creates the measurement and acceptanc
 
 ### 9.2 Implementation work
 
-1. Add the campaign contracts and result parser under `packages/contracts` or `packages/campaigns` with a single versioned schema.
+1. Add the campaign contracts and result parser under `packages/contracts` or `packages/assurance` with a single versioned schema.
 2. Implement required/observational/future-scope gate evaluation.
 3. Implement redaction that rejects known credential values and secret-shaped fields before writing a report.
 4. Add a correlation identity propagated across campaign, MCP, API, queue job, browser session, operation, evidence finalization, and artifact retrieval.

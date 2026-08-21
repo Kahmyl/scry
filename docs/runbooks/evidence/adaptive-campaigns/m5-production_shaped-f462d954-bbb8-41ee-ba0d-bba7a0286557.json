@@ -22,9 +22,7 @@
       "status": "failed",
       "reasonCode": "CAMPAIGN_ENVIRONMENT_REQUIRED",
       "safeDetail": {
-        "missing": [
-          "SCRY_VITRACT_PREVIEW_E2E"
-        ]
+        "missing": ["SCRY_VITRACT_PREVIEW_E2E"]
       }
     },
     {

@@ -88,9 +88,7 @@
       "p50Ms": 2180.693,
       "p95Ms": 2180.693,
       "maxMs": 2180.693,
-      "slowestOperationIds": [
-        "m2-bce81f66d4a551bdb5f051c8d50c19ade8f11bf1"
-      ]
+      "slowestOperationIds": ["m2-bce81f66d4a551bdb5f051c8d50c19ade8f11bf1"]
     },
     "database": {
       "count": 1,
@@ -104,9 +102,7 @@
       "p50Ms": 2180.693,
       "p95Ms": 2180.693,
       "maxMs": 2180.693,
-      "slowestOperationIds": [
-        "m2-bce81f66d4a551bdb5f051c8d50c19ade8f11bf1"
-      ]
+      "slowestOperationIds": ["m2-bce81f66d4a551bdb5f051c8d50c19ade8f11bf1"]
     },
     "expected_effect_verification": {
       "count": 12,
@@ -139,18 +135,14 @@
       "p50Ms": 69907.841875,
       "p95Ms": 69907.841875,
       "maxMs": 69907.841875,
-      "slowestOperationIds": [
-        "mcp-7d274bf6-077d-440c-b371-34a7e2476b86-2"
-      ]
+      "slowestOperationIds": ["mcp-7d274bf6-077d-440c-b371-34a7e2476b86-2"]
     },
     "mcp_session_start_round_trip": {
       "count": 1,
       "p50Ms": 56.62895900000001,
       "p95Ms": 56.62895900000001,
       "maxMs": 56.62895900000001,
-      "slowestOperationIds": [
-        "mcp-7d274bf6-077d-440c-b371-34a7e2476b86-1"
-      ]
+      "slowestOperationIds": ["mcp-7d274bf6-077d-440c-b371-34a7e2476b86-1"]
     },
     "native_resolution": {
       "count": 11,

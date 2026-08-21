@@ -6,9 +6,13 @@ const migration = new URL("../migrations/external-resource-bindings.sql", import
 describe("external resource binding migration", () => {
   it("enforces scoped one-to-one identity and immutable provenance", async () => {
     const source = await readFile(migration, "utf8");
-    expect(source).toContain("UNIQUE(source_protected_operation_id,provider,resource_kind,resource_scope)");
+    expect(source).toContain(
+      "UNIQUE(source_protected_operation_id,provider,resource_kind,resource_scope)",
+    );
     expect(source).toContain("external_resource_bindings_active_identity_unique");
-    expect(source).toContain("project_id,environment_id,provider,resource_kind,resource_scope,canonical_external_identity");
+    expect(source).toContain(
+      "project_id,environment_id,provider,resource_kind,resource_scope,canonical_external_identity",
+    );
     expect(source).toContain("generated_public_value_id,source_protected_operation_id,project_id");
     expect(source).toContain("External resource binding identity is immutable");
     expect(source).toContain("External resource bindings cannot be deleted");

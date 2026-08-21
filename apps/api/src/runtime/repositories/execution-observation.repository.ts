@@ -1,17 +1,33 @@
 import { ConflictException } from "@nestjs/common";
 import type { Artifact, PraxisResult, RecordingTimelineEntry, RunEvent } from "@scry/contracts";
+import type { PoolClient, QueryResultRow } from "pg";
 
 import { Database } from "../../infrastructure/index.js";
 
 export class ExecutionObservationRepository {
-  constructor(private readonly database: Database) {}
+  constructor(
+    private readonly database: Database,
+    private readonly client?: PoolClient,
+  ) {}
+
+  withClient(client: PoolClient) {
+    return new ExecutionObservationRepository(this.database, client);
+  }
+
+  private query<T extends QueryResultRow>(text: string, values: unknown[] = []) {
+    return this.client ? this.client.query<T>(text, values) : this.database.query<T>(text, values);
+  }
+
+  private transaction<T>(work: (client: PoolClient) => Promise<T>) {
+    return this.client ? work(this.client) : this.database.transaction(work);
+  }
 
   async appendEvent(
     attemptId: string,
     claimToken: string,
     event: Omit<RunEvent, "attemptId" | "runId">,
   ) {
-    const result = await this.database.query(
+    const result = await this.query(
       `INSERT INTO run_events(attempt_id, sequence, type, payload, occurred_at)
        SELECT $1, $3, $4, $5::jsonb, $6
        FROM attempts WHERE id = $1 AND claim_token = $2
@@ -31,7 +47,7 @@ export class ExecutionObservationRepository {
   }
 
   async recordGroundingDiagnostic(runId: string, payload: Record<string, unknown>) {
-    await this.database.transaction(async (client) => {
+    await this.transaction(async (client) => {
       await client.query(
         `INSERT INTO grounding_diagnostics(run_id,step_id,intent_digest,outcome,failure_code,candidate_count,eligible_count,confidence,confidence_margin,score_components,rejected_constraints,selected_fingerprint,drift,safe_actions,resolution_source,visual_candidate_count,observation,evidence_families,correlation_groups,degraded_policy,selected_adapter) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13,$14::jsonb,'unified',$15,$16::jsonb,$17::jsonb,$18::jsonb,$19,$20)`,
         [
@@ -75,7 +91,7 @@ export class ExecutionObservationRepository {
   }
 
   async recordPraxisResult(runId: string, attemptId: string, result: PraxisResult) {
-    await this.database.transaction(async (client) => {
+    await this.transaction(async (client) => {
       const completedAt = new Date();
       const startedAt = new Date(completedAt.getTime() - result.timing.totalMs);
       const stored = await client.query(
@@ -125,7 +141,7 @@ export class ExecutionObservationRepository {
     status: "passed" | "failed" | "unevaluated";
     error?: string;
   }) {
-    const result = await this.database.query(
+    const result = await this.query(
       `INSERT INTO assertion_results(
          attempt_id, step_id, assertion_index, assertion_type, status, error
        )
@@ -168,7 +184,7 @@ export class ExecutionObservationRepository {
       failed: input.step.assertions.filter(({ status }) => status === "failed").length,
       unevaluated: input.step.assertions.filter(({ status }) => status === "unevaluated").length,
     };
-    await this.database.query(
+    await this.query(
       `INSERT INTO step_results(attempt_id, step_id, ordinal, action_status, action_error,
                                 readiness, assertions_summary, evidence, started_at, completed_at, duration_ms)
        SELECT $1, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12
@@ -209,12 +225,12 @@ export class ExecutionObservationRepository {
     if (availability === "available" && (!input.contextId || input.captureEpoch === undefined))
       throw new ConflictException("AVAILABLE_ARTIFACT_REQUIRES_PROVENANCE");
     if (input.contextId)
-      await this.database.query(
+      await this.query(
         `INSERT INTO browser_contexts(id,run_id,provenance,capture_epoch)
        SELECT $1,run_id,'safe',$3 FROM attempts WHERE id=$2 ON CONFLICT (id) DO NOTHING`,
         [input.contextId, input.attemptId, input.captureEpoch ?? null],
       );
-    const result = await this.database.query(
+    const result = await this.query(
       `INSERT INTO artifacts(
          id, attempt_id, step_id, kind, availability, privacy_classification, content_type, storage_key,
          size_bytes, checksum_sha256, retention_until, metadata, reason_code, context_id, capture_epoch
@@ -258,7 +274,7 @@ export class ExecutionObservationRepository {
       if (entry.type !== "capture_epoch") continue;
       const producingProvenance =
         entry.startReason === "checkpoint_restored" ? "restored_safe" : "safe";
-      await this.database.transaction(async (client) => {
+      await this.transaction(async (client) => {
         const attempt = await client.query(
           `SELECT run_id FROM attempts WHERE id=$1 AND claim_token=$2`,
           [attemptId, claimToken],
@@ -299,7 +315,7 @@ export class ExecutionObservationRepository {
     for (const entry of entries) {
       if (entry.type === "capture_epoch") {
         activeContext = { contextId: entry.contextId, captureEpoch: entry.epoch };
-        await this.database.query(
+        await this.query(
           `INSERT INTO browser_contexts(id,run_id,provenance,capture_epoch)
            SELECT $1,run_id,'safe',$3 FROM attempts WHERE id=$2
            ON CONFLICT (id) DO UPDATE SET capture_epoch=EXCLUDED.capture_epoch`,
@@ -310,7 +326,7 @@ export class ExecutionObservationRepository {
       const endedAt = "endedAt" in entry ? entry.endedAt : null;
       const artifactId = "artifactId" in entry ? (entry.artifactId ?? null) : null;
       const operationId =
-        entry.type === "protected_gap"
+        entry.type === "protected_gap" || entry.type === "document_transition_gap"
           ? entry.operationId
           : entry.type === "checkpoint_boundary"
             ? entry.checkpointId
@@ -335,7 +351,7 @@ export class ExecutionObservationRepository {
             : entry.type === "checkpoint_boundary"
               ? (entry.reasonCode ?? null)
               : null;
-      await this.database.query(
+      await this.query(
         `INSERT INTO artifact_timeline_entries(id, attempt_id, sequence, entry_type, artifact_id, operation_id, channel, started_at, ended_at, reason_code, metadata, context_id, capture_epoch)
          SELECT $1,$2,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14 FROM attempts WHERE id = $2 AND claim_token = $3`,
         [
@@ -356,7 +372,7 @@ export class ExecutionObservationRepository {
         ],
       );
       if (entry.type === "protected_gap") {
-        await this.database.query(
+        await this.query(
           `INSERT INTO privacy_intervals(attempt_id, operation_id, sequence, mode, started_at, ended_at, terminal_state, safe_boundary_kind)
            SELECT $1,$3,$4,'protected_recording_gap',$5,$6,'safe_to_resume','recording_gap_closed'
            FROM attempts WHERE id = $1 AND claim_token = $2

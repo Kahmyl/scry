@@ -42,7 +42,8 @@ export type ProtectedResponseEvidence = {
   declaredSemanticLeafPresent: boolean | "unavailable";
   declaredSemanticLeafMatchCount: "zero" | "one" | "many" | "unavailable";
   selectedPathClass: "root" | "nested_object" | "array_item" | "unavailable";
-  extractionResultClass: "not_attempted" | "acquired" | "not_present" | "ambiguous" | "rejected" | "unavailable";
+  extractionResultClass:
+    "not_attempted" | "acquired" | "not_present" | "ambiguous" | "rejected" | "unavailable";
   lateResultDiscarded: boolean;
   capturedRootCount: "zero" | "one" | "many";
   ownedLineageCount: "zero" | "one" | "many";
@@ -51,24 +52,27 @@ export type ProtectedResponseEvidence = {
   ownershipStatus: "not_started" | "no_request" | "unique" | "ambiguous" | "rejected";
 };
 
-const envelopes = new WeakMap<Page, {
-  responses: unknown[];
-  pending: Set<Promise<void>>;
-  observedAllowedResponses: number;
-  rejectionCodes: string[];
-  requests: RequestObservation[];
-  eligibleRequests: Map<Request, EligibleRequestLifecycle>;
-  requestLineages: Map<Request, OwnedRequestLineage>;
-  rootLineages: OwnedRequestLineage[];
-  lifecycleWaiters: Set<() => void>;
-  unsupportedTransports: Set<string>;
-  captureState: "not_started" | "open" | "sealed";
-  finalizationState: "active" | "settling" | "finalized";
-  settlementResult: boolean | undefined;
-  accepting: boolean;
-  deadlineAt: number | undefined;
-  evidence: ProtectedResponseEvidence;
-}>();
+const envelopes = new WeakMap<
+  Page,
+  {
+    responses: unknown[];
+    pending: Set<Promise<void>>;
+    observedAllowedResponses: number;
+    rejectionCodes: string[];
+    requests: RequestObservation[];
+    eligibleRequests: Map<Request, EligibleRequestLifecycle>;
+    requestLineages: Map<Request, OwnedRequestLineage>;
+    rootLineages: OwnedRequestLineage[];
+    lifecycleWaiters: Set<() => void>;
+    unsupportedTransports: Set<string>;
+    captureState: "not_started" | "open" | "sealed";
+    finalizationState: "active" | "settling" | "finalized";
+    settlementResult: boolean | undefined;
+    accepting: boolean;
+    deadlineAt: number | undefined;
+    evidence: ProtectedResponseEvidence;
+  }
+>();
 
 function initialResponseEvidence(): ProtectedResponseEvidence {
   return {
@@ -101,13 +105,15 @@ export function beginProtectedResponseEnvelope(
   redactor: SecretRedactor,
   options?: {
     outputs?: ProtectedTransaction["extraction"]["outputs"];
-    stage?: (outputs: Array<{
-      reference: string;
-      classification: "public" | "protected";
-      name: string;
-      value: string;
-      scope: "run" | "project";
-    }>) => Promise<void>;
+    stage?: (
+      outputs: Array<{
+        reference: string;
+        classification: "public" | "protected";
+        name: string;
+        value: string;
+        scope: "run" | "project";
+      }>,
+    ) => Promise<void>;
     request?: RequestContract;
   },
 ) {
@@ -184,7 +190,8 @@ export function beginProtectedResponseEnvelope(
       const url = new URL(request.url());
       envelopeMatched =
         allowed.has(url.origin) &&
-        (!options?.request || requestMatchesContract(method, resourceType, url.pathname, options.request));
+        (!options?.request ||
+          requestMatchesContract(method, resourceType, url.pathname, options.request));
     } catch {
       return;
     }
@@ -220,7 +227,11 @@ export function beginProtectedResponseEnvelope(
     }
 
     if (envelope.captureState !== "open" || !envelopeMatched) return;
-    const lineage: OwnedRequestLineage = { root: request, requests: new Set([request]), rejected: false };
+    const lineage: OwnedRequestLineage = {
+      root: request,
+      requests: new Set([request]),
+      rejected: false,
+    };
     envelope.rootLineages.push(lineage);
     envelope.requestLineages.set(request, lineage);
     envelope.eligibleRequests.set(request, { terminal: false, phase: "awaiting_response" });
@@ -340,7 +351,11 @@ export function beginProtectedResponseEnvelope(
       }
 
       if (!envelope.accepting) return;
-      if (envelope.rootLineages.length !== 1 || envelope.rootLineages[0] !== lineage || lineage.rejected) {
+      if (
+        envelope.rootLineages.length !== 1 ||
+        envelope.rootLineages[0] !== lineage ||
+        lineage.rejected
+      ) {
         envelope.evidence.lateResultDiscarded = true;
         return;
       }
@@ -418,10 +433,7 @@ export function beginProtectedResponseEnvelope(
         }
 
         await new Promise((resolve) =>
-          setTimeout(
-            resolve,
-            Math.min(25, Math.max(0, deadline - Date.now())),
-          ),
+          setTimeout(resolve, Math.min(25, Math.max(0, deadline - Date.now()))),
         );
       }
 
@@ -438,9 +450,7 @@ export function beginProtectedResponseEnvelope(
         };
       }
 
-      const outsideEnvelope = envelope.requests.find(
-        (request) => !request.envelopeMatched,
-      );
+      const outsideEnvelope = envelope.requests.find((request) => !request.envelopeMatched);
 
       if (outsideEnvelope) {
         return {
@@ -451,8 +461,7 @@ export function beginProtectedResponseEnvelope(
         };
       }
 
-      const unsupportedTransport =
-        envelope.unsupportedTransports.values().next().value;
+      const unsupportedTransport = envelope.unsupportedTransports.values().next().value;
 
       if (unsupportedTransport) {
         return {
@@ -487,9 +496,11 @@ export function beginProtectedResponseEnvelope(
       }
       const settled = await settleResponseLifecycle(envelope, timeoutMs);
       if (!settled) {
-        if ([...envelope.eligibleRequests.values()].some(
-          (request) => request.phase === "awaiting_redirect_handoff",
-        )) {
+        if (
+          [...envelope.eligibleRequests.values()].some(
+            (request) => request.phase === "awaiting_redirect_handoff",
+          )
+        ) {
           envelope.rejectionCodes.push("PROTECTED_REQUEST_REDIRECT_HANDOFF_TIMEOUT");
         } else {
           envelope.rejectionCodes.push("PROTECTED_RESPONSE_SETTLEMENT_TIMEOUT");
@@ -519,12 +530,17 @@ export function beginProtectedResponseEnvelope(
       const remaining = Math.max(0, envelope.deadlineAt - Date.now());
       let stageFailure: unknown;
       let stageWork: Promise<void>;
-      stageWork = options.stage(outputs).then(
-        () => undefined,
-        (error) => { stageFailure = error; },
-      ).finally(() => envelope.pending.delete(stageWork));
+      stageWork = options
+        .stage(outputs)
+        .then(
+          () => undefined,
+          (error) => {
+            stageFailure = error;
+          },
+        )
+        .finally(() => envelope.pending.delete(stageWork));
       envelope.pending.add(stageWork);
-      if (!await settlePending(envelope.pending, remaining)) {
+      if (!(await settlePending(envelope.pending, remaining))) {
         envelope.evidence.stagingStatus = "timed_out";
         envelope.evidence.extractionResultClass = "unavailable";
         envelope.evidence.lateResultDiscarded = true;
@@ -579,7 +595,8 @@ function requestMatchesContract(
   pathname: string,
   contract: RequestContract,
 ) {
-  if (method !== contract.method || !contract.transports.some((type) => type === resourceType)) return false;
+  if (method !== contract.method || !contract.transports.some((type) => type === resourceType))
+    return false;
   const expected = contract.pathTemplate.split("/").filter(Boolean);
   const actual = pathname.split("/").filter(Boolean);
   if (expected.length !== actual.length) return false;
@@ -598,13 +615,14 @@ function updateOwnershipEvidence(envelope: {
   const category = count === 0 ? "zero" : count === 1 ? "one" : "many";
   envelope.evidence.capturedRootCount = category;
   envelope.evidence.ownedLineageCount = category;
-  envelope.evidence.ownershipStatus = count === 0
-    ? "no_request"
-    : count > 1
-      ? "ambiguous"
-      : envelope.rootLineages[0]!.rejected
-        ? "rejected"
-        : "unique";
+  envelope.evidence.ownershipStatus =
+    count === 0
+      ? "no_request"
+      : count > 1
+        ? "ambiguous"
+        : envelope.rootLineages[0]!.rejected
+          ? "rejected"
+          : "unique";
 }
 
 function boundedIncrement(value: number) {
@@ -666,7 +684,8 @@ async function settleResponseLifecycle(
       if (
         envelope.pending.size === 0 &&
         [...envelope.eligibleRequests.values()].every((request) => request.terminal)
-      ) changed();
+      )
+        changed();
     });
   }
   return true;
@@ -696,9 +715,7 @@ function responseOutputs(
       reference: output.reference,
       classification: output.classification,
       name:
-        output.classification === "protected"
-          ? output.storage.credentialName
-          : output.storage.name,
+        output.classification === "protected" ? output.storage.credentialName : output.storage.name,
       value: values[0]!,
       scope: output.storage.scope,
     });
@@ -707,10 +724,7 @@ function responseOutputs(
   return acquired;
 }
 
-export async function acquireProtectedResponseValue(
-  page: Page,
-  acquisition: AcquisitionIntent,
-) {
+export async function acquireProtectedResponseValue(page: Page, acquisition: AcquisitionIntent) {
   const envelope = envelopes.get(page);
 
   if (!envelope) {
@@ -727,9 +741,7 @@ export async function acquireProtectedResponseValue(
     throw new Error("PROTECTED_REQUEST_LINEAGE_REJECTED");
   }
   if (envelope.finalizationState !== "finalized" || envelope.settlementResult !== true) {
-    throw new Error(
-      envelope.rejectionCodes.at(-1) ?? "PROTECTED_RESPONSE_SETTLEMENT_INCOMPLETE",
-    );
+    throw new Error(envelope.rejectionCodes.at(-1) ?? "PROTECTED_RESPONSE_SETTLEMENT_INCOMPLETE");
   }
 
   const analysis = rankedResponseAnalysis(envelope.responses, acquisition);
@@ -789,10 +801,7 @@ function semanticIdentities(acquisition: AcquisitionIntent) {
   return identities;
 }
 
-function rankedResponseValues(
-  response: unknown,
-  acquisition: AcquisitionIntent,
-) {
+function rankedResponseValues(response: unknown, acquisition: AcquisitionIntent) {
   return rankedResponseAnalysis(response, acquisition).values;
 }
 
@@ -808,25 +817,18 @@ function rankedResponseAnalysis(
     .map((leaf) => ({
       ...leaf,
       overlap: leaf.path.reduce(
-        (score, segment) =>
-          score + (context.has(normalize(segment)) ? 1 : 0),
+        (score, segment) => score + (context.has(normalize(segment)) ? 1 : 0),
         0,
       ),
     }));
 
   if (!candidates.length) return { values: [], matchCount: "zero", pathClass: "unavailable" };
 
-  const bestOverlap = Math.max(
-    ...candidates.map((candidate) => candidate.overlap),
-  );
+  const bestOverlap = Math.max(...candidates.map((candidate) => candidate.overlap));
 
-  const contextual = candidates.filter(
-    (candidate) => candidate.overlap === bestOverlap,
-  );
+  const contextual = candidates.filter((candidate) => candidate.overlap === bestOverlap);
 
-  const shallowest = Math.min(
-    ...contextual.map((candidate) => candidate.path.length),
-  );
+  const shallowest = Math.min(...contextual.map((candidate) => candidate.path.length));
 
   const selected = contextual.filter((candidate) => candidate.path.length === shallowest);
   const values = [...new Set(selected.map((candidate) => candidate.value))];
@@ -837,7 +839,10 @@ function rankedResponseAnalysis(
   };
 }
 
-function applySemanticEvidence(evidence: ProtectedResponseEvidence, analyses: RankedResponseAnalysis[]) {
+function applySemanticEvidence(
+  evidence: ProtectedResponseEvidence,
+  analyses: RankedResponseAnalysis[],
+) {
   if (!analyses.length) return;
   const counts = analyses.map((analysis) => analysis.matchCount);
   evidence.declaredSemanticLeafPresent = counts.every((count) => count === "zero") ? false : true;
@@ -846,14 +851,14 @@ function applySemanticEvidence(evidence: ProtectedResponseEvidence, analyses: Ra
     : counts.every((count) => count === "one")
       ? "one"
       : "zero";
-  evidence.selectedPathClass = evidence.declaredSemanticLeafMatchCount === "one"
-    ? analyses[0]!.pathClass
-    : "unavailable";
-  evidence.extractionResultClass = evidence.declaredSemanticLeafMatchCount === "one"
-    ? "acquired"
-    : evidence.declaredSemanticLeafMatchCount === "many"
-      ? "ambiguous"
-      : "not_present";
+  evidence.selectedPathClass =
+    evidence.declaredSemanticLeafMatchCount === "one" ? analyses[0]!.pathClass : "unavailable";
+  evidence.extractionResultClass =
+    evidence.declaredSemanticLeafMatchCount === "one"
+      ? "acquired"
+      : evidence.declaredSemanticLeafMatchCount === "many"
+        ? "ambiguous"
+        : "not_present";
 }
 
 function classifyPath(path: string[]): "root" | "nested_object" | "array_item" {
@@ -870,7 +875,9 @@ function statusClass(status: number): ProtectedResponseEvidence["statusClass"] {
   return "other";
 }
 
-function contentTypeClass(value: string | undefined): ProtectedResponseEvidence["contentTypeClass"] {
+function contentTypeClass(
+  value: string | undefined,
+): ProtectedResponseEvidence["contentTypeClass"] {
   const normalized = value?.toLowerCase() ?? "";
   if (!normalized) return "unknown";
   if (normalized.includes("json")) return "json";
@@ -905,9 +912,7 @@ function semanticContext(acquisition: AcquisitionIntent) {
       .map(normalize)
       .filter(
         (value) =>
-          value &&
-          !keyIdentities.has(value) &&
-          !["retrieved", "response", "value"].includes(value),
+          value && !keyIdentities.has(value) && !["retrieved", "response", "value"].includes(value),
       ),
   );
 }
@@ -921,9 +926,7 @@ function keyedStringLeaves(
   }
 
   if (Array.isArray(value)) {
-    return value.flatMap((item, index) =>
-      keyedStringLeaves(item, [...path, String(index)]),
-    );
+    return value.flatMap((item, index) => keyedStringLeaves(item, [...path, String(index)]));
   }
 
   if (!value || typeof value !== "object") return [];

@@ -23,7 +23,9 @@ function fixture(overrides: Partial<Record<string, string>> = {}) {
     }),
   };
   const database = {
-    transaction: vi.fn(async (work: (value: { query: typeof client.query }) => unknown) => work(client)),
+    transaction: vi.fn(async (work: (value: { query: typeof client.query }) => unknown) =>
+      work(client),
+    ),
   };
   return {
     service: new UnknownMutationAdministrationService(database as never),
@@ -34,16 +36,19 @@ function fixture(overrides: Partial<Record<string, string>> = {}) {
 describe("unknown mutation administration", () => {
   it("atomically closes only an acknowledged post-dispatch unknown without changing truth", async () => {
     const { service, client } = fixture();
-    await expect(service.closeHistoricalUnknown({ sessionId: "session", operationId: "operation" }))
-      .resolves.toEqual({ classification: "unknown_historical_closed", replayed: false });
+    await expect(
+      service.closeHistoricalUnknown({ sessionId: "session", operationId: "operation" }),
+    ).resolves.toEqual({ classification: "unknown_historical_closed", replayed: false });
 
     const statements = client.query.mock.calls.map(([sql]) => sql as string);
-    expect(statements).toEqual(expect.arrayContaining([
-      expect.stringContaining("state='abandoned'"),
-      expect.stringContaining("'recovery_required','abandoned'"),
-      expect.stringContaining("state='cancelled'"),
-      expect.stringContaining("'session_cancelled'"),
-    ]));
+    expect(statements).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("state='abandoned'"),
+        expect.stringContaining("'recovery_required','abandoned'"),
+        expect.stringContaining("state='cancelled'"),
+        expect.stringContaining("'session_cancelled'"),
+      ]),
+    );
     expect(statements.join("\n")).not.toContain("mutation_outcome='not_applied'");
     expect(statements.join("\n")).not.toContain("mutation_outcome='applied'");
     expect(statements.join("\n")).not.toContain("ready_to_dispatch");
@@ -59,8 +64,9 @@ describe("unknown mutation administration", () => {
     ["sessionState", "active"],
   ])("fails closed when %s is outside the exact administrative boundary", async (key, value) => {
     const { service, client } = fixture({ [key]: value });
-    await expect(service.closeHistoricalUnknown({ sessionId: "session", operationId: "operation" }))
-      .rejects.toThrow("UNKNOWN_MUTATION_ADMINISTRATIVE_STATE_INVALID");
+    await expect(
+      service.closeHistoricalUnknown({ sessionId: "session", operationId: "operation" }),
+    ).rejects.toThrow("UNKNOWN_MUTATION_ADMINISTRATIVE_STATE_INVALID");
     expect(client.query).toHaveBeenCalledTimes(1);
   });
 
@@ -71,8 +77,9 @@ describe("unknown mutation administration", () => {
       adaptiveReason: "HISTORICAL_MUTATION_ADMINISTRATIVELY_CLOSED",
       sessionReason: "HISTORICAL_MUTATION_ADMINISTRATIVELY_CLOSED",
     });
-    await expect(service.closeHistoricalUnknown({ sessionId: "session", operationId: "operation" }))
-      .resolves.toEqual({ classification: "unknown_historical_closed", replayed: true });
+    await expect(
+      service.closeHistoricalUnknown({ sessionId: "session", operationId: "operation" }),
+    ).resolves.toEqual({ classification: "unknown_historical_closed", replayed: true });
     expect(client.query).toHaveBeenCalledTimes(1);
   });
 });

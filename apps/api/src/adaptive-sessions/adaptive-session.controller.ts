@@ -1,13 +1,11 @@
 import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common";
 import {
-  advanceAdaptiveSessionSchema,
   closeAdaptiveSessionSchema,
   recoverTrustedOriginsSchema,
   prepareFlowAuthoringSchema,
   reconcileAdaptiveOperationSchema,
   startAdaptiveSessionSchema,
   type CloseAdaptiveSessionInput,
-  type MissionAuthoringAdvanceInput,
   type StartAdaptiveSessionInput,
   type RecoverTrustedOriginsInput,
   type PrepareFlowAuthoringInput,
@@ -20,7 +18,9 @@ import { MissionFlowAuthoringService } from "./mission-flow-authoring.service.js
 
 @Controller("api/mission-flow-authoring")
 export class AdaptiveSessionController {
-  constructor(@Inject(MissionFlowAuthoringService) private readonly sessions: MissionFlowAuthoringService) {}
+  constructor(
+    @Inject(MissionFlowAuthoringService) private readonly sessions: MissionFlowAuthoringService,
+  ) {}
 
   @Post()
   start(
@@ -51,23 +51,63 @@ export class AdaptiveSessionController {
     return this.sessions.get(principal, sessionId);
   }
 
-  @Post(":sessionId/advance")
-  advance(
+  @Post(":sessionId/reconcile-unknown")
+  reconcileUnknown(
     @CurrentPrincipal() principal: Principal,
     @Param("sessionId") sessionId: string,
-    @Body(new ZodValidationPipe(advanceAdaptiveSessionSchema)) input: MissionAuthoringAdvanceInput,
+    @Body(new ZodValidationPipe(reconcileAdaptiveOperationSchema))
+    input: ReconcileAdaptiveOperationInput,
   ) {
-    return this.sessions.advance(principal, sessionId, input);
+    return this.sessions.reconcileUnknown(principal, sessionId, input);
+  }
+  @Post(":sessionId/close")
+  close(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(closeAdaptiveSessionSchema)) input: CloseAdaptiveSessionInput,
+  ) {
+    return this.sessions.close(principal, sessionId, input.idempotencyKey);
+  }
+}
+
+/**
+ * Agent-first public session surface. The legacy mission-flow-authoring routes
+ * above remain read-compatible during R0.6 but cannot dispatch an authoring turn.
+ */
+@Controller("api/praxis-sessions")
+export class PraxisSessionController {
+  constructor(
+    @Inject(MissionFlowAuthoringService) private readonly sessions: MissionFlowAuthoringService,
+  ) {}
+
+  @Post()
+  start(
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodValidationPipe(startAdaptiveSessionSchema)) input: StartAdaptiveSessionInput,
+  ) {
+    return this.sessions.start(principal, input);
+  }
+
+  @Get(":sessionId")
+  get(@CurrentPrincipal() principal: Principal, @Param("sessionId") sessionId: string) {
+    return this.sessions.get(principal, sessionId);
+  }
+
+  @Get(":sessionId/observation")
+  observe(@CurrentPrincipal() principal: Principal, @Param("sessionId") sessionId: string) {
+    return this.sessions.observe(principal, sessionId);
   }
 
   @Post(":sessionId/reconcile-unknown")
   reconcileUnknown(
     @CurrentPrincipal() principal: Principal,
     @Param("sessionId") sessionId: string,
-    @Body(new ZodValidationPipe(reconcileAdaptiveOperationSchema)) input: ReconcileAdaptiveOperationInput,
+    @Body(new ZodValidationPipe(reconcileAdaptiveOperationSchema))
+    input: ReconcileAdaptiveOperationInput,
   ) {
     return this.sessions.reconcileUnknown(principal, sessionId, input);
   }
+
   @Post(":sessionId/close")
   close(
     @CurrentPrincipal() principal: Principal,

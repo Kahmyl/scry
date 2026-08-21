@@ -3,7 +3,7 @@ import { z } from "zod";
 import { flowRevisionContentSchema } from "./api.js";
 import { currentPlanSchema } from "./current.js";
 import { objectiveContextSchema } from "./mission.js";
-import { semanticRoleSchema } from "./grounding.js";
+import { semanticRoleSchema, semanticScopeKindSchema } from "./grounding.js";
 
 const uuid = z.string().uuid();
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -87,7 +87,10 @@ const semanticText = z.string().trim().min(1).max(500);
 export const missionAuthoringSemanticTargetSchema = z
   .object({
     concept: semanticText,
-    reference: z.string().regex(/^context-control-[a-f0-9]{32}$/).optional(),
+    reference: z
+      .string()
+      .regex(/^context-control-[a-f0-9]{32}$/)
+      .optional(),
     role: semanticRoleSchema.optional(),
     name: semanticText.optional(),
     label: semanticText.optional(),
@@ -96,8 +99,9 @@ export const missionAuthoringSemanticTargetSchema = z
     testId: semanticText.optional(),
     scope: z
       .object({
-        kind: z.enum(["page", "dialog", "form", "section", "row", "region", "live_region"]),
+        kind: semanticScopeKindSchema,
         name: semanticText.optional(),
+        direct: z.boolean().optional(),
       })
       .strict()
       .superRefine((scope, context) => {
@@ -164,6 +168,7 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
       semanticEffect: z
         .enum(["read_context_transition", "resource_mutation", "unknown"])
         .optional(),
+      activationMechanism: z.enum(["pointer", "element", "dom"]).optional(),
     })
     .strict(),
   z
@@ -204,6 +209,23 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
     }),
   z
     .object({
+      kind: z.literal("authenticate"),
+      fields: z
+        .array(
+          z
+            .object({
+              target: missionAuthoringSemanticTargetSchema,
+              protectedReferenceId: uuid,
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(8),
+      submitTarget: missionAuthoringSemanticTargetSchema,
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal("select"),
       target: missionAuthoringSemanticTargetSchema,
       value: z.string().trim().min(1).max(2_000),
@@ -221,6 +243,9 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
       kind: z.literal("press"),
       target: missionAuthoringSemanticTargetSchema.optional(),
       key: safePressKeySchema,
+      semanticEffect: z
+        .enum(["read_context_transition", "resource_mutation", "unknown"])
+        .optional(),
     })
     .strict(),
   z
@@ -355,6 +380,32 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
         )
         .max(8)
         .optional(),
+      resourceEffect: z
+        .object({
+          operation: z.literal("create"),
+          provider: z
+            .string()
+            .trim()
+            .regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+          resourceKind: z
+            .string()
+            .trim()
+            .regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+          resourceScope: z.string().trim().min(1).max(500),
+          identityContractVersion: z.number().int().min(1).max(1_000),
+          correlation: z
+            .object({
+              field: z
+                .string()
+                .trim()
+                .regex(/^[A-Za-z][A-Za-z0-9_-]{0,99}$/),
+              value: z.string().trim().min(1).max(500),
+              uniqueness: z.literal("resource_scope"),
+            })
+            .strict(),
+        })
+        .strict()
+        .optional(),
     })
     .strict(),
   z
@@ -479,19 +530,21 @@ export const missionAuthoringIntentSchema = z
   .strict()
   .superRefine((intent, context) => {
     if (
-      intent.action.kind === "activate" &&
+      (intent.action.kind === "activate" || intent.action.kind === "press") &&
       intent.action.semanticEffect === "read_context_transition" &&
       intent.authorization.kind !== "live_read"
     )
       context.addIssue({
         code: "custom",
         path: ["authorization", "kind"],
-        message: "read-context activation requires explicit live_read authority",
+        message: "read-context transition requires explicit live_read authority",
       });
     const protectedReferences =
       intent.action.kind === "fill" && intent.action.protectedReferenceId
         ? [intent.action.protectedReferenceId]
-        : [];
+        : intent.action.kind === "authenticate"
+          ? intent.action.fields.map((field) => field.protectedReferenceId)
+          : [];
     if (
       new Set(intent.protectedInputReferences).size !== intent.protectedInputReferences.length ||
       intent.protectedInputReferences.length !== protectedReferences.length ||
@@ -501,6 +554,23 @@ export const missionAuthoringIntentSchema = z
         code: "custom",
         path: ["protectedInputReferences"],
         message: "protected references must exactly match protected fill references",
+      });
+    if (intent.action.kind === "authenticate" && intent.authorization.kind !== "authentication")
+      context.addIssue({
+        code: "custom",
+        path: ["authorization", "kind"],
+        message: "protected authentication requires authentication authority",
+      });
+    if (
+      intent.action.kind === "authenticate" &&
+      (intent.constraints.allowNonExact ||
+        intent.action.fields.some((field) => !field.target.reference) ||
+        !intent.action.submitTarget.reference)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["action"],
+        message: "protected authentication requires exact observed references",
       });
     if (
       (["live_mutation", "protected_mutation"].includes(intent.authorization.kind) &&
@@ -551,6 +621,21 @@ export const missionAuthoringIntentSchema = z
             message: "external resource identity must reference a public output",
           });
       }
+      const resourceEffect = intent.action.resourceEffect;
+      if (
+        resourceEffect &&
+        !(intent.action.externalResourceBindings ?? []).some(
+          (binding) =>
+            binding.provider === resourceEffect.provider &&
+            binding.resourceKind === resourceEffect.resourceKind &&
+            binding.resourceScope === resourceEffect.resourceScope,
+        )
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["action", "resourceEffect"],
+          message: "resource effect requires a matching external resource binding declaration",
+        });
     }
     if (
       intent.action.kind === "fill" &&
@@ -808,7 +893,6 @@ export const compileAndCertifyFlowSchema = compileFlowDraftSchema
 export const publishFlowDraftSchema = objectiveContextSchema
   .extend({
     expectedVersion: z.number().int().positive(),
-    compilationId: uuid,
     visibility: z.enum(["reusable", "mission_local", "internal"]),
     purpose: z.enum([
       "primary",

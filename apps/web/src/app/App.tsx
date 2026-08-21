@@ -208,7 +208,11 @@ export function App({
             <FlowDetailView
               flowId={flowDetailId}
               kind={flowDetailKind === "drafts" ? "draft" : "published"}
-              onBack={(flowMissionId) => navigate(flowMissionId ? `/dashboard/missions/${flowMissionId}/flows` : viewPaths.missions)}
+              onBack={(flowMissionId) =>
+                navigate(
+                  flowMissionId ? `/dashboard/missions/${flowMissionId}/flows` : viewPaths.missions,
+                )
+              }
             />
           ) : runId ? (
             <ReportView
@@ -221,7 +225,9 @@ export function App({
               projectId={projectId}
               scopedMissionId={missionId}
               onBack={() => navigate(`/dashboard/missions/${missionId}`)}
-              onOpenFlow={(kind, id) => navigate(`/dashboard/flows/${kind === "draft" ? "drafts" : "published"}/${id}`)}
+              onOpenFlow={(kind, id) =>
+                navigate(`/dashboard/flows/${kind === "draft" ? "drafts" : "published"}/${id}`)
+              }
             />
           ) : missionId ? (
             <MissionDetailPage

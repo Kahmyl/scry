@@ -19,8 +19,20 @@ const context = {
 
 function outputs() {
   return [
-    { reference: "clientSecret", classification: "protected" as const, storageName: "Qualification secret", value: "synthetic-canary-never-log", scope: "project" as const },
-    { reference: "clientId", classification: "public" as const, storageName: "Qualification client ID", value: "public-client-id", scope: "project" as const },
+    {
+      reference: "clientSecret",
+      classification: "protected" as const,
+      storageName: "Qualification secret",
+      value: "synthetic-canary-never-log",
+      scope: "project" as const,
+    },
+    {
+      reference: "clientId",
+      classification: "public" as const,
+      storageName: "Qualification client ID",
+      value: "public-client-id",
+      scope: "project" as const,
+    },
   ];
 }
 
@@ -29,19 +41,35 @@ function harness(failPattern?: RegExp) {
   const client = {
     query: vi.fn(async (sql: string, _values?: unknown[]) => {
       if (failPattern?.test(sql)) throw new Error("INJECTED_DATABASE_FAILURE");
-      if (sql.includes("SELECT state,safe_output_manifest")) return {
-        rowCount: 1,
-        rows: [{
-          state: "persisting",
-          safeOutputManifest: [
-            { reference: "clientSecret", classification: "protected" },
-            { reference: "clientId", classification: "public" },
+      if (sql.includes("SELECT state,safe_output_manifest"))
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              state: "persisting",
+              safeOutputManifest: [
+                { reference: "clientSecret", classification: "protected" },
+                { reference: "clientId", classification: "public" },
+              ],
+            },
           ],
-        }],
-      };
+        };
       if (sql.includes("SELECT 1 FROM project_credentials")) return { rowCount: 0, rows: [] };
-      if (sql.includes("UPDATE protected_operations SET state='persisted'")) return { rowCount: 1, rows: [{ id: context.protectedOperationId, state: "persisted", version: "8", fencingToken: "3", persistedReferences: {} }] };
-      if (sql.includes("SELECT value FROM generated_public_values")) return { rowCount: 1, rows: [{ value: "public-client-id" }] };
+      if (sql.includes("UPDATE protected_operations SET state='persisted'"))
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: context.protectedOperationId,
+              state: "persisted",
+              version: "8",
+              fencingToken: "3",
+              persistedReferences: {},
+            },
+          ],
+        };
+      if (sql.includes("SELECT value FROM generated_public_values"))
+        return { rowCount: 1, rows: [{ value: "public-client-id" }] };
       if (sql.includes("INSERT INTO project_credentials")) committed.push("credential");
       if (sql.includes("INSERT INTO run_captured_secrets")) committed.push("run-secret");
       if (sql.includes("INSERT INTO generated_public_values")) committed.push("public");
@@ -53,15 +81,26 @@ function harness(failPattern?: RegExp) {
   const database = {
     transaction: vi.fn(async (work: (value: typeof client) => Promise<unknown>) => {
       const before = [...committed];
-      try { return await work(client); } catch (error) { committed.splice(0, committed.length, ...before); throw error; }
+      try {
+        return await work(client);
+      } catch (error) {
+        committed.splice(0, committed.length, ...before);
+        throw error;
+      }
     }),
   };
-  return { repository: new ProtectedOutputPersistenceRepository(database as never), database, client, committed };
+  return {
+    repository: new ProtectedOutputPersistenceRepository(database as never),
+    database,
+    client,
+    committed,
+  };
 }
 
 describe("atomic protected output persistence", () => {
   it("encrypts a complete response set for crash recovery and never sends plaintext to SQL", async () => {
-    let encrypted: { ciphertext: Buffer; initializationVector: Buffer; authenticationTag: Buffer } | undefined;
+    let encrypted:
+      { ciphertext: Buffer; initializationVector: Buffer; authenticationTag: Buffer } | undefined;
     const query = vi.fn(async (sql: string, values?: unknown[]) => {
       if (sql.includes("INSERT INTO protected_response_output_staging")) {
         encrypted = {
@@ -80,9 +119,16 @@ describe("atomic protected output persistence", () => {
     await repository.stageResponseOutputs(context, acquired);
     expect(acquired.every((output) => output.value === "")).toBe(true);
     expect(JSON.stringify(query.mock.calls)).not.toContain("synthetic-canary-never-log");
-    const recovered = await repository.recoverStagedResponseOutputs({ ...context, version: context.version });
+    const recovered = await repository.recoverStagedResponseOutputs({
+      ...context,
+      version: context.version,
+    });
     expect(recovered).toMatchObject([
-      { reference: "clientSecret", classification: "protected", value: "synthetic-canary-never-log" },
+      {
+        reference: "clientSecret",
+        classification: "protected",
+        value: "synthetic-canary-never-log",
+      },
       { reference: "clientId", classification: "public", value: "public-client-id" },
     ]);
   });
@@ -94,56 +140,90 @@ describe("atomic protected output persistence", () => {
     const references = persisted.references;
     expect(database.transaction).toHaveBeenCalledOnce();
     expect(committed).toEqual(["credential", "public", "allowlist"]);
-    expect(references.clientSecret).toMatchObject({ classification: "protected", scope: "project" });
+    expect(references.clientSecret).toMatchObject({
+      classification: "protected",
+      scope: "project",
+    });
     expect(references.clientId).toMatchObject({ classification: "public", scope: "project" });
     expect(JSON.stringify(references)).not.toContain("synthetic-canary-never-log");
     expect(JSON.stringify(client.query.mock.calls)).not.toContain("synthetic-canary-never-log");
     expect(acquired.every((output) => output.value === "")).toBe(true);
-    expect(client.query.mock.calls.some(([sql]) => String(sql).includes("pg_advisory_xact_lock"))).toBe(true);
+    expect(
+      client.query.mock.calls.some(([sql]) => String(sql).includes("pg_advisory_xact_lock")),
+    ).toBe(true);
   });
 
   it("binds a response-provided project public identity in the same transaction", async () => {
     const { repository, committed, client } = harness();
-    await repository.persistOutputsAtomically(context, outputs(), [{
-      status: "active", identityReference: "clientId", provider: "provider",
-      resourceKind: "credential_record", resourceScope: "application-a",
-      identityContractVersion: 1, identitySource: "response",
-      requiredForDestructiveLifecycle: true,
-    }]);
+    await repository.persistOutputsAtomically(context, outputs(), [
+      {
+        status: "active",
+        identityReference: "clientId",
+        provider: "provider",
+        resourceKind: "credential_record",
+        resourceScope: "application-a",
+        identityContractVersion: 1,
+        identitySource: "response",
+        requiredForDestructiveLifecycle: true,
+      },
+    ]);
     expect(committed).toEqual(["credential", "public", "binding", "allowlist"]);
-    const binding = client.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO external_resource_bindings"));
+    const binding = client.query.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO external_resource_bindings"),
+    );
     expect(binding?.[1]).toContain("public-client-id");
   });
 
   it("persists an explicit unavailable state for protected-only issuance", async () => {
     const { repository, committed } = harness();
-    await repository.persistOutputsAtomically(context, outputs(), [{
-      status: "unavailable", provider: "provider", resourceKind: "credential_record",
-      resourceScope: "application-a", identityContractVersion: 1,
-      requiredForDestructiveLifecycle: true,
-    }]);
+    await repository.persistOutputsAtomically(context, outputs(), [
+      {
+        status: "unavailable",
+        provider: "provider",
+        resourceKind: "credential_record",
+        resourceScope: "application-a",
+        identityContractVersion: 1,
+        requiredForDestructiveLifecycle: true,
+      },
+    ]);
     expect(committed).toEqual(["credential", "public", "binding", "allowlist"]);
   });
 
   it("rejects arbitrary or protected outputs as binding identity", async () => {
     const { repository, database } = harness();
-    await expect(repository.persistOutputsAtomically(context, outputs(), [{
-      status: "active", identityReference: "clientSecret", provider: "provider",
-      resourceKind: "credential_record", resourceScope: "application-a",
-      identityContractVersion: 1, identitySource: "response",
-      requiredForDestructiveLifecycle: true,
-    }])).rejects.toThrow("EXTERNAL_RESOURCE_BINDING_PUBLIC_VALUE_REQUIRED");
+    await expect(
+      repository.persistOutputsAtomically(context, outputs(), [
+        {
+          status: "active",
+          identityReference: "clientSecret",
+          provider: "provider",
+          resourceKind: "credential_record",
+          resourceScope: "application-a",
+          identityContractVersion: 1,
+          identitySource: "response",
+          requiredForDestructiveLifecycle: true,
+        },
+      ]),
+    ).rejects.toThrow("EXTERNAL_RESOURCE_BINDING_PUBLIC_VALUE_REQUIRED");
     expect(database.transaction).not.toHaveBeenCalled();
   });
 
   it("rolls back credential, public value, and binding when binding insertion fails", async () => {
     const { repository, committed } = harness(/INSERT INTO external_resource_bindings/);
-    await expect(repository.persistOutputsAtomically(context, outputs(), [{
-      status: "active", identityReference: "clientId", provider: "provider",
-      resourceKind: "credential_record", resourceScope: "application-a",
-      identityContractVersion: 1, identitySource: "response",
-      requiredForDestructiveLifecycle: true,
-    }])).rejects.toThrow("INJECTED_DATABASE_FAILURE");
+    await expect(
+      repository.persistOutputsAtomically(context, outputs(), [
+        {
+          status: "active",
+          identityReference: "clientId",
+          provider: "provider",
+          resourceKind: "credential_record",
+          resourceScope: "application-a",
+          identityContractVersion: 1,
+          identitySource: "response",
+          requiredForDestructiveLifecycle: true,
+        },
+      ]),
+    ).rejects.toThrow("INJECTED_DATABASE_FAILURE");
     expect(committed).toEqual([]);
   });
 
@@ -155,7 +235,9 @@ describe("atomic protected output persistence", () => {
     it(`rolls back the complete set on ${label} failure`, async () => {
       const { repository, committed } = harness(pattern);
       const acquired = outputs();
-      await expect(repository.persistOutputsAtomically(context, acquired)).rejects.toThrow("INJECTED_DATABASE_FAILURE");
+      await expect(repository.persistOutputsAtomically(context, acquired)).rejects.toThrow(
+        "INJECTED_DATABASE_FAILURE",
+      );
       expect(committed).toEqual([]);
       expect(acquired.every((output) => output.value === "")).toBe(true);
     });
@@ -167,17 +249,29 @@ describe("atomic protected output persistence", () => {
       { ...outputs()[0]!, scope: "run" as const },
       { ...outputs()[1]!, scope: "run" as const },
     ];
-    const persisted = await repository.persistOutputsAtomically({
-      ...context, ownerKind: "run", ownerId: "77777777-7777-4777-8777-777777777777",
-    }, acquired);
+    const persisted = await repository.persistOutputsAtomically(
+      {
+        ...context,
+        ownerKind: "run",
+        ownerId: "77777777-7777-4777-8777-777777777777",
+      },
+      acquired,
+    );
     expect(database.transaction).toHaveBeenCalledOnce();
     expect(committed).toEqual(["run-secret", "public"]);
     expect(persisted.references).toMatchObject({
       clientSecret: { classification: "protected", scope: "run" },
       clientId: { classification: "public", scope: "run" },
     });
-    const publicInsert = client.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO generated_public_values"));
-    expect(publicInsert?.[1]).toMatchObject({ 2: context.ownerId, 3: null, 4: context.ownerId, 8: "run" });
+    const publicInsert = client.query.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO generated_public_values"),
+    );
+    expect(publicInsert?.[1]).toMatchObject({
+      2: context.ownerId,
+      3: null,
+      4: context.ownerId,
+      8: "run",
+    });
     expect(acquired.every((output) => output.value === "")).toBe(true);
   });
 
@@ -187,9 +281,16 @@ describe("atomic protected output persistence", () => {
       { ...outputs()[0]!, scope: "run" as const },
       { ...outputs()[1]!, scope: "run" as const },
     ];
-    await expect(repository.persistOutputsAtomically({
-      ...context, ownerKind: "run", ownerId: "77777777-7777-4777-8777-777777777777",
-    }, acquired)).rejects.toThrow("INJECTED_DATABASE_FAILURE");
+    await expect(
+      repository.persistOutputsAtomically(
+        {
+          ...context,
+          ownerKind: "run",
+          ownerId: "77777777-7777-4777-8777-777777777777",
+        },
+        acquired,
+      ),
+    ).rejects.toThrow("INJECTED_DATABASE_FAILURE");
     expect(committed).toEqual([]);
     expect(acquired.every((output) => output.value === "")).toBe(true);
   });

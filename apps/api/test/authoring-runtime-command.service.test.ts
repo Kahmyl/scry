@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { AuthoringRuntimeCommandService } from "../src/authoring/authoring-runtime-command.service.js";
+import { AuthoringRuntimeCommandService } from "../src/authoring/services/authoring-runtime-command.service.js";
 
 const principal = {
   kind: "service" as const,
@@ -46,17 +46,22 @@ describe("authoring runtime command service recovery", () => {
       enqueue: vi.fn(async () => ({ id: "command", state: "queued", replayed: false })),
       result: vi.fn(async () => ({ state: "running" })),
     };
-    const service = new AuthoringRuntimeCommandService(commands as never, {
-      assertAcceptingWork: vi.fn(async () => undefined),
-    } as never);
+    const service = new AuthoringRuntimeCommandService(
+      commands as never,
+      {
+        assertAcceptingWork: vi.fn(async () => undefined),
+      } as never,
+    );
     const pending = service.advance(principal, crypto.randomUUID(), turnCommand());
-    const assertion = expect(pending).rejects.toMatchObject({ response: expect.objectContaining({
-      code: "AUTHORING_TURN_DEADLINE_EXCEEDED",
-      mutationOutcome: "unknown",
-      retry: "safe_same_idempotency_key",
-      recoveryTool: "advance_flow_authoring",
-      idempotencyReuse: "same_request_arguments",
-    }) });
+    const assertion = expect(pending).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: "AUTHORING_TURN_DEADLINE_EXCEEDED",
+        mutationOutcome: "unknown",
+        retry: "safe_same_idempotency_key",
+        recoveryTool: "advance_flow_authoring",
+        idempotencyReuse: "same_request_arguments",
+      }),
+    });
     await vi.advanceTimersByTimeAsync(16_100);
     await assertion;
     vi.useRealTimers();

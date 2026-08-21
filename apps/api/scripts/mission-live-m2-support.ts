@@ -3,13 +3,16 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-import { retainMissionLiveCampaignReport, type CampaignCheck } from "@scry/campaigns";
+import { retainMissionLiveCampaignReport, type CampaignCheck } from "@scry/assurance/legacy";
 import { missionLiveCampaignResultSchema, type MissionAuthoringIntent } from "@scry/contracts";
 import pg from "pg";
 
 import { decryptCredential, encryptCredential } from "../src/access/credential.crypto.js";
 import type { CampaignContext } from "./adaptive-campaign-support.js";
-import { collectPersistedTelemetry, type DeployedCampaignSpec } from "./deployed-adaptive-campaign.js";
+import {
+  collectPersistedTelemetry,
+  type DeployedCampaignSpec,
+} from "./deployed-adaptive-campaign.js";
 
 export type M2FlowDefinition = {
   key: string;
@@ -25,11 +28,14 @@ export type M2Ownership = {
   environmentId: string;
   missionId: string;
   agentSessionId: string;
-  flows: Record<string, {
-    objectiveId: string;
-    flowDraftId: string;
-    authorizationId?: string;
-  }>;
+  flows: Record<
+    string,
+    {
+      objectiveId: string;
+      flowDraftId: string;
+      authorizationId?: string;
+    }
+  >;
 };
 
 export type M2Credential = { name: string; value: string };
@@ -64,11 +70,12 @@ export async function loadVitractCredentialValues(): Promise<{
     const email = byName.get("Vitract preview login email");
     const password = byName.get("Vitract preview login password");
     if (!email || !password) throw new Error("VITRACT_CAMPAIGN_PROTECTED_CREDENTIALS_UNAVAILABLE");
-    const decrypt = (row: typeof email) => decryptCredential({
-      ciphertext: row.ciphertext,
-      initializationVector: row.initializationVector,
-      authenticationTag: row.authenticationTag,
-    });
+    const decrypt = (row: typeof email) =>
+      decryptCredential({
+        ciphertext: row.ciphertext,
+        initializationVector: row.initializationVector,
+        authenticationTag: row.authenticationTag,
+      });
     return {
       email: { name: "Vitract preview login email", value: decrypt(email) },
       password: { name: "Vitract preview login password", value: decrypt(password) },
@@ -102,19 +109,28 @@ export async function provisionM2Campaign(
   const credentialIds = Object.fromEntries(
     Object.keys(input.credentials ?? {}).map((key) => [key, randomUUID()]),
   );
-  const flows = Object.fromEntries(input.flows.map((flow) => [flow.key, {
-    objectiveId: randomUUID(),
-    flowDraftId: randomUUID(),
-    ...(flow.authorizeMutation ? { authorizationId: randomUUID() } : {}),
-  }]));
+  const flows = Object.fromEntries(
+    input.flows.map((flow) => [
+      flow.key,
+      {
+        objectiveId: randomUUID(),
+        flowDraftId: randomUUID(),
+        ...(flow.authorizeMutation ? { authorizationId: randomUUID() } : {}),
+      },
+    ]),
+  );
   const pool = new pg.Pool({ connectionString: databaseUrl() });
   try {
     await pool.query("BEGIN");
     await pool.query(
       `INSERT INTO projects(id,workspace_id,name,description)
        VALUES($1,$2,$3,$4)`,
-      [projectId, input.workspaceId ?? "00000000-0000-4000-8000-000000000001",
-        `M2 ${input.target} ${context.campaignId}`, "Isolated canonical M2 campaign"],
+      [
+        projectId,
+        input.workspaceId ?? "00000000-0000-4000-8000-000000000001",
+        `M2 ${input.target} ${context.campaignId}`,
+        "Isolated canonical M2 campaign",
+      ],
     );
     await pool.query(
       `INSERT INTO environments(id,project_id,name,base_origin,policy,secret_refs)
@@ -160,16 +176,30 @@ export async function provisionM2Campaign(
            id,project_id,mission_id,objective_id,environment_id,name,purpose,content,plan,
            created_by_agent_session_id
          ) VALUES($1,$2,$3,$4,$5,$6,$7,'{}'::jsonb,'{}'::jsonb,$8)`,
-        [owner.flowDraftId, projectId, missionId, owner.objectiveId, environmentId,
-          flow.flow, flow.purpose, agentSessionId],
+        [
+          owner.flowDraftId,
+          projectId,
+          missionId,
+          owner.objectiveId,
+          environmentId,
+          flow.flow,
+          flow.purpose,
+          agentSessionId,
+        ],
       );
       if (owner.authorizationId) {
         await pool.query(
           `INSERT INTO mission_authorizations(
              id,mission_id,objective_id,environment_id,kind,reason,status,granted_by_agent_session_id
           ) VALUES($1,$2,$3,$4,$5,'Disposable M2 campaign mutation','approved',$6)`,
-          [owner.authorizationId, missionId, owner.objectiveId, environmentId,
-            flow.authorizationKind ?? "live_mutation", agentSessionId],
+          [
+            owner.authorizationId,
+            missionId,
+            owner.objectiveId,
+            environmentId,
+            flow.authorizationKind ?? "live_mutation",
+            agentSessionId,
+          ],
         );
       }
     }
@@ -179,8 +209,14 @@ export async function provisionM2Campaign(
         `INSERT INTO project_credentials(
            id,project_id,name,ciphertext,initialization_vector,authentication_tag
          ) VALUES($1,$2,$3,$4,$5,$6)`,
-        [credentialIds[key], projectId, credential.name, encrypted.ciphertext,
-          encrypted.initializationVector, encrypted.authenticationTag],
+        [
+          credentialIds[key],
+          projectId,
+          credential.name,
+          encrypted.ciphertext,
+          encrypted.initializationVector,
+          encrypted.authenticationTag,
+        ],
       );
       context.forbiddenValues.push(credential.value);
     }
@@ -252,10 +288,7 @@ export function m2Spec(input: {
   };
 }
 
-export async function verifyM2Ownership(
-  context: CampaignContext,
-  ownership: M2Ownership,
-) {
+export async function verifyM2Ownership(context: CampaignContext, ownership: M2Ownership) {
   const expectedFlows = Object.values(ownership.flows);
   const pool = new pg.Pool({ connectionString: databaseUrl() });
   try {
@@ -284,16 +317,31 @@ export async function verifyM2Ownership(
       [context.correlationId, ownership.projectId, ownership.missionId],
     );
     const row = result.rows[0]!;
-    const ownerPassed = row.missions === 1 && row.objectives === expectedFlows.length &&
-      row.drafts === expectedFlows.length && row.linkedFlows === expectedFlows.length;
+    const ownerPassed =
+      row.missions === 1 &&
+      row.objectives === expectedFlows.length &&
+      row.drafts === expectedFlows.length &&
+      row.linkedFlows === expectedFlows.length;
     const handoffPassed = row.completedHandoffs === Math.max(0, expectedFlows.length - 1);
     context.requiredChecks.push(
-      gate("m2-mission-flow-ownership", "One Mission owns every expected Objective and Flow", ownerPassed,
-        "M2_MISSION_FLOW_OWNERSHIP_MISMATCH"),
-      gate("m2-explicit-flow-handoffs", "Every Flow transition is explicitly journaled", handoffPassed,
-        "M2_FLOW_HANDOFF_JOURNAL_MISMATCH"),
-      gate("m2-operation-ownership", "Every operation is bound to its exact Mission Objective and Flow",
-        row.invalidOperations === 0, "M2_OPERATION_OWNERSHIP_INVALID"),
+      gate(
+        "m2-mission-flow-ownership",
+        "One Mission owns every expected Objective and Flow",
+        ownerPassed,
+        "M2_MISSION_FLOW_OWNERSHIP_MISMATCH",
+      ),
+      gate(
+        "m2-explicit-flow-handoffs",
+        "Every Flow transition is explicitly journaled",
+        handoffPassed,
+        "M2_FLOW_HANDOFF_JOURNAL_MISMATCH",
+      ),
+      gate(
+        "m2-operation-ownership",
+        "Every operation is bound to its exact Mission Objective and Flow",
+        row.invalidOperations === 0,
+        "M2_OPERATION_OWNERSHIP_INVALID",
+      ),
     );
   } finally {
     await pool.end();
@@ -305,10 +353,18 @@ export function recordM2EfficiencyChecks(context: CampaignContext, flowCount: nu
   const callBaseline = 9 * flowCount;
   const actualCalls = metrics.mcpRequests + 1;
   context.requiredChecks.push(
-    gate("m2-call-reduction", "MCP coordination calls are reduced by at least 70 percent",
-      reduction(callBaseline, actualCalls) >= 0.7, "M2_MCP_CALL_REDUCTION_MISSED"),
-    gate("m2-no-repeated-state", "No unchanged-state read or full-plan rewrite occurs",
-      metrics.unchangedStateReads === 0, "M2_REPEATED_STATE_READ_REMAINS"),
+    gate(
+      "m2-call-reduction",
+      "MCP coordination calls are reduced by at least 70 percent",
+      reduction(callBaseline, actualCalls) >= 0.7,
+      "M2_MCP_CALL_REDUCTION_MISSED",
+    ),
+    gate(
+      "m2-no-repeated-state",
+      "No unchanged-state read or full-plan rewrite occurs",
+      metrics.unchangedStateReads === 0,
+      "M2_REPEATED_STATE_READ_REMAINS",
+    ),
   );
 }
 
@@ -335,21 +391,32 @@ export async function retainCanonicalM2Result(
   const gitCommit = required("SCRY_GIT_COMMIT");
   const schemaFingerprint = required("SCRY_SCHEMA_FINGERPRINT");
   const runtimeVersion = required("SCRY_RUNTIME_VERSION");
-  const runtimeConfigurationDigest = createHash("sha256").update(JSON.stringify({
-    releaseId, gitCommit, schemaFingerprint, runtimeVersion,
-  })).digest("hex");
-  const timings = Object.fromEntries(Object.entries(metrics.phases).map(([phase, distribution]) => [
-    phase,
-    {
-      ...distribution,
-      slowestOperationIds: metrics.slowestOperations
-        .filter((operation) => operation.phase === phase)
-        .map((operation) => operation.operationId),
-    },
-  ]));
+  const runtimeConfigurationDigest = createHash("sha256")
+    .update(
+      JSON.stringify({
+        releaseId,
+        gitCommit,
+        schemaFingerprint,
+        runtimeVersion,
+      }),
+    )
+    .digest("hex");
+  const timings = Object.fromEntries(
+    Object.entries(metrics.phases).map(([phase, distribution]) => [
+      phase,
+      {
+        ...distribution,
+        slowestOperationIds: metrics.slowestOperations
+          .filter((operation) => operation.phase === phase)
+          .map((operation) => operation.operationId),
+      },
+    ]),
+  );
   const owners = Object.values(input.ownership.flows);
   return retainMissionLiveCampaignReport({
-    directory: fileURLToPath(new URL("../../../docs/runbooks/evidence/mission-first/m2/", import.meta.url)),
+    directory: fileURLToPath(
+      new URL("../../../docs/runbooks/evidence/mission-first/m2/", import.meta.url),
+    ),
     forbiddenValues: context.forbiddenValues,
     result: missionLiveCampaignResultSchema.parse({
       schemaVersion: 2,
@@ -372,7 +439,9 @@ export async function retainCanonicalM2Result(
       cleanup: {
         required: input.cleanupRequired ?? false,
         state: input.cleanupRequired
-          ? input.verdict === "pass" ? "completed" : "failed"
+          ? input.verdict === "pass"
+            ? "completed"
+            : "failed"
           : "not_required",
         refs: input.cleanupRefs ?? [],
       },
@@ -381,9 +450,15 @@ export async function retainCanonicalM2Result(
         api: metrics.apiRequests,
         repeatedStateReads: metrics.unchangedStateReads,
       },
-      resolution: { nativeResolved: telemetry.nativeResolved, praxisFallbacks: telemetry.praxisCalls },
+      resolution: {
+        nativeResolved: telemetry.nativeResolved,
+        praxisFallbacks: telemetry.praxisCalls,
+      },
       reductions: {
-        decisionBoundary: reduction(baseline.decisionBoundaries * flowCount, metrics.agentDecisionBoundaries),
+        decisionBoundary: reduction(
+          baseline.decisionBoundaries * flowCount,
+          metrics.agentDecisionBoundaries,
+        ),
         mcpCalls: reduction(callBaseline, actualCalls),
         agentBytes: reduction(byteBaseline, metrics.bytesReturnedToAgent),
       },
@@ -403,13 +478,15 @@ export function m2Verdict(context: CampaignContext): "pass" | "fail" {
 }
 
 function protectedReferences(turns: MissionAuthoringIntent[][]) {
-  return [...new Set(turns.flatMap((turn) => turn.flatMap((intent) => intent.protectedInputReferences)))];
+  return [
+    ...new Set(turns.flatMap((turn) => turn.flatMap((intent) => intent.protectedInputReferences))),
+  ];
 }
 
 function normalizeChecks(checks: CampaignCheck[]) {
   return checks.map((check) => ({
     ...check,
-    status: check.status === "awaiting_codex_verification" ? "blocked" as const : check.status,
+    status: check.status === "awaiting_codex_verification" ? ("blocked" as const) : check.status,
   }));
 }
 
@@ -428,14 +505,20 @@ function reduction(baseline: number, current: number) {
 }
 
 async function acceptedM1Baseline() {
-  const directory = fileURLToPath(new URL("../../../docs/runbooks/evidence/mission-first/m1/", import.meta.url));
-  const candidates = await Promise.all((await readdir(directory))
-    .filter((file) => file.startsWith("m1-production-shaped-r1-") && file.endsWith(".json"))
-    .map(async (file) => {
-      const fullPath = path.join(directory, file);
-      const parsed = missionLiveCampaignResultSchema.safeParse(JSON.parse(await readFile(fullPath, "utf8")));
-      return { file: fullPath, parsed, mtimeMs: (await stat(fullPath)).mtimeMs };
-    }));
+  const directory = fileURLToPath(
+    new URL("../../../docs/runbooks/evidence/mission-first/m1/", import.meta.url),
+  );
+  const candidates = await Promise.all(
+    (await readdir(directory))
+      .filter((file) => file.startsWith("m1-production-shaped-r1-") && file.endsWith(".json"))
+      .map(async (file) => {
+        const fullPath = path.join(directory, file);
+        const parsed = missionLiveCampaignResultSchema.safeParse(
+          JSON.parse(await readFile(fullPath, "utf8")),
+        );
+        return { file: fullPath, parsed, mtimeMs: (await stat(fullPath)).mtimeMs };
+      }),
+  );
   const accepted = candidates
     .filter((candidate) => candidate.parsed.success && candidate.parsed.data.verdict === "pass")
     .sort((left, right) => left.mtimeMs - right.mtimeMs)
@@ -446,9 +529,14 @@ async function acceptedM1Baseline() {
   return {
     file: accepted.file,
     mcpCalls: measuredCalls / Math.max(0.01, 1 - report.reductions.mcpCalls),
-    decisionBoundaries: Math.max(1, measuredCalls / Math.max(0.01, 1 - report.reductions.decisionBoundary)),
-    agentBytes: Math.max(1, report.privacyScan.checkedByteCount /
-      Math.max(0.01, 1 - report.reductions.agentBytes)),
+    decisionBoundaries: Math.max(
+      1,
+      measuredCalls / Math.max(0.01, 1 - report.reductions.decisionBoundary),
+    ),
+    agentBytes: Math.max(
+      1,
+      report.privacyScan.checkedByteCount / Math.max(0.01, 1 - report.reductions.agentBytes),
+    ),
   };
 }
 

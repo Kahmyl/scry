@@ -8,21 +8,15 @@ import {
   type CreateFlowInput,
   type CreateFlowRunInput,
   type ValidatePlanInput,
-  bindCalibrationSchema,
-  type BindCalibrationInput,
 } from "@scry/contracts";
 
 import { CurrentPrincipal, Public, type Principal } from "../auth/index.js";
 import { FlowService } from "./flow.service.js";
-import { RunQueueService } from "../runtime/index.js";
 import { ZodValidationPipe } from "../common/validation.pipe.js";
 
 @Controller("api")
 export class FlowController {
-  constructor(
-    @Inject(FlowService) private readonly core: FlowService,
-    @Inject(RunQueueService) private readonly queue: RunQueueService,
-  ) {}
+  constructor(@Inject(FlowService) private readonly core: FlowService) {}
 
   @Get("capabilities")
   @Public()
@@ -65,10 +59,7 @@ export class FlowController {
   }
 
   @Get("flows/:flowId")
-  getFlow(
-    @Param("flowId") flowId: string,
-    @CurrentPrincipal() principal: Principal,
-  ) {
+  getFlow(@Param("flowId") flowId: string, @CurrentPrincipal() principal: Principal) {
     return this.core.getFlow(principal, flowId);
   }
 
@@ -81,15 +72,6 @@ export class FlowController {
     return this.core.reviseFlow(principal, flowId, input);
   }
 
-  @Post("flows/:flowId/calibration-bindings")
-  bindCalibration(
-    @Param("flowId") flowId: string,
-    @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(bindCalibrationSchema)) input: BindCalibrationInput,
-  ) {
-    return this.core.bindCalibration(principal, flowId, input);
-  }
-
   @Post("projects/:projectId/runs")
   async createRun(
     @Param("projectId") projectId: string,
@@ -97,7 +79,6 @@ export class FlowController {
     @Body(new ZodValidationPipe(createFlowRunSchema)) input: CreateFlowRunInput,
   ) {
     const run = await this.core.createRun(principal, projectId, input);
-    await this.queue.dispatchPending();
     return run;
   }
 }

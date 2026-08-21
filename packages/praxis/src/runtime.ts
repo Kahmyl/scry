@@ -26,6 +26,24 @@ import {
   type PraxisProviderTiming,
 } from "./observation.js";
 import { PraxisAdapterError, type PraxisDispatchBoundary } from "./transaction.js";
+import { clickPinnedElement } from "./interaction/click.js";
+import {
+  enterTextReferencedTarget,
+  fillReferencedTarget,
+  PraxisFillDispatchError,
+  PraxisTextEntryDispatchError,
+} from "./interaction/fill.js";
+import {
+  PraxisFormControlDispatchError,
+  selectReferencedTarget,
+  setCheckedReferencedTarget,
+} from "./interaction/form-control.js";
+import { PraxisKeyDispatchError, pressReferencedTarget } from "./interaction/keyboard.js";
+import { scrollReferencedTarget } from "./interaction/scroll.js";
+import {
+  observeTargetReference,
+  type PraxisTargetReference,
+} from "./references/target-reference.js";
 import { PraxisExecutionEnvelope, type PraxisPreDispatchDeadline } from "./execution-envelope.js";
 import { PraxisStateObserver } from "./state-observer.js";
 import { validatePraxisVeilGrants } from "./veil-bridge.js";
@@ -54,6 +72,7 @@ export class PraxisGroundedTarget {
   readonly beforeUrl: string;
   readonly providerTimings: readonly PraxisProviderTiming[];
   readonly escalationLevel: number;
+  readonly pinnedReference: PraxisTargetReference | undefined;
   #grounded: GroundingResult;
   #armed: Promise<void> | undefined;
 
@@ -64,11 +83,19 @@ export class PraxisGroundedTarget {
     documentIdentity: string,
     resolution: PraxisResolution,
     strategy: PraxisStrategy,
+    pinnedReference: PraxisTargetReference | undefined,
     providerTimings: readonly PraxisProviderTiming[],
   ) {
-    this.handle = new PraxisTargetHandle(page, grounded.frame, grounded.locator, epoch, documentIdentity);
+    this.handle = new PraxisTargetHandle(
+      page,
+      grounded.frame,
+      grounded.locator,
+      epoch,
+      documentIdentity,
+    );
     this.resolution = resolution;
     this.strategy = strategy;
+    this.pinnedReference = pinnedReference;
     this.beforeUrl = page.url();
     this.providerTimings = providerTimings;
     this.escalationLevel = grounded.diagnostic.escalationLevel ?? 1;
@@ -204,6 +231,11 @@ export class PraxisGroundingEngine {
     const providerIds = PRAXIS_PROVIDER_CATALOG.map(
       (provider) => `${provider.id}@${provider.version}`,
     );
+    const pinnedReference = shouldPinTargetReference(request, strategy)
+      ? await observeTargetReference(this.page, grounded.locator, {
+          timeoutMs: request.policy.actionTimeoutMs,
+        }).catch(() => undefined)
+      : undefined;
     const cacheKey = PraxisObservationCache.key({
       scope: request.intent.scope,
       privacyState: request.privacy.state,
@@ -238,6 +270,7 @@ export class PraxisGroundingEngine {
       documentIdentity,
       resolution,
       strategy,
+      pinnedReference,
       providerTimings,
     );
   }
@@ -255,6 +288,17 @@ function groundingPendingSignature(error: GroundingError) {
     distinctions: diagnostic.candidateDistinctions,
     rejectedConstraints: diagnostic.rejectedConstraints,
   });
+}
+
+function shouldPinTargetReference(request: PraxisRequest, strategy: PraxisStrategy): boolean {
+  if (request.operation.type === "activate") return true;
+  if (request.operation.type === "enter_text")
+    return ["native_fill", "content_editable", "focus_keyboard"].includes(strategy);
+  if (request.operation.type === "select_option") return strategy === "native_select";
+  if (request.operation.type === "set_checked") return strategy === "native_check";
+  if (request.operation.type === "press_key") return true;
+  if (request.operation.type === "scroll") return true;
+  return false;
 }
 
 export function selectPraxisStrategy(
@@ -324,7 +368,7 @@ export class PraxisDispatcher {
     boundary: PraxisDispatchBoundary,
   ): Promise<{ mutationOutcome: PraxisMutationOutcome; output?: PraxisAcquisitionOutput }> {
     checkAbort(signal);
-    const mutating = isMutating(request.operation);
+    const mutating = request.dispatchSemantics !== "read_only" && isMutating(request.operation);
     let output: PraxisAcquisitionOutput | undefined;
     try {
       const preparedInput = await prepareInput(request, this.resolveInput);
@@ -348,12 +392,15 @@ export class PraxisDispatcher {
         if (
           request.operation.type === "enter_text" &&
           !["known_secret", "captured_secret"].includes(request.operation.input.classification) &&
-          (await locator.evaluate((element) =>
-            Boolean(element.closest('[data-scry-redacted="true"]')) ||
-            (element instanceof HTMLInputElement &&
-              (element.type === "password" ||
-                ["current-password", "new-password", "one-time-code"].includes(element.autocomplete.toLowerCase()) ||
-                element.inputMode === "numeric")),
+          (await locator.evaluate(
+            (element) =>
+              Boolean(element.closest('[data-scry-redacted="true"]')) ||
+              (element instanceof HTMLInputElement &&
+                (element.type === "password" ||
+                  ["current-password", "new-password", "one-time-code"].includes(
+                    element.autocomplete.toLowerCase(),
+                  ) ||
+                  element.inputMode === "numeric")),
           ))
         )
           throw new PraxisAdapterError("PROTECTED_INPUT_REFERENCE_REQUIRED", {
@@ -366,10 +413,8 @@ export class PraxisDispatcher {
         if (request.operation.type === "activate") {
           await assertActivationReady(locator, this.timeout(request.policy.actionTimeoutMs));
           await target.revalidate();
-          activationTarget =
-            (await locator.elementHandle({
-              timeout: this.timeout(request.policy.actionTimeoutMs),
-            })) ?? undefined;
+          await target.pinnedReference?.assertCurrent();
+          activationTarget = target.pinnedReference?.element();
           if (!activationTarget)
             throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
               provenance: "application",
@@ -421,8 +466,7 @@ export class PraxisDispatcher {
         });
       if (signal.aborted || error instanceof PraxisDispatchCancellation)
         throw new PraxisAdapterError("PRAXIS_CANCELLED", { provenance: "cancelled" });
-      if (error instanceof PraxisAdapterError) throw error;
-      throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+      throw error;
     }
   }
 
@@ -461,7 +505,15 @@ export class PraxisVerifier {
       return (await observationSetMatches(target.observationLocators(), request.operation.state))
         ? "passed"
         : "failed";
-    if (["inspect", "read_value", "scroll"].includes(request.operation.type)) {
+    if (request.operation.type === "scroll") {
+      try {
+        await target.pinnedReference?.assertCurrent();
+        return target.pinnedReference ? "passed" : "failed";
+      } catch {
+        return "failed";
+      }
+    }
+    if (["inspect", "read_value"].includes(request.operation.type)) {
       try {
         await target.handle.readAfterDispatch(async () => target.revalidate());
         return "passed";
@@ -475,6 +527,26 @@ export class PraxisVerifier {
       )
     )
       return "not_required";
+    if (request.operation.type === "select_option" || request.operation.type === "set_checked") {
+      const reference = target.pinnedReference;
+      if (!reference) return "failed";
+      try {
+        await reference.assertCurrent();
+        if (request.operation.type === "select_option")
+          return (await reference.element().inputValue()) ===
+            (await this.resolveInput(
+              request.operation.input.reference,
+              request.operation.input.classification,
+            ))
+            ? "passed"
+            : "failed";
+        return (await reference.element().isChecked()) === request.operation.checked
+          ? "passed"
+          : "failed";
+      } catch {
+        return "failed";
+      }
+    }
     return target.handle.readAfterDispatch(async (locator) => {
       if (request.operation.type === "enter_text")
         return (await stateObserver.readValue(locator)) ===
@@ -482,18 +554,6 @@ export class PraxisVerifier {
             request.operation.input.reference,
             request.operation.input.classification,
           ))
-          ? "passed"
-          : "failed";
-      if (request.operation.type === "select_option")
-        return (await locator.inputValue()) ===
-          (await this.resolveInput(
-            request.operation.input.reference,
-            request.operation.input.classification,
-          ))
-          ? "passed"
-          : "failed";
-      if (request.operation.type === "set_checked")
-        return (await stateObserver.checked(locator)) === request.operation.checked
           ? "passed"
           : "failed";
       return "not_required";
@@ -544,36 +604,148 @@ async function dispatchOperation(
         throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
           provenance: "application",
         });
+      if (request.operation.mechanism === "dom") {
+        try {
+          await activationTarget.evaluate((node) => {
+            if (!node.isConnected || !(node instanceof HTMLElement))
+              throw new Error("PINNED_DOM_ACTIVATION_TARGET_NOT_CURRENT");
+            node.click();
+          });
+        } catch (error) {
+          if (error instanceof PraxisStaleTargetError)
+            throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+              provenance: "application",
+            });
+          throw error;
+        }
+        break;
+      }
+      if (request.operation.mechanism === "element") {
+        try {
+          await activationTarget.click({ timeout: options.timeout, noWaitAfter: true });
+        } catch (error) {
+          const connected = await activationTarget
+            .evaluate((node) => node.isConnected)
+            .catch(() => false);
+          if (!connected)
+            throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+              provenance: "application",
+            });
+          throw error;
+        }
+        break;
+      }
+      const sourceDocumentIdentity = await readActivationDocumentIdentity(page);
       const receipt = `${request.transactionId}:${request.operationId}`;
       const activationObserved = await armActivationReceipt(page, activationTarget, receipt);
-      await activationTarget.click(
-        target.strategy === "canvas_coordinate" && point
-          ? { ...options, position: point }
-          : options,
-      );
-      if (!(await activationObserved()))
-        throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+      try {
+        await clickPinnedElement(page, activationTarget, {
+          timeoutMs: options.timeout,
+          ...(target.strategy === "canvas_coordinate" && point ? { position: point } : {}),
+        });
+      } catch (error) {
+        // Inside the transaction the mutation fence has already begun, so a
+        // target lost mid-dispatch keeps the conservative dispatch-failure
+        // semantics instead of the standalone stale-reference signal.
+        if (error instanceof PraxisStaleTargetError)
+          throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+        throw error;
+      }
+      if (!(await activationObserved())) {
+        const currentDocumentIdentity = await readActivationDocumentIdentity(page).catch(
+          () => undefined,
+        );
+        if (!currentDocumentIdentity || currentDocumentIdentity === sourceDocumentIdentity)
+          throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+      }
       break;
     }
     case "enter_text": {
       const value = preparedInput!;
-      if (target.strategy === "native_fill") await locator.fill(value, options);
-      else {
-        await locator.focus(options);
-        if (target.strategy === "content_editable")
-          await locator.press(process.platform === "darwin" ? "Meta+A" : "Control+A", options);
-        await page.keyboard.insertText(value);
+      if (target.strategy === "native_fill") {
+        if (!target.pinnedReference)
+          throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+            provenance: "application",
+            mutationOutcome: "unknown",
+            retry: "unsafe",
+            safeActions: ["do_not_retry"],
+          });
+        try {
+          await fillReferencedTarget(target.pinnedReference, value, { timeoutMs: options.timeout });
+        } catch (error) {
+          if (error instanceof PraxisFillDispatchError)
+            throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+          throw error;
+        }
+      } else if (target.strategy === "content_editable" || target.strategy === "focus_keyboard") {
+        if (!target.pinnedReference)
+          throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+            provenance: "application",
+            mutationOutcome: "unknown",
+            retry: "unsafe",
+            safeActions: ["do_not_retry"],
+          });
+        try {
+          await enterTextReferencedTarget(target.pinnedReference, value, {
+            strategy: target.strategy,
+            timeoutMs: options.timeout,
+          });
+        } catch (error) {
+          if (error instanceof PraxisTextEntryDispatchError)
+            throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+          throw error;
+        }
+      } else {
+        throw new PraxisAdapterError("PRAXIS_TEXT_ENTRY_STRATEGY_UNSUPPORTED", {
+          provenance: "application",
+        });
       }
       break;
     }
     case "select_option":
-      await locator.selectOption(preparedInput!, options);
+      if (!target.pinnedReference)
+        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+          provenance: "application",
+        });
+      try {
+        await selectReferencedTarget(target.pinnedReference, preparedInput!, {
+          timeoutMs: options.timeout,
+        });
+      } catch (error) {
+        if (error instanceof PraxisFormControlDispatchError)
+          throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+        throw error;
+      }
       break;
     case "set_checked":
-      await locator.setChecked(request.operation.checked, options);
+      if (!target.pinnedReference)
+        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+          provenance: "application",
+        });
+      try {
+        await setCheckedReferencedTarget(target.pinnedReference, request.operation.checked, {
+          timeoutMs: options.timeout,
+        });
+      } catch (error) {
+        if (error instanceof PraxisFormControlDispatchError)
+          throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+        throw error;
+      }
       break;
     case "press_key":
-      await locator.press(request.operation.key, options);
+      if (!target.pinnedReference)
+        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+          provenance: "application",
+        });
+      try {
+        await pressReferencedTarget(target.pinnedReference, request.operation.key, {
+          timeoutMs: options.timeout,
+        });
+      } catch (error) {
+        if (error instanceof PraxisKeyDispatchError)
+          throw new PraxisAdapterError("PRAXIS_DISPATCH_FAILED", { provenance: "application" });
+        throw error;
+      }
       break;
     case "wait_for_state":
       if (
@@ -592,27 +764,13 @@ async function dispatchOperation(
         });
       break;
     case "scroll":
-      if (request.operation.direction === "into_view")
-        await locator.scrollIntoViewIfNeeded(options);
-      else
-        await locator.evaluate(
-          (element, direction) =>
-            element.scrollBy({
-              top:
-                direction === "down"
-                  ? element.clientHeight
-                  : direction === "up"
-                    ? -element.clientHeight
-                    : 0,
-              left:
-                direction === "right"
-                  ? element.clientWidth
-                  : direction === "left"
-                    ? -element.clientWidth
-                    : 0,
-            }),
-          request.operation.direction,
-        );
+      if (!target.pinnedReference)
+        throw new PraxisAdapterError("PRAXIS_TARGET_CHANGED_BEFORE_ACTION", {
+          provenance: "application",
+        });
+      await scrollReferencedTarget(target.pinnedReference, request.operation.direction, {
+        timeoutMs: options.timeout,
+      });
       break;
     case "read_value":
       if (request.operation.classification === "public")
@@ -677,8 +835,7 @@ function activationReceiptState(page: Page): ActivationReceiptState {
     waiters,
     ready: page
       .exposeBinding("__scryPraxisRecordActivation", (_source, key: unknown) => {
-        if (typeof key !== "string") return;
-        waiters.get(key)?.();
+        if (typeof key === "string") waiters.get(key)?.();
       })
       .then(() => undefined),
   };
@@ -708,7 +865,7 @@ async function armActivationReceipt(
         () => {
           const binding = (
             window as typeof window & {
-              __scryPraxisRecordActivation?: (receipt: string) => Promise<void>;
+              __scryPraxisRecordActivation?: (value: string) => Promise<void>;
             }
           ).__scryPraxisRecordActivation;
           void binding?.(key);
@@ -726,6 +883,14 @@ async function armActivationReceipt(
     state.waiters.delete(receipt);
     return observed;
   };
+}
+async function readActivationDocumentIdentity(page: Page) {
+  return page.evaluate(() => {
+    const key = "__scryPraxisActivationDocumentIdentity";
+    const state = document as unknown as Record<string, unknown>;
+    if (typeof state[key] !== "string") state[key] = `${Date.now()}-${Math.random()}`;
+    return state[key] as string;
+  });
 }
 function isMutating(operation: PraxisOperation) {
   return ["activate", "enter_text", "select_option", "set_checked", "press_key"].includes(

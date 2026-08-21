@@ -220,10 +220,13 @@ export class PraxisDocumentEpoch {
 }
 
 export class PraxisDocumentIdentity {
-  private static readonly identities = new WeakMap<Frame, {
-    handle: JSHandle<Document>;
-    identity: string;
-  }>();
+  private static readonly identities = new WeakMap<
+    Frame,
+    {
+      handle: JSHandle<Document>;
+      identity: string;
+    }
+  >();
 
   static async current(page: Page, frame: Frame = page.mainFrame()): Promise<string> {
     if (page.isClosed() || frame.isDetached()) throw new PraxisStaleTargetError();
@@ -237,7 +240,7 @@ export class PraxisDocumentIdentity {
       }
       await prior.handle.dispose().catch(() => undefined);
     }
-    const handle = await frame.evaluateHandle(() => document) as JSHandle<Document>;
+    const handle = (await frame.evaluateHandle(() => document)) as JSHandle<Document>;
     const identity = randomUUID().replaceAll("-", "");
     this.identities.set(frame, { handle, identity });
     return identity;

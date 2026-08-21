@@ -30,13 +30,13 @@ export function registerPublishFlowDraftTool(server: McpServer, client: ScryApiC
   server.registerTool(
     "publish_flow_draft",
     {
-      title: "Publish execution-ready Flow",
-      description: "Freeze an execution-ready draft as one immutable Flow revision.",
+      title: "Publish Flow representation",
+      description:
+        "Freeze a mechanically valid draft as one immutable representation-only Flow revision. Publication does not compile, certify, admit, or execute browser operations.",
       inputSchema: {
         ...objectiveContext,
         draftId: uuid,
         expectedVersion: z.number().int().positive(),
-        compilationId: uuid,
         visibility: flowVisibilitySchema.default("mission_local"),
         purpose: flowPurposeSchema.default("primary"),
         reason: z.string().trim().min(1).max(2000),
@@ -53,7 +53,7 @@ export function registerPublishFlowDraftTool(server: McpServer, client: ScryApiC
         });
         return result(
           { publication },
-          "Execution-ready Flow revision published with its exact compiled contract identity.",
+          "Immutable representation-only Flow revision published; no compilation or certification admits execution.",
         );
       } catch (error) {
         if (!(error instanceof ScryApiError)) throw error;

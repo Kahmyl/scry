@@ -27,7 +27,7 @@ x-app-environment: &app-environment
 
 x-release-environment: &release-environment
   SCRY_RELEASE_ID: "${SCRY_RELEASE_ID:-local-20260806-compiled-plan}"
-  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-913f4353d5c9fc2cd7ac4c9f98a1d2fbd963c9f462b78e4425058eafa2722e66}"
+  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-8abcde60d523d2e8390a686a591c4435efee6331baf15a2468743a1c8cb65a4f}"
   SCRY_GIT_COMMIT: "${SCRY_GIT_COMMIT:-development}"
   SCRY_RUNTIME_VERSION: "${SCRY_RUNTIME_VERSION:-development}"
 
@@ -128,8 +128,8 @@ services:
           path: packages/contracts/src
           target: /workspace/packages/contracts/src
         - action: sync
-          path: packages/artifact/src
-          target: /workspace/packages/artifact/src
+          path: packages/chronicle/src
+          target: /workspace/packages/chronicle/src
         - action: rebuild
           path: apps/api/package.json
         - action: rebuild
@@ -172,8 +172,8 @@ services:
           path: packages/contracts/src
           target: /workspace/packages/contracts/src
         - action: sync+restart
-          path: packages/artifact/src
-          target: /workspace/packages/artifact/src
+          path: packages/chronicle/src
+          target: /workspace/packages/chronicle/src
         - action: rebuild
           path: apps/api/package.json
         - action: rebuild

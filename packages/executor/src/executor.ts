@@ -18,13 +18,7 @@ import {
   SecretRedactor,
 } from "@scry/policy";
 import { compileDefaultVeilPolicy, veilPolicyDigest, VeilAuthority } from "@scry/veil";
-import {
-  chromium,
-  type Browser,
-  type BrowserContext,
-  type CDPSession,
-  type Page,
-} from "playwright";
+import { type Browser, type BrowserContext, type CDPSession, type Page } from "playwright";
 
 import {
   availableArtifact,
@@ -32,7 +26,17 @@ import {
   registerVeilEvidenceAdmission,
   writeJson,
 } from "./artifacts.js";
-import { observeSemanticPageContext, playwrightBrowserChannel, visualRedactionInitScript } from "@scry/praxis";
+import {
+  capturePraxisStorageState,
+  closePraxisBrowser,
+  closePraxisContext,
+  observeAndMaskPraxisVisualRegions,
+  observeSemanticPageContext,
+  openPraxisBrowserSession,
+  visualRedactionInitScript,
+  waitForPraxisLoadState,
+  destroyPraxisIsolatedSession,
+} from "@scry/praxis";
 import {
   registerGroundingHistoryProvider,
   registerGroundingObserver,
@@ -41,12 +45,13 @@ import {
 import { requirePraxisSuccess, type PraxisConsumerContext } from "@scry/praxis";
 import { registerPraxisVeilAuthority } from "@scry/praxis";
 import { RecordingCoordinator } from "./recording-coordinator.js";
+import { captureSuccessorCheckpointPayload } from "./successor-checkpoint.js";
 import { VeilRuntimeCoordinator, type PrivacyCollector, type PrivacyPreparation } from "@scry/veil";
-import { VeilClipboardCollector } from "@scry/veil";
 import { VeilChannelCollector } from "@scry/veil";
 import { VeilVisualCaptureAuthority } from "@scry/veil";
 import { VeilVideoSegmentAuthority } from "@scry/veil";
 import { BrowserSessionProvenance } from "./browser-session.js";
+import { createVeilClipboardCollector } from "./privacy-clipboard-runtime.js";
 import {
   PlaywrightProtectedCapsuleFactory,
   ProtectedTransactionCoordinator,
@@ -54,12 +59,7 @@ import {
 } from "./protected-transaction-coordinator.js";
 import { TraceCoordinator } from "./trace-coordinator.js";
 import { sanitizeTraceArchive } from "./trace-sanitizer.js";
-import {
-  CalibrationRequiredError,
-  capturePageStructure,
-  protectedTransactionDigest,
-  structureFingerprint,
-} from "./calibration.js";
+import { capturePageStructure } from "./calibration.js";
 import { CheckpointCoordinator } from "./checkpoint-coordinator.js";
 import {
   executeReadiness,
@@ -138,6 +138,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   const usesProtectedValues = options.plan.steps.some(
     (step) =>
       step.action.type === "protectedTransaction" ||
+      step.action.type === "protectedAuthentication" ||
       (step.action.type === "fill" &&
         Boolean(step.action.secretRef || step.action.capturedSecretRef)),
   );
@@ -227,19 +228,20 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       page = options.existingSafeSession.page;
       safeProvenance = options.existingSafeSession.provenance;
     } else {
-      const browserChannel = playwrightBrowserChannel(options.browserChannel);
-      browser = await chromium.launch({
-        headless: options.headless ?? true,
-        ...(browserChannel ? { channel: browserChannel } : {}),
-      });
       const viewport = options.viewport ?? { width: 1280, height: 720 };
-      context = await browser.newContext({
-        viewport,
-        serviceWorkers: "block",
-        acceptDownloads: false,
-        ...(options.browserStorageState ? { storageState: options.browserStorageState } : {}),
+      const session = await openPraxisBrowserSession({
+        ...(options.browserChannel === undefined ? {} : { browserChannel: options.browserChannel }),
+        headless: options.headless ?? true,
+        context: {
+          viewport,
+          serviceWorkers: "block",
+          acceptDownloads: false,
+          ...(options.browserStorageState ? { storageState: options.browserStorageState } : {}),
+        },
       });
-      page = await context.newPage();
+      browser = session.browser;
+      context = session.context;
+      page = session.page;
       safeProvenance = new BrowserSessionProvenance(randomUUID(), "safe");
     }
     await installVisualRedactionStyles(context);
@@ -302,7 +304,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       videoAuthority: veilVideoSegments,
       videoBinding: veilCaptureBinding,
       abortCapture: async () => {
-        await context?.close();
+        if (context) await closePraxisContext(context);
       },
     });
     trace = new TraceCoordinator({
@@ -329,7 +331,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         return decision.disposition === "allow" || decision.disposition === "sanitize";
       },
       abortCapture: async () => {
-        await context?.close();
+        if (context) await closePraxisContext(context);
       },
     });
     let recordingVeilState: ReturnType<PrivacyCollector["state"]>["status"] = "active";
@@ -381,7 +383,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       },
       state: () => ({ status: recordingVeilState }),
     };
-    const clipboardCollector = new VeilClipboardCollector(page);
+    const clipboardCollector = createVeilClipboardCollector(page);
     const passiveCollectors = [...veilChannelCollectors.values(), clipboardCollector];
     privacyGate = new VeilRuntimeCoordinator(
       [recordingCollector, trace, ...passiveCollectors],
@@ -390,11 +392,14 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       veilPolicy.digest,
       `${runId}:${attemptId}`,
     );
+    let protectedContextTeardownOwned = false;
     page.once("close", () => {
-      void privacyGate?.seal({ code: "ACTIVE_PAGE_CLOSED" }).catch(() => undefined);
+      if (!protectedContextTeardownOwned)
+        void privacyGate?.seal({ code: "ACTIVE_PAGE_CLOSED" }).catch(() => undefined);
     });
     browser.once("disconnected", () => {
-      void privacyGate?.seal({ code: "BROWSER_DISCONNECTED" }).catch(() => undefined);
+      if (!protectedContextTeardownOwned)
+        void privacyGate?.seal({ code: "BROWSER_DISCONNECTED" }).catch(() => undefined);
     });
     state.startCaptureEpoch("run_started", safeProvenance?.contextId ?? randomUUID());
     await recording.startSegment({ page, reason: "run_started" });
@@ -447,6 +452,11 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
         const policyEpochBeforeStep = policyEpoch;
         let protectedTerminal = false;
         let protectedContinuationStepId: string | undefined;
+        let documentTransitionOpen = false;
+        const documentTransitionExpected =
+          step.action.type === "navigate" ||
+          (options.plan.steps.length === 1 && options.expectedDocumentTransition === true) ||
+          (step.action.type === "click" && step.action.expectedEffect.type === "navigation");
         if (step.action.type === "protectedTransaction") {
           if (
             !browser ||
@@ -464,6 +474,10 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             );
           }
           let protectedAssertionOrdinal = 0;
+          const liveBrowser = browser;
+          const liveContext = context;
+          const livePage = page;
+          const liveProvenance = safeProvenance;
           const transaction: ProtectedTransactionExecution =
             await new ProtectedTransactionCoordinator({
               safeSession: { browser, context, page, provenance: safeProvenance },
@@ -471,9 +485,34 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               redactor,
               store: options.protectedTransactionStore,
               capsuleFactory: new PlaywrightProtectedCapsuleFactory(
-                options.openBrowser ?? ((contextOptions) =>
-                  openCompatibilityBrowser(options.browserChannel, contextOptions)),
+                options.openBrowser ??
+                  ((contextOptions) =>
+                    openCompatibilityBrowser(options.browserChannel, contextOptions)),
               ),
+              ...(options.existingProtectedSession
+                ? {
+                    liveProtectedSession: {
+                      browser: liveBrowser,
+                      context: liveContext,
+                      page: livePage,
+                      provenance: liveProvenance,
+                      clipboardCollector: createVeilClipboardCollector(livePage),
+                      destroy: async () => {
+                        // This close is the coordinator's verified terminal boundary for an
+                        // existing protected session, not an unexpected privacy incident.
+                        // A failed teardown is still handled fail-closed by the coordinator.
+                        protectedContextTeardownOwned = true;
+                        const outcome = await destroyPraxisIsolatedSession({
+                          context: liveContext,
+                          browser: liveBrowser,
+                        });
+                        if (liveProvenance.value() !== "destroyed")
+                          liveProvenance.transition("destroyed");
+                        return outcome;
+                      },
+                    },
+                  }
+                : {}),
               allowedOrigins: options.plan.allowedOrigins,
               persistSecret: options.atomicSecretCapture,
               persistPublicValue: options.publicValueCapture,
@@ -487,9 +526,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
                 ? { recoverStagedResponseOutputs: options.recoverStagedProtectedResponseOutputs }
                 : {}),
               resolveKnownSecret: options.secretResolver ?? missingSecretResolver,
-              ...(options.executeNativeControl
-                ? { executeNativeControl: options.executeNativeControl }
-                : {}),
               prepareCapsule: async (capsule) => {
                 registerPraxisVeilAuthority(capsule.page, {
                   authority: veilAuthority,
@@ -505,52 +541,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
                   rejectPolicy,
                 );
                 attachCapabilityGuards(capsule.context, capsule.page, options, rejectPolicy);
-              },
-              verifyCalibration: async (capsule, action) => {
-                if (!action.calibrationAttestationId) return;
-                if (!options.calibrationVerifier)
-                  throw new InfrastructureDependencyError("Calibration verifier is unavailable");
-                try {
-                  const fingerprint = structureFingerprint(
-                    await capturePageStructure(capsule.page, action),
-                  );
-                  const operationDigest = protectedTransactionDigest(
-                    action,
-                    options.plan.allowedOrigins,
-                  );
-                  const verified = await options.calibrationVerifier({
-                    attestationId: action.calibrationAttestationId,
-                    operationId: action.operationId,
-                    operationDigest,
-                    structureFingerprint: fingerprint,
-                  });
-                  await emit("calibration.boundary_reached", {
-                    operationId: action.operationId,
-                    attestationId: action.calibrationAttestationId,
-                    operationDigest,
-                    structureFingerprint: fingerprint,
-                    verified,
-                    mode: "production_verification",
-                  });
-                  if (!verified) throw new CalibrationRequiredError();
-                } catch (error) {
-                  await emit("calibration.boundary_reached", {
-                    operationId: action.operationId,
-                    code:
-                      error && typeof error === "object" && "code" in error
-                        ? String(
-                            (error as { code?: unknown }).code ?? "CALIBRATION_VERIFICATION_FAILED",
-                          )
-                        : "CALIBRATION_VERIFICATION_FAILED",
-                    message:
-                      error instanceof Error
-                        ? error.message.slice(0, 500)
-                        : "CALIBRATION_VERIFICATION_FAILED",
-                    verified: false,
-                    mode: "production_verification_failed",
-                  });
-                  throw error;
-                }
               },
               onPreparationVerified: async (capsule, action) => {
                 if (options.calibrationRehearsal?.operationId !== action.operationId) return;
@@ -598,10 +588,18 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               },
               emit,
               signal: timeoutController.signal,
-              ...(options.dispatchDisposition ? { dispatchDisposition: options.dispatchDisposition } : {}),
-              ...(options.onReadyToDispatch ? { onReadyToDispatch: options.onReadyToDispatch } : {}),
-              ...(options.onMutationDispatch ? { onMutationDispatch: options.onMutationDispatch } : {}),
-              ...(options.markCredentialCompromised ? { markCredentialCompromised: options.markCredentialCompromised } : {}),
+              ...(options.dispatchDisposition
+                ? { dispatchDisposition: options.dispatchDisposition }
+                : {}),
+              ...(options.onReadyToDispatch
+                ? { onReadyToDispatch: options.onReadyToDispatch }
+                : {}),
+              ...(options.onMutationDispatch
+                ? { onMutationDispatch: options.onMutationDispatch }
+                : {}),
+              ...(options.markCredentialCompromised
+                ? { markCredentialCompromised: options.markCredentialCompromised }
+                : {}),
             }).execute(step.action);
           browser = transaction.safeSession.browser;
           context = transaction.safeSession.context;
@@ -634,27 +632,76 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           )
             throw new UnsafeProtectedCaptureError(transaction.result.status);
         } else {
-          await executeAction(
-            page,
-            step.action,
-            options,
-            timeoutController.signal,
-            redactor,
-            capturedSecrets,
-            capturedValues,
-            privacyGate,
-            emit,
-            {
-              runId,
-              attemptId,
-              stepId: step.id,
-              channel: "action",
-              ordinal: index,
-              allowedOrigins: options.plan.allowedOrigins,
-              timeoutMs: "timeoutMs" in step.action ? (step.action.timeoutMs ?? 10_000) : 10_000,
-              ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}),
-            },
-          );
+          const transitionOperationId = options.recordingOperationId ?? step.id;
+
+          if (documentTransitionExpected && !recording.isSealed()) {
+            await recording.beginDocumentTransition({
+              operationId: transitionOperationId,
+            });
+            documentTransitionOpen = true;
+          }
+
+          try {
+            await executeAction(
+              page,
+              step.action,
+              options,
+              timeoutController.signal,
+              redactor,
+              capturedSecrets,
+              capturedValues,
+              privacyGate,
+              emit,
+              {
+                runId,
+                attemptId,
+                stepId: step.id,
+                channel: "action",
+                ordinal: index,
+                allowedOrigins: options.plan.allowedOrigins,
+                timeoutMs: "timeoutMs" in step.action ? (step.action.timeoutMs ?? 10_000) : 10_000,
+                ...(options.onMutationDispatch
+                  ? { beforeMutation: options.onMutationDispatch }
+                  : {}),
+                ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}),
+              },
+            );
+          } catch (error) {
+            if (documentTransitionOpen) {
+              await recording
+                .failDocumentTransition("DOCUMENT_TRANSITION_ACTION_FAILED")
+                .catch(() => undefined);
+              documentTransitionOpen = false;
+            }
+            throw error;
+          }
+
+          if (documentTransitionOpen) {
+            try {
+              const transitionTimeoutMs =
+                "timeoutMs" in step.action && typeof step.action.timeoutMs === "number"
+                  ? Math.min(10_000, step.action.timeoutMs)
+                  : 10_000;
+
+              await waitForPraxisLoadState(page, "domcontentloaded", {
+                timeout: transitionTimeoutMs,
+              });
+
+              // Qualification is an independent factual check on the new
+              // document. Recording resumes only after this succeeds.
+              await observeAndMaskPraxisVisualRegions(page);
+              await recording.completeDocumentTransition(page);
+              documentTransitionOpen = false;
+            } catch (error) {
+              if (documentTransitionOpen) {
+                await recording
+                  .failDocumentTransition("DOCUMENT_TRANSITION_QUALIFICATION_FAILED")
+                  .catch(() => undefined);
+                documentTransitionOpen = false;
+              }
+              throw error;
+            }
+          }
         }
         result.action = { status: "passed" };
         const actionCompletedAt = new Date();
@@ -743,9 +790,11 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             "screenshots",
             `${step.action.name}.png`,
           );
-          const { permit } = await veilVisualCapture.issue(capturePage, veilCaptureBinding());
+          const observation = await observeAndMaskPraxisVisualRegions(capturePage);
+          const { permit } = veilVisualCapture.issue(observation, veilCaptureBinding());
+          const validatedObservation = await observeAndMaskPraxisVisualRegions(capturePage);
           const fallback = await veilVisualCapture.capture(
-            capturePage,
+            validatedObservation,
             permit,
             veilCaptureBinding(),
             () => captureScreenshotWithFallback(capturePage, screenshotPath, fullPage),
@@ -945,58 +994,24 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
     }
     if (context && page && state.terminalState === "passed" && options.captureSuccessorCheckpoint) {
       try {
-        const [storageState, sessionEntries, semantic] = await Promise.all([
-          context.storageState({ indexedDB: true }),
-          page.evaluate(() => Object.entries(sessionStorage)),
-          observeSemanticPageContext(page),
-        ]);
-        const restorationUrl = page.url();
-        if (!options.policy.allowedOrigins.includes(new URL(restorationUrl).origin))
-          throw new Error("SUCCESSOR_CHECKPOINT_ORIGIN_NOT_ALLOWED");
-        const admittedOrigins = new Set(options.policy.allowedOrigins);
-        const admittedHosts = new Set(
-          options.policy.allowedOrigins.map((origin) => new URL(origin).hostname),
+        await options.captureSuccessorCheckpoint(
+          await captureSuccessorCheckpointPayload(context, page, options.policy),
         );
-        storageState.origins = storageState.origins.filter((entry) => admittedOrigins.has(entry.origin));
-        storageState.cookies = storageState.cookies.filter((cookie) => {
-          const cookieDomain = cookie.domain.replace(/^\./, "");
-          return [...admittedHosts].some(
-            (host) => host === cookieDomain || host.endsWith(`.${cookieDomain}`),
-          );
-        });
-        const sessionBytes = sessionEntries.reduce(
-          (total, [key, value]) => total + Buffer.byteLength(key) + Buffer.byteLength(value),
-          0,
-        );
-        if (sessionEntries.length > 512 || sessionBytes > 512 * 1024)
-          throw new Error("SUCCESSOR_CHECKPOINT_SESSION_STORAGE_TOO_LARGE");
-        if (Buffer.byteLength(JSON.stringify(storageState)) > 2 * 1024 * 1024)
-          throw new Error("SUCCESSOR_CHECKPOINT_STORAGE_STATE_TOO_LARGE");
-        await options.captureSuccessorCheckpoint({
-          schemaVersion: 1,
-          policyDigest: createHash("sha256").update(JSON.stringify(options.policy)).digest("hex"),
-          storageState,
-          sessionStorage: { origin: new URL(page.url()).origin, entries: sessionEntries },
-          restorationUrl,
-          safeSemanticContext: {
-            title: semantic.authority.title,
-            controls: semantic.controls.slice(0, 24).map(({ role, name }) => ({ role, name })),
-          },
-        });
-      } catch (error) {
+      } catch {
         state.terminalState = "infrastructure_error";
         state.fatalError = "SUCCESSOR_CHECKPOINT_ESTABLISHMENT_FAILED";
       }
     }
     if (context && state.terminalState === "passed" && options.captureBrowserState) {
-      await Promise.resolve(options.captureBrowserState(await context.storageState())).catch(
-        () => undefined,
-      );
+      await Promise.resolve(
+        options.captureBrowserState(await capturePraxisStorageState(context)),
+      ).catch(() => undefined);
     }
     if (context && !borrowsSafeSession) {
-      await boundedClose(context.close()).catch(() => undefined);
+      await boundedClose(closePraxisContext(context)).catch(() => undefined);
     }
-    if (browser && !borrowsSafeSession) await boundedClose(browser.close()).catch(() => undefined);
+    if (browser && !borrowsSafeSession)
+      await boundedClose(closePraxisBrowser(browser)).catch(() => undefined);
     unregisterPraxisVeil?.();
     unregisterVeilAdmission();
   }
@@ -1057,19 +1072,10 @@ async function openCompatibilityBrowser(
   browserChannel: string | undefined,
   contextOptions?: import("playwright").BrowserContextOptions,
 ) {
-  const launchChannel = playwrightBrowserChannel(browserChannel);
-  const browser = await chromium.launch({
-    headless: true,
-    ...(launchChannel ? { channel: launchChannel } : {}),
+  return openPraxisBrowserSession({
+    ...(browserChannel === undefined ? {} : { browserChannel }),
+    context: { ...contextOptions, acceptDownloads: false },
   });
-  try {
-    const context = await browser.newContext({ ...contextOptions, acceptDownloads: false });
-    const page = await context.newPage();
-    return { browser, context, page };
-  } catch (error) {
-    await browser.close().catch(() => undefined);
-    throw error;
-  }
 }
 
 export { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import type { CampaignCheck, CampaignMetricsCollector } from "@scry/campaigns";
+import type { CampaignCheck, CampaignMetricsCollector } from "@scry/assurance/legacy";
 import pg from "pg";
 
 type ToolCall = {
@@ -102,7 +102,11 @@ export async function runDeployedCampaign(input: {
           eventId: `${eventId}-boundary`,
         });
       }
-      if (input.milestone === "M2" && call.name === "advance_flow_authoring" && findTurnState(response) !== "completed") {
+      if (
+        input.milestone === "M2" &&
+        call.name === "advance_flow_authoring" &&
+        findTurnState(response) !== "completed"
+      ) {
         throw new Error("M2_TURN_NOT_COMPLETED");
       }
       if (call.name === "close_flow_authoring") cleanupSucceeded = true;
@@ -124,11 +128,13 @@ export async function runDeployedCampaign(input: {
   const telemetry = await collectPersistedTelemetry(input.correlationId, input.metrics);
   if (input.milestone === "M1") {
     const threshold = input.resolutionThresholds ?? { minNativeResolved: 1, maxPraxisFallbacks: 0 };
-    const resolutionPassed = telemetry.nativeResolved >= threshold.minNativeResolved &&
+    const resolutionPassed =
+      telemetry.nativeResolved >= threshold.minNativeResolved &&
       telemetry.praxisCalls <= threshold.maxPraxisFallbacks;
     checks.push({
       id: "native-only-standard-controls",
-      description: "Native resolution and the single admitted Praxis fallback remain within target thresholds",
+      description:
+        "Native resolution and the single admitted Praxis fallback remain within target thresholds",
       status: resolutionPassed ? "passed" : "failed",
       ...(!resolutionPassed
         ? { reasonCode: "M1_NATIVE_ONLY_CONTROL_INVARIANT_FAILED", safeDetail: telemetry }
@@ -137,11 +143,12 @@ export async function runDeployedCampaign(input: {
   }
   if (input.milestone === "M2") {
     const threshold = input.resolutionThresholds ?? { minNativeResolved: 1, maxPraxisFallbacks: 0 };
-    const resolutionPassed = telemetry.nativeResolved >= threshold.minNativeResolved &&
-      telemetry.praxisCalls === 0;
+    const resolutionPassed =
+      telemetry.nativeResolved >= threshold.minNativeResolved && telemetry.praxisCalls === 0;
     checks.push({
       id: "m2-native-only",
-      description: "Every M2 browser interaction resolves through the one native driver without Praxis",
+      description:
+        "Every M2 browser interaction resolves through the one native driver without Praxis",
       status: resolutionPassed ? "passed" : "failed",
       ...(!resolutionPassed
         ? { reasonCode: "M2_NATIVE_ONLY_INVARIANT_FAILED", safeDetail: telemetry }
@@ -154,7 +161,8 @@ export async function runDeployedCampaign(input: {
   const responseBytes = Buffer.from(JSON.stringify(responses));
   const leaked = forbiddenValues.some(
     (value) =>
-      responseBytes.includes(value) || artifactBytes.some((artifact) => Buffer.from(artifact).includes(value)),
+      responseBytes.includes(value) ||
+      artifactBytes.some((artifact) => Buffer.from(artifact).includes(value)),
   );
   checks.push({
     id: "redaction",
@@ -179,48 +187,63 @@ export async function runDeployedCampaign(input: {
   checks.push({
     id: "deployed-journey",
     description: "The deployed MCP authoring journey reaches a terminal successful turn",
-    status: (input.milestone === "M2"
-      ? terminalTurnState === "completed"
-      : terminalBoundary === "objective_completed") ? "passed" : "failed",
-    ...((input.milestone === "M2" ? terminalTurnState !== "completed" : terminalBoundary !== "objective_completed")
+    status: (
+      input.milestone === "M2"
+        ? terminalTurnState === "completed"
+        : terminalBoundary === "objective_completed"
+    )
+      ? "passed"
+      : "failed",
+    ...((
+      input.milestone === "M2"
+        ? terminalTurnState !== "completed"
+        : terminalBoundary !== "objective_completed"
+    )
       ? { reasonCode: "CAMPAIGN_TERMINAL_BOUNDARY_MISSING" }
       : {}),
   });
   checks.push({
     id: "authoring-turn-surface",
-    description: input.milestone === "M2"
-      ? "M2 executes no more than two grouped semantic authoring turns"
-      : "M1 executes one grouped advance_flow_authoring call",
+    description:
+      input.milestone === "M2"
+        ? "M2 executes no more than two grouped semantic authoring turns"
+        : "M1 executes one grouped advance_flow_authoring call",
     status:
       input.milestone === "M0" ||
-      input.milestone === "M1" && authoringCalls(spec).length === 1 ||
-      input.milestone === "M2" && authoringCalls(spec).length >= 1 && authoringCalls(spec).length <= 2
+      (input.milestone === "M1" && authoringCalls(spec).length === 1) ||
+      (input.milestone === "M2" &&
+        authoringCalls(spec).length >= 1 &&
+        authoringCalls(spec).length <= 2)
         ? "passed"
         : "failed",
     ...(input.milestone === "M1" && authoringCalls(spec).length !== 1
       ? { reasonCode: "M1_GROUPED_AUTHORING_SURFACE_NOT_EXERCISED" }
-      : input.milestone === "M2" && (authoringCalls(spec).length < 1 || authoringCalls(spec).length > 2)
+      : input.milestone === "M2" &&
+          (authoringCalls(spec).length < 1 || authoringCalls(spec).length > 2)
         ? { reasonCode: "M2_GROUPED_AUTHORING_SURFACE_NOT_EXERCISED" }
-      : {}),
+        : {}),
   });
   if (input.milestone === "M1" && input.target === "production_shaped" && spec.restart) {
     checks.push(await verifyRestartFence(spec, input.correlationId));
   }
   if (input.milestone === "M2") {
     const turns = authoringCalls(spec);
-    const semanticOnly = turns.every((call) =>
-      Array.isArray(call.arguments.intents) && !("operations" in call.arguments));
+    const semanticOnly = turns.every(
+      (call) => Array.isArray(call.arguments.intents) && !("operations" in call.arguments),
+    );
     const channelsPresent = turns.every((_, index) => hasIndependentChannels(responses[index + 1]));
     checks.push(
       {
         id: "m2-semantic-turn-surface",
-        description: "M2 authoring calls contain semantic intents and no low-level operation payload",
+        description:
+          "M2 authoring calls contain semantic intents and no low-level operation payload",
         status: semanticOnly ? "passed" : "failed",
         ...(!semanticOnly ? { reasonCode: "M2_LOW_LEVEL_OPERATION_SURFACE_REMAINS" } : {}),
       },
       {
         id: "m2-independent-outcome-channels",
-        description: "Every grouped turn reports functional, mutation, privacy, evidence, and quality separately",
+        description:
+          "Every grouped turn reports functional, mutation, privacy, evidence, and quality separately",
         status: channelsPresent ? "passed" : "failed",
         ...(!channelsPresent ? { reasonCode: "M2_OUTCOME_CHANNEL_MISSING" } : {}),
       },
@@ -294,8 +317,10 @@ function validateSpec(
     if (spec.calls.some((call) => !permitted.has(call.name))) {
       throw new Error("M2_EXTERNAL_TOOL_FORBIDDEN");
     }
-    if (spec.calls.filter((call) => call.name === "start_flow_authoring").length !== 1 ||
-        spec.calls.filter((call) => call.name === "close_flow_authoring").length !== 1) {
+    if (
+      spec.calls.filter((call) => call.name === "start_flow_authoring").length !== 1 ||
+      spec.calls.filter((call) => call.name === "close_flow_authoring").length !== 1
+    ) {
       throw new Error("M2_AUTHORING_LIFECYCLE_INVALID");
     }
   }
@@ -303,11 +328,13 @@ function validateSpec(
     if (/protectedTransaction|capturePublicValue/i.test(bytes)) {
       throw new Error("VITRACT_CAMPAIGN_MUTATION_FORBIDDEN");
     }
-    const recoveryApplicationCreates = bytes.match(/"intentId":"vitract-save-application"/g)?.length ?? 0;
-    const admittedRecoveryApplication = input.milestone === "M2" && recoveryApplicationCreates === 1;
+    const recoveryApplicationCreates =
+      bytes.match(/"intentId":"vitract-save-application"/g)?.length ?? 0;
+    const admittedRecoveryApplication =
+      input.milestone === "M2" && recoveryApplicationCreates === 1;
     if (
       /create.{0,40}(credential|order)|generate.{0,40}credential/i.test(bytes) ||
-      /create.{0,40}application/i.test(bytes) && !admittedRecoveryApplication
+      (/create.{0,40}application/i.test(bytes) && !admittedRecoveryApplication)
     ) {
       throw new Error("VITRACT_CAMPAIGN_SCOPE_FORBIDDEN");
     }
@@ -412,10 +439,15 @@ export async function collectPersistedTelemetry(
     );
     const firstObservation = observations.rows[0];
     if (firstObservation) {
-      metrics.record(firstObservation.operationId, "browser_startup", firstObservation.observationMs, {
-        source: "browser_event",
-        eventId: `browser-${correlationId}`,
-      });
+      metrics.record(
+        firstObservation.operationId,
+        "browser_startup",
+        firstObservation.observationMs,
+        {
+          source: "browser_event",
+          eventId: `browser-${correlationId}`,
+        },
+      );
       metrics.record(
         firstObservation.operationId,
         "document_observation",
@@ -478,7 +510,11 @@ export async function collectPersistedTelemetry(
         eventId: `praxis-not-emitted-${correlationId}`,
       });
     }
-    const native = await pool.query<{ operationId: string; sequence: number; safeFacts: Record<string, unknown> }>(
+    const native = await pool.query<{
+      operationId: string;
+      sequence: number;
+      safeFacts: Record<string, unknown>;
+    }>(
       `SELECT event.operation_id AS "operationId",event.sequence,event.safe_facts AS "safeFacts"
        FROM execution_kernel_events event
        JOIN execution_kernel_operations operation
@@ -498,7 +534,11 @@ export async function collectPersistedTelemetry(
         });
       }
     }
-    const effects = await pool.query<{ operationId: string; sequence: number; safeFacts: Record<string, unknown> }>(
+    const effects = await pool.query<{
+      operationId: string;
+      sequence: number;
+      safeFacts: Record<string, unknown>;
+    }>(
       `SELECT event.operation_id AS "operationId",event.sequence,event.safe_facts AS "safeFacts"
        FROM execution_kernel_events event
        JOIN execution_kernel_operations operation
@@ -562,9 +602,12 @@ async function retrieveArtifacts(
         "artifact_retrieval",
         { source: "artifact_event", eventId },
         async () => {
-          const response = await fetch(`${apiBaseUrl()}/artifacts/${encodeURIComponent(artifactId)}`, {
-            headers: apiHeaders(),
-          });
+          const response = await fetch(
+            `${apiBaseUrl()}/artifacts/${encodeURIComponent(artifactId)}`,
+            {
+              headers: apiHeaders(),
+            },
+          );
           input.metrics.countApiRequest({ source: "api_http", eventId: `${eventId}-content-http` });
           if (!response.ok) throw new Error(`ARTIFACT_HTTP_${response.status}`);
           return new Uint8Array(await response.arrayBuffer());
@@ -718,13 +761,17 @@ export function findTurnState(value: unknown): string | undefined {
 }
 
 function hasIndependentChannels(value: unknown) {
-  return findNested(value, (record) => {
-    if (!record.channels || typeof record.channels !== "object") return undefined;
-    const channels = record.channels as Record<string, unknown>;
-    return ["functional", "mutation", "privacy", "evidence", "quality"].every((key) => key in channels)
-      ? "present"
-      : undefined;
-  }) === "present";
+  return (
+    findNested(value, (record) => {
+      if (!record.channels || typeof record.channels !== "object") return undefined;
+      const channels = record.channels as Record<string, unknown>;
+      return ["functional", "mutation", "privacy", "evidence", "quality"].every(
+        (key) => key in channels,
+      )
+        ? "present"
+        : undefined;
+    }) === "present"
+  );
 }
 
 function findNested(
@@ -732,7 +779,11 @@ function findNested(
   select: (record: Record<string, unknown>) => string | undefined,
 ): string | undefined {
   if (typeof value === "string") {
-    try { return findNested(JSON.parse(value), select); } catch { return undefined; }
+    try {
+      return findNested(JSON.parse(value), select);
+    } catch {
+      return undefined;
+    }
   }
   if (Array.isArray(value)) {
     for (const entry of value) {

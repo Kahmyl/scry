@@ -1,5 +1,10 @@
-import type { ProtectedTransaction } from "@scry/contracts";
-import { PraxisConsumerError, requirePraxisSuccess, resolveTargetLocator } from "@scry/praxis";
+import type { InteractionTargetIntent, ProtectedTransaction } from "@scry/contracts";
+import {
+  gotoPraxisPage,
+  PraxisConsumerError,
+  requirePraxisSuccess,
+  resolveTargetLocator,
+} from "@scry/praxis";
 import type { Page } from "playwright";
 
 import type { ProtectedTransactionDependencies } from "./protected-transaction-coordinator.js";
@@ -10,25 +15,36 @@ export async function executeProtectedPreparation(
   transaction: ProtectedTransaction,
   dependencies: ProtectedTransactionDependencies,
 ) {
-  for (const action of transaction.preparation.actions) {
+  for (
+    let actionIndex = 0;
+    actionIndex < transaction.preparation.actions.length;
+    actionIndex += 1
+  ) {
+    const action = transaction.preparation.actions[actionIndex]!;
     try {
       if (action.type === "navigate") {
-        await page.goto(action.url, {
+        await gotoPraxisPage(page, action.url, {
           waitUntil: "domcontentloaded",
           ...timeout(action.timeoutMs),
         });
         continue;
       }
       if (action.type === "clickNavigation") {
-        if (await executeNative(page, action.target, {
-          type: "click",
-          ...nativeTimeouts(action.timeoutMs),
-        }, dependencies)) continue;
+        const successor = transaction.preparation.actions[actionIndex + 1];
+        if (successor && "target" in successor) {
+          const successorAlreadyVisible = await resolveTargetLocator(page, successor.target)
+            .then((locator) => locator.isVisible())
+            .catch(() => false);
+          if (successorAlreadyVisible) continue;
+        }
         await requirePraxisSuccess({
           page,
           intent: action.target,
-          operation: { type: "activate" },
-          context: protectedContext(transaction, action.timeoutMs, dependencies.allowedOrigins),
+          operation: { type: "activate", mechanism: "element" },
+          context: {
+            ...protectedContext(transaction, action.timeoutMs, dependencies.allowedOrigins),
+            dispatchSemantics: "read_only",
+          },
           signal: dependencies.signal ?? new AbortController().signal,
         });
         continue;
@@ -38,15 +54,16 @@ export async function executeProtectedPreparation(
         if (!input || input.classification !== "public" || typeof input.value !== "string") {
           throw new PhaseError("PUBLIC_NAVIGATION_INPUT_INVALID", "preparation", "safe_to_retry");
         }
-        await page.getByText(input.value, { exact: action.exact }).click(timeout(action.timeoutMs));
+        await requirePraxisSuccess({
+          page,
+          intent: publicTextActivationIntent(input.value, action.exact),
+          operation: { type: "activate" },
+          context: protectedContext(transaction, action.timeoutMs, dependencies.allowedOrigins),
+          signal: dependencies.signal ?? new AbortController().signal,
+        });
         continue;
       }
       if (action.type === "waitFor") {
-        if (await executeNative(page, action.target, {
-          type: "waitFor",
-          state: action.state,
-          ...(action.timeoutMs === undefined ? {} : { timeoutMs: action.timeoutMs }),
-        }, dependencies)) continue;
         await requirePraxisSuccess({
           page,
           intent: action.target,
@@ -73,12 +90,6 @@ export async function executeProtectedPreparation(
         }
         const secret = await dependencies.resolveKnownSecret(input.credentialRef);
         dependencies.redactor.add(secret);
-        if (await executeNative(page, action.target, {
-          type: "fill",
-          value: secret,
-          protected: true,
-          ...nativeTimeouts(action.timeoutMs),
-        }, dependencies)) continue;
         await requirePraxisSuccess({
           page,
           intent: action.target,
@@ -99,12 +110,6 @@ export async function executeProtectedPreparation(
           );
         }
         if (action.type === "fillPublicInput") {
-          if (await executeNative(page, action.target, {
-            type: "fill",
-            value: String(input.value),
-            protected: false,
-            ...nativeTimeouts(action.timeoutMs),
-          }, dependencies)) continue;
           await requirePraxisSuccess({
             page,
             intent: action.target,
@@ -118,11 +123,6 @@ export async function executeProtectedPreparation(
           });
         }
         if (action.type === "selectPublicInput") {
-          if (await executeNative(page, action.target, {
-            type: "select",
-            value: String(input.value),
-            ...nativeTimeouts(action.timeoutMs),
-          }, dependencies)) continue;
           await requirePraxisSuccess({
             page,
             intent: action.target,
@@ -139,11 +139,6 @@ export async function executeProtectedPreparation(
           if (typeof input.value !== "boolean") {
             throw new PhaseError("TRANSACTION_INPUT_TYPE_MISMATCH", "preparation", "do_not_retry");
           }
-          if (await executeNative(page, action.target, {
-            type: "check",
-            checked: input.value,
-            ...nativeTimeouts(action.timeoutMs),
-          }, dependencies)) continue;
           await requirePraxisSuccess({
             page,
             intent: action.target,
@@ -156,8 +151,9 @@ export async function executeProtectedPreparation(
     } catch (error) {
       if (error instanceof PhaseError) throw error;
       if (error instanceof PraxisConsumerError) {
+        const actionType = action.type.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase();
         throw new PhaseError(
-          `PREPARATION_${error.result.code}`,
+          `PREPARATION_${actionType}_${error.result.code}`,
           "preparation",
           error.result.mutationOutcome === "unknown"
             ? "retry_requires_reconciliation"
@@ -215,9 +211,10 @@ export async function verifyProtectedTransactionAssertions(
         if (input.classification !== "public" || typeof input.value !== "boolean")
           throw new PhaseError("TRANSACTION_INPUT_TYPE_MISMATCH", phase, "do_not_retry");
       }
-      const expected = input.classification === "known_secret"
-        ? await dependencies.resolveKnownSecret(input.credentialRef)
-        : input.value;
+      const expected =
+        input.classification === "known_secret"
+          ? await dependencies.resolveKnownSecret(input.credentialRef)
+          : input.value;
       if (input.classification === "known_secret") dependencies.redactor.add(String(expected));
       const deadline = Date.now() + (assertion.timeoutMs ?? 10_000);
       let matches = false;
@@ -226,13 +223,16 @@ export async function verifyProtectedTransactionAssertions(
         if (assertion.type === "checkedMatchesInput") {
           matches = (await locator.isChecked({ timeout: remaining })) === expected;
         } else {
-          const actual = assertion.type === "fieldValueMatchesInput" || assertion.type === "selectedValueMatchesInput"
-            ? await locator.inputValue({ timeout: remaining })
-            : ((await locator.textContent({ timeout: remaining })) ?? "");
+          const actual =
+            assertion.type === "fieldValueMatchesInput" ||
+            assertion.type === "selectedValueMatchesInput"
+              ? await locator.inputValue({ timeout: remaining })
+              : ((await locator.textContent({ timeout: remaining })) ?? "");
           const expectedText = String(expected);
-          matches = assertion.type === "textMatchesInput" && !assertion.exact
-            ? actual.includes(expectedText)
-            : actual.trim() === expectedText;
+          matches =
+            assertion.type === "textMatchesInput" && !assertion.exact
+              ? actual.includes(expectedText)
+              : actual.trim() === expectedText;
         }
         if (!matches && Date.now() < deadline)
           await new Promise((resolve) => setTimeout(resolve, 100));
@@ -278,27 +278,24 @@ function timeout(timeoutMs?: number) {
   return timeoutMs === undefined ? {} : { timeout: timeoutMs };
 }
 
-async function executeNative(
-  page: Page,
-  target: Parameters<NonNullable<ProtectedTransactionDependencies["executeNativeControl"]>>[1],
-  operation: Parameters<NonNullable<ProtectedTransactionDependencies["executeNativeControl"]>>[2],
-  dependencies: ProtectedTransactionDependencies,
-) {
-  if (!dependencies.executeNativeControl) return false;
-  try {
-    await dependencies.executeNativeControl(page, target, operation);
-    return true;
-  } catch (error) {
-    const code = error instanceof Error ? error.message : String(error);
-    if (["NATIVE_TARGET_NOT_FOUND", "NATIVE_TARGET_AMBIGUOUS", "NATIVE_SCOPE_UNSAFE"].includes(code))
-      return false;
-    throw error;
-  }
-}
-
-function nativeTimeouts(timeoutMs?: number) {
+function publicTextActivationIntent(value: string, exact: boolean): InteractionTargetIntent {
   return {
-    ...(timeoutMs === undefined ? {} : { timeoutMs }),
-    resolutionTimeoutMs: Math.min(timeoutMs ?? 5_000, 5_000),
+    concept: value,
+    requiredCapabilities: ["pointer_activatable"],
+    preferredEvidence: {
+      roles: [],
+      names: [value],
+      labels: [],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+      expectedText: value,
+    },
+    scope: { kind: "page" },
+    relations: [],
+    prohibited: ["hidden", "disabled"],
+    risk: "ordinary",
+    confidence: { requiredFamilies: [] },
+    matching: exact ? "exact" : "non_exact",
   };
 }

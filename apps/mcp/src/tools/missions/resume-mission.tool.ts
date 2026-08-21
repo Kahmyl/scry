@@ -32,13 +32,20 @@ export function registerResumeMissionTool(server: McpServer, client: ScryApiClie
     {
       title: "Resume Mission",
       description:
-        "Resume the same existing Mission and Objective after a durable interruption such as awaiting_user. This does not create replacement task state. Read externalInput.lifecycle and fulfillmentPaths before acting; if the prerequisite is still missing, remain non-terminal and ask or guide the human instead of failing.",
+        "Resume the same existing Mission and Objective only after the current user request has explicitly chosen that Mission, or the current interaction already established continuation of it. Similarity alone is not continuation authority. continuationAuthority is an explicit attestation of that user choice: never construct it merely because a Mission looks related, is the only candidate, or appears resumable. This creates a new active Mission agent session; use the returned agentSessionId for subsequent writes. For awaiting_user, read externalInput.lifecycle and fulfillmentPaths and keep the Mission non-terminal while a prerequisite remains obtainable.",
       annotations: writes,
       inputSchema: {
         missionId: uuid,
         instructionSnapshot: z.string().trim().min(1).max(20_000),
         provider: z.enum(["codex", "claude", "scry_agent", "human"]).default("codex"),
         connectionId: z.string().trim().min(1).max(500).optional(),
+        continuationAuthority: z
+          .object({
+            confirmedUserAuthorized: z.literal(true),
+            selection: z.literal("continue_existing_mission"),
+            source: z.enum(["current_request_explicit", "followup_explicit_choice"]),
+          })
+          .strict(),
         idempotencyKey: z.string().trim().min(8).max(200).optional(),
       },
     },

@@ -11,7 +11,12 @@ import {
 import { Database } from "../../infrastructure/index.js";
 
 type Owner =
-  | { ownerKind: "authoring_session"; ownerId: string; flowDraftId: string; authorizationId: string }
+  | {
+      ownerKind: "authoring_session";
+      ownerId: string;
+      flowDraftId: string;
+      authorizationId: string;
+    }
   | { ownerKind: "run"; ownerId: string; flowRevisionId: string; authorizationId?: string };
 
 export type CreateProtectedOperationInput = Owner & {
@@ -24,13 +29,18 @@ export type CreateProtectedOperationInput = Owner & {
   objectiveId: string;
   agentSessionId: string;
   programDigest: string;
-  safeOutputManifest: Array<{ reference: string; classification: "public" | "protected"; storageName: string }>;
+  safeOutputManifest: Array<{
+    reference: string;
+    classification: "public" | "protected";
+    storageName: string;
+  }>;
 };
 
-export type ReserveProtectedOperationInput = Owner & Omit<
-  CreateProtectedOperationInput,
-  keyof Owner | "programDigest" | "safeOutputManifest" | "dispatchSemantics"
->;
+export type ReserveProtectedOperationInput = Owner &
+  Omit<
+    CreateProtectedOperationInput,
+    keyof Owner | "programDigest" | "safeOutputManifest" | "dispatchSemantics"
+  >;
 
 type OperationRow = {
   id: string;
@@ -42,7 +52,15 @@ type OperationRow = {
   leaseExpiresAt: Date | null;
   dispatchState: "not_started" | "authorized" | "started" | "acknowledged";
   mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
-  persistedReferences: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "run" | "project" }>;
+  persistedReferences: Record<
+    string,
+    {
+      classification: "public" | "protected";
+      credentialId?: string;
+      valueId?: string;
+      scope: "run" | "project";
+    }
+  >;
   mutationIdentity: string;
   dispatchSemantics?: "mutation" | "read_only";
   programDigest: string;
@@ -84,12 +102,21 @@ export class ProtectedOperationRepository {
          authorization_id,program_digest,state,phase,safe_output_manifest
        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NULL,'reserved','reserved','[]'::jsonb)
        ON CONFLICT DO NOTHING RETURNING id,state`,
-      [input.operationId,input.mutationIdentity,input.ownerKind,
-       input.ownerKind === "authoring_session" ? input.ownerId : null,
-       input.ownerKind === "run" ? input.ownerId : null,input.projectId,input.environmentId,
-       input.missionId,input.objectiveId,input.agentSessionId,
-       input.ownerKind === "authoring_session" ? input.flowDraftId : null,
-       input.ownerKind === "run" ? input.flowRevisionId : null,input.authorizationId ?? null],
+      [
+        input.operationId,
+        input.mutationIdentity,
+        input.ownerKind,
+        input.ownerKind === "authoring_session" ? input.ownerId : null,
+        input.ownerKind === "run" ? input.ownerId : null,
+        input.projectId,
+        input.environmentId,
+        input.missionId,
+        input.objectiveId,
+        input.agentSessionId,
+        input.ownerKind === "authoring_session" ? input.flowDraftId : null,
+        input.ownerKind === "run" ? input.flowRevisionId : null,
+        input.authorizationId ?? null,
+      ],
     );
     if (!result.rowCount) throw new ConflictException("PROTECTED_OPERATION_ALREADY_EXISTS");
     await this.appendTransition(result.rows[0]!.id, null, "reserved", "reserved", 0);
@@ -111,9 +138,15 @@ export class ProtectedOperationRepository {
          payload_commitment=$6,provider_idempotency_commitment=$7,
          state='planned',phase='planned',version=version+1,updated_at=now()
        WHERE id=$1 AND state='reserved' AND program_digest IS NULL RETURNING id`,
-      [input.id,input.programDigest,input.dispatchSemantics ?? "mutation",
-       JSON.stringify(input.safeOutputManifest),input.syntheticInputSetCommitment ?? null,
-       input.payloadCommitment ?? null,input.providerIdempotencyCommitment ?? null],
+      [
+        input.id,
+        input.programDigest,
+        input.dispatchSemantics ?? "mutation",
+        JSON.stringify(input.safeOutputManifest),
+        input.syntheticInputSetCommitment ?? null,
+        input.payloadCommitment ?? null,
+        input.providerIdempotencyCommitment ?? null,
+      ],
     );
     if (!result.rowCount) throw new ConflictException("PROTECTED_OPERATION_PROGRAM_ALREADY_BOUND");
     await this.appendTransition(input.id, "reserved", "planned", "planned", 0);
@@ -132,14 +165,21 @@ export class ProtectedOperationRepository {
          mutation_outcome AS "mutationOutcome",persisted_references AS "persistedReferences",
          dispatch_semantics AS "dispatchSemantics"`,
       [
-        input.operationId, input.mutationIdentity, input.ownerKind,
+        input.operationId,
+        input.mutationIdentity,
+        input.ownerKind,
         input.ownerKind === "authoring_session" ? input.ownerId : null,
         input.ownerKind === "run" ? input.ownerId : null,
-        input.projectId, input.environmentId, input.missionId, input.objectiveId,
+        input.projectId,
+        input.environmentId,
+        input.missionId,
+        input.objectiveId,
         input.agentSessionId,
         input.ownerKind === "authoring_session" ? input.flowDraftId : null,
         input.ownerKind === "run" ? input.flowRevisionId : null,
-        input.authorizationId ?? null, input.programDigest, input.dispatchSemantics ?? "mutation",
+        input.authorizationId ?? null,
+        input.programDigest,
+        input.dispatchSemantics ?? "mutation",
         JSON.stringify(input.safeOutputManifest),
       ],
     );
@@ -148,7 +188,14 @@ export class ProtectedOperationRepository {
     return normalize(result.rows[0]!);
   }
 
-  async claim(input: { ownerKind: ProtectedOperationOwnerKind; ownerId: string; operationId: string; leaseOwner: string; leaseDurationMs: number; binding: ProtectedOperationBinding }) {
+  async claim(input: {
+    ownerKind: ProtectedOperationOwnerKind;
+    ownerId: string;
+    operationId: string;
+    leaseOwner: string;
+    leaseDurationMs: number;
+    binding: ProtectedOperationBinding;
+  }) {
     return this.database.transaction(async (client) => {
       const result = await client.query<OperationRow>(
         `SELECT id,state,phase,version,fencing_token AS "fencingToken",lease_owner AS "leaseOwner",
@@ -167,28 +214,61 @@ export class ProtectedOperationRepository {
       const current = result.rows[0]!;
       if (!bindingMatches(current, input.binding))
         throw new ConflictException("PROTECTED_OPERATION_BINDING_MISMATCH");
+      if (input.ownerKind === "run") {
+        const authorization = await client.query(
+          `SELECT 1 FROM mission_authorizations
+           WHERE id=$1 AND mission_id=$2 AND objective_id=$3 AND environment_id=$4
+             AND kind='protected_mutation' AND operation_id=$5 AND status='approved'
+             AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now())`,
+          [
+            current.authorizationId,
+            current.missionId,
+            current.objectiveId,
+            current.environmentId,
+            input.operationId,
+          ],
+        );
+        if (!authorization.rowCount)
+          throw new ConflictException("PROTECTED_OPERATION_AUTHORIZATION_INVALID");
+      }
       const leaseLive = current.leaseExpiresAt && current.leaseExpiresAt.getTime() > Date.now();
       if (leaseLive && current.leaseOwner !== input.leaseOwner)
         throw new ConflictException("PROTECTED_OPERATION_LEASE_HELD");
       if (leaseLive && current.leaseOwner === input.leaseOwner) return normalize(current);
       let state = current.state;
-      if (!leaseLive) state = protectedOperationLeaseExpiryState(
-        state,
-        current.dispatchSemantics ?? "mutation",
-      );
+      if (!leaseLive)
+        state = protectedOperationLeaseExpiryState(state, current.dispatchSemantics ?? "mutation");
       const claimed = await client.query<OperationRow>(
         `UPDATE protected_operations SET state=$2,phase=CASE WHEN $2='recovery_required' THEN 'lease_expired' ELSE phase END,
            version=version+1,fencing_token=fencing_token+1,lease_owner=$3,
            lease_expires_at=now()+($4::text||' milliseconds')::interval,
-           mutation_outcome=CASE WHEN $2='failed_not_applied' THEN 'not_applied' WHEN $5::boolean THEN 'unknown' ELSE mutation_outcome END,
+           mutation_outcome=CASE
+             WHEN mutation_outcome IN ('applied','not_applied') THEN mutation_outcome
+             WHEN $2='failed_not_applied' THEN 'not_applied'
+             WHEN $5::boolean AND mutation_outcome NOT IN ('applied','not_applied') THEN 'unknown'
+             ELSE mutation_outcome
+           END,
            failure_code=CASE WHEN $2 IN ('recovery_required','failed_not_applied') THEN 'PROTECTED_OPERATION_LEASE_EXPIRED' ELSE failure_code END,
            recovery_class=CASE WHEN $2='recovery_required' THEN 'reconciliation_required' WHEN $2='failed_not_applied' THEN 'safe_to_retry' ELSE recovery_class END,
            updated_at=now() WHERE id=$1
          RETURNING id,state,phase,version,fencing_token AS "fencingToken",lease_owner AS "leaseOwner",
            lease_expires_at AS "leaseExpiresAt",dispatch_state AS "dispatchState",
            mutation_outcome AS "mutationOutcome",persisted_references AS "persistedReferences"`,
-        [current.id, state, input.leaseOwner, input.leaseDurationMs,
-          state === "recovery_required" && ["dispatching","dispatched","acquiring","persisting","persisted","reconciling"].includes(current.state)],
+        [
+          current.id,
+          state,
+          input.leaseOwner,
+          input.leaseDurationMs,
+          state === "recovery_required" &&
+            [
+              "dispatching",
+              "dispatched",
+              "acquiring",
+              "persisting",
+              "persisted",
+              "reconciling",
+            ].includes(current.state),
+        ],
       );
       if (state === "failed_not_applied") {
         await client.query(
@@ -197,12 +277,26 @@ export class ProtectedOperationRepository {
         );
         await destroyOperationBoundInputs(client, current.id);
       }
-      if (state !== current.state) await appendTransition(client, current.id, current.state, state, "lease_expired", Number(claimed.rows[0]!.fencingToken), "PROTECTED_OPERATION_LEASE_EXPIRED");
+      if (state !== current.state)
+        await appendTransition(
+          client,
+          current.id,
+          current.state,
+          state,
+          "lease_expired",
+          Number(claimed.rows[0]!.fencingToken),
+          "PROTECTED_OPERATION_LEASE_EXPIRED",
+        );
       return normalize(claimed.rows[0]!);
     });
   }
 
-  async heartbeat(input: { id: string; leaseOwner: string; fencingToken: number; leaseDurationMs: number }) {
+  async heartbeat(input: {
+    id: string;
+    leaseOwner: string;
+    fencingToken: number;
+    leaseDurationMs: number;
+  }) {
     const result = await this.database.query(
       `UPDATE protected_operations SET lease_expires_at=now()+($4::text||' milliseconds')::interval,updated_at=now()
        WHERE id=$1 AND lease_owner=$2 AND fencing_token=$3 AND lease_expires_at>now() AND completed_at IS NULL RETURNING id`,
@@ -212,31 +306,76 @@ export class ProtectedOperationRepository {
   }
 
   async transition(input: {
-    id: string; leaseOwner: string; fencingToken: number; version: number;
-    expected: ProtectedOperationState; next: ProtectedOperationState; phase: string;
-    reasonCode?: string; safeDiagnostics?: Record<string, unknown>;
+    id: string;
+    leaseOwner: string;
+    fencingToken: number;
+    version: number;
+    expected: ProtectedOperationState;
+    next: ProtectedOperationState;
+    phase: string;
+    reasonCode?: string;
+    safeDiagnostics?: Record<string, unknown>;
   }) {
     assertProtectedOperationTransition(input.expected, input.next);
     return this.database.transaction(async (client) => {
-      if (input.next === "failed_not_applied" && ["dispatching", "dispatched", "acquiring", "persisting", "persisted", "reconciling"].includes(input.expected)) {
-        const semantics = await client.query<{ dispatchSemantics: string }>(
-          `SELECT dispatch_semantics AS "dispatchSemantics" FROM protected_operations
+      if (
+        input.next === "failed_not_applied" &&
+        [
+          "dispatching",
+          "dispatched",
+          "acquiring",
+          "persisting",
+          "persisted",
+          "reconciling",
+        ].includes(input.expected)
+      ) {
+        const semantics = await client.query<{
+          dispatchSemantics: string;
+          mutationOutcome: string;
+        }>(
+          `SELECT dispatch_semantics AS "dispatchSemantics",mutation_outcome AS "mutationOutcome" FROM protected_operations
            WHERE id=$1 AND lease_owner=$2 AND fencing_token=$3 AND version=$4 AND state=$5 FOR UPDATE`,
-          [input.id,input.leaseOwner,input.fencingToken,input.version,input.expected],
+          [input.id, input.leaseOwner, input.fencingToken, input.version, input.expected],
         );
-        if (semantics.rows[0]?.dispatchSemantics !== "read_only")
-          throw new ConflictException("PROTECTED_MUTATION_CANNOT_SETTLE_NOT_APPLIED_AFTER_DISPATCH");
+        if (semantics.rows[0]?.mutationOutcome === "applied")
+          throw new ConflictException("PROTECTED_MUTATION_OUTCOME_CONTRADICTION");
+        if (
+          semantics.rows[0]?.dispatchSemantics !== "read_only" &&
+          semantics.rows[0]?.mutationOutcome !== "not_applied"
+        )
+          throw new ConflictException(
+            "PROTECTED_MUTATION_CANNOT_SETTLE_NOT_APPLIED_AFTER_DISPATCH",
+          );
       }
       const dispatchState = protectedOperationDispatchMayBegin(input.expected, input.next)
         ? "started"
-        : input.next === "dispatched" ? "acknowledged" : null;
-      const mutationOutcome = input.next === "completed" ? "applied"
-        : input.next === "failed_not_applied" ? "not_applied"
-          : input.next === "recovery_required" && ["dispatching", "dispatched", "acquiring", "persisting", "persisted", "reconciling"].includes(input.expected)
-            ? "unknown" : null;
+        : input.next === "dispatched"
+          ? "acknowledged"
+          : null;
+      const mutationOutcome =
+        input.next === "completed"
+          ? "applied"
+          : input.next === "failed_not_applied"
+            ? "not_applied"
+            : input.next === "recovery_required" &&
+                [
+                  "dispatching",
+                  "dispatched",
+                  "acquiring",
+                  "persisting",
+                  "persisted",
+                  "reconciling",
+                ].includes(input.expected)
+              ? "unknown"
+              : null;
       const result = await client.query<OperationRow>(
         `UPDATE protected_operations SET state=$6,phase=$7,version=version+1,
-           dispatch_state=COALESCE($8,dispatch_state),mutation_outcome=COALESCE($9,mutation_outcome),
+           dispatch_state=COALESCE($8,dispatch_state),
+           mutation_outcome=CASE
+             WHEN $9::text IS NULL THEN mutation_outcome
+             WHEN mutation_outcome IN ('applied','not_applied') THEN mutation_outcome
+             ELSE $9::text
+           END,
            failure_code=COALESCE($10,failure_code),safe_diagnostics=COALESCE($11::jsonb,safe_diagnostics),
            recovery_class=CASE WHEN $6='recovery_required' THEN 'reconciliation_required' ELSE recovery_class END,
            completed_at=CASE WHEN $6=ANY($12::text[]) THEN now() ELSE completed_at END,
@@ -247,8 +386,18 @@ export class ProtectedOperationRepository {
          RETURNING id,state,phase,version,fencing_token AS "fencingToken",lease_owner AS "leaseOwner",
            lease_expires_at AS "leaseExpiresAt",dispatch_state AS "dispatchState",
            mutation_outcome AS "mutationOutcome",persisted_references AS "persistedReferences"`,
-        [input.id,input.leaseOwner,input.fencingToken,input.version,input.expected,input.next,input.phase,
-          dispatchState,mutationOutcome,input.reasonCode ?? null,input.safeDiagnostics ? JSON.stringify(input.safeDiagnostics) : null,
+        [
+          input.id,
+          input.leaseOwner,
+          input.fencingToken,
+          input.version,
+          input.expected,
+          input.next,
+          input.phase,
+          dispatchState,
+          mutationOutcome,
+          input.reasonCode ?? null,
+          input.safeDiagnostics ? JSON.stringify(input.safeDiagnostics) : null,
           [...protectedOperationTerminalStates],
           [...protectedOperationTerminalStates, "recovery_required", "compromised"],
         ],
@@ -263,9 +412,51 @@ export class ProtectedOperationRepository {
       if (protectedOperationTerminalStates.has(input.next)) {
         await destroyOperationBoundInputs(client, input.id);
       }
-      await appendTransition(client,input.id,input.expected,input.next,input.phase,input.fencingToken,input.reasonCode,input.safeDiagnostics);
+      await appendTransition(
+        client,
+        input.id,
+        input.expected,
+        input.next,
+        input.phase,
+        input.fencingToken,
+        input.reasonCode,
+        input.safeDiagnostics,
+      );
       return normalize(result.rows[0]!);
     });
+  }
+
+  async settleMutationOutcome(input: {
+    id: string;
+    leaseOwner: string;
+    fencingToken: number;
+    version: number;
+    outcome: "applied" | "not_applied";
+  }) {
+    const result = await this.database.query<OperationRow>(
+      `UPDATE protected_operations
+          SET mutation_outcome=CASE
+                WHEN mutation_outcome IN ('applied','not_applied') THEN mutation_outcome
+                ELSE $5
+              END,
+              version=version+1,
+              updated_at=now()
+        WHERE id=$1
+          AND lease_owner=$2
+          AND fencing_token=$3
+          AND version=$4
+          AND lease_expires_at>now()
+          AND state IN ('dispatching','dispatched','acquiring','persisting','persisted','reconciling')
+          AND (mutation_outcome NOT IN ('applied','not_applied') OR mutation_outcome=$5)
+        RETURNING id,state,phase,version,fencing_token AS "fencingToken",
+          lease_owner AS "leaseOwner",lease_expires_at AS "leaseExpiresAt",
+          dispatch_state AS "dispatchState",mutation_outcome AS "mutationOutcome",
+          persisted_references AS "persistedReferences"`,
+      [input.id, input.leaseOwner, input.fencingToken, input.version, input.outcome],
+    );
+    if (!result.rowCount)
+      throw new ConflictException("PROTECTED_MUTATION_OUTCOME_SETTLEMENT_FENCED");
+    return normalize(result.rows[0]!);
   }
 
   async record(input: {
@@ -282,13 +473,28 @@ export class ProtectedOperationRepository {
            ELSE phase_timings || jsonb_build_object($4::text,round($6::numeric,3)) END,updated_at=now()
        WHERE id=$1 AND lease_owner=$2 AND fencing_token=$3 AND lease_expires_at>now()
          AND completed_at IS NULL RETURNING id`,
-      [input.id,input.leaseOwner,input.fencingToken,input.phase,JSON.stringify(input.safeDiagnostics ?? {}),input.durationMs ?? null],
+      [
+        input.id,
+        input.leaseOwner,
+        input.fencingToken,
+        input.phase,
+        JSON.stringify(input.safeDiagnostics ?? {}),
+        input.durationMs ?? null,
+      ],
     );
     if (!result.rowCount) throw new ConflictException("PROTECTED_OPERATION_FENCED");
   }
 
-  private appendTransition(id: string, from: ProtectedOperationState | null, to: ProtectedOperationState, phase: string, fencingToken: number) {
-    return this.database.transaction((client) => appendTransition(client,id,from,to,phase,fencingToken));
+  private appendTransition(
+    id: string,
+    from: ProtectedOperationState | null,
+    to: ProtectedOperationState,
+    phase: string,
+    fencingToken: number,
+  ) {
+    return this.database.transaction((client) =>
+      appendTransition(client, id, from, to, phase, fencingToken),
+    );
   }
 }
 
@@ -305,11 +511,20 @@ async function destroyOperationBoundInputs(
   );
 }
 
-async function appendTransition(client: { query: (text: string, values?: unknown[]) => Promise<unknown> }, id: string, from: ProtectedOperationState | null, to: ProtectedOperationState, phase: string, fencingToken: number, reasonCode?: string, diagnostics?: Record<string, unknown>) {
+async function appendTransition(
+  client: { query: (text: string, values?: unknown[]) => Promise<unknown> },
+  id: string,
+  from: ProtectedOperationState | null,
+  to: ProtectedOperationState,
+  phase: string,
+  fencingToken: number,
+  reasonCode?: string,
+  diagnostics?: Record<string, unknown>,
+) {
   await client.query(
     `INSERT INTO protected_operation_transitions(protected_operation_id,sequence,from_state,to_state,phase,fencing_token,reason_code,safe_diagnostics)
      SELECT $1,COALESCE(max(sequence),0)+1,$2,$3,$4,$5,$6,$7::jsonb FROM protected_operation_transitions WHERE protected_operation_id=$1`,
-    [id,from,to,phase,fencingToken,reasonCode ?? null,JSON.stringify(diagnostics ?? {})],
+    [id, from, to, phase, fencingToken, reasonCode ?? null, JSON.stringify(diagnostics ?? {})],
   );
 }
 
@@ -326,16 +541,19 @@ function bindingMatches(row: OperationRow, binding: ProtectedOperationBinding) {
         storageName: value.storageName,
       }))
       .sort((a, b) => a.reference.localeCompare(b.reference));
-  return row.mutationIdentity === binding.mutationIdentity
-    && row.dispatchSemantics === (binding.dispatchSemantics ?? "mutation")
-    && row.programDigest === binding.programDigest
-    && JSON.stringify(manifest(row.safeOutputManifest)) === JSON.stringify(manifest(binding.safeOutputManifest))
-    && row.projectId === binding.projectId
-    && row.environmentId === binding.environmentId
-    && row.missionId === binding.missionId
-    && row.objectiveId === binding.objectiveId
-    && row.agentSessionId === binding.agentSessionId
-    && row.flowDraftId === ("flowDraftId" in binding ? binding.flowDraftId : null)
-    && row.flowRevisionId === ("flowRevisionId" in binding ? binding.flowRevisionId : null)
-    && row.authorizationId === (binding.authorizationId ?? null);
+  return (
+    row.mutationIdentity === binding.mutationIdentity &&
+    row.dispatchSemantics === (binding.dispatchSemantics ?? "mutation") &&
+    row.programDigest === binding.programDigest &&
+    JSON.stringify(manifest(row.safeOutputManifest)) ===
+      JSON.stringify(manifest(binding.safeOutputManifest)) &&
+    row.projectId === binding.projectId &&
+    row.environmentId === binding.environmentId &&
+    row.missionId === binding.missionId &&
+    row.objectiveId === binding.objectiveId &&
+    row.agentSessionId === binding.agentSessionId &&
+    row.flowDraftId === ("flowDraftId" in binding ? binding.flowDraftId : null) &&
+    row.flowRevisionId === ("flowRevisionId" in binding ? binding.flowRevisionId : null) &&
+    row.authorizationId === (binding.authorizationId ?? null)
+  );
 }

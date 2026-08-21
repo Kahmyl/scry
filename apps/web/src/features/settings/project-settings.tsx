@@ -39,7 +39,9 @@ export function Settings({ projectId }: { projectId: string }) {
 
   const load = useCallback(() => {
     void Promise.all([
-      api<{ items: Credential[]; truncated: boolean }>(`/projects/${projectId}/credential-candidates`),
+      api<{ items: Credential[]; truncated: boolean }>(
+        `/projects/${projectId}/credential-candidates`,
+      ),
       api<Calibration[]>(`/projects/${projectId}/calibrations`),
       api<CredentialIncident[]>(`/projects/${projectId}/credential-incidents`),
     ])
@@ -153,7 +155,8 @@ export function Settings({ projectId }: { projectId: string }) {
                   {credential.securityStatus === "active"
                     ? "Active protected value"
                     : `${credential.securityStatus[0]!.toUpperCase()}${credential.securityStatus.slice(1)} · unavailable`}
-                  {" · updated "}{relativeTime(credential.updatedAt)}
+                  {" · updated "}
+                  {relativeTime(credential.updatedAt)}
                 </small>
               </div>
               <span className="credential-value">••••••••••••</span>

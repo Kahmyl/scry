@@ -182,12 +182,10 @@ describe("worker processor boundaries", () => {
         },
       ),
     };
-    const dispatch = vi.fn(
-      async (options: { onMutationDispatch?: () => void | Promise<void> }) => {
-        await options.onMutationDispatch?.();
-        throw new Error("WORKER_PROCESS_LOST_AFTER_DISPATCH");
-      },
-    );
+    const dispatch = vi.fn(async (options: { onMutationDispatch?: () => void | Promise<void> }) => {
+      await options.onMutationDispatch?.();
+      throw new Error("WORKER_PROCESS_LOST_AFTER_DISPATCH");
+    });
     const processor = createRunProcessor({
       ...identity,
       executions: executions as never,
@@ -215,7 +213,7 @@ describe("worker processor boundaries", () => {
     ).rejects.toThrow("EXECUTION_UNKNOWN_MUTATION_REQUIRES_RECONCILIATION");
 
     expect(dispatch).toHaveBeenCalledOnce();
-    expect(modes).toEqual(["certify", "certify"]);
+    expect(modes).toEqual(["run", "run"]);
     expect(requestInputs).toEqual([
       {
         operationId: "attempt-22222222-2222-4222-8222-222222222221",

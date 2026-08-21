@@ -5,7 +5,7 @@ import {
   NotFoundException,
   UnsupportedMediaTypeException,
 } from "@nestjs/common";
-import { type ArtifactStore, type VeilEvidenceAdmissionProof } from "@scry/artifact";
+import { type ArtifactStore, type VeilEvidenceAdmissionProof } from "@scry/chronicle/legacy";
 import { veilEvidenceManifestSchema } from "@scry/contracts";
 import { parse, serialize, type DefaultTreeAdapterMap } from "parse5";
 

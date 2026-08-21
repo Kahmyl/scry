@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { BrowserContext, BrowserContextOptions, Page } from "playwright";
 import type { Checkpoint } from "@scry/contracts";
+import { capturePraxisStorageState, closePraxisContext, gotoPraxisPage } from "@scry/praxis";
 
 export type CheckpointPayload = Awaited<ReturnType<BrowserContext["storageState"]>>;
 export type CheckpointStore = {
@@ -30,7 +31,9 @@ export class CheckpointCoordinator {
     },
   ) {}
   async establish(context: BrowserContext, checkpoint: Checkpoint) {
-    const payload = await context.storageState({ indexedDB: checkpoint.state.indexedDb });
+    const payload = await capturePraxisStorageState(context, {
+      indexedDB: checkpoint.state.indexedDb,
+    });
     const bindingFingerprint = this.binding(checkpoint);
     await this.input.store.establish({
       checkpoint,
@@ -50,7 +53,7 @@ export class CheckpointCoordinator {
       verified?: () => void | Promise<void>;
     },
   ) {
-    await uncertainContext.close();
+    await closePraxisContext(uncertainContext);
     await lifecycle?.contextDestroyed?.();
     let restored: RestoredRuntime | undefined;
     try {
@@ -63,7 +66,9 @@ export class CheckpointCoordinator {
         serviceWorkers: "block",
         acceptDownloads: false,
       });
-      await restored.page.goto(checkpoint.restorationUrl, { waitUntil: "domcontentloaded" });
+      await gotoPraxisPage(restored.page, checkpoint.restorationUrl, {
+        waitUntil: "domcontentloaded",
+      });
       if (!this.input.allowedOrigins.includes(new URL(restored.page.url()).origin))
         throw new Error("CHECKPOINT_ORIGIN_MISMATCH");
       await verify(restored.page, checkpoint);
@@ -71,7 +76,7 @@ export class CheckpointCoordinator {
       await lifecycle?.verified?.();
       return restored;
     } catch (error) {
-      await restored?.context.close().catch(() => undefined);
+      if (restored) await closePraxisContext(restored.context).catch(() => undefined);
       await this.input.store
         .complete(checkpoint.id, "failed", safeCode(error))
         .catch(() => undefined);

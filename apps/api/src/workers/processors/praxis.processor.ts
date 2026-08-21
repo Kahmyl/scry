@@ -25,11 +25,7 @@ export function createPraxisProcessor(options: PraxisWorkerOptions) {
 
     const claimToken = randomUUID();
 
-    const runtime = await options.praxis.claim(
-      job.data.requestId,
-      options.workerId,
-      claimToken,
-    );
+    const runtime = await options.praxis.claim(job.data.requestId, options.workerId, claimToken);
 
     if (!runtime) return { state: "not_claimed" };
 
@@ -40,11 +36,10 @@ export function createPraxisProcessor(options: PraxisWorkerOptions) {
         probeSessionId: string;
       };
 
-      const browserLeaseId =
-        await options.praxis.resolveActiveBrowserLease(
-          payload.probeSessionId,
-          options.workerId,
-        );
+      const browserLeaseId = await options.praxis.resolveActiveBrowserLease(
+        payload.probeSessionId,
+        options.workerId,
+      );
 
       if (!browserLeaseId) {
         throw new Error("AUTHORING_BROWSER_SESSION_UNAVAILABLE");
@@ -74,4 +69,3 @@ export function createPraxisProcessor(options: PraxisWorkerOptions) {
     }
   };
 }
-

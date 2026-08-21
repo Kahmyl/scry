@@ -12,11 +12,13 @@ import { registerBindCalibrationTool } from "./bind-calibration.tool.js";
 
 export function registerFlowsTools(server: McpServer, client: ScryApiClient) {
   registerListFlowsTool(server, client);
-  registerEnsureCalibrationTool(server, client);
-  registerListCalibrationsTool(server, client);
-  registerGetCalibrationTool(server, client);
-  registerApproveCalibrationTool(server, client);
-  registerRetryCalibrationTool(server, client);
-  registerCancelCalibrationTool(server, client);
-  registerBindCalibrationTool(server, client);
+  if (process.env.NODE_ENV === "test" && process.env.SCRY_LEGACY_MCP_FIXTURES === "true") {
+    registerEnsureCalibrationTool(server, client);
+    registerListCalibrationsTool(server, client);
+    registerGetCalibrationTool(server, client);
+    registerApproveCalibrationTool(server, client);
+    registerRetryCalibrationTool(server, client);
+    registerCancelCalibrationTool(server, client);
+    registerBindCalibrationTool(server, client);
+  }
 }

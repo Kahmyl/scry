@@ -37,12 +37,13 @@ try {
   await checkProductionTopology(context);
   const config = m2TargetRegistry[target];
   const prefix = `scry-m2-${context.campaignId.slice(0, 8)}`;
-  const credentials = target === "contact_list"
-    ? {
-        email: { name: "M2 Contact List email", value: `${prefix}-${repetition}@example.test` },
-        password: { name: "M2 Contact List password", value: `M2!${randomUUID()}` },
-      }
-    : undefined;
+  const credentials =
+    target === "contact_list"
+      ? {
+          email: { name: "M2 Contact List email", value: `${prefix}-${repetition}@example.test` },
+          password: { name: "M2 Contact List password", value: `M2!${randomUUID()}` },
+        }
+      : undefined;
   const provisioned = await provisionM2Campaign(context, {
     target,
     mission: config.mission,
@@ -51,13 +52,15 @@ try {
     ...(credentials ? { credentials } : {}),
     maxActions: 80,
     maxNavigations: 30,
-    ...(target === "xyz_bank" ? {
-      trustedScriptOrigins: [
-        "https://ajax.googleapis.com",
-        "https://cdnjs.cloudflare.com",
-        "https://maxcdn.bootstrapcdn.com",
-      ],
-    } : {}),
+    ...(target === "xyz_bank"
+      ? {
+          trustedScriptOrigins: [
+            "https://ajax.googleapis.com",
+            "https://cdnjs.cloudflare.com",
+            "https://maxcdn.bootstrapcdn.com",
+          ],
+        }
+      : {}),
   });
   ownership = provisioned.ownership;
   const turns = externalM2Intents({
@@ -105,9 +108,13 @@ try {
       verdict: "fail",
       cleanupRequired: true,
     });
-    process.stdout.write(`${JSON.stringify({ target, repetition, verdict: "fail", reasonCode: safeCode(error), report })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ target, repetition, verdict: "fail", reasonCode: safeCode(error), report })}\n`,
+    );
   } else {
-    process.stdout.write(`${JSON.stringify({ target, repetition, verdict: "blocked", reasonCode: safeCode(error) })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ target, repetition, verdict: "blocked", reasonCode: safeCode(error) })}\n`,
+    );
   }
   process.exitCode = 1;
 } finally {

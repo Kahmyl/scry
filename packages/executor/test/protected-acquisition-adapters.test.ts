@@ -146,7 +146,10 @@ describe("protected acquisition adapter registry", () => {
   }, 15_000);
 
   it("prefers an approved response value over a masked DOM fallback", async () => {
-    const browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" });
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
     const unregister = registerProtectedAcquisitionAdapter(
       "system.response-first",
       async () => "authoritative-response-value",
@@ -158,7 +161,12 @@ describe("protected acquisition adapter registry", () => {
         target,
         classification: "unknown_secret",
         objective: { kind: "capture_value", expectedValueType: "unknown_secret" },
-        permittedMethods: ["semantic_field_value", "input_value", "text_content", "protected_network_value"],
+        permittedMethods: [
+          "semantic_field_value",
+          "input_value",
+          "text_content",
+          "protected_network_value",
+        ],
         adapter: { id: "system.response-first", configuration: {} },
         validation: { minimumLength: 1, maximumLength: 100 },
       });
@@ -193,11 +201,17 @@ describe("protected acquisition adapter registry", () => {
           concept: "order id",
           requiredCapabilities: ["readable_value"],
           preferredEvidence: {
-            roles: ["value"], names: ["id"], labels: [], descriptions: [],
-            placeholders: [], inputTypes: [],
+            roles: ["value"],
+            names: ["id"],
+            labels: [],
+            descriptions: [],
+            placeholders: [],
+            inputTypes: [],
           },
           scope: { kind: "section", name: "List Orders" },
-          relations: [], prohibited: [], risk: "protected",
+          relations: [],
+          prohibited: [],
+          risk: "protected",
           confidence: { requiredFamilies: [] },
         },
         prohibitedSourceTargets: [
@@ -205,22 +219,34 @@ describe("protected acquisition adapter registry", () => {
             concept: "List Orders Client ID",
             requiredCapabilities: ["readable_value"],
             preferredEvidence: {
-              roles: ["textbox"], names: ["Client ID"], labels: [], descriptions: [],
-              placeholders: [], inputTypes: [],
+              roles: ["textbox"],
+              names: ["Client ID"],
+              labels: [],
+              descriptions: [],
+              placeholders: [],
+              inputTypes: [],
             },
             scope: { kind: "section", name: "List Orders" },
-            relations: [], prohibited: [], risk: "protected",
+            relations: [],
+            prohibited: [],
+            risk: "protected",
             confidence: { requiredFamilies: [] },
           },
           {
             concept: "List Orders Client secret",
             requiredCapabilities: ["readable_value"],
             preferredEvidence: {
-              roles: ["textbox"], names: ["Client secret"], labels: [], descriptions: [],
-              placeholders: [], inputTypes: [],
+              roles: ["textbox"],
+              names: ["Client secret"],
+              labels: [],
+              descriptions: [],
+              placeholders: [],
+              inputTypes: [],
             },
             scope: { kind: "section", name: "List Orders" },
-            relations: [], prohibited: [], risk: "protected",
+            relations: [],
+            prohibited: [],
+            risk: "protected",
             confidence: { requiredFamilies: [] },
           },
         ],
@@ -241,11 +267,11 @@ describe("protected acquisition adapter registry", () => {
       expect(result.value).not.toBe("CLIENT_ID_CANARY");
       expect(result.value).not.toBe("SECRET_CANARY");
       expect(result.result).toBeUndefined();
-      expect(result.diagnostics.filter((item) =>
-        item.lastFailureCode === "ACQUISITION_SOURCE_PROHIBITED"
-      ).map((item) => item.method)).toEqual(expect.arrayContaining([
-        "semantic_field_value",
-      ]));
+      expect(
+        result.diagnostics
+          .filter((item) => item.lastFailureCode === "ACQUISITION_SOURCE_PROHIBITED")
+          .map((item) => item.method),
+      ).toEqual(expect.arrayContaining(["semantic_field_value"]));
     } finally {
       await browser.close();
     }
@@ -263,48 +289,74 @@ describe("protected acquisition adapter registry", () => {
         concept: "client id",
         requiredCapabilities: ["focusable", "accepts_text", "editable", "readable_value"],
         preferredEvidence: {
-          roles: ["textbox"], names: ["Client ID"], labels: [], descriptions: [],
-          placeholders: [], inputTypes: [],
+          roles: ["textbox"],
+          names: ["Client ID"],
+          labels: [],
+          descriptions: [],
+          placeholders: [],
+          inputTypes: [],
         },
-        scope: { kind: "page" }, relations: [], prohibited: [], risk: "protected",
+        scope: { kind: "page" },
+        relations: [],
+        prohibited: [],
+        risk: "protected",
         confidence: { requiredFamilies: [] },
       } as const;
       const outputTarget = {
         ...protectedInputTarget,
         concept: "order id",
         requiredCapabilities: ["readable_value"],
-        preferredEvidence: { ...protectedInputTarget.preferredEvidence, roles: ["value"], names: ["id"] },
+        preferredEvidence: {
+          ...protectedInputTarget.preferredEvidence,
+          roles: ["value"],
+          names: ["id"],
+        },
       } as const;
       const facts = {
-        diagnostics: [], protectedAcquisitionEvidence: [], credentialReferences: {},
-        publicValueReferences: {}, protectedExtraction: "not_attempted", publicExtraction: "not_attempted",
+        diagnostics: [],
+        protectedAcquisitionEvidence: [],
+        credentialReferences: {},
+        publicValueReferences: {},
+        protectedExtraction: "not_attempted",
+        publicExtraction: "not_attempted",
       } as unknown as ProtectedTransactionFacts;
 
-      await expect(acquireProtectedOutputs(
-        page,
-        {
-          preparation: { actions: [{ type: "fillKnownSecret", input: "clientId", target: protectedInputTarget }], assertions: [] },
-          mutation: { dispatchSemantics: "read_only" },
-          extraction: {
-            timeoutMs: 1_000,
-            outputs: [{
-              reference: "orderId", classification: "protected",
-              acquisition: {
-                target: outputTarget, classification: "unknown_secret",
-                objective: { kind: "capture_value", expectedValueType: "unknown_secret" },
-                permittedMethods: ["semantic_field_value", "input_value", "text_content"],
-                validation: { minimumLength: 1, maximumLength: 100 },
-              },
-              storage: { credentialName: "Order ID", scope: "project" },
-            }],
-          },
-        } as never,
-        {} as ProtectedTransactionDependencies,
-        facts,
-      )).rejects.toMatchObject({ code: "PROTECTED_VALUE_UNAVAILABLE" });
-      expect(facts.diagnostics.some((item) =>
-        item.lastFailureCode === "ACQUISITION_SOURCE_PROHIBITED"
-      )).toBe(true);
+      await expect(
+        acquireProtectedOutputs(
+          page,
+          {
+            preparation: {
+              actions: [
+                { type: "fillKnownSecret", input: "clientId", target: protectedInputTarget },
+              ],
+              assertions: [],
+            },
+            mutation: { dispatchSemantics: "read_only" },
+            extraction: {
+              timeoutMs: 1_000,
+              outputs: [
+                {
+                  reference: "orderId",
+                  classification: "protected",
+                  acquisition: {
+                    target: outputTarget,
+                    classification: "unknown_secret",
+                    objective: { kind: "capture_value", expectedValueType: "unknown_secret" },
+                    permittedMethods: ["semantic_field_value", "input_value", "text_content"],
+                    validation: { minimumLength: 1, maximumLength: 100 },
+                  },
+                  storage: { credentialName: "Order ID", scope: "project" },
+                },
+              ],
+            },
+          } as never,
+          {} as ProtectedTransactionDependencies,
+          facts,
+        ),
+      ).rejects.toMatchObject({ code: "PROTECTED_VALUE_UNAVAILABLE" });
+      expect(
+        facts.diagnostics.some((item) => item.lastFailureCode === "ACQUISITION_SOURCE_PROHIBITED"),
+      ).toBe(true);
     } finally {
       await browser.close();
     }
@@ -317,7 +369,9 @@ describe("protected acquisition adapter registry", () => {
     });
     try {
       const page = await browser.newPage();
-      await page.setContent(`<section aria-label="Actual result"><label>Generated value<input value="container-independent-value"></label></section>`);
+      await page.setContent(
+        `<section aria-label="Actual result"><label>Generated value<input value="container-independent-value"></label></section>`,
+      );
       const acquisition = acquisitionIntentSchema.parse({
         target: {
           ...target,
@@ -506,7 +560,13 @@ describe("protected acquisition adapter registry", () => {
           persistPublicValue,
         } as unknown as ProtectedTransactionDependencies,
         facts,
-        { id: "protected-operation", state: "persisting", version: 1, fencingToken: 1 },
+        {
+          id: "protected-operation",
+          state: "persisting",
+          version: 1,
+          fencingToken: 1,
+          mutationOutcome: "unknown",
+        },
       );
 
       expect(persistSecret).not.toHaveBeenCalled();

@@ -11,10 +11,10 @@ const sourceFiles = await sourceTree(root);
 const forbiddenDependencies = new Map([
   [
     "packages/contracts",
-    new Set(["@scry/artifact", "@scry/policy", "@scry/praxis", "@scry/veil", "@scry/executor"]),
+    new Set(["@scry/chronicle", "@scry/policy", "@scry/praxis", "@scry/veil", "@scry/executor"]),
   ],
-  ["packages/artifact", new Set(["@scry/policy", "@scry/praxis", "@scry/veil", "@scry/executor"])],
-  ["packages/policy", new Set(["@scry/artifact", "@scry/praxis", "@scry/veil", "@scry/executor"])],
+  ["packages/chronicle", new Set(["@scry/policy", "@scry/praxis", "@scry/veil", "@scry/executor"])],
+  ["packages/policy", new Set(["@scry/chronicle", "@scry/praxis", "@scry/veil", "@scry/executor"])],
   ["packages/veil", new Set(["@scry/praxis", "@scry/executor"])],
   ["packages/praxis", new Set(["@scry/executor"])],
 ]);
@@ -32,6 +32,16 @@ for (const file of sourceFiles) {
       if ((path === owner || path.startsWith(`${owner}/`)) && forbidden.has(specifier))
         failures.push(`forbidden dependency: ${path} -> ${specifier}`);
     }
+  }
+  if (path.startsWith("packages/veil/src/")) {
+    if (imports.includes("playwright"))
+      failures.push(`Veil must not depend on Playwright: ${path}`);
+    if (
+      /\b(?:Page|Browser|BrowserContext|ElementHandle)\b|\bdocument\.|\bquerySelector(?:All)?\s*\(|\bgetBoundingClientRect\s*\(|\.screenshot\s*\(|\.screencast\b/.test(
+        source,
+      )
+    )
+      failures.push(`Veil contains browser, DOM, geometry, or capture mechanics: ${path}`);
   }
 }
 

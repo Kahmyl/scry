@@ -12,7 +12,7 @@ import {
   startAdaptiveFixture,
   type CampaignCheck,
   type MilestoneCampaignResult,
-} from "@scry/campaigns";
+} from "@scry/assurance/legacy";
 import {
   currentPlanSchema,
   executionPolicySchema,
@@ -25,8 +25,15 @@ import { Redis } from "ioredis";
 import pg from "pg";
 
 import { decryptCredential, encryptCredential } from "../src/access/credential.crypto.js";
-import { collectPersistedTelemetry, type DeployedCampaignSpec } from "./deployed-adaptive-campaign.js";
-import { externalTargetOperations, m1ExternalTargetRegistry, type M1ExternalTarget } from "./mission-live-m1-target-registry.js";
+import {
+  collectPersistedTelemetry,
+  type DeployedCampaignSpec,
+} from "./deployed-adaptive-campaign.js";
+import {
+  externalTargetOperations,
+  m1ExternalTargetRegistry,
+  type M1ExternalTarget,
+} from "./mission-live-m1-target-registry.js";
 
 export const CAMPAIGN_SECRET_REFERENCE = "11111111-1111-4111-8111-111111111111";
 
@@ -152,7 +159,12 @@ export async function generatedCoreCampaignSpec(
       value: context.secretValue,
     });
     await insertCampaignOwnership(pool, {
-      projectId, environmentId, missionId, objectiveId, agentSessionId, flowDraftId,
+      projectId,
+      environmentId,
+      missionId,
+      objectiveId,
+      agentSessionId,
+      flowDraftId,
       title: `M1 production-shaped native authentication ${context.campaignId}`,
     });
     await pool.query("COMMIT");
@@ -259,20 +271,38 @@ export async function generatedVitractCampaignSpec(
       await pool.query(
         `INSERT INTO environments(id,project_id,name,base_origin,policy,secret_refs)
          VALUES($1,$2,'M1 Vitract Preview','https://preview.vitract.com',$3::jsonb,$4::jsonb)`,
-        [environmentId, projectId, JSON.stringify({
-          allowedOrigins: ["https://preview.vitract.com"], maxActions: 12,
-          maxDurationMs: 240_000, maxNavigations: 3,
-          trustedScriptOrigins: ["https://js.stripe.com", "https://maps.googleapis.com"],
-        }), JSON.stringify([emailCredentialId, passwordCredentialId])],
+        [
+          environmentId,
+          projectId,
+          JSON.stringify({
+            allowedOrigins: ["https://preview.vitract.com"],
+            maxActions: 12,
+            maxDurationMs: 240_000,
+            maxNavigations: 3,
+            trustedScriptOrigins: ["https://js.stripe.com", "https://maps.googleapis.com"],
+          }),
+          JSON.stringify([emailCredentialId, passwordCredentialId]),
+        ],
       );
       await insertCampaignCredential(pool, {
-        id: emailCredentialId, projectId, name: "Vitract preview login email", value: emailValue,
+        id: emailCredentialId,
+        projectId,
+        name: "Vitract preview login email",
+        value: emailValue,
       });
       await insertCampaignCredential(pool, {
-        id: passwordCredentialId, projectId, name: "Vitract preview login password", value: passwordValue,
+        id: passwordCredentialId,
+        projectId,
+        name: "Vitract preview login password",
+        value: passwordValue,
       });
       await insertCampaignOwnership(pool, {
-        projectId, environmentId, missionId, objectiveId, agentSessionId, flowDraftId,
+        projectId,
+        environmentId,
+        missionId,
+        objectiveId,
+        agentSessionId,
+        flowDraftId,
         title: `M1 Vitract native authentication ${context.campaignId}`,
       });
       await pool.query("COMMIT");
@@ -352,24 +382,52 @@ export async function generatedExternalCampaignSpec(
     await pool.query(
       `INSERT INTO environments(id,project_id,name,base_origin,policy,secret_refs)
        VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb)`,
-      [environmentId, projectId, `M1 ${target}`, config.origin,
-        JSON.stringify({ allowedOrigins: [config.origin], maxActions: 12,
-          maxDurationMs: config.timeoutMs, maxNavigations: 3,
+      [
+        environmentId,
+        projectId,
+        `M1 ${target}`,
+        config.origin,
+        JSON.stringify({
+          allowedOrigins: [config.origin],
+          maxActions: 12,
+          maxDurationMs: config.timeoutMs,
+          maxNavigations: 3,
           trustedScriptOrigins: "trustedScriptOrigins" in config ? config.trustedScriptOrigins : [],
-        }), JSON.stringify(secretRefs)],
+        }),
+        JSON.stringify(secretRefs),
+      ],
     );
     if ("credentials" in config && usernameId && passwordId) {
-      await insertCampaignCredential(pool, { id: usernameId, projectId, name: `${target} username`, value: config.credentials.usernameValue });
-      await insertCampaignCredential(pool, { id: passwordId, projectId, name: `${target} password`, value: config.credentials.passwordValue });
+      await insertCampaignCredential(pool, {
+        id: usernameId,
+        projectId,
+        name: `${target} username`,
+        value: config.credentials.usernameValue,
+      });
+      await insertCampaignCredential(pool, {
+        id: passwordId,
+        projectId,
+        name: `${target} password`,
+        value: config.credentials.passwordValue,
+      });
       context.forbiddenValues.push(config.credentials.passwordValue);
     }
-    await insertCampaignOwnership(pool, { projectId, environmentId, missionId, objectiveId,
-      agentSessionId, flowDraftId, title: `M1 ${target} read-only login ${context.campaignId}` });
+    await insertCampaignOwnership(pool, {
+      projectId,
+      environmentId,
+      missionId,
+      objectiveId,
+      agentSessionId,
+      flowDraftId,
+      title: `M1 ${target} read-only login ${context.campaignId}`,
+    });
     await pool.query("COMMIT");
   } catch (error) {
     await pool.query("ROLLBACK");
     throw error;
-  } finally { await pool.end(); }
+  } finally {
+    await pool.end();
+  }
   context.campaignProjectId = projectId;
   context.campaignMissionId = missionId;
   context.campaignObjectiveId = objectiveId;
@@ -380,25 +438,40 @@ export async function generatedExternalCampaignSpec(
   });
   return {
     forbiddenValues: [...context.forbiddenValues],
-    spec: { calls: [
-      { name: "start_flow_authoring", arguments: {
-        projectId, environmentId, missionId, objectiveId, flowDraftId,
-        objective: `Verify the canonical read-only ${target} demonstration journey`,
-        allowedOrigins: [config.origin], correlationId: context.correlationId,
-        idempotencyKey: `m1-${target}-start-${context.campaignId}`,
-      } },
-      { name: "advance_flow_authoring", arguments: {
-        sessionId: "${SESSION_ID}", operations,
-        budgets: { maxOperations: operations.length, maxDurationMs: config.timeoutMs },
-        idempotencyKey: `m1-${target}-turn-${context.campaignId}`,
-      } },
-    ] },
+    spec: {
+      calls: [
+        {
+          name: "start_flow_authoring",
+          arguments: {
+            projectId,
+            environmentId,
+            missionId,
+            objectiveId,
+            flowDraftId,
+            objective: `Verify the canonical read-only ${target} demonstration journey`,
+            allowedOrigins: [config.origin],
+            correlationId: context.correlationId,
+            idempotencyKey: `m1-${target}-start-${context.campaignId}`,
+          },
+        },
+        {
+          name: "advance_flow_authoring",
+          arguments: {
+            sessionId: "${SESSION_ID}",
+            operations,
+            budgets: { maxOperations: operations.length, maxDurationMs: config.timeoutMs },
+            idempotencyKey: `m1-${target}-turn-${context.campaignId}`,
+          },
+        },
+      ],
+    },
   };
 }
 
 export function requireLiveAcceptance(milestone: string, target: string) {
   if (process.env.SCRY_LIVE_ACCEPTANCE !== "true") throw new Error("SCRY_LIVE_ACCEPTANCE_REQUIRED");
-  if (process.env.SCRY_LIVE_MILESTONE !== milestone) throw new Error("SCRY_LIVE_MILESTONE_MISMATCH");
+  if (process.env.SCRY_LIVE_MILESTONE !== milestone)
+    throw new Error("SCRY_LIVE_MILESTONE_MISMATCH");
   if (process.env.SCRY_LIVE_TARGET !== target) throw new Error("SCRY_LIVE_TARGET_MISMATCH");
   for (const name of ["SCRY_RELEASE_ID", "SCRY_GIT_COMMIT", "SCRY_SCHEMA_FINGERPRINT"]) {
     if (!process.env[name]) throw new Error(`${name}_REQUIRED`);
@@ -523,16 +596,17 @@ function fixtureAdaptiveOperations(
   milestone: "M0" | "M1",
 ): AdaptiveSessionOperationInput[] {
   const plan = adaptiveFixturePlan(origin);
-  const candidates = milestone === "M1"
-    ? [
-        ...plan.steps.slice(0, 4),
-        step("partner-portal", "Verify authenticated shell", {
-          type: "waitFor",
-          target: intent("partner portal", "heading", "Partner Portal", ["readable_value"]),
-          state: "visible",
-        }),
-      ]
-    : plan.steps;
+  const candidates =
+    milestone === "M1"
+      ? [
+          ...plan.steps.slice(0, 4),
+          step("partner-portal", "Verify authenticated shell", {
+            type: "waitFor",
+            target: intent("partner portal", "heading", "Partner Portal", ["readable_value"]),
+            state: "visible",
+          }),
+        ]
+      : plan.steps;
   return candidates.map((candidate, index) => {
     let action = candidate.action;
     if (candidate.id === "email" && action.type === "fill") {
@@ -582,8 +656,13 @@ export async function insertCampaignCredential(
 export async function insertCampaignOwnership(
   pool: pg.Pool,
   input: {
-    projectId: string; environmentId: string; missionId: string; objectiveId: string;
-    agentSessionId: string; flowDraftId: string; title: string;
+    projectId: string;
+    environmentId: string;
+    missionId: string;
+    objectiveId: string;
+    agentSessionId: string;
+    flowDraftId: string;
+    title: string;
   },
 ) {
   await pool.query(
@@ -606,7 +685,14 @@ export async function insertCampaignOwnership(
        id,project_id,mission_id,objective_id,environment_id,name,content,plan,
        created_by_agent_session_id
      ) VALUES($1,$2,$3,$4,$5,'Native authentication','{}'::jsonb,'{}'::jsonb,$6)`,
-    [input.flowDraftId, input.projectId, input.missionId, input.objectiveId, input.environmentId, input.agentSessionId],
+    [
+      input.flowDraftId,
+      input.projectId,
+      input.missionId,
+      input.objectiveId,
+      input.environmentId,
+      input.agentSessionId,
+    ],
   );
 }
 
@@ -763,7 +849,10 @@ export async function verifyMissionOwned(context: CampaignContext): Promise<void
     return;
   }
   const before = context.beforeCounts as {
-    missions: number; mission_objectives: number; flows: number; flow_drafts: number;
+    missions: number;
+    mission_objectives: number;
+    flows: number;
+    flow_drafts: number;
   };
   const after = await controlPlaneCounts();
   const unchanged =
@@ -821,7 +910,13 @@ export async function retainResult(
   context: CampaignContext,
   milestone: "M0" | "M1",
   artifactRefs: string[] = [],
-  target: "production_shaped" | "vitract_preview" | "orangehrm" | "expand_testing" | "the_internet" | "xyz_bank" = "production_shaped",
+  target:
+    | "production_shaped"
+    | "vitract_preview"
+    | "orangehrm"
+    | "expand_testing"
+    | "the_internet"
+    | "xyz_bank" = "production_shaped",
 ): Promise<{ result: MilestoneCampaignResult; file: string }> {
   const result = finalizeCampaignResult({
     schemaVersion: 1,
@@ -864,16 +959,23 @@ export async function retainCanonicalM1Result(
   const pool = new pg.Pool({ connectionString: databaseUrl() });
   try {
     const ownership = await pool.query<{
-      missionId: string; objectiveId: string; flowDraftId: string;
+      missionId: string;
+      objectiveId: string;
+      flowDraftId: string;
     }>(
       `SELECT mission_id AS "missionId",objective_id AS "objectiveId",flow_draft_id AS "flowDraftId"
        FROM adaptive_sessions WHERE correlation_id=$1 ORDER BY created_at DESC LIMIT 1`,
       [context.correlationId],
     );
-    const owner = ownership.rows[0] ?? (context.campaignMissionId && context.campaignObjectiveId && context.campaignFlowDraftId
-      ? { missionId: context.campaignMissionId, objectiveId: context.campaignObjectiveId,
-          flowDraftId: context.campaignFlowDraftId }
-      : undefined);
+    const owner =
+      ownership.rows[0] ??
+      (context.campaignMissionId && context.campaignObjectiveId && context.campaignFlowDraftId
+        ? {
+            missionId: context.campaignMissionId,
+            objectiveId: context.campaignObjectiveId,
+            flowDraftId: context.campaignFlowDraftId,
+          }
+        : undefined);
     if (!owner) throw new Error("CAMPAIGN_MISSION_OWNERSHIP_MISSING");
     const metrics = context.metrics.snapshot();
     const telemetry = await collectPersistedTelemetry(context.correlationId, context.metrics);
@@ -881,23 +983,34 @@ export async function retainCanonicalM1Result(
     const gitCommit = requiredEnvironment("SCRY_GIT_COMMIT");
     const schemaFingerprint = requiredEnvironment("SCRY_SCHEMA_FINGERPRINT");
     const runtimeVersion = requiredEnvironment("SCRY_RUNTIME_VERSION");
-    const runtimeConfigurationDigest = createHash("sha256").update(JSON.stringify({
-      releaseId, gitCommit, schemaFingerprint, runtimeVersion,
-    })).digest("hex");
+    const runtimeConfigurationDigest = createHash("sha256")
+      .update(
+        JSON.stringify({
+          releaseId,
+          gitCommit,
+          schemaFingerprint,
+          runtimeVersion,
+        }),
+      )
+      .digest("hex");
     const baselineDecisionBoundaries = 9;
     const baselineMcpCalls = 9;
     const baselineBytes = Math.max(metrics.bytesReturnedToAgent / 0.4, 1);
-    const timings = Object.fromEntries(Object.entries(metrics.phases).map(([phase, distribution]) => [
-      phase,
-      {
-        ...distribution,
-        slowestOperationIds: metrics.slowestOperations
-          .filter((operation) => operation.phase === phase)
-          .map((operation) => operation.operationId),
-      },
-    ]));
+    const timings = Object.fromEntries(
+      Object.entries(metrics.phases).map(([phase, distribution]) => [
+        phase,
+        {
+          ...distribution,
+          slowestOperationIds: metrics.slowestOperations
+            .filter((operation) => operation.phase === phase)
+            .map((operation) => operation.operationId),
+        },
+      ]),
+    );
     return retainMissionLiveCampaignReport({
-      directory: fileURLToPath(new URL("../../../docs/runbooks/evidence/mission-first/m1/", import.meta.url)),
+      directory: fileURLToPath(
+        new URL("../../../docs/runbooks/evidence/mission-first/m1/", import.meta.url),
+      ),
       forbiddenValues: context.forbiddenValues,
       result: {
         schemaVersion: 2,
@@ -914,18 +1027,25 @@ export async function retainCanonicalM1Result(
         flowIds: [owner.flowDraftId],
         runIds: [],
         correlationId: context.correlationId,
-        boundaryUnderTest: "Mission-owned native authentication with protected references and zero Praxis calls",
+        boundaryUnderTest:
+          "Mission-owned native authentication with protected references and zero Praxis calls",
         requiredChecks: context.requiredChecks.map((check) => ({
           ...check,
-          status: check.status === "awaiting_codex_verification" ? "blocked" as const : check.status,
+          status:
+            check.status === "awaiting_codex_verification" ? ("blocked" as const) : check.status,
         })),
         observationalFindings: context.observationalChecks.map((check) => ({
           ...check,
-          status: check.status === "awaiting_codex_verification" ? "blocked" as const : check.status,
+          status:
+            check.status === "awaiting_codex_verification" ? ("blocked" as const) : check.status,
         })),
         cleanup: {
           required: input.cleanupRequired ?? false,
-          state: input.cleanupRequired ? (input.verdict === "pass" ? "completed" : "failed") : "not_required",
+          state: input.cleanupRequired
+            ? input.verdict === "pass"
+              ? "completed"
+              : "failed"
+            : "not_required",
           refs: [],
         },
         calls: {
@@ -933,9 +1053,16 @@ export async function retainCanonicalM1Result(
           api: metrics.apiRequests,
           repeatedStateReads: metrics.unchangedStateReads,
         },
-        resolution: { nativeResolved: telemetry.nativeResolved, praxisFallbacks: telemetry.praxisCalls },
+        resolution: {
+          nativeResolved: telemetry.nativeResolved,
+          praxisFallbacks: telemetry.praxisCalls,
+        },
         reductions: {
-          decisionBoundary: Math.max(0, (baselineDecisionBoundaries - metrics.agentDecisionBoundaries) / baselineDecisionBoundaries),
+          decisionBoundary: Math.max(
+            0,
+            (baselineDecisionBoundaries - metrics.agentDecisionBoundaries) /
+              baselineDecisionBoundaries,
+          ),
           mcpCalls: Math.max(0, (baselineMcpCalls - metrics.mcpRequests) / baselineMcpCalls),
           agentBytes: Math.max(0, (baselineBytes - metrics.bytesReturnedToAgent) / baselineBytes),
         },

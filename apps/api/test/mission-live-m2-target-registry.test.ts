@@ -28,18 +28,22 @@ describe("M2 live target registry", () => {
         emailCredentialId: randomUUID(),
         passwordCredentialId: randomUUID(),
       }),
-      ...m2ExternalTargets.map((target) => externalM2Intents({
-        target,
-        ownership: ownership([...m2TargetRegistry[target].flows]),
-        credentialIds: { email: randomUUID(), password: randomUUID() },
-        campaignPrefix: "scry-m2-registry",
-      })),
+      ...m2ExternalTargets.map((target) =>
+        externalM2Intents({
+          target,
+          ownership: ownership([...m2TargetRegistry[target].flows]),
+          credentialIds: { email: randomUUID(), password: randomUUID() },
+          campaignPrefix: "scry-m2-registry",
+        }),
+      ),
     ];
 
     for (const turns of journeys) {
       expect(turns.length).toBeGreaterThan(0);
       expect(turns.length).toBeLessThanOrEqual(2);
-      expect(new Set(turns.flat().map((intent) => intent.flowDraftId)).size).toBeGreaterThanOrEqual(3);
+      expect(new Set(turns.flat().map((intent) => intent.flowDraftId)).size).toBeGreaterThanOrEqual(
+        3,
+      );
       for (const turn of turns) {
         expect(turn.length).toBeGreaterThan(0);
         expect(turn.length).toBeLessThanOrEqual(20);
@@ -55,10 +59,15 @@ function ownership(flows: M2FlowDefinition[]): M2Ownership {
     environmentId: randomUUID(),
     missionId: randomUUID(),
     agentSessionId: randomUUID(),
-    flows: Object.fromEntries(flows.map((flow) => [flow.key, {
-      objectiveId: randomUUID(),
-      flowDraftId: randomUUID(),
-      authorizationId: randomUUID(),
-    }])),
+    flows: Object.fromEntries(
+      flows.map((flow) => [
+        flow.key,
+        {
+          objectiveId: randomUUID(),
+          flowDraftId: randomUUID(),
+          authorizationId: randomUUID(),
+        },
+      ]),
+    ),
   };
 }

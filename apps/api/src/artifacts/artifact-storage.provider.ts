@@ -1,4 +1,4 @@
-import { createArtifactStoreFromEnv, type ArtifactStore } from "@scry/artifact";
+import { createArtifactStoreFromEnv, type ArtifactStore } from "@scry/chronicle/legacy";
 
 export const ARTIFACT_STORE = Symbol("ARTIFACT_STORE");
 

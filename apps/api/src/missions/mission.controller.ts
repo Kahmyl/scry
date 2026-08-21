@@ -9,14 +9,11 @@ import {
   endAgentSessionSchema,
   missionTransitionSchema,
   publishMissionReportSchema,
+  setMissionRecordingSelectionSchema,
   startAgentSessionSchema,
   updateMissionSchema,
   updateObjectiveSchema,
   updateResumePointerSchema,
-  createExecutionPlanSchema,
-  activateExecutionPlanSchema,
-  orchestrationControlSchema,
-  startReadyObjectivesSchema,
   grantMissionAuthorizationSchema,
   finalizeAgentWorkSchema,
   type AcceptEvidenceInput,
@@ -28,19 +25,14 @@ import {
   type EndAgentSessionInput,
   type MissionTransitionInput,
   type PublishMissionReportInput,
+  type SetMissionRecordingSelectionInput,
   type StartAgentSessionInput,
   type UpdateMissionInput,
   type UpdateObjectiveInput,
   type UpdateResumePointerInput,
   type FinalizeAgentWorkInput,
 } from "@scry/contracts";
-import type {
-  CreateExecutionPlanInput,
-  ActivateExecutionPlanInput,
-  GrantMissionAuthorizationInput,
-  OrchestrationControlInput,
-  StartReadyObjectivesInput,
-} from "@scry/contracts";
+import type { GrantMissionAuthorizationInput } from "@scry/contracts";
 
 import { CurrentPrincipal, type Principal } from "../auth/index.js";
 import { MissionService } from "./mission.service.js";
@@ -183,6 +175,15 @@ export class MissionController {
   ) {
     return this.missions.transition(p, id, "reopen", i);
   }
+  @Post("missions/:missionId/recording-selection") recordingSelection(
+    @Param("missionId") id: string,
+    @CurrentPrincipal() p: Principal,
+    @Body(new ZodValidationPipe(setMissionRecordingSelectionSchema))
+    i: SetMissionRecordingSelectionInput,
+  ) {
+    return this.missions.setRecordingSelection(p, id, i);
+  }
+
   @Get("missions/:missionId/report-preview") preview(
     @Param("missionId") id: string,
     @CurrentPrincipal() p: Principal,
@@ -207,61 +208,6 @@ export class MissionController {
     @CurrentPrincipal() p: Principal,
   ) {
     return this.missions.getReport(p, id);
-  }
-  @Post("missions/:missionId/execution-plans") createPlan(
-    @Param("missionId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(createExecutionPlanSchema)) i: CreateExecutionPlanInput,
-  ) {
-    return this.orchestration.createPlan(p, id, i);
-  }
-  @Post("missions/:missionId/execution-plans/activate") activatePlan(
-    @Param("missionId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(activateExecutionPlanSchema)) i: ActivateExecutionPlanInput,
-  ) {
-    return this.orchestration.activate(p, id, i);
-  }
-  @Get("missions/:missionId/execution-plans/:revision/validate") validatePlan(
-    @Param("missionId") id: string,
-    @Param("revision") revision: string,
-    @CurrentPrincipal() p: Principal,
-  ) {
-    return this.orchestration.validate(p, id, Number(revision));
-  }
-  @Get("missions/:missionId/orchestration") orchestrationStatus(
-    @Param("missionId") id: string,
-    @CurrentPrincipal() p: Principal,
-  ) {
-    return this.orchestration.status(p, id);
-  }
-  @Post("missions/:missionId/orchestration/start-ready") startReady(
-    @Param("missionId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(startReadyObjectivesSchema)) i: StartReadyObjectivesInput,
-  ) {
-    return this.orchestration.startReady(p, id, i);
-  }
-  @Post("missions/:missionId/orchestration/pause") pause(
-    @Param("missionId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(orchestrationControlSchema)) i: OrchestrationControlInput,
-  ) {
-    return this.orchestration.control(p, id, "pause", i);
-  }
-  @Post("missions/:missionId/orchestration/resume") resumeOrchestration(
-    @Param("missionId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(orchestrationControlSchema)) i: OrchestrationControlInput,
-  ) {
-    return this.orchestration.control(p, id, "resume", i);
-  }
-  @Post("missions/:missionId/orchestration/cancel") cancelOrchestration(
-    @Param("missionId") id: string,
-    @CurrentPrincipal() p: Principal,
-    @Body(new ZodValidationPipe(orchestrationControlSchema)) i: OrchestrationControlInput,
-  ) {
-    return this.orchestration.control(p, id, "cancel", i);
   }
   @Post("missions/:missionId/authorizations") authorize(
     @Param("missionId") id: string,

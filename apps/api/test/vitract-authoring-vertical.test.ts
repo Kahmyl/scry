@@ -4,7 +4,7 @@ import { currentPlanSchema, type InteractionTargetIntent } from "@scry/contracts
 import { describe, expect, it } from "vitest";
 
 import { AuthenticationAuthoringService } from "../src/authentication-authoring/index.js";
-import { deriveCompiledPlan } from "../src/authoring/authoring.service.js";
+import { deriveCompiledPlan } from "../src/authoring/services/authoring.service.js";
 
 const probeSessionId = "00000000-0000-4000-8000-000000000021";
 

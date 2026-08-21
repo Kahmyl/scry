@@ -9,12 +9,8 @@
   "target": "vitract_preview",
   "repetition": 1,
   "missionId": "0a279a27-2f68-4d86-bf4f-f5757b0461b9",
-  "objectiveIds": [
-    "dcbe8760-ea36-478e-ad05-7b759f9a4cb8"
-  ],
-  "flowIds": [
-    "c059ef85-37e8-4081-944e-8c3e2787268e"
-  ],
+  "objectiveIds": ["dcbe8760-ea36-478e-ad05-7b759f9a4cb8"],
+  "flowIds": ["c059ef85-37e8-4081-944e-8c3e2787268e"],
   "runIds": [],
   "correlationId": "23eea99b-c25c-4f8a-94ca-5ffd393f2ea2",
   "boundaryUnderTest": "Mission-owned native authentication with protected references and zero Praxis calls",
@@ -106,9 +102,7 @@
       "p50Ms": 9.781457999999986,
       "p95Ms": 9.781457999999986,
       "maxMs": 9.781457999999986,
-      "slowestOperationIds": [
-        "api"
-      ]
+      "slowestOperationIds": ["api"]
     },
     "artifact_retrieval": {
       "count": 1,
@@ -122,27 +116,21 @@
       "p50Ms": 2037.049,
       "p95Ms": 2037.049,
       "maxMs": 2037.049,
-      "slowestOperationIds": [
-        "vitract-navigate"
-      ]
+      "slowestOperationIds": ["vitract-navigate"]
     },
     "database": {
       "count": 1,
       "p50Ms": 8.772625000000005,
       "p95Ms": 8.772625000000005,
       "maxMs": 8.772625000000005,
-      "slowestOperationIds": [
-        "database"
-      ]
+      "slowestOperationIds": ["database"]
     },
     "document_observation": {
       "count": 1,
       "p50Ms": 2037.049,
       "p95Ms": 2037.049,
       "maxMs": 2037.049,
-      "slowestOperationIds": [
-        "vitract-navigate"
-      ]
+      "slowestOperationIds": ["vitract-navigate"]
     },
     "evidence_finalization": {
       "count": 1,
@@ -180,29 +168,21 @@
       "p50Ms": 12293.605416,
       "p95Ms": 12293.605416,
       "maxMs": 12293.605416,
-      "slowestOperationIds": [
-        "mcp-23eea99b-c25c-4f8a-94ca-5ffd393f2ea2-2"
-      ]
+      "slowestOperationIds": ["mcp-23eea99b-c25c-4f8a-94ca-5ffd393f2ea2-2"]
     },
     "mcp_session_start_round_trip": {
       "count": 1,
       "p50Ms": 66.69925,
       "p95Ms": 66.69925,
       "maxMs": 66.69925,
-      "slowestOperationIds": [
-        "mcp-23eea99b-c25c-4f8a-94ca-5ffd393f2ea2-1"
-      ]
+      "slowestOperationIds": ["mcp-23eea99b-c25c-4f8a-94ca-5ffd393f2ea2-1"]
     },
     "native_resolution": {
       "count": 3,
       "p50Ms": 31.34858399999939,
       "p95Ms": 40.93262499999764,
       "maxMs": 40.93262499999764,
-      "slowestOperationIds": [
-        "vitract-email",
-        "vitract-sign-in",
-        "vitract-password"
-      ]
+      "slowestOperationIds": ["vitract-email", "vitract-sign-in", "vitract-password"]
     },
     "praxis_grounding": {
       "count": 1,
@@ -216,27 +196,21 @@
       "p50Ms": 0,
       "p95Ms": 0,
       "maxMs": 0,
-      "slowestOperationIds": [
-        "23eea99b-c25c-4f8a-94ca-5ffd393f2ea2"
-      ]
+      "slowestOperationIds": ["23eea99b-c25c-4f8a-94ca-5ffd393f2ea2"]
     },
     "redis": {
       "count": 1,
       "p50Ms": 3.5547499999999843,
       "p95Ms": 3.5547499999999843,
       "maxMs": 3.5547499999999843,
-      "slowestOperationIds": [
-        "redis"
-      ]
+      "slowestOperationIds": ["redis"]
     },
     "worker": {
       "count": 1,
       "p50Ms": 7.077125000000024,
       "p95Ms": 7.077125000000024,
       "maxMs": 7.077125000000024,
-      "slowestOperationIds": [
-        "worker"
-      ]
+      "slowestOperationIds": ["worker"]
     }
   },
   "privacyScan": {

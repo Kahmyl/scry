@@ -7,12 +7,8 @@
   "target": "production_shaped",
   "repetition": 1,
   "missionId": "a020f7e6-6479-4322-8dc8-e15ab44461f3",
-  "objectiveIds": [
-    "467ba9ad-488f-489d-81bb-61851117dc52"
-  ],
-  "flowIds": [
-    "d267f6c5-8129-481a-9ae6-b21f5dfcad57"
-  ],
+  "objectiveIds": ["467ba9ad-488f-489d-81bb-61851117dc52"],
+  "flowIds": ["d267f6c5-8129-481a-9ae6-b21f5dfcad57"],
   "runIds": [],
   "correlationId": "d739bcd7-12f5-42d2-a87d-346b892eca0f",
   "boundaryUnderTest": "Mission-owned native authentication with protected references and zero Praxis calls",
@@ -125,9 +121,7 @@
       "p50Ms": 8.452665999999965,
       "p95Ms": 8.452665999999965,
       "maxMs": 8.452665999999965,
-      "slowestOperationIds": [
-        "api"
-      ]
+      "slowestOperationIds": ["api"]
     },
     "artifact_retrieval": {
       "count": 1,
@@ -141,27 +135,21 @@
       "p50Ms": 671.827,
       "p95Ms": 671.827,
       "maxMs": 671.827,
-      "slowestOperationIds": [
-        "fixture-1-navigate"
-      ]
+      "slowestOperationIds": ["fixture-1-navigate"]
     },
     "database": {
       "count": 1,
       "p50Ms": 5.478665999999976,
       "p95Ms": 5.478665999999976,
       "maxMs": 5.478665999999976,
-      "slowestOperationIds": [
-        "database"
-      ]
+      "slowestOperationIds": ["database"]
     },
     "document_observation": {
       "count": 1,
       "p50Ms": 671.827,
       "p95Ms": 671.827,
       "maxMs": 671.827,
-      "slowestOperationIds": [
-        "fixture-1-navigate"
-      ]
+      "slowestOperationIds": ["fixture-1-navigate"]
     },
     "evidence_finalization": {
       "count": 1,
@@ -175,11 +163,7 @@
       "p50Ms": 0.004625000001396984,
       "p95Ms": 0.08808299999509472,
       "maxMs": 0.08808299999509472,
-      "slowestOperationIds": [
-        "fixture-1-navigate",
-        "fixture-3-password",
-        "fixture-4-sign-in"
-      ]
+      "slowestOperationIds": ["fixture-1-navigate", "fixture-3-password", "fixture-4-sign-in"]
     },
     "interaction_execution": {
       "count": 5,
@@ -199,18 +183,14 @@
       "p50Ms": 902.8202080000001,
       "p95Ms": 902.8202080000001,
       "maxMs": 902.8202080000001,
-      "slowestOperationIds": [
-        "mcp-d739bcd7-12f5-42d2-a87d-346b892eca0f-2"
-      ]
+      "slowestOperationIds": ["mcp-d739bcd7-12f5-42d2-a87d-346b892eca0f-2"]
     },
     "mcp_session_start_round_trip": {
       "count": 1,
       "p50Ms": 84.64237499999996,
       "p95Ms": 84.64237499999996,
       "maxMs": 84.64237499999996,
-      "slowestOperationIds": [
-        "mcp-d739bcd7-12f5-42d2-a87d-346b892eca0f-1"
-      ]
+      "slowestOperationIds": ["mcp-d739bcd7-12f5-42d2-a87d-346b892eca0f-1"]
     },
     "native_resolution": {
       "count": 4,
@@ -243,18 +223,14 @@
       "p50Ms": 3.0805420000000368,
       "p95Ms": 3.0805420000000368,
       "maxMs": 3.0805420000000368,
-      "slowestOperationIds": [
-        "redis"
-      ]
+      "slowestOperationIds": ["redis"]
     },
     "worker": {
       "count": 1,
       "p50Ms": 6.342499999999973,
       "p95Ms": 6.342499999999973,
       "maxMs": 6.342499999999973,
-      "slowestOperationIds": [
-        "worker"
-      ]
+      "slowestOperationIds": ["worker"]
     }
   },
   "privacyScan": {

@@ -7,7 +7,11 @@
       "routeClass": "/api/v1/partner-api/orders",
       "requiredInputs": ["partner_api_client_id", "partner_api_client_secret"],
       "optionalInputs": ["page", "limit", "status"],
-      "queryConstraints": { "page": "integer>=1", "limit": "integer:1..100", "status": "documented_enum" },
+      "queryConstraints": {
+        "page": "integer>=1",
+        "limit": "integer:1..100",
+        "status": "documented_enum"
+      },
       "filtering": "status",
       "sorting": "NOT_DOCUMENTED",
       "responseClass": "order_collection",
@@ -17,7 +21,11 @@
       "operation": "Retrieve Order",
       "method": "GET",
       "routeClass": "/api/v1/partner-api/orders/{opaque-order-identity}",
-      "requiredInputs": ["partner_api_client_id", "partner_api_client_secret", "canonical_order_identity"],
+      "requiredInputs": [
+        "partner_api_client_id",
+        "partner_api_client_secret",
+        "canonical_order_identity"
+      ],
       "canonicalIdentityLocation": "response.data.id",
       "responseClass": "canonical_order",
       "classification": "read_only"
@@ -26,9 +34,24 @@
       "operation": "Create Order",
       "method": "POST",
       "routeClass": "/api/v1/partner-api/orders",
-      "requiredInputs": ["partner_api_client_id", "partner_api_client_secret", "provider_idempotency_key", "orderType", "orderedFor", "quantity", "kitType", "currency", "shipping"],
+      "requiredInputs": [
+        "partner_api_client_id",
+        "partner_api_client_secret",
+        "provider_idempotency_key",
+        "orderType",
+        "orderedFor",
+        "quantity",
+        "kitType",
+        "currency",
+        "shipping"
+      ],
       "optionalInputs": ["deliveryMode"],
-      "identityAlternatives": ["clientId", "nested_client", "practitionerId", "nested_practitioner"],
+      "identityAlternatives": [
+        "clientId",
+        "nested_client",
+        "practitionerId",
+        "nested_practitioner"
+      ],
       "identityRule": "exactly_one_matching_orderedFor",
       "canonicalIdentityLocation": "response.data.id",
       "responseClass": "canonical_created_order",

@@ -9,12 +9,8 @@
   "target": "orangehrm",
   "repetition": 2,
   "missionId": "b5ea394a-65b0-4278-a607-3e04c98daa5a",
-  "objectiveIds": [
-    "3d728df2-ed4e-40ff-9ce9-4b6cb744f282"
-  ],
-  "flowIds": [
-    "bd053eb5-5433-403f-8d9e-4a6c9daa25db"
-  ],
+  "objectiveIds": ["3d728df2-ed4e-40ff-9ce9-4b6cb744f282"],
+  "flowIds": ["bd053eb5-5433-403f-8d9e-4a6c9daa25db"],
   "runIds": [],
   "correlationId": "f2e36ee2-0054-4da9-8afe-a323366eedc4",
   "boundaryUnderTest": "Mission-owned native authentication with protected references and zero Praxis calls",
@@ -77,36 +73,28 @@
       "p50Ms": 7.774792000000048,
       "p95Ms": 7.774792000000048,
       "maxMs": 7.774792000000048,
-      "slowestOperationIds": [
-        "api"
-      ]
+      "slowestOperationIds": ["api"]
     },
     "database": {
       "count": 1,
       "p50Ms": 7.984374999999972,
       "p95Ms": 7.984374999999972,
       "maxMs": 7.984374999999972,
-      "slowestOperationIds": [
-        "database"
-      ]
+      "slowestOperationIds": ["database"]
     },
     "redis": {
       "count": 1,
       "p50Ms": 2.977916999999991,
       "p95Ms": 2.977916999999991,
       "maxMs": 2.977916999999991,
-      "slowestOperationIds": [
-        "redis"
-      ]
+      "slowestOperationIds": ["redis"]
     },
     "worker": {
       "count": 1,
       "p50Ms": 5.56820799999997,
       "p95Ms": 5.56820799999997,
       "maxMs": 5.56820799999997,
-      "slowestOperationIds": [
-        "worker"
-      ]
+      "slowestOperationIds": ["worker"]
     }
   },
   "privacyScan": {

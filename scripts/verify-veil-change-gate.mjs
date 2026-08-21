@@ -61,7 +61,7 @@ if (!publish.includes("VEIL_CRASH_EPHEMERAL_DATABASE=true pnpm campaign:veil:wor
   failures.push("release workflow does not declare the worker-crash database disposable");
 const productionRoots = [
   resolve(root, "packages/executor/src"),
-  resolve(root, "packages/artifact/src"),
+  resolve(root, "packages/chronicle/src"),
   resolve(root, "apps"),
 ];
 const sources = productionRoots
@@ -82,7 +82,7 @@ for (const path of sources) {
     failures.push(`legacy PrivacyGate reference remains in ${name}`);
   if (
     name !== "packages/executor/src/artifacts.ts" &&
-    name !== "packages/artifact/src/index.ts" &&
+    name !== "packages/chronicle/src/index.ts" &&
     /availability\s*:\s*["']available["']/.test(source)
   )
     failures.push(`direct available-artifact construction bypass in ${name}`);

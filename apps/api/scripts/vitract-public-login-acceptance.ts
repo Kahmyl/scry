@@ -19,11 +19,18 @@ const emailTarget: InteractionTargetIntent = {
   concept: "login email",
   requiredCapabilities: ["focusable", "accepts_text", "editable"],
   preferredEvidence: {
-    roles: ["textbox"], names: [], labels: [], descriptions: [],
-    placeholders: ["Enter your email"], inputTypes: [],
+    roles: ["textbox"],
+    names: [],
+    labels: [],
+    descriptions: [],
+    placeholders: ["Enter your email"],
+    inputTypes: [],
   },
-  scope: { kind: "page" }, relations: [], prohibited: ["hidden", "disabled"],
-  risk: "authentication", confidence: { requiredFamilies: [] },
+  scope: { kind: "page" },
+  relations: [],
+  prohibited: ["hidden", "disabled"],
+  risk: "authentication",
+  confidence: { requiredFamilies: [] },
 };
 
 type AcceptanceOutput = {
@@ -84,8 +91,7 @@ let browser: Browser | undefined;
 let context: BrowserContext | undefined;
 let page: Page | undefined;
 let unregisterPraxis: (() => void) | undefined;
-let activeStage: Exclude<AcceptanceOutput["failureStage"], "none"> =
-  "ENVIRONMENT_POLICY_LOAD";
+let activeStage: Exclude<AcceptanceOutput["failureStage"], "none"> = "ENVIRONMENT_POLICY_LOAD";
 
 try {
   const environmentPolicy = await loadAuthoritativeEnvironmentPolicy(database, LOGIN_URL);
@@ -109,19 +115,26 @@ try {
       enumerable: false,
       writable: false,
     });
-    document.addEventListener("click", (event) => {
-      const element = event.target instanceof Element
-        ? event.target.closest('button, input[type="button"], input[type="submit"]')
-        : null;
-      const label = element instanceof HTMLInputElement
-        ? element.value
-        : element?.textContent ?? "";
-      if (/^\s*(?:log\s*in|login|sign\s*in)\s*$/i.test(label))
-        acceptance.loginClickCount += 1;
-    }, true);
-    document.addEventListener("submit", () => {
-      acceptance.formSubmitCount += 1;
-    }, true);
+    document.addEventListener(
+      "click",
+      (event) => {
+        const element =
+          event.target instanceof Element
+            ? event.target.closest('button, input[type="button"], input[type="submit"]')
+            : null;
+        const label =
+          element instanceof HTMLInputElement ? element.value : (element?.textContent ?? "");
+        if (/^\s*(?:log\s*in|login|sign\s*in)\s*$/i.test(label)) acceptance.loginClickCount += 1;
+      },
+      true,
+    );
+    document.addEventListener(
+      "submit",
+      () => {
+        acceptance.formSubmitCount += 1;
+      },
+      true,
+    );
   });
 
   activeStage = "NAVIGATION";
@@ -136,10 +149,12 @@ try {
   recordSafeLocation(page, output);
 
   unregisterPraxis = registerPraxisVeilAuthority(page, {
-    authority: new VeilAuthority(compileVeilPolicy({
-      profile: "balanced",
-      allowedOrigins: environmentPolicy.allowedOrigins,
-    })),
+    authority: new VeilAuthority(
+      compileVeilPolicy({
+        profile: "balanced",
+        allowedOrigins: environmentPolicy.allowedOrigins,
+      }),
+    ),
     userId: "public-login-acceptance",
     environmentId: "manual-live-acceptance",
     browserContextId: "fresh-public-login-context",
@@ -163,18 +178,6 @@ try {
     policy: actionPolicy,
     options: {
       outputDirectory: "/tmp/scry-vitract-public-login-acceptance",
-      executeNativeControl: async (activePage, target, operation, beforeDispatch) => {
-        output.nativeAttempted = true;
-        if ("resolutionTimeoutMs" in operation)
-          output.nativeProbeBudgetMs = operation.resolutionTimeoutMs ?? 0;
-        try {
-          await driver.executeSemanticControl(activePage, target, operation, beforeDispatch);
-          output.nativeSucceeded = true;
-        } catch (error) {
-          output.nativeFailureCode = safeCode(error);
-          throw error;
-        }
-      },
       onPraxisResult: async (result) => {
         output.praxisInvocationCount += 1;
         output.praxisResultSequence.push(
@@ -194,9 +197,11 @@ try {
     : "no";
 
   const counters = await page.evaluate(() => {
-    const acceptance = (window as Window & {
-      __scryPublicLoginAcceptance?: { loginClickCount: number; formSubmitCount: number };
-    }).__scryPublicLoginAcceptance;
+    const acceptance = (
+      window as Window & {
+        __scryPublicLoginAcceptance?: { loginClickCount: number; formSubmitCount: number };
+      }
+    ).__scryPublicLoginAcceptance;
     return {
       loginClickCount: acceptance?.loginClickCount ?? 0,
       formSubmitCount: acceptance?.formSubmitCount ?? 0,
@@ -205,7 +210,8 @@ try {
   output.loginClickCount = counters.loginClickCount;
   output.formSubmitObserved = counters.formSubmitCount > 0;
   output.finalInputValueMatchesSyntheticAcceptanceValue =
-    (await page.getByPlaceholder("Enter your email", { exact: true }).inputValue()) === SYNTHETIC_VALUE
+    (await page.getByPlaceholder("Enter your email", { exact: true }).inputValue()) ===
+    SYNTHETIC_VALUE
       ? "yes"
       : "no";
   recordSafeLocation(page, output);
@@ -268,31 +274,34 @@ async function loadAuthoritativeEnvironmentPolicy(
   if (
     new URL(result.rows[0]!.baseOrigin).origin !== targetOrigin ||
     !policy.allowedOrigins.includes(targetOrigin)
-  ) throw new Error("LIVE_LOGIN_ENVIRONMENT_POLICY_INVALID");
+  )
+    throw new Error("LIVE_LOGIN_ENVIRONMENT_POLICY_INVALID");
   return policy;
 }
 
 function printOutput(value: AcceptanceOutput) {
-  process.stdout.write([
-    `failureStage: ${value.failureStage}`,
-    `browserLaunchAttempted: ${value.browserLaunchAttempted}`,
-    `navigationSucceeded: ${value.navigationSucceeded}`,
-    `finalOrigin: ${value.finalOrigin}`,
-    `finalPath: ${value.finalPath}`,
-    `actionTimeoutMs: ${value.actionTimeoutMs}`,
-    `nativeProbeBudgetMs: ${value.nativeProbeBudgetMs}`,
-    `nativeAttempted: ${value.nativeAttempted}`,
-    `nativeSucceeded: ${value.nativeSucceeded}`,
-    `nativeFailureCode: ${value.nativeFailureCode}`,
-    `praxisInvocationCount: ${value.praxisInvocationCount}`,
-    `praxisResultSequence: ${JSON.stringify(value.praxisResultSequence)}`,
-    `actionElapsedMs: ${value.actionElapsedMs}`,
-    `fillDispatched: ${value.fillDispatched}`,
-    `dispatchCount: ${value.dispatchCount}`,
-    `loginClickCount: ${value.loginClickCount}`,
-    `formSubmitObserved: ${value.formSubmitObserved}`,
-    `finalInputValueMatchesSyntheticAcceptanceValue: ${value.finalInputValueMatchesSyntheticAcceptanceValue}`,
-    `dispatchAfterDeadlineObserved: ${value.dispatchAfterDeadlineObserved}`,
-    `result: ${value.result}`,
-  ].join("\n") + "\n");
+  process.stdout.write(
+    [
+      `failureStage: ${value.failureStage}`,
+      `browserLaunchAttempted: ${value.browserLaunchAttempted}`,
+      `navigationSucceeded: ${value.navigationSucceeded}`,
+      `finalOrigin: ${value.finalOrigin}`,
+      `finalPath: ${value.finalPath}`,
+      `actionTimeoutMs: ${value.actionTimeoutMs}`,
+      `nativeProbeBudgetMs: ${value.nativeProbeBudgetMs}`,
+      `nativeAttempted: ${value.nativeAttempted}`,
+      `nativeSucceeded: ${value.nativeSucceeded}`,
+      `nativeFailureCode: ${value.nativeFailureCode}`,
+      `praxisInvocationCount: ${value.praxisInvocationCount}`,
+      `praxisResultSequence: ${JSON.stringify(value.praxisResultSequence)}`,
+      `actionElapsedMs: ${value.actionElapsedMs}`,
+      `fillDispatched: ${value.fillDispatched}`,
+      `dispatchCount: ${value.dispatchCount}`,
+      `loginClickCount: ${value.loginClickCount}`,
+      `formSubmitObserved: ${value.formSubmitObserved}`,
+      `finalInputValueMatchesSyntheticAcceptanceValue: ${value.finalInputValueMatchesSyntheticAcceptanceValue}`,
+      `dispatchAfterDeadlineObserved: ${value.dispatchAfterDeadlineObserved}`,
+      `result: ${value.result}`,
+    ].join("\n") + "\n",
+  );
 }

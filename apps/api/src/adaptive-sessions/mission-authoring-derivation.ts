@@ -47,6 +47,9 @@ export function deriveMissionAuthoringOperation(input: {
           expectedEffect: deriveEffect(intent.expectedEffect, target),
           dispatchSemantics:
             intent.action.semanticEffect === "read_context_transition" ? "read_only" : "mutation",
+          ...(intent.action.activationMechanism
+            ? { activationMechanism: intent.action.activationMechanism }
+            : {}),
           timeoutMs: intent.constraints.timeoutMs,
         };
       case "fill":
@@ -63,6 +66,16 @@ export function deriveMissionAuthoringOperation(input: {
               value: intent.action.publicValue!,
               timeoutMs: intent.constraints.timeoutMs,
             };
+      case "authenticate":
+        return {
+          type: "protectedAuthentication",
+          fields: intent.action.fields.map((field) => ({
+            target: target(field.target, ["focusable", "accepts_text", "editable"]),
+            secretRef: field.protectedReferenceId,
+          })),
+          submitTarget: target(intent.action.submitTarget, ["focusable", "pointer_activatable"]),
+          timeoutMs: intent.constraints.timeoutMs,
+        };
       case "select":
         return {
           type: "select",
@@ -84,6 +97,8 @@ export function deriveMissionAuthoringOperation(input: {
             ? { target: target(intent.action.target, ["focusable", "keyboard_activatable"]) }
             : {}),
           key: intent.action.key,
+          dispatchSemantics:
+            intent.action.semanticEffect === "read_context_transition" ? "read_only" : "mutation",
           timeoutMs: intent.constraints.timeoutMs,
         };
       case "wait_for":
@@ -158,7 +173,11 @@ export function deriveMissionAuthoringTarget(
       ...(text ? { expectedText: text } : {}),
     },
     scope: target.scope
-      ? { kind: target.scope.kind, ...(target.scope.name ? { name: target.scope.name } : {}) }
+      ? {
+          kind: target.scope.kind,
+          ...(target.scope.name ? { name: target.scope.name } : {}),
+          ...(target.scope.direct !== undefined ? { direct: target.scope.direct } : {}),
+        }
       : { kind: "page" },
     relations: [],
     prohibited: ["hidden", "disabled"],

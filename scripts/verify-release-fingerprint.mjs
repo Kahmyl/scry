@@ -89,12 +89,55 @@ const externalResourceBindings = await readFile(
   "utf8",
 );
 const operationBoundSyntheticProtectedInputs = await readFile(
-  new URL("operation-bound-synthetic-protected-inputs.sql", migrations), "utf8",
+  new URL("operation-bound-synthetic-protected-inputs.sql", migrations),
+  "utf8",
 );
-const structuredSyntheticProtectedInput = await readFile(new URL("structured-synthetic-protected-input.sql", migrations), "utf8");
-const segmentedFlowSuccessorCheckpoints = await readFile(new URL("segmented-flow-successor-checkpoints.sql", migrations), "utf8");
-const adaptiveCertificationProvenance = await readFile(new URL("adaptive-certification-provenance.sql", migrations), "utf8");
-const adaptiveOperationReconciliation = await readFile(new URL("adaptive-operation-reconciliation.sql", migrations), "utf8");
+const structuredSyntheticProtectedInput = await readFile(
+  new URL("structured-synthetic-protected-input.sql", migrations),
+  "utf8",
+);
+const segmentedFlowSuccessorCheckpoints = await readFile(
+  new URL("segmented-flow-successor-checkpoints.sql", migrations),
+  "utf8",
+);
+const adaptiveCertificationProvenance = await readFile(
+  new URL("adaptive-certification-provenance.sql", migrations),
+  "utf8",
+);
+const adaptiveOperationReconciliation = await readFile(
+  new URL("adaptive-operation-reconciliation.sql", migrations),
+  "utf8",
+);
+const protectedOperationAuthorizationBinding = await readFile(
+  new URL("protected-operation-authorization-binding.sql", migrations),
+  "utf8",
+);
+const runPraxisSessionLedger = await readFile(
+  new URL("run-praxis-session-ledger.sql", migrations),
+  "utf8",
+);
+const protectedLivePraxisSession = await readFile(
+  new URL("protected-live-praxis-session.sql", migrations),
+  "utf8",
+);
+const resourceEffectReconciliation = await readFile(
+  new URL("resource-effect-reconciliation.sql", migrations),
+  "utf8",
+);
+const scopeUnknownFenceToResourceMutations = await readFile(
+  new URL("20260820-0910_scope_unknown_fence_to_resource_mutations.sql", migrations),
+  "utf8",
+);
+
+const documentTransitionGap = await readFile(
+  new URL("20260816-231045_add_document_transition_gap.sql", migrations),
+  "utf8",
+);
+
+const missionRecordingSelection = await readFile(
+  new URL("mission-recording-selection.sql", migrations),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", migrations), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -124,6 +167,16 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", migration
   ["segmented-flow-successor-checkpoints.sql", segmentedFlowSuccessorCheckpoints],
   ["adaptive-certification-provenance.sql", adaptiveCertificationProvenance],
   ["adaptive-operation-reconciliation.sql", adaptiveOperationReconciliation],
+  ["protected-operation-authorization-binding.sql", protectedOperationAuthorizationBinding],
+  ["run-praxis-session-ledger.sql", runPraxisSessionLedger],
+  ["protected-live-praxis-session.sql", protectedLivePraxisSession],
+  ["resource-effect-reconciliation.sql", resourceEffectReconciliation],
+  [
+    "20260820-0910_scope_unknown_fence_to_resource_mutations.sql",
+    scopeUnknownFenceToResourceMutations,
+  ],
+  ["20260816-231045_add_document_transition_gap.sql", documentTransitionGap],
+  ["mission-recording-selection.sql", missionRecordingSelection],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

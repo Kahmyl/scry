@@ -66,6 +66,7 @@ export const startAdaptiveSessionSchema = z
       maxDurationMs: 60_000,
     }),
     initialProtectedReferenceIds: z.array(uuid).max(20).default([]),
+    protection: z.enum(["ordinary", "protected"]).default("ordinary"),
   })
   .strict();
 
@@ -171,25 +172,29 @@ export const continueAdaptiveSessionTurnSchema = z
   })
   .strict();
 
-export const reconcileAdaptiveOperationSchema = z.object({
-  missionId: uuid,
-  operationId: z.string().trim().min(1).max(200),
-  idempotencyKey: z.string().trim().min(8).max(200),
-}).strict();
+export const reconcileAdaptiveOperationSchema = z
+  .object({
+    missionId: uuid,
+    operationId: z.string().trim().min(1).max(200),
+    idempotencyKey: z.string().trim().min(8).max(200),
+  })
+  .strict();
 
-export const adaptiveOperationReconciliationResultSchema = z.object({
-  sessionId: uuid,
-  operationId: z.string().trim().min(1).max(200),
-  originalMutationOutcome: z.literal("unknown"),
-  result: z.enum(["proven_applied", "proven_not_applied", "still_unknown"]),
-  redispatchAllowed: z.literal(false),
-  missionFenceCleared: z.boolean(),
-  reasonCode: z.string().trim().min(1).max(120),
-  replayed: z.boolean(),
-  safeActions: z.array(z.string().trim().min(1).max(120)),
-  requiresFreshIdempotencyKey: z.boolean(),
-  nextAttemptId: uuid.optional(),
-}).strict();
+export const adaptiveOperationReconciliationResultSchema = z
+  .object({
+    sessionId: uuid,
+    operationId: z.string().trim().min(1).max(200),
+    originalMutationOutcome: z.literal("unknown"),
+    result: z.enum(["proven_applied", "proven_not_applied", "still_unknown"]),
+    redispatchAllowed: z.literal(false),
+    missionFenceCleared: z.boolean(),
+    reasonCode: z.string().trim().min(1).max(120),
+    replayed: z.boolean(),
+    safeActions: z.array(z.string().trim().min(1).max(120)),
+    requiresFreshIdempotencyKey: z.boolean(),
+    nextAttemptId: uuid.optional(),
+  })
+  .strict();
 
 export const advanceAdaptiveSessionSchema = z.discriminatedUnion("kind", [
   advanceAdaptiveSessionIntentsSchema,
@@ -325,7 +330,9 @@ export const recoverTrustedOriginsSchema = z
     sourceFlowDraftId: uuid,
     sourceAuthoringSessionId: uuid,
     approvedOrigins: z.array(z.string().url()).min(1).max(20),
-    approval: z.object({ kind: z.literal("explicit"), reason: z.string().trim().min(1).max(2_000) }).strict(),
+    approval: z
+      .object({ kind: z.literal("explicit"), reason: z.string().trim().min(1).max(2_000) })
+      .strict(),
     idempotencyKey: z.string().trim().min(8).max(200),
   })
   .strict();
@@ -344,13 +351,17 @@ export const adaptiveSessionOperationSchema = z
     dispatchBoundary: z.enum(["not_dispatched", "dispatching", "dispatched", "acknowledged"]),
     outcome: operationOutcomeSchema.nullable(),
     decisionBoundary: agentDecisionBoundarySchema.nullable(),
-    reconciliation: z.object({
-      available: z.boolean(),
-      redispatchAllowed: z.literal(false),
-      result: z.enum(["proven_applied", "proven_not_applied", "still_unknown"]).nullable(),
-      reasonCode: z.string().nullable(),
-      safeAction: z.literal("reconcile_unknown_operation").nullable(),
-    }).strict().nullable().default(null),
+    reconciliation: z
+      .object({
+        available: z.boolean(),
+        redispatchAllowed: z.literal(false),
+        result: z.enum(["proven_applied", "proven_not_applied", "still_unknown"]).nullable(),
+        reasonCode: z.string().nullable(),
+        safeAction: z.literal("reconcile_unknown_operation").nullable(),
+      })
+      .strict()
+      .nullable()
+      .default(null),
     startedAt: z.string().datetime(),
     completedAt: z.string().datetime().nullable(),
   })
@@ -422,5 +433,7 @@ export type AdaptiveSessionTransitionInput = z.infer<typeof adaptiveSessionTrans
 export type CloseAdaptiveSessionInput = z.infer<typeof closeAdaptiveSessionSchema>;
 export type RecoverTrustedOriginsInput = z.infer<typeof recoverTrustedOriginsSchema>;
 export type ReconcileAdaptiveOperationInput = z.infer<typeof reconcileAdaptiveOperationSchema>;
-export type AdaptiveOperationReconciliationResult = z.infer<typeof adaptiveOperationReconciliationResultSchema>;
+export type AdaptiveOperationReconciliationResult = z.infer<
+  typeof adaptiveOperationReconciliationResultSchema
+>;
 export type AdaptiveSession = z.infer<typeof adaptiveSessionSchema>;

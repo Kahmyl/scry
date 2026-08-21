@@ -15,9 +15,7 @@ const createPraxisInspectionSchema = z
   })
   .strict();
 
-type CreatePraxisInspectionInput = z.infer<
-  typeof createPraxisInspectionSchema
->;
+type CreatePraxisInspectionInput = z.infer<typeof createPraxisInspectionSchema>;
 
 @Controller("api/praxis")
 export class PraxisController {

@@ -85,16 +85,16 @@ The user gets a normal Chrome window and can interact with it whenever needed. B
 
 That gives you:
 
-* persistent authentication;
-* warm browser caches;
-* cookies/local storage;
-* site preferences;
-* full native Playwright connection;
-* CDP instrumentation;
-* normal visual Chrome;
-* no extension installation;
-* no remote-debugging setup by the user;
-* no requirement to modify their everyday Chrome profile.
+- persistent authentication;
+- warm browser caches;
+- cookies/local storage;
+- site preferences;
+- full native Playwright connection;
+- CDP instrumentation;
+- normal visual Chrome;
+- no extension installation;
+- no remote-debugging setup by the user;
+- no requirement to modify their everyday Chrome profile.
 
 And our Vitract experiment already showed one immediate advantage: the first cold navigation was ~5.5s, while subsequent navigations in the persistent context were around **600ms**. Persistence should not be the correctness fix, but it's a very useful operational property.
 
@@ -234,4 +234,3 @@ And importantly, **we don't need to build any of this yet**. After the current c
 [2]: https://playwright.dev/docs/api/class-browsertype "BrowserType | Playwright"
 [3]: https://developer.chrome.com/docs/extensions/reference/api/debugger?utm_source=chatgpt.com "chrome.debugger  |  API  |  Chrome for Developers"
 [4]: https://developer.chrome.com/docs/extensions/reference/api/permissions?hl=en&utm_source=chatgpt.com "chrome.permissions  |  API  |  Chrome for Developers"
-

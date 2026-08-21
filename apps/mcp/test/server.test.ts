@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ScryApiClient } from "../src/api-client.js";
 import { createScryMcpServer } from "../src/server.js";
@@ -9,6 +9,9 @@ import { SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS } from "../src/server-composition.
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+});
+beforeEach(() => {
+  vi.stubEnv("SCRY_LEGACY_MCP_FIXTURES", "true");
 });
 const context = {
   missionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -34,11 +37,101 @@ const admittedCapabilities = {
 };
 
 describe("current Scry MCP surface", () => {
+  it("exposes the agent-first public surface without legacy admission or progression tools", async () => {
+    vi.stubEnv("SCRY_LEGACY_MCP_FIXTURES", "");
+    const { client, server } = await connected();
+    const tools = (await client.listTools()).tools;
+    const names = tools.map(({ name }) => name);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "start_praxis_session",
+        "observe_praxis_session",
+        "get_praxis_session",
+        "close_praxis_session",
+        "start_run",
+        "dispatch_run_operation",
+        "attach_run_praxis_session",
+        "finalize_run",
+      ]),
+    );
+    expect(names).not.toEqual(
+      expect.arrayContaining([
+        "advance_flow_authoring",
+        "prepare_flow_authoring",
+        "start_flow_authoring",
+        "ensure_calibration",
+        "bind_calibration",
+        "create_execution_plan",
+        "activate_execution_plan",
+        "start_ready_objectives",
+        "pause_mission_orchestration",
+        "resume_mission_orchestration",
+      ]),
+    );
+    const observe = tools.find(({ name }) => name === "observe_praxis_session")!;
+    expect(observe.description).toContain("opaque context-control references");
+    const dispatch = tools.find(({ name }) => name === "dispatch_run_operation")!;
+    expect(dispatch.description).toContain("semantic-only targets");
+    expect(dispatch.description).toContain("no selector fallback");
+    expect(dispatch.description).toContain("protectedReferenceId");
+    expect(dispatch.description).toContain("protectedInputReferences");
+    expect(dispatch.description).toContain("Do not send value or valueSource");
+    expect(dispatch.description).toContain("never expose the protected plaintext");
+
+    const startPraxis = tools.find(({ name }) => name === "start_praxis_session")!;
+    expect(startPraxis.description).toContain("start_mission or resume_mission");
+    expect(startPraxis.description).toContain("never invent");
+    expect(startPraxis.description).toContain("list_missions and ask the user");
+    expect(startPraxis.description).toContain("explicitly chose continuation");
+    expect(startPraxis.description).toContain(
+      "authoring.reusable.sessionId is not an agentSessionId",
+    );
+    expect(startPraxis.description).toContain("runtime_admitted is not proof");
+
+    const listMissions = tools.find(({ name }) => name === "list_missions")!;
+    expect(listMissions.description).toContain("ignore clearly unrelated Missions");
+    expect(listMissions.description).toContain("do not resume it automatically");
+    expect(listMissions.description).toContain("ask whether to continue it or start distinct work");
+
+    const startMission = tools.find(({ name }) => name === "start_mission")!;
+    expect(startMission.description).toContain("user");
+    expect(startMission.description).toContain("distinctAuthority");
+    expect((startMission.inputSchema as any).properties).toHaveProperty("distinctAuthority");
+
+    const resumeMission = tools.find(({ name }) => name === "resume_mission")!;
+    expect(resumeMission.description).toContain("Similarity alone is not continuation authority");
+    expect(resumeMission.description).toContain("continuationAuthority");
+    expect((resumeMission.inputSchema as any).properties).toHaveProperty("continuationAuthority");
+    expect((resumeMission.inputSchema as any).required).toContain("continuationAuthority");
+
+    const listCredentials = tools.find(({ name }) => name === "list_project_credentials")!;
+    expect(listCredentials.description).toContain("usedInMission");
+    expect(listCredentials.description).toContain("does not authorize first Mission use");
+    expect(listCredentials.description).toContain(
+      "Environment authorization alone is not Mission reuse authority",
+    );
+
+    const authorizeCredentials = tools.find(
+      ({ name }) => name === "authorize_environment_credentials",
+    )!;
+    expect(authorizeCredentials.description).toContain("usedInMission=false or null");
+    expect(authorizeCredentials.description).toContain("user must explicitly choose");
+
+    const operatingContext = tools.find(({ name }) => name === "get_operating_context")!;
+    expect(operatingContext.description).toContain("sole Mission candidate is never auto-selected");
+    expect(operatingContext.description).toContain("Project/environment metadata only");
+
+    await client.close();
+    await server.close();
+  });
+
   it("exposes privacy-safe structural grouping through the negotiated MCP instructions", async () => {
     expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("containerReferences");
-    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("without revealing suppressed row text");
-    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("not action targets or resource identity");
-    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("Never select the first container");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("privacy-safe grouping");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain(
+      "not action targets or resource identity",
+    );
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("Never select by list order");
     expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("request clarification");
     const { client, server } = await connected();
     expect(client.getInstructions()).toContain(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS);
@@ -47,17 +140,39 @@ describe("current Scry MCP surface", () => {
   });
   it("returns the operating-context message envelope accepted by its host schema", async () => {
     const payload = {
-      selection: { project: null, requiresProjectSelection: false,
-        projectCandidates: { items: [], truncated: false } },
+      selection: {
+        project: null,
+        requiresProjectSelection: false,
+        projectCandidates: { items: [], truncated: false },
+      },
       missions: { candidates: { items: [], truncated: false } },
-      credentials: { items: [], truncated: false }, environments: { items: [], truncated: false },
-      authoring: { reusable: { items: [], truncated: false }, recoverable: { items: [], truncated: false },
-        uncertain: { items: [], truncated: false }, ready: false,
-        missing: ["project", "mission", "objective", "environment", "flow_draft", "authoring_session"] },
-      continuation: { deterministicPreparationAvailable: false, userAuthorityRequired: false,
-        safeActions: ["create_project_in_dashboard"], blockerCode: "NO_PROJECT" },
+      credentials: { items: [], truncated: false },
+      environments: { items: [], truncated: false },
+      authoring: {
+        reusable: { items: [], truncated: false },
+        recoverable: { items: [], truncated: false },
+        uncertain: { items: [], truncated: false },
+        ready: false,
+        missing: [
+          "project",
+          "mission",
+          "objective",
+          "environment",
+          "flow_draft",
+          "authoring_session",
+        ],
+      },
+      continuation: {
+        deterministicPreparationAvailable: false,
+        userAuthorityRequired: false,
+        safeActions: ["create_project_in_dashboard"],
+        blockerCode: "NO_PROJECT",
+      },
     };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 })),
+    );
     const { client, server } = await connected();
     const response = await client.callTool({ name: "get_operating_context", arguments: {} });
     expect(response.structuredContent).toMatchObject({ message: expect.any(String), ...payload });
@@ -84,15 +199,21 @@ describe("current Scry MCP surface", () => {
             reason: "Only the user can supply this decision.",
           },
           availableCapabilities: ["resume_mission", "update_mission_objective"],
-          fulfillmentPaths: [{
-            kind: "selection",
-            humanAction: "Choose the authoritative option.",
-            agentExposure: "public_input",
-            result: "The same task can resume.",
-            availableCapabilities: ["resume_mission"],
-            continuation: { sameMission: true, sameObjective: true,
-              replacementMissionRequired: false, resumeWith: "resume_mission" },
-          }],
+          fulfillmentPaths: [
+            {
+              kind: "selection",
+              humanAction: "Choose the authoritative option.",
+              agentExposure: "public_input",
+              result: "The same task can resume.",
+              availableCapabilities: ["resume_mission"],
+              continuation: {
+                sameMission: true,
+                sameObjective: true,
+                replacementMissionRequired: false,
+                resumeWith: "resume_mission",
+              },
+            },
+          ],
           constraints: ["Do not retry while the effect remains unknown."],
           consequences: ["Continuation requires authoritative re-observation."],
           continuation: {
@@ -104,34 +225,65 @@ describe("current Scry MCP surface", () => {
           },
           waiting: true,
           terminal: false,
-          lifecycle: { terminal: false, taskStillActive: true, sameMissionResumable: true,
-            sameObjectiveResumable: true, shouldFinalize: false,
-            shouldPublishFinalReport: false, shouldCreateReplacementMission: false,
-            requiredNextStep: "fulfill_human_prerequisite_then_resume" },
+          lifecycle: {
+            terminal: false,
+            taskStillActive: true,
+            sameMissionResumable: true,
+            sameObjectiveResumable: true,
+            shouldFinalize: false,
+            shouldPublishFinalReport: false,
+            shouldCreateReplacementMission: false,
+            requiredNextStep: "fulfill_human_prerequisite_then_resume",
+          },
           resumeRef: context.objectiveId,
         },
       },
       objectives: [{ id: context.objectiveId, title: "Safe objective", status: "running" }],
-      authoring: [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", state: "editing",
-        probes: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", state: "completed" }],
-        compilations: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", status: "failed" }] }],
+      authoring: [
+        {
+          id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          state: "editing",
+          probes: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", state: "completed" }],
+          compilations: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", status: "failed" }],
+        },
+      ],
     };
-    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
-      const url = new URL(String(input));
-      const body = url.pathname.endsWith("/capabilities")
-        ? admittedCapabilities
-        : init?.method === "POST"
-          ? { missionId: context.missionId, agentSessionId: context.agentSessionId, status: "active" }
-          : safeMission;
-      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(String(input));
+        const body = url.pathname.endsWith("/capabilities")
+          ? admittedCapabilities
+          : init?.method === "POST"
+            ? {
+                missionId: context.missionId,
+                agentSessionId: context.agentSessionId,
+                status: "active",
+              }
+            : safeMission;
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+      }),
+    );
     const { client, server } = await connected();
     await client.callTool({ name: "get_capabilities", arguments: {} });
-    const get = await client.callTool({ name: "get_mission", arguments: { missionId: context.missionId } });
-    const resume = await client.callTool({ name: "resume_mission", arguments: {
-      missionId: context.missionId, instructionSnapshot: "Resume safely", provider: "codex",
-      idempotencyKey: "mission-safe-resume",
-    } });
+    const get = await client.callTool({
+      name: "get_mission",
+      arguments: { missionId: context.missionId },
+    });
+    const resume = await client.callTool({
+      name: "resume_mission",
+      arguments: {
+        missionId: context.missionId,
+        instructionSnapshot: "Resume safely",
+        provider: "codex",
+        continuationAuthority: {
+          confirmedUserAuthorized: true,
+          selection: "continue_existing_mission",
+          source: "followup_explicit_choice",
+        },
+        idempotencyKey: "mission-safe-resume",
+      },
+    });
     expect(get.structuredContent).toMatchObject({ mission: safeMission });
     expect(resume.structuredContent).toMatchObject({ mission: safeMission });
     await client.close();
@@ -145,6 +297,10 @@ describe("current Scry MCP surface", () => {
     );
     const { client, server } = await connected();
     const tools = (await client.listTools()).tools;
+    expect(
+      tools.find(({ name }) => name === "grant_mission_execution_authorization")?.inputSchema
+        .properties,
+    ).toHaveProperty("operationId");
     expect(tools.map(({ name }) => name)).toEqual([
       "get_capabilities",
       "list_projects",
@@ -178,6 +334,8 @@ describe("current Scry MCP surface", () => {
       "update_mission_objective",
       "attach_flow_to_mission",
       "finalize_agent_work",
+      "set_mission_recording_selection",
+      "publish_mission_report",
       "list_environments",
       "create_test_environment",
       "list_project_credentials",
@@ -195,12 +353,14 @@ describe("current Scry MCP surface", () => {
       "get_flow_draft",
       "list_mission_flow_drafts",
       "abandon_flow_draft",
-      "compile_and_certify_flow",
       "publish_flow_draft",
       "list_authentication_contracts",
       "list_authenticated_session_leases",
       "revoke_authenticated_session_lease",
       "start_run",
+      "dispatch_run_operation",
+      "attach_run_praxis_session",
+      "finalize_run",
       "get_run",
       "get_veil_findings",
       "tighten_veil_preferences",
@@ -209,135 +369,212 @@ describe("current Scry MCP surface", () => {
       "accept_objective_evidence",
       "classify_run",
       "set_mission_resume_pointer",
-      "publish_mission_report",
       "get_artifact",
       "search_artifact",
       "extract_artifact_html",
     ]);
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("Protected fill example action");
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("Ordinary fill example action");
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("inputSources: literal or protected_reference");
-    expect(tools.find(({ name }) => name === "create_test_environment")?.description)
-      .toContain("environmentRecovery.missingTrustedScriptOrigins");
-    expect(tools.find(({ name }) => name === "create_test_environment")?.description)
-      .toContain("maxNavigations 1-50");
-    expect(tools.find(({ name }) => name === "create_flow_draft")?.description)
-      .toContain("plan.steps is required with at least one item");
-    expect(tools.find(({ name }) => name === "create_flow_draft")?.description)
-      .toContain("waitFor+target+state");
-    expect(tools.find(({ name }) => name === "create_flow_draft")?.description)
-      .toContain("not the simpler advance_flow_authoring semantic target");
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("the public field is reference, never authoritativeReference");
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("wait_for requires state, one of visible, hidden, attached, detached");
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("Valid roles: button, checkbox, combobox");
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("allowNonExact has no implicit default");
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("urlPattern is also accepted as a host-compatible alias");
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("login/authentication submit");
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("Protected acquisition must be atomic with its preparation intents in the same turn");
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("action has no top-level target");
-    expect(tools.find(({ name }) => name === "set_mission_resume_pointer")?.description)
-      .toContain("must exactly equal pointer.objectiveId");
-    expect(tools.find(({ name }) => name === "set_mission_resume_pointer")?.description)
-      .toContain("never prefix it with 'objective:'");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "Protected fill example action",
+    );
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "Ordinary fill example action",
+    );
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "inputSources: literal or protected_reference",
+    );
+    expect(tools.find(({ name }) => name === "create_test_environment")?.description).toContain(
+      "environmentRecovery.missingTrustedScriptOrigins",
+    );
+    expect(tools.find(({ name }) => name === "create_test_environment")?.description).toContain(
+      "maxNavigations 1-50",
+    );
+    expect(tools.find(({ name }) => name === "create_flow_draft")?.description).toContain(
+      "plan.steps is required with at least one item",
+    );
+    expect(tools.find(({ name }) => name === "create_flow_draft")?.description).toContain(
+      "waitFor+target+state",
+    );
+    expect(tools.find(({ name }) => name === "create_flow_draft")?.description).toContain(
+      "not the simpler advance_flow_authoring semantic target",
+    );
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "the public field is reference, never authoritativeReference",
+    );
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "wait_for requires state, one of visible, hidden, attached, detached",
+    );
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "Valid roles: button, checkbox, combobox",
+    );
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "allowNonExact has no implicit default",
+    );
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "urlPattern is also accepted as a host-compatible alias",
+    );
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "login/authentication submit",
+    );
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "Protected acquisition must be atomic with its preparation intents in the same turn",
+    );
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "action has no top-level target",
+    );
+    expect(tools.find(({ name }) => name === "set_mission_resume_pointer")?.description).toContain(
+      "must exactly equal pointer.objectiveId",
+    );
+    expect(tools.find(({ name }) => name === "set_mission_resume_pointer")?.description).toContain(
+      "never prefix it with 'objective:'",
+    );
     const resumePointerSchema = tools.find(({ name }) => name === "set_mission_resume_pointer")!
       .inputSchema as any;
-    expect(resumePointerSchema.properties.pointer.anyOf[0].properties.externalInput.properties.resumeRef)
-      .toMatchObject({ type: "string", format: "uuid" });
-    expect(tools.find(({ name }) => name === "recover_trusted_script_origins")?.description)
-      .toContain("Navigation is not performed");
-    const draftSchema = tools.find(({ name }) => name === "create_flow_draft")!
-      .inputSchema as any;
+    expect(
+      resumePointerSchema.properties.pointer.anyOf[0].properties.externalInput.properties.resumeRef,
+    ).toMatchObject({ type: "string", format: "uuid" });
+    expect(
+      tools.find(({ name }) => name === "recover_trusted_script_origins")?.description,
+    ).toContain("Navigation is not performed");
+    const draftSchema = tools.find(({ name }) => name === "create_flow_draft")!.inputSchema as any;
+    // draft purpose schema mirrors the mutable API contract
+    expect(draftSchema.properties.purpose.enum).toEqual([
+      "setup",
+      "primary",
+      "acceptance",
+      "diagnostic",
+      "reconciliation",
+      "cleanup",
+    ]);
+    expect(draftSchema.properties.purpose.enum).not.toContain("verification");
+    expect(draftSchema.properties.purpose.enum).not.toContain("calibration");
+
     const stepsSchema = draftSchema.properties.plan.properties.steps;
     expect(stepsSchema.minItems).toBe(1);
-    expect(stepsSchema.items.required).toEqual(
-      expect.arrayContaining(["id", "title", "action"]),
+    expect(stepsSchema.items.required).toEqual(expect.arrayContaining(["id", "title", "action"]));
+    expect(stepsSchema.items.properties.action.properties.type.enum).toEqual(
+      expect.arrayContaining(["navigate", "waitFor", "fill", "click"]),
     );
-    expect(stepsSchema.items.properties.action.properties.type.enum)
-      .toEqual(expect.arrayContaining(["navigate", "waitFor", "fill", "click"]));
-    expect(stepsSchema.items.properties.action.properties).toEqual(expect.objectContaining({
-      url: expect.any(Object), target: expect.any(Object), state: expect.any(Object),
-      secretRef: expect.any(Object), expectedStatus: expect.any(Object),
-    }));
+    expect(stepsSchema.items.properties.action.properties).toEqual(
+      expect.objectContaining({
+        url: expect.any(Object),
+        target: expect.any(Object),
+        state: expect.any(Object),
+        secretRef: expect.any(Object),
+        expectedStatus: expect.any(Object),
+      }),
+    );
     expect(draftSchema.properties.plan.properties.checkpoints.items.required).toEqual(
       expect.arrayContaining([
-        "id", "beforeStepId", "restorationUrl", "verificationAssertions",
-        "continueAtStepId", "maxRestorations", "state",
+        "id",
+        "beforeStepId",
+        "restorationUrl",
+        "verificationAssertions",
+        "continueAtStepId",
+        "maxRestorations",
+        "state",
       ]),
     );
     const authoringSchema = tools.find(({ name }) => name === "advance_flow_authoring")!
       .inputSchema as any;
     const intentSchema = authoringSchema.properties.intents.items;
     const actionSchema = intentSchema.properties.action;
-    expect(actionSchema.properties.kind.enum).toEqual(expect.arrayContaining([
-      "navigate", "fill", "wait_for", "same_origin_request",
-    ]));
-    expect(actionSchema.properties.publicValue.description).toContain("Ordinary literal fill source");
-    expect(actionSchema.properties.protectedReferenceId).toMatchObject({ type: "string", format: "uuid" });
-    expect(actionSchema.properties.protectedReferenceId.description).toContain("Opaque Project credential UUID");
-    expect(intentSchema.properties.protectedInputReferences.description)
-      .toContain("exactly [action.protectedReferenceId]");
-    expect(actionSchema.properties.state.enum).toEqual(["visible", "hidden", "attached", "detached"]);
-    expect(actionSchema.properties.target.properties.reference.pattern)
-      .toBe("^context-control-[a-f0-9]{32}$");
-    expect(actionSchema.properties.target.properties.scope.properties.kind.enum)
-      .toEqual(expect.arrayContaining(["dialog", "section", "row", "live_region"]));
+    expect(actionSchema.properties.kind.enum).toEqual(
+      expect.arrayContaining(["navigate", "fill", "wait_for", "same_origin_request"]),
+    );
+    expect(actionSchema.properties.publicValue.description).toContain(
+      "Ordinary literal fill source",
+    );
+    expect(actionSchema.properties.protectedReferenceId).toMatchObject({
+      type: "string",
+      format: "uuid",
+    });
+    expect(actionSchema.properties.protectedReferenceId.description).toContain(
+      "Opaque Project credential UUID",
+    );
+    expect(intentSchema.properties.protectedInputReferences.description).toContain(
+      "exactly [action.protectedReferenceId]",
+    );
+    expect(actionSchema.properties.state.enum).toEqual([
+      "visible",
+      "hidden",
+      "attached",
+      "detached",
+    ]);
+    expect(actionSchema.properties.target.properties.reference.pattern).toBe(
+      "^context-control-[a-f0-9]{32}$",
+    );
+    expect(actionSchema.properties.target.properties.scope.properties.kind.enum).toEqual(
+      expect.arrayContaining(["dialog", "section", "row", "live_region"]),
+    );
     expect(intentSchema.properties.credentialLifecycle.properties.effect.const).toBe("revoke");
-    expect(actionSchema.properties.syntheticProtectedSource.properties.generatorContract.enum)
-      .toEqual(expect.arrayContaining(["reserved_test_email", "opaque_operation_token"]));
-    expect(tools.find(({ name }) => name === "list_projects")?.description)
-      .toContain("MCP has no project-creation capability");
-    expect(tools.find(({ name }) => name === "get_operating_context")?.description)
-      .toContain("never returns protected values");
-    expect(tools.find(({ name }) => name === "prepare_flow_authoring")?.description)
-      .toContain("performs no authored browser navigation");
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("allowNewPage alone grants permission but does not arm safe new-page adoption");
+    expect(
+      actionSchema.properties.syntheticProtectedSource.properties.generatorContract.enum,
+    ).toEqual(expect.arrayContaining(["reserved_test_email", "opaque_operation_token"]));
+    expect(tools.find(({ name }) => name === "list_projects")?.description).toContain(
+      "MCP has no project-creation capability",
+    );
+    expect(tools.find(({ name }) => name === "get_operating_context")?.description).toContain(
+      "never returns protected values",
+    );
+    expect(tools.find(({ name }) => name === "prepare_flow_authoring")?.description).toContain(
+      "performs no authored browser navigation",
+    );
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "allowNewPage alone grants permission but does not arm safe new-page adoption",
+    );
     const preparationSchema = tools.find(({ name }) => name === "prepare_flow_authoring")!
       .inputSchema as any;
-    expect(preparationSchema.properties.draft.properties.plan.properties.steps.items.properties.action
-      .properties.type.enum).toEqual(expect.arrayContaining(["navigate", "click", "waitFor"]));
+    expect(
+      preparationSchema.properties.draft.properties.plan.properties.steps.items.properties.action
+        .properties.type.enum,
+    ).toEqual(expect.arrayContaining(["navigate", "click", "waitFor"]));
     const operatingContextInput = tools.find(({ name }) => name === "get_operating_context")!
       .inputSchema as any;
     expect(operatingContextInput.properties.requiredCredentialReferences.maxItems).toBe(20);
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("unknown forbids blind retry");
-    expect(tools.find(({ name }) => name === "start_flow_authoring")?.description)
-      .toContain("maxDurationMs 1000-60000");
-    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description)
-      .toContain("observable role/name/label/placeholder/text/testId fact");
-    expect(tools.find(({ name }) => name === "end_agent_session")?.description)
-      .toContain("Required final lifecycle write");
-    expect(tools.find(({ name }) => name === "finalize_agent_work")?.description)
-      .toContain("cannot terminalize an UNKNOWN");
-    expect(tools.find(({ name }) => name === "finalize_agent_work")?.description)
-      .toContain("NON-TERMINAL");
-    expect(tools.find(({ name }) => name === "create_project_credential")?.description)
-      .toContain("agent/model sees that source plaintext");
-    expect(tools.find(({ name }) => name === "list_project_credentials")?.description)
-      .toContain("Project settings → Test credentials → Add credential");
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "unknown forbids blind retry",
+    );
+    expect(tools.find(({ name }) => name === "start_flow_authoring")?.description).toContain(
+      "maxDurationMs 1000-60000",
+    );
+    expect(tools.find(({ name }) => name === "advance_flow_authoring")?.description).toContain(
+      "observable role/name/label/placeholder/text/testId fact",
+    );
+    expect(tools.find(({ name }) => name === "end_agent_session")?.description).toContain(
+      "Required final lifecycle write",
+    );
+    expect(tools.find(({ name }) => name === "finalize_agent_work")?.description).toContain(
+      "cannot terminalize an UNKNOWN",
+    );
+    expect(tools.find(({ name }) => name === "finalize_agent_work")?.description).toContain(
+      "NON-TERMINAL",
+    );
+    expect(tools.find(({ name }) => name === "create_project_credential")?.description).toContain(
+      "agent/model sees that source plaintext",
+    );
+    expect(tools.find(({ name }) => name === "list_project_credentials")?.description).toContain(
+      "Project settings → Test credentials → Add credential",
+    );
     const credentialListSchema = tools.find(({ name }) => name === "list_project_credentials")!
       .inputSchema as any;
     expect(credentialListSchema.properties.credentialReferenceId.format).toBe("uuid");
-    expect(tools.find(({ name }) => name === "cancel_mission_orchestration")?.description)
-      .toContain("explicit user cancellation");
-    const externalInputSchema = resumePointerSchema.properties.pointer.anyOf[0]
-      .properties.externalInput.properties;
-    expect(externalInputSchema.lifecycle.required).toEqual(expect.arrayContaining([
-      "terminal", "taskStillActive", "sameMissionResumable", "sameObjectiveResumable",
-      "shouldFinalize", "shouldPublishFinalReport", "shouldCreateReplacementMission",
-      "requiredNextStep",
-    ]));
+    expect(
+      tools.find(({ name }) => name === "cancel_mission_orchestration")?.description,
+    ).toContain("explicit user cancellation");
+    const externalInputSchema =
+      resumePointerSchema.properties.pointer.anyOf[0].properties.externalInput.properties;
+    expect(externalInputSchema.lifecycle.required).toEqual(
+      expect.arrayContaining([
+        "terminal",
+        "taskStillActive",
+        "sameMissionResumable",
+        "sameObjectiveResumable",
+        "shouldFinalize",
+        "shouldPublishFinalReport",
+        "shouldCreateReplacementMission",
+        "requiredNextStep",
+      ]),
+    );
     const fulfillmentSchema = JSON.stringify(externalInputSchema.fulfillmentPaths.items);
     expect(fulfillmentSchema).toContain("protected_plaintext_before_encrypted_storage");
     expect(fulfillmentSchema).toContain("dashboard_managed");
@@ -358,18 +595,22 @@ describe("current Scry MCP surface", () => {
         });
         return Promise.resolve(
           new Response(
-            JSON.stringify(url.pathname.endsWith("/capabilities") ? admittedCapabilities : {
-              correlationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-              operationsCompleted: [],
-              safeState: { documentEpoch: 1, url: "https://example.test/" },
-              decisionBoundary: {
-                type: "objective_completed",
-                reasonCode: "AUTHORING_TURN_COMPLETED",
-                safeActions: [],
-              },
-              timings: { totalMs: 1 },
-              bytesReturned: 128,
-            }),
+            JSON.stringify(
+              url.pathname.endsWith("/capabilities")
+                ? admittedCapabilities
+                : {
+                    correlationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    operationsCompleted: [],
+                    safeState: { documentEpoch: 1, url: "https://example.test/" },
+                    decisionBoundary: {
+                      type: "objective_completed",
+                      reasonCode: "AUTHORING_TURN_COMPLETED",
+                      safeActions: [],
+                    },
+                    timings: { totalMs: 1 },
+                    bytesReturned: 128,
+                  },
+            ),
             { status: 200 },
           ),
         );
@@ -419,26 +660,33 @@ describe("current Scry MCP surface", () => {
       arguments: {
         sessionId: "11111111-1111-4111-8111-111111111111",
         kind: "intents",
-        intents: [{
-          intentId: "fill-password",
-          objectiveId: context.objectiveId,
-          flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-          action: { kind: "fill", target: { concept: "password", role: "textbox" },
-            protectedReferenceId: credentialReference },
-          expectedEffect: { kind: "none" },
-          constraints: { timeoutMs: 5_000, allowNewPage: false, allowNonExact: true },
-          authorization: { kind: "authentication" },
-          protectedInputReferences: [credentialReference],
-        }],
+        intents: [
+          {
+            intentId: "fill-password",
+            objectiveId: context.objectiveId,
+            flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            action: {
+              kind: "fill",
+              target: { concept: "password", role: "textbox" },
+              protectedReferenceId: credentialReference,
+            },
+            expectedEffect: { kind: "none" },
+            constraints: { timeoutMs: 5_000, allowNewPage: false, allowNonExact: true },
+            authorization: { kind: "authentication" },
+            protectedInputReferences: [credentialReference],
+          },
+        ],
         budgets: { maxOperations: 1, maxDurationMs: 5_000 },
       },
     });
     expect(protectedFill.isError).not.toBe(true);
     expect(requests[0]?.body).toMatchObject({
-      intents: [{
-        action: { kind: "fill", protectedReferenceId: credentialReference },
-        protectedInputReferences: [credentialReference],
-      }],
+      intents: [
+        {
+          action: { kind: "fill", protectedReferenceId: credentialReference },
+          protectedInputReferences: [credentialReference],
+        },
+      ],
     });
     requests.length = 0;
     const ordinaryFill = await client.callTool({
@@ -446,24 +694,33 @@ describe("current Scry MCP surface", () => {
       arguments: {
         sessionId: "11111111-1111-4111-8111-111111111111",
         kind: "intents",
-        intents: [{
-          intentId: "fill-public-name",
-          objectiveId: context.objectiveId,
-          flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-          action: { kind: "fill", target: { concept: "credential name", role: "textbox" },
-            publicValue: "Qualification credential" },
-          expectedEffect: { kind: "none" },
-          constraints: { timeoutMs: 5_000, allowNewPage: false, allowNonExact: false },
-          authorization: { kind: "ordinary" },
-          protectedInputReferences: [],
-        }],
+        intents: [
+          {
+            intentId: "fill-public-name",
+            objectiveId: context.objectiveId,
+            flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            action: {
+              kind: "fill",
+              target: { concept: "credential name", role: "textbox" },
+              publicValue: "Qualification credential",
+            },
+            expectedEffect: { kind: "none" },
+            constraints: { timeoutMs: 5_000, allowNewPage: false, allowNonExact: false },
+            authorization: { kind: "ordinary" },
+            protectedInputReferences: [],
+          },
+        ],
         budgets: { maxOperations: 1, maxDurationMs: 5_000 },
       },
     });
     expect(ordinaryFill.isError).not.toBe(true);
     expect(requests[0]?.body).toMatchObject({
-      intents: [{ action: { kind: "fill", publicValue: "Qualification credential" },
-        protectedInputReferences: [] }],
+      intents: [
+        {
+          action: { kind: "fill", publicValue: "Qualification credential" },
+          protectedInputReferences: [],
+        },
+      ],
     });
     requests.length = 0;
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -641,88 +898,256 @@ describe("current Scry MCP surface", () => {
     await server.close();
   });
 
-  it("preserves safe causal rejection context through the external MCP result", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request) => {
-      const path = new URL(String(input)).pathname;
-      if (path.endsWith("/capabilities")) return Promise.resolve(new Response(JSON.stringify(admittedCapabilities), { status: 200 }));
-      return Promise.resolve(new Response(JSON.stringify({
-        statusCode: 409,
-        message: {
-          code: "ENVIRONMENT_CAPABILITY_INCOMPLETE",
-          capability: "allowed_origins",
-          missingCount: 1,
-          mutationOutcome: "not_applied",
-          retry: "safe_after_prerequisite",
-          safeActions: ["list_environments", "create_test_environment"],
-          unsafeDiagnostic: "must-not-escape",
-        },
-      }), { status: 409 }));
-    }));
+  it("preserves the complete typed rejection for dispatch_run_operation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/capabilities"))
+          return Promise.resolve(
+            new Response(JSON.stringify(admittedCapabilities), { status: 200 }),
+          );
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              statusCode: 409,
+              message: {
+                code: "MISSION_AUTHORING_AUTHORIZATION_INVALID",
+                mutationOutcome: "not_applied",
+                retry: "safe_after_prerequisite",
+                safeActions: ["inspect_protected_authorization"],
+                operationId: "r07-protected-acquisition",
+                unsafeDiagnostic: "must-not-escape",
+              },
+            }),
+            { status: 409 },
+          ),
+        );
+      }),
+    );
     const { client, server } = await connected();
-    const response = await client.callTool({ name: "start_flow_authoring", arguments: {
-      projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      missionId: context.missionId,
-      objectiveId: context.objectiveId,
-      flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-      agentSessionId: context.agentSessionId,
-      objective: "Inspect account details",
-      allowedOrigins: ["https://example.test"],
-    } });
-    expect(response.structuredContent).toMatchObject({ rejection: {
-      code: "ENVIRONMENT_CAPABILITY_INCOMPLETE",
-      appliedState: "not_applied",
-      retry: "safe_after_prerequisite",
-      context: { capability: "allowed_origins", missingCount: 1 },
-      safeActions: ["list_environments", "create_test_environment"],
-    } });
+    const response = await client.callTool({
+      name: "dispatch_run_operation",
+      arguments: {
+        runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        praxisSessionId: "11111111-1111-4111-8111-111111111111",
+        intent: {
+          intentId: "r07-protected-acquisition",
+          objectiveId: context.objectiveId,
+          flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          action: {
+            kind: "acquire_protected_outputs",
+            preparationIntentIds: ["fill-credential-label"],
+            mutation: {
+              kind: "one_time",
+              target: {
+                concept: "generate credential",
+                reference: `context-control-${"a".repeat(32)}`,
+              },
+            },
+            outputs: [
+              {
+                reference: "client-secret",
+                classification: "protected",
+                target: { concept: "client secret", role: "textbox" },
+                storageName: "Client secret",
+              },
+            ],
+          },
+          expectedEffect: { kind: "none" },
+          constraints: { timeoutMs: 30_000, allowNewPage: false, allowNonExact: false },
+          authorization: {
+            kind: "protected_mutation",
+            authorizationId: "99999999-9999-4999-8999-999999999999",
+          },
+          protectedInputReferences: [],
+        },
+      },
+    });
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      rejection: {
+        code: "MISSION_AUTHORING_AUTHORIZATION_INVALID",
+        status: 409,
+        appliedState: "not_applied",
+        retry: "safe_after_prerequisite",
+        safeActions: ["inspect_protected_authorization"],
+        context: { operationId: "r07-protected-acquisition" },
+      },
+    });
     expect(JSON.stringify(response)).not.toContain("must-not-escape");
-    await client.close(); await server.close();
+    await client.close();
+    await server.close();
+  });
+
+  it("preserves safe causal rejection context through the external MCP result", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/capabilities"))
+          return Promise.resolve(
+            new Response(JSON.stringify(admittedCapabilities), { status: 200 }),
+          );
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              statusCode: 409,
+              message: {
+                code: "ENVIRONMENT_CAPABILITY_INCOMPLETE",
+                capability: "allowed_origins",
+                missingCount: 1,
+                mutationOutcome: "not_applied",
+                retry: "safe_after_prerequisite",
+                safeActions: ["list_environments", "create_test_environment"],
+                unsafeDiagnostic: "must-not-escape",
+              },
+            }),
+            { status: 409 },
+          ),
+        );
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "start_flow_authoring",
+      arguments: {
+        projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        missionId: context.missionId,
+        objectiveId: context.objectiveId,
+        flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        agentSessionId: context.agentSessionId,
+        objective: "Inspect account details",
+        allowedOrigins: ["https://example.test"],
+      },
+    });
+    expect(response.structuredContent).toMatchObject({
+      rejection: {
+        code: "ENVIRONMENT_CAPABILITY_INCOMPLETE",
+        appliedState: "not_applied",
+        retry: "safe_after_prerequisite",
+        context: { capability: "allowed_origins", missingCount: 1 },
+        safeActions: ["list_environments", "create_test_environment"],
+      },
+    });
+    expect(JSON.stringify(response)).not.toContain("must-not-escape");
+    await client.close();
+    await server.close();
   });
 
   it("keeps safe rejection context when a direct tool delegates error translation to MCP", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      statusCode: 409,
-      message: {
-        code: "AUTHORING_DRAFT_CONTEXT_MISMATCH",
-        mutationOutcome: "not_applied",
-        retry: "safe_after_prerequisite",
-        safeActions: ["create_objective_scoped_draft"],
-        unsafeDiagnostic: "must-not-escape",
-      },
-    }), { status: 409 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            statusCode: 409,
+            message: {
+              code: "AUTHORING_DRAFT_CONTEXT_MISMATCH",
+              mutationOutcome: "not_applied",
+              retry: "safe_after_prerequisite",
+              safeActions: ["create_objective_scoped_draft"],
+              unsafeDiagnostic: "must-not-escape",
+            },
+          }),
+          { status: 409 },
+        ),
+      ),
+    );
     const { client, server } = await connected();
-    const response = await client.callTool({ name: "create_flow_draft", arguments: {
-      ...context,
-      projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-      name: "Read-only fixture",
-      content: { objective: "Observe", expectedOutcomes: ["Page visible"], preconditions: [], prohibitedSideEffects: [] },
-      plan: { name: "Observe", objective: "Observe", allowedOrigins: ["https://example.test"], budgets: { maxActions: 1, maxDurationMs: 1000, maxNavigations: 1 }, checkpoints: [], steps: [{ id: "open", title: "Open", action: { type: "navigate", url: "https://example.test" }, assertions: [], onFailure: "stop", evidence: [], captureIntent: "final" }] },
-    } });
+    const response = await client.callTool({
+      name: "create_flow_draft",
+      arguments: {
+        ...context,
+        projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        name: "Read-only fixture",
+        content: {
+          objective: "Observe",
+          expectedOutcomes: ["Page visible"],
+          preconditions: [],
+          prohibitedSideEffects: [],
+        },
+        plan: {
+          name: "Observe",
+          objective: "Observe",
+          allowedOrigins: ["https://example.test"],
+          budgets: { maxActions: 1, maxDurationMs: 1000, maxNavigations: 1 },
+          checkpoints: [],
+          steps: [
+            {
+              id: "open",
+              title: "Open",
+              action: { type: "navigate", url: "https://example.test" },
+              assertions: [],
+              onFailure: "stop",
+              evidence: [],
+              captureIntent: "final",
+            },
+          ],
+        },
+      },
+    });
     const serialized = JSON.stringify(response);
     expect(response.isError).toBe(true);
     expect(serialized).toContain("AUTHORING_DRAFT_CONTEXT_MISMATCH");
     expect(serialized).toContain("not_applied");
     expect(serialized).not.toContain("must-not-escape");
-    await client.close(); await server.close();
+    await client.close();
+    await server.close();
   });
 
   it.each([
-    ["update_mission_objective", { ...context, objectiveId: context.objectiveId, status: "blocked", conclusion: "No safe continuation" }],
-    ["publish_mission_report", { missionId: context.missionId, agentSessionId: context.agentSessionId, overallConclusion: "Mission complete", journeySummary: ["Verified"], expectedRevision: 1 }],
-  ])("returns machine-readable agent-session finalization after terminal work via %s", async (name, args) => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "terminal-resource" }), { status: 200 })));
-    const { client, server } = await connected();
-    const response = await client.callTool({ name, arguments: args });
-    expect(response.structuredContent).toMatchObject({ agentSessionFinalization: {
-      required: true,
-      tool: "end_agent_session",
-      agentSessionId: context.agentSessionId,
-      recommendedStatus: expect.stringMatching(/^(completed|failed)$/),
-    } });
-    await client.close(); await server.close();
-  });
+    [
+      "update_mission_objective",
+      {
+        ...context,
+        objectiveId: context.objectiveId,
+        status: "blocked",
+        conclusion: "No safe continuation",
+      },
+    ],
+    [
+      "publish_mission_report",
+      {
+        missionId: context.missionId,
+        agentSessionId: context.agentSessionId,
+        overallConclusion: "Mission complete",
+        journeySummary: ["Verified"],
+        expectedRevision: 1,
+        idempotencyKey: "mcp-server-test-publish-report",
+      },
+    ],
+  ])(
+    "returns machine-readable agent-session finalization after terminal work via %s",
+    async (name, args) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation((input: string | URL | Request) => {
+          const path = new URL(String(input)).pathname;
+
+          const body = path.endsWith("/capabilities")
+            ? admittedCapabilities
+            : { id: "terminal-resource" };
+
+          return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+        }),
+      );
+      const { client, server } = await connected();
+      const response = await client.callTool({ name, arguments: args });
+      expect(response.structuredContent).toMatchObject({
+        agentSessionFinalization: {
+          required: true,
+          tool: "end_agent_session",
+          agentSessionId: context.agentSessionId,
+          recommendedStatus: expect.stringMatching(/^(completed|failed)$/),
+        },
+      });
+      await client.close();
+      await server.close();
+    },
+  );
 
   it("creates a credential without returning its sensitive value", async () => {
     const sensitiveValue = "explicit-user-secret";
@@ -778,45 +1203,102 @@ describe("current Scry MCP surface", () => {
 
   it("lists bounded safe credential metadata and preserves ambiguity", async () => {
     const requested: string[] = [];
-    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: string | URL | Request) => {
-      requested.push(String(input));
-      return Promise.resolve(new Response(JSON.stringify({
-      items: [
-        { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-          referenceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-          projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Preview password",
-          securityStatus: "active", eligibleForAuthorization: true, authorizedEnvironmentIds: [],
-          authorizedEnvironmentIdsTruncated: false,
-          createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
-        { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-          referenceId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-          projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Preview password old",
-          securityStatus: "revoked", eligibleForAuthorization: false, authorizedEnvironmentIds: [],
-          authorizedEnvironmentIdsTruncated: true,
-          createdAt: "2026-07-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
-      ], truncated: true,
-    }), { status: 200 }));
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        requested.push(String(input));
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              items: [
+                {
+                  id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                  referenceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                  projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                  name: "Preview password",
+                  securityStatus: "active",
+                  eligibleForAuthorization: true,
+                  authorizedEnvironmentIds: [],
+                  authorizedEnvironmentIdsTruncated: false,
+                  createdAt: "2026-08-01T00:00:00.000Z",
+                  updatedAt: "2026-08-01T00:00:00.000Z",
+                },
+                {
+                  id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+                  referenceId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+                  projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                  name: "Preview password old",
+                  securityStatus: "revoked",
+                  eligibleForAuthorization: false,
+                  authorizedEnvironmentIds: [],
+                  authorizedEnvironmentIdsTruncated: true,
+                  createdAt: "2026-07-01T00:00:00.000Z",
+                  updatedAt: "2026-08-01T00:00:00.000Z",
+                },
+              ],
+              truncated: true,
+            }),
+            { status: 200 },
+          ),
+        );
+      }),
+    );
     const { client, server } = await connected();
-    const response = await client.callTool({ name: "list_project_credentials", arguments: {
-      projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-    } });
-    expect(response.structuredContent).toMatchObject({ credentials: {
-      truncated: true, items: [
-        { name: "Preview password", securityStatus: "active", eligibleForAuthorization: true },
-        { name: "Preview password old", securityStatus: "revoked",
-          eligibleForAuthorization: false, authorizedEnvironmentIdsTruncated: true },
-      ],
-    } });
+    const response = await client.callTool({
+      name: "list_project_credentials",
+      arguments: {
+        projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      },
+    });
+    expect(response.structuredContent).toMatchObject({
+      credentials: {
+        truncated: true,
+        items: [
+          { name: "Preview password", securityStatus: "active", eligibleForAuthorization: true },
+          {
+            name: "Preview password old",
+            securityStatus: "revoked",
+            eligibleForAuthorization: false,
+            authorizedEnvironmentIdsTruncated: true,
+          },
+        ],
+      },
+    });
     expect(JSON.stringify(response)).not.toContain("value");
     expect(JSON.stringify(response)).toContain("do not infer uniqueness");
-    await client.callTool({ name: "list_project_credentials", arguments: {
-      projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      credentialReferenceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-    } });
+
+    expect(response.structuredContent).toMatchObject({
+      credentialCreationAlternative: {
+        available: true,
+        kind: "create_new_credential_set",
+        label: "Create a new credential set",
+        routes: [
+          {
+            kind: "dashboard_managed",
+            plaintextSeenByAgent: false,
+          },
+          {
+            kind: "agent_assisted",
+            tool: "create_project_credential",
+            requiresExplicitPlaintextFromUser: true,
+            plaintextSeenByAgent: true,
+          },
+        ],
+      },
+    });
+
+    expect(JSON.stringify(response)).toContain("Create a new credential set");
+    await client.callTool({
+      name: "list_project_credentials",
+      arguments: {
+        projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        credentialReferenceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      },
+    });
     expect(requested[0]).toContain("/credential-candidates");
     expect(requested[1]).toContain("referenceId=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
-    await client.close(); await server.close();
+    await client.close();
+    await server.close();
   });
 
   it("adds credential references to an environment without replacing its allowlist", async () => {
@@ -847,6 +1329,12 @@ describe("current Scry MCP surface", () => {
                   id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
                   baseOrigin: "https://preview.example.com",
                   policy: {
+                    externalResourcePresentationAuthorities: [
+                      {
+                        origin: "https://assets.example.com",
+                        authority: "server-managed-test-fixture",
+                      },
+                    ],
                     allowedOrigins: ["https://preview.example.com"],
                     allowPrivateNetwork: false,
                     allowDownloads: false,
@@ -870,6 +1358,8 @@ describe("current Scry MCP surface", () => {
       },
     });
     expect(response.isError).not.toBe(true);
+
+    expect(requests[1]?.body?.policy).not.toHaveProperty("externalResourcePresentationAuthorities");
     expect(requests[1]?.body).toMatchObject({
       ...context,
       secretRefs: ["cccccccc-cccc-4ccc-8ccc-cccccccccccc", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"],
@@ -878,7 +1368,7 @@ describe("current Scry MCP surface", () => {
     await server.close();
   });
 
-  it("starts a run only with an admitted compiled contract", async () => {
+  it("opens an agent-directed Run only with an explicit live Praxis session", async () => {
     const requests: Array<{ path: string; body?: Record<string, unknown> }> = [];
     vi.stubGlobal(
       "fetch",
@@ -902,7 +1392,7 @@ describe("current Scry MCP surface", () => {
         projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         flowRevisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-        compiledContractId: "99999999-9999-4999-8999-999999999999",
+        praxisSessionId: "99999999-9999-4999-8999-999999999999",
       },
     });
     expect(response.isError).not.toBe(true);
@@ -912,47 +1402,9 @@ describe("current Scry MCP surface", () => {
     ]);
     expect(requests[1]?.body).toMatchObject({
       flowRevisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      compiledContractId: "99999999-9999-4999-8999-999999999999",
+      praxisSessionId: "99999999-9999-4999-8999-999999999999",
       browser: "chromium",
     });
-    await client.close();
-    await server.close();
-  });
-
-  it("rejects compile and certify before writing when the API release mismatches", async () => {
-    vi.stubEnv("SCRY_RELEASE_ID", "expected-release");
-    const requests: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((input: string | URL | Request) => {
-        const path = new URL(String(input)).pathname;
-        requests.push(path);
-        return Promise.resolve(
-          new Response(JSON.stringify({ ...admittedCapabilities, releaseId: "stale-release" }), {
-            status: 200,
-          }),
-        );
-      }),
-    );
-    const { client, server } = await connected();
-    const response = await client.callTool({
-      name: "compile_and_certify_flow",
-      arguments: {
-        ...context,
-        draftId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        draftVersion: 1,
-        authoringSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      },
-    });
-    expect(response.isError).toBe(true);
-    expect(response.structuredContent).toMatchObject({
-      rejection: {
-        code: "SCRY_RELEASE_MISMATCH",
-        safeActions: ["restart_mcp_with_current_release", "verify_api_release"],
-      },
-    });
-    expect(requests).toEqual(["/api/capabilities"]);
     await client.close();
     await server.close();
   });
@@ -980,8 +1432,7 @@ describe("current Scry MCP surface", () => {
         ...context,
         draftId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         expectedVersion: 1,
-        compilationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        reason: "Publish certified contract",
+        reason: "Publish durable representation",
       },
     });
     expect(response.isError).toBe(true);
@@ -996,8 +1447,7 @@ describe("current Scry MCP surface", () => {
     await server.close();
   });
 
-  it("returns the exact compiled contract identity from publication", async () => {
-    const compiledContractId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  it("returns the immutable representation revision from publication", async () => {
     const requests: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -1010,8 +1460,7 @@ describe("current Scry MCP surface", () => {
               flowId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
               revisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
               revision: 1,
-              compilationId: compiledContractId,
-              compiledContractId,
+              replayed: false,
             };
         return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
       }),
@@ -1023,64 +1472,17 @@ describe("current Scry MCP surface", () => {
         ...context,
         draftId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         expectedVersion: 1,
-        compilationId: compiledContractId,
-        reason: "Publish certified contract",
+        reason: "Publish durable representation",
       },
     });
     expect(response.isError).not.toBe(true);
     expect(response.structuredContent).toMatchObject({
-      publication: { compilationId: compiledContractId, compiledContractId },
+      publication: { revisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", replayed: false },
     });
     expect(requests).toEqual([
       "/api/capabilities",
       "/api/flow-drafts/dddddddd-dddd-4ddd-8ddd-dddddddddddd/publish",
     ]);
-    await client.close();
-    await server.close();
-  });
-
-  it("preserves typed certification rejection actions through the authoring tool", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((input: string | URL | Request) => {
-        const path = new URL(String(input)).pathname;
-        if (path.endsWith("/capabilities")) {
-          return Promise.resolve(
-            new Response(JSON.stringify(admittedCapabilities), { status: 200 }),
-          );
-        }
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              statusCode: 409,
-              message: {
-                code: "EXECUTION_READY_COMPILATION_REQUIRED",
-                safeActions: ["revise_flow", "compile_and_certify_flow"],
-              },
-            }),
-            { status: 409 },
-          ),
-        );
-      }),
-    );
-    const { client, server } = await connected();
-    const response = await client.callTool({
-      name: "compile_and_certify_flow",
-      arguments: {
-        ...context,
-        draftId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        draftVersion: 1,
-        authoringSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      },
-    });
-    expect(response.isError).toBe(true);
-    expect(response.structuredContent).toMatchObject({
-      rejection: {
-        code: "EXECUTION_READY_COMPILATION_REQUIRED",
-        safeActions: ["revise_flow", "compile_and_certify_flow"],
-      },
-    });
     await client.close();
     await server.close();
   });

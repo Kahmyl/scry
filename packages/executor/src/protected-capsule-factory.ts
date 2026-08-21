@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { VeilClipboardCollector } from "@scry/veil";
+import { destroyPraxisIsolatedSession, installPraxisSessionStorage } from "@scry/praxis";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 
 import {
@@ -8,7 +8,7 @@ import {
   type ProtectedBrowserSession,
   type SafeBrowserSession,
 } from "./browser-session.js";
-import { runProtectedStage } from "./protected-stage-supervisor.js";
+import { createVeilClipboardCollector } from "./privacy-clipboard-runtime.js";
 
 export type CapsuleFactory = {
   create(input: {
@@ -46,13 +46,10 @@ export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
     };
     const { browser, context, page, forceClose } = await this.openBrowser(options);
     if (input.sessionStorage) {
-      await context.addInitScript(({ origin, entries }) => {
-        if (window.location.origin !== origin) return;
-        for (const [key, value] of entries) window.sessionStorage.setItem(key, value);
-      }, input.sessionStorage);
+      await installPraxisSessionStorage(context, input.sessionStorage);
     }
     const provenance = new BrowserSessionProvenance(randomUUID(), "protected");
-    const clipboardCollector = new VeilClipboardCollector(page);
+    const clipboardCollector = createVeilClipboardCollector(page);
     let destroyed = false;
     const session: ProtectedBrowserSession = {
       browser,
@@ -63,18 +60,11 @@ export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
       destroy: async () => {
         if (destroyed) return "destroyed";
         destroyed = true;
-        let outcome: "destroyed" | "force_terminated" = "destroyed";
-        try {
-          await boundedDestruction(context.close(), 2_000);
-          await boundedDestruction(browser.close(), 2_000);
-        } catch {
-          outcome = "force_terminated";
-          if (forceClose) {
-            await boundedDestruction(forceClose(), 2_000).catch(() => undefined);
-          } else {
-            await boundedDestruction(browser.close(), 2_000).catch(() => undefined);
-          }
-        }
+        const outcome = await destroyPraxisIsolatedSession({
+          context,
+          browser,
+          ...(forceClose ? { forceClose } : {}),
+        });
         if (provenance.value() !== "destroyed") provenance.transition("destroyed");
         return outcome;
       },
@@ -87,12 +77,4 @@ export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
       throw error;
     }
   }
-}
-
-async function boundedDestruction(work: Promise<unknown>, timeoutMs: number) {
-  return runProtectedStage({
-    stage: "capsule_destruction", timeoutMs,
-    timeoutCode: "PROTECTED_CAPSULE_DESTRUCTION_TIMEOUT",
-    dispatchPosition: "post_dispatch", work: () => work,
-  });
 }

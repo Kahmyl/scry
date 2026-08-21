@@ -25,10 +25,13 @@ describe("M2 grouped Mission authoring migration", () => {
     expect(migration).not.toContain("ALTER COLUMN mission_id SET NOT NULL");
     expect(migration).toContain("LEGACY_OPERATION_UNOWNED_AT_M2_CUTOVER");
     expect(migration).toContain("AND operation.state IN ('pending','running')");
-    expect(migration.match(/DROP TRIGGER IF EXISTS adaptive_operations_identity_immutable/g)).toHaveLength(2);
+    expect(
+      migration.match(/DROP TRIGGER IF EXISTS adaptive_operations_identity_immutable/g),
+    ).toHaveLength(2);
     expect(migration).toContain("CREATE TRIGGER adaptive_operations_identity_immutable");
-    expect(migration.indexOf("DROP TRIGGER IF EXISTS adaptive_operations_identity_immutable"))
-      .toBeLessThan(migration.indexOf("UPDATE adaptive_operations operation"));
+    expect(
+      migration.indexOf("DROP TRIGGER IF EXISTS adaptive_operations_identity_immutable"),
+    ).toBeLessThan(migration.indexOf("UPDATE adaptive_operations operation"));
   });
 
   it("keeps historical Flow operations valid when a session hands off to a new active Flow", async () => {
@@ -37,9 +40,13 @@ describe("M2 grouped Mission authoring migration", () => {
       "utf8",
     );
 
-    expect(migration).toContain("FOREIGN KEY(session_id,mission_id)\n      REFERENCES adaptive_sessions(id,mission_id)");
+    expect(migration).toContain(
+      "FOREIGN KEY(session_id,mission_id)\n      REFERENCES adaptive_sessions(id,mission_id)",
+    );
     expect(migration).toContain("adaptive_operations_flow_owner_fk");
-    expect(migration).not.toContain("REFERENCES adaptive_sessions(id,mission_id,active_objective_id,active_flow_draft_id)");
+    expect(migration).not.toContain(
+      "REFERENCES adaptive_sessions(id,mission_id,active_objective_id,active_flow_draft_id)",
+    );
     expect(migration).toContain("DROP CONSTRAINT IF EXISTS adaptive_sessions_active_owner_unique");
   });
 
@@ -54,8 +61,12 @@ describe("M2 grouped Mission authoring migration", () => {
     expect(migration).toContain("mission_authoring_turns_one_active_per_session_idx");
     expect(migration).toContain("WHERE state IN ('running','pending')");
     expect(migration).toContain("state='running' AND safe_response IS NULL");
-    expect(migration).toContain("state='pending' AND safe_response IS NOT NULL AND current_phase IS NOT NULL AND completed_at IS NULL");
-    expect(migration).toContain("state IN ('completed','decision_required','failed') AND safe_response IS NOT NULL AND completed_at IS NOT NULL");
+    expect(migration).toContain(
+      "state='pending' AND safe_response IS NOT NULL AND current_phase IS NOT NULL AND completed_at IS NULL",
+    );
+    expect(migration).toContain(
+      "state IN ('completed','decision_required','failed') AND safe_response IS NOT NULL AND completed_at IS NOT NULL",
+    );
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS mission_authoring_session_flows");
     expect(migration).toContain("safe_input jsonb NOT NULL");
     expect(migration).toContain("continuation_idempotency_key text");

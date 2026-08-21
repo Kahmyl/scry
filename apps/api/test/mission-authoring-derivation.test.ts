@@ -53,15 +53,22 @@ function deriveWithEffect(
 describe("Mission authoring semantic derivation", () => {
   it("normalizes the public navigation urlPattern alias into the kernel URL contract", () => {
     const parsed = missionAuthoringIntentSchema.parse({
-      intentId: "navigate-with-host-alias", objectiveId: ids.objectiveId,
+      intentId: "navigate-with-host-alias",
+      objectiveId: ids.objectiveId,
       flowDraftId: ids.flowDraftId,
       action: { kind: "navigate", url: "https://example.test/partner" },
-      expectedEffect: { kind: "navigation", urlPattern: "https://example.test/partner", match: "exact" },
+      expectedEffect: {
+        kind: "navigation",
+        urlPattern: "https://example.test/partner",
+        match: "exact",
+      },
       constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
-      authorization: { kind: "ordinary" }, protectedInputReferences: [],
+      authorization: { kind: "ordinary" },
+      protectedInputReferences: [],
     });
-    expect(deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: parsed }).expectedEffect)
-      .toEqual({ type: "navigation", url: "https://example.test/partner", match: "exact" });
+    expect(
+      deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: parsed }).expectedEffect,
+    ).toEqual({ type: "navigation", url: "https://example.test/partner", match: "exact" });
   });
 
   it("derives action-specific capabilities and typed test-ID evidence", () => {
@@ -112,11 +119,19 @@ describe("Mission authoring semantic derivation", () => {
     };
     const readContext = missionAuthoringIntentSchema.parse({
       ...base,
-      action: { kind: "activate", target, semanticEffect: "read_context_transition" },
+      action: {
+        kind: "activate",
+        target,
+        semanticEffect: "read_context_transition",
+        activationMechanism: "dom",
+      },
     });
     expect(
       deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: readContext }),
-    ).toMatchObject({ mode: "observe", action: { type: "click", dispatchSemantics: "read_only" } });
+    ).toMatchObject({
+      mode: "observe",
+      action: { type: "click", dispatchSemantics: "read_only", activationMechanism: "dom" },
+    });
     const unknownByDefault = missionAuthoringIntentSchema.parse({
       ...base,
       intentId: "unknown-context",
@@ -125,16 +140,41 @@ describe("Mission authoring semantic derivation", () => {
     expect(
       deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: unknownByDefault }),
     ).toMatchObject({ mode: "observe", action: { type: "click", dispatchSemantics: "mutation" } });
+    const readContextPress = missionAuthoringIntentSchema.parse({
+      ...base,
+      intentId: "read-context-press",
+      action: { kind: "press", target, key: "Enter", semanticEffect: "read_context_transition" },
+    });
+    expect(
+      deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: readContextPress }),
+    ).toMatchObject({ mode: "observe", action: { type: "press", dispatchSemantics: "read_only" } });
   });
 
   it("rejects read-context activation without explicit live_read authority", () => {
-    expect(() => missionAuthoringIntentSchema.parse({
-      intentId: "unauthorized-read-context", objectiveId: ids.objectiveId, flowDraftId: ids.flowDraftId,
-      action: { kind: "activate", target, semanticEffect: "read_context_transition" },
-      expectedEffect: { kind: "none" },
-      constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
-      authorization: { kind: "ordinary" }, protectedInputReferences: [],
-    })).toThrow("read-context activation requires explicit live_read authority");
+    expect(() =>
+      missionAuthoringIntentSchema.parse({
+        intentId: "unauthorized-read-context",
+        objectiveId: ids.objectiveId,
+        flowDraftId: ids.flowDraftId,
+        action: { kind: "activate", target, semanticEffect: "read_context_transition" },
+        expectedEffect: { kind: "none" },
+        constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+        authorization: { kind: "ordinary" },
+        protectedInputReferences: [],
+      }),
+    ).toThrow("read-context transition requires explicit live_read authority");
+    expect(() =>
+      missionAuthoringIntentSchema.parse({
+        intentId: "unauthorized-read-context-press",
+        objectiveId: ids.objectiveId,
+        flowDraftId: ids.flowDraftId,
+        action: { kind: "press", target, key: "Enter", semanticEffect: "read_context_transition" },
+        expectedEffect: { kind: "none" },
+        constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+        authorization: { kind: "ordinary" },
+        protectedInputReferences: [],
+      }),
+    ).toThrow("read-context transition requires explicit live_read authority");
   });
 
   it("preserves new-page ownership as a distinct internal effect", () => {
@@ -290,6 +330,18 @@ describe("Mission authoring semantic derivation", () => {
           transports: ["fetch"],
         },
         response: { confirmedNotAppliedStatuses: [400, 401, 403, 404, 409, 429] },
+        externalResourceBindings: [
+          {
+            status: "active",
+            identityReference: "clientId",
+            provider: "example",
+            resourceKind: "credential",
+            resourceScope: "application-1",
+            identityContractVersion: 1,
+            identitySource: "response",
+            requiredForDestructiveLifecycle: true,
+          },
+        ],
       },
       expectedEffect: { kind: "none" },
       constraints: { timeoutMs: 2_000, allowNewPage: false, allowNonExact: false },
@@ -326,18 +378,19 @@ describe("Mission authoring semantic derivation", () => {
       transaction.extraction.outputs.every((output) => output.storage.scope === "project"),
     ).toBe(true);
     expect(
-      transaction.extraction.outputs.every(
-        (output) =>
-          JSON.stringify(output.acquisition.permittedMethods) ===
-          JSON.stringify([
-            "semantic_field_value",
-            "input_value",
-            "text_content",
-            "copy_control",
-            "protected_network_value",
-          ]),
-      ),
-    ).toBe(true);
+      transaction.extraction.outputs.find((output) => output.reference === "clientId")?.acquisition
+        .permittedMethods,
+    ).toEqual(["protected_network_value"]);
+    expect(
+      transaction.extraction.outputs.find((output) => output.reference === "clientSecret")
+        ?.acquisition.permittedMethods,
+    ).toEqual([
+      "semantic_field_value",
+      "input_value",
+      "text_content",
+      "copy_control",
+      "protected_network_value",
+    ]);
     expect(JSON.stringify(transaction)).not.toMatch(
       /selector|javascript|coordinates|adapterId|plaintext/i,
     );

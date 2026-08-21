@@ -32,7 +32,8 @@ export function registerCancelMissionOrchestrationTool(server: McpServer, client
     `${action}_mission_orchestration`,
     {
       title: `${action} Mission orchestration`,
-      description: "Use only for an explicit user cancellation or another authoritative cancellation decision. This stops Mission scheduling while preserving Mission history and accepted evidence; it is not the response to an obtainable awaiting_user prerequisite, which should remain non-terminal and resumable.",
+      description:
+        "Use only for an explicit user cancellation or another authoritative cancellation decision. This stops Mission scheduling while preserving Mission history and accepted evidence; it is not the response to an obtainable awaiting_user prerequisite, which should remain non-terminal and resumable.",
       inputSchema: {
         ...missionContext,
         reason: z.string().trim().min(1).max(2000),

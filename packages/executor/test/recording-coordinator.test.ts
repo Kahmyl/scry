@@ -93,6 +93,11 @@ async function fixture(
       frameId: "main",
       documentEpoch: 1,
     }),
+    observeVisualMask: async () => ({
+      documentIdentity: "recording-test-document",
+      revision: 1,
+      regions: [],
+    }),
     ...(options.transitionTimeoutMs !== undefined
       ? { transitionTimeoutMs: options.transitionTimeoutMs }
       : {}),
@@ -236,6 +241,74 @@ describe("RecordingCoordinator", () => {
     expect(coordinator.isSealed()).toBe(true);
     expect(coordinator.timeline()[0]).toEqual(
       expect.objectContaining({ type: "unavailable_interval" }),
+    );
+  });
+
+  it("segments recording around an intentional ordinary document transition", async () => {
+    const { root, page, coordinator } = await fixture();
+
+    await coordinator.startSegment({ page, reason: "run_started" });
+
+    await coordinator.beginDocumentTransition({
+      operationId: "navigation-operation",
+    });
+
+    // Executor/Praxis performs and qualifies navigation while no screencast
+    // segment is active. The coordinator only resumes after that qualification.
+    await coordinator.completeDocumentTransition(page);
+    await coordinator.finalize();
+
+    const timeline = coordinator.timeline();
+
+    expect(timeline.map((entry) => entry.type)).toEqual([
+      "video_segment",
+      "document_transition_gap",
+      "video_segment",
+    ]);
+
+    expect(timeline.map((entry) => entry.sequence)).toEqual([0, 1, 2]);
+
+    expect(timeline[1]).toEqual(
+      expect.objectContaining({
+        type: "document_transition_gap",
+        operationId: "navigation-operation",
+        reason: "navigation_boundary",
+        captureStatus: "intentionally_suppressed",
+      }),
+    );
+
+    expect(coordinator.isSealed()).toBe(false);
+    expect(coordinator.artifacts()).toHaveLength(2);
+
+    for (const artifact of coordinator.artifacts()) {
+      expect(artifact.availability).toBe("available");
+      expect((await readFile(path.join(root, artifact.relativePath!))).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("fails closed when a document transition cannot be re-qualified", async () => {
+    const { page, coordinator } = await fixture();
+
+    await coordinator.startSegment({ page, reason: "run_started" });
+    await coordinator.beginDocumentTransition({
+      operationId: "failed-navigation-operation",
+    });
+
+    await coordinator.failDocumentTransition("DOCUMENT_TRANSITION_QUALIFICATION_FAILED");
+
+    await coordinator.finalize();
+
+    expect(coordinator.isSealed()).toBe(true);
+
+    const timeline = coordinator.timeline();
+
+    expect(timeline.map((entry) => entry.type)).toEqual(["video_segment", "unavailable_interval"]);
+
+    expect(timeline[1]).toEqual(
+      expect.objectContaining({
+        type: "unavailable_interval",
+        failureCode: "DOCUMENT_TRANSITION_QUALIFICATION_FAILED",
+      }),
     );
   });
 });

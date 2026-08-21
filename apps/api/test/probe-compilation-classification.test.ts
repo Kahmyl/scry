@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyProbeCompilationInput } from "../src/authoring/authoring.service.js";
+import { classifyProbeCompilationInput } from "../src/authoring/services/authoring.service.js";
 
 describe("Probe compilation diagnostic classification", () => {
   it("keeps quality findings non-blocking", () => {

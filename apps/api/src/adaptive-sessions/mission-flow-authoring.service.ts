@@ -22,8 +22,8 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Principal } from "../auth/index.js";
 import { ReleaseAdmissionService } from "../runtime/index.js";
 import { AdaptiveSessionKernelRunner } from "./adaptive-session-kernel.runner.js";
-import { AdaptiveSessionRepository } from "./adaptive-session.repository.js";
-import { OperationBoundProtectedInputRepository } from "./operation-bound-protected-input.repository.js";
+import { AdaptiveSessionRepository } from "./repositories/adaptive-session.repository.js";
+import { OperationBoundProtectedInputRepository } from "./repositories/operation-bound-protected-input.repository.js";
 import { AdaptiveOperationReconciliationRegistry } from "./adaptive-operation-reconciliation.registry.js";
 import {
   deriveMissionAuthoringOperation,
@@ -33,6 +33,16 @@ import {
   compileMissionAuthoringProtectedTransaction,
   missionAuthoringProtectedOperationReservation,
 } from "./mission-authoring-protected-transaction.js";
+
+export type MissionRunEvidenceContext = {
+  veilPolicySnapshot: import("@scry/contracts").VeilPolicySnapshot;
+  outputDirectoryFor(operation: AdaptiveSessionOperationInput): string;
+  commit(input: {
+    operation: AdaptiveSessionOperationInput;
+    report: import("@scry/executor").ExecutionReport;
+    outputDirectory: string;
+  }): Promise<void>;
+};
 
 @Injectable()
 export class MissionFlowAuthoringService {
@@ -101,7 +111,10 @@ export class MissionFlowAuthoringService {
         await this.sessions.activateProvisionedSession(prepared.authoringSessionId);
       } catch (error) {
         await this.runner.close(prepared.authoringSessionId).catch(() => undefined);
-        const concurrent = await this.sessions.get(workspaceId(principal), prepared.authoringSessionId);
+        const concurrent = await this.sessions.get(
+          workspaceId(principal),
+          prepared.authoringSessionId,
+        );
         if (concurrent.state === "active") return { ...prepared, reused: true };
         if (prepared.reused && concurrent.state === "provisioning") {
           throw new ConflictException({
@@ -133,15 +146,37 @@ export class MissionFlowAuthoringService {
 
   async get(principal: Principal, sessionId: string) {
     const session = await this.sessions.get(workspaceId(principal), sessionId);
-    return { ...session, operations: await Promise.all(session.operations.map(async (operation: any) => {
-      if (!operation.reconciliation) return operation;
-      const authority = await this.sessions.getUnknownReconciliationAuthority(
-        workspaceId(principal), sessionId, operation.operationId);
-      const available = this.runner.reconciliationAvailable(sessionId, operation.expectedEffect)
-        || Boolean(authority && this.reconciliationRegistry?.available(authority));
-      return { ...operation, reconciliation: { ...operation.reconciliation, available,
-        safeAction: available ? "reconcile_unknown_operation" : null } };
-    })) };
+    return {
+      ...session,
+      operations: await Promise.all(
+        session.operations.map(async (operation: any) => {
+          if (!operation.reconciliation) return operation;
+          const authority = await this.sessions.getUnknownReconciliationAuthority(
+            workspaceId(principal),
+            sessionId,
+            operation.operationId,
+          );
+          const available =
+            this.runner.reconciliationAvailable(sessionId, operation.expectedEffect) ||
+            Boolean(authority && this.reconciliationRegistry?.available(authority));
+          return {
+            ...operation,
+            reconciliation: {
+              ...operation.reconciliation,
+              available,
+              safeAction: available ? "reconcile_unknown_operation" : null,
+            },
+          };
+        }),
+      ),
+    };
+  }
+
+  async observe(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.observe(sessionId);
   }
 
   async reconcileUnknown(
@@ -152,51 +187,113 @@ export class MissionFlowAuthoringService {
     await this.admission.assertAcceptingWork();
     this.requireWrite(principal);
     const claim = await this.sessions.beginUnknownReconciliation({
-      workspaceId: workspaceId(principal), sessionId, ...input,
+      workspaceId: workspaceId(principal),
+      sessionId,
+      ...input,
     });
-    if (claim.state === "completed" && "result" in claim && claim.result && claim.reasonCode) return {
-      sessionId, operationId: input.operationId, originalMutationOutcome: "unknown" as const,
-      result: claim.result, redispatchAllowed: false as const,
-      missionFenceCleared: claim.missionFenceCleared, reasonCode: claim.reasonCode,
-      replayed: true, safeActions: claim.result === "still_unknown" ? ["get_flow_authoring"]
-        : claim.authoringSessionState === "active"
-          ? ["get_flow_authoring", "advance_flow_authoring"]
-          : ["get_flow_authoring", "start_flow_authoring"],
-      requiresFreshIdempotencyKey: claim.result === "still_unknown",
-      ...(claim.result === "still_unknown" ? { nextAttemptId: randomUUID() } : {}),
-    };
-    if (claim.replayed) throw new ConflictException({
-      code: "UNKNOWN_RECONCILIATION_IN_PROGRESS", mutationOutcome: "unknown",
-      safeActions: ["get_flow_authoring"],
-    });
-    const resourceObservation = await this.reconciliationRegistry?.reconcile(claim.authority);
-    const observation = resourceObservation ?? (claim.expectedEffect.type === "none"
-      ? { result: "still_unknown" as const, reasonCode: "RECONCILIATION_EXPECTED_EFFECT_UNAVAILABLE",
-          evidence: { expectedEffectType: "none" } }
-      : await this.runner.reconcileUnknownEffect(sessionId, claim.expectedEffect, claim.baseline));
+    if (claim.state === "completed" && "result" in claim && claim.result && claim.reasonCode)
+      return {
+        sessionId,
+        operationId: input.operationId,
+        originalMutationOutcome: "unknown" as const,
+        result: claim.result,
+        redispatchAllowed: false as const,
+        missionFenceCleared: claim.missionFenceCleared,
+        reasonCode: claim.reasonCode,
+        replayed: true,
+        safeActions:
+          claim.result === "still_unknown"
+            ? ["get_flow_authoring"]
+            : claim.authoringSessionState === "active"
+              ? ["get_flow_authoring", "advance_flow_authoring"]
+              : ["get_flow_authoring", "start_flow_authoring"],
+        requiresFreshIdempotencyKey: claim.result === "still_unknown",
+        ...(claim.result === "still_unknown" ? { nextAttemptId: randomUUID() } : {}),
+      };
+    if (claim.replayed)
+      throw new ConflictException({
+        code: "UNKNOWN_RECONCILIATION_IN_PROGRESS",
+        mutationOutcome: "unknown",
+        safeActions: ["get_flow_authoring"],
+      });
+    const readOnlyObservation =
+      (claim.authority.action.type === "click" || claim.authority.action.type === "press") &&
+      claim.authority.action.dispatchSemantics === "read_only"
+        ? {
+            result: "proven_not_applied" as const,
+            reasonCode: "READ_ONLY_DISPATCH_HAS_NO_MUTATION_EFFECT",
+            evidence: { dispatchSemantics: "read_only", functionalEffect: "unresolved" },
+          }
+        : null;
+    const resourceObservation =
+      readOnlyObservation ?? (await this.reconciliationRegistry?.reconcile(claim.authority));
+    const observation =
+      resourceObservation ??
+      (claim.expectedEffect.type === "none"
+        ? {
+            result: "still_unknown" as const,
+            reasonCode: "RECONCILIATION_EXPECTED_EFFECT_UNAVAILABLE",
+            evidence: { expectedEffectType: "none" },
+          }
+        : await this.runner.reconcileUnknownEffect(
+            sessionId,
+            claim.expectedEffect,
+            claim.baseline,
+          ));
     const settled = await this.sessions.completeUnknownReconciliation({
-      sessionId, missionId: input.missionId, operationId: input.operationId,
-      idempotencyKey: input.idempotencyKey, runtimeOwned: this.runner.hasRuntime(sessionId), ...observation,
+      sessionId,
+      missionId: input.missionId,
+      operationId: input.operationId,
+      idempotencyKey: input.idempotencyKey,
+      runtimeOwned: this.runner.hasRuntime(sessionId),
+      ...observation,
     });
     return {
-      sessionId, operationId: input.operationId, originalMutationOutcome: "unknown" as const,
-      result: observation.result, redispatchAllowed: false as const,
+      sessionId,
+      operationId: input.operationId,
+      originalMutationOutcome: "unknown" as const,
+      result: observation.result,
+      redispatchAllowed: false as const,
       missionFenceCleared: settled.missionFenceCleared,
-      reasonCode: observation.reasonCode, replayed: false,
-      safeActions: observation.result !== "still_unknown"
-        ? settled.authoringSessionState === "active"
-          ? ["get_flow_authoring", "advance_flow_authoring"]
-          : ["get_flow_authoring", "start_flow_authoring"]
-        : ["get_flow_authoring"],
+      reasonCode: observation.reasonCode,
+      replayed: false,
+      ...(observation.result === "proven_applied_output_unrecovered"
+        ? {
+            resourceEffect: {
+              resource: observation.resource,
+              outputState: observation.outputState,
+            },
+          }
+        : {}),
+      safeActions:
+        observation.result !== "still_unknown"
+          ? observation.result === "proven_applied_output_unrecovered"
+            ? ["get_flow_authoring"]
+            : settled.authoringSessionState === "active"
+              ? ["get_flow_authoring", "advance_flow_authoring"]
+              : ["get_flow_authoring", "start_flow_authoring"]
+          : ["get_flow_authoring"],
       requiresFreshIdempotencyKey: observation.result === "still_unknown",
       ...(observation.result === "still_unknown" ? { nextAttemptId: randomUUID() } : {}),
     };
+  }
+
+  async captureRunSuccessorCheckpoint(principal: Principal, sessionId: string) {
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+
+    // Authorization/read scope only. The runner still owns browser state.
+    await this.sessions.get(workspaceId(principal), sessionId);
+
+    return this.runner.captureSuccessorCheckpoint(sessionId);
   }
 
   async advance(
     principal: Principal,
     sessionId: string,
     input: MissionAuthoringAdvanceInput | AdvanceAdaptiveSessionInput,
+
+    runEvidence?: MissionRunEvidenceContext,
   ) {
     await this.admission.assertAcceptingWork();
     this.requireWrite(principal);
@@ -207,7 +304,7 @@ export class MissionFlowAuthoringService {
       const key = `${sessionId}:${missionInput.idempotencyKey}`;
       const inFlight = this.inFlightTurns.get(key);
       if (inFlight) return this.awaitInFlightTurn(inFlight, missionInput.budgets.maxDurationMs);
-      const owner = this.advanceOwned(principal, sessionId, missionInput);
+      const owner = this.advanceOwned(principal, sessionId, missionInput, runEvidence);
       this.inFlightTurns.set(key, owner);
       try {
         return await owner;
@@ -215,13 +312,15 @@ export class MissionFlowAuthoringService {
         if (this.inFlightTurns.get(key) === owner) this.inFlightTurns.delete(key);
       }
     }
-    return this.advanceOwned(principal, sessionId, missionInput);
+    return this.advanceOwned(principal, sessionId, missionInput, runEvidence);
   }
 
   private async advanceOwned(
     principal: Principal,
     sessionId: string,
     input: MissionAuthoringAdvanceInput,
+
+    runEvidence?: MissionRunEvidenceContext,
   ) {
     let turn: {
       turnId: string;
@@ -280,6 +379,7 @@ export class MissionFlowAuthoringService {
       input.budgets,
       turn.nextIntentIndex,
       input.kind === "continue" ? turn.response : null,
+      runEvidence,
     );
   }
 
@@ -311,6 +411,8 @@ export class MissionFlowAuthoringService {
     budgets: { maxOperations: number; maxDurationMs: number },
     nextIntentIndex = 0,
     priorResult: MissionAuthoringTurnResult | null = null,
+
+    runEvidence?: MissionRunEvidenceContext,
   ) {
     const startedAt = performance.now();
     const completed: MissionAuthoringTurnResult["completed"] = [...(priorResult?.completed ?? [])];
@@ -518,19 +620,22 @@ export class MissionFlowAuthoringService {
         claim.replayed &&
         claim.state === "running"
       ) {
-        const disposition = await this.sessions.replayDisposition(
-          sessionId,
-          operation.operationId,
-        );
+        const disposition = await this.sessions.replayDisposition(sessionId, operation.operationId);
         if (disposition.requiresReconciliation) {
           await this.sessions.markRunningOperationRecoveryRequired(
             sessionId,
             operation.operationId,
           );
           const decision = turnResult({
-            turnId, state: "decision_required", completed, handoffChanged,
-            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
-            startedAt, elapsedBaseMs: priorTotalMs, timings,
+            turnId,
+            state: "decision_required",
+            completed,
+            handoffChanged,
+            ...(active ? { active } : {}),
+            ...(safeState ? { safeState } : {}),
+            startedAt,
+            elapsedBaseMs: priorTotalMs,
+            timings,
             decisionBoundary: {
               type: "mutation_reconciliation_required",
               reasonCode: "ADAPTIVE_OPERATION_RECONCILIATION_REQUIRED",
@@ -541,12 +646,22 @@ export class MissionFlowAuthoringService {
         }
         if (!disposition.canResume) {
           const pending = turnResult({
-            turnId, state: "pending", completed, handoffChanged,
-            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
-            startedAt, elapsedBaseMs: priorTotalMs, phase: "operation_running", timings,
+            turnId,
+            state: "pending",
+            completed,
+            handoffChanged,
+            ...(active ? { active } : {}),
+            ...(safeState ? { safeState } : {}),
+            startedAt,
+            elapsedBaseMs: priorTotalMs,
+            phase: "operation_running",
+            timings,
           });
           return this.sessions.persistPending({
-            sessionId, turnId, result: pending, phase: "operation_running",
+            sessionId,
+            turnId,
+            result: pending,
+            phase: "operation_running",
             nextIntentIndex: intentIndex,
           });
         }
@@ -573,7 +688,7 @@ export class MissionFlowAuthoringService {
             phase: "protected_operation",
             nextIntentIndex: intentIndex,
           });
-          this.launchProtectedExecution(sessionId, operation);
+          this.launchProtectedExecution(sessionId, operation, runEvidence);
           return persisted;
         }
         const projection = await this.sessions.projectProtectedOperationForAuthoring({
@@ -585,7 +700,7 @@ export class MissionFlowAuthoringService {
           // Its protected repository claim is the sole authority that fences the
           // prior owner and applies process-loss recovery classification.
           if (!projection.leaseActive) {
-            this.launchProtectedExecution(sessionId, operation);
+            this.launchProtectedExecution(sessionId, operation, runEvidence);
           }
           const pending = turnResult({
             turnId,
@@ -663,15 +778,31 @@ export class MissionFlowAuthoringService {
         const remainingMs = Math.floor(budgets.maxDurationMs - (performance.now() - startedAt));
         if (remainingMs < 100) {
           const pending = turnResult({
-            turnId, state: "pending", completed, handoffChanged,
-            ...(active ? { active } : {}), ...(safeState ? { safeState } : {}),
-            startedAt, elapsedBaseMs: priorTotalMs, phase: "budget", timings,
+            turnId,
+            state: "pending",
+            completed,
+            handoffChanged,
+            ...(active ? { active } : {}),
+            ...(safeState ? { safeState } : {}),
+            startedAt,
+            elapsedBaseMs: priorTotalMs,
+            phase: "budget",
+            timings,
           });
           return this.sessions.persistPending({
-            sessionId, turnId, result: pending, phase: "budget", nextIntentIndex: intentIndex,
+            sessionId,
+            turnId,
+            result: pending,
+            phase: "budget",
+            nextIntentIndex: intentIndex,
           });
         }
-        const result = await this.executeWithinTurnDeadline(sessionId, operation, remainingMs);
+        const result = await this.executeWithinTurnDeadline(
+          sessionId,
+          operation,
+          remainingMs,
+          runEvidence,
+        );
         timings.resolveMs += result.timings.resolveMs;
         timings.executeMs += result.timings.executeMs;
         timings.verifyMs += result.timings.verifyMs;
@@ -717,6 +848,15 @@ export class MissionFlowAuthoringService {
           code,
           turnId,
         );
+        if (failure?.outcome) {
+          completed.push(
+            compactSemanticDelta(
+              intent.intentId,
+              failure.outcome,
+              requiresProtectedInterval(intent),
+            ),
+          );
+        }
         const decision = turnResult({
           turnId,
           state: "decision_required",
@@ -727,8 +867,9 @@ export class MissionFlowAuthoringService {
           startedAt,
           elapsedBaseMs: priorTotalMs,
           timings,
-          decisionBoundary: failure?.decisionBoundary ?? (
-            code === "EXECUTION_MODE_POLICY_DENIED"
+          decisionBoundary:
+            failure?.decisionBoundary ??
+            (code === "EXECUTION_MODE_POLICY_DENIED"
               ? liveReadPolicyBoundary(intent)
               : {
                   type: "environment_unavailable",
@@ -774,9 +915,38 @@ export class MissionFlowAuthoringService {
     sessionId: string,
     operation: AdaptiveSessionOperationInput,
     signal?: AbortSignal,
+    runEvidence?: MissionRunEvidenceContext,
   ) {
+    const execute = async () => {
+      if (!runEvidence) return this.runner.execute(sessionId, operation, signal);
+
+      const outputDirectory = runEvidence.outputDirectoryFor(operation);
+
+      const result = await this.runner.executeForRun({
+        sessionId,
+        operation,
+        outputDirectory,
+        veilPolicySnapshot: runEvidence.veilPolicySnapshot,
+        ...(signal ? { signal } : {}),
+      });
+
+      if (!result.report)
+        throw new ConflictException({
+          code: "RUN_EVIDENCE_REPORT_MISSING",
+          mutationOutcome: "not_applied",
+        });
+
+      await runEvidence.commit({
+        operation,
+        report: result.report,
+        outputDirectory,
+      });
+
+      return result;
+    };
+
     try {
-      return await this.runner.execute(sessionId, operation, signal);
+      return await execute();
     } catch (error) {
       if (!(
         typeof error === "object" &&
@@ -785,7 +955,8 @@ export class MissionFlowAuthoringService {
         error.preDispatchTransient === true
       ))
         throw error;
-      return this.runner.execute(sessionId, operation, signal);
+
+      return execute();
     }
   }
 
@@ -793,6 +964,8 @@ export class MissionFlowAuthoringService {
     sessionId: string,
     operation: AdaptiveSessionOperationInput,
     remainingMs: number,
+
+    runEvidence?: MissionRunEvidenceContext,
   ) {
     const controller = new AbortController();
     const timeout = setTimeout(() => {
@@ -805,18 +978,27 @@ export class MissionFlowAuthoringService {
       action: clampActionTimeout(operation.action, remainingMs),
     } satisfies AdaptiveSessionOperationInput;
     try {
-      return await this.executeWithOnePreDispatchRetry(sessionId, bounded, controller.signal);
+      return await this.executeWithOnePreDispatchRetry(
+        sessionId,
+        bounded,
+        controller.signal,
+        runEvidence,
+      );
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  private launchProtectedExecution(sessionId: string, operation: AdaptiveSessionOperationInput) {
+  private launchProtectedExecution(
+    sessionId: string,
+    operation: AdaptiveSessionOperationInput,
+    runEvidence?: MissionRunEvidenceContext,
+  ) {
     const key = `${sessionId}:${operation.operationId}`;
     if (this.inFlightProtectedOperations.has(key)) return;
     const work = (async () => {
       try {
-        await this.executeWithOnePreDispatchRetry(sessionId, operation);
+        await this.executeWithOnePreDispatchRetry(sessionId, operation, undefined, runEvidence);
         await this.sessions.projectProtectedOperationForAuthoring({
           sessionId,
           operationId: operation.operationId,
@@ -840,6 +1022,10 @@ export class MissionFlowAuthoringService {
   async close(principal: Principal, sessionId: string, idempotencyKey: string) {
     this.requireWrite(principal);
     try {
+      await this.sessions.settleInvalidPredispatchProtectedAuthorizations({
+        workspaceId: workspaceId(principal),
+        sessionId,
+      });
       return await this.sessions.closeAtSafeBoundary({
         workspaceId: workspaceId(principal),
         sessionId,
@@ -863,7 +1049,9 @@ function liveReadPolicyBoundary(
   intent: import("@scry/contracts").MissionAuthoringIntent,
 ): NonNullable<MissionAuthoringTurnResult["decisionBoundary"]> {
   const semanticEffect =
-    intent.action.kind === "activate" ? (intent.action.semanticEffect ?? "unknown") : "resource_mutation";
+    intent.action.kind === "activate"
+      ? (intent.action.semanticEffect ?? "unknown")
+      : "resource_mutation";
   const readContext = semanticEffect === "read_context_transition";
   return {
     type: "policy_refused",
@@ -917,7 +1105,9 @@ function authoringProvisioningFailure(
   sessionId: string,
   error?: unknown,
 ) {
-  const checkpointFailure = errorCode(error, "AUTHORING_PROVISIONING_FAILED").startsWith("SUCCESSOR_CHECKPOINT_");
+  const checkpointFailure = errorCode(error, "AUTHORING_PROVISIONING_FAILED").startsWith(
+    "SUCCESSOR_CHECKPOINT_",
+  );
   return new ConflictException({
     code: errorCode(error, "AUTHORING_PROVISIONING_FAILED"),
     mutationOutcome: "not_applied",
@@ -926,16 +1116,22 @@ function authoringProvisioningFailure(
       resourceExists: true,
       executionReadiness: "unavailable",
     },
-    ...(!checkpointFailure ? { recovery: {
-      recoveryTool: "start_flow_authoring",
-      requiresFreshIdempotencyKey: true,
-      idempotencyKey: `authoring-recovery-${randomUUID()}`,
-      failedAuthoringSessionId: sessionId,
-      preservesMissionId: input.missionId,
-      preservesObjectiveId: input.objectiveId,
-      preservesFlowDraftId: input.flowDraftId,
-    }} : {}),
-    safeActions: checkpointFailure ? ["get_operating_context"] : ["get_operating_context", "start_flow_authoring"],
+    ...(!checkpointFailure
+      ? {
+          recovery: {
+            recoveryTool: "start_flow_authoring",
+            requiresFreshIdempotencyKey: true,
+            idempotencyKey: `authoring-recovery-${randomUUID()}`,
+            failedAuthoringSessionId: sessionId,
+            preservesMissionId: input.missionId,
+            preservesObjectiveId: input.objectiveId,
+            preservesFlowDraftId: input.flowDraftId,
+          },
+        }
+      : {}),
+    safeActions: checkpointFailure
+      ? ["get_operating_context"]
+      : ["get_operating_context", "start_flow_authoring"],
   });
 }
 
@@ -943,7 +1139,9 @@ function authoringPreparationFailure(
   prepared: Awaited<ReturnType<AdaptiveSessionRepository["prepare"]>>,
   error?: unknown,
 ) {
-  const checkpointFailure = errorCode(error, "AUTHORING_PROVISIONING_FAILED").startsWith("SUCCESSOR_CHECKPOINT_");
+  const checkpointFailure = errorCode(error, "AUTHORING_PROVISIONING_FAILED").startsWith(
+    "SUCCESSOR_CHECKPOINT_",
+  );
   return new ConflictException({
     code: errorCode(error, "AUTHORING_PROVISIONING_FAILED"),
     mutationOutcome: "not_applied",
@@ -952,16 +1150,22 @@ function authoringPreparationFailure(
       resourceExists: true,
       executionReadiness: "unavailable",
     },
-    ...(!checkpointFailure ? { recovery: {
-      recoveryTool: "start_flow_authoring",
-      requiresFreshIdempotencyKey: true,
-      idempotencyKey: `authoring-recovery-${randomUUID()}`,
-      failedAuthoringSessionId: prepared.authoringSessionId,
-      preservesMissionId: prepared.missionId,
-      preservesObjectiveId: prepared.objectiveId,
-      preservesFlowDraftId: prepared.flowDraftId,
-    }} : {}),
-    safeActions: checkpointFailure ? ["get_operating_context"] : ["get_operating_context", "start_flow_authoring"],
+    ...(!checkpointFailure
+      ? {
+          recovery: {
+            recoveryTool: "start_flow_authoring",
+            requiresFreshIdempotencyKey: true,
+            idempotencyKey: `authoring-recovery-${randomUUID()}`,
+            failedAuthoringSessionId: prepared.authoringSessionId,
+            preservesMissionId: prepared.missionId,
+            preservesObjectiveId: prepared.objectiveId,
+            preservesFlowDraftId: prepared.flowDraftId,
+          },
+        }
+      : {}),
+    safeActions: checkpointFailure
+      ? ["get_operating_context"]
+      : ["get_operating_context", "start_flow_authoring"],
   });
 }
 
@@ -973,7 +1177,7 @@ function admissionDecisionBoundary(
     return {
       type: "authorization_required",
       reasonCode: code,
-      safeActions: ["authorize_environment_credentials", "advance_flow_authoring"],
+      safeActions: ["authorize_environment_credentials"],
     };
   }
   if (code.includes("ORIGIN_NOT_ALLOWED") || code.includes("AUTHORIZATION")) {
@@ -1108,6 +1312,7 @@ function privacyChannel(
 function requiresProtectedInterval(intent: MissionAuthoringIntent) {
   return (
     (intent.action.kind === "fill" && Boolean(intent.action.protectedReferenceId)) ||
+    intent.action.kind === "authenticate" ||
     intent.action.kind === "same_origin_request"
   );
 }

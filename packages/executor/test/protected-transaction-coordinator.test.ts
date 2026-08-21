@@ -36,9 +36,9 @@ const intent = (
       ? ["focusable", "accepts_text", "editable", "readable_value"]
       : role === "checkbox"
         ? ["focusable", "toggleable"]
-      : role === "button"
-        ? ["pointer_activatable"]
-        : ["readable_value"],
+        : role === "button"
+          ? ["pointer_activatable"]
+          : ["readable_value"],
   preferredEvidence: {
     roles: [role],
     names: [concept],
@@ -70,7 +70,9 @@ afterEach(async () =>
 it("verifies checked preparation through checked-state semantics", async () => {
   const opened = await openTestBrowser();
   const unregister = registerPraxisVeilAuthority(opened.page, {
-    authority: new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: ["https://example.test"] })),
+    authority: new VeilAuthority(
+      compileVeilPolicy({ profile: "balanced", allowedOrigins: ["https://example.test"] }),
+    ),
     userId: "checked-verification-test",
     environmentId: "test",
     browserContextId: "checked-verification-context",
@@ -79,25 +81,48 @@ it("verifies checked preparation through checked-state semantics", async () => {
     await opened.page.setContent('<label><input type="checkbox" checked> Active</label>');
     const operation = transaction("https://example.test");
     const checkbox: InteractionTargetIntent = {
-      concept: "active", requiredCapabilities: ["focusable", "toggleable"],
-      preferredEvidence: { roles: ["checkbox"], names: ["Active"], labels: ["Active"], descriptions: [], placeholders: [], inputTypes: ["checkbox"] },
-      scope: { kind: "page" }, relations: [], prohibited: ["hidden", "disabled"], risk: "ordinary",
+      concept: "active",
+      requiredCapabilities: ["focusable", "toggleable"],
+      preferredEvidence: {
+        roles: ["checkbox"],
+        names: ["Active"],
+        labels: ["Active"],
+        descriptions: [],
+        placeholders: [],
+        inputTypes: ["checkbox"],
+      },
+      scope: { kind: "page" },
+      relations: [],
+      prohibited: ["hidden", "disabled"],
+      risk: "ordinary",
       confidence: { requiredFamilies: [], minimum: 0.45, minimumMargin: 0, minimumFamilyCount: 1 },
     };
     operation.inputs = { active: { classification: "public", value: true } };
-    await expect(verifyProtectedTransactionAssertions(
-      opened.page,
-      [{ type: "checkedMatchesInput", target: checkbox, input: "active", timeoutMs: 500 }],
-      operation,
-      { redactor: new SecretRedactor(), resolveKnownSecret: async () => "", verifyAssertions: async () => undefined } as never,
-    )).resolves.toBeUndefined();
+    await expect(
+      verifyProtectedTransactionAssertions(
+        opened.page,
+        [{ type: "checkedMatchesInput", target: checkbox, input: "active", timeoutMs: 500 }],
+        operation,
+        {
+          redactor: new SecretRedactor(),
+          resolveKnownSecret: async () => "",
+          verifyAssertions: async () => undefined,
+        } as never,
+      ),
+    ).resolves.toBeUndefined();
     await opened.page.getByRole("checkbox", { name: "Active" }).uncheck();
-    await expect(verifyProtectedTransactionAssertions(
-      opened.page,
-      [{ type: "checkedMatchesInput", target: checkbox, input: "active", timeoutMs: 200 }],
-      operation,
-      { redactor: new SecretRedactor(), resolveKnownSecret: async () => "", verifyAssertions: async () => undefined } as never,
-    )).rejects.toThrow("PREPARATION_ACTIVE_VERIFICATION_FAILED");
+    await expect(
+      verifyProtectedTransactionAssertions(
+        opened.page,
+        [{ type: "checkedMatchesInput", target: checkbox, input: "active", timeoutMs: 200 }],
+        operation,
+        {
+          redactor: new SecretRedactor(),
+          resolveKnownSecret: async () => "",
+          verifyAssertions: async () => undefined,
+        } as never,
+      ),
+    ).rejects.toThrow("PREPARATION_ACTIVE_VERIFICATION_FAILED");
   } finally {
     unregister();
     await opened.context.close();
@@ -207,13 +232,26 @@ const transaction = (origin: string): ProtectedTransaction => ({
   },
 });
 
-function memoryStore(initial: MutationLedgerState = "planned", persistedReferences?: import("../src/protected-transaction-coordinator.js").ProtectedOperationClaim["persistedReferences"]) {
+function memoryStore(
+  initial: MutationLedgerState = "planned",
+  persistedReferences?: import("../src/protected-transaction-coordinator.js").ProtectedOperationClaim["persistedReferences"],
+) {
   let state = initial;
   let version = 1;
+  let mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown" =
+    initial === "failed_not_applied" ? "not_applied" : "not_attempted";
+  const claim = () => ({
+    id: "protected-operation",
+    state,
+    version,
+    fencingToken: 1,
+    mutationOutcome,
+    ...(persistedReferences ? { persistedReferences } : {}),
+  });
   return {
     state: () => state,
     store: {
-      claim: async () => ({ id: "protected-operation", state, version, fencingToken: 1, ...(persistedReferences ? { persistedReferences } : {}) }),
+      claim: async () => claim(),
       transition: async ({
         expected,
         next,
@@ -223,8 +261,19 @@ function memoryStore(initial: MutationLedgerState = "planned", persistedReferenc
       }) => {
         if (state !== expected) throw new Error("PROTECTED_OPERATION_TRANSITION_FENCED");
         state = next;
+        if (next === "failed_not_applied") mutationOutcome = "not_applied";
         version += 1;
-        return { id: "protected-operation", state, version, fencingToken: 1, ...(persistedReferences ? { persistedReferences } : {}) };
+        return claim();
+      },
+      settleMutationOutcome: async ({ outcome }: { outcome: "applied" | "not_applied" }) => {
+        if (
+          (mutationOutcome === "applied" || mutationOutcome === "not_applied") &&
+          mutationOutcome !== outcome
+        )
+          throw new Error("PROTECTED_MUTATION_OUTCOME_SETTLEMENT_FENCED");
+        mutationOutcome = outcome;
+        version += 1;
+        return claim();
       },
       record: async () => undefined,
     },
@@ -236,13 +285,41 @@ function atomicProjectCapture(
   persistSecret: (value: string) => Promise<{ credentialId: string }>,
   persistPublic: (value: string) => Promise<{ valueId: string }>,
 ) {
-  return async (input: Parameters<NonNullable<import("../src/types.js").AtomicOutputCapture>>[0]) => {
-    const references: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "project" }> = {};
+  return async (
+    input: Parameters<NonNullable<import("../src/types.js").AtomicOutputCapture>>[0],
+  ) => {
+    const references: Record<
+      string,
+      {
+        classification: "public" | "protected";
+        credentialId?: string;
+        valueId?: string;
+        scope: "project";
+      }
+    > = {};
     for (const output of input.outputs) {
-      if (output.classification === "protected") references[output.reference] = { classification: "protected", ...(await persistSecret(output.value)), scope: "project" };
-      else references[output.reference] = { classification: "public", ...(await persistPublic(output.value)), scope: "project" };
+      if (output.classification === "protected")
+        references[output.reference] = {
+          classification: "protected",
+          ...(await persistSecret(output.value)),
+          scope: "project",
+        };
+      else
+        references[output.reference] = {
+          classification: "public",
+          ...(await persistPublic(output.value)),
+          scope: "project",
+        };
     }
-    const claim = await store.transition({ id: input.claim.id, operationId: input.operationId, version: input.claim.version, fencingToken: input.claim.fencingToken, expected: "persisting", next: "persisted", phase: "persistence_committed" });
+    const claim = await store.transition({
+      id: input.claim.id,
+      operationId: input.operationId,
+      version: input.claim.version,
+      fencingToken: input.claim.fencingToken,
+      expected: "persisting",
+      next: "persisted",
+      phase: "persistence_committed",
+    });
     return { claim, references };
   };
 }
@@ -263,10 +340,7 @@ async function verify(page: Page, assertions: Assertion[]) {
 }
 
 describe("protected transaction capsule", () => {
-  async function runClipboardCapsule(
-    mode: "retry" | "persistent",
-    rejectIndexedDbExport = false,
-  ) {
+  async function runClipboardCapsule(mode: "retry" | "persistent", rejectIndexedDbExport = false) {
     const secret = `capsule-clipboard-${mode}-${randomUUID()}`;
     const server = createServer((_request, response) => {
       response.setHeader("content-type", "text/html");
@@ -310,6 +384,10 @@ describe("protected transaction capsule", () => {
         storage: { credentialName: "Secret", scope: "project" },
       },
     ];
+    operation.mutation.reconciliation = {
+      strategy: "persisted_outputs",
+      requiredReferences: ["clientSecret"],
+    };
     operation.acquisitionReadiness.approvedMethods = ["copy_control"];
     const gate = new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]);
     const authority = new VeilAuthority(
@@ -360,7 +438,11 @@ describe("protected transaction capsule", () => {
         resolveKnownSecret: async () => "",
         persistSecret,
         persistPublicValue: async () => ({ valueId: randomUUID() }),
-        persistOutputsAtomically: atomicProjectCapture(storeMemory.store, persistSecret, async () => ({ valueId: randomUUID() })),
+        persistOutputsAtomically: atomicProjectCapture(
+          storeMemory.store,
+          persistSecret,
+          async () => ({ valueId: randomUUID() }),
+        ),
         verifyAssertions: verify,
       }).execute(operation);
       cleanupCalls = await page.evaluate(() => 0); // keeps the safe page live for post-capsule verification
@@ -474,7 +556,9 @@ describe("protected transaction capsule", () => {
         ...memory.store,
         heartbeatIntervalMs: 250,
         heartbeatTimeoutMs: 100,
-        heartbeat: async () => { heartbeatCalls += 1; },
+        heartbeat: async () => {
+          heartbeatCalls += 1;
+        },
       };
       const secrets: string[] = [];
       const publics: string[] = [];
@@ -507,12 +591,18 @@ describe("protected transaction capsule", () => {
           return { valueId: "22222222-2222-4222-8222-222222222222" };
         },
         persistOutputsAtomically: atomicProjectCapture(
-            lifecycleStore,
-          async (value) => { secrets.push(value); return { credentialId: "11111111-1111-4111-8111-111111111111" }; },
-          async (value) => { publics.push(value); return { valueId: "22222222-2222-4222-8222-222222222222" }; },
+          lifecycleStore,
+          async (value) => {
+            secrets.push(value);
+            return { credentialId: "11111111-1111-4111-8111-111111111111" };
+          },
+          async (value) => {
+            publics.push(value);
+            return { valueId: "22222222-2222-4222-8222-222222222222" };
+          },
         ),
         verifyAssertions: verify,
-        verifyCalibration: async (session) => {
+        onPreparationVerified: async (session) => {
           expect(await session.page.getByLabel("Name").inputValue()).toBe("Capsule app");
           expect(await session.page.getByLabel("Description").inputValue()).toBe(
             "Prepared only in capsule",
@@ -614,14 +704,19 @@ describe("protected transaction capsule", () => {
         return;
       }
       response.setHeader("content-type", "text/html");
-      response.end(`<label>Name<input></label><label>Description<textarea></textarea></label><button aria-label="Save">Save</button><script>document.querySelector('[aria-label=Save]').onclick=()=>fetch('/orders')</script>`);
+      response.end(
+        `<label>Name<input></label><label>Description<textarea></textarea></label><button aria-label="Save">Save</button><script>document.querySelector('[aria-label=Save]').onclick=()=>fetch('/orders')</script>`,
+      );
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("server unavailable");
     const origin = `http://127.0.0.1:${address.port}`;
-    const browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" });
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
     try {
       const context = await browser.newContext();
       const page = await context.newPage();
@@ -648,33 +743,55 @@ describe("protected transaction capsule", () => {
       operation.mutation.dispatchSemantics = "read_only";
       operation.mutation.action.expectedEffect = { type: "none" };
       operation.extraction.timeoutMs = 250;
-      operation.extraction.outputs = [{
-        classification: "public",
-        reference: "orderId",
-        acquisition: {
-          target: intent("id", "value"), classification: "public",
-          permittedMethods: ["protected_network_value"],
-          validation: { minimumLength: 1, maximumLength: 200 },
+      operation.extraction.outputs = [
+        {
+          classification: "public",
+          reference: "orderId",
+          acquisition: {
+            target: intent("id", "value"),
+            classification: "public",
+            permittedMethods: ["protected_network_value"],
+            validation: { minimumLength: 1, maximumLength: 200 },
+          },
+          storage: { name: "Order ID", scope: "project" },
         },
-        storage: { name: "Order ID", scope: "project" },
-      }];
+      ];
       operation.acquisitionReadiness.valueIntent = intent("id", "value");
       operation.acquisitionReadiness.approvedMethods = ["protected_network_value"];
-      operation.mutation.reconciliation = { strategy: "persisted_outputs", requiredReferences: ["orderId"] };
-      const authority = new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] }));
+      operation.mutation.reconciliation = {
+        strategy: "persisted_outputs",
+        requiredReferences: ["orderId"],
+      };
+      const authority = new VeilAuthority(
+        compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] }),
+      );
       const result = await new ProtectedTransactionKernel({
-        safeSession: { browser, context, page, provenance: new BrowserSessionProvenance(randomUUID(), "safe") },
+        safeSession: {
+          browser,
+          context,
+          page,
+          provenance: new BrowserSessionProvenance(randomUUID(), "safe"),
+        },
         gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]),
-        redactor: new SecretRedactor(), store,
-        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser), allowedOrigins: [origin],
+        redactor: new SecretRedactor(),
+        store,
+        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser),
+        allowedOrigins: [origin],
         prepareCapsule: async (session) => {
           registerPraxisVeilAuthority(session.page, {
-            authority, userId: "read-only-test", environmentId: "test",
+            authority,
+            userId: "read-only-test",
+            environmentId: "test",
             browserContextId: session.provenance.contextId,
           });
-        }, resolveKnownSecret: async () => "",
-        persistSecret: async () => { throw new Error("must not persist"); },
-        persistPublicValue: async () => { throw new Error("must not persist"); },
+        },
+        resolveKnownSecret: async () => "",
+        persistSecret: async () => {
+          throw new Error("must not persist");
+        },
+        persistPublicValue: async () => {
+          throw new Error("must not persist");
+        },
         verifyAssertions: verify,
       }).execute(operation);
 
@@ -731,140 +848,219 @@ describe("protected transaction capsule", () => {
   it.each([200, 400, 401, 403, 404, 422, 429])(
     "settles documented read-only request status %s through the production kernel",
     async (httpStatusCode) => {
-    const expected = {
-      clientId: `client-${randomUUID()}`,
-      clientSecret: `secret-${randomUUID()}`,
-      orderId: randomUUID(),
-    };
-    let dispatches = 0;
-    const observations: Array<Record<string, unknown>> = [];
-    const server = createServer((request, response) => {
-      if (request.url === "/") {
-        response.setHeader("content-type", "text/html");
-        response.end(`<link rel="icon" href="data:,"><label>Client ID<input></label><label>Client secret<input></label><label>Order ID<input></label><button aria-label="Save">Save</button><output aria-label="id">response schema</output><script>
+      const expected = {
+        clientId: `client-${randomUUID()}`,
+        clientSecret: `secret-${randomUUID()}`,
+        orderId: randomUUID(),
+      };
+      let dispatches = 0;
+      const observations: Array<Record<string, unknown>> = [];
+      const server = createServer((request, response) => {
+        if (request.url === "/") {
+          response.setHeader("content-type", "text/html");
+          response.end(`<link rel="icon" href="data:,"><label>Client ID<input></label><label>Client secret<input></label><label>Order ID<input></label><button aria-label="Save">Save</button><output aria-label="id">response schema</output><script>
           document.querySelector('[aria-label=Save]').onclick=()=>fetch('/api/v1/partner-api/orders/'+encodeURIComponent(document.querySelectorAll('input')[2].value),{method:'GET',headers:{'x-vitract-client-id':document.querySelectorAll('input')[0].value,'x-vitract-client-secret':document.querySelectorAll('input')[1].value}})
         </script>`);
-        return;
-      }
-      if (request.url === "/safe") {
-        response.setHeader("content-type", "text/html");
-        response.end("<main>continued</main>");
-        return;
-      }
-      if (!request.url?.startsWith("/api/v1/partner-api/orders/")) {
-        response.statusCode = 404;
-        response.end();
-        return;
-      }
-      dispatches += 1;
-      let bodyBytes = 0;
-      request.on("data", (chunk) => { bodyBytes += chunk.length; });
-      request.on("end", () => {
-        const shape = {
-          method: request.method,
-          pathMatches: request.url === `/api/v1/partner-api/orders/${expected.orderId}`,
-          queryAbsent: !request.url?.includes("?"),
-          clientIdHeaderMatches: request.headers["x-vitract-client-id"] === expected.clientId,
-          clientSecretHeaderMatches: request.headers["x-vitract-client-secret"] === expected.clientSecret,
-          bodyAbsent: bodyBytes === 0,
-        };
-        observations.push(shape);
-        const accepted = Object.values(shape).every((value) => value === true || value === "GET");
-        response.statusCode = accepted ? httpStatusCode : shape.method !== "GET" ? 405
-          : !shape.pathMatches ? 404
-            : !shape.clientIdHeaderMatches || !shape.clientSecretHeaderMatches ? 401
-              : 422;
-        response.setHeader("content-type", "application/json");
-        response.end(JSON.stringify(accepted && httpStatusCode === 200
-          ? { data: { id: expected.orderId } }
-          : { error: "rejected" }));
-      });
-    });
-    servers.push(server);
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const address = server.address();
-    if (!address || typeof address === "string") throw new Error("server unavailable");
-    const origin = `http://127.0.0.1:${address.port}`;
-    const browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" });
-    try {
-      const context = await browser.newContext();
-      const page = await context.newPage();
-      await page.goto(origin);
-      const memory = memoryStore();
-      const operation = transaction(origin);
-      operation.entry = { url: origin, assertions: [{ type: "visible", target: intent("Save", "button") }] };
-      operation.inputs = {
-        clientId: { classification: "known_secret", credentialRef: "client-id-ref" },
-        clientSecret: { classification: "known_secret", credentialRef: "client-secret-ref" },
-        orderId: { classification: "known_secret", credentialRef: "order-id-ref" },
-      };
-      operation.preparation.actions = [
-        { type: "fillKnownSecret", input: "clientId", target: intent("Client ID", "textbox"), effect: "replayable_setup" },
-        { type: "fillKnownSecret", input: "clientSecret", target: intent("Client secret", "textbox"), effect: "replayable_setup" },
-        { type: "fillKnownSecret", input: "orderId", target: intent("Order ID", "textbox"), effect: "replayable_setup" },
-      ];
-      operation.preparation.assertions = [];
-      operation.mutation = {
-        action: { type: "click", target: intent("Save", "button"), expectedEffect: { type: "none" } },
-        kind: "repeatable", dispatchSemantics: "read_only",
-        reconciliation: { strategy: "persisted_outputs", requiredReferences: ["retrievedOrderId"] },
-      };
-      operation.extraction.outputs = [{
-        classification: "public", reference: "retrievedOrderId",
-        acquisition: { target: intent("id", "value"), classification: "public", permittedMethods: ["protected_network_value"], validation: { minimumLength: 1, maximumLength: 200 } },
-        storage: { name: "Retrieved Order ID", scope: "project" },
-      }];
-      operation.acquisitionReadiness.valueIntent = intent("id", "value");
-      operation.acquisitionReadiness.approvedMethods = ["protected_network_value"];
-      const authority = new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] }));
-      const startedAt = Date.now();
-      const result = await new ProtectedTransactionKernel({
-        safeSession: { browser, context, page, provenance: new BrowserSessionProvenance(randomUUID(), "safe") },
-        gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]), redactor: new SecretRedactor(),
-        store: memory.store, capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser), allowedOrigins: [origin],
-        prepareCapsule: async (session) => {
-          registerPraxisVeilAuthority(session.page, { authority, userId: "request-contract-test", environmentId: "test", browserContextId: session.provenance.contextId });
-        },
-        resolveKnownSecret: async (reference) => reference === "client-id-ref" ? expected.clientId : reference === "client-secret-ref" ? expected.clientSecret : expected.orderId,
-        persistSecret: async () => { throw new Error("must not persist a protected output"); },
-        persistPublicValue: async () => ({ valueId: randomUUID() }),
-        persistOutputsAtomically: atomicProjectCapture(
-          memory.store,
-          async () => { throw new Error("must not persist a protected output"); },
-          async () => ({ valueId: randomUUID() }),
-        ),
-        verifyAssertions: verify,
-      }).execute(operation);
-      if (httpStatusCode === 200) {
-        expect(result.result.status).toBe("completed");
-        expect(memory.state()).toBe("completed");
-      } else {
-        expect(result.result).toMatchObject({
-          status: "aborted",
-          reasonCode: "PROTECTED_RESPONSE_HTTP_REJECTED",
-          mutation: { dispatch: "acknowledged", outcome: "confirmed_not_applied" },
-          responseEvidence: {
-            httpStatusCode,
-            statusClass: "4xx",
-            bodyAcquisitionStarted: false,
-            bodyAcquisitionSettled: false,
-            extractionResultClass: "rejected",
-          },
+          return;
+        }
+        if (request.url === "/safe") {
+          response.setHeader("content-type", "text/html");
+          response.end("<main>continued</main>");
+          return;
+        }
+        if (!request.url?.startsWith("/api/v1/partner-api/orders/")) {
+          response.statusCode = 404;
+          response.end();
+          return;
+        }
+        dispatches += 1;
+        let bodyBytes = 0;
+        request.on("data", (chunk) => {
+          bodyBytes += chunk.length;
         });
-        expect(memory.state()).toBe("failed_not_applied");
-        expect(Date.now() - startedAt).toBeLessThan(3_000);
+        request.on("end", () => {
+          const shape = {
+            method: request.method,
+            pathMatches: request.url === `/api/v1/partner-api/orders/${expected.orderId}`,
+            queryAbsent: !request.url?.includes("?"),
+            clientIdHeaderMatches: request.headers["x-vitract-client-id"] === expected.clientId,
+            clientSecretHeaderMatches:
+              request.headers["x-vitract-client-secret"] === expected.clientSecret,
+            bodyAbsent: bodyBytes === 0,
+          };
+          observations.push(shape);
+          const accepted = Object.values(shape).every((value) => value === true || value === "GET");
+          response.statusCode = accepted
+            ? httpStatusCode
+            : shape.method !== "GET"
+              ? 405
+              : !shape.pathMatches
+                ? 404
+                : !shape.clientIdHeaderMatches || !shape.clientSecretHeaderMatches
+                  ? 401
+                  : 422;
+          response.setHeader("content-type", "application/json");
+          response.end(
+            JSON.stringify(
+              accepted && httpStatusCode === 200
+                ? { data: { id: expected.orderId } }
+                : { error: "rejected" },
+            ),
+          );
+        });
+      });
+      servers.push(server);
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("server unavailable");
+      const origin = `http://127.0.0.1:${address.port}`;
+      const browser = await chromium.launch({
+        headless: true,
+        channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+      });
+      try {
+        const context = await browser.newContext();
+        const page = await context.newPage();
+        await page.goto(origin);
+        const memory = memoryStore();
+        const operation = transaction(origin);
+        operation.entry = {
+          url: origin,
+          assertions: [{ type: "visible", target: intent("Save", "button") }],
+        };
+        operation.inputs = {
+          clientId: { classification: "known_secret", credentialRef: "client-id-ref" },
+          clientSecret: { classification: "known_secret", credentialRef: "client-secret-ref" },
+          orderId: { classification: "known_secret", credentialRef: "order-id-ref" },
+        };
+        operation.preparation.actions = [
+          {
+            type: "fillKnownSecret",
+            input: "clientId",
+            target: intent("Client ID", "textbox"),
+            effect: "replayable_setup",
+          },
+          {
+            type: "fillKnownSecret",
+            input: "clientSecret",
+            target: intent("Client secret", "textbox"),
+            effect: "replayable_setup",
+          },
+          {
+            type: "fillKnownSecret",
+            input: "orderId",
+            target: intent("Order ID", "textbox"),
+            effect: "replayable_setup",
+          },
+        ];
+        operation.preparation.assertions = [];
+        operation.mutation = {
+          action: {
+            type: "click",
+            target: intent("Save", "button"),
+            expectedEffect: { type: "none" },
+          },
+          kind: "repeatable",
+          dispatchSemantics: "read_only",
+          reconciliation: {
+            strategy: "persisted_outputs",
+            requiredReferences: ["retrievedOrderId"],
+          },
+        };
+        operation.extraction.outputs = [
+          {
+            classification: "public",
+            reference: "retrievedOrderId",
+            acquisition: {
+              target: intent("id", "value"),
+              classification: "public",
+              permittedMethods: ["protected_network_value"],
+              validation: { minimumLength: 1, maximumLength: 200 },
+            },
+            storage: { name: "Retrieved Order ID", scope: "project" },
+          },
+        ];
+        operation.acquisitionReadiness.valueIntent = intent("id", "value");
+        operation.acquisitionReadiness.approvedMethods = ["protected_network_value"];
+        const authority = new VeilAuthority(
+          compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] }),
+        );
+        const startedAt = Date.now();
+        const result = await new ProtectedTransactionKernel({
+          safeSession: {
+            browser,
+            context,
+            page,
+            provenance: new BrowserSessionProvenance(randomUUID(), "safe"),
+          },
+          gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]),
+          redactor: new SecretRedactor(),
+          store: memory.store,
+          capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser),
+          allowedOrigins: [origin],
+          prepareCapsule: async (session) => {
+            registerPraxisVeilAuthority(session.page, {
+              authority,
+              userId: "request-contract-test",
+              environmentId: "test",
+              browserContextId: session.provenance.contextId,
+            });
+          },
+          resolveKnownSecret: async (reference) =>
+            reference === "client-id-ref"
+              ? expected.clientId
+              : reference === "client-secret-ref"
+                ? expected.clientSecret
+                : expected.orderId,
+          persistSecret: async () => {
+            throw new Error("must not persist a protected output");
+          },
+          persistPublicValue: async () => ({ valueId: randomUUID() }),
+          persistOutputsAtomically: atomicProjectCapture(
+            memory.store,
+            async () => {
+              throw new Error("must not persist a protected output");
+            },
+            async () => ({ valueId: randomUUID() }),
+          ),
+          verifyAssertions: verify,
+        }).execute(operation);
+        if (httpStatusCode === 200) {
+          expect(result.result.status).toBe("completed");
+          expect(memory.state()).toBe("completed");
+        } else {
+          expect(result.result).toMatchObject({
+            status: "aborted",
+            reasonCode: "PROTECTED_RESPONSE_HTTP_REJECTED",
+            mutation: { dispatch: "acknowledged", outcome: "confirmed_not_applied" },
+            responseEvidence: {
+              httpStatusCode,
+              statusClass: "4xx",
+              bodyAcquisitionStarted: false,
+              bodyAcquisitionSettled: false,
+              extractionResultClass: "rejected",
+            },
+          });
+          expect(memory.state()).toBe("failed_not_applied");
+          expect(Date.now() - startedAt).toBeLessThan(3_000);
+        }
+        expect(dispatches).toBe(1);
+        expect(observations).toEqual([
+          {
+            method: "GET",
+            pathMatches: true,
+            queryAbsent: true,
+            clientIdHeaderMatches: true,
+            clientSecretHeaderMatches: true,
+            bodyAbsent: true,
+          },
+        ]);
+        expect(JSON.stringify(observations)).not.toContain(expected.clientId);
+        expect(JSON.stringify(observations)).not.toContain(expected.clientSecret);
+        expect(JSON.stringify(observations)).not.toContain(expected.orderId);
+      } finally {
+        await browser.close();
       }
-      expect(dispatches).toBe(1);
-      expect(observations).toEqual([{
-        method: "GET", pathMatches: true, queryAbsent: true,
-        clientIdHeaderMatches: true, clientSecretHeaderMatches: true, bodyAbsent: true,
-      }]);
-      expect(JSON.stringify(observations)).not.toContain(expected.clientId);
-      expect(JSON.stringify(observations)).not.toContain(expected.clientSecret);
-      expect(JSON.stringify(observations)).not.toContain(expected.orderId);
-    } finally {
-      await browser.close();
-    }
     },
     15_000,
   );
@@ -872,16 +1068,12 @@ describe("protected transaction capsule", () => {
   it("classifies a read-only activation with no initiated request before the full response timeout", async () => {
     const server = createServer((_request, response) => {
       response.setHeader("content-type", "text/html");
-      response.end(
-        `<button aria-label="Save">Save</button>`,
-      );
+      response.end(`<button aria-label="Save">Save</button>`);
     });
 
     servers.push(server);
 
-    await new Promise<void>((resolve) =>
-      server.listen(0, "127.0.0.1", resolve),
-    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 
     const address = server.address();
     if (!address || typeof address === "string") {
@@ -913,9 +1105,7 @@ describe("protected transaction capsule", () => {
       const operation = transaction(origin);
 
       operation.entry.url = origin;
-      operation.entry.assertions = [
-        { type: "visible", target: intent("Save", "button") },
-      ];
+      operation.entry.assertions = [{ type: "visible", target: intent("Save", "button") }];
 
       operation.preparation.actions = [];
       operation.preparation.assertions = [];
@@ -946,9 +1136,7 @@ describe("protected transaction capsule", () => {
       ];
 
       operation.acquisitionReadiness.valueIntent = intent("id", "value");
-      operation.acquisitionReadiness.approvedMethods = [
-        "protected_network_value",
-      ];
+      operation.acquisitionReadiness.approvedMethods = ["protected_network_value"];
 
       operation.mutation.reconciliation = {
         strategy: "persisted_outputs",
@@ -971,14 +1159,10 @@ describe("protected transaction capsule", () => {
           page,
           provenance: new BrowserSessionProvenance(randomUUID(), "safe"),
         },
-        gate: new VeilRuntimeCoordinator([
-          new VeilChannelCollector("evidence"),
-        ]),
+        gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]),
         redactor: new SecretRedactor(),
         store,
-        capsuleFactory: new PlaywrightProtectedCapsuleFactory(
-          openTestBrowser,
-        ),
+        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser),
         allowedOrigins: [origin],
         prepareCapsule: async (session) => {
           registerPraxisVeilAuthority(session.page, {
@@ -1065,7 +1249,10 @@ describe("protected transaction capsule", () => {
   });
 
   it("marks an incomplete staged protected set compromised without an intermediate lease-releasing transition", async () => {
-    const browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" });
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
     try {
       const context = await browser.newContext();
       const page = await context.newPage();
@@ -1073,17 +1260,34 @@ describe("protected transaction capsule", () => {
       const memory = memoryStore("recovery_required");
       const compromised = vi.fn();
       const result = await new ProtectedTransactionKernel({
-        safeSession: { browser, context, page, provenance: new BrowserSessionProvenance(randomUUID(), "safe") },
+        safeSession: {
+          browser,
+          context,
+          page,
+          provenance: new BrowserSessionProvenance(randomUUID(), "safe"),
+        },
         gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]),
-        redactor: new SecretRedactor(), store: memory.store,
-        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser), allowedOrigins: ["https://example.test"],
-        prepareCapsule: async () => undefined, resolveKnownSecret: async () => "",
-        persistSecret: async () => { throw new Error("must not persist"); },
-        persistPublicValue: async () => { throw new Error("must not persist"); },
-        recoverStagedResponseOutputs: async () => [{
-          reference: "clientSecret", classification: "protected", name: "Secret",
-          value: "staged-protected-value", scope: "project",
-        }],
+        redactor: new SecretRedactor(),
+        store: memory.store,
+        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser),
+        allowedOrigins: ["https://example.test"],
+        prepareCapsule: async () => undefined,
+        resolveKnownSecret: async () => "",
+        persistSecret: async () => {
+          throw new Error("must not persist");
+        },
+        persistPublicValue: async () => {
+          throw new Error("must not persist");
+        },
+        recoverStagedResponseOutputs: async () => [
+          {
+            reference: "clientSecret",
+            classification: "protected",
+            name: "Secret",
+            value: "staged-protected-value",
+            scope: "project",
+          },
+        ],
         markCredentialCompromised: compromised,
         verifyAssertions: async () => undefined,
       }).execute(operation);
@@ -1094,145 +1298,373 @@ describe("protected transaction capsule", () => {
       });
       expect(memory.state()).toBe("compromised");
       expect(compromised).not.toHaveBeenCalled();
-    } finally { await browser.close(); }
+    } finally {
+      await browser.close();
+    }
   });
 
   it("reconciles committed opaque references after process death without redispatch", async () => {
-    const browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" });
+    const browser = await chromium.launch({
+      headless: true,
+      channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    });
     try {
       const context = await browser.newContext();
       const page = await context.newPage();
       const operation = transaction("https://example.test");
       const memory = memoryStore("recovery_required", {
-        clientId: { classification: "public", valueId: "22222222-2222-4222-8222-222222222222", scope: "project" },
-        clientSecret: { classification: "protected", credentialId: "11111111-1111-4111-8111-111111111111", scope: "project" },
+        clientId: {
+          classification: "public",
+          valueId: "22222222-2222-4222-8222-222222222222",
+          scope: "project",
+        },
+        clientSecret: {
+          classification: "protected",
+          credentialId: "11111111-1111-4111-8111-111111111111",
+          scope: "project",
+        },
       });
       const result = await new ProtectedTransactionKernel({
-        safeSession: { browser, context, page, provenance: new BrowserSessionProvenance(randomUUID(), "safe") },
+        safeSession: {
+          browser,
+          context,
+          page,
+          provenance: new BrowserSessionProvenance(randomUUID(), "safe"),
+        },
         gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]),
-        redactor: new SecretRedactor(), store: memory.store,
-        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser), allowedOrigins: ["https://example.test"],
-        prepareCapsule: async () => undefined, resolveKnownSecret: async () => "",
-        persistSecret: async () => { throw new Error("must not persist"); },
-        persistPublicValue: async () => { throw new Error("must not persist"); },
+        redactor: new SecretRedactor(),
+        store: memory.store,
+        capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser),
+        allowedOrigins: ["https://example.test"],
+        prepareCapsule: async () => undefined,
+        resolveKnownSecret: async () => "",
+        persistSecret: async () => {
+          throw new Error("must not persist");
+        },
+        persistPublicValue: async () => {
+          throw new Error("must not persist");
+        },
         verifyAssertions: async () => undefined,
       }).execute(operation);
-      expect(result.result).toMatchObject({ status: "completed", mutation: { outcome: "confirmed_succeeded" } });
-      expect(memory.state()).toBe("completed");
-    } finally { await browser.close(); }
-  });
-
-  it.each([
-    { label: "A valid Create response", status: 201, body: "canonical", expectedState: "completed", expectedOutcome: "confirmed_succeeded", qualificationOnly: false, acknowledged: true, expectedPostCount: 1 },
-    { label: "D provider-proven validation rejection", status: 400, body: "error", expectedState: "failed_not_applied", expectedOutcome: "confirmed_not_applied", qualificationOnly: false, acknowledged: true, expectedPostCount: 1 },
-    { label: "E success without canonical identity", status: 201, body: "missing", expectedState: "recovery_required", expectedOutcome: "unknown", qualificationOnly: false, acknowledged: true, expectedPostCount: 1 },
-    { label: "H final activation without acknowledgement", status: 201, body: "canonical", expectedState: "recovery_required", expectedOutcome: "unknown", qualificationOnly: false, acknowledged: false, expectedPostCount: 0 },
-    { label: "Q qualification policy withholds dispatch", status: 201, body: "canonical", expectedState: "failed_not_applied", expectedOutcome: "confirmed_not_applied", qualificationOnly: true, acknowledged: true, expectedPostCount: 0 },
-  ] as const)("certifies Create Order $label through the real protected kernel", async ({ status, body, expectedState, expectedOutcome, qualificationOnly, acknowledged, expectedPostCount }) => {
-    const protectedValues = {
-      clientId: `client-${randomUUID()}`,
-      clientSecret: `secret-${randomUUID()}`,
-      idempotencyKey: `create-${randomUUID()}`,
-      payload: JSON.stringify({
-        orderType: "monthly-billing", orderedFor: "client", quantity: 1,
-        kitType: "gut-scan", currency: "usd", deliveryMode: "dropship",
-        clientId: randomUUID(),
-        shipping: { country: "US", addressLineOne: "100 Local Street", city: "Boston", state: "MA", postalCode: "02108" },
-      }),
-      orderId: randomUUID(),
-    };
-    let dispatches = 0;
-    const safeObservations: Array<Record<string, unknown>> = [];
-    const server = createServer((request, response) => {
-      if (request.url === "/" || request.url === "/new") {
-        response.setHeader("content-type", "text/html");
-        response.end(`<link rel="icon" href="data:,"><label>Client ID<input></label><label>Client secret<input></label><label>Idempotency key<input></label><label>JSON body<textarea></textarea></label><label><input type="checkbox">I understand this sends a real request that may create or change Partner data.</label><button aria-label="Save">Save</button><output aria-label="id">response schema</output><script>
-          document.querySelector('[aria-label=Save]').onclick=()=>{if(!document.querySelector('input[type=checkbox]').checked)return;fetch('/api/v1/partner-api/orders',{method:'POST',headers:{'x-vitract-client-id':document.querySelectorAll('input')[0].value,'x-vitract-client-secret':document.querySelectorAll('input')[1].value,'Idempotency-Key':document.querySelectorAll('input')[2].value,'content-type':'application/json'},body:document.querySelector('textarea').value})}
-        </script>`);
-        return;
-      }
-      if (request.url === "/safe") {
-        response.setHeader("content-type", "text/html"); response.end("<main>continued</main>"); return;
-      }
-      if (request.url !== "/api/v1/partner-api/orders") { response.statusCode = 404; response.end(); return; }
-      dispatches += 1;
-      let payload = "";
-      request.on("data", (chunk) => { payload += chunk.toString(); });
-      request.on("end", () => {
-        const observation = {
-          method: request.method,
-          pathExact: request.url === "/api/v1/partner-api/orders",
-          clientIdPresent: request.headers["x-vitract-client-id"] === protectedValues.clientId,
-          clientSecretPresent: request.headers["x-vitract-client-secret"] === protectedValues.clientSecret,
-          idempotencyKeyPresent: request.headers["idempotency-key"] === protectedValues.idempotencyKey,
-          payloadExact: payload === protectedValues.payload,
-        };
-        safeObservations.push(observation);
-        response.statusCode = status;
-        response.setHeader("content-type", "application/json");
-        response.end(JSON.stringify(body === "canonical" ? { data: { id: protectedValues.orderId, referenceId: "local-reference" } } : body === "missing" ? { data: { status: "created" } } : { error: { code: "VALIDATION_ERROR" } }));
+      expect(result.result).toMatchObject({
+        status: "completed",
+        mutation: { outcome: "confirmed_succeeded" },
       });
-    });
-    servers.push(server);
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const address = server.address();
-    if (!address || typeof address === "string") throw new Error("server unavailable");
-    const origin = `http://127.0.0.1:${address.port}`;
-    const browser = await chromium.launch({ headless: true, channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome" });
-    try {
-      const context = await browser.newContext();
-      const page = await context.newPage();
-      await page.goto(origin);
-      const memory = memoryStore();
-      const operation = transaction(origin);
-      operation.operationId = `create-order-${randomUUID()}`;
-      operation.entry = { url: origin, assertions: [{ type: "visible", target: intent("Save", "button") }] };
-      operation.inputs = Object.fromEntries(Object.keys(protectedValues).filter((key) => key !== "orderId").map((key) => [key, { classification: "known_secret", credentialRef: `${key}-ref` }])) as ProtectedTransaction["inputs"];
-      if (acknowledged) operation.inputs.mutationAcknowledged = { classification: "public", value: true };
-      operation.preparation.actions = [
-        { type: "fillKnownSecret", input: "clientId", target: intent("Client ID", "textbox"), effect: "replayable_setup" },
-        { type: "fillKnownSecret", input: "clientSecret", target: intent("Client secret", "textbox"), effect: "replayable_setup" },
-        { type: "fillKnownSecret", input: "idempotencyKey", target: intent("Idempotency key", "textbox"), effect: "replayable_setup" },
-        { type: "fillKnownSecret", input: "payload", target: intent("JSON body", "textbox"), effect: "replayable_setup" },
-        ...(acknowledged ? [{ type: "checkPublicInput" as const, input: "mutationAcknowledged", target: intent("I understand this sends a real request that may create or change Partner data.", "checkbox"), effect: "replayable_setup" as const }] : []),
-      ];
-      operation.preparation.assertions = acknowledged ? [{ type: "checkedMatchesInput", target: intent("I understand this sends a real request that may create or change Partner data.", "checkbox"), input: "mutationAcknowledged" }] : [];
-      operation.mutation = {
-        action: { type: "click", target: intent("Save", "button"), expectedEffect: { type: "none" } },
-        kind: "one_time",
-        request: { method: "POST", pathTemplate: "/api/v1/partner-api/orders", transports: ["fetch"] },
-        response: { confirmedNotAppliedStatuses: [400, 401, 403, 404, 409, 429] },
-        reconciliation: { strategy: "persisted_outputs", requiredReferences: ["createdOrderId"] },
-      };
-      operation.extraction.outputs = [{
-        classification: "public", reference: "createdOrderId",
-        acquisition: { target: intent("id", "value"), classification: "public", permittedMethods: ["protected_network_value"], validation: { minimumLength: 1, maximumLength: 200 } },
-        storage: { name: "Created Order ID", scope: "project" },
-      }];
-      operation.extraction.timeoutMs = 700;
-      operation.acquisitionReadiness.valueIntent = intent("id", "value");
-      operation.acquisitionReadiness.approvedMethods = ["protected_network_value"];
-      const authority = new VeilAuthority(compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] }));
-      const result = await new ProtectedTransactionKernel({
-        safeSession: { browser, context, page, provenance: new BrowserSessionProvenance(randomUUID(), "safe") },
-        gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]), redactor: new SecretRedactor(),
-        store: memory.store, capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser), allowedOrigins: [origin],
-        prepareCapsule: async (session) => { registerPraxisVeilAuthority(session.page, { authority, userId: "create-order-local", environmentId: "test", browserContextId: session.provenance.contextId }); },
-        resolveKnownSecret: async (reference) => protectedValues[reference.replace(/-ref$/, "") as keyof typeof protectedValues],
-        persistSecret: async () => { throw new Error("must not persist protected output"); },
-        persistPublicValue: async () => ({ valueId: randomUUID() }),
-        persistOutputsAtomically: atomicProjectCapture(memory.store, async () => { throw new Error("must not persist protected output"); }, async () => ({ valueId: randomUUID() })),
-        verifyAssertions: verify,
-        ...(qualificationOnly ? { dispatchDisposition: "qualification_only" as const } : {}),
-      }).execute(operation);
-      expect(memory.state()).toBe(expectedState);
-      expect(result.result.mutation.outcome).toBe(expectedOutcome);
-      expect(dispatches).toBe(expectedPostCount);
-      expect(safeObservations).toEqual(expectedPostCount === 0 ? [] : [{ method: "POST", pathExact: true, clientIdPresent: true, clientSecretPresent: true, idempotencyKeyPresent: true, payloadExact: true }]);
-      const safeSerialized = JSON.stringify({ result: result.result, observations: safeObservations });
-      for (const value of Object.values(protectedValues)) expect(safeSerialized).not.toContain(value);
+      expect(memory.state()).toBe("completed");
     } finally {
       await browser.close();
     }
-  }, 60_000);
+  });
+
+  it.each([
+    {
+      label: "A valid Create response",
+      status: 201,
+      body: "canonical",
+      expectedState: "completed",
+      expectedOutcome: "confirmed_succeeded",
+      qualificationOnly: false,
+      acknowledged: true,
+      expectedPostCount: 1,
+    },
+    {
+      label: "D provider-proven validation rejection",
+      status: 400,
+      body: "error",
+      expectedState: "failed_not_applied",
+      expectedOutcome: "confirmed_not_applied",
+      qualificationOnly: false,
+      acknowledged: true,
+      expectedPostCount: 1,
+    },
+    {
+      label: "E success without canonical identity",
+      status: 201,
+      body: "missing",
+      expectedState: "recovery_required",
+      expectedOutcome: "unknown",
+      qualificationOnly: false,
+      acknowledged: true,
+      expectedPostCount: 1,
+    },
+    {
+      label: "H final activation without acknowledgement",
+      status: 201,
+      body: "canonical",
+      expectedState: "recovery_required",
+      expectedOutcome: "unknown",
+      qualificationOnly: false,
+      acknowledged: false,
+      expectedPostCount: 0,
+    },
+    {
+      label: "Q qualification policy withholds dispatch",
+      status: 201,
+      body: "canonical",
+      expectedState: "failed_not_applied",
+      expectedOutcome: "confirmed_not_applied",
+      qualificationOnly: true,
+      acknowledged: true,
+      expectedPostCount: 0,
+    },
+  ] as const)(
+    "certifies Create Order $label through the real protected kernel",
+    async ({
+      status,
+      body,
+      expectedState,
+      expectedOutcome,
+      qualificationOnly,
+      acknowledged,
+      expectedPostCount,
+    }) => {
+      const protectedValues = {
+        clientId: `client-${randomUUID()}`,
+        clientSecret: `secret-${randomUUID()}`,
+        idempotencyKey: `create-${randomUUID()}`,
+        payload: JSON.stringify({
+          orderType: "monthly-billing",
+          orderedFor: "client",
+          quantity: 1,
+          kitType: "gut-scan",
+          currency: "usd",
+          deliveryMode: "dropship",
+          clientId: randomUUID(),
+          shipping: {
+            country: "US",
+            addressLineOne: "100 Local Street",
+            city: "Boston",
+            state: "MA",
+            postalCode: "02108",
+          },
+        }),
+        orderId: randomUUID(),
+      };
+      let dispatches = 0;
+      const safeObservations: Array<Record<string, unknown>> = [];
+      const server = createServer((request, response) => {
+        if (request.url === "/" || request.url === "/new") {
+          response.setHeader("content-type", "text/html");
+          response.end(`<link rel="icon" href="data:,"><label>Client ID<input></label><label>Client secret<input></label><label>Idempotency key<input></label><label>JSON body<textarea></textarea></label><label><input type="checkbox">I understand this sends a real request that may create or change Partner data.</label><button aria-label="Save">Save</button><output aria-label="id">response schema</output><script>
+          document.querySelector('[aria-label=Save]').onclick=()=>{if(!document.querySelector('input[type=checkbox]').checked)return;fetch('/api/v1/partner-api/orders',{method:'POST',headers:{'x-vitract-client-id':document.querySelectorAll('input')[0].value,'x-vitract-client-secret':document.querySelectorAll('input')[1].value,'Idempotency-Key':document.querySelectorAll('input')[2].value,'content-type':'application/json'},body:document.querySelector('textarea').value})}
+        </script>`);
+          return;
+        }
+        if (request.url === "/safe") {
+          response.setHeader("content-type", "text/html");
+          response.end("<main>continued</main>");
+          return;
+        }
+        if (request.url !== "/api/v1/partner-api/orders") {
+          response.statusCode = 404;
+          response.end();
+          return;
+        }
+        dispatches += 1;
+        let payload = "";
+        request.on("data", (chunk) => {
+          payload += chunk.toString();
+        });
+        request.on("end", () => {
+          const observation = {
+            method: request.method,
+            pathExact: request.url === "/api/v1/partner-api/orders",
+            clientIdPresent: request.headers["x-vitract-client-id"] === protectedValues.clientId,
+            clientSecretPresent:
+              request.headers["x-vitract-client-secret"] === protectedValues.clientSecret,
+            idempotencyKeyPresent:
+              request.headers["idempotency-key"] === protectedValues.idempotencyKey,
+            payloadExact: payload === protectedValues.payload,
+          };
+          safeObservations.push(observation);
+          response.statusCode = status;
+          response.setHeader("content-type", "application/json");
+          response.end(
+            JSON.stringify(
+              body === "canonical"
+                ? { data: { id: protectedValues.orderId, referenceId: "local-reference" } }
+                : body === "missing"
+                  ? { data: { status: "created" } }
+                  : { error: { code: "VALIDATION_ERROR" } },
+            ),
+          );
+        });
+      });
+      servers.push(server);
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("server unavailable");
+      const origin = `http://127.0.0.1:${address.port}`;
+      const browser = await chromium.launch({
+        headless: true,
+        channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+      });
+      try {
+        const context = await browser.newContext();
+        const page = await context.newPage();
+        await page.goto(origin);
+        const memory = memoryStore();
+        const operation = transaction(origin);
+        operation.operationId = `create-order-${randomUUID()}`;
+        operation.entry = {
+          url: origin,
+          assertions: [{ type: "visible", target: intent("Save", "button") }],
+        };
+        operation.inputs = Object.fromEntries(
+          Object.keys(protectedValues)
+            .filter((key) => key !== "orderId")
+            .map((key) => [key, { classification: "known_secret", credentialRef: `${key}-ref` }]),
+        ) as ProtectedTransaction["inputs"];
+        if (acknowledged)
+          operation.inputs.mutationAcknowledged = { classification: "public", value: true };
+        operation.preparation.actions = [
+          {
+            type: "fillKnownSecret",
+            input: "clientId",
+            target: intent("Client ID", "textbox"),
+            effect: "replayable_setup",
+          },
+          {
+            type: "fillKnownSecret",
+            input: "clientSecret",
+            target: intent("Client secret", "textbox"),
+            effect: "replayable_setup",
+          },
+          {
+            type: "fillKnownSecret",
+            input: "idempotencyKey",
+            target: intent("Idempotency key", "textbox"),
+            effect: "replayable_setup",
+          },
+          {
+            type: "fillKnownSecret",
+            input: "payload",
+            target: intent("JSON body", "textbox"),
+            effect: "replayable_setup",
+          },
+          ...(acknowledged
+            ? [
+                {
+                  type: "checkPublicInput" as const,
+                  input: "mutationAcknowledged",
+                  target: intent(
+                    "I understand this sends a real request that may create or change Partner data.",
+                    "checkbox",
+                  ),
+                  effect: "replayable_setup" as const,
+                },
+              ]
+            : []),
+        ];
+        operation.preparation.assertions = acknowledged
+          ? [
+              {
+                type: "checkedMatchesInput",
+                target: intent(
+                  "I understand this sends a real request that may create or change Partner data.",
+                  "checkbox",
+                ),
+                input: "mutationAcknowledged",
+              },
+            ]
+          : [];
+        operation.mutation = {
+          action: {
+            type: "click",
+            target: intent("Save", "button"),
+            expectedEffect: { type: "none" },
+          },
+          kind: "one_time",
+          request: {
+            method: "POST",
+            pathTemplate: "/api/v1/partner-api/orders",
+            transports: ["fetch"],
+          },
+          response: { confirmedNotAppliedStatuses: [400, 401, 403, 404, 409, 429] },
+          reconciliation: { strategy: "persisted_outputs", requiredReferences: ["createdOrderId"] },
+        };
+        operation.extraction.outputs = [
+          {
+            classification: "public",
+            reference: "createdOrderId",
+            acquisition: {
+              target: intent("id", "value"),
+              classification: "public",
+              permittedMethods: ["protected_network_value"],
+              validation: { minimumLength: 1, maximumLength: 200 },
+            },
+            storage: { name: "Created Order ID", scope: "project" },
+          },
+        ];
+        operation.extraction.timeoutMs = 700;
+        operation.acquisitionReadiness.valueIntent = intent("id", "value");
+        operation.acquisitionReadiness.approvedMethods = ["protected_network_value"];
+        const authority = new VeilAuthority(
+          compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] }),
+        );
+        const result = await new ProtectedTransactionKernel({
+          safeSession: {
+            browser,
+            context,
+            page,
+            provenance: new BrowserSessionProvenance(randomUUID(), "safe"),
+          },
+          gate: new VeilRuntimeCoordinator([new VeilChannelCollector("evidence")]),
+          redactor: new SecretRedactor(),
+          store: memory.store,
+          capsuleFactory: new PlaywrightProtectedCapsuleFactory(openTestBrowser),
+          allowedOrigins: [origin],
+          prepareCapsule: async (session) => {
+            registerPraxisVeilAuthority(session.page, {
+              authority,
+              userId: "create-order-local",
+              environmentId: "test",
+              browserContextId: session.provenance.contextId,
+            });
+          },
+          resolveKnownSecret: async (reference) =>
+            protectedValues[reference.replace(/-ref$/, "") as keyof typeof protectedValues],
+          persistSecret: async () => {
+            throw new Error("must not persist protected output");
+          },
+          persistPublicValue: async () => ({ valueId: randomUUID() }),
+          persistOutputsAtomically: atomicProjectCapture(
+            memory.store,
+            async () => {
+              throw new Error("must not persist protected output");
+            },
+            async () => ({ valueId: randomUUID() }),
+          ),
+          verifyAssertions: verify,
+          ...(qualificationOnly ? { dispatchDisposition: "qualification_only" as const } : {}),
+        }).execute(operation);
+        expect(memory.state()).toBe(expectedState);
+        expect(result.result.mutation.outcome).toBe(expectedOutcome);
+        expect(dispatches).toBe(expectedPostCount);
+        expect(safeObservations).toEqual(
+          expectedPostCount === 0
+            ? []
+            : [
+                {
+                  method: "POST",
+                  pathExact: true,
+                  clientIdPresent: true,
+                  clientSecretPresent: true,
+                  idempotencyKeyPresent: true,
+                  payloadExact: true,
+                },
+              ],
+        );
+        const safeSerialized = JSON.stringify({
+          result: result.result,
+          observations: safeObservations,
+        });
+        for (const value of Object.values(protectedValues))
+          expect(safeSerialized).not.toContain(value);
+      } finally {
+        await browser.close();
+      }
+    },
+    60_000,
+  );
 });

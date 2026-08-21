@@ -75,12 +75,7 @@ export const safeResumeBoundarySchema = z.discriminatedUnion("kind", [
       referenceType: z.enum(["vault", "captured"]),
     })
     .strict(),
-  z
-    .object({
-      kind: z.literal("protected_surface_closed"),
-      verifier: interactionTargetIntentSchema,
-    })
-    .strict(),
+  z.object({ kind: z.literal("protected_surface_closed") }).strict(),
   z
     .object({
       kind: z.literal("known_safe_navigation"),
@@ -111,6 +106,7 @@ const mutationActionSchema = z.discriminatedUnion("type", [
       target: interactionTargetIntentSchema,
       expectedEffect: expectedEffectSchema.default({ type: "none" }),
       dispatchSemantics: z.enum(["read_only", "mutation"]).optional(),
+      activationMechanism: z.enum(["pointer", "element", "dom"]).optional(),
       timeoutMs: timeout,
     })
     .strict(),
@@ -750,6 +746,7 @@ export const currentActionSchema = z.union([
       target: interactionTargetIntentSchema,
       expectedEffect: expectedEffectSchema.default({ type: "none" }),
       dispatchSemantics: z.enum(["read_only", "mutation"]).optional(),
+      activationMechanism: z.enum(["pointer", "element", "dom"]).optional(),
       timeoutMs: timeout,
     })
     .strict(),
@@ -786,6 +783,21 @@ export const currentActionSchema = z.union([
     .strict(),
   z
     .object({
+      type: z.literal("protectedAuthentication"),
+      fields: z
+        .array(
+          z
+            .object({ target: interactionTargetIntentSchema, secretRef: z.string().uuid() })
+            .strict(),
+        )
+        .min(1)
+        .max(8),
+      submitTarget: interactionTargetIntentSchema,
+      timeoutMs: timeout,
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("check"),
       target: interactionTargetIntentSchema,
       checked: z.boolean(),
@@ -797,6 +809,7 @@ export const currentActionSchema = z.union([
       type: z.literal("press"),
       target: interactionTargetIntentSchema.optional(),
       key: z.enum(["Enter", "Escape", "Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]),
+      dispatchSemantics: z.enum(["read_only", "mutation"]).optional(),
       timeoutMs: timeout,
     })
     .strict(),

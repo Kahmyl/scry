@@ -7,14 +7,24 @@ import type {
 import type { Locator, Page } from "playwright";
 import type { Readable } from "node:stream";
 import {
+  clearPraxisClipboard,
+  observePraxisCopyEvent,
+  readPraxisClipboard,
+  readPraxisElementValue,
+  readPraxisSelectedText,
   armExpectedEffect,
+  clickReferencedTarget,
+  downloadFromReferencedTarget,
+  focusReferencedTarget,
   GroundingError,
+  observeTargetReference,
+  pressPageKey,
   resolveTarget,
   verifyExpectedEffect,
 } from "@scry/praxis";
 import { acquireProtectedVisualText } from "@scry/praxis";
 import { requirePraxisSuccess } from "@scry/praxis";
-import { markVeilProtectedClipboardTouched } from "@scry/veil";
+import { markProtectedClipboardTouched } from "./privacy-clipboard-runtime.js";
 
 import { acquireProtectedResponseValue } from "./protected-response-envelope.js";
 
@@ -108,7 +118,7 @@ export async function executeProtectedReveal(
   }
   const beforeUrl = page.url();
   const expectedEffect = armExpectedEffect(page, action.expectedEffect, action.timeoutMs);
-  await page.keyboard.press(action.key);
+  await pressPageKey(page, action.key);
   await verifyExpectedEffect(
     page,
     action.expectedEffect,
@@ -118,10 +128,7 @@ export async function executeProtectedReveal(
   );
 }
 
-export async function verifyProtectedRevealTarget(
-  page: Page,
-  operation: ProtectedTransaction,
-) {
+export async function verifyProtectedRevealTarget(page: Page, operation: ProtectedTransaction) {
   const action = operation.mutation.action;
   if (action.type === "click") {
     await resolveTarget(page, action.target);
@@ -135,7 +142,10 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
   const deadline = Date.now() + timeoutMs;
   const targetVariants = acquisitionTargetVariants(acquisition.target);
   const methods = acquisition.permittedMethods.includes("protected_network_value")
-    ? ["protected_network_value" as const, ...acquisition.permittedMethods.filter((method) => method !== "protected_network_value")]
+    ? [
+        "protected_network_value" as const,
+        ...acquisition.permittedMethods.filter((method) => method !== "protected_network_value"),
+      ]
     : [...acquisition.permittedMethods];
   const diagnostics: CandidateState[] = methods.map((method, candidate) => ({
     candidate,
@@ -159,10 +169,11 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
       diagnostic.firstAttemptedAt ??= new Date(started).toISOString();
       try {
         const remainingMs = Math.max(1, deadline - Date.now());
-        const ownershipMs = acquisitionAttemptOwnershipMs(
-          remainingMs,
-          method !== "protected_network_value" && !exhaustedMethods.has("protected_network_value"),
-        );
+        const hasEligibleNetworkFallback =
+          methods.includes("protected_network_value") &&
+          method !== "protected_network_value" &&
+          !exhaustedMethods.has("protected_network_value");
+        const ownershipMs = acquisitionAttemptOwnershipMs(remainingMs, hasEligibleNetworkFallback);
         const acquired = await ownAcquisitionAttempt(
           () => attemptAcquisitionMethod(page, acquisition, targetVariants, method, diagnostic),
           ownershipMs,
@@ -170,7 +181,16 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
         );
         if (acquired?.result) return { ...acquired, diagnostics };
       } catch (error) {
-        diagnostic.lastFailureCode = error instanceof GroundingError ? error.code : safeCode(error);
+        const failureCode = error instanceof GroundingError ? error.code : safeCode(error);
+        // A late retry timing out does not invalidate a factual failure already
+        // observed from this method. Preserve the stronger evidence instead of
+        // replacing it with the retry's scheduling outcome.
+        if (
+          !(error instanceof AcquisitionAttemptTimeoutError) ||
+          diagnostic.lastFailureCode === undefined
+        ) {
+          diagnostic.lastFailureCode = failureCode;
+        }
         if (error instanceof AcquisitionAttemptTimeoutError) retryPriorityMethod = true;
         if (
           method === "protected_network_value" &&
@@ -190,7 +210,8 @@ export async function acquireValue(page: Page, acquisition: AcquisitionIntent, t
             "PROTECTED_RESPONSE_OVERSIZED",
             "PROTECTED_RESPONSE_PARSE_FAILED",
           ].includes(diagnostic.lastFailureCode)
-        ) return { result: undefined, value: undefined, diagnostics };
+        )
+          return { result: undefined, value: undefined, diagnostics };
         if (error instanceof GroundingError) {
           diagnostic.matchCount = error.code === "TARGET_AMBIGUOUS" ? "many" : "none";
           diagnostic.containerResolved = error.code !== "TARGET_NOT_FOUND";
@@ -237,11 +258,13 @@ async function attemptAcquisitionMethod(
       diagnostic.matchCount = "one";
       diagnostic.visibility = "visible";
       diagnostic.accessibility = "available";
-      if (await matchesProhibitedSource(
-        page,
-        result.locator,
-        acquisition.prohibitedSourceTargets ?? [],
-      )) {
+      if (
+        await matchesProhibitedSource(
+          page,
+          result.locator,
+          acquisition.prohibitedSourceTargets ?? [],
+        )
+      ) {
         diagnostic.lastFailureCode = "ACQUISITION_SOURCE_PROHIBITED";
         continue;
       }
@@ -275,8 +298,10 @@ function validateAcquired(
     return { result: acquired, value: undefined };
   }
   const normalized = acquired.value.trim();
-  if (valid(normalized, acquisition.validation) &&
-    !isSemanticIdentityEcho(normalized, acquisition.target)) {
+  if (
+    valid(normalized, acquisition.validation) &&
+    !isSemanticIdentityEcho(normalized, acquisition.target)
+  ) {
     acquired.value = normalized;
     return { result: acquired, value: normalized };
   }
@@ -298,7 +323,9 @@ function acquisitionAttemptOwnershipMs(remainingMs: number, reservePriorityRetry
     : remainingMs;
 }
 
-async function ownAcquisitionAttempt<T extends { result: ProtectedAcquisitionResult; value: string | undefined } | undefined>(
+async function ownAcquisitionAttempt<
+  T extends { result: ProtectedAcquisitionResult; value: string | undefined } | undefined,
+>(
   work: () => Promise<T>,
   timeoutMs: number,
   method: AcquisitionIntent["permittedMethods"][number],
@@ -306,17 +333,23 @@ async function ownAcquisitionAttempt<T extends { result: ProtectedAcquisitionRes
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timedOut = false;
   const attempt = Promise.resolve().then(work);
-  attempt.then((late) => {
-    if (timedOut && late?.result.kind === "captured_value") {
-      late.result.value = "";
-      late.value = undefined;
-    }
-  }, () => undefined);
+  attempt.then(
+    (late) => {
+      if (timedOut && late?.result.kind === "captured_value") {
+        late.result.value = "";
+        late.value = undefined;
+      }
+    },
+    () => undefined,
+  );
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      timedOut = true;
-      reject(new AcquisitionAttemptTimeoutError(method));
-    }, Math.max(1, timeoutMs));
+    timer = setTimeout(
+      () => {
+        timedOut = true;
+        reject(new AcquisitionAttemptTimeoutError(method));
+      },
+      Math.max(1, timeoutMs),
+    );
     timer.unref?.();
   });
   try {
@@ -347,10 +380,13 @@ async function matchesProhibitedSource(
         const prohibitedElement = await prohibited.locator.elementHandle();
         if (!prohibitedElement) continue;
         try {
-          if (await candidateElement.evaluate(
-            (element, other) => element === other,
-            prohibitedElement,
-          )) return true;
+          if (
+            await candidateElement.evaluate(
+              (element, other) => element === other,
+              prohibitedElement,
+            )
+          )
+            return true;
         } finally {
           await prohibitedElement.dispose();
         }
@@ -364,9 +400,12 @@ async function matchesProhibitedSource(
   }
 }
 
-function acquisitionTargetVariants(target: AcquisitionIntent["target"]): AcquisitionIntent["target"][] {
+function acquisitionTargetVariants(
+  target: AcquisitionIntent["target"],
+): AcquisitionIntent["target"][] {
   const variants = [target];
-  const identity = target.preferredEvidence.names[0] ??
+  const identity =
+    target.preferredEvidence.names[0] ??
     target.preferredEvidence.labels[0] ??
     target.preferredEvidence.expectedText;
   const neutral = {
@@ -380,9 +419,8 @@ function acquisitionTargetVariants(target: AcquisitionIntent["target"]): Acquisi
     },
   };
   if (target.preferredEvidence.roles.length) variants.push(neutral);
-  const pageScoped = target.scope.kind === "page"
-    ? neutral
-    : { ...neutral, scope: { kind: "page" as const } };
+  const pageScoped =
+    target.scope.kind === "page" ? neutral : { ...neutral, scope: { kind: "page" as const } };
   if (target.scope.kind !== "page") variants.push(pageScoped);
   if (identity) {
     variants.push({
@@ -458,74 +496,73 @@ async function acquireByMethod(
     case "dom_text":
       return target.textContent().then((value) => capture(value ?? ""));
     case "semantic_field_value":
-      return target
-        .evaluate((element) =>
-          element instanceof HTMLInputElement ||
-          element instanceof HTMLTextAreaElement ||
-          element instanceof HTMLSelectElement
-            ? element.value
-            : (element.textContent ?? ""),
-        )
-        .then(capture);
+      return readPraxisElementValue(target).then(capture);
     case "copy_control": {
       const group = target.locator(
         "xpath=ancestor::*[self::fieldset or @role='group' or self::div][1]",
       );
       const copy = group.getByRole("button", { name: /copy/i });
       if ((await copy.count()) !== 1) throw new AcquisitionError("COPY_CONTROL_UNRESOLVED");
-      if (acquisition.objective?.kind === "verify_user_copy_experience") {
-        const copied = copyEventObserved(page, () => copy.click());
-        markVeilProtectedClipboardTouched(page);
-        if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
-        return { kind: "copy_experience_verified", adapter: "copy_control" };
+      const copyReference = await observeTargetReference(page, copy);
+      try {
+        if (acquisition.objective?.kind === "verify_user_copy_experience") {
+          const copied = observePraxisCopyEvent(page, () => clickReferencedTarget(copyReference));
+          markProtectedClipboardTouched(page);
+          if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
+          return { kind: "copy_experience_verified", adapter: "copy_control" };
+        }
+        await clickReferencedTarget(copyReference);
+        const lifecycleOwned = markProtectedClipboardTouched(page);
+        const value = await readPraxisClipboard(page);
+        if (!lifecycleOwned) await clearPraxisClipboard(page);
+        return capture(value);
+      } finally {
+        await copyReference.dispose();
       }
-      await copy.click();
-      const lifecycleOwned = markVeilProtectedClipboardTouched(page);
-      const value = await page.evaluate(() => navigator.clipboard.readText());
-      if (!lifecycleOwned) await page.evaluate(() => navigator.clipboard.writeText(""));
-      return capture(value);
     }
     case "selected_text":
     case "scoped_text_selection":
-      return target
-        .evaluate((element) => {
-          const selection = getSelection();
-          const range = document.createRange();
-          range.selectNodeContents(element);
-          selection?.removeAllRanges();
-          selection?.addRange(range);
-          const value = selection?.toString() ?? "";
-          selection?.removeAllRanges();
-          return value;
-        })
-        .then(capture);
+      return readPraxisSelectedText(target).then(capture);
     case "keyboard_copy":
     case "clipboard_event": {
-      await target.focus();
-      await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-      const copied = copyEventObserved(page, () =>
-        page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C"),
-      );
-      markVeilProtectedClipboardTouched(page);
-      if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
-      await page.keyboard.press("Escape").catch(() => undefined);
-      return { kind: "copy_experience_verified", adapter: canonicalMethod(method) };
+      const reference = await observeTargetReference(page, target);
+      try {
+        await focusReferencedTarget(reference);
+        await pressPageKey(page, process.platform === "darwin" ? "Meta+A" : "Control+A");
+        const copied = observePraxisCopyEvent(page, () =>
+          pressPageKey(page, process.platform === "darwin" ? "Meta+C" : "Control+C"),
+        );
+        markProtectedClipboardTouched(page);
+        if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
+        await pressPageKey(page, "Escape").catch(() => undefined);
+        return { kind: "copy_experience_verified", adapter: canonicalMethod(method) };
+      } finally {
+        await reference.dispose();
+      }
     }
     case "focused_keyboard_selection": {
-      await target.focus();
-      await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-      const copied = copyEventObserved(page, () =>
-        page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C"),
-      );
-      const lifecycleOwned = markVeilProtectedClipboardTouched(page);
-      if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
-      const value = await page.evaluate(() => navigator.clipboard.readText());
-      if (!lifecycleOwned) await page.evaluate(() => navigator.clipboard.writeText(""));
-      await page.keyboard.press("Escape").catch(() => undefined);
-      return capture(value);
+      const reference = await observeTargetReference(page, target);
+      try {
+        await focusReferencedTarget(reference);
+        await pressPageKey(page, process.platform === "darwin" ? "Meta+A" : "Control+A");
+        const copied = observePraxisCopyEvent(page, () =>
+          pressPageKey(page, process.platform === "darwin" ? "Meta+C" : "Control+C"),
+        );
+        const lifecycleOwned = markProtectedClipboardTouched(page);
+        if (!(await copied)) throw new AcquisitionError("COPY_EXPERIENCE_NOT_OBSERVED");
+        const value = await readPraxisClipboard(page);
+        if (!lifecycleOwned) await clearPraxisClipboard(page);
+        await pressPageKey(page, "Escape").catch(() => undefined);
+        return capture(value);
+      } finally {
+        await reference.dispose();
+      }
     }
     case "download_content": {
-      const [download] = await Promise.all([page.waitForEvent("download"), target.click()]);
+      const reference = await observeTargetReference(page, target);
+      const download = await downloadFromReferencedTarget(reference).finally(() =>
+        reference.dispose(),
+      );
       const stream = await download.createReadStream();
       if (!stream) throw new AcquisitionError("DOWNLOAD_STREAM_UNAVAILABLE");
       return readBoundedText(stream, acquisition.validation.maximumLength).then(capture);
@@ -546,26 +583,6 @@ async function acquireByMethod(
     case "protected_visual_reading":
       return acquireProtectedVisualText(page, intent).then(capture);
   }
-}
-
-async function copyEventObserved(page: Page, perform: () => Promise<unknown>) {
-  await page.evaluate(() => {
-    (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved = false;
-    document.addEventListener(
-      "copy",
-      () => {
-        (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved =
-          true;
-      },
-      { once: true },
-    );
-  });
-  await perform();
-  return page.evaluate(
-    () =>
-      (globalThis as typeof globalThis & { __scryCopyObserved?: boolean }).__scryCopyObserved ===
-      true,
-  );
 }
 
 function assertObjectiveMethods(acquisition: AcquisitionIntent) {

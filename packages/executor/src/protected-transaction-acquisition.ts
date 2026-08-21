@@ -24,11 +24,14 @@ export async function verifyProtectedAcquisitionReadiness(
   }
   try {
     const ceremony = await resolveTarget(page, contract.ceremonyIntent);
+    // Agent-directed V2 operations always take the exact-reference branch. The
+    // score check is retained only for historical whole-Flow drain fixtures.
     if (
-      ceremony.diagnostic.confidence < contract.minimumConfidence ||
-      ceremony.diagnostic.confidenceMargin < contract.minimumConfidenceMargin
+      !contract.ceremonyIntent.authoritativeReference &&
+      (ceremony.diagnostic.confidence < contract.minimumConfidence ||
+        ceremony.diagnostic.confidenceMargin < contract.minimumConfidenceMargin)
     ) {
-      throw new Error("confidence");
+      throw new Error("legacy-confidence");
     }
   } catch {
     throw new PhaseError("ACQUISITION_NOT_READY", "preparation", "do_not_retry");
@@ -60,7 +63,7 @@ export async function acquireProtectedOutputs(
 ): Promise<AcquiredProtectedOutputSet> {
   const deadline = Date.now() + transaction.extraction.timeoutMs;
   const protectedInputTargets = (transaction.preparation?.actions ?? []).flatMap((action) =>
-    action.type === "fillKnownSecret" ? [action.target] : []
+    action.type === "fillKnownSecret" ? [action.target] : [],
   );
   const extracted = await runProtectedStage({
     stage: "protected_output_acquisition",
@@ -68,9 +71,7 @@ export async function acquireProtectedOutputs(
     signal: dependencies.signal,
     timeoutCode: "PROTECTED_OUTPUT_ACQUISITION_TIMEOUT",
     dispatchPosition:
-      transaction.mutation.dispatchSemantics === "read_only"
-        ? "read_only"
-        : "post_dispatch",
+      transaction.mutation.dispatchSemantics === "read_only" ? "read_only" : "post_dispatch",
     work: (stageSignal) =>
       Promise.all(
         transaction.extraction.outputs.map(async (output) => {
@@ -122,9 +123,9 @@ export async function acquireProtectedOutputs(
     if (!extraction.result || extraction.result.kind !== "captured_value") {
       if (output.classification === "protected") facts.protectedExtraction = "not_found";
       else facts.publicExtraction = "not_found";
-      const networkFailure = extraction.diagnostics
-        .find((diagnostic) => diagnostic.method === "protected_network_value")
-        ?.lastFailureCode;
+      const networkFailure = extraction.diagnostics.find(
+        (diagnostic) => diagnostic.method === "protected_network_value",
+      )?.lastFailureCode;
       facts.reasonCode = networkFailure?.startsWith("PROTECTED_RESPONSE_")
         ? networkFailure
         : output.classification === "protected"
@@ -137,8 +138,12 @@ export async function acquireProtectedOutputs(
     if (output.classification === "protected") dependencies.redactor.add(extraction.result.value);
     acquired.push({ output, value: extraction.result.value, adapter: extraction.result.adapter });
   }
-  facts.protectedExtraction = acquired.some(({ output }) => output.classification === "protected") ? "captured" : "not_attempted";
-  facts.publicExtraction = acquired.some(({ output }) => output.classification === "public") ? "captured" : "not_attempted";
+  facts.protectedExtraction = acquired.some(({ output }) => output.classification === "protected")
+    ? "captured"
+    : "not_attempted";
+  facts.publicExtraction = acquired.some(({ output }) => output.classification === "public")
+    ? "captured"
+    : "not_attempted";
   return acquired;
 }
 
@@ -151,26 +156,35 @@ export async function persistAcquiredProtectedOutputs(
 ) {
   if (acquired.length) {
     if (!dependencies.persistOutputsAtomically)
-      throw new PhaseError("ATOMIC_OUTPUT_PERSISTENCE_AUTHORITY_REQUIRED", "persistence", "do_not_retry");
+      throw new PhaseError(
+        "ATOMIC_OUTPUT_PERSISTENCE_AUTHORITY_REQUIRED",
+        "persistence",
+        "do_not_retry",
+      );
     try {
       const persisted = await runProtectedStage({
         stage: "atomic_persistence",
         timeoutMs: transaction.extraction.timeoutMs,
         signal: dependencies.signal,
         timeoutCode: "ATOMIC_OUTPUT_PERSISTENCE_TIMEOUT",
-        dispatchPosition: transaction.mutation.dispatchSemantics === "read_only" ? "read_only" : "post_dispatch",
-        work: () => dependencies.persistOutputsAtomically!({
-        operationId: transaction.operationId,
-        claim,
-        outputs: acquired.map(({ output, value }) => ({
-          reference: output.reference,
-          classification: output.classification,
-          name: output.classification === "protected" ? output.storage.credentialName : output.storage.name,
-          value,
-          scope: output.storage.scope,
-        })),
-        externalResourceBindings: transaction.extraction.externalResourceBindings ?? [],
-        }),
+        dispatchPosition:
+          transaction.mutation.dispatchSemantics === "read_only" ? "read_only" : "post_dispatch",
+        work: () =>
+          dependencies.persistOutputsAtomically!({
+            operationId: transaction.operationId,
+            claim,
+            outputs: acquired.map(({ output, value }) => ({
+              reference: output.reference,
+              classification: output.classification,
+              name:
+                output.classification === "protected"
+                  ? output.storage.credentialName
+                  : output.storage.name,
+              value,
+              scope: output.storage.scope,
+            })),
+            externalResourceBindings: transaction.extraction.externalResourceBindings ?? [],
+          }),
       });
       const references = persisted.references;
       for (const { output, adapter } of acquired) {
@@ -180,8 +194,12 @@ export async function persistAcquiredProtectedOutputs(
         if (output.classification === "protected" && stored.credentialId) {
           facts.credentialReferences[output.reference] = stored.credentialId;
           facts.protectedAcquisitionEvidence.push({
-            reference: output.reference, adapter, objective: "capture_value",
-            outcome: "value_persisted", capsule: "destroyed", evidenceClosure: "sealed",
+            reference: output.reference,
+            adapter,
+            objective: "capture_value",
+            outcome: "value_persisted",
+            capsule: "destroyed",
+            evidenceClosure: "sealed",
           });
         } else if (output.classification === "public" && stored.valueId) {
           facts.publicValueReferences[output.reference] = stored.valueId;
@@ -195,9 +213,19 @@ export async function persistAcquiredProtectedOutputs(
         facts.publicPersistence = "confirmed";
       return persisted.claim;
     } catch {
-      facts.protectedPersistence = acquired.some(({ output }) => output.classification === "protected") ? "uncertain" : "not_attempted";
-      facts.publicPersistence = acquired.some(({ output }) => output.classification === "public") ? "uncertain" : "not_attempted";
-      facts.credentialSecurity = acquired.some(({ output }) => output.classification === "protected") ? "compromised" : facts.credentialSecurity;
+      facts.protectedPersistence = acquired.some(
+        ({ output }) => output.classification === "protected",
+      )
+        ? "uncertain"
+        : "not_attempted";
+      facts.publicPersistence = acquired.some(({ output }) => output.classification === "public")
+        ? "uncertain"
+        : "not_attempted";
+      facts.credentialSecurity = acquired.some(
+        ({ output }) => output.classification === "protected",
+      )
+        ? "compromised"
+        : facts.credentialSecurity;
       throw new PhaseError("ATOMIC_OUTPUT_PERSISTENCE_FAILED", "persistence", "manual_review");
     } finally {
       for (const item of acquired) item.value = "";
@@ -286,7 +314,13 @@ export async function recoverProtectedAcquisition(
         facts: {},
       });
     }
-    claim = await extractAndPersistProtectedOutputs(page, recoveryTransaction, dependencies, facts, claim);
+    claim = await extractAndPersistProtectedOutputs(
+      page,
+      recoveryTransaction,
+      dependencies,
+      facts,
+      claim,
+    );
     if (!protectedOutputsPersisted(transaction, facts)) {
       await new Promise((resolve) => setTimeout(resolve, Math.min(250, expiresAt - Date.now())));
     }

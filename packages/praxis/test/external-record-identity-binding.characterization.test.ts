@@ -32,7 +32,8 @@ function boundRecord(issuance: Issuance, records: ProviderRecord[]) {
     issuance.environmentId !== owner.environmentId ||
     issuance.provider !== owner.provider ||
     issuance.applicationId !== owner.applicationId
-  ) return undefined;
+  )
+    return undefined;
   if (!issuance.publicRecordId) return undefined;
   const matches = records.filter((record) => record.publicRecordId === issuance.publicRecordId);
   return matches.length === 1 ? matches[0] : undefined;
@@ -43,8 +44,13 @@ function revokeIntent(publicRecordId: string): InteractionTargetIntent {
     concept: "revoke issuance-bound provider credential",
     requiredCapabilities: ["focusable", "pointer_activatable"],
     preferredEvidence: {
-      roles: ["button"], names: ["Revoke"], labels: [], descriptions: [],
-      placeholders: [], inputTypes: [], testIds: [],
+      roles: ["button"],
+      names: ["Revoke"],
+      labels: [],
+      descriptions: [],
+      placeholders: [],
+      inputTypes: [],
+      testIds: [],
     },
     scope: { kind: "row", name: publicRecordId },
     relations: [],
@@ -77,7 +83,9 @@ describe("external provider record identity binding characterization", () => {
   afterAll(async () => browser.close());
 
   it("A: proves one record only from an issuance-bound public record ID", () => {
-    const records = [{ publicRecordId: "record-a", publicLabel: "Alpha", status: "active" }] as const;
+    const records = [
+      { publicRecordId: "record-a", publicLabel: "Alpha", status: "active" },
+    ] as const;
     expect(boundRecord({ ...owner, publicRecordId: "record-a" }, [...records])).toEqual(records[0]);
   });
 
@@ -86,7 +94,9 @@ describe("external provider record identity binding characterization", () => {
       { publicRecordId: "record-a", publicLabel: "Alpha", status: "active" },
       { publicRecordId: "record-b", publicLabel: "Beta", status: "active" },
     ];
-    expect(boundRecord({ ...owner, publicRecordId: "record-b" }, records)?.publicRecordId).toBe("record-b");
+    expect(boundRecord({ ...owner, publicRecordId: "record-b" }, records)?.publicRecordId).toBe(
+      "record-b",
+    );
   });
 
   it("C: distinguishable rows without issuance binding remain insufficient", () => {
@@ -98,21 +108,23 @@ describe("external provider record identity binding characterization", () => {
   });
 
   it("D: cardinality one without issuance binding remains insufficient", () => {
-    expect(boundRecord(owner, [
-      { publicRecordId: "record-a", publicLabel: "Alpha", status: "active" },
-    ])).toBeUndefined();
+    expect(
+      boundRecord(owner, [{ publicRecordId: "record-a", publicLabel: "Alpha", status: "active" }]),
+    ).toBeUndefined();
   });
 
   it("E: an observed label cannot create missing historical provenance", () => {
-    expect(boundRecord(owner, [
-      { publicRecordId: "record-a", publicLabel: "Alpha", status: "active" },
-    ])).toBeUndefined();
+    expect(
+      boundRecord(owner, [{ publicRecordId: "record-a", publicLabel: "Alpha", status: "active" }]),
+    ).toBeUndefined();
   });
 
   it("F: timestamp proximity is not record identity", () => {
-    expect(boundRecord({ ...owner, createdAt: "2030-01-01T00:00:00Z" }, [
-      { publicRecordId: "record-a", publicLabel: "Alpha", status: "active" },
-    ])).toBeUndefined();
+    expect(
+      boundRecord({ ...owner, createdAt: "2030-01-01T00:00:00Z" }, [
+        { publicRecordId: "record-a", publicLabel: "Alpha", status: "active" },
+      ]),
+    ).toBeUndefined();
   });
 
   it("G: a duplicated safe public descriptor remains insufficient", () => {
@@ -144,10 +156,14 @@ describe("external provider record identity binding characterization", () => {
   });
 
   it("J: a forbidden secret-only distinction cannot select a public record", async () => {
-    await page.setContent(row({ publicRecordId: "record-a", publicLabel: "Alpha", status: "active" }));
-    await expect(resolveTarget(page, revokeIntent("secret-only-discriminator"))).rejects.toMatchObject({
-      code: "TARGET_SCOPE_NOT_FOUND",
-      diagnostic: { safeActions: ["retry_after_render", "revise_intent"] },
+    await page.setContent(
+      row({ publicRecordId: "record-a", publicLabel: "Alpha", status: "active" }),
+    );
+    await expect(
+      resolveTarget(page, revokeIntent("secret-only-discriminator")),
+    ).rejects.toMatchObject({
+      code: "TARGET_SCOPE_INVALID",
+      diagnostic: { safeActions: ["narrow_scope", "revise_intent"] },
     });
   });
 });

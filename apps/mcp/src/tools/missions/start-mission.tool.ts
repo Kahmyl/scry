@@ -32,7 +32,7 @@ export function registerStartMissionTool(server: McpServer, client: ScryApiClien
     {
       title: "Start Mission",
       description:
-        "Create a durable work item only after listing Missions and confirming no related non-terminal Mission should be resumed or edited.",
+        "Create a durable work item only after listing Missions. If a non-terminal Mission plausibly overlaps the request and the user has not already decided, ask whether to continue it or start distinct work. Normal creation with no related durable-identity collision does not require user-choice attestation. If distinctReason is used to intentionally bypass a related Mission collision, distinctAuthority must attest the user's explicit new-work choice; never construct it merely to bypass the comparison.",
       annotations: writes,
       inputSchema: {
         projectId: uuid,
@@ -43,6 +43,14 @@ export function registerStartMissionTool(server: McpServer, client: ScryApiClien
         connectionId: z.string().trim().min(1).max(500).optional(),
         idempotencyKey: z.string().trim().min(8).max(200).optional(),
         distinctReason: z.string().trim().min(1).max(2000).optional(),
+        distinctAuthority: z
+          .object({
+            confirmedUserAuthorized: z.literal(true),
+            selection: z.literal("start_distinct_mission"),
+            source: z.enum(["current_request_explicit", "followup_explicit_choice"]),
+          })
+          .strict()
+          .optional(),
       },
     },
     async ({ projectId, idempotencyKey, ...body }) =>

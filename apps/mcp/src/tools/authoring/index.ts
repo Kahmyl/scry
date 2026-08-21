@@ -5,7 +5,6 @@ import { registerCreateFlowDraftTool } from "./create-flow-draft.tool.js";
 import { registerGetFlowDraftTool } from "./get-flow-draft.tool.js";
 import { registerListMissionFlowDraftsTool } from "./list-mission-flow-drafts.tool.js";
 import { registerAbandonFlowDraftTool } from "./abandon-flow-draft.tool.js";
-import { registerCompileAndCertifyFlowTool } from "./compile-and-certify-flow.tool.js";
 import { registerPublishFlowDraftTool } from "./publish-flow-draft.tool.js";
 import { registerListAuthenticationContractsTool } from "./list-authentication-contracts.tool.js";
 import { registerListAuthenticatedSessionLeasesTool } from "./list-authenticated-session-leases.tool.js";
@@ -16,7 +15,6 @@ export function registerAuthoringTools(server: McpServer, client: ScryApiClient)
   registerGetFlowDraftTool(server, client);
   registerListMissionFlowDraftsTool(server, client);
   registerAbandonFlowDraftTool(server, client);
-  registerCompileAndCertifyFlowTool(server, client);
   registerPublishFlowDraftTool(server, client);
   registerListAuthenticationContractsTool(server, client);
   registerListAuthenticatedSessionLeasesTool(server, client);

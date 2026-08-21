@@ -9,10 +9,7 @@ import {
   type InteractionTargetIntent,
   type PraxisCandidateResponse,
 } from "@scry/contracts";
-import type {
-  createAuthoringBrowserSession,
-  AuthoringBrowserSession,
-} from "@scry/executor";
+import type { createAuthoringBrowserSession, AuthoringBrowserSession } from "@scry/executor";
 import { runProtectedStage } from "@scry/executor";
 import { inspectPraxisCandidates } from "@scry/praxis";
 
@@ -214,19 +211,22 @@ export function createAuthoringRuntimeOwner(options: {
         return;
       }
 
-      const claimHeartbeat = setInterval(() => {
-        void options.commands
-          .heartbeatClaim({
-            commandId: command.id,
-            browserLeaseId: command.browserLeaseId,
-            workerId: options.workerId,
-            claimToken: command.claimToken,
-          })
-          .then((retained) => {
-            if (!retained) void stopOwnedSession(command.browserLeaseId, false);
-          })
-          .catch(() => undefined);
-      }, Math.max(250, Math.floor(options.heartbeatMs / 2)));
+      const claimHeartbeat = setInterval(
+        () => {
+          void options.commands
+            .heartbeatClaim({
+              commandId: command.id,
+              browserLeaseId: command.browserLeaseId,
+              workerId: options.workerId,
+              claimToken: command.claimToken,
+            })
+            .then((retained) => {
+              if (!retained) void stopOwnedSession(command.browserLeaseId, false);
+            })
+            .catch(() => undefined);
+        },
+        Math.max(250, Math.floor(options.heartbeatMs / 2)),
+      );
       try {
         await executeCommand(owned, command);
       } finally {

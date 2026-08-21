@@ -32,15 +32,19 @@ export async function configureVitractPresentationAuthority(database: Database) 
       throw new Error("VITRACT_PRESENTATION_AUTHORITY_OWNER_MISMATCH");
     const policy = executionPolicySchema.parse(result.rows[0]!.policy);
     const authorities = policy.externalResourcePresentationAuthorities ?? [];
-    const sameRevision = authorities.filter((candidate) =>
-      candidate.provider === EXPECTED.authority.provider &&
-      candidate.resourceKind === EXPECTED.authority.resourceKind &&
-      candidate.resourceScope === EXPECTED.authority.resourceScope &&
-      candidate.contractVersion === EXPECTED.authority.contractVersion &&
-      candidate.revision === EXPECTED.authority.revision,
+    const sameRevision = authorities.filter(
+      (candidate) =>
+        candidate.provider === EXPECTED.authority.provider &&
+        candidate.resourceKind === EXPECTED.authority.resourceKind &&
+        candidate.resourceScope === EXPECTED.authority.resourceScope &&
+        candidate.contractVersion === EXPECTED.authority.contractVersion &&
+        candidate.revision === EXPECTED.authority.revision,
     );
-    if (sameRevision.length > 1 || (sameRevision.length === 1 &&
-      JSON.stringify(sameRevision[0]) !== JSON.stringify(EXPECTED.authority)))
+    if (
+      sameRevision.length > 1 ||
+      (sameRevision.length === 1 &&
+        JSON.stringify(sameRevision[0]) !== JSON.stringify(EXPECTED.authority))
+    )
       throw new Error("VITRACT_PRESENTATION_AUTHORITY_REVISION_CONFLICT");
     if (sameRevision.length === 1) return "already_configured" as const;
     const superseded = authorities.map((candidate) =>
@@ -57,7 +61,9 @@ export async function configureVitractPresentationAuthority(database: Database) 
       externalResourcePresentationAuthorities: [...superseded, EXPECTED.authority],
     });
     await client.query(`UPDATE environments SET policy=$3::jsonb WHERE id=$1 AND project_id=$2`, [
-      EXPECTED.environmentId, EXPECTED.projectId, JSON.stringify(updated),
+      EXPECTED.environmentId,
+      EXPECTED.projectId,
+      JSON.stringify(updated),
     ]);
     return "configured" as const;
   });
@@ -69,9 +75,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const result = await configureVitractPresentationAuthority(database);
     process.stdout.write(`vitractPresentationAuthority: ${result}\n`);
   } catch (error) {
-    const code = error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)
-      ? error.message
-      : "VITRACT_PRESENTATION_AUTHORITY_CONFIGURATION_FAILED";
+    const code =
+      error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)
+        ? error.message
+        : "VITRACT_PRESENTATION_AUTHORITY_CONFIGURATION_FAILED";
     process.stderr.write(`${code}\n`);
     process.exitCode = 1;
   } finally {

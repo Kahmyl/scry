@@ -43,7 +43,15 @@ export type AtomicOutputCapture = (input: {
   externalResourceBindings: import("@scry/contracts").ProtectedTransaction["extraction"]["externalResourceBindings"];
 }) => Promise<{
   claim: import("./protected-transaction-coordinator.js").ProtectedOperationClaim;
-  references: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "run" | "project" }>;
+  references: Record<
+    string,
+    {
+      classification: "public" | "protected";
+      credentialId?: string;
+      valueId?: string;
+      scope: "run" | "project";
+    }
+  >;
 }>;
 export type PublicValueResolver = (reference: string) => Promise<string>;
 export type BrowserStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
@@ -54,6 +62,16 @@ export type ExecuteOptions = {
   outputDirectory: string;
   /** Internal ownership of external expected-effect verification. */
   expectedEffectVerificationOwner?: "kernel" | "praxis";
+  /**
+   * Runtime-only operation identity for recording-boundary provenance.
+   * This is not authored progression authority.
+   */
+  recordingOperationId?: string;
+  /**
+   * Runtime-only hint that this single-operation execution is expected to
+   * cross an ordinary navigation/document boundary.
+   */
+  expectedDocumentTransition?: boolean;
   runId?: string;
   attemptId?: string;
   browserChannel?: string;
@@ -66,19 +84,6 @@ export type ExecuteOptions = {
     context: BrowserContext;
     page: Page;
   }>;
-  executeNativeControl?: (
-    page: Page,
-    target: import("@scry/contracts").InteractionTargetIntent,
-    operation:
-      | { type: "click"; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number }
-      | { type: "fill"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number; protected: boolean }
-      | { type: "select"; value: string; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number }
-      | { type: "check"; checked: boolean; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number }
-      | { type: "press"; key: string; timeoutMs?: number; resolutionTimeoutMs?: number; preDispatchDeadlineAt?: number }
-      | { type: "scroll"; deltaY: number; preDispatchDeadlineAt?: number }
-      | { type: "waitFor"; state: "visible" | "hidden" | "attached" | "detached"; timeoutMs?: number; preDispatchDeadlineAt?: number },
-    beforeDispatch?: () => Promise<void>,
-  ) => Promise<void>;
   executeNativeNavigation?: (
     page: Page,
     url: string,
@@ -99,19 +104,6 @@ export type ExecuteOptions = {
     allowedOrigins: string[],
     beforeDispatch?: () => Promise<void>,
   ) => Promise<{ status: number; classification: "expected" | "unexpected" }>;
-  /** Per-request composition policy. M2 grouped authoring never permits Praxis fallback. */
-  nativeResolutionPolicy?: "native_then_praxis" | "native_only";
-  verifyNativeExpectedEffect?: (
-    page: Page,
-    effect: import("@scry/contracts").ExpectedEffect,
-    beforeUrl: string,
-    timeoutMs: number,
-  ) => Promise<void>;
-  onNativeResolution?: (input: {
-    status: "resolved" | "fallback";
-    reasonCode?: string;
-    durationMs: number;
-  }) => void | Promise<void>;
   onExpectedEffectVerification?: (input: {
     status: "succeeded" | "failed";
     reasonCode?: string;
@@ -119,6 +111,8 @@ export type ExecuteOptions = {
   }) => void | Promise<void>;
   /** Internal authoring boundary: execute against the already-owned safe session. */
   existingSafeSession?: import("./browser-session.js").SafeBrowserSession;
+  /** The borrowed session is already a Veil-protected live Praxis session. */
+  existingProtectedSession?: boolean;
   captureBrowserState?: (state: BrowserStorageState) => void | Promise<void>;
   captureSuccessorCheckpoint?: (checkpoint: {
     schemaVersion: 1;
@@ -202,7 +196,10 @@ export type ExecuteOptions = {
   onMutationDispatch?: () => void | Promise<void>;
   /** Trusted runtime-only disposition; absent from authored plans and actions. */
   dispatchDisposition?: "execute" | "qualification_only";
-  onReadyToDispatch?: (input: { operationId: string; disposition: "execute" | "qualification_only" }) => void | Promise<void>;
+  onReadyToDispatch?: (input: {
+    operationId: string;
+    disposition: "execute" | "qualification_only";
+  }) => void | Promise<void>;
   /** Internal phase signal used to derive privacy settlement from lifecycle facts. */
   onPrivacyBoundary?: (phase: "entered" | "verified" | "sealed") => void | Promise<void>;
   readinessTimeoutMultiplier?: number;

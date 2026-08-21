@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { ArtifactStore, VeilEvidenceAdmissionProof } from "@scry/artifact";
+import type { ArtifactStore, VeilEvidenceAdmissionProof } from "@scry/chronicle/legacy";
 import type { Database } from "../../infrastructure/index.js";
 
 type DueArtifact = {

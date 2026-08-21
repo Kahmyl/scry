@@ -1,4 +1,5 @@
 import type { ProtectedTransaction, ProtectedTransactionResult } from "@scry/contracts";
+import { gotoPraxisPage, reloadPraxisPage } from "@scry/praxis";
 
 import type { SafeBrowserSession } from "./browser-session.js";
 import type {
@@ -26,7 +27,7 @@ export async function reconcileProtectedMutation(
   }
   try {
     if (transaction.mutation.reconciliation.strategy === "public_ui_state") {
-      await session.page.reload({ waitUntil: "domcontentloaded" });
+      await reloadPraxisPage(session.page, { waitUntil: "domcontentloaded" });
       await verifyProtectedTransactionAssertions(
         session.page,
         transaction.mutation.reconciliation.assertions,
@@ -37,10 +38,13 @@ export async function reconcileProtectedMutation(
       return "succeeded";
     }
     const outcome = await runProtectedStage({
-      stage: "custom_reconciliation", timeoutMs: transaction.extraction.timeoutMs,
-      signal: dependencies.signal, timeoutCode: "PROTECTED_RECONCILIATION_TIMEOUT",
+      stage: "custom_reconciliation",
+      timeoutMs: transaction.extraction.timeoutMs,
+      signal: dependencies.signal,
+      timeoutCode: "PROTECTED_RECONCILIATION_TIMEOUT",
       dispatchPosition: "post_dispatch",
-      work: () => dependencies.reconcile?.(session, transaction) ?? Promise.resolve("unknown" as const),
+      work: () =>
+        dependencies.reconcile?.(session, transaction) ?? Promise.resolve("unknown" as const),
     });
     return outcome;
   } catch {
@@ -57,7 +61,7 @@ export async function continueAfterProtectedMutation(
   for (const strategy of transaction.continuation.strategies) {
     try {
       if (strategy.mode === "resume_parked_context") {
-        await session.page.goto(strategy.reentryUrl, { waitUntil: "domcontentloaded" });
+        await gotoPraxisPage(session.page, strategy.reentryUrl, { waitUntil: "domcontentloaded" });
         await verifyProtectedTransactionAssertions(
           session.page,
           strategy.assertions,
@@ -74,12 +78,14 @@ export async function continueAfterProtectedMutation(
       }
       if (strategy.mode === "recreate_clean_context" && dependencies.recreateCleanSession) {
         session = await runProtectedStage({
-          stage: "clean_session_recreation", timeoutMs: transaction.extraction.timeoutMs,
-          signal: dependencies.signal, timeoutCode: "PROTECTED_CLEAN_SESSION_RECREATION_TIMEOUT",
+          stage: "clean_session_recreation",
+          timeoutMs: transaction.extraction.timeoutMs,
+          signal: dependencies.signal,
+          timeoutCode: "PROTECTED_CLEAN_SESSION_RECREATION_TIMEOUT",
           dispatchPosition: "post_dispatch",
           work: () => dependencies.recreateCleanSession!(strategy.checkpointId),
         });
-        await session.page.goto(strategy.reentryUrl, { waitUntil: "domcontentloaded" });
+        await gotoPraxisPage(session.page, strategy.reentryUrl, { waitUntil: "domcontentloaded" });
         await verifyProtectedTransactionAssertions(
           session.page,
           strategy.assertions,
@@ -97,12 +103,14 @@ export async function continueAfterProtectedMutation(
       }
       if (strategy.mode === "reauthenticate" && dependencies.reauthenticate) {
         session = await runProtectedStage({
-          stage: "reauthentication", timeoutMs: transaction.extraction.timeoutMs,
-          signal: dependencies.signal, timeoutCode: "PROTECTED_REAUTHENTICATION_TIMEOUT",
+          stage: "reauthentication",
+          timeoutMs: transaction.extraction.timeoutMs,
+          signal: dependencies.signal,
+          timeoutCode: "PROTECTED_REAUTHENTICATION_TIMEOUT",
           dispatchPosition: "post_dispatch",
           work: () => dependencies.reauthenticate!(strategy.authenticationContractId),
         });
-        await session.page.goto(strategy.reentryUrl, { waitUntil: "domcontentloaded" });
+        await gotoPraxisPage(session.page, strategy.reentryUrl, { waitUntil: "domcontentloaded" });
         await verifyProtectedTransactionAssertions(
           session.page,
           strategy.assertions,

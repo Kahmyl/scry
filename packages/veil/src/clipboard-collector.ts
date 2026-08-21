@@ -1,7 +1,4 @@
-import type { Page } from "playwright";
 import { VeilChannelCollector } from "./channel-collector.js";
-
-const clipboardCollectors = new WeakMap<Page, VeilClipboardCollector>();
 
 export class VeilClipboardCleanupError extends Error {
   override name = "VeilClipboardCleanupError";
@@ -13,12 +10,11 @@ export class VeilClipboardCollector extends VeilChannelCollector {
   private protectedClipboardTouched = false;
 
   constructor(
-    private readonly page: Page,
+    private readonly clearAndVerify: () => Promise<void>,
     private readonly attempts = 3,
     private readonly attemptTimeoutMs = 1_000,
   ) {
     super("clipboard");
-    clipboardCollectors.set(page, this);
   }
 
   markProtectedClipboardTouched(): void {
@@ -30,11 +26,7 @@ export class VeilClipboardCollector extends VeilChannelCollector {
       let failure: unknown;
       for (let attempt = 0; attempt < this.attempts; attempt += 1) {
         try {
-          await boundedCleanup(this.page.evaluate(async () => {
-            await navigator.clipboard.writeText("");
-            const observed = await navigator.clipboard.readText();
-            if (observed !== "") throw new Error("clipboard remained non-empty");
-          }), this.attemptTimeoutMs);
+          await boundedCleanup(this.clearAndVerify(), this.attemptTimeoutMs);
           this.protectedClipboardTouched = false;
           failure = undefined;
           break;
@@ -57,18 +49,18 @@ async function boundedCleanup<T>(work: Promise<T>, timeoutMs: number): Promise<T
     return await Promise.race([
       work,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("VEIL_CLIPBOARD_CLEANUP_TIMEOUT")), Math.max(0, timeoutMs));
+        timer = setTimeout(
+          () => reject(new Error("VEIL_CLIPBOARD_CLEANUP_TIMEOUT")),
+          Math.max(0, timeoutMs),
+        );
         timer.unref?.();
       }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
-    work.then(() => undefined, () => undefined);
+    work.then(
+      () => undefined,
+      () => undefined,
+    );
   }
-}
-
-export function markVeilProtectedClipboardTouched(page: Page): boolean {
-  const collector = clipboardCollectors.get(page);
-  collector?.markProtectedClipboardTouched();
-  return Boolean(collector);
 }

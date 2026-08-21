@@ -35,11 +35,13 @@ export function registerGrantMissionExecutionAuthorizationTool(
     {
       title: "Grant Mission execution authorization",
       description:
-        "Persist explicit owner/admin authorization for a scoped Live or protected operation. Authorization is never inferred.",
+        "Persist explicit owner/admin authorization for a scoped Live or protected operation. Protected mutation authorization binds the exact live protected Praxis session. Authorization is never inferred.",
       inputSchema: {
         ...objectiveContext,
         environmentId: uuid,
         kind: authorizationKindSchema,
+        operationId: z.string().trim().min(1).max(200).optional(),
+        praxisSessionId: uuid.optional(),
         reason: z.string().trim().min(1).max(2000),
         expiresAt: z.string().datetime().optional(),
         confirmedUserAuthorized: z.literal(true),

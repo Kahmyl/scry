@@ -28,9 +28,7 @@ export const veilEvidenceChannelSchema = z.enum([
 export const veilClassificationSchema = z.enum(["public", "sensitive", "secret", "unknown"]);
 export const veilDispositionSchema = z.enum(["allow", "sanitize", "suppress", "quarantine"]);
 export const veilOperationSchema = z.enum([
-  "schedule",
   "observe",
-  "interact",
   "protected_transaction",
   "capture",
   "admit_evidence",

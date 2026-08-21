@@ -27,13 +27,13 @@ const displacedTools = [
   "cancel_flow_authoring",
 ];
 const displacedRoutes = [
-  "@Patch(\"flow-drafts/:draftId\")",
+  '@Patch("flow-drafts/:draftId")',
   "flow-drafts/:draftId/probes",
   "probe-sessions/:probeId/commands",
   "probe-sessions/:probeId/advance",
   "probe-sessions/:probeId/cancel",
-  "@Get(\"probe-sessions/:probeId\")",
-  "flow-drafts/:draftId/compile\")",
+  '@Get("probe-sessions/:probeId")',
+  'flow-drafts/:draftId/compile")',
 ];
 
 const failures = [];
@@ -52,7 +52,8 @@ for (const required of [
   "get_flow_authoring",
   "close_flow_authoring",
 ]) {
-  if (!mcpSource.includes(`\"${required}\"`)) failures.push(`required MCP tool missing: ${required}`);
+  if (!mcpSource.includes(`\"${required}\"`))
+    failures.push(`required MCP tool missing: ${required}`);
 }
 if (!sessionController.includes('@Post(\":sessionId/close\")')) {
   failures.push("required close API route missing");

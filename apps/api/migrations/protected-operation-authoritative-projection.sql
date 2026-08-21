@@ -99,6 +99,30 @@ BEGIN
        OR NEW.safe_outcome ? 'generatedReferences' THEN
       RAISE EXCEPTION 'Failed adaptive protected projection disagrees with durable operation';
     END IF;
+  ELSIF durable.mutation_outcome='applied' THEN
+    IF NEW.state<>'failed' OR NEW.functional_result<>'inconclusive'
+       OR NEW.mutation_outcome<>'applied' OR NEW.privacy_result<>'sealed'
+       OR NEW.safe_outcome->>'functionalResult'<>'inconclusive'
+       OR NEW.safe_outcome->>'mutationOutcome'<>'applied'
+       OR NEW.decision_boundary->>'type'<>'effect_observation_required'
+       OR jsonb_typeof(NEW.safe_outcome->'generatedReferences')<>'array'
+       OR jsonb_array_length(NEW.safe_outcome->'generatedReferences')<>
+          (SELECT count(*) FROM jsonb_object_keys(durable.persisted_references))
+       OR EXISTS (
+         SELECT 1 FROM jsonb_each(durable.persisted_references) stored(reference,value)
+          WHERE NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(NEW.safe_outcome->'generatedReferences') projected
+             WHERE projected->>'reference'=stored.reference
+               AND projected->>'classification'=stored.value->>'classification'
+               AND projected->>'scope'='project'
+               AND (
+                 (stored.value->>'classification'='protected' AND projected->>'credentialId'=stored.value->>'credentialId')
+                 OR (stored.value->>'classification'='public' AND projected->>'valueId'=stored.value->>'valueId')
+               )
+          )
+       ) THEN
+      RAISE EXCEPTION 'Applied recovery adaptive protected projection disagrees with durable operation';
+    END IF;
   ELSE
     IF NEW.state<>'failed' OR NEW.functional_result<>'inconclusive'
        OR NEW.mutation_outcome<>'unknown' OR NEW.privacy_result<>'sealed'

@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 import type { ExecutionRequest } from "@scry/contracts";
-import { createExecutionCapabilityManifest, ExecutionKernel, type ExecutionReport } from "@scry/executor";
+import {
+  createExecutionCapabilityManifest,
+  ExecutionKernel,
+  type ExecutionReport,
+} from "@scry/executor";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { Database } from "../src/infrastructure/index.js";
@@ -221,7 +225,13 @@ integration("execution kernel repository integration", () => {
           repository.settle(input),
       },
       mutationFence: {
-        claim: ({ mutationIdentity: identity, requestDigest }: { mutationIdentity: string; requestDigest: string }) =>
+        claim: ({
+          mutationIdentity: identity,
+          requestDigest,
+        }: {
+          mutationIdentity: string;
+          requestDigest: string;
+        }) =>
           repository.claimMutation(sessionId, {
             operationId: identity,
             mutationKind: "one_time",
@@ -229,8 +239,15 @@ integration("execution kernel repository integration", () => {
             inputSchemaDigest: requestDigest,
             inputDigest: requestDigest,
           }),
-        transition: ({ mutationIdentity: identity, ...transition }: { mutationIdentity: string; fencingToken: number; expected: string; next: string }) =>
-          repository.transitionMutation(sessionId, { operationId: identity, ...transition }),
+        transition: ({
+          mutationIdentity: identity,
+          ...transition
+        }: {
+          mutationIdentity: string;
+          fencingToken: number;
+          expected: string;
+          next: string;
+        }) => repository.transitionMutation(sessionId, { operationId: identity, ...transition }),
       },
       options: { outputDirectory: "/tmp/unused" },
     };
@@ -306,7 +323,9 @@ integration("execution kernel repository integration", () => {
       outcome: successfulOutcome(first.operationId, "not_applied"),
     });
     await expect(repository.resolveSecret(sessionId, "owner-1-secret")).resolves.toBeUndefined();
-    await expect(repository.resolvePublicValue(sessionId, "owner-1-public")).resolves.toBeUndefined();
+    await expect(
+      repository.resolvePublicValue(sessionId, "owner-1-public"),
+    ).resolves.toBeUndefined();
     await expect(repository.resolveSecret(sessionId, "owner-2-secret")).resolves.toBe(
       "owner-2-protected",
     );
@@ -328,7 +347,9 @@ integration("execution kernel repository integration", () => {
       repository.purgeExpiredValues(new Date(Date.now() + 25 * 60 * 60 * 1_000)),
     ).resolves.toBe(2);
     await expect(repository.resolveSecret(sessionId, "owner-2-secret")).resolves.toBeUndefined();
-    await expect(repository.resolvePublicValue(sessionId, "owner-2-public")).resolves.toBeUndefined();
+    await expect(
+      repository.resolvePublicValue(sessionId, "owner-2-public"),
+    ).resolves.toBeUndefined();
   });
 });
 

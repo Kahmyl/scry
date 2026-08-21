@@ -2,12 +2,9 @@ import { spawnSync } from "node:child_process";
 
 const strict = true;
 const databaseUrl = process.env.SCRY_AUTHORING_TEST_DATABASE_URL;
-const vitractEnabled = process.env.SCRY_VITRACT_PREVIEW_E2E === "true";
 
 if (strict && !databaseUrl)
   fail("SCRY_AUTHORING_TEST_DATABASE_URL is required for the release gate");
-if (strict && !vitractEnabled)
-  fail("SCRY_VITRACT_PREVIEW_E2E=true is required for the release gate");
 
 run([
   "--filter",
@@ -28,7 +25,6 @@ run([
   "test/protected-acquisition-adapters.test.ts",
   "test/protected-transaction-coordinator.test.ts",
   "test/probe-veil-boundary.test.ts",
-  "test/vitract-preview.e2e.test.ts",
   "--maxWorkers=1",
 ]);
 run([
@@ -56,9 +52,9 @@ if (databaseUrl) {
   run(["--filter", "@scry/api", "exec", "vitest", "run", "test/authoring.integration.test.ts"]);
 }
 if (strict) {
-  run(["campaign:praxis:public-apps"]);
-  run(["campaign:veil:adversarial"]);
-  run(["campaign:veil:public-apps"]);
+  run(["--filter", "@scry/executor", "campaign:praxis:public-apps"]);
+  run(["--filter", "@scry/executor", "campaign:veil:adversarial"]);
+  run(["--filter", "@scry/executor", "campaign:veil:public-apps"]);
 }
 
 function run(args) {

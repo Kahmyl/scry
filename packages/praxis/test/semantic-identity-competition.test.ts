@@ -97,23 +97,38 @@ describe("semantic identity competition", () => {
       const page = await browser.newPage();
       const cases = {
         caseA: await characterize(page, '<input type="text" placeholder="Enter your email">'),
-        caseB: await characterize(page, `
+        caseB: await characterize(
+          page,
+          `
           <input type="text" placeholder="Enter your email">
           <input type="password" placeholder="Enter your password">
-        `),
-        caseC: await characterize(page, `
+        `,
+        ),
+        caseC: await characterize(
+          page,
+          `
           <input type="text" placeholder="Enter your email">
           <input type="text" placeholder="Search">
-        `),
-        caseD: await characterize(page, `
+        `,
+        ),
+        caseD: await characterize(
+          page,
+          `
           <input type="text" placeholder="Enter your email">
           <input type="text" placeholder="Enter your email">
-        `),
-        caseE: await characterize(page, '<input type="password" placeholder="Enter your password">'),
-        caseF: await characterize(page, `
+        `,
+        ),
+        caseE: await characterize(
+          page,
+          '<input type="password" placeholder="Enter your password">',
+        ),
+        caseF: await characterize(
+          page,
+          `
           <input type="text" placeholder="Enter your email" hidden>
           <input type="password" placeholder="Enter your password">
-        `),
+        `,
+        ),
         caseG: await characterize(
           page,
           `<form><span>Identity-free group</span><input type="text"><input type="text"></form>`,
@@ -121,20 +136,30 @@ describe("semantic identity competition", () => {
             ...emailIntent,
             concept: "compatible text control",
             preferredEvidence: {
-              roles: ["textbox"], names: [], labels: [], descriptions: [],
-              placeholders: [], inputTypes: [],
+              roles: ["textbox"],
+              names: [],
+              labels: [],
+              descriptions: [],
+              placeholders: [],
+              inputTypes: [],
             },
             relations: [{ kind: "same_boundary", name: "Identity-free group" }],
             confidence: {
-              requiredFamilies: [], minimum: 0.8, minimumMargin: 0.14, minimumFamilyCount: 2,
+              requiredFamilies: [],
+              minimum: 0.8,
+              minimumMargin: 0.14,
+              minimumFamilyCount: 2,
             },
           },
         ),
-        caseH: await characterize(page, `
+        caseH: await characterize(
+          page,
+          `
           <input type="text" placeholder="Enter your email">
           <input type="text" placeholder="Search">
           <input type="text" placeholder="Enter your email">
-        `),
+        `,
+        ),
         caseI: await characterize(
           page,
           `<input type="text" placeholder="Enter your email"><input type="search" placeholder="Search">`,
@@ -143,15 +168,21 @@ describe("semantic identity competition", () => {
             preferredEvidence: { ...emailIntent.preferredEvidence, inputTypes: ["search"] },
           },
         ),
-        caseJ: await characterize(page, `
+        caseJ: await characterize(
+          page,
+          `
           <input type="password" placeholder="private-sensitive-alpha">
           <input type="password" placeholder="private-sensitive-beta">
-        `),
+        `,
+        ),
         caseK: await characterize(page, '<input type="text" placeholder="Search">'),
-        caseL: await characterize(page, `
+        caseL: await characterize(
+          page,
+          `
           <input type="text" placeholder="Enter your email" disabled>
           <input type="text" placeholder="Search">
-        `),
+        `,
+        ),
       };
 
       expect(cases.caseA).toMatchObject({

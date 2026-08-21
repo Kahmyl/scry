@@ -64,9 +64,11 @@ export class ProjectsController {
   }
 
   @Get(":projectId/credential-candidates")
-  listCredentialCandidates(@Param("projectId") projectId: string,
+  listCredentialCandidates(
+    @Param("projectId") projectId: string,
     @CurrentPrincipal() principal: Principal,
-    @Query(new ZodValidationPipe(listCredentialsSchema)) input: ListCredentialsInput) {
+    @Query(new ZodValidationPipe(listCredentialsSchema)) input: ListCredentialsInput,
+  ) {
     return this.repository.listCredentialCandidates(principal, projectId, input);
   }
 

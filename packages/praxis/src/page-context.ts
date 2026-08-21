@@ -12,13 +12,37 @@ const MAX_CONTEXT_CONTROLS = 48;
 const MAX_CONTEXT_CANDIDATES = 5_000;
 const MAX_CONTEXT_CONTAINERS = 48;
 const CONTEXT_CONTROL_SELECTOR = [
-  "a[href]", "button", "input:not([type=hidden])", "textarea", "select", "[role=button]",
-  "[role=link]", "[role=tab]", "[role=menuitem]", "[role=switch]", "[role=checkbox]",
-  "[role=radio]", "[role=combobox]", "[role=dialog]", "[role=status]", "[role=alert]",
-  "[contenteditable=true]", "h1", "h2", "h3", "[role=heading]", "[role=region][aria-label]",
+  "a[href]",
+  "button",
+  "input:not([type=hidden])",
+  "textarea",
+  "select",
+  "[role=button]",
+  "[role=link]",
+  "[role=tab]",
+  "[role=menuitem]",
+  "[role=switch]",
+  "[role=checkbox]",
+  "[role=radio]",
+  "[role=combobox]",
+  "[role=dialog]",
+  "[role=status]",
+  "[role=alert]",
+  "[contenteditable=true]",
+  "h1",
+  "h2",
+  "h3",
+  "[role=heading]",
+  "[role=region][aria-label]",
 ].join(",");
 const CONTEXT_CONTAINER_SELECTOR = [
-  "[role=row]", "[role=listitem]", "tr", "li", "article", "fieldset", "[role=group]",
+  "[role=row]",
+  "[role=listitem]",
+  "tr",
+  "li",
+  "article",
+  "fieldset",
+  "[role=group]",
 ].join(",");
 
 type ContextContainerKind = SemanticPageContext["containers"][number]["kind"];
@@ -70,16 +94,18 @@ export async function observeSemanticPageContextReferenceState(
 ): Promise<SemanticPageContextReferenceState> {
   const entry = resolveSemanticPageContextControl(page, reference);
   if (!entry) return { state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_UNKNOWN" };
-  const documentIdentity = await PraxisDocumentIdentity.current(page, page.mainFrame()).catch(() => null);
+  const documentIdentity = await PraxisDocumentIdentity.current(page, page.mainFrame()).catch(
+    () => null,
+  );
   if (documentIdentity !== entry.handle.documentIdentity)
     return { state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_DOCUMENT_CHANGED" };
 
-  const exactAttached = await entry.element.evaluate((element) => element.isConnected).catch(() => false);
+  const exactAttached = await entry.element
+    .evaluate((element) => element.isConnected)
+    .catch(() => false);
   const locator = await entry.locate();
   if (exactAttached) {
     if (!locator)
-      return { state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_SEMANTICS_CHANGED" };
-    if (!(await revalidateSemanticPageContextControl(entry, locator)))
       return { state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_SEMANTICS_CHANGED" };
     return (await locator.isVisible())
       ? { state: "visible", reasonCode: "CONTEXT_REFERENCE_VISIBLE" }
@@ -101,58 +127,136 @@ export async function observeSemanticPageContextReferenceState(
   return { state: "absent", reasonCode: "CONTEXT_REFERENCE_ABSENT" };
 }
 
-export async function revalidateSemanticPageContextControl(
-  entry: NonNullable<ReturnType<typeof resolveSemanticPageContextControl>>,
-  locator: Locator,
-) {
-  const currentIdentity = await semanticIdentityForLocator(locator);
-  if (currentIdentity !== entry.semanticIdentity) return false;
-  return contextContainersCurrent(entry, true);
-}
-
 async function semanticIdentityForLocator(locator: Locator) {
   const identity = await locator.evaluate((element) => {
     const html = element as HTMLElement;
     const input = element as HTMLInputElement;
     const tag = element.tagName.toLowerCase();
     const redactedBoundary = Boolean(element.closest('[data-scry-redacted="true"]'));
-    const sensitive = redactedBoundary ||
-      (tag === "input" && (input.type === "password" ||
-        ["current-password", "new-password", "one-time-code"].includes(input.autocomplete.toLowerCase()) ||
-        input.inputMode === "numeric"));
+    const sensitive =
+      redactedBoundary ||
+      (tag === "input" &&
+        (input.type === "password" ||
+          ["current-password", "new-password", "one-time-code"].includes(
+            input.autocomplete.toLowerCase(),
+          ) ||
+          input.inputMode === "numeric"));
     const label = "labels" in input && input.labels ? input.labels[0]?.textContent : undefined;
-    const role = element.getAttribute("role") ||
-      (tag === "a" ? "link" : tag === "button" ? "button" : tag === "select" ? "combobox" :
-        ["h1", "h2", "h3"].includes(tag) ? "heading" : tag === "textarea" || tag === "input" ?
-          input.type === "checkbox" ? "checkbox" : input.type === "radio" ? "radio" : "textbox" :
-          html.isContentEditable ? "textbox" : "control");
-    const safeProtectedLabel = redactedBoundary ? "" : element.getAttribute("aria-label") || label || "";
-    const name = sensitive ? safeProtectedLabel || "identity suppressed" :
-      element.getAttribute("aria-label") || label || element.getAttribute("title") ||
-      element.getAttribute("placeholder") || html.innerText || element.textContent || "";
-    const boundary = element.closest("[role=dialog],[role=menu],[role=region],nav,section,form,main");
-    const heading = boundary?.querySelector("h1,h2,h3,h4,h5,h6");
-    const groupSensitive = Boolean(boundary?.closest('[data-scry-redacted="true"]') ||
-      boundary?.querySelector('[data-scry-redacted="true"],input[type=password],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]'));
-    const group = groupSensitive ? "" : boundary?.getAttribute("aria-label") || heading?.textContent || "";
+    const role =
+      element.getAttribute("role") ||
+      (tag === "a"
+        ? "link"
+        : tag === "button"
+          ? "button"
+          : tag === "select"
+            ? "combobox"
+            : ["h1", "h2", "h3"].includes(tag)
+              ? "heading"
+              : tag === "textarea" || tag === "input"
+                ? input.type === "checkbox"
+                  ? "checkbox"
+                  : input.type === "radio"
+                    ? "radio"
+                    : "textbox"
+                : html.isContentEditable
+                  ? "textbox"
+                  : "control");
+    const safeProtectedLabel = redactedBoundary
+      ? ""
+      : element.getAttribute("aria-label") || label || "";
+    const name = sensitive
+      ? safeProtectedLabel || "identity suppressed"
+      : element.getAttribute("aria-label") ||
+        label ||
+        element.getAttribute("title") ||
+        element.getAttribute("placeholder") ||
+        html.innerText ||
+        element.textContent ||
+        "";
+    const boundary = element.closest(
+      "dialog,[role=dialog],[role=menu],[role=region],[role=form],nav,section,article,form,main,aside",
+    );
+    const heading = boundary
+      ? Array.from(boundary.querySelectorAll("h1,h2,h3,h4,h5,h6")).find(
+          (candidate) =>
+            candidate.closest(
+              "dialog,[role=dialog],[role=menu],[role=region],[role=form],nav,section,article,form,main,aside",
+            ) === boundary,
+        )
+      : undefined;
+    const groupSensitive = Boolean(
+      boundary?.closest('[data-scry-redacted="true"]') ||
+      boundary?.querySelector(
+        '[data-scry-redacted="true"],input[type=password],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]',
+      ),
+    );
+    const group = groupSensitive
+      ? ""
+      : boundary?.getAttribute("aria-label") || heading?.textContent || "";
+    const boundaryRole = boundary?.getAttribute("role") ?? "";
+    const boundaryTag = boundary?.tagName.toLowerCase() ?? "";
+    const boundaryKind =
+      boundaryRole === "dialog" || boundaryTag === "dialog"
+        ? "dialog"
+        : boundaryRole === "form" || boundaryTag === "form"
+          ? "form"
+          : boundaryTag === "section" || boundaryTag === "article"
+            ? "section"
+            : boundaryRole === "region" || ["nav", "main", "aside"].includes(boundaryTag)
+              ? "region"
+              : undefined;
     const autocomplete = tag === "input" ? input.autocomplete.toLowerCase() : "";
-    const semanticPurpose = sensitive ? autocomplete === "one-time-code" ? "one_time_code" :
-      autocomplete === "current-password" ? "current_password" : autocomplete === "new-password" ?
-        "new_password" : input.inputMode === "numeric" ? "pin" : input.type === "password" ?
-          "password" : "protected_input" : null;
-    const capabilities = ["observe",
-      ...(tag === "a" || tag === "button" || ["button", "link", "tab", "menuitem"].includes(role) ? ["activate"] : []),
-      ...(tag === "textarea" || (tag === "input" && !["checkbox", "radio"].includes(input.type)) || html.isContentEditable ? ["enter_text"] : []),
+    const semanticPurpose = sensitive
+      ? autocomplete === "one-time-code"
+        ? "one_time_code"
+        : autocomplete === "current-password"
+          ? "current_password"
+          : autocomplete === "new-password"
+            ? "new_password"
+            : input.inputMode === "numeric"
+              ? "pin"
+              : input.type === "password"
+                ? "password"
+                : "protected_input"
+      : null;
+    const capabilities = [
+      "observe",
+      ...(tag === "a" || tag === "button" || ["button", "link", "tab", "menuitem"].includes(role)
+        ? ["activate"]
+        : []),
+      ...(tag === "textarea" ||
+      (tag === "input" && !["checkbox", "radio"].includes(input.type)) ||
+      html.isContentEditable
+        ? ["enter_text"]
+        : []),
       ...(["checkbox", "radio", "switch"].includes(role) ? ["toggle"] : []),
       ...(tag === "select" || ["combobox", "listbox"].includes(role) ? ["select_option"] : []),
     ].sort();
-    return { role, name, group, capabilities, semanticPurpose, valueProtected: sensitive,
-      disabled: Boolean(("disabled" in input && input.disabled) || element.getAttribute("aria-disabled") === "true") };
+    return {
+      role,
+      name,
+      group,
+      boundaryKind,
+      capabilities,
+      semanticPurpose,
+      valueProtected: sensitive,
+      disabled: Boolean(
+        ("disabled" in input && input.disabled) || element.getAttribute("aria-disabled") === "true",
+      ),
+    };
   });
   return JSON.stringify({
     role: cleanContextText(identity.role, 40),
     name: cleanContextText(identity.name, 160),
     group: cleanContextText(identity.group, 120),
+    boundary: identity.boundaryKind
+      ? {
+          kind: identity.boundaryKind,
+          ...(cleanContextText(identity.group, 120)
+            ? { name: cleanContextText(identity.group, 120) }
+            : {}),
+        }
+      : null,
     capabilities: identity.capabilities,
     semanticPurpose: identity.semanticPurpose,
     valueProtected: identity.valueProtected,
@@ -166,14 +270,23 @@ async function contextContainersCurrent(
 ) {
   for (let index = 0; index < entry.containers.length; index += 1) {
     const container = entry.containers[index]!;
-    const attached = await container.element.evaluate((element) => element.isConnected).catch(() => false);
+    const attached = await container.element
+      .evaluate((element) => element.isConnected)
+      .catch(() => false);
     if (!attached) return false;
-    const currentKind = await container.element.evaluate((element) => {
-      const role = element.getAttribute("role");
-      const tag = element.tagName.toLowerCase();
-      return role === "row" || tag === "tr" ? "row" :
-        role === "listitem" || tag === "li" ? "list_item" : tag === "article" ? "card" : "group";
-    }).catch(() => null);
+    const currentKind = await container.element
+      .evaluate((element) => {
+        const role = element.getAttribute("role");
+        const tag = element.tagName.toLowerCase();
+        return role === "row" || tag === "tr"
+          ? "row"
+          : role === "listitem" || tag === "li"
+            ? "list_item"
+            : tag === "article"
+              ? "card"
+              : "group";
+      })
+      .catch(() => null);
     if (currentKind !== container.kind) return false;
     if (requireControlMembership) {
       const containsControl = await container.element
@@ -217,234 +330,299 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
   const frame = page.mainFrame();
   const documentEpoch = await PraxisDocumentEpoch.stable(page, frame, new AbortController().signal);
   const documentIdentity = await PraxisDocumentIdentity.current(page, frame);
-  const observed = await page.evaluate(({ limit, candidateLimit, selector, containerSelector }) => {
-    const allCandidates = Array.from(document.querySelectorAll(selector));
-    const candidates = allCandidates.slice(0, candidateLimit);
-    const containerCandidates = Array.from(document.querySelectorAll(containerSelector));
-    const projected: Array<{
-      role: string;
-      name: string;
-      group?: string;
-      capabilities: string[];
-      selected?: boolean;
-      expanded?: boolean;
-      checked?: boolean;
-      disabled?: boolean;
-      current?: boolean;
-      candidateIndex: number;
-      runtimeId: string;
-      containerIndices: number[];
-      containerKinds: ContextContainerKind[];
-      semanticPurpose?: string;
-      valueProtected?: boolean;
-      inputSources?: Array<"literal" | "protected_reference">;
-    }> = [];
-    const state = globalThis as typeof globalThis & {
-      __scryGroundingIds?: WeakMap<Element, string>;
-      __scryGroundingSequence?: number;
-    };
-    state.__scryGroundingIds ??= new WeakMap();
-    state.__scryGroundingSequence ??= 0;
-    for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
-      const element = candidates[candidateIndex]!;
-      if (projected.length >= limit) break;
-      const html = element as HTMLElement;
-      const input = element as HTMLInputElement;
-      const style = getComputedStyle(html);
-      const rect = html.getBoundingClientRect();
-      if (
-        style.display === "none" ||
-        style.visibility === "hidden" ||
-        rect.width <= 0 ||
-        rect.height <= 0 ||
-        element.closest('[aria-hidden="true"],[inert]')
-      )
-        continue;
-      const sensitive =
-        Boolean(element.closest('[data-scry-redacted="true"]')) ||
-        (element.tagName.toLowerCase() === "input" &&
-          (input.type === "password" ||
-            ["current-password", "new-password", "one-time-code"].includes(input.autocomplete.toLowerCase()) ||
-            input.inputMode === "numeric"));
-      const redactedBoundary = Boolean(element.closest('[data-scry-redacted="true"]'));
-      const tag = element.tagName.toLowerCase();
-      let runtimeId = state.__scryGroundingIds.get(element);
-      if (!runtimeId) {
-        state.__scryGroundingSequence += 1;
-        runtimeId = `control-${state.__scryGroundingSequence}`;
-        state.__scryGroundingIds.set(element, runtimeId);
-      }
-      const label = "labels" in input && input.labels ? input.labels[0]?.textContent : undefined;
-      const role =
-        element.getAttribute("role")?.slice(0, 100) ||
-        (tag === "a"
-          ? "link"
-          : tag === "button"
-            ? "button"
-            : tag === "select"
-              ? "combobox"
-              : ["h1", "h2", "h3"].includes(tag)
-                ? "heading"
-                : tag === "textarea" || tag === "input"
-                  ? input.type === "checkbox"
-                    ? "checkbox"
-                    : input.type === "radio"
-                      ? "radio"
-                      : "textbox"
-                  : html.isContentEditable
-                    ? "textbox"
-                    : "control");
-      const safeProtectedLabel = redactedBoundary
-        ? ""
-        : element.getAttribute("aria-label") || label || "";
-      const name = sensitive
-        ? safeProtectedLabel || "identity suppressed"
-        : (
-            element.getAttribute("aria-label") ||
-            label ||
-            element.getAttribute("title") ||
-            element.getAttribute("placeholder") ||
-            html.innerText ||
-            element.textContent ||
-            ""
-          ).slice(0, 500);
-      if (!name) continue;
-      const boundary = element.closest(
-        "[role=dialog],[role=menu],[role=region],nav,section,form,main",
-      );
-      const heading = boundary?.querySelector("h1,h2,h3,h4,h5,h6");
-      const groupSensitive = Boolean(
-        boundary?.closest('[data-scry-redacted="true"]') ||
-        boundary?.querySelector(
-          '[data-scry-redacted="true"],input[type=password],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]',
-        ),
-      );
-      const group = groupSensitive
-        ? ""
-        : (boundary?.getAttribute("aria-label") || heading?.textContent || "").slice(0, 500);
-      const autocomplete = tag === "input" ? input.autocomplete.toLowerCase() : "";
-      const semanticPurpose = sensitive
-        ? autocomplete === "one-time-code"
-          ? "one_time_code"
-          : autocomplete === "current-password"
-            ? "current_password"
-            : autocomplete === "new-password"
-              ? "new_password"
-              : input.inputMode === "numeric"
-                ? "pin"
-                : input.type === "password"
-                  ? "password"
-                  : "protected_input"
-        : undefined;
-      const capabilities = [
-        "observe",
-        ...(tag === "a" || tag === "button" || ["button", "link", "tab", "menuitem"].includes(role)
-          ? ["activate"]
-          : []),
-        ...(tag === "textarea" ||
-        (tag === "input" && !["checkbox", "radio"].includes(input.type)) ||
-        html.isContentEditable
-          ? ["enter_text"]
-          : []),
-        ...(["checkbox", "radio", "switch"].includes(role) ? ["toggle"] : []),
-        ...(tag === "select" || ["combobox", "listbox"].includes(role) ? ["select_option"] : []),
-      ];
-      const inputSources: Array<"literal" | "protected_reference"> | undefined = capabilities.includes("enter_text")
-        ? sensitive
-          ? ["protected_reference"]
-          : ["literal", "protected_reference"]
-        : undefined;
-      const selectedAttribute = element.getAttribute("aria-selected");
-      const expandedAttribute = element.getAttribute("aria-expanded");
-      const checkedAttribute = element.getAttribute("aria-checked");
-      const containerElements: Element[] = [];
-      let ancestor = element.parentElement;
-      while (ancestor) {
-        if (ancestor.matches(containerSelector)) containerElements.push(ancestor);
-        ancestor = ancestor.parentElement;
-      }
-      const containerIndices = containerElements
-        .map((container) => containerCandidates.indexOf(container))
-        .filter((index) => index >= 0)
-        .slice(0, 4);
-      const containerKinds = containerElements.slice(0, 4).map((container) => {
-        const role = container.getAttribute("role");
-        const tag = container.tagName.toLowerCase();
-        if (role === "row" || tag === "tr") return "row";
-        if (role === "listitem" || tag === "li") return "list_item";
-        if (tag === "article") return "card";
-        return "group";
-      }) as ContextContainerKind[];
-      const selected = selectedAttribute === null ? undefined : selectedAttribute === "true";
-      const expanded = expandedAttribute === null ? undefined : expandedAttribute === "true";
-      const ariaChecked = checkedAttribute === null ? undefined : checkedAttribute === "true";
-      projected.push({
-        candidateIndex,
-        runtimeId,
-        containerIndices,
-        containerKinds,
-        role,
-        name,
-        ...(semanticPurpose ? { semanticPurpose, valueProtected: true } : {}),
-        ...(group ? { group } : {}),
-        capabilities,
-        ...(inputSources ? { inputSources } : {}),
-        ...(selected === undefined ? {} : { selected }),
-        ...(expanded === undefined ? {} : { expanded }),
-        ...("checked" in input && ["checkbox", "radio"].includes(input.type)
-          ? { checked: Boolean(input.checked) }
-          : ariaChecked === undefined
-            ? {}
-            : { checked: ariaChecked }),
-        ...(("disabled" in input && input.disabled) ||
-        element.getAttribute("aria-disabled") === "true"
-          ? { disabled: true }
-          : {}),
-        ...(element.getAttribute("aria-current") && element.getAttribute("aria-current") !== "false"
-          ? { current: true }
-          : {}),
-      });
-    }
-    return {
-      title: document.title.slice(0, 500),
-      url: `${location.origin}${location.pathname}`,
-      observed: allCandidates.length,
-      truncated:
-        allCandidates.length > candidates.length ||
-        (projected.length >= limit && candidates.length > projected.length),
-      controls: projected,
-      sectionObserved: document.querySelectorAll("h1,h2,h3,[role=heading]").length,
-      sections: Array.from(document.querySelectorAll("h1,h2,h3,[role=heading]"))
-        .filter((heading) => !heading.closest('[data-scry-redacted="true"],[aria-hidden="true"],[inert]'))
-        .slice(0, 12)
-        .map((heading) => {
-          const parts: string[] = [];
-          let sibling = heading.nextElementSibling;
-          while (sibling && !sibling.matches("h1,h2,h3,[role=heading]") && parts.join(" ").length < 4000) {
-            if (!sibling.closest('[data-scry-redacted="true"],[aria-hidden="true"],[inert]')) {
-              const safeClone = sibling.cloneNode(true) as HTMLElement;
-              safeClone.querySelectorAll('[data-scry-redacted="true"],[aria-hidden="true"],[inert],script,style').forEach((node) => node.remove());
-              const text = safeClone.innerText || safeClone.textContent || "";
-              if (text.trim()) parts.push(text.trim());
-            }
-            sibling = sibling.nextElementSibling;
+  const observed = await page.evaluate(
+    ({ limit, candidateLimit, selector, containerSelector }) => {
+      const allCandidates = Array.from(document.querySelectorAll(selector));
+      const candidates = allCandidates.slice(0, candidateLimit);
+      const containerCandidates = Array.from(document.querySelectorAll(containerSelector));
+      const projected: Array<{
+        role: string;
+        name: string;
+        group?: string;
+        boundary?: { kind: "dialog" | "form" | "section" | "region"; name?: string };
+        capabilities: string[];
+        selected?: boolean;
+        expanded?: boolean;
+        checked?: boolean;
+        disabled?: boolean;
+        current?: boolean;
+        candidateIndex: number;
+        runtimeId: string;
+        containerIndices: number[];
+        containerRuntimeIds: string[];
+        containerKinds: ContextContainerKind[];
+        semanticPurpose?: string;
+        valueProtected?: boolean;
+        inputSources?: Array<"literal" | "protected_reference">;
+      }> = [];
+      const state = globalThis as typeof globalThis & {
+        __scryGroundingIds?: WeakMap<Element, string>;
+        __scryGroundingSequence?: number;
+      };
+      state.__scryGroundingIds ??= new WeakMap();
+      state.__scryGroundingSequence ??= 0;
+      for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+        const element = candidates[candidateIndex]!;
+        if (projected.length >= limit) break;
+        const html = element as HTMLElement;
+        const input = element as HTMLInputElement;
+        const style = getComputedStyle(html);
+        const rect = html.getBoundingClientRect();
+        if (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          rect.width <= 0 ||
+          rect.height <= 0 ||
+          element.closest('[aria-hidden="true"],[inert]')
+        )
+          continue;
+        const sensitive =
+          Boolean(element.closest('[data-scry-redacted="true"]')) ||
+          (element.tagName.toLowerCase() === "input" &&
+            (input.type === "password" ||
+              ["current-password", "new-password", "one-time-code"].includes(
+                input.autocomplete.toLowerCase(),
+              ) ||
+              input.inputMode === "numeric"));
+        const redactedBoundary = Boolean(element.closest('[data-scry-redacted="true"]'));
+        const tag = element.tagName.toLowerCase();
+        let runtimeId = state.__scryGroundingIds.get(element);
+        if (!runtimeId) {
+          state.__scryGroundingSequence += 1;
+          runtimeId = `control-${state.__scryGroundingSequence}`;
+          state.__scryGroundingIds.set(element, runtimeId);
+        }
+        const label = "labels" in input && input.labels ? input.labels[0]?.textContent : undefined;
+        const role =
+          element.getAttribute("role")?.slice(0, 100) ||
+          (tag === "a"
+            ? "link"
+            : tag === "button"
+              ? "button"
+              : tag === "select"
+                ? "combobox"
+                : ["h1", "h2", "h3"].includes(tag)
+                  ? "heading"
+                  : tag === "textarea" || tag === "input"
+                    ? input.type === "checkbox"
+                      ? "checkbox"
+                      : input.type === "radio"
+                        ? "radio"
+                        : "textbox"
+                    : html.isContentEditable
+                      ? "textbox"
+                      : "control");
+        const safeProtectedLabel = redactedBoundary
+          ? ""
+          : element.getAttribute("aria-label") || label || "";
+        const name = sensitive
+          ? safeProtectedLabel || "identity suppressed"
+          : (
+              element.getAttribute("aria-label") ||
+              label ||
+              element.getAttribute("title") ||
+              element.getAttribute("placeholder") ||
+              html.innerText ||
+              element.textContent ||
+              ""
+            ).slice(0, 500);
+        if (!name) continue;
+        const boundary = element.closest(
+          "dialog,[role=dialog],[role=menu],[role=region],[role=form],nav,section,article,form,main,aside",
+        );
+        const heading = boundary
+          ? Array.from(boundary.querySelectorAll("h1,h2,h3,h4,h5,h6")).find(
+              (candidate) =>
+                candidate.closest(
+                  "dialog,[role=dialog],[role=menu],[role=region],[role=form],nav,section,article,form,main,aside",
+                ) === boundary,
+            )
+          : undefined;
+        const groupSensitive = Boolean(
+          boundary?.closest('[data-scry-redacted="true"]') ||
+          boundary?.querySelector(
+            '[data-scry-redacted="true"],input[type=password],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]',
+          ),
+        );
+        const group = groupSensitive
+          ? ""
+          : (boundary?.getAttribute("aria-label") || heading?.textContent || "").slice(0, 500);
+        const boundaryRole = boundary?.getAttribute("role") ?? "";
+        const boundaryTag = boundary?.tagName.toLowerCase() ?? "";
+        const boundaryKind =
+          boundaryRole === "dialog" || boundaryTag === "dialog"
+            ? "dialog"
+            : boundaryRole === "form" || boundaryTag === "form"
+              ? "form"
+              : boundaryTag === "section" || boundaryTag === "article"
+                ? "section"
+                : boundaryRole === "region" || ["nav", "main", "aside"].includes(boundaryTag)
+                  ? "region"
+                  : undefined;
+        const autocomplete = tag === "input" ? input.autocomplete.toLowerCase() : "";
+        const semanticPurpose = sensitive
+          ? autocomplete === "one-time-code"
+            ? "one_time_code"
+            : autocomplete === "current-password"
+              ? "current_password"
+              : autocomplete === "new-password"
+                ? "new_password"
+                : input.inputMode === "numeric"
+                  ? "pin"
+                  : input.type === "password"
+                    ? "password"
+                    : "protected_input"
+          : undefined;
+        const capabilities = [
+          "observe",
+          ...(tag === "a" ||
+          tag === "button" ||
+          ["button", "link", "tab", "menuitem"].includes(role)
+            ? ["activate"]
+            : []),
+          ...(tag === "textarea" ||
+          (tag === "input" && !["checkbox", "radio"].includes(input.type)) ||
+          html.isContentEditable
+            ? ["enter_text"]
+            : []),
+          ...(["checkbox", "radio", "switch"].includes(role) ? ["toggle"] : []),
+          ...(tag === "select" || ["combobox", "listbox"].includes(role) ? ["select_option"] : []),
+        ];
+        const inputSources: Array<"literal" | "protected_reference"> | undefined =
+          capabilities.includes("enter_text")
+            ? sensitive
+              ? ["protected_reference"]
+              : ["literal", "protected_reference"]
+            : undefined;
+        const selectedAttribute = element.getAttribute("aria-selected");
+        const expandedAttribute = element.getAttribute("aria-expanded");
+        const checkedAttribute = element.getAttribute("aria-checked");
+        const containerElements: Element[] = [];
+        let ancestor = element.parentElement;
+        while (ancestor) {
+          if (ancestor.matches(containerSelector)) containerElements.push(ancestor);
+          ancestor = ancestor.parentElement;
+        }
+        const containerIndices = containerElements
+          .map((container) => containerCandidates.indexOf(container))
+          .filter((index) => index >= 0)
+          .slice(0, 4);
+        const containerRuntimeIds = containerElements.slice(0, 4).map((container) => {
+          let id = state.__scryGroundingIds!.get(container);
+          if (!id) {
+            state.__scryGroundingSequence! += 1;
+            id = `container-${state.__scryGroundingSequence}`;
+            state.__scryGroundingIds!.set(container, id);
           }
-          return { heading: (heading.textContent || "").trim(), content: parts.join(" ").slice(0, 4000) };
-        })
-        .filter((section) => section.heading && section.content),
-    };
-  }, {
-    limit: MAX_CONTEXT_CONTROLS,
-    candidateLimit: MAX_CONTEXT_CANDIDATES,
-    selector: CONTEXT_CONTROL_SELECTOR,
-    containerSelector: CONTEXT_CONTAINER_SELECTOR,
-  });
+          return id;
+        });
+        const containerKinds = containerElements.slice(0, 4).map((container) => {
+          const role = container.getAttribute("role");
+          const tag = container.tagName.toLowerCase();
+          if (role === "row" || tag === "tr") return "row";
+          if (role === "listitem" || tag === "li") return "list_item";
+          if (tag === "article") return "card";
+          return "group";
+        }) as ContextContainerKind[];
+        const selected = selectedAttribute === null ? undefined : selectedAttribute === "true";
+        const expanded = expandedAttribute === null ? undefined : expandedAttribute === "true";
+        const ariaChecked = checkedAttribute === null ? undefined : checkedAttribute === "true";
+        projected.push({
+          candidateIndex,
+          runtimeId,
+          containerIndices,
+          containerRuntimeIds,
+          containerKinds,
+          role,
+          name,
+          ...(semanticPurpose ? { semanticPurpose, valueProtected: true } : {}),
+          ...(group ? { group } : {}),
+          ...(boundaryKind
+            ? { boundary: { kind: boundaryKind, ...(group ? { name: group } : {}) } }
+            : {}),
+          capabilities,
+          ...(inputSources ? { inputSources } : {}),
+          ...(selected === undefined ? {} : { selected }),
+          ...(expanded === undefined ? {} : { expanded }),
+          ...("checked" in input && ["checkbox", "radio"].includes(input.type)
+            ? { checked: Boolean(input.checked) }
+            : ariaChecked === undefined
+              ? {}
+              : { checked: ariaChecked }),
+          ...(("disabled" in input && input.disabled) ||
+          element.getAttribute("aria-disabled") === "true"
+            ? { disabled: true }
+            : {}),
+          ...(element.getAttribute("aria-current") &&
+          element.getAttribute("aria-current") !== "false"
+            ? { current: true }
+            : {}),
+        });
+      }
+      return {
+        title: document.title.slice(0, 500),
+        url: `${location.origin}${location.pathname}`,
+        observed: allCandidates.length,
+        truncated:
+          allCandidates.length > candidates.length ||
+          (projected.length >= limit && candidates.length > projected.length),
+        controls: projected,
+        sectionObserved: document.querySelectorAll("h1,h2,h3,[role=heading]").length,
+        sections: Array.from(document.querySelectorAll("h1,h2,h3,[role=heading]"))
+          .filter(
+            (heading) =>
+              !heading.closest('[data-scry-redacted="true"],[aria-hidden="true"],[inert]'),
+          )
+          .slice(0, 12)
+          .map((heading) => {
+            const parts: string[] = [];
+            let sibling = heading.nextElementSibling;
+            while (
+              sibling &&
+              !sibling.matches("h1,h2,h3,[role=heading]") &&
+              parts.join(" ").length < 4000
+            ) {
+              if (!sibling.closest('[data-scry-redacted="true"],[aria-hidden="true"],[inert]')) {
+                const safeClone = sibling.cloneNode(true) as HTMLElement;
+                safeClone
+                  .querySelectorAll(
+                    '[data-scry-redacted="true"],[aria-hidden="true"],[inert],script,style',
+                  )
+                  .forEach((node) => node.remove());
+                const text = safeClone.innerText || safeClone.textContent || "";
+                if (text.trim()) parts.push(text.trim());
+              }
+              sibling = sibling.nextElementSibling;
+            }
+            return {
+              heading: (heading.textContent || "").trim(),
+              content: parts.join(" ").slice(0, 4000),
+            };
+          })
+          .filter((section) => section.heading && section.content),
+      };
+    },
+    {
+      limit: MAX_CONTEXT_CONTROLS,
+      candidateLimit: MAX_CONTEXT_CANDIDATES,
+      selector: CONTEXT_CONTROL_SELECTOR,
+      containerSelector: CONTEXT_CONTAINER_SELECTOR,
+    },
+  );
   const controls: SemanticPageContext["controls"] = [];
   const registered = new Map<string, ContextControlEntry>();
   const previous = contextControls.get(page);
   const previousContainers = contextContainers.get(page);
   const registeredContainers = new Map<string, ContextContainerEntry>();
   const containerControls = new Map<string, string[]>();
+  const candidateElements = (await page
+    .locator(CONTEXT_CONTROL_SELECTOR)
+    .elementHandles()) as ElementHandle<Element>[];
+  const containerElements = (await page
+    .locator(CONTEXT_CONTAINER_SELECTOR)
+    .elementHandles()) as ElementHandle<Element>[];
+  const retainedCandidateIndices = new Set<number>();
+  const retainedContainerIndices = new Set<number>();
   for (const control of observed.controls) {
     const role = cleanContextText(control.role, 40);
     const name = cleanContextText(control.name, 160);
@@ -452,21 +630,43 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
     if (!role || !name) continue;
     const locator = page.locator(CONTEXT_CONTROL_SELECTOR).nth(control.candidateIndex);
     const semanticIdentity = JSON.stringify({
-      role, name, group, capabilities: [...control.capabilities].sort(),
+      role,
+      name,
+      group,
+      boundary: control.boundary ?? null,
+      capabilities: [...control.capabilities].sort(),
       semanticPurpose: control.semanticPurpose ?? null,
       valueProtected: Boolean(control.valueProtected),
       disabled: Boolean(control.disabled),
     });
     let reference: string | undefined;
-    const currentElement = await locator.elementHandle();
+    const currentElement = candidateElements[control.candidateIndex] ?? null;
+    const currentIdentityMatches = currentElement
+      ? await currentElement
+          .evaluate((element, runtimeId) => {
+            const state = globalThis as typeof globalThis & {
+              __scryGroundingIds?: WeakMap<Element, string>;
+            };
+            return state.__scryGroundingIds?.get(element) === runtimeId;
+          }, control.runtimeId)
+          .catch(() => false)
+      : false;
+    if (!currentIdentityMatches) {
+      await currentElement?.dispose();
+      continue;
+    }
     if (previous && currentElement) {
       for (const [candidateReference, entry] of previous) {
         if (
           entry.handle.documentIdentity !== documentIdentity ||
           entry.semanticIdentity !== semanticIdentity
-        ) continue;
+        )
+          continue;
         const sameElement = await entry.element
-          .evaluate((priorElement, candidateElement) => priorElement === candidateElement, currentElement)
+          .evaluate(
+            (priorElement, candidateElement) => priorElement === candidateElement,
+            currentElement,
+          )
           .catch(() => false);
         if (sameElement) {
           reference = candidateReference;
@@ -475,17 +675,30 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       }
     }
     if (!currentElement) continue;
+    retainedCandidateIndices.add(control.candidateIndex);
     const containers: ContextContainerEntry[] = [];
     for (let index = 0; index < control.containerIndices.length; index += 1) {
-      const containerLocator = page.locator(CONTEXT_CONTAINER_SELECTOR).nth(control.containerIndices[index]!);
-      const containerElement = await containerLocator.elementHandle();
+      const containerElement = containerElements[control.containerIndices[index]!] ?? null;
       if (!containerElement) continue;
+      const containerIdentityMatches = await containerElement
+        .evaluate((element, runtimeId) => {
+          const state = globalThis as typeof globalThis & {
+            __scryGroundingIds?: WeakMap<Element, string>;
+          };
+          return state.__scryGroundingIds?.get(element) === runtimeId;
+        }, control.containerRuntimeIds[index]!)
+        .catch(() => false);
+      if (!containerIdentityMatches) continue;
+      retainedContainerIndices.add(control.containerIndices[index]!);
       const kind = control.containerKinds[index]!;
       let containerReference: string | undefined;
       for (const [candidateReference, entry] of registeredContainers) {
         if (entry.kind !== kind) continue;
         const sameElement = await entry.element
-          .evaluate((priorElement, candidateElement) => priorElement === candidateElement, containerElement)
+          .evaluate(
+            (priorElement, candidateElement) => priorElement === candidateElement,
+            containerElement,
+          )
           .catch(() => false);
         if (sameElement) {
           containerReference = candidateReference;
@@ -496,7 +709,10 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         if (containerReference) break;
         if (entry.documentIdentity !== documentIdentity || entry.kind !== kind) continue;
         const sameElement = await entry.element
-          .evaluate((priorElement, candidateElement) => priorElement === candidateElement, containerElement)
+          .evaluate(
+            (priorElement, candidateElement) => priorElement === candidateElement,
+            containerElement,
+          )
           .catch(() => false);
         if (sameElement) {
           containerReference = candidateReference;
@@ -515,8 +731,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         kind,
         documentIdentity,
       };
-      if (existing) await containerElement.dispose();
-      else registeredContainers.set(containerReference, container);
+      if (!existing) registeredContainers.set(containerReference, container);
       containers.push(container);
     }
     reference ??= `context-control-${randomBytes(16).toString("hex")}`;
@@ -534,6 +749,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       candidateIndex: _candidateIndex,
       runtimeId: _runtimeId,
       containerIndices: _containerIndices,
+      containerRuntimeIds: _containerRuntimeIds,
       containerKinds: _containerKinds,
       ...publicControl
     } = control;
@@ -558,7 +774,15 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
     }
   }
   await Promise.all([
-    ...[...(previous?.values() ?? [])].map((entry) => entry.element.dispose().catch(() => undefined)),
+    ...candidateElements.flatMap((element, index) =>
+      retainedCandidateIndices.has(index) ? [] : [element.dispose().catch(() => undefined)],
+    ),
+    ...containerElements.flatMap((element, index) =>
+      retainedContainerIndices.has(index) ? [] : [element.dispose().catch(() => undefined)],
+    ),
+    ...[...(previous?.values() ?? [])].map((entry) =>
+      entry.element.dispose().catch(() => undefined),
+    ),
     ...[...(previousContainers?.values() ?? [])].map((entry) =>
       entry.element.dispose().catch(() => undefined),
     ),
@@ -582,25 +806,27 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       truncated: observed.truncated,
     },
     controls,
-    containers: await Promise.all([...registeredContainers.values()].map(async (container) => {
-      let parentReference: string | undefined;
-      for (const candidate of registeredContainers.values()) {
-        if (candidate.reference === container.reference) continue;
-        const contains = await candidate.element
-          .evaluate((parent, child) => parent.contains(child), container.element)
-          .catch(() => false);
-        if (contains) {
-          parentReference = candidate.reference;
-          break;
+    containers: await Promise.all(
+      [...registeredContainers.values()].map(async (container) => {
+        let parentReference: string | undefined;
+        for (const candidate of registeredContainers.values()) {
+          if (candidate.reference === container.reference) continue;
+          const contains = await candidate.element
+            .evaluate((parent, child) => parent.contains(child), container.element)
+            .catch(() => false);
+          if (contains) {
+            parentReference = candidate.reference;
+            break;
+          }
         }
-      }
-      return {
-        reference: container.reference,
-        kind: container.kind,
-        controlReferences: containerControls.get(container.reference) ?? [],
-        ...(parentReference ? { parentReference } : {}),
-      };
-    })),
+        return {
+          reference: container.reference,
+          kind: container.kind,
+          controlReferences: containerControls.get(container.reference) ?? [],
+          ...(parentReference ? { parentReference } : {}),
+        };
+      }),
+    ),
     containerCompleteness: {
       kind: "bounded",
       observed: new Set(observed.controls.flatMap((control) => control.containerIndices)).size,
@@ -609,10 +835,12 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         new Set(observed.controls.flatMap((control) => control.containerIndices)).size >
         registeredContainers.size,
     },
-    sections: observed.sections.map((section) => ({
-      heading: cleanContextText(section.heading, 200),
-      content: cleanContextText(section.content, 4_000),
-    })).filter((section) => section.heading && section.content),
+    sections: observed.sections
+      .map((section) => ({
+        heading: cleanContextText(section.heading, 200),
+        content: cleanContextText(section.content, 4_000),
+      }))
+      .filter((section) => section.heading && section.content),
     sectionCompleteness: {
       kind: "bounded",
       observed: observed.sectionObserved,

@@ -15,7 +15,10 @@ export class ProtectedStageTimeoutError extends Error {
 export class ProtectedStageAbortedError extends Error {
   override readonly name = "ProtectedStageAbortedError";
 
-  constructor(readonly stage: string, readonly reason: unknown) {
+  constructor(
+    readonly stage: string,
+    readonly reason: unknown,
+  ) {
     super("PROTECTED_STAGE_ABORTED");
   }
 }
@@ -37,15 +40,18 @@ export async function runProtectedStage<T>(input: {
   let removeAbort: (() => void) | undefined;
 
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      const error = new ProtectedStageTimeoutError(
-        input.stage,
-        input.timeoutCode,
-        input.dispatchPosition,
-      );
-      controller.abort(error);
-      reject(error);
-    }, Math.max(0, input.timeoutMs));
+    timer = setTimeout(
+      () => {
+        const error = new ProtectedStageTimeoutError(
+          input.stage,
+          input.timeoutCode,
+          input.dispatchPosition,
+        );
+        controller.abort(error);
+        reject(error);
+      },
+      Math.max(0, input.timeoutMs),
+    );
     timer.unref?.();
   });
 
@@ -67,7 +73,10 @@ export async function runProtectedStage<T>(input: {
     // Attaching both handlers contains late rejection without granting late
     // completion any authority after this owner has returned.
     const work = Promise.resolve().then(() => input.work(controller.signal));
-    work.then(() => undefined, () => undefined);
+    work.then(
+      () => undefined,
+      () => undefined,
+    );
     return await Promise.race([work, deadline, aborted]);
   } finally {
     if (timer) clearTimeout(timer);

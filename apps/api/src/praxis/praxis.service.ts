@@ -1,7 +1,7 @@
 import { ConflictException, Injectable, Inject } from "@nestjs/common";
 import { Database } from "../infrastructure/index.js";
 import { RunQueueService } from "../runtime/index.js";
-import { PraxisRuntimeRepository } from "./repositories/praxis-runtime.repository.js";
+import { PraxisRuntimeRepository } from "./praxis-runtime.repository.js";
 
 @Injectable()
 export class PraxisService {

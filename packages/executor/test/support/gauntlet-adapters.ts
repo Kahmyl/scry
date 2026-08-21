@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import { markVeilProtectedClipboardTouched } from "@scry/veil";
+import { markProtectedClipboardTouched } from "../../src/privacy-clipboard-runtime.js";
 
 export type AdapterCapability =
   "clipboard_extraction" | "network_extraction" | "safe_exit" | "credential_revocation";
@@ -78,7 +78,7 @@ const clipboard: BuiltInAdapter<Record<string, never>> = {
   async execute(context) {
     requireProtected(context);
     const started = Date.now();
-    const lifecycleOwned = markVeilProtectedClipboardTouched(context.page);
+    const lifecycleOwned = markProtectedClipboardTouched(context.page);
     const value = await context.page.evaluate(() => navigator.clipboard.readText());
     if (!value) throw new AdapterError("ADAPTER_VALUE_EMPTY", "gauntlet.clipboard");
     context.registerSecret(value);

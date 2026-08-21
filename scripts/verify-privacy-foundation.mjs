@@ -18,11 +18,17 @@ const forbidden = [
   { pattern: /captureSecret|revealAndCaptureSecret/g, reason: "split legacy protected action" },
 ];
 
+const externalVersionedApiContracts = new Set([
+  "apps/api/src/auth.service.ts",
+  "apps/api/src/adaptive-sessions/vitract-credential-resource-effect.provider.ts",
+]);
+
 const violations = [];
 for (const relativePath of foundationFiles) {
-  if (relativePath === "apps/api/src/auth.service.ts") continue; // Supabase's external issuer path is not a Scry route.
   const source = readFileSync(resolve(root, relativePath), "utf8");
   for (const rule of forbidden) {
+    if (rule.reason === "versioned public API" && externalVersionedApiContracts.has(relativePath))
+      continue;
     rule.pattern.lastIndex = 0;
     if (rule.pattern.test(source)) violations.push(`${relativePath}: ${rule.reason}`);
   }

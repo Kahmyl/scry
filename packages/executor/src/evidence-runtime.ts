@@ -2,11 +2,19 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { visualRedactionInitScript } from "@scry/praxis";
+import {
+  capturePraxisSanitizedStructure,
+  capturePraxisScreenshot,
+  installPraxisInitScript,
+  measurePraxisDocument,
+  observeAndMaskPraxisVisualRegions,
+  visualRedactionInitScript,
+} from "@scry/praxis";
 import type { SecretRedactor } from "@scry/policy";
 import {
   type VeilChannelCollector,
   type VeilRuntimeCoordinator,
+  VeilVisualCaptureError,
   type VeilVisualCaptureAuthority,
 } from "@scry/veil";
 import type { BrowserContext, Page } from "playwright";
@@ -20,6 +28,55 @@ type CaptureBinding = {
   frameId: string;
   documentEpoch: number;
 };
+
+const VISUAL_CAPTURE_STABILIZATION_ATTEMPTS = 3;
+
+export async function captureWithStableVisualPermit<T>(input: {
+  visualCapture: VeilVisualCaptureAuthority;
+  captureBinding: () => CaptureBinding;
+  observe: () => Promise<Awaited<ReturnType<typeof observeAndMaskPraxisVisualRegions>>>;
+  capture: () => Promise<T>;
+}) {
+  let lastDocumentChanged: VeilVisualCaptureError | undefined;
+
+  for (let attempt = 1; attempt <= VISUAL_CAPTURE_STABILIZATION_ATTEMPTS; attempt += 1) {
+    const binding = input.captureBinding();
+    const observation = await input.observe();
+    const { permit } = input.visualCapture.issue(observation, binding);
+    const validatedObservation = await input.observe();
+
+    try {
+      const result = await input.visualCapture.capture(
+        validatedObservation,
+        permit,
+        binding,
+        input.capture,
+      );
+
+      return {
+        permit,
+        observation: validatedObservation,
+        result,
+        stabilizationAttempts: attempt,
+      };
+    } catch (error) {
+      if (
+        !(error instanceof VeilVisualCaptureError) ||
+        error.code !== "VEIL_CAPTURE_DOCUMENT_CHANGED"
+      ) {
+        throw error;
+      }
+
+      lastDocumentChanged = error;
+
+      if (attempt === VISUAL_CAPTURE_STABILIZATION_ATTEMPTS) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastDocumentChanged ?? new Error("VEIL_VISUAL_CAPTURE_STABILIZATION_EXHAUSTED");
+}
 
 export async function captureRequestedEvidence(
   page: Page,
@@ -57,11 +114,16 @@ export async function captureRequestedEvidence(
       try {
         if (!visualCapture || !captureBinding)
           throw new Error("VEIL_VISUAL_CAPTURE_AUTHORITY_REQUIRED");
-        const binding = captureBinding();
-        const { permit } = await visualCapture.issue(page, binding);
-        const fallback = await visualCapture.capture(page, permit, binding, () =>
-          captureScreenshotWithFallback(page, file, true),
-        );
+        const {
+          permit,
+          observation,
+          result: fallback,
+        } = await captureWithStableVisualPermit({
+          visualCapture,
+          captureBinding,
+          observe: () => observeAndMaskPraxisVisualRegions(page),
+          capture: () => captureScreenshotWithFallback(page, file, true),
+        });
         const artifact = await availableArtifact(
           "screenshot",
           "image/png",
@@ -216,11 +278,12 @@ export async function captureFailureScreenshot(
   try {
     const file = path.join(root, "screenshots", `${stepId}.failure.png`);
     if (!visualCapture || !captureBinding) return;
-    const binding = captureBinding();
-    const { permit } = await visualCapture.issue(page, binding);
-    await visualCapture.capture(page, permit, binding, () =>
-      page.screenshot({ path: file, fullPage: true }).then(() => undefined),
-    );
+    const { permit } = await captureWithStableVisualPermit({
+      visualCapture,
+      captureBinding,
+      observe: () => observeAndMaskPraxisVisualRegions(page),
+      capture: () => capturePraxisScreenshot(page, file, { fullPage: true }),
+    });
     result.artifacts.push(
       await availableArtifact(
         "screenshot",
@@ -236,27 +299,24 @@ export async function captureFailureScreenshot(
 }
 
 export async function installVisualRedactionStyles(context: BrowserContext) {
-  await context.addInitScript({ content: visualRedactionInitScript });
+  await installPraxisInitScript(context, visualRedactionInitScript);
 }
 
 export async function captureScreenshotWithFallback(page: Page, file: string, fullPage: boolean) {
   if (!fullPage) {
-    await page.screenshot({ path: file, fullPage: false, timeout: 10_000 });
+    await capturePraxisScreenshot(page, file, { fullPage: false, timeoutMs: 10_000 });
     return false;
   }
-  const dimensions = await page.evaluate(() => ({
-    width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth ?? 0),
-    height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0),
-  }));
+  const dimensions = await measurePraxisDocument(page);
   if (dimensions.width * dimensions.height <= 40_000_000) {
     try {
-      await page.screenshot({ path: file, fullPage: true, timeout: 10_000 });
+      await capturePraxisScreenshot(page, file, { fullPage: true, timeoutMs: 10_000 });
       return false;
     } catch {
       // Chromium can reject or stall on extremely complex pages despite modest dimensions.
     }
   }
-  await page.screenshot({ path: file, fullPage: false, timeout: 10_000 });
+  await capturePraxisScreenshot(page, file, { fullPage: false, timeoutMs: 10_000 });
   return true;
 }
 
@@ -264,74 +324,7 @@ export async function sanitizedDomStructure(
   page: Page,
   redactor: Pick<SecretRedactor, "redact">,
 ): Promise<string> {
-  const structure = await page.evaluate(() => {
-    const source = document.documentElement;
-    const clone = source.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll("script,style,noscript,template").forEach((element) => element.remove());
-    const semanticTextSelector =
-      "a,button,label,h1,h2,h3,[role=button],[role=link],[role=tab],[role=switch]";
-    const walker = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT);
-    const remove: Node[] = [];
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      if (node.nodeType === Node.COMMENT_NODE) {
-        remove.push(node);
-        continue;
-      }
-      const parent = node.parentElement;
-      if (!parent?.closest(semanticTextSelector)) {
-        remove.push(node);
-        continue;
-      }
-      node.textContent = (node.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
-      if (!node.textContent) remove.push(node);
-    }
-    remove.forEach((node) => node.parentNode?.removeChild(node));
-    clone.querySelectorAll("*").forEach((element) => {
-      const inputType = element instanceof HTMLInputElement ? element.type : undefined;
-      const semanticAttributes = new Map(
-        [...element.attributes]
-          .filter((attribute) =>
-            [
-              "role",
-              "aria-label",
-              "aria-expanded",
-              "aria-haspopup",
-              "aria-selected",
-              "aria-checked",
-              "placeholder",
-            ].includes(attribute.name),
-          )
-          .map((attribute) => [attribute.name, attribute.value.slice(0, 200)]),
-      );
-      for (const attribute of [...element.attributes]) element.removeAttribute(attribute.name);
-      for (const [name, value] of semanticAttributes) element.setAttribute(name, value);
-      if (inputType) element.setAttribute("type", safeInputType(inputType));
-    });
-    return `<!doctype html>${clone.outerHTML}`;
-
-    function safeInputType(value: string) {
-      return [
-        "button",
-        "checkbox",
-        "color",
-        "date",
-        "file",
-        "hidden",
-        "image",
-        "month",
-        "number",
-        "password",
-        "radio",
-        "range",
-        "reset",
-        "submit",
-        "time",
-        "week",
-      ].includes(value)
-        ? value
-        : "text";
-    }
-  });
+  const structure = await capturePraxisSanitizedStructure(page);
   return redactor.redact(structure);
 }
 

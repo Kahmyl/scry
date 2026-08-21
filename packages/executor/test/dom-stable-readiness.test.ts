@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { currentPlanSchema, executionPolicySchema } from "@scry/contracts";
-import { resolveTargetLocator } from "@scry/praxis";
 
 import { executePlan } from "../src/executor.js";
 
@@ -66,7 +65,10 @@ describe("DOM-stable readiness", () => {
         schemaVersion: 1,
         policyDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
         restorationUrl: `${origin}/`,
-        storageState: expect.objectContaining({ cookies: expect.any(Array), origins: expect.any(Array) }),
+        storageState: expect.objectContaining({
+          cookies: expect.any(Array),
+          origins: expect.any(Array),
+        }),
         sessionStorage: { origin, entries: [] },
       }),
     );
@@ -83,17 +85,31 @@ describe("DOM-stable readiness", () => {
     if (!address || typeof address === "string") throw new Error("server unavailable");
     const origin = `http://127.0.0.1:${address.port}`;
     const plan = currentPlanSchema.parse({
-      name: "Checkpoint failure", objective: "Fail closed", allowedOrigins: [origin],
-      budgets: { maxActions: 1, maxDurationMs: 10_000, maxNavigations: 1 }, checkpoints: [],
-      steps: [{ id: "open", title: "Open", action: { type: "navigate", url: origin },
-        assertions: [], evidence: [], onFailure: "stop", captureIntent: "transient" }],
+      name: "Checkpoint failure",
+      objective: "Fail closed",
+      allowedOrigins: [origin],
+      budgets: { maxActions: 1, maxDurationMs: 10_000, maxNavigations: 1 },
+      checkpoints: [],
+      steps: [
+        {
+          id: "open",
+          title: "Open",
+          action: { type: "navigate", url: origin },
+          assertions: [],
+          evidence: [],
+          onFailure: "stop",
+          captureIntent: "transient",
+        },
+      ],
     });
     const report = await executePlan({
       plan,
       policy: executionPolicySchema.parse({ allowedOrigins: [origin], allowPrivateNetwork: true }),
       outputDirectory: await mkdtemp(path.join(tmpdir(), "scry-checkpoint-failure-")),
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
-      captureSuccessorCheckpoint: () => { throw new Error("storage unavailable"); },
+      captureSuccessorCheckpoint: () => {
+        throw new Error("storage unavailable");
+      },
     });
     expect(report).toMatchObject({
       state: "infrastructure_error",
@@ -129,16 +145,36 @@ describe("DOM-stable readiness", () => {
     const button = {
       concept: "start",
       requiredCapabilities: ["pointer_activatable"],
-      preferredEvidence: { roles: ["button"], names: ["Start"], labels: [], descriptions: [], placeholders: [], inputTypes: [] },
-      scope: { kind: "page" }, relations: [], prohibited: ["hidden", "disabled"],
-      risk: "ordinary", confidence: { requiredFamilies: [] },
+      preferredEvidence: {
+        roles: ["button"],
+        names: ["Start"],
+        labels: [],
+        descriptions: [],
+        placeholders: [],
+        inputTypes: [],
+      },
+      scope: { kind: "page" },
+      relations: [],
+      prohibited: ["hidden", "disabled"],
+      risk: "ordinary",
+      confidence: { requiredFamilies: [] },
     };
     const resultRegion = {
       concept: "result",
       requiredCapabilities: ["readable_value"],
-      preferredEvidence: { roles: ["region"], names: ["Result"], labels: [], descriptions: [], placeholders: [], inputTypes: [] },
-      scope: { kind: "page" }, relations: [], prohibited: ["hidden"],
-      risk: "ordinary", confidence: { requiredFamilies: [] },
+      preferredEvidence: {
+        roles: ["region"],
+        names: ["Result"],
+        labels: [],
+        descriptions: [],
+        placeholders: [],
+        inputTypes: [],
+      },
+      scope: { kind: "page" },
+      relations: [],
+      prohibited: ["hidden"],
+      risk: "ordinary",
+      confidence: { requiredFamilies: [] },
     };
     const plan = currentPlanSchema.parse({
       name: "Independent post-action readiness",
@@ -147,13 +183,40 @@ describe("DOM-stable readiness", () => {
       budgets: { maxActions: 2, maxDurationMs: 10_000, maxNavigations: 1 },
       checkpoints: [],
       steps: [
-        { id: "open", title: "Open", action: { type: "navigate", url: origin },
-          assertions: [], evidence: [], onFailure: "stop", captureIntent: "transient" },
-        { id: "start", title: "Start", action: { type: "click", target: button,
-          expectedEffect: { type: "none" }, timeoutMs: actionTimeoutMs },
-          after: { mode: "all", timeoutMs: readinessTimeoutMs,
-            conditions: [{ type: "content", target: resultRegion, requiredText: "Ready after action deadline" }] },
-          assertions: [], evidence: [], onFailure: "stop", captureIntent: "transient" },
+        {
+          id: "open",
+          title: "Open",
+          action: { type: "navigate", url: origin },
+          assertions: [],
+          evidence: [],
+          onFailure: "stop",
+          captureIntent: "transient",
+        },
+        {
+          id: "start",
+          title: "Start",
+          action: {
+            type: "click",
+            target: button,
+            expectedEffect: { type: "none" },
+            timeoutMs: actionTimeoutMs,
+          },
+          after: {
+            mode: "all",
+            timeoutMs: readinessTimeoutMs,
+            conditions: [
+              {
+                type: "content",
+                target: resultRegion,
+                requiredText: "Ready after action deadline",
+              },
+            ],
+          },
+          assertions: [],
+          evidence: [],
+          onFailure: "stop",
+          captureIntent: "transient",
+        },
       ],
     });
     const report = await executePlan({
@@ -161,12 +224,6 @@ describe("DOM-stable readiness", () => {
       policy: executionPolicySchema.parse({ allowedOrigins: [origin], allowPrivateNetwork: true }),
       outputDirectory: await mkdtemp(path.join(tmpdir(), "scry-readiness-independence-")),
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
-      executeNativeControl: async (page, target, operation, beforeDispatch) => {
-        if (operation.type !== "click") throw new Error("EXPECTED_CLICK");
-        const locator = await resolveTargetLocator(page, target);
-        await beforeDispatch?.();
-        await locator.click(operation.timeoutMs === undefined ? {} : { timeout: operation.timeoutMs });
-      },
       onMutationDispatch: async () => {
         dispatchCount += 1;
         dispatchAt = performance.now() - actionStartedAt;

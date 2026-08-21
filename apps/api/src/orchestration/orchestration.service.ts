@@ -4,8 +4,6 @@ import {
   Inject,
   Injectable,
   NotFoundException,
-  OnModuleDestroy,
-  OnModuleInit,
 } from "@nestjs/common";
 import type {
   ActivateExecutionPlanInput,
@@ -25,21 +23,10 @@ const TERMINAL_RUNS = ["passed", "failed", "cancelled", "timed_out", "infrastruc
 const workspaceId = (p: Principal) => (p.kind === "user" ? p.workspaceId : null);
 
 @Injectable()
-export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
-  private timer?: NodeJS.Timeout;
+export class OrchestrationService {
   private ticking = false;
   constructor(@Inject(Database) private readonly db: Database) {}
 
-  async onModuleInit() {
-    await this.tick().catch(() => undefined);
-    this.timer = setInterval(
-      () => void this.tick().catch(() => undefined),
-      Number(process.env.SCRY_ORCHESTRATION_INTERVAL_MS ?? 1_000),
-    );
-  }
-  onModuleDestroy() {
-    if (this.timer) clearInterval(this.timer);
-  }
   private write(p: Principal) {
     if (p.kind === "user" && p.role === "viewer")
       throw new ForbiddenException("Write access required");
@@ -156,8 +143,11 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
         [missionId],
       );
       if (unknownMutation.rowCount)
-        throw new ConflictException({ code: "MISSION_RECONCILIATION_REQUIRED",
-          mutationOutcome: "unknown", safeActions: ["get_flow_authoring"] });
+        throw new ConflictException({
+          code: "MISSION_RECONCILIATION_REQUIRED",
+          mutationOutcome: "unknown",
+          safeActions: ["get_flow_authoring"],
+        });
       const plan = await c.query<{
         id: string;
         source_mission_revision: number;
@@ -211,7 +201,6 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
         `UPDATE missions SET status='running',revision=revision+1,updated_at=now() WHERE id=$1`,
         [missionId],
       );
-      await this.reconcileMission(c, missionId);
       await this.activity(c, missionId, input.agentSessionId, null, "Execution plan activated", {
         planId: plan.rows[0]!.id,
         revision: input.planRevision,
@@ -277,7 +266,7 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
           `UPDATE mission_objective_orchestration SET state='cancelled',blocker_code='MISSION_CANCELLED',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE mission_id=$1 AND state NOT IN ('passed','failed','awaiting_evidence')`,
           [missionId],
         );
-      } else if (action === "resume") await this.reconcileMission(c, missionId);
+      }
       await this.activity(
         c,
         missionId,
@@ -303,13 +292,26 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
         [input.objectiveId, missionId, input.environmentId],
       );
       if (!valid.rowCount) throw new ConflictException({ code: "AUTHORIZATION_SCOPE_MISMATCH" });
+      if (input.kind === "protected_mutation") {
+        const protectedSession = await c.query(
+          `SELECT 1 FROM adaptive_sessions
+           WHERE id=$1 AND project_id=(SELECT project_id FROM missions WHERE id=$2)
+             AND mission_id=$2 AND active_objective_id=$3 AND environment_id=$4
+             AND protection='protected' AND state IN ('active','provisioning')`,
+          [input.praxisSessionId, missionId, input.objectiveId, input.environmentId],
+        );
+        if (!protectedSession.rowCount)
+          throw new ConflictException({ code: "AUTHORIZATION_PRAXIS_SESSION_SCOPE_MISMATCH" });
+      }
       const result = await c.query<{ id: string }>(
-        `INSERT INTO mission_authorizations(mission_id,objective_id,environment_id,kind,reason,granted_by_agent_session_id,granted_by_user_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+        `INSERT INTO mission_authorizations(mission_id,objective_id,environment_id,kind,operation_id,praxis_session_id,reason,granted_by_agent_session_id,granted_by_user_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
         [
           missionId,
           input.objectiveId,
           input.environmentId,
           input.kind,
+          input.operationId ?? null,
+          input.praxisSessionId ?? null,
           input.reason,
           input.agentSessionId,
           p.userId,
@@ -325,10 +327,10 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
         {
           authorizationId: result.rows[0]!.id,
           kind: input.kind,
+          operationId: input.operationId ?? null,
           environmentId: input.environmentId,
         },
       );
-      await this.reconcileMission(c, missionId);
       return { id: result.rows[0]!.id, status: "approved", kind: input.kind };
     });
   }
@@ -541,11 +543,6 @@ export class OrchestrationService implements OnModuleInit, OnModuleDestroy {
       [objectiveId],
     );
     if (credentials.rowCount) return { code: "CREDENTIAL_AUTHORIZATION_REQUIRED" };
-    const calibration = await c.query(
-      `SELECT 1 FROM mission_execution_bindings b JOIN flow_revisions fr ON fr.id=b.flow_revision_id CROSS JOIN LATERAL jsonb_path_query(fr.plan,'$.steps[*].action ? (@.type == "protectedTransaction")') action LEFT JOIN calibration_attestations a ON a.id=(action->>'calibrationAttestationId')::uuid LEFT JOIN calibration_decisions d ON d.attestation_id=a.id AND d.decision='approved' LEFT JOIN calibration_revocations r ON r.attestation_id=a.id WHERE b.objective_id=$1 AND (a.id IS NULL OR d.id IS NULL OR r.id IS NOT NULL)`,
-      [objectiveId],
-    );
-    if (calibration.rowCount) return { code: "CALIBRATION_AUTHORIZATION_REQUIRED" };
     return null;
   }
 

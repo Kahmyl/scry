@@ -51,162 +51,180 @@ try {
   const qualification = await identifyQualification();
   const createdOperationId = argumentValue("--created-operation=");
   if (process.argv.includes("--preflight-only")) {
-    process.stdout.write([
-      "qualificationProvenance: exact",
-      "activeExistingCredential: yes",
-      "existingCanonicalOrderReference: yes",
-      "credentialGeneratedThisTask: no",
-      "providerMutationPaths: zero",
-      "protectedPlaintextExposed: no",
-      "FINAL_STATUS: LIVE_RETRIEVE_ORDER_PREFLIGHT_READY",
-    ].join("\n") + "\n");
+    process.stdout.write(
+      [
+        "qualificationProvenance: exact",
+        "activeExistingCredential: yes",
+        "existingCanonicalOrderReference: yes",
+        "credentialGeneratedThisTask: no",
+        "providerMutationPaths: zero",
+        "protectedPlaintextExposed: no",
+        "FINAL_STATUS: LIVE_RETRIEVE_ORDER_PREFLIGHT_READY",
+      ].join("\n") + "\n",
+    );
     process.exitCode = 0;
   } else if (createdOperationId) {
     await retrieveExactCreatedOperation(qualification, createdOperationId);
   } else {
-  mcp = await initializeMcp();
-  if (process.argv.includes("--acquire-existing-identity")) {
-    await acquireExistingIdentity(qualification);
-  } else {
-  const runId = randomUUID();
-  const started = await checkedCall({
-    name: "start_flow_authoring",
-    arguments: {
-      projectId: qualification.projectId,
-      environmentId: qualification.environmentId,
-      missionId: qualification.missionId,
-      agentSessionId: qualification.agentSessionId,
-      objectiveId: qualification.objectiveId,
-      flowDraftId: qualification.flowDraftId,
-      objective: "Validate Vitract List output isolation and opaque Retrieve chaining",
-      allowedOrigins: qualification.allowedOrigins,
-      correlationId: randomUUID(),
-      initialProtectedReferenceIds: qualification.credentialReferenceIds,
-      turnBudgets: { maxOperations: 1, maxDurationMs: 30_000 },
-      idempotencyKey: `vitract-list-retrieve-postfix-start-${runId}`,
-    },
-  });
-  const sessionId = findAdaptiveSessionId(started);
-  assert(sessionId, "POSTFIX_SESSION_ID_MISSING");
-  openSessions.add(sessionId);
+    mcp = await initializeMcp();
+    if (process.argv.includes("--acquire-existing-identity")) {
+      await acquireExistingIdentity(qualification);
+    } else {
+      const runId = randomUUID();
+      const started = await checkedCall({
+        name: "start_flow_authoring",
+        arguments: {
+          projectId: qualification.projectId,
+          environmentId: qualification.environmentId,
+          missionId: qualification.missionId,
+          agentSessionId: qualification.agentSessionId,
+          objectiveId: qualification.objectiveId,
+          flowDraftId: qualification.flowDraftId,
+          objective: "Validate Vitract List output isolation and opaque Retrieve chaining",
+          allowedOrigins: qualification.allowedOrigins,
+          correlationId: randomUUID(),
+          initialProtectedReferenceIds: qualification.credentialReferenceIds,
+          turnBudgets: { maxOperations: 1, maxDurationMs: 30_000 },
+          idempotencyKey: `vitract-list-retrieve-postfix-start-${runId}`,
+        },
+      });
+      const sessionId = findAdaptiveSessionId(started);
+      assert(sessionId, "POSTFIX_SESSION_ID_MISSING");
+      openSessions.add(sessionId);
 
-  const navigate = navigationIntent(qualification, runId);
-  const listPreparation = qualification.listPreparation.map((intent) =>
-    narrowDocumentationScope(structuredClone(intent), "List Orders"),
-  );
-  const prepared = await checkedCall({
-    name: "advance_flow_authoring",
-    arguments: {
-      sessionId,
-      kind: "intents",
-      intents: [navigate, ...listPreparation],
-      budgets: {
-        maxOperations: 1 + listPreparation.length,
-        maxDurationMs: 30_000,
-      },
-      idempotencyKey: `vitract-list-retrieve-postfix-prepare-${runId}`,
-    },
-  });
-  assert(findTurn(prepared).state === "completed", "POSTFIX_LIST_PREPARATION_FAILED");
-  assertPagination(listPreparation);
+      const navigate = navigationIntent(qualification, runId);
+      const listPreparation = qualification.listPreparation.map((intent) =>
+        narrowDocumentationScope(structuredClone(intent), "List Orders"),
+      );
+      const prepared = await checkedCall({
+        name: "advance_flow_authoring",
+        arguments: {
+          sessionId,
+          kind: "intents",
+          intents: [navigate, ...listPreparation],
+          budgets: {
+            maxOperations: 1 + listPreparation.length,
+            maxDurationMs: 30_000,
+          },
+          idempotencyKey: `vitract-list-retrieve-postfix-prepare-${runId}`,
+        },
+      });
+      assert(findTurn(prepared).state === "completed", "POSTFIX_LIST_PREPARATION_FAILED");
+      assertPagination(listPreparation);
 
-  const listIntent = narrowDocumentationScope(cloneIntent(qualification.listIntent, {
-    intentId: `postfix-list-${runId}`,
-    preparationIntentIds: listPreparation.map((intent) => intent.intentId),
-  }), "List Orders");
-  const listTurn = await executeProtectedTurn(sessionId, listIntent, `postfix-list-${runId}`);
-  assert(listTurn.state === "completed", "POSTFIX_LIST_NOT_COMPLETED");
-  const listProof = await operationProof(sessionId, listTurn.turnId, listIntent.intentId);
-  const listedReferences = listTurn.completed.flatMap((entry) => entry.generatedReferences ?? []);
-  assert(listProof.httpStatus === 200, "POSTFIX_LIST_HTTP_STATUS_NOT_200");
-  assert(listProof.dispatchCount === 1, "POSTFIX_LIST_DISPATCH_COUNT_INVALID");
-  assert(
-    listProof.requestStatus === "initiated" &&
-      listProof.requestEnvelopeMatched &&
-      listProof.requestMethod === "GET",
-    "POSTFIX_LIST_READ_ONLY_REQUEST_UNPROVEN",
-  );
-  assert(listedReferences.length === 1, "POSTFIX_LIST_OUTPUT_COUNT_INVALID");
-  assert(listProof.committedOutputCount === 1, "POSTFIX_LIST_COMMITTED_COUNT_INVALID");
-  assert(
-    listProof.acquisitionSource === "protected_network_value",
-    "POSTFIX_LIST_OUTPUT_NOT_NETWORK_ACQUIRED",
-  );
-  const listed = listedReferences[0]!;
-  const listedOpaqueId = opaqueId(listed);
-  assert(
-    !qualification.credentialReferenceIds.includes(listedOpaqueId),
-    "POSTFIX_LIST_OUTPUT_REFERENCE_CONTAMINATED",
-  );
-  assert(
-    !qualification.credentialReferenceIds.includes(listed.reference),
-    "POSTFIX_LIST_OUTPUT_ALIAS_CONTAMINATED",
-  );
-  const listedOrderId = await decryptCommittedReference(qualification.projectId, listed);
+      const listIntent = narrowDocumentationScope(
+        cloneIntent(qualification.listIntent, {
+          intentId: `postfix-list-${runId}`,
+          preparationIntentIds: listPreparation.map((intent) => intent.intentId),
+        }),
+        "List Orders",
+      );
+      const listTurn = await executeProtectedTurn(sessionId, listIntent, `postfix-list-${runId}`);
+      assert(listTurn.state === "completed", "POSTFIX_LIST_NOT_COMPLETED");
+      const listProof = await operationProof(sessionId, listTurn.turnId, listIntent.intentId);
+      const listedReferences = listTurn.completed.flatMap(
+        (entry) => entry.generatedReferences ?? [],
+      );
+      assert(listProof.httpStatus === 200, "POSTFIX_LIST_HTTP_STATUS_NOT_200");
+      assert(listProof.dispatchCount === 1, "POSTFIX_LIST_DISPATCH_COUNT_INVALID");
+      assert(
+        listProof.requestStatus === "initiated" &&
+          listProof.requestEnvelopeMatched &&
+          listProof.requestMethod === "GET",
+        "POSTFIX_LIST_READ_ONLY_REQUEST_UNPROVEN",
+      );
+      assert(listedReferences.length === 1, "POSTFIX_LIST_OUTPUT_COUNT_INVALID");
+      assert(listProof.committedOutputCount === 1, "POSTFIX_LIST_COMMITTED_COUNT_INVALID");
+      assert(
+        listProof.acquisitionSource === "protected_network_value",
+        "POSTFIX_LIST_OUTPUT_NOT_NETWORK_ACQUIRED",
+      );
+      const listed = listedReferences[0]!;
+      const listedOpaqueId = opaqueId(listed);
+      assert(
+        !qualification.credentialReferenceIds.includes(listedOpaqueId),
+        "POSTFIX_LIST_OUTPUT_REFERENCE_CONTAMINATED",
+      );
+      assert(
+        !qualification.credentialReferenceIds.includes(listed.reference),
+        "POSTFIX_LIST_OUTPUT_ALIAS_CONTAMINATED",
+      );
+      const listedOrderId = await decryptCommittedReference(qualification.projectId, listed);
 
-  process.stdout.write(`listResponseStatusClass: ${statusClass(listProof.httpStatus)}\n`);
-  process.stdout.write(`listDispatchCount: ${listProof.dispatchCount}\n`);
-  process.stdout.write("canonicalOrderIdentityAcquired: yes\n");
+      process.stdout.write(`listResponseStatusClass: ${statusClass(listProof.httpStatus)}\n`);
+      process.stdout.write(`listDispatchCount: ${listProof.dispatchCount}\n`);
+      process.stdout.write("canonicalOrderIdentityAcquired: yes\n");
 
-  const retrieve = retrieveFromQualification(qualification, listedOpaqueId, runId);
-  const retrievePrepared = await checkedCall({
-    name: "advance_flow_authoring",
-    arguments: {
-      sessionId,
-      kind: "intents",
-      intents: retrieve.preparation,
-      budgets: { maxOperations: retrieve.preparation.length, maxDurationMs: 30_000 },
-      idempotencyKey: `vitract-list-retrieve-postfix-retrieve-prepare-${runId}`,
-    },
-  });
-  assert(findTurn(retrievePrepared).state === "completed", "POSTFIX_RETRIEVE_PREPARATION_FAILED");
-  const retrieveTurn = await executeProtectedTurn(
-    sessionId,
-    retrieve.intent,
-    `postfix-retrieve-${runId}`,
-  );
-  const retrieveProof = await operationProof(
-    sessionId,
-    retrieveTurn.turnId,
-    retrieve.intent.intentId,
-  );
-  assert(retrieveProof.dispatchCount <= 1, "POSTFIX_RETRIEVE_DISPATCH_LIMIT_EXCEEDED");
-  assert(retrieveProof.redispatchCount === 0, "POSTFIX_RETRIEVE_REDISPATCH_FORBIDDEN");
-  assert(retrieveProof.state === "completed", "POSTFIX_RETRIEVE_NOT_COMPLETED");
-  assert(retrieveProof.requestStatus === "initiated", "POSTFIX_RETRIEVE_REQUEST_NOT_INITIATED");
-  assert(retrieveProof.requestEnvelopeMatched, "POSTFIX_RETRIEVE_REQUEST_NOT_EXACT");
-  assert(retrieveProof.requestMethod === "GET", "POSTFIX_RETRIEVE_READ_ONLY_REQUEST_UNPROVEN");
-  assert(retrieveProof.httpStatus !== null && retrieveProof.httpStatus >= 200 && retrieveProof.httpStatus < 300,
-    "POSTFIX_RETRIEVE_RESPONSE_NOT_ACCEPTED");
-  assert(retrieveProof.expectedOutputCount === 1, "POSTFIX_RETRIEVE_OUTPUT_CONTRACT_INVALID");
-  assert(retrieveProof.acquiredOutputCount === 1, "POSTFIX_RETRIEVE_OUTPUT_NOT_ACQUIRED");
-  assert(retrieveProof.committedOutputCount === 1, "POSTFIX_RETRIEVE_OUTPUT_NOT_COMMITTED");
-  const retrievedReferences = retrieveTurn.completed.flatMap((entry) => entry.generatedReferences ?? []);
-  assert(retrievedReferences.length === 1, "POSTFIX_RETRIEVE_OUTPUT_REFERENCE_INVALID");
-  const retrievedOrderId = await decryptCommittedReference(
-    qualification.projectId,
-    retrievedReferences[0]!,
-  );
-  assert(retrievedOrderId === listedOrderId, "POSTFIX_RETRIEVE_IDENTITY_MISMATCH");
+      const retrieve = retrieveFromQualification(qualification, listedOpaqueId, runId);
+      const retrievePrepared = await checkedCall({
+        name: "advance_flow_authoring",
+        arguments: {
+          sessionId,
+          kind: "intents",
+          intents: retrieve.preparation,
+          budgets: { maxOperations: retrieve.preparation.length, maxDurationMs: 30_000 },
+          idempotencyKey: `vitract-list-retrieve-postfix-retrieve-prepare-${runId}`,
+        },
+      });
+      assert(
+        findTurn(retrievePrepared).state === "completed",
+        "POSTFIX_RETRIEVE_PREPARATION_FAILED",
+      );
+      const retrieveTurn = await executeProtectedTurn(
+        sessionId,
+        retrieve.intent,
+        `postfix-retrieve-${runId}`,
+      );
+      const retrieveProof = await operationProof(
+        sessionId,
+        retrieveTurn.turnId,
+        retrieve.intent.intentId,
+      );
+      assert(retrieveProof.dispatchCount <= 1, "POSTFIX_RETRIEVE_DISPATCH_LIMIT_EXCEEDED");
+      assert(retrieveProof.redispatchCount === 0, "POSTFIX_RETRIEVE_REDISPATCH_FORBIDDEN");
+      assert(retrieveProof.state === "completed", "POSTFIX_RETRIEVE_NOT_COMPLETED");
+      assert(retrieveProof.requestStatus === "initiated", "POSTFIX_RETRIEVE_REQUEST_NOT_INITIATED");
+      assert(retrieveProof.requestEnvelopeMatched, "POSTFIX_RETRIEVE_REQUEST_NOT_EXACT");
+      assert(retrieveProof.requestMethod === "GET", "POSTFIX_RETRIEVE_READ_ONLY_REQUEST_UNPROVEN");
+      assert(
+        retrieveProof.httpStatus !== null &&
+          retrieveProof.httpStatus >= 200 &&
+          retrieveProof.httpStatus < 300,
+        "POSTFIX_RETRIEVE_RESPONSE_NOT_ACCEPTED",
+      );
+      assert(retrieveProof.expectedOutputCount === 1, "POSTFIX_RETRIEVE_OUTPUT_CONTRACT_INVALID");
+      assert(retrieveProof.acquiredOutputCount === 1, "POSTFIX_RETRIEVE_OUTPUT_NOT_ACQUIRED");
+      assert(retrieveProof.committedOutputCount === 1, "POSTFIX_RETRIEVE_OUTPUT_NOT_COMMITTED");
+      const retrievedReferences = retrieveTurn.completed.flatMap(
+        (entry) => entry.generatedReferences ?? [],
+      );
+      assert(retrievedReferences.length === 1, "POSTFIX_RETRIEVE_OUTPUT_REFERENCE_INVALID");
+      const retrievedOrderId = await decryptCommittedReference(
+        qualification.projectId,
+        retrievedReferences[0]!,
+      );
+      assert(retrievedOrderId === listedOrderId, "POSTFIX_RETRIEVE_IDENTITY_MISMATCH");
 
-  process.stdout.write([
-    "activeExistingCredential: yes",
-    "credentialGeneratedThisTask: no",
-    "canonicalOrderIdentitySource: fresh_read_only_list",
-    `requestTransportClassification: ${safeTransport(retrieveProof.requestMethod, retrieveProof.requestTransport)}`,
-    "requestInitiationObserved: yes",
-    "requestCorrelation: exact",
-    "responseObserved: yes",
-    "responseCorrelation: exact",
-    `responseStatusClass: ${statusClass(retrieveProof.httpStatus)}`,
-    "bodyAcquisition: succeeded",
-    "declaredOutputAcquisition: succeeded",
-    "requestedOrderIdentityMatched: yes",
-    "providerMutationCount: 0",
-    "protectedPlaintextExposed: no",
-    "FINAL_STATUS: LIVE_RETRIEVE_ORDER_READ_ONLY_ACCEPTED",
-  ].join("\n") + "\n");
-  }
+      process.stdout.write(
+        [
+          "activeExistingCredential: yes",
+          "credentialGeneratedThisTask: no",
+          "canonicalOrderIdentitySource: fresh_read_only_list",
+          `requestTransportClassification: ${safeTransport(retrieveProof.requestMethod, retrieveProof.requestTransport)}`,
+          "requestInitiationObserved: yes",
+          "requestCorrelation: exact",
+          "responseObserved: yes",
+          "responseCorrelation: exact",
+          `responseStatusClass: ${statusClass(retrieveProof.httpStatus)}`,
+          "bodyAcquisition: succeeded",
+          "declaredOutputAcquisition: succeeded",
+          "requestedOrderIdentityMatched: yes",
+          "providerMutationCount: 0",
+          "protectedPlaintextExposed: no",
+          "FINAL_STATUS: LIVE_RETRIEVE_ORDER_READ_ONLY_ACCEPTED",
+        ].join("\n") + "\n",
+      );
+    }
   }
 } catch (error) {
   process.stderr.write(`safeStage: ${safeStage}\n`);
@@ -248,11 +266,15 @@ async function retrieveExactCreatedOperation(
   const started = await checkedCall({
     name: "start_flow_authoring",
     arguments: {
-      projectId: qualification.projectId, environmentId: qualification.environmentId,
-      missionId: qualification.missionId, agentSessionId: qualification.agentSessionId,
-      objectiveId: qualification.objectiveId, flowDraftId: qualification.flowDraftId,
+      projectId: qualification.projectId,
+      environmentId: qualification.environmentId,
+      missionId: qualification.missionId,
+      agentSessionId: qualification.agentSessionId,
+      objectiveId: qualification.objectiveId,
+      flowDraftId: qualification.flowDraftId,
       objective: "Verify the exact newly created Vitract Test order read-only",
-      allowedOrigins: qualification.allowedOrigins, correlationId: randomUUID(),
+      allowedOrigins: qualification.allowedOrigins,
+      correlationId: randomUUID(),
       initialProtectedReferenceIds: [
         ...qualification.credentialReferenceIds,
         opaqueId(createdReference),
@@ -264,15 +286,12 @@ async function retrieveExactCreatedOperation(
   const sessionId = findAdaptiveSessionId(started);
   assert(sessionId, "POST_CREATE_RETRIEVE_SESSION_ID_MISSING");
   openSessions.add(sessionId);
-  const retrieve = retrieveFromQualification(
-    qualification,
-    opaqueId(createdReference),
-    runId,
-  );
+  const retrieve = retrieveFromQualification(qualification, opaqueId(createdReference), runId);
   const prepared = await checkedCall({
     name: "advance_flow_authoring",
     arguments: {
-      sessionId, kind: "intents",
+      sessionId,
+      kind: "intents",
       intents: [navigationIntent(qualification, runId), ...retrieve.preparation],
       budgets: { maxOperations: retrieve.preparation.length + 1, maxDurationMs: 30_000 },
       idempotencyKey: `vitract-post-create-retrieve-prepare-${runId}`,
@@ -286,10 +305,19 @@ async function retrieveExactCreatedOperation(
   );
   const proof = await operationProof(sessionId, retrieveTurn.turnId, retrieve.intent.intentId);
   assert(proof.state === "completed", "POST_CREATE_RETRIEVE_NOT_COMPLETED");
-  assert(proof.dispatchCount === 1 && proof.redispatchCount === 0, "POST_CREATE_RETRIEVE_DISPATCH_INVALID");
-  assert(proof.requestStatus === "initiated" && proof.requestEnvelopeMatched, "POST_CREATE_RETRIEVE_REQUEST_NOT_EXACT");
+  assert(
+    proof.dispatchCount === 1 && proof.redispatchCount === 0,
+    "POST_CREATE_RETRIEVE_DISPATCH_INVALID",
+  );
+  assert(
+    proof.requestStatus === "initiated" && proof.requestEnvelopeMatched,
+    "POST_CREATE_RETRIEVE_REQUEST_NOT_EXACT",
+  );
   assert(proof.requestMethod === "GET", "POST_CREATE_RETRIEVE_NOT_READ_ONLY");
-  assert(proof.httpStatus !== null && proof.httpStatus >= 200 && proof.httpStatus < 300, "POST_CREATE_RETRIEVE_RESPONSE_INVALID");
+  assert(
+    proof.httpStatus !== null && proof.httpStatus >= 200 && proof.httpStatus < 300,
+    "POST_CREATE_RETRIEVE_RESPONSE_INVALID",
+  );
   const returned = retrieveTurn.completed.flatMap((entry) => entry.generatedReferences ?? []);
   assert(returned.length === 1, "POST_CREATE_RETRIEVE_OUTPUT_INVALID");
   const [createdIdentity, returnedIdentity] = await Promise.all([
@@ -297,14 +325,16 @@ async function retrieveExactCreatedOperation(
     decryptCommittedReference(qualification.projectId, returned[0]!),
   ]);
   assert(createdIdentity === returnedIdentity, "POST_CREATE_RETRIEVE_IDENTITY_MISMATCH");
-  process.stdout.write([
-    "postCreateRetrieve: PASS",
-    "retrieveRequestCorrelation: exact",
-    "retrieveResponseCorrelation: exact",
-    "requestedCreatedOrderIdentityMatched: yes",
-    "providerMutationCountDuringRetrieve: 0",
-    "canonicalCreatedOrderIdentityExposed: no",
-  ].join("\n") + "\n");
+  process.stdout.write(
+    [
+      "postCreateRetrieve: PASS",
+      "retrieveRequestCorrelation: exact",
+      "retrieveResponseCorrelation: exact",
+      "requestedCreatedOrderIdentityMatched: yes",
+      "providerMutationCountDuringRetrieve: 0",
+      "canonicalCreatedOrderIdentityExposed: no",
+    ].join("\n") + "\n",
+  );
 }
 
 function argumentValue(prefix: string) {
@@ -323,11 +353,15 @@ async function acquireExistingIdentity(qualification: Qualification) {
     const started = await checkedCall({
       name: "start_flow_authoring",
       arguments: {
-        projectId: qualification.projectId, environmentId: qualification.environmentId,
-        missionId: qualification.missionId, agentSessionId: qualification.agentSessionId,
-        objectiveId: qualification.objectiveId, flowDraftId: qualification.flowDraftId,
+        projectId: qualification.projectId,
+        environmentId: qualification.environmentId,
+        missionId: qualification.missionId,
+        agentSessionId: qualification.agentSessionId,
+        objectiveId: qualification.objectiveId,
+        flowDraftId: qualification.flowDraftId,
         objective: `Acquire one authoritative existing Vitract ${identityType} identity read-only`,
-        allowedOrigins: qualification.allowedOrigins, correlationId: randomUUID(),
+        allowedOrigins: qualification.allowedOrigins,
+        correlationId: randomUUID(),
         initialProtectedReferenceIds: [credentialMapping.clientId, credentialMapping.clientSecret],
         turnBudgets: { maxOperations: 1, maxDurationMs: 30_000 },
         idempotencyKey: `vitract-${identityType}-identity-start-${runId}`,
@@ -341,8 +375,24 @@ async function acquireExistingIdentity(qualification: Qualification) {
       const section = `${operationName} examples`;
       const prefix = identityType === "client" ? "listPartnerClients" : "listPartnerPractitioners";
       const preparation: MissionAuthoringIntent[] = [
-        identityFill(qualification, runId, `${prefix}-client-id`, "Client ID", credentialMapping.clientId, section, 0),
-        identityFill(qualification, runId, `${prefix}-client-secret`, "Client secret", credentialMapping.clientSecret, section, 1),
+        identityFill(
+          qualification,
+          runId,
+          `${prefix}-client-id`,
+          "Client ID",
+          credentialMapping.clientId,
+          section,
+          0,
+        ),
+        identityFill(
+          qualification,
+          runId,
+          `${prefix}-client-secret`,
+          "Client secret",
+          credentialMapping.clientSecret,
+          section,
+          1,
+        ),
         identityPublicFill(qualification, runId, `${prefix}-query-page`, "page", "1", section, 2),
         // Two is deliberate: a second record makes the canonical `id` leaf
         // ambiguous and prevents persistence instead of selecting by position.
@@ -352,51 +402,113 @@ async function acquireExistingIdentity(qualification: Qualification) {
       safeStage = `${identityType.toUpperCase()}_PREPARATION`;
       const prepared = await checkedCall({
         name: "advance_flow_authoring",
-        arguments: { sessionId, kind: "intents", intents: [navigation, ...preparation],
+        arguments: {
+          sessionId,
+          kind: "intents",
+          intents: [navigation, ...preparation],
           budgets: { maxOperations: preparation.length + 1, maxDurationMs: 30_000 },
-          idempotencyKey: `vitract-${identityType}-identity-prepare-${runId}` },
+          idempotencyKey: `vitract-${identityType}-identity-prepare-${runId}`,
+        },
       });
       assert(findTurn(prepared).state === "completed", "IDENTITY_PREPARATION_FAILED");
-      const pathTemplate = identityType === "client"
-        ? "/api/v1/partner-api/clients"
-        : "/api/v1/partner-api/practitioners";
+      const pathTemplate =
+        identityType === "client"
+          ? "/api/v1/partner-api/clients"
+          : "/api/v1/partner-api/practitioners";
       const intent: MissionAuthoringIntent = {
         intentId: `vitract-${identityType}-identity-${runId}`,
-        objectiveId: qualification.objectiveId, flowDraftId: qualification.flowDraftId,
+        objectiveId: qualification.objectiveId,
+        flowDraftId: qualification.flowDraftId,
         action: {
           kind: "acquire_protected_outputs",
           preparationIntentIds: preparation.map((item) => item.intentId),
-          mutation: { kind: "read_only", target: { concept: `${operationName} Run`, role: "button", name: "Run", scope: { kind: "region", name: section }, exact: true } },
+          mutation: {
+            kind: "read_only",
+            target: {
+              concept: `${operationName} Run`,
+              role: "button",
+              name: "Run",
+              scope: { kind: "region", name: section },
+              exact: true,
+            },
+          },
           request: { method: "GET", pathTemplate, transports: ["fetch", "xhr"] },
           outputs: [
-            { reference: `${identityType}CanonicalId`, classification: "protected", target: { concept: `${identityType} canonical id`, role: "value", name: "id", scope: { kind: "region", name: section }, exact: true }, storageName: `Vitract ${identityType} canonical ID` },
-            { reference: `${identityType}CollectionCount`, classification: "public", target: { concept: `${identityType} collection count`, role: "value", name: "count", scope: { kind: "region", name: section }, exact: true }, storageName: `Vitract ${identityType} collection count` },
+            {
+              reference: `${identityType}CanonicalId`,
+              classification: "protected",
+              target: {
+                concept: `${identityType} canonical id`,
+                role: "value",
+                name: "id",
+                scope: { kind: "region", name: section },
+                exact: true,
+              },
+              storageName: `Vitract ${identityType} canonical ID`,
+            },
+            {
+              reference: `${identityType}CollectionCount`,
+              classification: "public",
+              target: {
+                concept: `${identityType} collection count`,
+                role: "value",
+                name: "count",
+                scope: { kind: "region", name: section },
+                exact: true,
+              },
+              storageName: `Vitract ${identityType} collection count`,
+            },
           ],
         },
         expectedEffect: { kind: "none" },
         constraints: { timeoutMs: 30_000, allowNewPage: false, allowNonExact: false },
-        authorization: { kind: "protected_mutation", authorizationId: qualification.authorizationId },
+        authorization: {
+          kind: "protected_mutation",
+          authorizationId: qualification.authorizationId,
+        },
         protectedInputReferences: [],
       };
       safeStage = `${identityType.toUpperCase()}_ACQUISITION`;
-      const turn = await executeProtectedTurn(sessionId, intent, `vitract-${identityType}-identity-${runId}`);
+      const turn = await executeProtectedTurn(
+        sessionId,
+        intent,
+        `vitract-${identityType}-identity-${runId}`,
+      );
       if (turn.state !== "completed") continue;
       const proof = await operationProof(sessionId, turn.turnId, intent.intentId);
       const references = turn.completed.flatMap((entry) => entry.generatedReferences ?? []);
-      const canonical = references.find((reference) => reference.reference === `${identityType}CanonicalId`);
-      const countReference = references.find((reference) => reference.reference === `${identityType}CollectionCount`);
+      const canonical = references.find(
+        (reference) => reference.reference === `${identityType}CanonicalId`,
+      );
+      const countReference = references.find(
+        (reference) => reference.reference === `${identityType}CollectionCount`,
+      );
       if (!canonical || !countReference || references.length !== 2) continue;
       const count = await decryptCommittedReference(qualification.projectId, countReference);
       assert(count === "1", "IDENTITY_SINGLETON_NOT_PROVEN");
-      assert(proof.httpStatus === 200 && proof.dispatchCount === 1 && proof.requestStatus === "initiated" && proof.requestEnvelopeMatched && proof.requestMethod === "GET", "IDENTITY_READ_ONLY_LIFECYCLE_UNPROVEN");
-      process.stdout.write([
-        `identityType: ${identityType}`, `identityAcquisitionOperation: ${operationName}`,
-        "identityRequestCorrelation: exact", "identityResponseCorrelation: exact",
-        "canonicalExistingIdentityAcquired: yes", "canonicalExistingIdentityExposed: no",
-        "PIIExposed: no", "identityPersistence: PASS", "providerMutationCount: 0",
-        `identityOpaqueReferenceId: ${opaqueId(canonical)}`,
-        "FINAL_STATUS: EXISTING_IDENTITY_ACQUIRED",
-      ].join("\n") + "\n");
+      assert(
+        proof.httpStatus === 200 &&
+          proof.dispatchCount === 1 &&
+          proof.requestStatus === "initiated" &&
+          proof.requestEnvelopeMatched &&
+          proof.requestMethod === "GET",
+        "IDENTITY_READ_ONLY_LIFECYCLE_UNPROVEN",
+      );
+      process.stdout.write(
+        [
+          `identityType: ${identityType}`,
+          `identityAcquisitionOperation: ${operationName}`,
+          "identityRequestCorrelation: exact",
+          "identityResponseCorrelation: exact",
+          "canonicalExistingIdentityAcquired: yes",
+          "canonicalExistingIdentityExposed: no",
+          "PIIExposed: no",
+          "identityPersistence: PASS",
+          "providerMutationCount: 0",
+          `identityOpaqueReferenceId: ${opaqueId(canonical)}`,
+          "FINAL_STATUS: EXISTING_IDENTITY_ACQUIRED",
+        ].join("\n") + "\n",
+      );
       return;
     } finally {
       await closeSession(sessionId).catch(() => undefined);
@@ -409,31 +521,84 @@ async function acquireExistingIdentity(qualification: Qualification) {
 function mappedCredentialReferences(qualification: Qualification) {
   const mapped = qualification.listPreparation.flatMap((intent) => {
     if (intent.action.kind !== "fill" || !intent.action.protectedReferenceId) return [];
-    const concept = `${intent.action.target.concept} ${intent.action.target.name ?? ""} ${intent.action.target.label ?? ""}`.toLowerCase();
+    const concept =
+      `${intent.action.target.concept} ${intent.action.target.name ?? ""} ${intent.action.target.label ?? ""}`.toLowerCase();
     return [{ concept, reference: intent.action.protectedReferenceId }];
   });
   const clientId = mapped.filter(({ concept }) => concept.includes("client id"));
   const clientSecret = mapped.filter(({ concept }) => concept.includes("client secret"));
-  assert(clientId.length === 1 && clientSecret.length === 1, "IDENTITY_CREDENTIAL_MAPPING_AMBIGUOUS");
-  assert(clientId[0]!.reference !== clientSecret[0]!.reference, "IDENTITY_CREDENTIAL_MAPPING_COLLISION");
+  assert(
+    clientId.length === 1 && clientSecret.length === 1,
+    "IDENTITY_CREDENTIAL_MAPPING_AMBIGUOUS",
+  );
+  assert(
+    clientId[0]!.reference !== clientSecret[0]!.reference,
+    "IDENTITY_CREDENTIAL_MAPPING_COLLISION",
+  );
   return { clientId: clientId[0]!.reference, clientSecret: clientSecret[0]!.reference };
 }
 
-function identityFill(qualification: Qualification, runId: string, testId: string, label: string, protectedReferenceId: string, section: string, index: number): MissionAuthoringIntent {
+function identityFill(
+  qualification: Qualification,
+  runId: string,
+  testId: string,
+  label: string,
+  protectedReferenceId: string,
+  section: string,
+  index: number,
+): MissionAuthoringIntent {
   return {
-    intentId: `identity-protected-${index}-${runId}`, objectiveId: qualification.objectiveId, flowDraftId: qualification.flowDraftId,
-    action: { kind: "fill", target: { concept: `${section} ${label}`, role: "textbox", label, testId, scope: { kind: "region", name: section }, exact: true }, protectedReferenceId },
-    expectedEffect: { kind: "none" }, constraints: { timeoutMs: 10_000, allowNewPage: false, allowNonExact: false },
-    authorization: { kind: "authentication" }, protectedInputReferences: [protectedReferenceId],
+    intentId: `identity-protected-${index}-${runId}`,
+    objectiveId: qualification.objectiveId,
+    flowDraftId: qualification.flowDraftId,
+    action: {
+      kind: "fill",
+      target: {
+        concept: `${section} ${label}`,
+        role: "textbox",
+        label,
+        testId,
+        scope: { kind: "region", name: section },
+        exact: true,
+      },
+      protectedReferenceId,
+    },
+    expectedEffect: { kind: "none" },
+    constraints: { timeoutMs: 10_000, allowNewPage: false, allowNonExact: false },
+    authorization: { kind: "authentication" },
+    protectedInputReferences: [protectedReferenceId],
   };
 }
 
-function identityPublicFill(qualification: Qualification, runId: string, testId: string, label: string, publicValue: string, section: string, index: number): MissionAuthoringIntent {
+function identityPublicFill(
+  qualification: Qualification,
+  runId: string,
+  testId: string,
+  label: string,
+  publicValue: string,
+  section: string,
+  index: number,
+): MissionAuthoringIntent {
   return {
-    intentId: `identity-public-${index}-${runId}`, objectiveId: qualification.objectiveId, flowDraftId: qualification.flowDraftId,
-    action: { kind: "fill", target: { concept: `${section} ${label}`, role: "textbox", label, testId, scope: { kind: "region", name: section }, exact: true }, publicValue },
-    expectedEffect: { kind: "none" }, constraints: { timeoutMs: 10_000, allowNewPage: false, allowNonExact: false },
-    authorization: { kind: "ordinary" }, protectedInputReferences: [],
+    intentId: `identity-public-${index}-${runId}`,
+    objectiveId: qualification.objectiveId,
+    flowDraftId: qualification.flowDraftId,
+    action: {
+      kind: "fill",
+      target: {
+        concept: `${section} ${label}`,
+        role: "textbox",
+        label,
+        testId,
+        scope: { kind: "region", name: section },
+        exact: true,
+      },
+      publicValue,
+    },
+    expectedEffect: { kind: "none" },
+    constraints: { timeoutMs: 10_000, allowNewPage: false, allowNonExact: false },
+    authorization: { kind: "ordinary" },
+    protectedInputReferences: [],
   };
 }
 
@@ -675,7 +840,10 @@ function retrieveFromQualification(
     }
     return cloned;
   });
-  const intent = narrowDocumentationScope(structuredClone(qualification.retrieveIntent), "Retrieve Order");
+  const intent = narrowDocumentationScope(
+    structuredClone(qualification.retrieveIntent),
+    "Retrieve Order",
+  );
   intent.intentId = `postfix-retrieve-${runId}`;
   intent.protectedInputReferences = intent.protectedInputReferences.map((id) =>
     oldOrderReferences.has(id) ? listedOpaqueId : id,
@@ -837,10 +1005,14 @@ async function checkedCall(tool: { name: string; arguments: Record<string, unkno
     process.stderr.write(`safeToolShape: ${JSON.stringify(safeShape(response))}\n`);
     const rejectionCode = findNested(response, (record) =>
       typeof record.code === "string"
-        ? /release/i.test(record.code) ? "RELEASE_ADMISSION_REJECTED"
-          : /reference/i.test(record.code) ? "PROTECTED_REFERENCE_ADMISSION_REJECTED"
-            : /ownership/i.test(record.code) ? "OWNERSHIP_ADMISSION_REJECTED"
-              : /capabilit|origin/i.test(record.code) ? "ENVIRONMENT_CAPABILITY_REJECTED"
+        ? /release/i.test(record.code)
+          ? "RELEASE_ADMISSION_REJECTED"
+          : /reference/i.test(record.code)
+            ? "PROTECTED_REFERENCE_ADMISSION_REJECTED"
+            : /ownership/i.test(record.code)
+              ? "OWNERSHIP_ADMISSION_REJECTED"
+              : /capabilit|origin/i.test(record.code)
+                ? "ENVIRONMENT_CAPABILITY_REJECTED"
                 : "UNCLASSIFIED_ADMISSION_REJECTION"
         : undefined,
     );
@@ -857,7 +1029,11 @@ async function checkedCall(tool: { name: string; arguments: Record<string, unkno
 function safeShape(value: unknown): unknown {
   if (Array.isArray(value)) return value.slice(0, 5).map(safeShape);
   if (!value || typeof value !== "object") return typeof value;
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>).slice(0, 20).map(([key, child]) => [key, safeShape(child)]));
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .slice(0, 20)
+      .map(([key, child]) => [key, safeShape(child)]),
+  );
 }
 
 async function closeSession(sessionId: string) {

@@ -13,10 +13,20 @@ const input = {
 
 describe("external resource binding resolution", () => {
   it("returns exactly one ownership-fenced active binding", async () => {
-    const binding = { sourceProtectedOperationId: "operation", ...input, externalIdentity: "record-a", identityContractVersion: 1 };
-    const query = vi.fn(async (_sql: string, _values: unknown[]) => ({ rowCount: 1, rows: [binding] }));
+    const binding = {
+      sourceProtectedOperationId: "operation",
+      ...input,
+      externalIdentity: "record-a",
+      identityContractVersion: 1,
+    };
+    const query = vi.fn(async (_sql: string, _values: unknown[]) => ({
+      rowCount: 1,
+      rows: [binding],
+    }));
     const database = { query };
-    await expect(new ExternalResourceBindingRepository(database as never).resolveActiveForCredential(input)).resolves.toEqual(binding);
+    await expect(
+      new ExternalResourceBindingRepository(database as never).resolveActiveForCredential(input),
+    ).resolves.toEqual(binding);
     const [sql, values] = query.mock.calls[0]!;
     expect(sql).toContain("credential.security_status='active'");
     expect(sql).toContain("binding.required_for_destructive_lifecycle=true");
@@ -25,8 +35,11 @@ describe("external resource binding resolution", () => {
   });
 
   it.each([0, 2])("fails closed for %s matching bindings", async (rowCount) => {
-    const database = { query: vi.fn(async (_sql: string, _values: unknown[]) => ({ rowCount, rows: [] })) };
-    await expect(new ExternalResourceBindingRepository(database as never).resolveActiveForCredential(input))
-      .rejects.toMatchObject({ response: { code: "EXTERNAL_RESOURCE_BINDING_UNAVAILABLE" } });
+    const database = {
+      query: vi.fn(async (_sql: string, _values: unknown[]) => ({ rowCount, rows: [] })),
+    };
+    await expect(
+      new ExternalResourceBindingRepository(database as never).resolveActiveForCredential(input),
+    ).rejects.toMatchObject({ response: { code: "EXTERNAL_RESOURCE_BINDING_UNAVAILABLE" } });
   });
 });

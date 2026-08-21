@@ -9,7 +9,7 @@ import {
   AuthenticationAuthoringService,
 } from "../src/authentication-authoring/index.js";
 import { AuthoringService } from "../src/authoring/index.js";
-import { AdaptiveSessionRepository } from "../src/adaptive-sessions/adaptive-session.repository.js";
+import { AdaptiveSessionRepository } from "../src/adaptive-sessions/repositories/adaptive-session.repository.js";
 import { Database } from "../src/infrastructure/database.js";
 import { RunAttemptRepository } from "../src/runtime/repositories/run-attempt.repository.js";
 
@@ -36,6 +36,68 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     objectiveId: objective,
     agentSessionId: session,
   };
+
+  it("publishes a mechanically valid representation without compilation", async () => {
+    const name = `Direct representation ${randomUUID()}`;
+    const plan = currentPlanSchema.parse({
+      name,
+      objective: "Open preview",
+      preconditions: [],
+      allowedOrigins: ["https://example.test"],
+      budgets: { maxActions: 1, maxDurationMs: 10_000, maxNavigations: 1 },
+      checkpoints: [],
+      steps: [
+        {
+          id: "open",
+          title: "Open preview",
+          action: { type: "navigate", url: "https://example.test" },
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "final",
+        },
+      ],
+    });
+    const draft = await service.createDraft(principal, {
+      ...context,
+      projectId: project,
+      environmentId: environment,
+      name,
+      description: "",
+      content: {
+        objective: "Open preview",
+        preconditions: [],
+        expectedOutcomes: ["Preview opens"],
+        prohibitedSideEffects: [],
+      },
+      plan,
+      idempotencyKey: `direct-draft-${randomUUID()}`,
+    });
+    const idempotencyKey = `direct-publish-${randomUUID()}`;
+    const publication = await service.publish(principal, draft.id!, {
+      ...context,
+      expectedVersion: 1,
+      visibility: "mission_local",
+      purpose: "acceptance",
+      reason: "Publish representation without qualification admission",
+      idempotencyKey,
+    });
+    const replay = await service.publish(principal, draft.id!, {
+      ...context,
+      expectedVersion: 1,
+      visibility: "mission_local",
+      purpose: "acceptance",
+      reason: "Publish representation without qualification admission",
+      idempotencyKey,
+    });
+    expect(publication).toMatchObject({ revision: 1, replayed: false });
+    expect(replay).toMatchObject({ revisionId: publication.revisionId, replayed: true });
+    await expect(
+      database.query(`SELECT count(*)::integer count FROM flow_compilations WHERE draft_id=$1`, [
+        draft.id,
+      ]),
+    ).resolves.toMatchObject({ rows: [{ count: 0 }] });
+  });
 
   beforeAll(async () => {
     process.env.DATABASE_URL = process.env.SCRY_AUTHORING_TEST_DATABASE_URL;
@@ -180,7 +242,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
             `SELECT count(*)
                FROM flow_revisions fr
                JOIN flows f ON f.id=fr.flow_id
-               WHERE f.project_id=$1`,
+               WHERE f.project_id=$1 AND f.name='Open preview'`,
             [project],
           )
         ).rows[0]!.count,
@@ -231,15 +293,16 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     const publication = await service.publish(principal, draftId, {
       ...context,
       expectedVersion: 2,
-      compilationId: compilation.id!,
       visibility: "mission_local",
       purpose: "primary",
       reason: "Probe and compilation passed",
       idempotencyKey: `publish-${randomUUID()}`,
     });
 
-    expect(publication.revision).toBe(1);
-    expect(publication.compiledContractId).toBe(compilation.id);
+    // The optional historical compilation retains candidate revision 1 as evidence;
+    // representation-only publication appends the authored draft as revision 2.
+    expect(publication.revision).toBe(2);
+    expect(publication.replayed).toBe(false);
 
     // Regression characterization: before M1, publication inserted a Flow with
     // owner_mission_id=NULL and violated the mandatory aggregate-root contract.
@@ -438,13 +501,12 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       const publication = await service.publish(principal, created.id!, {
         ...context,
         expectedVersion: 1,
-        compilationId: result.compiledContractId!,
         visibility: "mission_local",
         purpose: "primary",
         reason: "Certified v1 compatibility contract",
         idempotencyKey: `publish-v1-certification-${randomUUID()}`,
       });
-      expect(publication.compiledContractId).toBe(result.compiledContractId);
+      expect(publication.replayed).toBe(false);
     } finally {
       if (previousWaitTimeout === undefined) delete process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS;
       else process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS = previousWaitTimeout;
@@ -575,10 +637,9 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     expect(
       Number(
         (
-          await database.query(
-            `SELECT count(*) FROM flow_compilations WHERE draft_id=$1`,
-            [created.id],
-          )
+          await database.query(`SELECT count(*) FROM flow_compilations WHERE draft_id=$1`, [
+            created.id,
+          ])
         ).rows[0]!.count,
       ),
     ).toBe(0);
@@ -624,9 +685,10 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       certificationCandidate: true,
     });
 
-    const certificationRunId = "certificationRunId" in first.certification
-      ? first.certification.certificationRunId
-      : undefined;
+    const certificationRunId =
+      "certificationRunId" in first.certification
+        ? first.certification.certificationRunId
+        : undefined;
     if (!certificationRunId) throw new Error("Certification Run was not queued");
     await completeCertification(database, { certificationRunId });
     const restoreOwnerId = randomUUID();
@@ -1089,7 +1151,6 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     const publication = await service.publish(principal, draftId, {
       ...context,
       expectedVersion: 1,
-      compilationId: compilation.id!,
       visibility: "mission_local",
       purpose: "primary",
       reason: "Remove probe-confirmed redundant navigation preparation",
@@ -1103,9 +1164,11 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       [publication.revisionId],
     );
 
-    expect(revision.rows[0]!.plan.steps.map((step) => step.id)).toEqual(["open", "open-orders"]);
-
-    expect(revision.rows[0]!.plan.steps.some((step) => step.id === "open-menu")).toBe(false);
+    expect(revision.rows[0]!.plan.steps.map((step) => step.id)).toEqual([
+      "open",
+      "open-menu",
+      "open-orders",
+    ]);
   });
 
   it("authors the Vitract login vertical through authentication, adaptive compilation, certification, and replay", async () => {
@@ -1439,18 +1502,6 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       throw new Error("Certification Run was not queued");
     }
     const certificationRun = certifiedCompilation.certification.certificationRunId;
-    await expect(
-      service.publish(principal, created.id!, {
-        ...context,
-        expectedVersion: 1,
-        compilationId: compilation.id!,
-        visibility: "mission_local",
-        purpose: "primary",
-        reason: "Certification is still pending",
-        idempotencyKey: `publish-pending-vitract-${randomUUID()}`,
-      }),
-    ).rejects.toMatchObject({ response: { code: "CERTIFICATION_RUN_REQUIRED" } });
-
     const attempts = new RunAttemptRepository(database);
     const claimToken = randomUUID();
     const attempt = await attempts.claimAttempt(
@@ -1477,18 +1528,6 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       ],
     );
 
-    await expect(
-      service.publish(principal, created.id!, {
-        ...context,
-        expectedVersion: 1,
-        compilationId: compilation.id!,
-        visibility: "mission_local",
-        purpose: "primary",
-        reason: "Certification evidence is degraded",
-        idempotencyKey: `publish-degraded-vitract-${randomUUID()}`,
-      }),
-    ).rejects.toMatchObject({ response: { code: "CERTIFICATION_RUN_REQUIRED" } });
-
     await database.query(
       `DELETE FROM artifact_timeline_entries
        WHERE attempt_id=$1 AND entry_type='unavailable_interval'`,
@@ -1498,14 +1537,13 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     const publication = await service.publish(principal, created.id!, {
       ...context,
       expectedVersion: 1,
-      compilationId: compilation.id!,
       visibility: "mission_local",
       purpose: "primary",
       reason: "Vitract authoring transcript certified",
       idempotencyKey: `publish-vitract-${randomUUID()}`,
     });
 
-    expect(publication.compiledContractId).toBe(compilation.id);
+    expect(publication.replayed).toBe(false);
 
     const revision = await database.query<{ plan: typeof plan }>(
       `SELECT plan
@@ -1515,6 +1553,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     );
     expect(revision.rows[0]!.plan.steps.map((step) => step.id)).toEqual([
       "open-login",
+      "open-menu",
       "open-orders",
     ]);
 

@@ -941,7 +941,7 @@ The listed ownership is mandatory. Implementation uses these module paths; respo
 ### Migrations and campaigns
 
 - `apps/api/migrations`: Flow owner constraints, Mission-owned session/journal persistence, learned compilation/certification/evidence additions.
-- `packages/campaigns`: result schema, redaction, metrics, gate evaluator, target safety contracts.
+- `packages/assurance`: result schema, redaction, metrics, gate evaluator, target safety contracts.
 - `apps/api/scripts/mission-live-*.ts`: deployed campaign clients; no direct browser implementation.
 - `scripts/verify-mission-first-milestone.mjs`: validates reports, repetition count, release binding, redaction, and latency.
 

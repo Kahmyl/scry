@@ -16,14 +16,14 @@ Recovery state is refined by a single ordered production chain:
 
 ## Authoritative decision table
 
-| Mutation semantics | Durable evidence after reclaim | Result | Redispatch |
-|---|---|---|---|
-| one-time mutation | no recovered outputs | `recovery_required` / unknown | forbidden |
-| one-time mutation | incomplete set containing protected material | `compromised` / unknown | forbidden |
-| one-time mutation | complete staged set, atomically persisted during recovery | `completed` / applied | forbidden |
-| one-time mutation | complete committed reference set | `completed` / applied | forbidden |
-| one-time mutation | complete public-only staged or committed set | `completed` / applied | forbidden |
-| read-only | no request/result evidence after owner loss | `failed_not_applied` | not a mutation replay |
+| Mutation semantics | Durable evidence after reclaim                            | Result                        | Redispatch            |
+| ------------------ | --------------------------------------------------------- | ----------------------------- | --------------------- |
+| one-time mutation  | no recovered outputs                                      | `recovery_required` / unknown | forbidden             |
+| one-time mutation  | incomplete set containing protected material              | `compromised` / unknown       | forbidden             |
+| one-time mutation  | complete staged set, atomically persisted during recovery | `completed` / applied         | forbidden             |
+| one-time mutation  | complete committed reference set                          | `completed` / applied         | forbidden             |
+| one-time mutation  | complete public-only staged or committed set              | `completed` / applied         | forbidden             |
+| read-only          | no request/result evidence after owner loss               | `failed_not_applied`          | not a mutation replay |
 
 The starting post-dispatch state (`dispatching`, `dispatched`, `acquiring`, `persisting`, `persisted`, or `reconciling`) does not override stronger durable output evidence. Repository reclaim first advances the fence; the kernel then applies this table.
 

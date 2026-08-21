@@ -47,24 +47,28 @@ export async function analyzePraxisQuality(
 ): Promise<PraxisQualityFinding[]> {
   const findings: PraxisQualityFinding[] = [];
   const families = new Set(target.resolution.evidenceFamilies);
-  const semantics = await target.handle.use((locator) =>
-    locator.evaluate((element) => {
-      const tag = element.tagName.toLowerCase();
-      const role = element.getAttribute("role");
-      const ariaLabel = element.getAttribute("aria-label")?.trim() ?? "";
-      const text = element.textContent?.trim() ?? "";
-      const labels =
-        element instanceof HTMLInputElement ||
-        element instanceof HTMLSelectElement ||
-        element instanceof HTMLTextAreaElement
-          ? (element.labels?.length ?? 0)
-          : 0;
-      const interactiveNative = ["button", "a", "input", "select", "textarea"].includes(tag);
-      const clickable = element instanceof HTMLElement && typeof element.onclick === "function";
-      const customRole = ["combobox", "listbox", "menu", "dialog"].includes(role ?? "");
-      return { tag, role, ariaLabel, text, labels, interactiveNative, clickable, customRole };
-    }),
-  );
+  const readSemantics = (element: Element) => {
+    const tag = element.tagName.toLowerCase();
+    const role = element.getAttribute("role");
+    const ariaLabel = element.getAttribute("aria-label")?.trim() ?? "";
+    const text = element.textContent?.trim() ?? "";
+    const labels =
+      element instanceof HTMLInputElement ||
+      element instanceof HTMLSelectElement ||
+      element instanceof HTMLTextAreaElement
+        ? (element.labels?.length ?? 0)
+        : 0;
+    const interactiveNative = ["button", "a", "input", "select", "textarea"].includes(tag);
+    const clickable = element instanceof HTMLElement && typeof element.onclick === "function";
+    const customRole = ["combobox", "listbox", "menu", "dialog"].includes(role ?? "");
+    return { tag, role, ariaLabel, text, labels, interactiveNative, clickable, customRole };
+  };
+  // Quality is advisory and runs after dispatch. Read the pinned entity even
+  // when the application removed it; consulting its locator here could wait
+  // for or silently bind to a semantic replacement after mutation.
+  const semantics = target.pinnedReference
+    ? await target.pinnedReference.element().evaluate(readSemantics)
+    : await target.handle.use((locator) => locator.evaluate(readSemantics));
   if (!families.has("accessibility") && request.intent.preferredEvidence.roles.length)
     findings.push(
       finding(

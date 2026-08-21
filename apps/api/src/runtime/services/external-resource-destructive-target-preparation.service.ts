@@ -50,11 +50,12 @@ export class ExternalResourceDestructiveTargetPreparationService {
       binding,
       expectedOwnership: { projectId: input.projectId, environmentId: input.environmentId },
       presentationContract,
-      observeResources: ({ phase, contract }) => input.observeResources({
-        phase,
-        resourceCollection: contract.presentationObservation.resourceCollection,
-        presentationIdentity: contract.presentationIdentity,
-      }),
+      observeResources: ({ phase, contract }) =>
+        input.observeResources({
+          phase,
+          resourceCollection: contract.presentationObservation.resourceCollection,
+          presentationIdentity: contract.presentationIdentity,
+        }),
       allowedOrigins: input.allowedOrigins,
     });
   }

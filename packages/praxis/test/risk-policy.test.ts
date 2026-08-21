@@ -1,10 +1,7 @@
 import type { InteractionTargetIntent } from "@scry/contracts";
 import { describe, expect, it } from "vitest";
 
-import {
-  interactionRiskClass,
-  interactionRiskPolicy,
-} from "../src/risk-policy.js";
+import { interactionRiskClass, interactionRiskPolicy } from "../src/risk-policy.js";
 
 function intent(
   risk: InteractionTargetIntent["risk"],

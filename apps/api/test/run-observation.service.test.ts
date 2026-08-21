@@ -54,7 +54,7 @@ describe("canonical run observation", () => {
       ]),
     );
     expect(observation.integrity).toEqual({ status: "complete", issues: [] });
-    expect(observation.safeActions).toEqual(["rerun", "revise_flow", "read_artifact"]);
+    expect(observation.safeActions).toEqual([]);
     expect(observation.veil).toMatchObject({
       effectiveProfile: "private",
       policyDigest: "a".repeat(64),

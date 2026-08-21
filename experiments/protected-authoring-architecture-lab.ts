@@ -11,8 +11,21 @@ import {
 import { compileMissionAuthoringProtectedTransaction } from "../apps/api/src/adaptive-sessions/mission-authoring-protected-transaction.js";
 
 type Capability = InteractionTargetIntent["requiredCapabilities"][number];
-type PreparationKind = "navigate" | "activate" | "fill_public" | "fill_protected" | "select" | "wait" | "inspect" | "check";
-type PrototypeName = "current_late_validation" | "full_plan_preflight" | "merged_capabilities" | "consumer_local" | "negotiated_hybrid";
+type PreparationKind =
+  | "navigate"
+  | "activate"
+  | "fill_public"
+  | "fill_protected"
+  | "select"
+  | "wait"
+  | "inspect"
+  | "check";
+type PrototypeName =
+  | "current_late_validation"
+  | "full_plan_preflight"
+  | "merged_capabilities"
+  | "consumer_local"
+  | "negotiated_hybrid";
 type Scenario = {
   id: string;
   preparationKinds: PreparationKind[];
@@ -84,7 +97,8 @@ const capabilityProfiles = [
       fill_public: ["focusable", "accepts_text", "editable", "readable_value"],
       fill_protected: ["focusable", "accepts_text", "editable", "readable_value"],
       select: ["focusable", "selects_option", "readable_value"],
-      wait: ["observable"], inspect: ["observable"],
+      wait: ["observable"],
+      inspect: ["observable"],
       check: ["focusable", "toggleable", "readable_value"],
     },
   },
@@ -95,7 +109,8 @@ const capabilityProfiles = [
       fill_public: ["focusable", "accepts_text", "editable"],
       fill_protected: ["focusable", "accepts_text", "editable"],
       select: ["focusable", "selects_option"],
-      wait: ["observable"], inspect: ["observable"],
+      wait: ["observable"],
+      inspect: ["observable"],
       check: ["focusable", "toggleable"],
     },
   },
@@ -106,7 +121,8 @@ const capabilityProfiles = [
       fill_public: ["observable", "readable_value"],
       fill_protected: ["observable", "readable_value"],
       select: ["observable", "readable_value"],
-      wait: ["observable"], inspect: ["observable"],
+      wait: ["observable"],
+      inspect: ["observable"],
       check: ["observable", "readable_value"],
     },
   },
@@ -121,9 +137,13 @@ for (const program of preparationPrograms) {
         for (const exact of [true, false]) {
           for (const profile of capabilityProfiles) {
             ordinal += 1;
-            const preparation = program.map((kind, index) => preparationIntent(kind, index, scope, exact));
+            const preparation = program.map((kind, index) =>
+              preparationIntent(kind, index, scope, exact),
+            );
             const acquisition = acquisitionAction(preparation, outputs, mutationRole, scope, exact);
-            const shouldExecute = program.every((kind) => expectedCompatibility(kind, profile.capabilities[kind] ?? []));
+            const shouldExecute = program.every((kind) =>
+              expectedCompatibility(kind, profile.capabilities[kind] ?? []),
+            );
             scenarios.push({
               id: `${String(ordinal).padStart(4, "0")}:${program.join("+")}:${profile.name}`,
               preparationKinds: program,
@@ -140,100 +160,169 @@ for (const program of preparationPrograms) {
 }
 
 const results = scenarios.flatMap((scenario) =>
-  (["current_late_validation", "full_plan_preflight", "merged_capabilities", "consumer_local", "negotiated_hybrid"] as const)
-    .map((prototype) => evaluate(prototype, scenario)),
+  (
+    [
+      "current_late_validation",
+      "full_plan_preflight",
+      "merged_capabilities",
+      "consumer_local",
+      "negotiated_hybrid",
+    ] as const
+  ).map((prototype) => evaluate(prototype, scenario)),
 );
 
-const forbidden = /(selector|xpath|runtimeId|fingerprint|browserHandle|outerHTML|innerHTML|plaintext|credentialValue)/i;
+const forbidden =
+  /(selector|xpath|runtimeId|fingerprint|browserHandle|outerHTML|innerHTML|plaintext|credentialValue)/i;
 const serialized = JSON.stringify(results);
 if (forbidden.test(serialized)) throw new Error("LAB_FORBIDDEN_IMPLEMENTATION_DETAIL");
 
-const summary = (["current_late_validation", "full_plan_preflight", "merged_capabilities", "consumer_local", "negotiated_hybrid"] as const)
-  .map((prototype) => {
-    const sample = results.filter((result) => result.prototype === prototype);
-    const executable = sample.filter((_, index) => scenarios[index]!.shouldExecute);
-    const incompatible = sample.filter((_, index) => !scenarios[index]!.shouldExecute);
-    return {
-      prototype,
-      scenarios: sample.length,
-      admitted: sample.filter((result) => result.admitted).length,
-      lateFailures: sample.filter((result) => result.lateFailure).length,
-      unsafeAdmissions: incompatible.filter((result) => result.admitted).length,
-      falseRefusals: executable.filter((result) => !result.admitted).length,
-      safeBoundaries: sample.filter((result) => result.safeBoundary).length,
-      validPlans: sample.filter((result) => result.planValid).length,
-      latencyMs: latency(sample.map((result) => result.durationMs)),
-      reasonCodes: counts(sample.map((result) => result.reasonCode ?? "NONE")),
-    };
-  });
+const summary = (
+  [
+    "current_late_validation",
+    "full_plan_preflight",
+    "merged_capabilities",
+    "consumer_local",
+    "negotiated_hybrid",
+  ] as const
+).map((prototype) => {
+  const sample = results.filter((result) => result.prototype === prototype);
+  const executable = sample.filter((_, index) => scenarios[index]!.shouldExecute);
+  const incompatible = sample.filter((_, index) => !scenarios[index]!.shouldExecute);
+  return {
+    prototype,
+    scenarios: sample.length,
+    admitted: sample.filter((result) => result.admitted).length,
+    lateFailures: sample.filter((result) => result.lateFailure).length,
+    unsafeAdmissions: incompatible.filter((result) => result.admitted).length,
+    falseRefusals: executable.filter((result) => !result.admitted).length,
+    safeBoundaries: sample.filter((result) => result.safeBoundary).length,
+    validPlans: sample.filter((result) => result.planValid).length,
+    latencyMs: latency(sample.map((result) => result.durationMs)),
+    reasonCodes: counts(sample.map((result) => result.reasonCode ?? "NONE")),
+  };
+});
 
-process.stdout.write(`${JSON.stringify({
-  outcome: "PROTECTED_AUTHORING_ARCHITECTURE_LAB_COMPLETE",
-  generatedAt: new Date().toISOString(),
-  scenarioCount: scenarios.length,
-  evaluationCount: results.length,
-  dimensions: {
-    preparationPrograms: preparationPrograms.length,
-    scopes: scopes.length,
-    outputShapes: outputShapes.length,
-    mutationRoles: mutationRoles.length,
-    exactnessModes: 2,
-    capabilityProfiles: capabilityProfiles.length,
-  },
-  safetyOracles: {
-    noLateValidationAfterAdmission: true,
-    noAdmissionWithoutObservedCapabilities: true,
-    fullExecutablePlanValidation: true,
-    unsupportedPreparationRejectedBeforeMutation: true,
-    forbiddenImplementationDetailsAbsent: true,
-  },
-  summary,
-}, null, 2)}\n`);
+process.stdout.write(
+  `${JSON.stringify(
+    {
+      outcome: "PROTECTED_AUTHORING_ARCHITECTURE_LAB_COMPLETE",
+      generatedAt: new Date().toISOString(),
+      scenarioCount: scenarios.length,
+      evaluationCount: results.length,
+      dimensions: {
+        preparationPrograms: preparationPrograms.length,
+        scopes: scopes.length,
+        outputShapes: outputShapes.length,
+        mutationRoles: mutationRoles.length,
+        exactnessModes: 2,
+        capabilityProfiles: capabilityProfiles.length,
+      },
+      safetyOracles: {
+        noLateValidationAfterAdmission: true,
+        noAdmissionWithoutObservedCapabilities: true,
+        fullExecutablePlanValidation: true,
+        unsupportedPreparationRejectedBeforeMutation: true,
+        forbiddenImplementationDetailsAbsent: true,
+      },
+      summary,
+    },
+    null,
+    2,
+  )}\n`,
+);
 
 function evaluate(prototype: PrototypeName, scenario: Scenario): Result {
   const started = performance.now();
   try {
-    const transaction = prototype === "negotiated_hybrid"
-      ? compileNegotiatedHybrid(scenario)
-      : compileMissionAuthoringProtectedTransaction({
-      operationId: `lab-${scenario.id.replace(/[^A-Za-z0-9_-]/g, "-")}`,
-      entryUrl: `${origin}/credentials`,
-      action: scenario.acquisition,
-      preparation: scenario.preparation,
-      timeoutMs,
-      });
-    const transformed = prototype === "merged_capabilities"
-      ? mergedCapabilities(transaction)
-      : prototype === "consumer_local" || prototype === "negotiated_hybrid"
-        ? consumerLocalCapabilities(transaction)
-        : transaction;
+    const transaction =
+      prototype === "negotiated_hybrid"
+        ? compileNegotiatedHybrid(scenario)
+        : compileMissionAuthoringProtectedTransaction({
+            operationId: `lab-${scenario.id.replace(/[^A-Za-z0-9_-]/g, "-")}`,
+            entryUrl: `${origin}/credentials`,
+            action: scenario.acquisition,
+            preparation: scenario.preparation,
+            timeoutMs,
+          });
+    const transformed =
+      prototype === "merged_capabilities"
+        ? mergedCapabilities(transaction)
+        : prototype === "consumer_local" || prototype === "negotiated_hybrid"
+          ? consumerLocalCapabilities(transaction)
+          : transaction;
     const planValid = currentPlanSchema.safeParse(planFor(transformed)).success;
     if (prototype === "current_late_validation") {
-      return result({ prototype, scenario, admitted: true, lateFailure: !planValid, safeBoundary: false, planValid, started });
+      return result({
+        prototype,
+        scenario,
+        admitted: true,
+        lateFailure: !planValid,
+        safeBoundary: false,
+        planValid,
+        started,
+      });
     }
     if (!planValid) {
-      return result({ prototype, scenario, admitted: false, lateFailure: false, safeBoundary: true, planValid, reasonCode: "FULL_PLAN_INVALID", started });
+      return result({
+        prototype,
+        scenario,
+        admitted: false,
+        lateFailure: false,
+        safeBoundary: true,
+        planValid,
+        reasonCode: "FULL_PLAN_INVALID",
+        started,
+      });
     }
     if (prototype === "negotiated_hybrid" && !observedCapabilitiesSatisfy(transformed, scenario)) {
-      return result({ prototype, scenario, admitted: false, lateFailure: false, safeBoundary: true, planValid, reasonCode: "OBSERVED_CAPABILITY_MISMATCH", started });
+      return result({
+        prototype,
+        scenario,
+        admitted: false,
+        lateFailure: false,
+        safeBoundary: true,
+        planValid,
+        reasonCode: "OBSERVED_CAPABILITY_MISMATCH",
+        started,
+      });
     }
-    return result({ prototype, scenario, admitted: true, lateFailure: false, safeBoundary: false, planValid, started });
+    return result({
+      prototype,
+      scenario,
+      admitted: true,
+      lateFailure: false,
+      safeBoundary: false,
+      planValid,
+      started,
+    });
   } catch (error) {
     return result({
-      prototype, scenario, admitted: false, lateFailure: false, safeBoundary: true, planValid: false,
-      reasonCode: safeCode(error), started,
+      prototype,
+      scenario,
+      admitted: false,
+      lateFailure: false,
+      safeBoundary: true,
+      planValid: false,
+      reasonCode: safeCode(error),
+      started,
     });
   }
 }
 
 function compileNegotiatedHybrid(scenario: Scenario): ProtectedTransaction {
-  const checkIndexes = scenario.preparationKinds.flatMap((kind, index) => kind === "check" ? [index] : []);
+  const checkIndexes = scenario.preparationKinds.flatMap((kind, index) =>
+    kind === "check" ? [index] : [],
+  );
   const compilablePreparation = scenario.preparation.map((intent, index) => {
     if (!checkIndexes.includes(index)) return intent;
     if (intent.action.kind !== "set_checked") return intent;
     return {
       ...intent,
-      action: { kind: "wait_for" as const, target: intent.action.target, state: "visible" as const },
+      action: {
+        kind: "wait_for" as const,
+        target: intent.action.target,
+        state: "visible" as const,
+      },
     };
   });
   const transaction = compileMissionAuthoringProtectedTransaction({
@@ -253,8 +342,11 @@ function compileNegotiatedHybrid(scenario: Scenario): ProtectedTransaction {
     const actionTarget = structuredClone(placeholder.target);
     actionTarget.requiredCapabilities = ["focusable", "toggleable"];
     transaction.preparation.actions[index] = {
-      type: "checkPublicInput", input, target: actionTarget,
-      effect: "replayable_setup", timeoutMs: original.constraints.timeoutMs,
+      type: "checkPublicInput",
+      input,
+      target: actionTarget,
+      effect: "replayable_setup",
+      timeoutMs: original.constraints.timeoutMs,
     };
     transaction.preparation.assertions.push({
       type: "fieldValueMatchesInput",
@@ -266,7 +358,9 @@ function compileNegotiatedHybrid(scenario: Scenario): ProtectedTransaction {
   return transaction;
 }
 
-function result(input: Omit<Result, "scenarioId" | "durationMs"> & { scenario: Scenario; started: number }): Result {
+function result(
+  input: Omit<Result, "scenarioId" | "durationMs"> & { scenario: Scenario; started: number },
+): Result {
   const { scenario, started, ...rest } = input;
   return { ...rest, scenarioId: scenario.id, durationMs: performance.now() - started };
 }
@@ -275,7 +369,9 @@ function consumerLocalCapabilities(transaction: ProtectedTransaction): Protected
   const copy = structuredClone(transaction);
   for (const assertion of copy.preparation.assertions) {
     if (assertion.type !== "fieldValueMatchesInput") continue;
-    assertion.target.requiredCapabilities = union(assertion.target.requiredCapabilities, ["readable_value"]);
+    assertion.target.requiredCapabilities = union(assertion.target.requiredCapabilities, [
+      "readable_value",
+    ]);
   }
   return copy;
 }
@@ -284,18 +380,25 @@ function mergedCapabilities(transaction: ProtectedTransaction): ProtectedTransac
   const copy = consumerLocalCapabilities(transaction);
   for (const action of copy.preparation.actions) {
     if (!("input" in action) || !("target" in action)) continue;
-    const assertion = copy.preparation.assertions.find((candidate) =>
-      candidate.type === "fieldValueMatchesInput" && candidate.input === action.input,
+    const assertion = copy.preparation.assertions.find(
+      (candidate) =>
+        candidate.type === "fieldValueMatchesInput" && candidate.input === action.input,
     );
     if (!assertion || assertion.type !== "fieldValueMatchesInput") continue;
-    const combined = union(action.target.requiredCapabilities, assertion.target.requiredCapabilities);
+    const combined = union(
+      action.target.requiredCapabilities,
+      assertion.target.requiredCapabilities,
+    );
     action.target.requiredCapabilities = combined;
     assertion.target.requiredCapabilities = combined;
   }
   return copy;
 }
 
-function observedCapabilitiesSatisfy(transaction: ProtectedTransaction, scenario: Scenario): boolean {
+function observedCapabilitiesSatisfy(
+  transaction: ProtectedTransaction,
+  scenario: Scenario,
+): boolean {
   for (let index = 0; index < transaction.preparation.actions.length; index += 1) {
     const action = transaction.preparation.actions[index]!;
     const kind = scenario.preparationKinds[index]!;
@@ -303,10 +406,15 @@ function observedCapabilitiesSatisfy(transaction: ProtectedTransaction, scenario
     const observed = scenario.observedCapabilities[kind] ?? [];
     if (!containsAll(observed, action.target.requiredCapabilities)) return false;
     if (!("input" in action)) continue;
-    const assertion = transaction.preparation.assertions.find((candidate) =>
-      candidate.type === "fieldValueMatchesInput" && candidate.input === action.input,
+    const assertion = transaction.preparation.assertions.find(
+      (candidate) =>
+        candidate.type === "fieldValueMatchesInput" && candidate.input === action.input,
     );
-    if (assertion?.type === "fieldValueMatchesInput" && !containsAll(observed, assertion.target.requiredCapabilities)) return false;
+    if (
+      assertion?.type === "fieldValueMatchesInput" &&
+      !containsAll(observed, assertion.target.requiredCapabilities)
+    )
+      return false;
   }
   return true;
 }
@@ -317,7 +425,8 @@ function expectedCompatibility(kind: PreparationKind, observed: Capability[]): b
     fill_public: ["focusable", "accepts_text", "editable", "readable_value"],
     fill_protected: ["focusable", "accepts_text", "editable", "readable_value"],
     select: ["selects_option", "readable_value"],
-    wait: ["observable"], inspect: ["observable"],
+    wait: ["observable"],
+    inspect: ["observable"],
     check: ["toggleable", "readable_value"],
   };
   return kind === "navigate" || containsAll(observed, requirements[kind] ?? []);
@@ -331,27 +440,46 @@ function preparationIntent(
 ): MissionAuthoringIntent {
   const intentId = `${kind}-${index}`;
   const base = {
-    intentId, objectiveId, flowDraftId,
+    intentId,
+    objectiveId,
+    flowDraftId,
     expectedEffect: { kind: "none" as const },
     constraints: { timeoutMs, allowNewPage: false, allowNonExact: !exact },
     authorization: { kind: "ordinary" as const },
     protectedInputReferences: [] as string[],
   };
-  const semanticTarget = { concept: `${kind} control`, role: roleFor(kind), name: `${kind} control`, exact, ...(scope ? { scope } : {}) };
+  const semanticTarget = {
+    concept: `${kind} control`,
+    role: roleFor(kind),
+    name: `${kind} control`,
+    exact,
+    ...(scope ? { scope } : {}),
+  };
   switch (kind) {
-    case "navigate": return { ...base, action: { kind: "navigate", url: `${origin}/credentials` } };
-    case "activate": return { ...base, action: { kind: "activate", target: semanticTarget } };
-    case "fill_public": return { ...base, action: { kind: "fill", target: semanticTarget, publicValue: "public qualification value" } };
-    case "fill_protected": return {
-      ...base,
-      action: { kind: "fill", target: semanticTarget, protectedReferenceId },
-      authorization: { kind: "authentication" as const },
-      protectedInputReferences: [protectedReferenceId],
-    };
-    case "select": return { ...base, action: { kind: "select", target: semanticTarget, value: "test" } };
-    case "wait": return { ...base, action: { kind: "wait_for", target: semanticTarget, state: "visible" } };
-    case "inspect": return { ...base, action: { kind: "inspect", target: semanticTarget } };
-    case "check": return { ...base, action: { kind: "set_checked", target: semanticTarget, checked: true } };
+    case "navigate":
+      return { ...base, action: { kind: "navigate", url: `${origin}/credentials` } };
+    case "activate":
+      return { ...base, action: { kind: "activate", target: semanticTarget } };
+    case "fill_public":
+      return {
+        ...base,
+        action: { kind: "fill", target: semanticTarget, publicValue: "public qualification value" },
+      };
+    case "fill_protected":
+      return {
+        ...base,
+        action: { kind: "fill", target: semanticTarget, protectedReferenceId },
+        authorization: { kind: "authentication" as const },
+        protectedInputReferences: [protectedReferenceId],
+      };
+    case "select":
+      return { ...base, action: { kind: "select", target: semanticTarget, value: "test" } };
+    case "wait":
+      return { ...base, action: { kind: "wait_for", target: semanticTarget, state: "visible" } };
+    case "inspect":
+      return { ...base, action: { kind: "inspect", target: semanticTarget } };
+    case "check":
+      return { ...base, action: { kind: "set_checked", target: semanticTarget, checked: true } };
   }
 }
 
@@ -365,11 +493,26 @@ function acquisitionAction(
   return {
     kind: "acquire_protected_outputs",
     preparationIntentIds: preparation.map((intent) => intent.intentId),
-    mutation: { kind: "one_time", target: { concept: "generate credentials", role: mutationRole, name: "Generate", exact, ...(scope ? { scope } : {}) } },
+    mutation: {
+      kind: "one_time",
+      target: {
+        concept: "generate credentials",
+        role: mutationRole,
+        name: "Generate",
+        exact,
+        ...(scope ? { scope } : {}),
+      },
+    },
     outputs: outputs.map((output) => ({
       reference: output.reference,
       classification: output.classification,
-      target: { concept: output.reference, role: output.role, name: output.reference, exact, ...(scope ? { scope } : {}) },
+      target: {
+        concept: output.reference,
+        role: output.role,
+        name: output.reference,
+        exact,
+        ...(scope ? { scope } : {}),
+      },
       storageName: output.reference,
     })),
   };
@@ -386,27 +529,43 @@ function roleFor(kind: PreparationKind) {
 function planFor(action: ProtectedTransaction) {
   const continuationSteps = action.continuation.strategies.flatMap((strategy) => {
     if (!("continueAtStepId" in strategy)) return [];
-    return [{
-      id: strategy.continueAtStepId,
-      title: "Resume after protected interaction",
-      action: { type: "navigate" as const, url: strategy.reentryUrl, timeoutMs: 10_000 },
-      assertions: [], onFailure: "stop" as const, evidence: [],
-      captureIntent: "transient" as const,
-      transientJustification: "Protected continuation contract boundary.",
-    }];
+    return [
+      {
+        id: strategy.continueAtStepId,
+        title: "Resume after protected interaction",
+        action: { type: "navigate" as const, url: strategy.reentryUrl, timeoutMs: 10_000 },
+        assertions: [],
+        onFailure: "stop" as const,
+        evidence: [],
+        captureIntent: "transient" as const,
+        transientJustification: "Protected continuation contract boundary.",
+      },
+    ];
   });
   return {
     name: "Architecture qualification",
     objective: "Evaluate protected authoring compilation",
-    preconditions: [], allowedOrigins: [origin],
-    budgets: { maxActions: 1 + continuationSteps.length, maxDurationMs: 30_000, maxNavigations: 1 + continuationSteps.length },
+    preconditions: [],
+    allowedOrigins: [origin],
+    budgets: {
+      maxActions: 1 + continuationSteps.length,
+      maxDurationMs: 30_000,
+      maxNavigations: 1 + continuationSteps.length,
+    },
     checkpoints: [],
-    steps: [{
-      id: "protected-operation", title: "Protected operation", action,
-      assertions: [], onFailure: "stop" as const, evidence: [],
-      captureIntent: "transient" as const,
-      transientJustification: "Disposable architecture qualification.",
-    }, ...continuationSteps],
+    steps: [
+      {
+        id: "protected-operation",
+        title: "Protected operation",
+        action,
+        assertions: [],
+        onFailure: "stop" as const,
+        evidence: [],
+        captureIntent: "transient" as const,
+        transientJustification: "Disposable architecture qualification.",
+      },
+      ...continuationSteps,
+    ],
   };
 }
 
@@ -422,10 +581,20 @@ function safeCode(error: unknown) {
   return "COMPILATION_REFUSED";
 }
 function counts(values: string[]) {
-  return Object.fromEntries([...new Set(values)].sort().map((value) => [value, values.filter((candidate) => candidate === value).length]));
+  return Object.fromEntries(
+    [...new Set(values)]
+      .sort()
+      .map((value) => [value, values.filter((candidate) => candidate === value).length]),
+  );
 }
 function latency(values: number[]) {
   const sorted = [...values].sort((a, b) => a - b);
-  const percentile = (p: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] ?? 0;
-  return { p50: percentile(0.5), p95: percentile(0.95), p99: percentile(0.99), max: sorted.at(-1) ?? 0 };
+  const percentile = (p: number) =>
+    sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] ?? 0;
+  return {
+    p50: percentile(0.5),
+    p95: percentile(0.95),
+    p99: percentile(0.99),
+    max: sorted.at(-1) ?? 0,
+  };
 }

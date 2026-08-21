@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { LocalArtifactStore, signVeilEvidenceAdmission } from "@scry/artifact";
+import { LocalArtifactStore, signVeilEvidenceAdmission } from "@scry/chronicle/legacy";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 import { describe, expect, it, vi } from "vitest";
 
@@ -94,6 +94,13 @@ async function createFixture() {
   for (const fixture of artifacts)
     await writeFile(path.join(outputDirectory, fixture.artifact.relativePath), fixture.content);
 
+  const observations = {
+    recordStepResult: vi.fn(async () => undefined),
+    recordAssertion: vi.fn(async () => undefined),
+    recordCaptureEpochs: vi.fn(async () => undefined),
+    recordArtifact: vi.fn(async () => undefined),
+    recordArtifactTimeline: vi.fn(async () => undefined),
+  };
   const executions = {
     claimAttempt: vi.fn(async () => ({ id: attemptId, attemptNumber: 1 })),
     loadExecution: vi.fn(async () => ({
@@ -112,11 +119,10 @@ async function createFixture() {
     heartbeat: vi.fn(async () => true),
     isCancellationRequested: vi.fn(async () => false),
     markFinalizing: vi.fn(async () => undefined),
-    recordStepResult: vi.fn(async () => undefined),
-    recordAssertion: vi.fn(async () => undefined),
-    recordCaptureEpochs: vi.fn(async () => undefined),
-    recordArtifact: vi.fn(async () => undefined),
-    recordArtifactTimeline: vi.fn(async () => undefined),
+    ...observations,
+    observationTransaction: vi.fn(async (work: (writer: typeof observations) => Promise<unknown>) =>
+      work(observations),
+    ),
     completeAttempt: vi.fn(async () => undefined),
     failAttempt: vi.fn(async () => undefined),
     appendEvent: vi.fn(async () => undefined),

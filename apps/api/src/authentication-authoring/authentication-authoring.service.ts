@@ -10,7 +10,7 @@ import {
   authenticationContractCandidateSchema,
 } from "@scry/contracts";
 
-import { AuthenticationAttemptRepository } from "./repositories/authentication-attempt.repository.js";
+import { AuthenticationAttemptRepository } from "./authentication-attempt.repository.js";
 
 type AuthField = "username" | "password";
 type PraxisCandidate = {

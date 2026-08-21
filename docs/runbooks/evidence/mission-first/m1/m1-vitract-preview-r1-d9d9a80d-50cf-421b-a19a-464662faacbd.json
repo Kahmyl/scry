@@ -9,12 +9,8 @@
   "target": "vitract_preview",
   "repetition": 1,
   "missionId": "10004949-3b0e-4be8-ba59-51977fe63d26",
-  "objectiveIds": [
-    "bfdfdd97-b376-4b8c-b012-62c1e7e06764"
-  ],
-  "flowIds": [
-    "74ca287a-5c6f-4a81-837b-11f7c41df5eb"
-  ],
+  "objectiveIds": ["bfdfdd97-b376-4b8c-b012-62c1e7e06764"],
+  "flowIds": ["74ca287a-5c6f-4a81-837b-11f7c41df5eb"],
   "runIds": [],
   "correlationId": "d9d9a80d-50cf-421b-a19a-464662faacbd",
   "boundaryUnderTest": "Mission-owned native authentication with protected references and zero Praxis calls",
@@ -112,136 +108,105 @@
       "p50Ms": 6.641666999999984,
       "p95Ms": 6.641666999999984,
       "maxMs": 6.641666999999984,
-      "slowestOperationIds": [
-        "api"
-      ]
+      "slowestOperationIds": ["api"]
     },
     "artifact_retrieval": {
       "count": 1,
       "p50Ms": 0,
       "p95Ms": 0,
       "maxMs": 0,
-      "slowestOperationIds": [
-        "d9d9a80d-50cf-421b-a19a-464662faacbd"
-      ]
+      "slowestOperationIds": ["d9d9a80d-50cf-421b-a19a-464662faacbd"]
     },
     "browser_startup": {
       "count": 1,
       "p50Ms": 1227.13,
       "p95Ms": 1227.13,
       "maxMs": 1227.13,
-      "slowestOperationIds": [
-        "vitract-navigate"
-      ]
+      "slowestOperationIds": ["vitract-navigate"]
     },
     "database": {
       "count": 1,
       "p50Ms": 6.371708000000012,
       "p95Ms": 6.371708000000012,
       "maxMs": 6.371708000000012,
-      "slowestOperationIds": [
-        "database"
-      ]
+      "slowestOperationIds": ["database"]
     },
     "document_observation": {
       "count": 1,
       "p50Ms": 1227.13,
       "p95Ms": 1227.13,
       "maxMs": 1227.13,
-      "slowestOperationIds": [
-        "vitract-navigate"
-      ]
+      "slowestOperationIds": ["vitract-navigate"]
     },
     "evidence_finalization": {
       "count": 1,
       "p50Ms": 0,
       "p95Ms": 0,
       "maxMs": 0,
-      "slowestOperationIds": [
-        "d9d9a80d-50cf-421b-a19a-464662faacbd"
-      ]
+      "slowestOperationIds": ["d9d9a80d-50cf-421b-a19a-464662faacbd"]
     },
     "expected_effect_verification": {
       "count": 1,
       "p50Ms": 0.047541000007186085,
       "p95Ms": 0.047541000007186085,
       "maxMs": 0.047541000007186085,
-      "slowestOperationIds": [
-        "vitract-navigate"
-      ]
+      "slowestOperationIds": ["vitract-navigate"]
     },
     "interaction_execution": {
       "count": 2,
       "p50Ms": 517,
       "p95Ms": 10578,
       "maxMs": 10578,
-      "slowestOperationIds": [
-        "vitract-email",
-        "vitract-navigate"
-      ]
+      "slowestOperationIds": ["vitract-email", "vitract-navigate"]
     },
     "mcp_round_trip": {
       "count": 1,
       "p50Ms": 12368.992124999999,
       "p95Ms": 12368.992124999999,
       "maxMs": 12368.992124999999,
-      "slowestOperationIds": [
-        "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-2"
-      ]
+      "slowestOperationIds": ["mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-2"]
     },
     "mcp_session_start_round_trip": {
       "count": 1,
       "p50Ms": 53.606334000000004,
       "p95Ms": 53.606334000000004,
       "maxMs": 53.606334000000004,
-      "slowestOperationIds": [
-        "mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-1"
-      ]
+      "slowestOperationIds": ["mcp-d9d9a80d-50cf-421b-a19a-464662faacbd-1"]
     },
     "native_resolution": {
       "count": 1,
       "p50Ms": 10050.401379000003,
       "p95Ms": 10050.401379000003,
       "maxMs": 10050.401379000003,
-      "slowestOperationIds": [
-        "vitract-email"
-      ]
+      "slowestOperationIds": ["vitract-email"]
     },
     "praxis_grounding": {
       "count": 1,
       "p50Ms": 513.8537499999948,
       "p95Ms": 513.8537499999948,
       "maxMs": 513.8537499999948,
-      "slowestOperationIds": [
-        "vitract-email"
-      ]
+      "slowestOperationIds": ["vitract-email"]
     },
     "queue_wait": {
       "count": 1,
       "p50Ms": 0,
       "p95Ms": 0,
       "maxMs": 0,
-      "slowestOperationIds": [
-        "d9d9a80d-50cf-421b-a19a-464662faacbd"
-      ]
+      "slowestOperationIds": ["d9d9a80d-50cf-421b-a19a-464662faacbd"]
     },
     "redis": {
       "count": 1,
       "p50Ms": 3.060292000000004,
       "p95Ms": 3.060292000000004,
       "maxMs": 3.060292000000004,
-      "slowestOperationIds": [
-        "redis"
-      ]
+      "slowestOperationIds": ["redis"]
     },
     "worker": {
       "count": 1,
       "p50Ms": 7.562417000000039,
       "p95Ms": 7.562417000000039,
       "maxMs": 7.562417000000039,
-      "slowestOperationIds": [
-        "worker"
-      ]
+      "slowestOperationIds": ["worker"]
     }
   },
   "privacyScan": {

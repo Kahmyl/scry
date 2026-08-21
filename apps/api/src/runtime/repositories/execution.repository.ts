@@ -337,6 +337,10 @@ export class ExecutionRepository {
     return this.observations.recordPraxisResult(...args);
   }
 
+  observationTransaction<T>(work: (observations: ExecutionObservationRepository) => Promise<T>) {
+    return this.database.transaction((client) => work(this.observations.withClient(client)));
+  }
+
   recordAssertion(...args: Parameters<ExecutionObservationRepository["recordAssertion"]>) {
     return this.observations.recordAssertion(...args);
   }

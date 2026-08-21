@@ -57,22 +57,43 @@ describe("cross-surface external resource destructive target preparation", () =>
       concept: "revoke issuance-bound credential",
       requiredCapabilities: ["focusable", "pointer_activatable"],
       preferredEvidence: {
-        roles: ["button"], names: ["Revoke", "Revoke credential"], labels: [],
-        descriptions: [], placeholders: [], inputTypes: [], testIds: [],
+        roles: ["button"],
+        names: ["Revoke", "Revoke credential"],
+        labels: [],
+        descriptions: [],
+        placeholders: [],
+        inputTypes: [],
+        testIds: [],
       },
-      scope: { kind: "page" }, relations: [], prohibited: ["hidden", "disabled"],
-      risk: "destructive", confidence: { requiredFamilies: [] }, matching: "exact",
+      scope: { kind: "page" },
+      relations: [],
+      prohibited: ["hidden", "disabled"],
+      risk: "destructive",
+      confidence: { requiredFamilies: [] },
+      matching: "exact",
     },
   };
 
   type RecordShape = {
     id: string;
-    fields: Array<{ semanticField: string; classification: "internal_non_secret" | "protected"; value: string }>;
+    fields: Array<{
+      semanticField: string;
+      classification: "internal_non_secret" | "protected";
+      value: string;
+    }>;
   };
-  const label = (value: string, classification: "internal_non_secret" | "protected" = "internal_non_secret") => ({
-    semanticField: "label", classification, value,
+  const label = (
+    value: string,
+    classification: "internal_non_secret" | "protected" = "internal_non_secret",
+  ) => ({
+    semanticField: "label",
+    classification,
+    value,
   });
-  const observation = (id: string, records: RecordShape[]): AuthoritativeExternalResourceObservation => ({
+  const observation = (
+    id: string,
+    records: RecordShape[],
+  ): AuthoritativeExternalResourceObservation => ({
     observationId: id,
     source: "authoritative_read_only_resource_observation",
     resourceCollection: "application_credentials",
@@ -104,10 +125,11 @@ describe("cross-surface external resource destructive target preparation", () =>
       binding: input.activeBinding ?? binding,
       expectedOwnership: ownership,
       presentationContract: input.activeContract ?? contract,
-      observeResources: async ({ phase }) => observation(
-        `observation-${++sequence}`,
-        phase === "pre_dispatch" ? input.secondRecords ?? input.records : input.records,
-      ),
+      observeResources: async ({ phase }) =>
+        observation(
+          `observation-${++sequence}`,
+          phase === "pre_dispatch" ? (input.secondRecords ?? input.records) : input.records,
+        ),
       allowedOrigins: [],
     });
   }
@@ -132,35 +154,67 @@ describe("cross-surface external resource destructive target preparation", () =>
       activeBinding: { ...binding, externalIdentity: "canonical-b" },
       html: row("Alpha") + row("Beta"),
     });
-    expect(await prepared.locator.evaluate((element) => element.closest("tr")?.textContent)).toContain("Beta");
+    expect(
+      await prepared.locator.evaluate((element) => element.closest("tr")?.textContent),
+    ).toContain("Beta");
     expect(clickCount).toBe(0);
   });
 
   it("C: rejects a presentation label duplicated in current provider state", async () => {
-    await expectCode(prepare({ records: [
-      { id: "canonical-a", fields: [label("Same")] },
-      { id: "canonical-b", fields: [label("Same")] },
-    ], html: row("Same") + row("Same") }), "PRESENTATION_IDENTITY_AMBIGUOUS");
+    await expectCode(
+      prepare({
+        records: [
+          { id: "canonical-a", fields: [label("Same")] },
+          { id: "canonical-b", fields: [label("Same")] },
+        ],
+        html: row("Same") + row("Same"),
+      }),
+      "PRESENTATION_IDENTITY_AMBIGUOUS",
+    );
   });
 
   it("D: rejects a missing bound canonical resource", async () => {
-    await expectCode(prepare({ records: [{ id: "canonical-b", fields: [label("Beta")] }] }), "CANONICAL_RESOURCE_NOT_FOUND");
+    await expectCode(
+      prepare({ records: [{ id: "canonical-b", fields: [label("Beta")] }] }),
+      "CANONICAL_RESOURCE_NOT_FOUND",
+    );
   });
 
   it("E: rejects a browser surface that does not expose the projected label", async () => {
-    await expectCode(prepare({ records: [{ id: "canonical-a", fields: [label("Alpha")] }], html: row("Unrelated") }), "BROWSER_BOUNDARY_NOT_FOUND");
+    await expectCode(
+      prepare({
+        records: [{ id: "canonical-a", fields: [label("Alpha")] }],
+        html: row("Unrelated"),
+      }),
+      "BROWSER_BOUNDARY_NOT_FOUND",
+    );
   });
 
   it("F: rejects two browser containers with the same projected label", async () => {
-    await expectCode(prepare({ records: [{ id: "canonical-a", fields: [label("Alpha")] }], html: row("Alpha") + row("Alpha") }), "BROWSER_BOUNDARY_AMBIGUOUS");
+    await expectCode(
+      prepare({
+        records: [{ id: "canonical-a", fields: [label("Alpha")] }],
+        html: row("Alpha") + row("Alpha"),
+      }),
+      "BROWSER_BOUNDARY_AMBIGUOUS",
+    );
   });
 
   it("G: rejects two intended actions inside the unique browser container", async () => {
-    await expectCode(prepare({ records: [{ id: "canonical-a", fields: [label("Alpha")] }], html: row("Alpha", 2) }), "ACTION_TARGET_AMBIGUOUS");
+    await expectCode(
+      prepare({
+        records: [{ id: "canonical-a", fields: [label("Alpha")] }],
+        html: row("Alpha", 2),
+      }),
+      "ACTION_TARGET_AMBIGUOUS",
+    );
   });
 
   it("H: rejects a protected-only declared presentation value", async () => {
-    await expectCode(prepare({ records: [{ id: "canonical-a", fields: [label("Alpha", "protected")] }] }), "PRESENTATION_IDENTITY_NOT_INTERNAL_SAFE");
+    await expectCode(
+      prepare({ records: [{ id: "canonical-a", fields: [label("Alpha", "protected")] }] }),
+      "PRESENTATION_IDENTITY_NOT_INTERNAL_SAFE",
+    );
   });
 
   it("uses an explicitly authorized internal-only client ID when label is unavailable", async () => {
@@ -170,9 +224,18 @@ describe("cross-surface external resource destructive target preparation", () =>
     };
     const prepared = await prepare({
       activeContract: clientIdContract,
-      records: [{ id: "canonical-a", fields: [
-        { semanticField: "clientId", classification: "internal_non_secret", value: "client-visible-a" },
-      ] }],
+      records: [
+        {
+          id: "canonical-a",
+          fields: [
+            {
+              semanticField: "clientId",
+              classification: "internal_non_secret",
+              value: "client-visible-a",
+            },
+          ],
+        },
+      ],
       html: row("client-visible-a"),
     });
     expect(prepared.diagnostic.scope).toMatchObject({ kind: "row", name: "client-visible-a" });
@@ -184,16 +247,26 @@ describe("cross-surface external resource destructive target preparation", () =>
       ...contract,
       presentationIdentity: { ...contract.presentationIdentity, semanticField: "clientId" },
     };
-    await expectCode(prepare({
-      activeContract: clientIdContract,
-      records: [
-        { id: "canonical-a", fields: [label("unavailable-label")] },
-        { id: "canonical-b", fields: [
-          { semanticField: "clientId", classification: "internal_non_secret", value: "client-visible-b" },
-        ] },
-      ],
-      html: row("client-visible-b"),
-    }), "PRESENTATION_IDENTITY_UNAVAILABLE");
+    await expectCode(
+      prepare({
+        activeContract: clientIdContract,
+        records: [
+          { id: "canonical-a", fields: [label("unavailable-label")] },
+          {
+            id: "canonical-b",
+            fields: [
+              {
+                semanticField: "clientId",
+                classification: "internal_non_secret",
+                value: "client-visible-b",
+              },
+            ],
+          },
+        ],
+        html: row("client-visible-b"),
+      }),
+      "PRESENTATION_IDENTITY_UNAVAILABLE",
+    );
   });
 
   it("rejects client ID without independent internal-only classification", async () => {
@@ -201,13 +274,25 @@ describe("cross-surface external resource destructive target preparation", () =>
       ...contract,
       presentationIdentity: { ...contract.presentationIdentity, semanticField: "clientId" },
     };
-    await expectCode(prepare({
-      activeContract: clientIdContract,
-      records: [{ id: "canonical-a", fields: [
-        { semanticField: "clientId", classification: "protected", value: "protected-client-id" },
-      ] }],
-      html: row("protected-client-id"),
-    }), "PRESENTATION_IDENTITY_NOT_INTERNAL_SAFE");
+    await expectCode(
+      prepare({
+        activeContract: clientIdContract,
+        records: [
+          {
+            id: "canonical-a",
+            fields: [
+              {
+                semanticField: "clientId",
+                classification: "protected",
+                value: "protected-client-id",
+              },
+            ],
+          },
+        ],
+        html: row("protected-client-id"),
+      }),
+      "PRESENTATION_IDENTITY_NOT_INTERNAL_SAFE",
+    );
   });
 
   it("rejects an authorized client ID absent from the browser surface", async () => {
@@ -215,13 +300,25 @@ describe("cross-surface external resource destructive target preparation", () =>
       ...contract,
       presentationIdentity: { ...contract.presentationIdentity, semanticField: "clientId" },
     };
-    await expectCode(prepare({
-      activeContract: clientIdContract,
-      records: [{ id: "canonical-a", fields: [
-        { semanticField: "clientId", classification: "internal_non_secret", value: "client-visible-a" },
-      ] }],
-      html: row("unrelated"),
-    }), "BROWSER_BOUNDARY_NOT_FOUND");
+    await expectCode(
+      prepare({
+        activeContract: clientIdContract,
+        records: [
+          {
+            id: "canonical-a",
+            fields: [
+              {
+                semanticField: "clientId",
+                classification: "internal_non_secret",
+                value: "client-visible-a",
+              },
+            ],
+          },
+        ],
+        html: row("unrelated"),
+      }),
+      "BROWSER_BOUNDARY_NOT_FOUND",
+    );
   });
 
   it("I: rejects secret suffix as the only available discriminator", async () => {
@@ -229,34 +326,64 @@ describe("cross-surface external resource destructive target preparation", () =>
       ...contract,
       presentationIdentity: { ...contract.presentationIdentity, semanticField: "secretSuffix" },
     };
-    await expectCode(prepare({
-      activeContract: suffixContract,
-      records: [{ id: "canonical-a", fields: [{ semanticField: "secretSuffix", classification: "protected", value: "suffix" }] }],
-    }), "PRESENTATION_IDENTITY_NOT_INTERNAL_SAFE");
+    await expectCode(
+      prepare({
+        activeContract: suffixContract,
+        records: [
+          {
+            id: "canonical-a",
+            fields: [
+              { semanticField: "secretSuffix", classification: "protected", value: "suffix" },
+            ],
+          },
+        ],
+      }),
+      "PRESENTATION_IDENTITY_NOT_INTERNAL_SAFE",
+    );
   });
 
   it("J: rejects status and timestamp when the declared public label is absent", async () => {
-    await expectCode(prepare({ records: [{ id: "canonical-a", fields: [
-      { semanticField: "status", classification: "internal_non_secret", value: "active" },
-      { semanticField: "createdAt", classification: "internal_non_secret", value: "2030-01-01" },
-    ] }] }), "PRESENTATION_IDENTITY_UNAVAILABLE");
+    await expectCode(
+      prepare({
+        records: [
+          {
+            id: "canonical-a",
+            fields: [
+              { semanticField: "status", classification: "internal_non_secret", value: "active" },
+              {
+                semanticField: "createdAt",
+                classification: "internal_non_secret",
+                value: "2030-01-01",
+              },
+            ],
+          },
+        ],
+      }),
+      "PRESENTATION_IDENTITY_UNAVAILABLE",
+    );
   });
 
   it("K: rejects presentation drift between initial observation and pre-dispatch revalidation", async () => {
-    await expectCode(prepare({
-      records: [{ id: "canonical-a", fields: [label("Alpha")] }],
-      secondRecords: [{ id: "canonical-a", fields: [label("Gamma")] }],
-    }), "PRESENTATION_IDENTITY_DRIFTED");
+    await expectCode(
+      prepare({
+        records: [{ id: "canonical-a", fields: [label("Alpha")] }],
+        secondRecords: [{ id: "canonical-a", fields: [label("Gamma")] }],
+      }),
+      "PRESENTATION_IDENTITY_DRIFTED",
+    );
   });
 
   it("L: rejects a label that becomes ambiguous before dispatch", async () => {
-    await expectCode(prepare({
-      records: [{ id: "canonical-a", fields: [label("Alpha")] }],
-      secondRecords: [
-        { id: "canonical-a", fields: [label("Alpha")] },
-        { id: "canonical-b", fields: [label("Alpha")] },
-      ],
-    }), "PRESENTATION_IDENTITY_AMBIGUOUS");
+    await expectCode(
+      prepare({
+        records: [{ id: "canonical-a", fields: [label("Alpha")] }],
+        secondRecords: [
+          { id: "canonical-a", fields: [label("Alpha")] },
+          { id: "canonical-b", fields: [label("Alpha")] },
+        ],
+      }),
+      "PRESENTATION_IDENTITY_AMBIGUOUS",
+    );
   });
 
   it("M: ignores an unrelated global Revoke control outside the projected row", async () => {
@@ -264,14 +391,21 @@ describe("cross-surface external resource destructive target preparation", () =>
       records: [{ id: "canonical-a", fields: [label("Alpha")] }],
       html: '<button aria-label="Revoke">Revoke</button>' + row("Alpha"),
     });
-    expect(await prepared.locator.evaluate((element) => element.closest("tr")?.textContent)).toContain("Alpha");
+    expect(
+      await prepared.locator.evaluate((element) => element.closest("tr")?.textContent),
+    ).toContain("Alpha");
   });
 
   it("N: rejects duplicate records carrying the bound canonical identity", async () => {
-    await expectCode(prepare({ records: [
-      { id: "canonical-a", fields: [label("Alpha")] },
-      { id: "canonical-a", fields: [label("Beta")] },
-    ] }), "CANONICAL_RESOURCE_DUPLICATE");
+    await expectCode(
+      prepare({
+        records: [
+          { id: "canonical-a", fields: [label("Alpha")] },
+          { id: "canonical-a", fields: [label("Beta")] },
+        ],
+      }),
+      "CANONICAL_RESOURCE_DUPLICATE",
+    );
   });
 
   it.each([
@@ -279,22 +413,27 @@ describe("cross-surface external resource destructive target preparation", () =>
     { environmentId: "wrong-environment" },
     { provider: "wrong-provider" },
     { resourceScope: "wrong-application" },
-  ])("O: rejects binding ownership or resource scope mismatch before observation: %o", async (override) => {
-    let observations = 0;
-    await page.setContent(`<table><tbody>${row("Alpha")}</tbody></table>`);
-    await expect(prepareExternalResourceDestructiveTarget({
-      page,
-      binding: { ...binding, ...override },
-      expectedOwnership: ownership,
-      presentationContract: contract,
-      observeResources: async () => {
-        observations += 1;
-        return observation("never", []);
-      },
-      allowedOrigins: [],
-    })).rejects.toMatchObject({ code: "EXTERNAL_BINDING_UNAVAILABLE" });
-    expect(observations).toBe(0);
-  });
+  ])(
+    "O: rejects binding ownership or resource scope mismatch before observation: %o",
+    async (override) => {
+      let observations = 0;
+      await page.setContent(`<table><tbody>${row("Alpha")}</tbody></table>`);
+      await expect(
+        prepareExternalResourceDestructiveTarget({
+          page,
+          binding: { ...binding, ...override },
+          expectedOwnership: ownership,
+          presentationContract: contract,
+          observeResources: async () => {
+            observations += 1;
+            return observation("never", []);
+          },
+          allowedOrigins: [],
+        }),
+      ).rejects.toMatchObject({ code: "EXTERNAL_BINDING_UNAVAILABLE" });
+      expect(observations).toBe(0);
+    },
+  );
 
   it("uses the realistic null-label Vitract row without putting canonical identity in the DOM", async () => {
     const canonicalCanary = "canonical-provider-id-must-remain-internal";
@@ -306,15 +445,27 @@ describe("cross-surface external resource destructive target preparation", () =>
         ...contract,
         presentationIdentity: { ...contract.presentationIdentity, semanticField: "clientId" },
       },
-      records: [{ id: canonicalCanary, fields: [
-        { semanticField: "clientId", classification: "internal_non_secret", value: "internal-client-presentation" },
-        { semanticField: "secretSuffix", classification: "protected", value: "secret-suffix" },
-        { semanticField: "status", classification: "internal_non_secret", value: "active" },
-        { semanticField: "lastUsedAt", classification: "internal_non_secret", value: "never" },
-      ] }],
+      records: [
+        {
+          id: canonicalCanary,
+          fields: [
+            {
+              semanticField: "clientId",
+              classification: "internal_non_secret",
+              value: "internal-client-presentation",
+            },
+            { semanticField: "secretSuffix", classification: "protected", value: "secret-suffix" },
+            { semanticField: "status", classification: "internal_non_secret", value: "active" },
+            { semanticField: "lastUsedAt", classification: "internal_non_secret", value: "never" },
+          ],
+        },
+      ],
       html,
     });
-    expect(prepared.diagnostic.scope).toMatchObject({ kind: "row", name: "internal-client-presentation" });
+    expect(prepared.diagnostic.scope).toMatchObject({
+      kind: "row",
+      name: "internal-client-presentation",
+    });
     expect(JSON.stringify(prepared.diagnostic)).not.toContain(canonicalCanary);
     expect(clickCount).toBe(0);
   });
@@ -327,49 +478,66 @@ describe("cross-surface external resource destructive target preparation", () =>
 
   it("rejects reuse of the same observation receipt as stale revalidation", async () => {
     await page.setContent(`<table><tbody>${row("Alpha")}</tbody></table>`);
-    await expect(prepareExternalResourceDestructiveTarget({
-      page, binding, expectedOwnership: ownership, presentationContract: contract,
-      observeResources: async () => observation("stale-observation", [
-        { id: "canonical-a", fields: [label("Alpha")] },
-      ]),
-      allowedOrigins: [],
-    })).rejects.toMatchObject({ code: "PROVIDER_REVALIDATION_FAILED" });
+    await expect(
+      prepareExternalResourceDestructiveTarget({
+        page,
+        binding,
+        expectedOwnership: ownership,
+        presentationContract: contract,
+        observeResources: async () =>
+          observation("stale-observation", [{ id: "canonical-a", fields: [label("Alpha")] }]),
+        allowedOrigins: [],
+      }),
+    ).rejects.toMatchObject({ code: "PROVIDER_REVALIDATION_FAILED" });
   });
 
   it("classifies a missing scoped action separately from a missing boundary", async () => {
-    await expectCode(prepare({
-      records: [{ id: "canonical-a", fields: [label("Alpha")] }],
-      html: '<tr role="row"><td>Alpha</td><td>No lifecycle action</td></tr>',
-    }), "ACTION_TARGET_NOT_FOUND");
+    await expectCode(
+      prepare({
+        records: [{ id: "canonical-a", fields: [label("Alpha")] }],
+        html: '<tr role="row"><td>Alpha</td><td>No lifecycle action</td></tr>',
+      }),
+      "ACTION_TARGET_NOT_FOUND",
+    );
   });
 
   it("classifies an unavailable second provider observation as failed revalidation", async () => {
     await page.setContent(`<table><tbody>${row("Alpha")}</tbody></table>`);
-    await expect(prepareExternalResourceDestructiveTarget({
-      page, binding, expectedOwnership: ownership, presentationContract: contract,
-      observeResources: async ({ phase }) => {
-        if (phase === "pre_dispatch") throw new Error("private provider failure");
-        return observation("initial", [{ id: "canonical-a", fields: [label("Alpha")] }]);
-      },
-      allowedOrigins: [],
-    })).rejects.toMatchObject({ code: "PROVIDER_REVALIDATION_FAILED" });
+    await expect(
+      prepareExternalResourceDestructiveTarget({
+        page,
+        binding,
+        expectedOwnership: ownership,
+        presentationContract: contract,
+        observeResources: async ({ phase }) => {
+          if (phase === "pre_dispatch") throw new Error("private provider failure");
+          return observation("initial", [{ id: "canonical-a", fields: [label("Alpha")] }]);
+        },
+        allowedOrigins: [],
+      }),
+    ).rejects.toMatchObject({ code: "PROVIDER_REVALIDATION_FAILED" });
   });
 
   it("fails Praxis revalidation when the prepared action drifts after provider revalidation", async () => {
     await page.setContent(`<table><tbody>${row("Alpha")}</tbody></table>`);
     let sequence = 0;
-    await expect(prepareExternalResourceDestructiveTarget({
-      page, binding, expectedOwnership: ownership, presentationContract: contract,
-      observeResources: async ({ phase }) => {
-        if (phase === "pre_dispatch")
-          await page.getByRole("button", { name: "Revoke" }).evaluate((element) => {
-            if (element instanceof HTMLButtonElement) element.disabled = true;
-          });
-        return observation(`observation-${++sequence}`, [
-          { id: "canonical-a", fields: [label("Alpha")] },
-        ]);
-      },
-      allowedOrigins: [],
-    })).rejects.toMatchObject({ code: "PRAXIS_REVALIDATION_FAILED" });
+    await expect(
+      prepareExternalResourceDestructiveTarget({
+        page,
+        binding,
+        expectedOwnership: ownership,
+        presentationContract: contract,
+        observeResources: async ({ phase }) => {
+          if (phase === "pre_dispatch")
+            await page.getByRole("button", { name: "Revoke" }).evaluate((element) => {
+              if (element instanceof HTMLButtonElement) element.disabled = true;
+            });
+          return observation(`observation-${++sequence}`, [
+            { id: "canonical-a", fields: [label("Alpha")] },
+          ]);
+        },
+        allowedOrigins: [],
+      }),
+    ).rejects.toMatchObject({ code: "PRAXIS_REVALIDATION_FAILED" });
   }, 10_000);
 });

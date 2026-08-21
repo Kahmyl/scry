@@ -413,4 +413,11 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir structured-synthetic-protected-input.sql
 \ir segmented-flow-successor-checkpoints.sql
 \ir adaptive-certification-provenance.sql
+\ir protected-operation-authorization-binding.sql
+\ir run-praxis-session-ledger.sql
+\ir protected-live-praxis-session.sql
 \ir adaptive-operation-reconciliation.sql
+\ir resource-effect-reconciliation.sql
+\ir 20260820-0910_scope_unknown_fence_to_resource_mutations.sql
+\ir 20260816-231045_add_document_transition_gap.sql
+\ir mission-recording-selection.sql

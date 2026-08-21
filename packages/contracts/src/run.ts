@@ -69,7 +69,7 @@ export const recordingTimelineEntrySchema = z.discriminatedUnion("type", [
       pageId: z.string().min(1),
       startedAt: z.string().datetime(),
       endedAt: z.string().datetime(),
-      reason: z.enum(["run_started", "safe_resume", "page_switch"]),
+      reason: z.enum(["run_started", "safe_resume", "page_switch", "document_resume"]),
       status: z.enum(["available", "quarantined", "failed"]),
       privacyStatus: z.enum(["verified_safe", "quarantined"]),
       artifactId: z.string().uuid().optional(),
@@ -89,6 +89,18 @@ export const recordingTimelineEntrySchema = z.discriminatedUnion("type", [
       endedAt: z.string().datetime(),
       reason: z.string().trim().min(1).max(500),
       privacyStatus: z.literal("capture_suppressed"),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("document_transition_gap"),
+      id: z.string().uuid(),
+      sequence: z.number().int().nonnegative(),
+      operationId: z.string().min(1),
+      startedAt: z.string().datetime(),
+      endedAt: z.string().datetime(),
+      reason: z.literal("navigation_boundary"),
+      captureStatus: z.literal("intentionally_suppressed"),
     })
     .strict(),
   z

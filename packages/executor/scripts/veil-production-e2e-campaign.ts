@@ -8,7 +8,7 @@ import {
   LocalArtifactStore,
   VeilEvidenceAdmissionError,
   type VeilEvidenceAdmissionProof,
-} from "@scry/artifact";
+} from "@scry/chronicle/legacy";
 import {
   currentPlanSchema,
   executionPolicySchema,
@@ -25,7 +25,11 @@ import { unzipSync } from "fflate";
 import { executePlan } from "../src/executor.js";
 import { availableArtifact, registerVeilEvidenceAdmission } from "../src/artifacts.js";
 import { BrowserSessionProvenance } from "../src/browser-session.js";
-import { resolveTargetLocator } from "@scry/praxis";
+import {
+  capturePraxisScreenshot,
+  observeAndMaskPraxisVisualRegions,
+  resolveTargetLocator,
+} from "@scry/praxis";
 import { VeilAuthority } from "@scry/veil";
 import { VeilChannelCollector } from "@scry/veil";
 import { VeilRuntimeCoordinator } from "@scry/veil";
@@ -601,8 +605,11 @@ async function admitPostTransactionEvidence(
     sanitation?: any;
   }> = [];
   const screenshot = path.join(root, "transaction.png");
-  const issued = await visual.issue(page, binding);
-  await visual.capture(page, issued.permit, binding, () => page.screenshot({ path: screenshot }));
+  const observation = await observeAndMaskPraxisVisualRegions(page);
+  const issued = visual.issue(observation, binding);
+  await visual.capture(await observeAndMaskPraxisVisualRegions(page), issued.permit, binding, () =>
+    capturePraxisScreenshot(page, screenshot, { fullPage: false }),
+  );
   files.push({
     channel: "screenshot",
     kind: "screenshot",
@@ -611,7 +618,11 @@ async function admitPostTransactionEvidence(
     permit: issued.permit,
   });
   const videoPermit = videoAuthority.issue("protected-safe-resume", binding);
-  await videoAuthority.checkpoint(page, videoPermit, binding);
+  await videoAuthority.checkpoint(
+    await observeAndMaskPraxisVisualRegions(page),
+    videoPermit,
+    binding,
+  );
   const videoBytes = await page.evaluate(async () => {
     const canvas = document.createElement("canvas");
     canvas.width = 320;
@@ -965,7 +976,8 @@ async function inspectBrowserCapabilityTeardown(origin: string, admittedReport: 
   });
   const page = await context.newPage();
   const { VeilClipboardCollector } = await import("@scry/veil");
-  const clipboardCollector = new VeilClipboardCollector(page);
+  const { clearAndVerifyPraxisClipboard } = await import("@scry/praxis");
+  const clipboardCollector = new VeilClipboardCollector(() => clearAndVerifyPraxisClipboard(page));
   try {
     await page.goto(`${origin}/replica/credential`);
     await page.evaluate(

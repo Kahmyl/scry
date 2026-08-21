@@ -14,7 +14,10 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 
 import { executePlan } from "../src/executor.js";
-import type { MutationLedgerState } from "../src/protected-transaction-coordinator.js";
+import type {
+  MutationLedgerState,
+  ProtectedOperationClaim,
+} from "../src/protected-transaction-coordinator.js";
 
 const servers: Array<ReturnType<typeof createServer>> = [];
 afterEach(async () =>
@@ -47,6 +50,7 @@ describe("executor protected assertion persistence identity", () => {
     const transaction = protectedTransaction(origin);
     const results: PraxisResult[] = [];
     let ledger: MutationLedgerState = "planned";
+    let mutationOutcome: ProtectedOperationClaim["mutationOutcome"] = "not_attempted";
 
     const report = await executePlan({
       plan: currentPlanSchema.parse({
@@ -90,11 +94,38 @@ describe("executor protected assertion persistence identity", () => {
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
       veilAdmissionKey: "protected-assertion-test-admission-key-32-bytes",
       protectedTransactionStore: {
-        claim: async () => ({ id: "protected-operation", state: ledger, version: 1, fencingToken: 1 }),
+        claim: async () => ({
+          id: "protected-operation",
+          state: ledger,
+          version: 1,
+          fencingToken: 1,
+          mutationOutcome,
+        }),
         transition: async ({ expected, next }) => {
           if (ledger !== expected) throw new Error("PROTECTED_OPERATION_TRANSITION_FENCED");
           ledger = next;
-          return { id: "protected-operation", state: ledger, version: 2, fencingToken: 1 };
+          return {
+            id: "protected-operation",
+            state: ledger,
+            version: 2,
+            fencingToken: 1,
+            mutationOutcome,
+          };
+        },
+        settleMutationOutcome: async ({ outcome }) => {
+          if (
+            (mutationOutcome === "applied" || mutationOutcome === "not_applied") &&
+            mutationOutcome !== outcome
+          )
+            throw new Error("PROTECTED_MUTATION_OUTCOME_SETTLEMENT_CONTRADICTION");
+          mutationOutcome = outcome;
+          return {
+            id: "protected-operation",
+            state: ledger,
+            version: 2,
+            fencingToken: 1,
+            mutationOutcome,
+          };
         },
         record: async () => undefined,
       },
@@ -107,14 +138,30 @@ describe("executor protected assertion persistence identity", () => {
         return { valueId: randomUUID() };
       },
       atomicOutputCapture: async ({ claim, outputs }) => {
-        const references: Record<string, { classification: "public" | "protected"; credentialId?: string; valueId?: string; scope: "run" | "project" }> = {};
+        const references: Record<
+          string,
+          {
+            classification: "public" | "protected";
+            credentialId?: string;
+            valueId?: string;
+            scope: "run" | "project";
+          }
+        > = {};
         for (const output of outputs) {
           if (output.classification === "protected") {
             expect(output.value).toBe(protectedValue);
-            references[output.reference] = { classification: "protected", credentialId: randomUUID(), scope: output.scope };
+            references[output.reference] = {
+              classification: "protected",
+              credentialId: randomUUID(),
+              scope: output.scope,
+            };
           } else {
             expect(output.value).toBe(publicValue);
-            references[output.reference] = { classification: "public", valueId: randomUUID(), scope: output.scope };
+            references[output.reference] = {
+              classification: "public",
+              valueId: randomUUID(),
+              scope: output.scope,
+            };
           }
           output.value = "";
         }

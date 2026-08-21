@@ -22,7 +22,9 @@ describe("adaptive session production runtime restart", () => {
         </script></main></body></html>`);
         return;
       }
-      response.end(`<html><body data-path="${request.url}"><main><h1>${request.url}</h1></main></body></html>`);
+      response.end(
+        `<html><body data-path="${request.url}"><main><h1>${request.url}</h1></main></body></html>`,
+      );
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -58,6 +60,7 @@ describe("adaptive session production runtime restart", () => {
       claimSuccessorCheckpoint: vi.fn(async () => null),
       heartbeatRuntimeLease: vi.fn(),
       markOperationDispatching: vi.fn(),
+      recordDispatchBaseline: vi.fn(),
       releaseRuntimeLease: vi.fn(async () => true),
       recordVerifiedObservation: vi.fn(async (observation) => {
         lastObservation = observation;
@@ -114,7 +117,9 @@ describe("adaptive session production runtime restart", () => {
         checkpointId: randomUUID(),
         payload: {
           schemaVersion: 1 as const,
-          policyDigest: createHash("sha256").update(JSON.stringify(policy(origin))).digest("hex"),
+          policyDigest: createHash("sha256")
+            .update(JSON.stringify(policy(origin)))
+            .digest("hex"),
           storageState: {
             cookies: [],
             origins: [{ origin, localStorage: [{ name: "durable", value: "yes" }] }],
@@ -127,6 +132,7 @@ describe("adaptive session production runtime restart", () => {
       completeSuccessorCheckpoint,
       heartbeatRuntimeLease: vi.fn(),
       markOperationDispatching: vi.fn(),
+      recordDispatchBaseline: vi.fn(),
       releaseRuntimeLease: vi.fn(async () => true),
       recordVerifiedObservation: vi.fn(),
       resolveCredential: vi.fn(),
@@ -148,11 +154,18 @@ describe("adaptive session production runtime restart", () => {
             concept: "authenticated continuation",
             requiredCapabilities: ["pointer_activatable"],
             preferredEvidence: {
-              roles: ["button"], names: ["Authenticated continuation"], labels: [],
-              descriptions: [], placeholders: [], inputTypes: [],
+              roles: ["button"],
+              names: ["Authenticated continuation"],
+              labels: [],
+              descriptions: [],
+              placeholders: [],
+              inputTypes: [],
             },
-            scope: { kind: "page" }, relations: [], prohibited: ["hidden", "disabled"],
-            risk: "ordinary", confidence: { requiredFamilies: [] },
+            scope: { kind: "page" },
+            relations: [],
+            prohibited: ["hidden", "disabled"],
+            risk: "ordinary",
+            confidence: { requiredFamilies: [] },
           },
           state: "visible",
         },
@@ -185,15 +198,24 @@ describe("adaptive session production runtime restart", () => {
             concept: "authenticated continuation",
             requiredCapabilities: ["pointer_activatable"],
             preferredEvidence: {
-              roles: ["button"], names: ["Authenticated continuation"], labels: [],
-              descriptions: [], placeholders: [], inputTypes: [],
+              roles: ["button"],
+              names: ["Authenticated continuation"],
+              labels: [],
+              descriptions: [],
+              placeholders: [],
+              inputTypes: [],
             },
-            scope: { kind: "page" }, relations: [], prohibited: ["hidden", "disabled"],
-            risk: "ordinary", confidence: { requiredFamilies: [] },
+            scope: { kind: "page" },
+            relations: [],
+            prohibited: ["hidden", "disabled"],
+            risk: "ordinary",
+            confidence: { requiredFamilies: [] },
           },
           state: "visible",
         },
-        expectedEffect: { type: "none" }, mode: "rehearse", protectedInputReferences: [],
+        expectedEffect: { type: "none" },
+        mode: "rehearse",
+        protectedInputReferences: [],
       }),
     ).resolves.toMatchObject({ outcome: { functionalResult: "succeeded" } });
     expect(repository.claimSuccessorCheckpoint).toHaveBeenCalledTimes(2);
@@ -230,9 +252,14 @@ function capabilityFactory() {
             allowedOrigins: string[],
             timeoutMs?: number,
             trustedScriptOrigins?: string[],
-          ) => new NativeBrowserDriver().navigateAndWait(
-            page, url, allowedOrigins, timeoutMs, trustedScriptOrigins,
-          ),
+          ) =>
+            new NativeBrowserDriver().navigateAndWait(
+              page,
+              url,
+              allowedOrigins,
+              timeoutMs,
+              trustedScriptOrigins,
+            ),
         },
         journal: {
           begin: vi.fn(),

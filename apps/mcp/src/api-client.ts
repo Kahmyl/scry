@@ -17,21 +17,64 @@ export class ScryApiError extends Error {
 }
 
 const SAFE_REJECTION_CONTEXT_KEYS = new Set([
-  "state", "current", "target", "phase", "capability", "missingCount", "limit",
-  "actualVersion", "actualRevision", "actualRevisionId", "commandId", "turnId",
-  "sourceMissionRevision", "currentMissionRevision", "objectiveId", "dependencyId",
-  "mutationOutcome", "retry", "retryClass", "continuation", "recoveryTool",
-  "requiresNewFlowDraftAndAuthoringSession", "idempotencyReuse",
-  "disclosedOrigins", "missingTrustedScriptOrigins", "missingAllowedOrigin",
-  "environment", "environmentId", "resourceExists", "executionReadiness",
-  "recovery", "recoveryBinding", "recoveryKind", "requiresFreshIdempotencyKey",
-  "requiresPendingTurn", "failedAuthoringSessionId", "failedOperationId", "sourceTurnId",
-  "preservesMissionId", "preservesObjectiveId", "preservesFlowDraftId",
-  "preservesCurrentFlow", "missionId", "flowDraftId", "sessionId",
-  "environmentResourceExists", "refreshedDecisionBoundary", "requestedTurnId",
-  "currentTurnState", "type", "reasonCode", "authoringRecovery",
+  "state",
+  "current",
+  "target",
+  "phase",
+  "capability",
+  "missingCount",
+  "limit",
+  "actualVersion",
+  "actualRevision",
+  "actualRevisionId",
+  "commandId",
+  "turnId",
+  "sourceMissionRevision",
+  "currentMissionRevision",
+  "objectiveId",
+  "dependencyId",
+  "mutationOutcome",
+  "retry",
+  "retryClass",
+  "continuation",
+  "recoveryTool",
+  "requiresNewFlowDraftAndAuthoringSession",
+  "idempotencyReuse",
+  "disclosedOrigins",
+  "missingTrustedScriptOrigins",
+  "missingAllowedOrigin",
+  "environment",
+  "environmentId",
+  "resourceExists",
+  "executionReadiness",
+  "recovery",
+  "recoveryBinding",
+  "recoveryKind",
+  "requiresFreshIdempotencyKey",
+  "requiresPendingTurn",
+  "failedAuthoringSessionId",
+  "failedOperationId",
+  "sourceTurnId",
+  "preservesMissionId",
+  "preservesObjectiveId",
+  "preservesFlowDraftId",
+  "preservesCurrentFlow",
+  "missionId",
+  "flowDraftId",
+  "sessionId",
+  "environmentResourceExists",
+  "refreshedDecisionBoundary",
+  "requestedTurnId",
+  "currentTurnState",
+  "type",
+  "reasonCode",
+  "authoringRecovery",
   "idempotencyKey",
-  "operationId", "reconciliation", "redispatchAllowed", "missionFenceCleared",
+  "operationId",
+  "reconciliation",
+  "redispatchAllowed",
+  "missionFenceCleared",
+  "validationIssueCount",
   "safeActions",
 ]);
 
@@ -92,10 +135,12 @@ export class ScryApiClient {
       (expectedRelease && capabilities.releaseId !== expectedRelease) ||
       (expectedSchema && capabilities.schemaFingerprint !== expectedSchema)
     ) {
-      throw new ScryApiError("SCRY_RELEASE_MISMATCH", 409, [
-        "restart_mcp_with_current_release",
-        "verify_api_release",
-      ], { mutationOutcome: "not_applied", retry: "safe_after_prerequisite" });
+      throw new ScryApiError(
+        "SCRY_RELEASE_MISMATCH",
+        409,
+        ["restart_mcp_with_current_release", "verify_api_release"],
+        { mutationOutcome: "not_applied", retry: "safe_after_prerequisite" },
+      );
     }
     if (
       !capabilities.praxis ||
@@ -104,10 +149,12 @@ export class ScryApiClient {
       capabilities.praxis.scoringPolicyVersion !== PRAXIS_SCORING_POLICY_VERSION ||
       capabilities.praxis.cutoff !== true
     ) {
-      throw new ScryApiError("SCRY_PRAXIS_VERSION_MISMATCH", 409, [
-        "restart_mcp_with_current_release",
-        "verify_api_release",
-      ], { mutationOutcome: "not_applied", retry: "safe_after_prerequisite" });
+      throw new ScryApiError(
+        "SCRY_PRAXIS_VERSION_MISMATCH",
+        409,
+        ["restart_mcp_with_current_release", "verify_api_release"],
+        { mutationOutcome: "not_applied", retry: "safe_after_prerequisite" },
+      );
     }
     return capabilities;
   }
@@ -137,15 +184,36 @@ export class ScryApiClient {
     if (!response.ok) {
       const envelope = asRecord(body);
       const detail = asRecord(envelope?.message) ?? envelope;
+
+      const detailCode = stringField(detail, "code");
+      const envelopeCode = stringField(envelope, "code");
+      const validationMessages = stringArrayField(envelope, "message") ?? [];
+
+      const inferredValidationFailure =
+        response.status === 400 && !detailCode && !envelopeCode && validationMessages.length > 0;
+
       const code =
-        stringField(detail, "code") ??
-        stringField(envelope, "code") ??
+        detailCode ??
+        envelopeCode ??
         (typeof envelope?.message === "string" ? envelope.message : undefined) ??
-        `HTTP_${response.status}`;
+        (inferredValidationFailure
+          ? "SCRY_API_REQUEST_VALIDATION_FAILED"
+          : `HTTP_${response.status}`);
+
       const safeActions =
         stringArrayField(detail, "safeActions") ?? stringArrayField(envelope, "safeActions") ?? [];
+
       const { safeActions: _safeActions, code: _code, ...safeDetail } = detail ?? {};
-      throw new ScryApiError(code, response.status, safeActions, safeRejectionContext(safeDetail));
+
+      throw new ScryApiError(code, response.status, safeActions, {
+        ...safeRejectionContext(safeDetail),
+        ...(inferredValidationFailure
+          ? {
+              mutationOutcome: "not_applied",
+              validationIssueCount: validationMessages.length,
+            }
+          : {}),
+      });
     }
     return body as T;
   }
@@ -153,8 +221,9 @@ export class ScryApiClient {
 
 function safeRejectionContext(value: Record<string, unknown> | undefined) {
   return Object.fromEntries(
-    Object.entries(value ?? {}).filter(([key, candidate]) =>
-      SAFE_REJECTION_CONTEXT_KEYS.has(key) && isSafeRejectionValue(candidate)),
+    Object.entries(value ?? {}).filter(
+      ([key, candidate]) => SAFE_REJECTION_CONTEXT_KEYS.has(key) && isSafeRejectionValue(candidate),
+    ),
   );
 }
 
@@ -165,8 +234,13 @@ function isSafeRejectionValue(value: unknown): boolean {
   if (Array.isArray(value)) return value.length <= 20 && value.every(isSafeRejectionValue);
   if (value && typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>);
-    return entries.length <= 20 && entries.every(([key, candidate]) =>
-      SAFE_REJECTION_CONTEXT_KEYS.has(key) && isSafeRejectionValue(candidate));
+    return (
+      entries.length <= 20 &&
+      entries.every(
+        ([key, candidate]) =>
+          SAFE_REJECTION_CONTEXT_KEYS.has(key) && isSafeRejectionValue(candidate),
+      )
+    );
   }
   return false;
 }
@@ -198,7 +272,17 @@ export type ScryCapabilities = {
   adaptiveExecution?: {
     kernel: boolean;
     authoringTurn: boolean;
-    modes: Array<"observe" | "rehearse" | "transact" | "certify" | "run">;
+    modes: Array<"observe" | "transact" | "run">;
+  };
+  agentDirectedExecution?: {
+    livePraxisSession: boolean;
+    factualObservation: boolean;
+    exactReferenceRequired: boolean;
+    durableRunLedger: boolean;
+    explicitRunFinalization: boolean;
+    automaticProgression: boolean;
+    compileCertificationRequired: boolean;
+    calibrationRequired: boolean;
   };
   directBrowser?: { enabled: boolean; maxActionsPerTurn: number; sessionIdleTtlMs: number };
   groundingCapabilities?: string[];
