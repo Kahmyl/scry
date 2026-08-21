@@ -1,5 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { renderComposeOci } from "./render-compose-oci.mjs";
 
 const workflow = readFileSync(".github/workflows/docker-publish.yml", "utf8");
 
@@ -31,7 +35,8 @@ for (const required of [
   "SCRY_DEPLOYMENT_TIER: beta",
   'COMPOSE_PROFILES: ""',
   "docker/build-push-action@v6",
-  "docker compose -f compose.deploy.yml publish",
+  'node scripts/render-compose-oci.mjs "$RUNNER_TEMP/scry-compose-oci.yml"',
+  'docker compose -f "$SCRY_COMPOSE_FILE" publish',
   "node scripts/schema-fingerprint.mjs",
   "Boot and smoke-test the candidate beta topology",
 ]) {
@@ -60,13 +65,37 @@ const environment = {
   SUPABASE_URL: "https://example.invalid",
   SUPABASE_PUBLISHABLE_KEY: "verification",
 };
-const services = execFileSync(
-  "docker",
-  ["compose", "-f", "compose.deploy.yml", "config", "--services"],
-  { env: environment, encoding: "utf8" },
-)
-  .trim()
-  .split("\n");
+const temporaryDirectory = mkdtempSync(join(tmpdir(), "scry-compose-oci-verification-"));
+const renderedPath = join(temporaryDirectory, "compose.yml");
+let services;
+try {
+  const rendered = renderComposeOci(renderedPath);
+  if (/^\s+file:\s+/m.test(rendered))
+    fail("rendered OCI Compose model retains a local file-backed config");
+  for (const configName of [
+    "postgres_hba",
+    "prometheus_config",
+    "prometheus_rules",
+    "blackbox_config",
+  ]) {
+    if (!rendered.includes(`  ${configName}:\n    content: |`))
+      fail(`rendered OCI Compose model does not embed ${configName}`);
+  }
+  services = execFileSync("docker", ["compose", "-f", renderedPath, "config", "--services"], {
+    env: environment,
+    encoding: "utf8",
+  })
+    .trim()
+    .split("\n");
+  const resolvedModel = execFileSync("docker", ["compose", "-f", renderedPath, "config"], {
+    env: { ...environment, COMPOSE_PROFILES: "operations" },
+    encoding: "utf8",
+  });
+  if (!resolvedModel.includes("{{ $$labels.instance }}"))
+    fail("rendered OCI Compose model did not preserve escaped Prometheus template variables");
+} finally {
+  rmSync(temporaryDirectory, { recursive: true, force: true });
+}
 
 for (const required of ["postgres", "redis", "migrate", "api", "worker", "mcp", "web", "caddy"]) {
   if (!services.includes(required)) fail(`beta stack omits core service: ${required}`);
