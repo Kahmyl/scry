@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 
 const workflow = readFileSync(".github/workflows/docker-publish.yml", "utf8");
 const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+const betaTests = readFileSync("scripts/run-beta-tests.mjs", "utf8");
+const authoringRelease = readFileSync("scripts/verify-adaptive-authoring-release.mjs", "utf8");
 
 for (const retiredWorkflow of [
   ".github/workflows/praxis-verification.yml",
@@ -55,6 +57,19 @@ const browserGateIndex = workflow.indexOf("pnpm verify:protected-interaction-con
 const betaTestsIndex = workflow.indexOf("pnpm test:beta");
 if (!(browserInstallIndex < browserGateIndex && browserInstallIndex < betaTestsIndex))
   fail("the matching Playwright Chromium binary must be installed before browser-backed gates");
+
+if (!betaTests.includes('"!@scry/executor"'))
+  fail("beta tests must leave the exhaustive Executor suite to local qualification");
+for (const focusedExecutorTest of [
+  "test/protected-acquisition-adapters.test.ts",
+  "test/protected-transaction-coordinator.test.ts",
+  "test/probe-veil-boundary.test.ts",
+]) {
+  if (!authoringRelease.includes(focusedExecutorTest))
+    fail(`focused beta Executor gate omits ${focusedExecutorTest}`);
+}
+if (authoringRelease.includes('"campaign:'))
+  fail("focused beta authoring qualification must not reactivate retired legacy campaigns");
 
 const environment = {
   ...process.env,

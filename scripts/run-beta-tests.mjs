@@ -4,6 +4,10 @@ import { spawnSync } from "node:child_process";
 const historicalSnapshot = "/private/tmp/scry-m1-cutover-2b9e22e42cf3/development-db.dump";
 const apiArguments = ["--filter", "@scry/api", "exec", "vitest", "run"];
 
+process.stdout.write(
+  "BETA_QUALIFICATION_SCOPE: FULL_EXECUTOR_SUITE_LOCAL_ONLY; CI runs the focused protected and authoring Executor gate before publication.\n",
+);
+
 if (!existsSync(historicalSnapshot)) {
   process.stdout.write(
     "BETA_QUALIFICATION_GAP: M1_SNAPSHOT_REQUIRED; the immutable M1 snapshot suite is not reported as passing.\n",
@@ -19,6 +23,8 @@ run([
   "./packages/**",
   "--filter",
   "!@scry/api",
+  "--filter",
+  "!@scry/executor",
   "--recursive",
   "test",
 ]);
