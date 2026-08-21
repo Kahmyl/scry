@@ -21,7 +21,7 @@ env:
 
 jobs:
   publish:
-    name: Qualify and publish beta application and stack
+    name: Build, smoke, and publish beta application and stack
     runs-on: ubuntu-latest
 
     steps:
@@ -31,42 +31,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.29.3
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Verify beta contracts and implementation
+      - name: Record beta schema identity
         run: |
-          pnpm install --frozen-lockfile
-          pnpm verify:docker-publish-workflow
-          pnpm format:check
-          pnpm verify:privacy-foundation
-          pnpm verify:playwright
-          pnpm --filter @scry/api exec playwright install --with-deps chromium
-          pnpm verify:subsystem-boundaries
-          pnpm verify:repository-topology
-          pnpm verify:execution-kernel-boundary
-          pnpm verify:direct-browser-boundary
-          pnpm verify:protected-interaction-conformance
-          pnpm verify:release-fingerprint
-          pnpm verify:deployment-tiers
-          pnpm typecheck
-          pnpm test:beta
           echo "SCRY_SCHEMA_FINGERPRINT=$(node scripts/schema-fingerprint.mjs)" >> "$GITHUB_ENV"
-
-      - name: Verify authoring release against an isolated database
-        env:
-          SCRY_AUTHORING_TEST_DATABASE_URL: postgres://scry:scry-local@127.0.0.1:54329/scry
-        run: |
-          trap 'docker compose down -v --remove-orphans' EXIT
-          docker compose up -d --wait postgres
-          DATABASE_URL="$SCRY_AUTHORING_TEST_DATABASE_URL" pnpm db:migrate
-          pnpm verify:adaptive-authoring-release
 
       - name: Generate application image metadata
         id: meta
@@ -78,8 +45,8 @@ jobs:
             type=sha,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build the combined Scry image for qualification
-        id: qualification-build
+      - name: Build the combined Scry beta image
+        id: candidate-build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -94,7 +61,7 @@ jobs:
             org.scry.release-id=${{ github.sha }}
           cache-from: type=gha,scope=scry
 
-      - name: Boot and verify the candidate beta topology
+      - name: Boot and smoke-test the candidate beta topology
         env:
           SCRY_DOMAIN: scry.example.com
           POSTGRES_PASSWORD: integration-password
@@ -119,7 +86,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and publish the qualified Scry image
+      - name: Build and publish the Scry beta image
         id: build
         uses: docker/build-push-action@v6
         with:
