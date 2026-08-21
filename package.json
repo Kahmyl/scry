@@ -31,10 +31,12 @@
     "verify:deployment-preflight": "node scripts/verify-deployment-preflight.mjs",
     "verify:deployment-tiers": "node scripts/verify-deployment-tiers.mjs",
     "verify:production-recovery": "sh scripts/qualify-production-recovery.sh",
+    "verify:docker-publish-workflow": "node scripts/verify-docker-publish-workflow.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "analyze:decomposition": "node scripts/analyze-source-structure.mjs",
     "test": "pnpm --recursive test",
+    "test:beta": "node scripts/run-beta-tests.mjs",
     "typecheck": "pnpm --recursive typecheck",
     "verify:assurance": "pnpm --filter @scry/assurance typecheck && pnpm --filter @scry/assurance test:truth"
   },
