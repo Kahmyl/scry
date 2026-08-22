@@ -314,7 +314,6 @@ describe("current Scry MCP surface", () => {
       "close_flow_authoring",
       "start_mission",
       "resume_mission",
-      "attach_to_mission",
       "get_mission",
       "list_missions",
       "update_mission",

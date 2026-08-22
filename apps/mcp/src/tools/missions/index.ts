@@ -3,7 +3,6 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ScryApiClient } from "../../api-client.js";
 import { registerStartMissionTool } from "./start-mission.tool.js";
 import { registerResumeMissionTool } from "./resume-mission.tool.js";
-import { registerAttachToMissionTool } from "./attach-to-mission.tool.js";
 import { registerGetMissionTool } from "./get-mission.tool.js";
 import { registerListMissionsTool } from "./list-missions.tool.js";
 import { registerUpdateMissionTool } from "./update-mission.tool.js";
@@ -29,7 +28,6 @@ import { registerSetMissionRecordingSelectionTool } from "./set-mission-recordin
 export function registerMissionsTools(server: McpServer, client: ScryApiClient) {
   registerStartMissionTool(server, client);
   registerResumeMissionTool(server, client);
-  registerAttachToMissionTool(server, client);
   registerGetMissionTool(server, client);
   registerListMissionsTool(server, client);
   registerUpdateMissionTool(server, client);
