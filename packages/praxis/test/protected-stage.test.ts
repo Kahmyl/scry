@@ -4,7 +4,7 @@ import {
   ProtectedStageAbortedError,
   ProtectedStageTimeoutError,
   runProtectedStage,
-} from "../src/protected-stage-supervisor.js";
+} from "@scry/praxis";
 
 describe("protected stage supervisor", () => {
   it("returns a result that settles before its deadline", async () => {

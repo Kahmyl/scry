@@ -8,7 +8,7 @@ import type {
   ProtectedTransactionFacts,
 } from "./protected-transaction-coordinator.js";
 import { ProtectedTransactionPhaseError as PhaseError } from "./protected-transaction-errors.js";
-import { runProtectedStage } from "./protected-stage-supervisor.js";
+import { runProtectedStage } from "@scry/praxis";
 
 export async function verifyProtectedAcquisitionReadiness(
   page: Page,

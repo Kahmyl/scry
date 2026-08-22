@@ -27,7 +27,7 @@ import type { Browser, BrowserContext, Page } from "playwright";
 
 import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
 import { BrowserSessionProvenance } from "@scry/praxis";
-import { runProtectedStage } from "./protected-stage-supervisor.js";
+import { runProtectedStage } from "@scry/praxis";
 import type { ExecutionReport } from "./types.js";
 
 export type AuthoringBrowserSessionState =

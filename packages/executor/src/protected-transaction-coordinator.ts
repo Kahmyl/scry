@@ -45,7 +45,7 @@ import {
   beginProtectedResponseEnvelope,
   type ProtectedResponseEvidence,
 } from "./protected-response-envelope.js";
-import { runProtectedStage } from "./protected-stage-supervisor.js";
+import { runProtectedStage } from "@scry/praxis";
 
 /** @deprecated Historical rows only. New operations use ProtectedOperationState. */
 export type MutationLedgerState = ProtectedOperationState;

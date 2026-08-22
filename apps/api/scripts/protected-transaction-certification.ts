@@ -11,9 +11,9 @@ import {
   beginProtectedResponseEnvelope,
   PlaywrightProtectedCapsuleFactory,
   registerProtectedAcquisitionAdapter,
-  runProtectedStage,
   type ProtectedOperationClaim,
 } from "@scry/executor";
+import { runProtectedStage } from "@scry/praxis";
 import { VeilChannelCollector, VeilClipboardCollector, VeilRuntimeCoordinator } from "@scry/veil";
 import { ProtectedCertificationDatabase } from "./protected-certification-database.js";
 import { NativeBrowserDriver } from "../src/runtime/native-browser-driver/native-browser-driver.js";

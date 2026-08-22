@@ -28,3 +28,4 @@ export * from "./lifecycle/browser-session.js";
 export * from "./lifecycle/page-ownership.js";
 export * from "./lifecycle/navigation.js";
 export * from "./lifecycle/session-state.js";
+export * from "./lifecycle/protected-stage.js";

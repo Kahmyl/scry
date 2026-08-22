@@ -7,7 +7,7 @@ import type {
   ProtectedTransactionFacts,
 } from "./protected-transaction-coordinator.js";
 import { verifyProtectedTransactionAssertions } from "./protected-transaction-preparation.js";
-import { runProtectedStage } from "./protected-stage-supervisor.js";
+import { runProtectedStage } from "@scry/praxis";
 
 export async function reconcileProtectedMutation(
   session: SafeBrowserSession,

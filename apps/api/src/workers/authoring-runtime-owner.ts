@@ -10,7 +10,7 @@ import {
   type PraxisCandidateResponse,
 } from "@scry/contracts";
 import type { createAuthoringBrowserSession, AuthoringBrowserSession } from "@scry/executor";
-import { runProtectedStage } from "@scry/executor";
+import { runProtectedStage } from "@scry/praxis";
 import { inspectPraxisCandidates } from "@scry/praxis";
 
 import type {

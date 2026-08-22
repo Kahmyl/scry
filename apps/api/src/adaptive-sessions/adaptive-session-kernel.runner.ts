@@ -13,10 +13,10 @@ import type {
 } from "@scry/contracts";
 import {
   captureSuccessorCheckpointPayload,
-  runProtectedStage,
   type AuthoringBrowserSession,
   type ExecutionReport,
 } from "@scry/executor";
+import { runProtectedStage } from "@scry/praxis";
 import {
   observeSemanticPageContext,
   observeSemanticPageContextReferenceState,
