@@ -4,7 +4,6 @@ export * from "./recording-coordinator.js";
 export * from "./trace-coordinator.js";
 export * from "./checkpoint-coordinator.js";
 export * from "./successor-checkpoint.js";
-export * from "./browser-session.js";
 export * from "./authoring-browser-session.js";
 export * from "./protected-transaction-coordinator.js";
 export * from "./protected-extractor.js";
@@ -18,3 +17,9 @@ export * from "./native-browser-navigation.js";
 export * from "./protected-stage-supervisor.js";
 export * from "./protected-response-envelope.js";
 export * from "./external-resource-target-preparation.js";
+
+export {
+  BrowserSessionProvenance,
+  type SafeBrowserSession,
+  type ProtectedBrowserSession,
+} from "@scry/praxis";

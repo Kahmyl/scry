@@ -4,7 +4,7 @@ import { chromium, type BrowserContextOptions, type Page } from "playwright";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Assertion, InteractionTargetIntent, ProtectedTransaction } from "@scry/contracts";
 import { SecretRedactor } from "@scry/policy";
-import { BrowserSessionProvenance } from "../src/browser-session.js";
+import { BrowserSessionProvenance } from "@scry/praxis";
 import { resolveTargetLocator } from "@scry/praxis";
 import { VeilRuntimeCoordinator, type PrivacyCollector } from "@scry/veil";
 import { compileVeilPolicy } from "@scry/veil";

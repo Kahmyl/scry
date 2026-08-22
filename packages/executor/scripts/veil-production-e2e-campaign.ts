@@ -24,7 +24,7 @@ import { unzipSync } from "fflate";
 
 import { executePlan } from "../src/executor.js";
 import { availableArtifact, registerVeilEvidenceAdmission } from "../src/artifacts.js";
-import { BrowserSessionProvenance } from "../src/browser-session.js";
+import { BrowserSessionProvenance } from "@scry/praxis";
 import {
   capturePraxisScreenshot,
   observeAndMaskPraxisVisualRegions,

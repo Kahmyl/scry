@@ -50,7 +50,7 @@ import { VeilRuntimeCoordinator, type PrivacyCollector, type PrivacyPreparation 
 import { VeilChannelCollector } from "@scry/veil";
 import { VeilVisualCaptureAuthority } from "@scry/veil";
 import { VeilVideoSegmentAuthority } from "@scry/veil";
-import { BrowserSessionProvenance } from "./browser-session.js";
+import { BrowserSessionProvenance } from "@scry/praxis";
 import { createVeilClipboardCollector } from "./privacy-clipboard-runtime.js";
 import {
   PlaywrightProtectedCapsuleFactory,

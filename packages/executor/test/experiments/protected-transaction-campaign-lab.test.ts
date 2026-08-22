@@ -14,7 +14,7 @@ import {
   VeilRuntimeCoordinator,
 } from "@scry/veil";
 
-import { BrowserSessionProvenance } from "../../src/browser-session.js";
+import { BrowserSessionProvenance } from "@scry/praxis";
 import {
   PlaywrightProtectedCapsuleFactory,
   ProtectedTransactionKernel,

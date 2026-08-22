@@ -26,7 +26,7 @@ import { VeilAuthority, VeilRuntimeCoordinator } from "@scry/veil";
 import type { Browser, BrowserContext, Page } from "playwright";
 
 import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
-import { BrowserSessionProvenance } from "./browser-session.js";
+import { BrowserSessionProvenance } from "@scry/praxis";
 import { runProtectedStage } from "./protected-stage-supervisor.js";
 import type { ExecutionReport } from "./types.js";
 

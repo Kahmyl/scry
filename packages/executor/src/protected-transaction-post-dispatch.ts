@@ -1,7 +1,7 @@
 import type { ProtectedTransaction, ProtectedTransactionResult } from "@scry/contracts";
 import { gotoPraxisPage, reloadPraxisPage } from "@scry/praxis";
 
-import type { SafeBrowserSession } from "./browser-session.js";
+import type { SafeBrowserSession } from "@scry/praxis";
 import type {
   ProtectedTransactionDependencies,
   ProtectedTransactionFacts,

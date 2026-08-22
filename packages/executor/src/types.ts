@@ -110,7 +110,7 @@ export type ExecuteOptions = {
     durationMs: number;
   }) => void | Promise<void>;
   /** Internal authoring boundary: execute against the already-owned safe session. */
-  existingSafeSession?: import("./browser-session.js").SafeBrowserSession;
+  existingSafeSession?: import("@scry/praxis").SafeBrowserSession;
   /** The borrowed session is already a Veil-protected live Praxis session. */
   existingProtectedSession?: boolean;
   captureBrowserState?: (state: BrowserStorageState) => void | Promise<void>;

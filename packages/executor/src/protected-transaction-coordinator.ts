@@ -12,7 +12,7 @@ import {
   capturePraxisStorageState,
   gotoPraxisPage,
 } from "@scry/praxis";
-import type { ProtectedBrowserSession, SafeBrowserSession } from "./browser-session.js";
+import type { ProtectedBrowserSession, SafeBrowserSession } from "@scry/praxis";
 import { executeProtectedReveal, verifyProtectedRevealTarget } from "./protected-extractor.js";
 import {
   protectedTransactionDigest,

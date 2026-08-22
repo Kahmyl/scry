@@ -22,7 +22,7 @@ import { chromium, type Browser, type Page } from "playwright";
 
 import { compileMissionAuthoringProtectedTransaction } from "../../../../apps/api/src/adaptive-sessions/mission-authoring-protected-transaction.js";
 import { createAuthoringBrowserSession } from "../../src/authoring-browser-session.js";
-import { BrowserSessionProvenance } from "../../src/browser-session.js";
+import { BrowserSessionProvenance } from "@scry/praxis";
 import {
   PlaywrightProtectedCapsuleFactory,
   ProtectedTransactionKernel,

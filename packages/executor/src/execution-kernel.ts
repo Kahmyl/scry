@@ -14,7 +14,7 @@ import {
 import { SecretRedactor } from "@scry/policy";
 import { armExpectedEffect, verifyExpectedEffect } from "@scry/praxis";
 import type { Page } from "playwright";
-import type { SafeBrowserSession } from "./browser-session.js";
+import type { SafeBrowserSession } from "@scry/praxis";
 
 import { executeAction } from "./action-runtime.js";
 import { InteractionLifecycleTracker } from "./interaction-lifecycle.js";

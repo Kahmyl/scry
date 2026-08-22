@@ -7,7 +7,7 @@ import {
   BrowserSessionProvenance,
   type ProtectedBrowserSession,
   type SafeBrowserSession,
-} from "./browser-session.js";
+} from "@scry/praxis";
 import { createVeilClipboardCollector } from "./privacy-clipboard-runtime.js";
 
 export type CapsuleFactory = {
