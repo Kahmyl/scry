@@ -13,6 +13,7 @@ import type { RuntimePolicyViolationCode } from "@scry/policy";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 import type { CalibrationStructure } from "./calibration.js";
 
+import type { ProtectedTransactionExecutor } from "./protected-transaction-runtime.js";
 import type { RecordingCoordinator } from "./recording-coordinator.js";
 import type { VeilRuntimeCoordinator } from "@scry/veil";
 
@@ -84,11 +85,6 @@ export type RecoverStagedProtectedResponseOutputs = (input: {
 
 export type PublicValueResolver = (reference: string) => Promise<string>;
 export type BrowserStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
-
-export type ProtectedTransactionExecutor = (input: {
-  transaction: import("@scry/contracts").ProtectedTransaction;
-  dependencies: import("./protected-transaction-coordinator.js").ProtectedTransactionDependencies;
-}) => Promise<import("./protected-transaction-coordinator.js").ProtectedTransactionExecution>;
 
 export type ExecuteOptions = {
   plan: CurrentPlan;

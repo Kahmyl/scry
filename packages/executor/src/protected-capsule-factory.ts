@@ -9,16 +9,9 @@ import {
   type SafeBrowserSession,
 } from "@scry/praxis";
 import { createVeilClipboardCollector } from "./privacy-clipboard-runtime.js";
+import type { CapsuleFactory } from "./protected-transaction-runtime.js";
 
-export type CapsuleFactory = {
-  create(input: {
-    storageState: Awaited<ReturnType<SafeBrowserSession["context"]["storageState"]>>;
-    sessionStorage?: { origin: string; entries: Array<[string, string]> };
-    viewport?: { width: number; height: number };
-    browserChannel?: string;
-    prepare: (session: ProtectedBrowserSession) => Promise<void>;
-  }): Promise<ProtectedBrowserSession>;
-};
+export type { CapsuleFactory } from "./protected-transaction-runtime.js";
 
 export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
   constructor(

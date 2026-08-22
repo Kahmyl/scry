@@ -52,10 +52,8 @@ import { VeilVisualCaptureAuthority } from "@scry/veil";
 import { VeilVideoSegmentAuthority } from "@scry/veil";
 import { BrowserSessionProvenance } from "@scry/praxis";
 import { createVeilClipboardCollector } from "./privacy-clipboard-runtime.js";
-import {
-  PlaywrightProtectedCapsuleFactory,
-  type ProtectedTransactionExecution,
-} from "./protected-transaction-coordinator.js";
+import type { ProtectedTransactionExecution } from "./protected-transaction-runtime.js";
+import { PlaywrightProtectedCapsuleFactory } from "./protected-transaction-coordinator.js";
 import { TraceCoordinator } from "./trace-coordinator.js";
 import { sanitizeTraceArchive } from "./trace-sanitizer.js";
 import { capturePageStructure } from "./calibration.js";

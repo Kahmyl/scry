@@ -35,7 +35,7 @@ export async function executeAction(
   switch (action.type) {
     case "protectedTransaction":
       throw new InfrastructureDependencyError(
-        "Protected transactions must be delegated to ProtectedTransactionKernel",
+        "Protected transactions must be delegated to the protected transaction runtime capability",
       );
     case "capturePublicValue": {
       const captured = await capturePublicGeneratedValue(
