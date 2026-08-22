@@ -38,7 +38,10 @@
     "test": "pnpm --recursive test",
     "test:beta": "node scripts/run-beta-tests.mjs",
     "typecheck": "pnpm --recursive typecheck",
-    "verify:assurance": "pnpm --filter @scry/assurance typecheck && pnpm --filter @scry/assurance test:truth"
+    "verify:assurance": "pnpm --filter @scry/assurance typecheck && pnpm --filter @scry/assurance test:truth",
+    "verify": "node scripts/verification-driver.mjs",
+    "verify:audit": "node scripts/verification-driver.mjs --audit",
+    "verify:full": "node scripts/verification-driver.mjs --full"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
