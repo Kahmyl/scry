@@ -8,6 +8,7 @@ dependencies = [
   "mcp==2.0.0",
   "openai>=2,<3",
   "pydantic>=2.11,<3",
+  "python-dotenv>=1.1,<2",
 ]
 
 [project.scripts]
