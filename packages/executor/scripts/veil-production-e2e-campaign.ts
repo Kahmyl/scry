@@ -23,7 +23,13 @@ import { chromium, type CDPSession } from "playwright";
 import { unzipSync } from "fflate";
 
 import { executePlan } from "../src/executor.js";
-import { availableArtifact, registerVeilEvidenceAdmission } from "../src/artifacts.js";
+import { materializeAvailableArtifact } from "@scry/chronicle";
+import {
+  finalizeVeilArtifactEvidence,
+  prepareVeilArtifactEvidence,
+  registerVeilEvidenceAdmission,
+  type VeilArtifactEvidence,
+} from "@scry/veil";
 import { BrowserSessionProvenance } from "@scry/praxis";
 import {
   capturePraxisScreenshot,
@@ -41,6 +47,29 @@ import {
 } from "../src/protected-transaction-coordinator.js";
 import { VeilVisualCaptureAuthority } from "@scry/veil";
 import { VeilVideoSegmentAuthority } from "@scry/veil";
+
+async function availableArtifact(
+  kind: Artifact["kind"],
+  contentType: string,
+  filePath: string,
+  relativePath?: string,
+  evidence?: VeilArtifactEvidence,
+): Promise<Artifact> {
+  const prepared = prepareVeilArtifactEvidence({
+    kind,
+    filePath,
+    evidence,
+  });
+
+  return materializeAvailableArtifact({
+    kind,
+    contentType,
+    filePath,
+    ...(relativePath ? { relativePath } : {}),
+    prepared,
+    finalize: finalizeVeilArtifactEvidence,
+  });
+}
 
 type Check = { name: string; status: "passed" | "failed"; diagnostic?: string };
 

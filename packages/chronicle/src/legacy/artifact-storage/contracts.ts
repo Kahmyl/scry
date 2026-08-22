@@ -1,15 +1,11 @@
-import type { VeilEvidenceManifest } from "@scry/contracts";
+import type { VeilEvidenceAdmissionProof } from "../../artifacts/admission.js";
+
+export type { VeilEvidenceAdmissionProof } from "../../artifacts/admission.js";
 
 export type StoredArtifact = Readonly<{
   storageKey: string;
   sizeBytes: number;
   checksumSha256: string;
-}>;
-
-export type VeilEvidenceAdmissionProof = Readonly<{
-  manifest: VeilEvidenceManifest;
-  sanitation?: Readonly<Record<string, unknown>>;
-  token: string;
 }>;
 
 export type AdmittedArtifact = StoredArtifact & Readonly<{ admission: VeilEvidenceAdmissionProof }>;

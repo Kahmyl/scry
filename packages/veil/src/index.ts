@@ -6,3 +6,5 @@ export * from "./channel-collector.js";
 export * from "./clipboard-collector.js";
 export * from "./visual-capture.js";
 export * from "./video-segment.js";
+
+export * from "./evidence-admission.js";
