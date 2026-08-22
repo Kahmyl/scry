@@ -56,6 +56,11 @@ export type AtomicOutputCapture = (input: {
 export type PublicValueResolver = (reference: string) => Promise<string>;
 export type BrowserStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 
+export type ProtectedTransactionExecutor = (input: {
+  transaction: import("@scry/contracts").ProtectedTransaction;
+  dependencies: import("./protected-transaction-coordinator.js").ProtectedTransactionDependencies;
+}) => Promise<import("./protected-transaction-coordinator.js").ProtectedTransactionExecution>;
+
 export type ExecuteOptions = {
   plan: CurrentPlan;
   policy: ExecutionPolicy;
@@ -137,6 +142,8 @@ export type ExecuteOptions = {
     import("./protected-transaction-coordinator.js").ProtectedTransactionDependencies["recoverStagedResponseOutputs"]
   >;
   publicValueResolver?: PublicValueResolver;
+  /** Runtime composition seam for protected transaction progression. */
+  protectedTransactionExecutor?: ProtectedTransactionExecutor;
   protectedTransactionStore?: import("./protected-transaction-coordinator.js").ProtectedTransactionStore;
   checkpointStore?: import("./checkpoint-coordinator.js").CheckpointStore;
   flowRevisionId?: string;

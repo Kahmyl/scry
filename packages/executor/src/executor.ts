@@ -53,8 +53,8 @@ import { VeilVideoSegmentAuthority } from "@scry/veil";
 import { BrowserSessionProvenance } from "@scry/praxis";
 import { createVeilClipboardCollector } from "./privacy-clipboard-runtime.js";
 import {
+  executeProtectedTransactionCompatibility,
   PlaywrightProtectedCapsuleFactory,
-  ProtectedTransactionCoordinator,
   type ProtectedTransactionExecution,
 } from "./protected-transaction-coordinator.js";
 import { TraceCoordinator } from "./trace-coordinator.js";
@@ -478,8 +478,11 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           const liveContext = context;
           const livePage = page;
           const liveProvenance = safeProvenance;
-          const transaction: ProtectedTransactionExecution =
-            await new ProtectedTransactionCoordinator({
+          const executeProtectedTransaction =
+            options.protectedTransactionExecutor ?? executeProtectedTransactionCompatibility;
+          const transaction: ProtectedTransactionExecution = await executeProtectedTransaction({
+            transaction: step.action,
+            dependencies: {
               safeSession: { browser, context, page, provenance: safeProvenance },
               gate: privacyGate,
               redactor,
@@ -600,7 +603,8 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               ...(options.markCredentialCompromised
                 ? { markCredentialCompromised: options.markCredentialCompromised }
                 : {}),
-            }).execute(step.action);
+            },
+          });
           browser = transaction.safeSession.browser;
           context = transaction.safeSession.context;
           page = transaction.safeSession.page;

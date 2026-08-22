@@ -1845,6 +1845,13 @@ function protectedPhaseFailure(error: unknown, facts: Facts) {
 }
 
 /** Kept as a domain alias while callers are cut over to the kernel name. */
+export async function executeProtectedTransactionCompatibility(input: {
+  transaction: ProtectedTransaction;
+  dependencies: ProtectedTransactionDependencies;
+}): Promise<ProtectedTransactionExecution> {
+  return new ProtectedTransactionKernel(input.dependencies).execute(input.transaction);
+}
+
 export class ProtectedTransactionCoordinator extends ProtectedTransactionKernel {}
 
 export type ProtectedTransactionFacts = ReturnType<typeof initialFacts>;

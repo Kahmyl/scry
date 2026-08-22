@@ -20,6 +20,7 @@ const capabilityKeys = [
   "atomicSecretCapture",
   "publicValueCapture",
   "publicValueResolver",
+  "protectedTransactionExecutor",
   "protectedTransactionStore",
   "checkpointStore",
   "calibrationVerifier",

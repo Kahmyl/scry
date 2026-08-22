@@ -3,6 +3,7 @@ import type { ExecutionCapabilityName, ExecutionMode, ExecutionRequest } from "@
 import {
   createExecutionCapabilityManifest,
   ExecutionKernel,
+  ProtectedTransactionKernel,
   createAuthoringBrowserSession,
   type ExecuteOptions,
   type RuntimeExecutionCapabilities,
@@ -341,6 +342,7 @@ export class ExecutionCapabilityFactory {
     protectedAuthorizations?: Record<string, string>;
   }): Pick<
     ExecuteOptions,
+    | "protectedTransactionExecutor"
     | "protectedTransactionStore"
     | "atomicOutputCapture"
     | "stageProtectedResponseOutputs"
@@ -355,6 +357,8 @@ export class ExecutionCapabilityFactory {
     const outputs = this.protectedOutputs;
     const leaseDurationMs = 30_000;
     return {
+      protectedTransactionExecutor: ({ transaction, dependencies }) =>
+        new ProtectedTransactionKernel(dependencies).execute(transaction),
       protectedTransactionStore: {
         claim: async (claim) => {
           const runAuthorizationId = context.protectedAuthorizations?.[claim.operationId];
