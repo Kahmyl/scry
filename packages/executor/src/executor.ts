@@ -53,7 +53,6 @@ import { VeilVideoSegmentAuthority } from "@scry/veil";
 import { BrowserSessionProvenance } from "@scry/praxis";
 import { createVeilClipboardCollector } from "./privacy-clipboard-runtime.js";
 import {
-  executeProtectedTransactionCompatibility,
   PlaywrightProtectedCapsuleFactory,
   type ProtectedTransactionExecution,
 } from "./protected-transaction-coordinator.js";
@@ -478,133 +477,137 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           const liveContext = context;
           const livePage = page;
           const liveProvenance = safeProvenance;
-          const executeProtectedTransaction =
-            options.protectedTransactionExecutor ?? executeProtectedTransactionCompatibility;
-          const transaction: ProtectedTransactionExecution = await executeProtectedTransaction({
-            transaction: step.action,
-            dependencies: {
-              safeSession: { browser, context, page, provenance: safeProvenance },
-              gate: privacyGate,
-              redactor,
-              store: options.protectedTransactionStore,
-              capsuleFactory: new PlaywrightProtectedCapsuleFactory(
-                options.openBrowser ??
-                  ((contextOptions) =>
-                    openCompatibilityBrowser(options.browserChannel, contextOptions)),
-              ),
-              ...(options.existingProtectedSession
-                ? {
-                    liveProtectedSession: {
-                      browser: liveBrowser,
-                      context: liveContext,
-                      page: livePage,
-                      provenance: liveProvenance,
-                      clipboardCollector: createVeilClipboardCollector(livePage),
-                      destroy: async () => {
-                        // This close is the coordinator's verified terminal boundary for an
-                        // existing protected session, not an unexpected privacy incident.
-                        // A failed teardown is still handled fail-closed by the coordinator.
-                        protectedContextTeardownOwned = true;
-                        const outcome = await destroyPraxisIsolatedSession({
-                          context: liveContext,
-                          browser: liveBrowser,
-                        });
-                        if (liveProvenance.value() !== "destroyed")
-                          liveProvenance.transition("destroyed");
-                        return outcome;
+          if (!options.protectedTransactionExecutor) {
+            throw new InfrastructureDependencyError(
+              "Protected transaction runtime capability is unavailable",
+            );
+          }
+          const transaction: ProtectedTransactionExecution =
+            await options.protectedTransactionExecutor({
+              transaction: step.action,
+              dependencies: {
+                safeSession: { browser, context, page, provenance: safeProvenance },
+                gate: privacyGate,
+                redactor,
+                store: options.protectedTransactionStore,
+                capsuleFactory: new PlaywrightProtectedCapsuleFactory(
+                  options.openBrowser ??
+                    ((contextOptions) =>
+                      openCompatibilityBrowser(options.browserChannel, contextOptions)),
+                ),
+                ...(options.existingProtectedSession
+                  ? {
+                      liveProtectedSession: {
+                        browser: liveBrowser,
+                        context: liveContext,
+                        page: livePage,
+                        provenance: liveProvenance,
+                        clipboardCollector: createVeilClipboardCollector(livePage),
+                        destroy: async () => {
+                          // This close is the coordinator's verified terminal boundary for an
+                          // existing protected session, not an unexpected privacy incident.
+                          // A failed teardown is still handled fail-closed by the coordinator.
+                          protectedContextTeardownOwned = true;
+                          const outcome = await destroyPraxisIsolatedSession({
+                            context: liveContext,
+                            browser: liveBrowser,
+                          });
+                          if (liveProvenance.value() !== "destroyed")
+                            liveProvenance.transition("destroyed");
+                          return outcome;
+                        },
                       },
-                    },
-                  }
-                : {}),
-              allowedOrigins: options.plan.allowedOrigins,
-              persistSecret: options.atomicSecretCapture,
-              persistPublicValue: options.publicValueCapture,
-              ...(options.atomicOutputCapture
-                ? { persistOutputsAtomically: options.atomicOutputCapture }
-                : {}),
-              ...(options.stageProtectedResponseOutputs
-                ? { stageResponseOutputsAtomically: options.stageProtectedResponseOutputs }
-                : {}),
-              ...(options.recoverStagedProtectedResponseOutputs
-                ? { recoverStagedResponseOutputs: options.recoverStagedProtectedResponseOutputs }
-                : {}),
-              resolveKnownSecret: options.secretResolver ?? missingSecretResolver,
-              prepareCapsule: async (capsule) => {
-                registerPraxisVeilAuthority(capsule.page, {
-                  authority: veilAuthority,
-                  userId: "executor",
-                  environmentId: options.environmentId ?? "local-environment",
-                  browserContextId: capsule.provenance.contextId,
-                });
-                registerPraxisGroundingObservers(capsule.page, options);
-                await attachRequestInterception(
-                  capsule.context,
-                  capsule.page,
-                  requestPolicy,
-                  rejectPolicy,
-                );
-                attachCapabilityGuards(capsule.context, capsule.page, options, rejectPolicy);
-              },
-              onPreparationVerified: async (capsule, action) => {
-                if (options.calibrationRehearsal?.operationId !== action.operationId) return;
-                const structure = await capturePageStructure(capsule.page, action);
-                await options.calibrationRehearsal.onBoundary({
-                  stepId: step.id,
-                  structure,
-                  url: capsule.page.url(),
-                });
-                await emit("calibration.boundary_reached", {
-                  stepId: step.id,
-                  operationId: action.operationId,
-                });
-                state.calibrationBoundaryReached = true;
-              },
-              verifyAssertions: async (targetPage, assertions) => {
-                for (const assertion of assertions)
-                  await executeAssertion(
-                    targetPage,
-                    assertion,
-                    options.plan.allowedOrigins[0]!,
-                    {
-                      runId,
-                      attemptId,
-                      stepId: step.id,
-                      channel: "assertion",
-                      ordinal: protectedAssertionOrdinal++,
-                      allowedOrigins: options.plan.allowedOrigins,
-                      timeoutMs: assertion.timeoutMs ?? 10_000,
-                      ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}),
-                    },
-                    timeoutController.signal,
+                    }
+                  : {}),
+                allowedOrigins: options.plan.allowedOrigins,
+                persistSecret: options.atomicSecretCapture,
+                persistPublicValue: options.publicValueCapture,
+                ...(options.atomicOutputCapture
+                  ? { persistOutputsAtomically: options.atomicOutputCapture }
+                  : {}),
+                ...(options.stageProtectedResponseOutputs
+                  ? { stageResponseOutputsAtomically: options.stageProtectedResponseOutputs }
+                  : {}),
+                ...(options.recoverStagedProtectedResponseOutputs
+                  ? { recoverStagedResponseOutputs: options.recoverStagedProtectedResponseOutputs }
+                  : {}),
+                resolveKnownSecret: options.secretResolver ?? missingSecretResolver,
+                prepareCapsule: async (capsule) => {
+                  registerPraxisVeilAuthority(capsule.page, {
+                    authority: veilAuthority,
+                    userId: "executor",
+                    environmentId: options.environmentId ?? "local-environment",
+                    browserContextId: capsule.provenance.contextId,
+                  });
+                  registerPraxisGroundingObservers(capsule.page, options);
+                  await attachRequestInterception(
+                    capsule.context,
+                    capsule.page,
+                    requestPolicy,
+                    rejectPolicy,
                   );
+                  attachCapabilityGuards(capsule.context, capsule.page, options, rejectPolicy);
+                },
+                onPreparationVerified: async (capsule, action) => {
+                  if (options.calibrationRehearsal?.operationId !== action.operationId) return;
+                  const structure = await capturePageStructure(capsule.page, action);
+                  await options.calibrationRehearsal.onBoundary({
+                    stepId: step.id,
+                    structure,
+                    url: capsule.page.url(),
+                  });
+                  await emit("calibration.boundary_reached", {
+                    stepId: step.id,
+                    operationId: action.operationId,
+                  });
+                  state.calibrationBoundaryReached = true;
+                },
+                verifyAssertions: async (targetPage, assertions) => {
+                  for (const assertion of assertions)
+                    await executeAssertion(
+                      targetPage,
+                      assertion,
+                      options.plan.allowedOrigins[0]!,
+                      {
+                        runId,
+                        attemptId,
+                        stepId: step.id,
+                        channel: "assertion",
+                        ordinal: protectedAssertionOrdinal++,
+                        allowedOrigins: options.plan.allowedOrigins,
+                        timeoutMs: assertion.timeoutMs ?? 10_000,
+                        ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}),
+                      },
+                      timeoutController.signal,
+                    );
+                },
+                reconcile: async () => "unknown",
+                ...(options.recordContextProvenance
+                  ? { onContextProvenance: options.recordContextProvenance }
+                  : {}),
+                ...(options.recoverAcquisition
+                  ? { recoverAcquisition: options.recoverAcquisition }
+                  : {}),
+                onEvidenceResumed: async ({ contextId }) => {
+                  state.endCaptureEpoch("sealed", "sealed");
+                  state.startCaptureEpoch("checkpoint_restored", contextId);
+                },
+                emit,
+                signal: timeoutController.signal,
+                ...(options.dispatchDisposition
+                  ? { dispatchDisposition: options.dispatchDisposition }
+                  : {}),
+                ...(options.onReadyToDispatch
+                  ? { onReadyToDispatch: options.onReadyToDispatch }
+                  : {}),
+                ...(options.onMutationDispatch
+                  ? { onMutationDispatch: options.onMutationDispatch }
+                  : {}),
+                ...(options.markCredentialCompromised
+                  ? { markCredentialCompromised: options.markCredentialCompromised }
+                  : {}),
               },
-              reconcile: async () => "unknown",
-              ...(options.recordContextProvenance
-                ? { onContextProvenance: options.recordContextProvenance }
-                : {}),
-              ...(options.recoverAcquisition
-                ? { recoverAcquisition: options.recoverAcquisition }
-                : {}),
-              onEvidenceResumed: async ({ contextId }) => {
-                state.endCaptureEpoch("sealed", "sealed");
-                state.startCaptureEpoch("checkpoint_restored", contextId);
-              },
-              emit,
-              signal: timeoutController.signal,
-              ...(options.dispatchDisposition
-                ? { dispatchDisposition: options.dispatchDisposition }
-                : {}),
-              ...(options.onReadyToDispatch
-                ? { onReadyToDispatch: options.onReadyToDispatch }
-                : {}),
-              ...(options.onMutationDispatch
-                ? { onMutationDispatch: options.onMutationDispatch }
-                : {}),
-              ...(options.markCredentialCompromised
-                ? { markCredentialCompromised: options.markCredentialCompromised }
-                : {}),
-            },
-          });
+            });
           browser = transaction.safeSession.browser;
           context = transaction.safeSession.context;
           page = transaction.safeSession.page;
