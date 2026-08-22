@@ -32,7 +32,7 @@ export function registerResumeMissionTool(server: McpServer, client: ScryApiClie
     {
       title: "Resume Mission",
       description:
-        "Resume the same existing Mission and Objective only after the current user request has explicitly chosen that Mission, or the current interaction already established continuation of it. Similarity alone is not continuation authority. continuationAuthority is an explicit attestation of that user choice: never construct it merely because a Mission looks related, is the only candidate, or appears resumable. This creates a new active Mission agent session; use the returned agentSessionId for subsequent writes. For awaiting_user, read externalInput.lifecycle and fulfillmentPaths and keep the Mission non-terminal while a prerequisite remains obtainable.",
+        "Resume the same existing Mission and Objective only after the current user request has explicitly chosen that Mission. continuationAuthority.selection must use the exact schema literal continue_existing_mission; never substitute a Mission title, ID, or paraphrase. or the current interaction already established continuation of it. Similarity alone is not continuation authority. continuationAuthority is an explicit attestation of that user choice: never construct it merely because a Mission looks related, is the only candidate, or appears resumable. This creates a new active Mission agent session; use the returned agentSessionId for subsequent writes. For awaiting_user, read externalInput.lifecycle and fulfillmentPaths and keep the Mission non-terminal while a prerequisite remains obtainable.",
       annotations: writes,
       inputSchema: {
         missionId: uuid,

@@ -32,7 +32,7 @@ export function registerPublishFlowDraftTool(server: McpServer, client: ScryApiC
     {
       title: "Publish Flow representation",
       description:
-        "Freeze a mechanically valid draft as one immutable representation-only Flow revision. Publication does not compile, certify, admit, or execute browser operations.",
+        "Freeze a mechanically valid draft as one immutable representation-only Flow revision. The returned publication.revisionId is the Flow revision identifier used by start_run; draftId is not a Flow revision ID. Publication does not compile, certify, admit, or execute browser operations.",
       inputSchema: {
         ...objectiveContext,
         draftId: uuid,

@@ -32,7 +32,7 @@ export function registerStartRunTool(server: McpServer, client: ScryApiClient) {
     {
       title: "Start run",
       description:
-        "Open a durable agent-directed Run ledger bound to an existing live Praxis session. This does not create or queue a browser.",
+        "Open a durable agent-directed Run ledger bound to an existing live Praxis session. flowRevisionId must be the exact publication.revisionId returned by publish_flow_draft; never use a Flow draft ID as flowRevisionId. This does not create or queue a browser.",
       inputSchema: {
         ...objectiveContext,
         projectId: uuid,
