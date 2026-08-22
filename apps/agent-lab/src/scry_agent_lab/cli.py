@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .agent import run_agent
-from .config import local_model_config
+from .config import model_config
 from .mcp_client import ScryMcpClient
 from .models import OpenAICompatibleModel
 from .transcript import Transcript
@@ -49,6 +49,11 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--mcp-url",
         default="http://127.0.0.1:4100/mcp",
+    )
+    run.add_argument(
+        "--provider",
+        choices=["local", "deepseek"],
+        default="local",
     )
     run.add_argument(
         "--model",
@@ -118,7 +123,7 @@ async def run_command(args: argparse.Namespace) -> int:
         output_directory / "transcript.jsonl"
     )
 
-    config = local_model_config(args.model)
+    config = model_config(args.provider, args.model)
     model = OpenAICompatibleModel(config)
 
     spec = AgentRunSpec(
@@ -138,6 +143,7 @@ async def run_command(args: argparse.Namespace) -> int:
             mcp=mcp,
             transcript=transcript,
             model_name=config.model,
+            provider_name=config.provider,
         )
 
     result_path = output_directory / "result.json"

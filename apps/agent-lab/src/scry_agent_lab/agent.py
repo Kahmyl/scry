@@ -54,6 +54,7 @@ async def run_agent(
     mcp: Any,
     transcript: Transcript,
     model_name: str,
+    provider_name: str,
 ) -> AgentRunResult:
     started = time.perf_counter()
     snapshot = await mcp.snapshot()
@@ -148,6 +149,7 @@ async def run_agent(
             return AgentRunResult(
                 status="completed",
                 objective=spec.objective,
+                provider=provider_name,
                 model=model_name,
                 mcp_url=spec.mcp_url,
                 mcp_protocol_version=snapshot.protocol_version,
@@ -171,6 +173,7 @@ async def run_agent(
                 return AgentRunResult(
                     status="limit_exceeded",
                     objective=spec.objective,
+                    provider=provider_name,
                     model=model_name,
                     mcp_url=spec.mcp_url,
                     mcp_protocol_version=snapshot.protocol_version,
@@ -272,6 +275,7 @@ async def run_agent(
     return AgentRunResult(
         status="limit_exceeded",
         objective=spec.objective,
+        provider=provider_name,
         model=model_name,
         mcp_url=spec.mcp_url,
         mcp_protocol_version=snapshot.protocol_version,

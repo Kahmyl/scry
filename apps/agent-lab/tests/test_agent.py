@@ -126,6 +126,7 @@ async def test_external_agent_loop_calls_mcp_and_finishes(
         mcp=mcp,
         transcript=transcript,
         model_name="fake-model",
+        provider_name="fake",
     )
 
     assert result.status == "completed"

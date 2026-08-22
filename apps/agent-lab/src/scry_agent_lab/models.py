@@ -23,7 +23,10 @@ class ModelResponse:
 
 
 class OpenAICompatibleModel:
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(
+        self,
+        config: ModelConfig,
+    ) -> None:
         self.config = config
         self.client = AsyncOpenAI(
             base_url=config.base_url,
@@ -37,14 +40,33 @@ class OpenAICompatibleModel:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> ModelResponse:
-        response = await self.client.chat.completions.create(
-            model=self.config.model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            temperature=self.config.temperature,
-            seed=self.config.seed,
-            max_tokens=self.config.max_tokens,
+        request: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+            "max_tokens": self.config.max_tokens,
+        }
+
+        if self.config.temperature is not None:
+            request["temperature"] = (
+                self.config.temperature
+            )
+
+        if self.config.seed is not None:
+            request["seed"] = (
+                self.config.seed
+            )
+
+        if self.config.extra_body is not None:
+            request["extra_body"] = (
+                self.config.extra_body
+            )
+
+        response = (
+            await self.client.chat.completions.create(
+                **request
+            )
         )
 
         message = response.choices[0].message
@@ -55,7 +77,9 @@ class OpenAICompatibleModel:
                 name=call.function.name,
                 arguments=call.function.arguments,
             )
-            for call in (message.tool_calls or [])
+            for call in (
+                message.tool_calls or []
+            )
         ]
 
         usage = (

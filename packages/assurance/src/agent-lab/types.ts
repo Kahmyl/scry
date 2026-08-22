@@ -12,6 +12,7 @@ export type AgentLabRunSpec = Readonly<{
 export type AgentLabRunResult = Readonly<{
   status: AgentLabRunStatus;
   objective: string;
+  provider: string;
   model: string;
   mcp_url: string;
   mcp_protocol_version?: string | null;

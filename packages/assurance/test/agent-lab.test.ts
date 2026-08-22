@@ -29,6 +29,7 @@ describe("Agent Lab Assurance bridge", () => {
         JSON.stringify({
           status: "completed",
           objective: "Inspect Scry.",
+          provider: "fake",
           model: "fake-model",
           mcp_url: "http://fake/mcp",
           advertised_tools: ["get_capabilities"],

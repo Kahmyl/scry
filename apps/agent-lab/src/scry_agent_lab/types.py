@@ -41,6 +41,7 @@ class AgentRunSpec(BaseModel):
 class AgentRunResult(BaseModel):
     status: Literal["completed", "failed", "limit_exceeded"]
     objective: str
+    provider: str
     model: str
     mcp_url: str
     mcp_protocol_version: str | None = None

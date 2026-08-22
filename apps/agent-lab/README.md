@@ -47,3 +47,18 @@ under `apps/agent-lab/.runs/`.
 
 Agent Lab does not decide qualification PASS or FAIL. Assurance owns claims,
 oracles, evidence interpretation, and qualification.
+
+## DeepSeek challenger
+
+Agent Lab can run the same external-agent objective through DeepSeek V4 Flash:
+
+    DEEPSEEK_API_KEY=... \
+      pnpm assurance:agent \
+      --provider deepseek \
+      --objective "..."
+
+The default DeepSeek profile uses `deepseek-v4-flash` in non-thinking mode.
+This keeps its tool-call loop directly comparable with the local model.
+
+DeepSeek is a separate experimental/qualification result. A DeepSeek success
+must never silently turn a failed local-model qualification into a PASS.
