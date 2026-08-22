@@ -10,7 +10,17 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "test:truth": "vitest run test/results.test.ts test/fixtures.test.ts test/browser-fixtures.test.ts test/praxis-reference-replacement.test.ts test/campaigns.test.ts test/journeys.test.ts"
+    "test:truth": "vitest run test/results.test.ts test/fixtures.test.ts test/browser-fixtures.test.ts test/praxis-reference-replacement.test.ts test/campaigns.test.ts test/journeys.test.ts",
+    "campaign:praxis": "tsx scripts/legacy-campaigns/praxis-production-campaign.ts",
+    "campaign:praxis:100": "tsx scripts/legacy-campaigns/praxis-production-campaign-100.ts",
+    "campaign:praxis:resilience": "tsx scripts/legacy-campaigns/praxis-resilience-campaign.ts",
+    "campaign:praxis:certification": "tsx scripts/legacy-campaigns/praxis-certification-campaign.ts",
+    "campaign:praxis:public-apps": "tsx scripts/legacy-campaigns/praxis-public-app-campaign.ts",
+    "campaign:veil:certification": "tsx scripts/legacy-campaigns/veil-certification-campaign.ts",
+    "campaign:veil:adversarial": "tsx scripts/legacy-campaigns/veil-adversarial-campaign.ts",
+    "campaign:veil:public-apps": "tsx scripts/legacy-campaigns/veil-public-app-campaign.ts",
+    "campaign:veil:performance": "tsx scripts/legacy-campaigns/veil-performance-campaign.ts",
+    "campaign:veil:release-scope": "tsx scripts/legacy-campaigns/veil-release-scope-campaign.ts"
   },
   "dependencies": {
     "@scry/contracts": "workspace:*"
@@ -20,6 +30,9 @@
     "@types/node": "^22.0.0",
     "playwright": "1.62.0",
     "typescript": "^5.8.3",
-    "vitest": "^4.0.15"
+    "vitest": "^4.0.15",
+    "@scry/veil": "workspace:*",
+    "@scry/chronicle": "workspace:*",
+    "tsx": "^4.20.0"
   }
 }
