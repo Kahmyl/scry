@@ -33,7 +33,7 @@ export function registerClosePraxisSessionTool(server: McpServer, client: ScryAp
     {
       title: "Close Praxis session",
       description:
-        "Close the live session. Its references become permanently stale; continuation requires a new session, re-observation, and new references.",
+        "Close the live session. A completed operation, turn, or Objective boundary does not itself close an active Praxis session. When its runtime work is complete and final Mission publication is intended, close the session before publish_mission_report. Its references become permanently stale; continuation requires a new session, re-observation, and new references.",
       inputSchema: {
         praxisSessionId: uuid,
         idempotencyKey: closeAdaptiveSessionSchema.shape.idempotencyKey.optional(),
