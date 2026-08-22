@@ -6,6 +6,8 @@ import type {
   RunEvent,
   CurrentPlan,
   OutcomeClassification,
+  ProtectedTransactionStore,
+  ProtectedOperationClaim,
 } from "@scry/contracts";
 import type { RuntimePolicyViolationCode } from "@scry/policy";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
@@ -32,7 +34,7 @@ export type PublicValueCapture = (input: {
 }) => Promise<{ valueId: string }>;
 export type AtomicOutputCapture = (input: {
   operationId: string;
-  claim: import("./protected-transaction-coordinator.js").ProtectedOperationClaim;
+  claim: ProtectedOperationClaim;
   outputs: Array<{
     reference: string;
     classification: "public" | "protected";
@@ -42,7 +44,7 @@ export type AtomicOutputCapture = (input: {
   }>;
   externalResourceBindings: import("@scry/contracts").ProtectedTransaction["extraction"]["externalResourceBindings"];
 }) => Promise<{
-  claim: import("./protected-transaction-coordinator.js").ProtectedOperationClaim;
+  claim: ProtectedOperationClaim;
   references: Record<
     string,
     {
@@ -53,6 +55,33 @@ export type AtomicOutputCapture = (input: {
     }
   >;
 }>;
+
+export type StageProtectedResponseOutputs = (input: {
+  operationId: string;
+  claim: ProtectedOperationClaim;
+  outputs: Array<{
+    reference: string;
+    classification: "public" | "protected";
+    name: string;
+    value: string;
+    scope: "run" | "project";
+  }>;
+}) => Promise<void>;
+
+export type RecoverStagedProtectedResponseOutputs = (input: {
+  operationId: string;
+  claim: ProtectedOperationClaim;
+}) => Promise<
+  | Array<{
+      reference: string;
+      classification: "public" | "protected";
+      name: string;
+      value: string;
+      scope: "run" | "project";
+    }>
+  | undefined
+>;
+
 export type PublicValueResolver = (reference: string) => Promise<string>;
 export type BrowserStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 
@@ -135,16 +164,12 @@ export type ExecuteOptions = {
   atomicSecretCapture?: AtomicSecretCapture;
   publicValueCapture?: PublicValueCapture;
   atomicOutputCapture?: AtomicOutputCapture;
-  stageProtectedResponseOutputs?: NonNullable<
-    import("./protected-transaction-coordinator.js").ProtectedTransactionDependencies["stageResponseOutputsAtomically"]
-  >;
-  recoverStagedProtectedResponseOutputs?: NonNullable<
-    import("./protected-transaction-coordinator.js").ProtectedTransactionDependencies["recoverStagedResponseOutputs"]
-  >;
+  stageProtectedResponseOutputs?: StageProtectedResponseOutputs;
+  recoverStagedProtectedResponseOutputs?: RecoverStagedProtectedResponseOutputs;
   publicValueResolver?: PublicValueResolver;
   /** Runtime composition seam for protected transaction progression. */
   protectedTransactionExecutor?: ProtectedTransactionExecutor;
-  protectedTransactionStore?: import("./protected-transaction-coordinator.js").ProtectedTransactionStore;
+  protectedTransactionStore?: ProtectedTransactionStore;
   checkpointStore?: import("./checkpoint-coordinator.js").CheckpointStore;
   flowRevisionId?: string;
   environmentId?: string;

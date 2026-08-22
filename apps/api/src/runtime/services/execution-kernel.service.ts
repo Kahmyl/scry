@@ -349,7 +349,7 @@ export class ExecutionCapabilityFactory {
     | "recoverStagedProtectedResponseOutputs"
     | "markCredentialCompromised"
   > {
-    let current: import("@scry/executor").ProtectedOperationClaim | undefined;
+    let current: import("@scry/contracts").ProtectedOperationClaim | undefined;
     let phaseStartedAt = performance.now();
     if (!this.protectedOperations || !this.protectedOutputs)
       throw new Error("PROTECTED_OPERATION_AUTHORITY_UNAVAILABLE");

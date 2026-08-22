@@ -24,6 +24,67 @@ export const protectedOperationStateSchema = z.enum([
 export type ProtectedOperationState = z.infer<typeof protectedOperationStateSchema>;
 export type ProtectedOperationOwnerKind = z.infer<typeof protectedOperationOwnerKindSchema>;
 
+export type ProtectedOperationClaim = {
+  id: string;
+  state: ProtectedOperationState;
+  version: number;
+  fencingToken: number;
+  mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
+  persistedReferences?: Record<
+    string,
+    {
+      classification: "public" | "protected";
+      credentialId?: string;
+      valueId?: string;
+      scope: "run" | "project";
+    }
+  >;
+};
+
+export type ProtectedTransactionStore = {
+  claim(input: {
+    operationId: string;
+    mutationKind: "one_time" | "repeatable";
+    dispatchSemantics?: "mutation" | "read_only";
+    programDigest: string;
+    inputSchemaDigest: string;
+    inputDigest: string;
+    mutationIdentity: string;
+    safeOutputManifest: Array<{
+      reference: string;
+      classification: "public" | "protected";
+      storageName: string;
+    }>;
+  }): Promise<ProtectedOperationClaim>;
+  transition(input: {
+    id: string;
+    operationId: string;
+    version: number;
+    fencingToken: number;
+    expected: ProtectedOperationState;
+    next: ProtectedOperationState;
+    phase: string;
+    reasonCode?: string;
+    facts?: Record<string, unknown>;
+  }): Promise<ProtectedOperationClaim>;
+  record(input: {
+    operationId: string;
+    fencingToken: number;
+    phase: string;
+    facts?: Record<string, unknown>;
+  }): Promise<void>;
+  settleMutationOutcome(input: {
+    id: string;
+    operationId: string;
+    version: number;
+    fencingToken: number;
+    outcome: "applied" | "not_applied";
+  }): Promise<ProtectedOperationClaim>;
+  heartbeat?(claim: ProtectedOperationClaim): Promise<void>;
+  heartbeatIntervalMs?: number;
+  heartbeatTimeoutMs?: number;
+};
+
 const transitions = {
   reserved: ["planned", "failed_not_applied"],
   planned: ["preparing", "failed_not_applied"],

@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { Page } from "playwright";
 import type {
   Assertion,
+  ProtectedOperationClaim,
   ProtectedOperationState,
+  ProtectedTransactionStore,
   ProtectedTransaction,
   ProtectedTransactionResult,
 } from "@scry/contracts";
@@ -49,65 +51,7 @@ import { runProtectedStage } from "@scry/praxis";
 
 /** @deprecated Historical rows only. New operations use ProtectedOperationState. */
 export type MutationLedgerState = ProtectedOperationState;
-export type ProtectedOperationClaim = {
-  id: string;
-  state: ProtectedOperationState;
-  version: number;
-  fencingToken: number;
-  mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
-  persistedReferences?: Record<
-    string,
-    {
-      classification: "public" | "protected";
-      credentialId?: string;
-      valueId?: string;
-      scope: "run" | "project";
-    }
-  >;
-};
-export type ProtectedTransactionStore = {
-  claim(input: {
-    operationId: string;
-    mutationKind: "one_time" | "repeatable";
-    dispatchSemantics?: "mutation" | "read_only";
-    programDigest: string;
-    inputSchemaDigest: string;
-    inputDigest: string;
-    mutationIdentity: string;
-    safeOutputManifest: Array<{
-      reference: string;
-      classification: "public" | "protected";
-      storageName: string;
-    }>;
-  }): Promise<ProtectedOperationClaim>;
-  transition(input: {
-    id: string;
-    operationId: string;
-    version: number;
-    fencingToken: number;
-    expected: MutationLedgerState;
-    next: MutationLedgerState;
-    phase: string;
-    reasonCode?: string;
-    facts?: Record<string, unknown>;
-  }): Promise<ProtectedOperationClaim>;
-  record(input: {
-    operationId: string;
-    fencingToken: number;
-    phase: string;
-    facts?: Record<string, unknown>;
-  }): Promise<void>;
-  settleMutationOutcome(input: {
-    id: string;
-    operationId: string;
-    version: number;
-    fencingToken: number;
-    outcome: "applied" | "not_applied";
-  }): Promise<ProtectedOperationClaim>;
-  heartbeat?(claim: ProtectedOperationClaim): Promise<void>;
-  heartbeatIntervalMs?: number;
-  heartbeatTimeoutMs?: number;
-};
+export type { ProtectedOperationClaim, ProtectedTransactionStore } from "@scry/contracts";
 
 export type ProtectedTransactionDependencies = {
   safeSession: SafeBrowserSession;
