@@ -7,17 +7,17 @@ interface is the public MCP endpoint only.
 
 ## Local model
 
-The default model is `scry-agent:local`, created from `qwen3.5:9b` with a
+The default model is `scry-agent-local`, created from `qwen3.5:9b` with a
 16,384-token context.
 
 From the repository root:
 
     ollama pull qwen3.5:9b
-    ollama create scry-agent:local -f apps/agent-lab/models/qwen3.5-9b.Modelfile
+    ollama create scry-agent-local -f apps/agent-lab/models/qwen3.5-9b.Modelfile
 
 The model is only needed while running experiments. Unload it with:
 
-    ollama stop scry-agent:local
+    ollama stop scry-agent-local
 
 ## Scry MCP
 

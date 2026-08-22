@@ -62,16 +62,26 @@ class ScryMcpClient:
 
     async def snapshot(self) -> McpSnapshot:
         client = self._require_client()
-        listed = await client.list_tools()
 
-        tools = [
-            McpTool(
-                name=tool.name,
-                description=tool.description,
-                input_schema=tool.inputSchema,
+        tools: list[McpTool] = []
+        cursor: str | None = None
+
+        while True:
+            listed = await client.list_tools(cursor=cursor)
+
+            tools.extend(
+                McpTool(
+                    name=tool.name,
+                    description=tool.description,
+                    input_schema=tool.input_schema,
+                )
+                for tool in listed.tools
             )
-            for tool in listed.tools
-        ]
+
+            cursor = listed.next_cursor
+
+            if cursor is None:
+                break
 
         server_info = _dump(client.server_info)
 

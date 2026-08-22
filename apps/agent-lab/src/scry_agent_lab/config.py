@@ -16,7 +16,7 @@ class ModelConfig:
 
 def local_model_config(model_override: str | None = None) -> ModelConfig:
     return ModelConfig(
-        model=model_override or os.getenv("SCRY_AGENT_LAB_MODEL", "scry-agent:local"),
+        model=model_override or os.getenv("SCRY_AGENT_LAB_MODEL", "scry-agent-local"),
         base_url=os.getenv(
             "SCRY_AGENT_LAB_MODEL_BASE_URL",
             "http://127.0.0.1:11434/v1",
