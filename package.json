@@ -41,7 +41,8 @@
     "verify:assurance": "pnpm --filter @scry/assurance typecheck && pnpm --filter @scry/assurance test:truth",
     "verify": "node scripts/verification-driver.mjs",
     "verify:audit": "node scripts/verification-driver.mjs --audit",
-    "verify:full": "node scripts/verification-driver.mjs --full"
+    "verify:full": "node scripts/verification-driver.mjs --full",
+    "assurance:agent": "uv run --project apps/agent-lab scry-agent-lab run"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

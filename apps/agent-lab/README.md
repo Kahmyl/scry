@@ -8,7 +8,7 @@ interface is the public MCP endpoint only.
 ## Local model
 
 The default model is `scry-agent-local`, created from `qwen3.5:9b` with a
-16,384-token context.
+32,768-token context.
 
 From the repository root:
 
