@@ -6,7 +6,7 @@ const state = vi.hoisted(() => ({
   resolveTarget: undefined as undefined | ((target: any) => Promise<any>),
 }));
 
-vi.mock("../src/protected-response-envelope.js", () => ({
+vi.mock("@scry/praxis", () => ({
   acquireProtectedResponseValue: vi.fn(async () => {
     state.networkCalls += 1;
     if (!state.networkAvailable) throw new Error("PROTECTED_RESPONSE_NOT_OBSERVED");

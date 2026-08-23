@@ -13,5 +13,4 @@ export * from "./probe.js";
 export * from "./types.js";
 export * from "./execution-kernel.js";
 export * from "./interaction-lifecycle.js";
-export * from "./protected-response-envelope.js";
 export * from "./external-resource-target-preparation.js";

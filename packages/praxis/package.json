@@ -15,7 +15,8 @@
     "@scry/veil": "workspace:*",
     "@tesseract.js-data/eng": "^1.0.0",
     "playwright": "1.62.0",
-    "tesseract.js": "^6.0.1"
+    "tesseract.js": "^6.0.1",
+    "@scry/policy": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

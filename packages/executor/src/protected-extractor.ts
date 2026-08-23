@@ -26,7 +26,7 @@ import { acquireProtectedVisualText } from "@scry/praxis";
 import { requirePraxisSuccess } from "@scry/praxis";
 import { markProtectedClipboardTouched } from "./privacy-clipboard-runtime.js";
 
-import { acquireProtectedResponseValue } from "./protected-response-envelope.js";
+import { acquireProtectedResponseValue } from "@scry/praxis";
 
 type CandidateState = ExtractionDiagnostic & {
   method?: AcquisitionIntent["permittedMethods"][number];

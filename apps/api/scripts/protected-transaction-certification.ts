@@ -8,10 +8,10 @@ import { SecretRedactor } from "@scry/policy";
 import { requirePraxisSuccess } from "@scry/praxis";
 import {
   acquireValue,
-  beginProtectedResponseEnvelope,
   PlaywrightProtectedCapsuleFactory,
   registerProtectedAcquisitionAdapter,
 } from "@scry/executor";
+import { beginProtectedResponseEnvelope } from "@scry/praxis";
 import type { ProtectedOperationClaim } from "@scry/contracts";
 import { runProtectedStage } from "@scry/praxis";
 import { VeilChannelCollector, VeilClipboardCollector, VeilRuntimeCoordinator } from "@scry/veil";

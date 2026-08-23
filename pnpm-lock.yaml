@@ -310,6 +310,9 @@ importers:
       '@scry/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@scry/policy':
+        specifier: workspace:*
+        version: link:../policy
       '@scry/veil':
         specifier: workspace:*
         version: link:../veil

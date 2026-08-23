@@ -2,10 +2,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { chromium } from "playwright";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SecretRedactor } from "@scry/policy";
-import {
-  acquireProtectedResponseValue,
-  beginProtectedResponseEnvelope,
-} from "../src/protected-response-envelope.js";
+import { acquireProtectedResponseValue, beginProtectedResponseEnvelope } from "@scry/praxis";
 
 const servers: Array<ReturnType<typeof createServer>> = [];
 afterEach(async () =>
