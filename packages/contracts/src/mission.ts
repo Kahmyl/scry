@@ -242,12 +242,15 @@ export const activityRelationSchema = z.enum([
   "verified_by",
   "accepted_for",
 ]);
+export const missionPurposeSchema = z.enum(["primary", "diagnostic", "recovery"]);
+export const missionRelationKindSchema = z.enum(["diagnoses", "recovery_for", "informs"]);
 export const missionActivityTypeSchema = z.enum([
   "mission_created",
   "mission_updated",
   "mission_resumed",
   "mission_cancelled",
   "mission_reopened",
+  "mission_related",
   "agent_session_started",
   "agent_session_ended",
   "objective_created",
@@ -350,6 +353,7 @@ export const createMissionSchema = z
     provider: agentProviderSchema.default("codex"),
     instructionSnapshot: z.string().trim().min(1).max(20_000),
     connectionId: z.string().trim().min(1).max(500).optional(),
+    purpose: missionPurposeSchema.default("primary"),
     idempotencyKey: missionIdempotencyKeySchema,
     distinctReason: z.string().trim().min(1).max(2_000).optional(),
     distinctAuthority: missionDistinctWorkAuthoritySchema.optional(),
@@ -371,6 +375,36 @@ export const createMissionSchema = z
         message: "Distinct-work authority may only accompany an intentional distinctReason.",
       });
   });
+
+export const createMissionRelationSchema = missionContextSchema
+  .extend({
+    targetMissionId: uuidSchema,
+    relation: missionRelationKindSchema,
+    reason: z.string().trim().min(1).max(2_000),
+    idempotencyKey: missionIdempotencyKeySchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.targetMissionId === value.missionId)
+      context.addIssue({
+        code: "custom",
+        path: ["targetMissionId"],
+        message: "A Mission relation requires distinct source and target Missions",
+      });
+  });
+
+export const missionRelationFactSchema = z
+  .object({
+    id: uuidSchema,
+    projectId: uuidSchema,
+    sourceMissionId: uuidSchema,
+    targetMissionId: uuidSchema,
+    relation: missionRelationKindSchema,
+    createdByAgentSessionId: uuidSchema,
+    reason: z.string().trim().min(1).max(2_000),
+    createdAt: z.string().datetime(),
+  })
+  .strict();
 
 export const updateMissionSchema = missionContextSchema
   .extend({
@@ -767,6 +801,37 @@ export const missionRecordingManifestSchema = z
   })
   .strict();
 
+export const missionRelationDisclosureSchema = z
+  .object({
+    relationId: uuidSchema,
+    relation: missionRelationKindSchema,
+    direction: z.enum(["incoming", "outgoing"]),
+    reason: z.string().trim().min(1).max(2_000),
+    createdAt: z.string().datetime(),
+    relatedMission: z
+      .object({
+        id: uuidSchema,
+        purpose: missionPurposeSchema,
+        status: missionStatusSchema,
+      })
+      .strict(),
+    unresolvedProtectedOperations: z.array(
+      z
+        .object({
+          protectedOperationId: uuidSchema,
+          operationId: z.string().trim().min(1).max(200),
+          objectiveId: uuidSchema,
+          state: z.string().trim().min(1).max(100),
+          mutationOutcome: z.enum(["not_attempted", "not_applied", "applied", "unknown"]),
+          recoveryClass: z.string().trim().min(1).max(100).nullable(),
+          failureCode: z.string().trim().min(1).max(200).nullable(),
+          updatedAt: z.string().datetime(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
 export const missionReportSnapshotSchema = z
   .object({
     mission: z
@@ -774,6 +839,7 @@ export const missionReportSnapshotSchema = z
         id: uuidSchema,
         title: z.string().trim().min(1).max(2_000),
         originalInstruction: z.string().max(20_000),
+        purpose: missionPurposeSchema.default("primary"),
         status: missionStatusSchema,
         sourceRevision: z.number().int().nonnegative(),
       })
@@ -802,6 +868,7 @@ export const missionReportSnapshotSchema = z
       .regex(/^[a-f0-9]{64}$/)
       .nullable(),
     mutationReceipts: z.array(mutationReceiptSchema).default([]),
+    relatedMissions: z.array(missionRelationDisclosureSchema).default([]),
     compositionDigest: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
@@ -839,7 +906,13 @@ export type RunRole = z.infer<typeof runRoleSchema>;
 export type MissionContext = z.infer<typeof missionContextSchema>;
 export type ObjectiveContext = z.infer<typeof objectiveContextSchema>;
 export type MissionResumePointer = z.infer<typeof missionResumePointerSchema>;
-export type CreateMissionInput = z.infer<typeof createMissionSchema>;
+type ParsedCreateMissionInput = z.infer<typeof createMissionSchema>;
+export type CreateMissionInput = Omit<ParsedCreateMissionInput, "purpose"> & {
+  purpose?: ParsedCreateMissionInput["purpose"];
+};
+export type CreateMissionRelationInput = z.infer<typeof createMissionRelationSchema>;
+export type MissionRelationFact = z.infer<typeof missionRelationFactSchema>;
+export type MissionRelationDisclosure = z.infer<typeof missionRelationDisclosureSchema>;
 export type UpdateMissionInput = z.infer<typeof updateMissionSchema>;
 export type StartAgentSessionInput = z.infer<typeof startAgentSessionSchema>;
 export type EndAgentSessionInput = z.infer<typeof endAgentSessionSchema>;

@@ -13,9 +13,7 @@ export function registerPreviewMissionReportTool(server: McpServer, client: Scry
       description:
         "Preview the exact typed evidence and recording composition that publication would freeze, together with canonical readiness blockers. A null snapshot means the explicit selection is missing, stale, unavailable, gapped, or otherwise inadmissible; resolve the returned blocker instead of fabricating or silently omitting evidence.",
       inputSchema: { missionId: uuid },
-      outputSchema: z
-        .object({ message: z.string(), preview: missionReportPreviewSchema })
-        .strict(),
+      outputSchema: z.object({ message: z.string(), preview: missionReportPreviewSchema }).strict(),
       annotations: readOnly,
     },
     async ({ missionId }) =>

@@ -140,6 +140,10 @@ const missionRecordingSelection = await readFile(
 );
 
 const operationalEvents = await readFile(new URL("operational-events.sql", migrations), "utf8");
+const missionDiagnosticIsolation = await readFile(
+  new URL("mission-diagnostic-isolation.sql", migrations),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", migrations), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -180,6 +184,7 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", migration
   ["20260816-231045_add_document_transition_gap.sql", documentTransitionGap],
   ["mission-recording-selection.sql", missionRecordingSelection],
   ["operational-events.sql", operationalEvents],
+  ["mission-diagnostic-isolation.sql", missionDiagnosticIsolation],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

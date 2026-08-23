@@ -42,6 +42,7 @@ export function MissionReportView({ reportId, onBack }: { reportId: string; onBa
     snapshot.objectiveResults.flatMap((objective) => objective.acceptedArtifactIds),
   ).size;
   const missionRecording = recordingPlayback(snapshot.recording ?? null);
+  const relatedMissions = snapshot.relatedMissions ?? [];
   return (
     <div className="mission-report-detail">
       <button className="back-button mission-report-back" onClick={onBack}>
@@ -201,6 +202,60 @@ export function MissionReportView({ reportId, onBack }: { reportId: string; onBa
           )}
         </div>
       </section>
+      {relatedMissions.length > 0 && (
+        <section className="mission-report-section" aria-label="Related Mission provenance">
+          <div className="mission-report-section-head">
+            <div>
+              <span>Factual provenance, not accepted evidence</span>
+              <h2>Related Missions</h2>
+            </div>
+            <small>{relatedMissions.length} immutable relations</small>
+          </div>
+          <div className="mission-report-evidence-objective-body">
+            {relatedMissions.map((relation) => (
+              <article className="mission-report-evidence-run open" key={relation.relationId}>
+                <div className="mission-report-evidence-run-head">
+                  <div>
+                    <span>{relation.direction}</span>
+                    <h4>{relation.relation.replaceAll("_", " ")}</h4>
+                    <code>{relation.relatedMission.id}</code>
+                  </div>
+                  <div>
+                    <span>Purpose</span>
+                    <strong>{relation.relatedMission.purpose}</strong>
+                  </div>
+                  <div>
+                    <span>Mission state</span>
+                    <strong>{relation.relatedMission.status}</strong>
+                  </div>
+                  <div>
+                    <span>Unresolved recovery</span>
+                    <strong>{relation.unresolvedProtectedOperations.length}</strong>
+                  </div>
+                </div>
+                <div className="mission-report-evidence-run-body">
+                  <p>{relation.reason}</p>
+                  {relation.unresolvedProtectedOperations.map((operation) => (
+                    <div
+                      className="mission-report-unavailable-artifact"
+                      key={operation.protectedOperationId}
+                    >
+                      <AlertTriangle size={15} />
+                      <span>
+                        <strong>{operation.mutationOutcome} mutation truth</strong>
+                        <small>
+                          {operation.operationId} · {operation.state}
+                          {operation.recoveryClass ? ` · ${operation.recoveryClass}` : ""}
+                        </small>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       {missionRecording.entries.length > 0 && (
         <section className="mission-report-section" aria-label="Mission recording composition">
           <div className="mission-report-section-head">

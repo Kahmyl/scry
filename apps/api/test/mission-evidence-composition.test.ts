@@ -144,6 +144,8 @@ describe("Mission evidence composition", () => {
 
       if (text.includes("FROM artifact_timeline_entries")) return rows([]);
 
+      if (text.includes("FROM mission_relations relation")) return rows([]);
+
       throw new Error(`UNEXPECTED_QUERY: ${text}`);
     });
 

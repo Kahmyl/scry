@@ -21,6 +21,7 @@ function input(mutationReceipts = [receipt()]) {
     evidenceDigest: "a".repeat(64),
     recordingDigest: "b".repeat(64),
     mutationReceipts,
+    relatedMissions: [],
   };
 }
 
@@ -69,5 +70,36 @@ describe("Mission report composition digest", () => {
         selectedRunIds: [selectedRunId, selectedRunId],
       }),
     ).toThrow("CHRONICLE_REPORT_SELECTED_RUN_DUPLICATE");
+  });
+
+  it("binds relation disclosure and rejects duplicate or self-referential provenance", () => {
+    const relation = {
+      relationId: "66666666-6666-4666-8666-666666666666",
+      relation: "diagnoses" as const,
+      direction: "incoming" as const,
+      reason: "Diagnostic provenance",
+      createdAt: "2026-08-23T17:00:00.000Z",
+      relatedMission: {
+        id: "77777777-7777-4777-8777-777777777777",
+        purpose: "diagnostic" as const,
+        status: "blocked" as const,
+      },
+      unresolvedProtectedOperations: [],
+    };
+    const withRelation = { ...input([]), relatedMissions: [relation] };
+    expect(digestMissionReportComposition(withRelation)).not.toBe(
+      digestMissionReportComposition(input([])),
+    );
+    expect(() =>
+      digestMissionReportComposition({ ...withRelation, relatedMissions: [relation, relation] }),
+    ).toThrow("CHRONICLE_REPORT_MISSION_RELATION_DUPLICATE");
+    expect(() =>
+      digestMissionReportComposition({
+        ...withRelation,
+        relatedMissions: [
+          { ...relation, relatedMission: { ...relation.relatedMission, id: missionId } },
+        ],
+      }),
+    ).toThrow("CHRONICLE_REPORT_MISSION_RELATION_SELF_REFERENCE");
   });
 });

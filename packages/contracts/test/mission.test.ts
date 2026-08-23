@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   acceptEvidenceSchema,
   createMissionSchema,
+  createMissionRelationSchema,
   missionReportPreviewSchema,
   missionResumePointerSchema,
   publishMissionReportSchema,
@@ -28,6 +29,43 @@ describe("Mission contracts", () => {
       createMissionSchema.safeParse({
         title: "Missing instruction",
         idempotencyKey: "mission-key-2",
+      }).success,
+    ).toBe(false);
+  });
+  it("defaults Mission purpose to primary and validates distinct cross-Mission provenance", () => {
+    expect(
+      createMissionSchema.parse({
+        title: "Primary",
+        originalInstruction: "Accept the journey",
+        instructionSnapshot: "Accept the journey",
+        provider: "codex",
+        idempotencyKey: "mission-purpose-primary",
+      }).purpose,
+    ).toBe("primary");
+    expect(
+      createMissionSchema.safeParse({
+        title: "Diagnostic",
+        originalInstruction: "Diagnose separately",
+        instructionSnapshot: "Diagnose separately",
+        provider: "codex",
+        purpose: "diagnostic",
+        idempotencyKey: "mission-purpose-diagnostic",
+        distinctReason: "The user chose isolated diagnostic work.",
+        distinctAuthority: {
+          confirmedUserAuthorized: true,
+          selection: "start_distinct_mission",
+          source: "current_request_explicit",
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      createMissionRelationSchema.safeParse({
+        missionId: ids.missionId,
+        agentSessionId: ids.agentSessionId,
+        targetMissionId: ids.missionId,
+        relation: "diagnoses",
+        reason: "Invalid self relation",
+        idempotencyKey: "mission-relation-self",
       }).success,
     ).toBe(false);
   });

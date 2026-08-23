@@ -428,6 +428,8 @@ describe("Mission recording report resolution", () => {
           },
         ]);
 
+      if (text.includes("FROM mission_relations relation")) return rows();
+
       return recording(text, values);
     });
 

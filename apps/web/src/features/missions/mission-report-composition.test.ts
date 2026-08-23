@@ -21,10 +21,7 @@ const baseSnapshot = {
     objectives: [
       {
         objectiveId: "objective-a",
-        acceptedEvidence: [
-          accepted("artifact-z", 0),
-          accepted("artifact-a", 1),
-        ],
+        acceptedEvidence: [accepted("artifact-z", 0), accepted("artifact-a", 1)],
       },
     ],
   },

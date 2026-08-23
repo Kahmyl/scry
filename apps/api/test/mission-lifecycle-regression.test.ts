@@ -703,6 +703,9 @@ describe("Mission lifecycle regression", () => {
       // This synthetic lifecycle fixture is genuinely Run-free,
       // so recording=null is valid rather than auto-selecting Runs.
       { rows: [{ count: 0 }] },
+
+      // No cross-Mission provenance for this legacy lifecycle fixture.
+      { rows: [] },
     ];
 
     const query = vi.fn(async () => {

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { MutationReceipt } from "@scry/contracts";
+import type { MissionRelationDisclosure, MutationReceipt } from "@scry/contracts";
 
 export type MissionReportCompositionDigestInput = Readonly<{
   missionId: string;
@@ -9,6 +9,7 @@ export type MissionReportCompositionDigestInput = Readonly<{
   evidenceDigest: string;
   recordingDigest: string | null;
   mutationReceipts: readonly MutationReceipt[];
+  relatedMissions: readonly MissionRelationDisclosure[];
 }>;
 
 /**
@@ -39,6 +40,14 @@ export function digestMissionReportComposition(input: MissionReportCompositionDi
     if (!receipt.correlation.runId || !selected.has(receipt.correlation.runId))
       throw new Error("CHRONICLE_REPORT_MUTATION_RECEIPT_RUN_UNSELECTED");
   }
+  const relationIds = new Set<string>();
+  for (const relation of input.relatedMissions) {
+    if (relationIds.has(relation.relationId))
+      throw new Error("CHRONICLE_REPORT_MISSION_RELATION_DUPLICATE");
+    relationIds.add(relation.relationId);
+    if (relation.relatedMission.id === input.missionId)
+      throw new Error("CHRONICLE_REPORT_MISSION_RELATION_SELF_REFERENCE");
+  }
 
   return createHash("sha256")
     .update(
@@ -50,6 +59,7 @@ export function digestMissionReportComposition(input: MissionReportCompositionDi
         evidenceDigest: input.evidenceDigest,
         recordingDigest: input.recordingDigest,
         mutationReceipts: input.mutationReceipts,
+        relatedMissions: input.relatedMissions,
       }),
     )
     .digest("hex");

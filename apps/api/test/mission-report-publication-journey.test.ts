@@ -19,6 +19,9 @@ const id = {
   flowRevision: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
   environment: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
   context: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  diagnosticMission: "10101010-1010-4010-8010-101010101010",
+  relation: "11111111-2222-4111-8111-111111111111",
+  unknownOperation: "12121212-3434-4212-8212-121212121212",
 };
 
 const selectedRun = {
@@ -97,11 +100,39 @@ describe("production-shaped Mission report composition", () => {
             revision: 8,
             title: "Composed Mission",
             originalInstruction: "Verify the complete protected journey.",
+            purpose: "primary",
             status: "running",
           },
         ]);
       if (text.includes("FROM missions WHERE id=$1"))
         return rows([{ status: "running", revision: 8, finalReportId: null, resumePointer: null }]);
+      if (text.includes("FROM mission_relations relation"))
+        return rows([
+          {
+            relationId: id.relation,
+            relation: "diagnoses",
+            direction: "incoming",
+            reason: "Isolated diagnostic provenance remains disclosed.",
+            createdAt: "2026-08-23T15:00:00.000Z",
+            relatedMissionId: id.diagnosticMission,
+            relatedMissionPurpose: "diagnostic",
+            relatedMissionStatus: "blocked",
+          },
+        ]);
+      if (text.includes("mission_id=ANY($1::uuid[])"))
+        return rows([
+          {
+            protectedOperationId: id.unknownOperation,
+            missionId: id.diagnosticMission,
+            operationId: "diagnostic-probe",
+            objectiveId: "13131313-3434-4313-8313-131313131313",
+            state: "recovery_required",
+            mutationOutcome: "unknown",
+            recoveryClass: "reconciliation_required",
+            failureCode: "PROVIDER_RESULT_UNKNOWN",
+            updatedAt: "2026-08-23T15:04:00.000Z",
+          },
+        ]);
       if (text.includes("FROM protected_operations")) return rows();
       if (text.includes("FROM adaptive_operations o")) return rows();
       if (text.includes("FROM adaptive_sessions")) return rows();
@@ -270,6 +301,24 @@ describe("production-shaped Mission report composition", () => {
     expect(published.snapshot.recording?.runs[0]!.timeline[1]!.artifact).toBeNull();
     expect(published.snapshot.recording?.runs[0]!.timeline[1]!.reason).toBe("protected_operation");
     expect(published.snapshot.compositionDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(published.snapshot.relatedMissions).toEqual([
+      expect.objectContaining({
+        relation: "diagnoses",
+        direction: "incoming",
+        relatedMission: expect.objectContaining({
+          id: id.diagnosticMission,
+          purpose: "diagnostic",
+          status: "blocked",
+        }),
+        unresolvedProtectedOperations: [
+          expect.objectContaining({
+            protectedOperationId: id.unknownOperation,
+            mutationOutcome: "unknown",
+            recoveryClass: "reconciliation_required",
+          }),
+        ],
+      }),
+    ]);
     expect(published.snapshot.mutationReceipts).toEqual([
       expect.objectContaining({
         mutationOutcome: "applied",

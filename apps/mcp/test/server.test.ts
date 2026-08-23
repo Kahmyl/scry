@@ -164,6 +164,7 @@ describe("current Scry MCP surface", () => {
       "attach_run_praxis_session",
       "finalize_run",
       "get_run",
+      "relate_missions",
       "set_mission_recording_selection",
       "preview_mission_report",
       "publish_mission_report",
@@ -175,6 +176,11 @@ describe("current Scry MCP surface", () => {
     expect(JSON.stringify(tools.find(({ name }) => name === "get_run")?.outputSchema)).toContain(
       "mutationReceipts",
     );
+    const startMissionTool = tools.find(({ name }) => name === "start_mission")!;
+    expect(JSON.stringify(startMissionTool.inputSchema)).toContain("diagnostic");
+    expect(startMissionTool.description).toContain("inherit its blockers");
+    const relateMissions = tools.find(({ name }) => name === "relate_missions")!;
+    expect(relateMissions.description).toContain("cannot move UNKNOWN mutation truth");
 
     const grant = tools.find(({ name }) => name === "grant_mission_execution_authorization")!;
     expect(grant.description).toContain("operationId");
@@ -270,6 +276,49 @@ describe("current Scry MCP surface", () => {
             }),
           ],
         },
+      },
+    });
+    await client.close();
+    await server.close();
+  });
+  it("returns typed factual provenance from the distinct-Mission relation tool", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        const body = path.endsWith("/capabilities")
+          ? admittedCapabilities
+          : {
+              id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              projectId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              sourceMissionId: context.missionId,
+              targetMissionId: context.objectiveId,
+              relation: "diagnoses",
+              createdByAgentSessionId: context.agentSessionId,
+              reason: "Isolated diagnostic provenance.",
+              createdAt: "2026-08-23T17:00:00.000Z",
+              replayed: false,
+            };
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "relate_missions",
+      arguments: {
+        missionId: context.missionId,
+        agentSessionId: context.agentSessionId,
+        targetMissionId: context.objectiveId,
+        relation: "diagnoses",
+        reason: "Isolated diagnostic provenance.",
+      },
+    });
+    expect(response.structuredContent).toMatchObject({
+      relation: {
+        sourceMissionId: context.missionId,
+        targetMissionId: context.objectiveId,
+        relation: "diagnoses",
+        replayed: false,
       },
     });
     await client.close();
@@ -473,6 +522,7 @@ describe("current Scry MCP surface", () => {
       "cancel_mission_orchestration",
       "grant_mission_execution_authorization",
       "relate_mission_activity",
+      "relate_missions",
       "create_mission_objective",
       "update_mission_objective",
       "attach_flow_to_mission",

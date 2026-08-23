@@ -5,6 +5,7 @@ import {
   classifyRunSchema,
   createActivityRelationSchema,
   createMissionSchema,
+  createMissionRelationSchema,
   createObjectiveSchema,
   endAgentSessionSchema,
   missionTransitionSchema,
@@ -20,6 +21,7 @@ import {
   type AttachFlowInput,
   type ClassifyRunInput,
   type CreateMissionInput,
+  type CreateMissionRelationInput,
   type CreateActivityRelationInput,
   type CreateObjectiveInput,
   type EndAgentSessionInput,
@@ -85,6 +87,13 @@ export class MissionController {
     @Body(new ZodValidationPipe(createActivityRelationSchema)) input: CreateActivityRelationInput,
   ) {
     return this.missions.relateActivities(principal, missionId, input);
+  }
+  @Post("missions/:missionId/relations") missionRelation(
+    @Param("missionId") missionId: string,
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodValidationPipe(createMissionRelationSchema)) input: CreateMissionRelationInput,
+  ) {
+    return this.missions.relateMissions(principal, missionId, input);
   }
   @Post("missions/:missionId/agent-sessions") startSession(
     @Param("missionId") missionId: string,

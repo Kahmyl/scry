@@ -16,6 +16,7 @@ import type {
   ClassifyRunInput,
   CreateActivityRelationInput,
   CreateMissionInput,
+  CreateMissionRelationInput,
   CreateObjectiveInput,
   EndAgentSessionInput,
   MissionTransitionInput,
@@ -38,6 +39,7 @@ import { Database } from "../infrastructure/index.js";
 import { ProtectedOperationRepository } from "../runtime/index.js";
 import { resolveMissionRecording } from "./mission-recording-resolver.js";
 import { loadMissionReportCompositionReadiness } from "./mission-report-readiness.js";
+import { insertMissionRelation, loadMissionRelationDisclosures } from "./mission-relations.js";
 
 type Query = <T extends QueryResultRow = QueryResultRow>(
   text: string,
@@ -59,6 +61,7 @@ export class MissionService {
 
   async create(principal: Principal, projectId: string, input: CreateMissionInput) {
     this.requireWrite(principal);
+    const purpose = input.purpose ?? "primary";
 
     if (
       input.distinctReason &&
@@ -118,8 +121,8 @@ export class MissionService {
       const missionId = randomUUID();
       const agentSessionId = randomUUID();
       await query(
-        `INSERT INTO missions(id,project_id,title,original_instruction,status) VALUES($1,$2,$3,$4,'planning')`,
-        [missionId, projectId, input.title, input.originalInstruction],
+        `INSERT INTO missions(id,project_id,title,original_instruction,purpose,status) VALUES($1,$2,$3,$4,$5,'planning')`,
+        [missionId, projectId, input.title, input.originalInstruction, purpose],
       );
       await query(
         `INSERT INTO agent_sessions(id,mission_id,provider,connection_id,instruction_snapshot,idempotency_key) VALUES($1,$2,$3,$4,$5,$6)`,
@@ -141,6 +144,7 @@ export class MissionService {
         `Mission created: ${input.title}`,
         {
           projectId,
+          purpose,
           ...(input.distinctReason
             ? {
                 distinctReason: input.distinctReason,
@@ -153,7 +157,13 @@ export class MissionService {
             : {}),
         },
       );
-      const response = { missionId, agentSessionId, status: "planning", replayed: false };
+      const response = {
+        missionId,
+        agentSessionId,
+        purpose,
+        status: "planning",
+        replayed: false,
+      };
       await this.completeIdempotency(
         query,
         `mission:create:${projectId}`,
@@ -172,7 +182,7 @@ export class MissionService {
     );
     return (
       await this.database.query(
-        `SELECT m.id,m.project_id AS "projectId",m.title,m.original_instruction AS "originalInstruction",m.status,
+        `SELECT m.id,m.project_id AS "projectId",m.title,m.original_instruction AS "originalInstruction",m.purpose,m.status,
               m.resume_pointer AS "resumePointer",m.revision,m.created_at AS "createdAt",m.updated_at AS "updatedAt",
               COUNT(DISTINCT o.id)::int AS "objectiveCount",COUNT(DISTINCT o.id) FILTER (WHERE ${reportableObjectivePredicate("o")})::int AS "terminalObjectiveCount",
               COUNT(DISTINCT e.id) FILTER (WHERE e.superseded_at IS NULL AND e.invalidated_at IS NULL)::int AS "acceptedEvidenceCount",
@@ -223,11 +233,11 @@ export class MissionService {
       false,
     );
     const missionResult = await this.database.query(
-      `SELECT m.id,m.project_id AS "projectId",m.title,m.original_instruction AS "originalInstruction",m.status,m.current_objective_id AS "currentObjectiveId",m.resume_pointer AS "resumePointer",m.final_report_id AS "finalReportId",m.final_report_id AS "latestReportId",m.revision,m.created_at AS "createdAt",m.updated_at AS "updatedAt",m.completed_at AS "completedAt",(SELECT COUNT(*)::int FROM mission_objectives WHERE mission_id=m.id) AS "objectiveCount",(SELECT COUNT(*)::int FROM mission_objectives o WHERE o.mission_id=m.id AND ${reportableObjectivePredicate("o")}) AS "terminalObjectiveCount",(SELECT COUNT(*)::int FROM accepted_evidence WHERE mission_id=m.id AND superseded_at IS NULL AND invalidated_at IS NULL) AS "acceptedEvidenceCount" FROM missions m WHERE m.id=$1`,
+      `SELECT m.id,m.project_id AS "projectId",m.title,m.original_instruction AS "originalInstruction",m.purpose,m.status,m.current_objective_id AS "currentObjectiveId",m.resume_pointer AS "resumePointer",m.final_report_id AS "finalReportId",m.final_report_id AS "latestReportId",m.revision,m.created_at AS "createdAt",m.updated_at AS "updatedAt",m.completed_at AS "completedAt",(SELECT COUNT(*)::int FROM mission_objectives WHERE mission_id=m.id) AS "objectiveCount",(SELECT COUNT(*)::int FROM mission_objectives o WHERE o.mission_id=m.id AND ${reportableObjectivePredicate("o")}) AS "terminalObjectiveCount",(SELECT COUNT(*)::int FROM accepted_evidence WHERE mission_id=m.id AND superseded_at IS NULL AND invalidated_at IS NULL) AS "acceptedEvidenceCount" FROM missions m WHERE m.id=$1`,
       [missionId],
     );
     const mission = missionResult.rows[0]!;
-    const [objectives, flows, runs, evidence, reports, authoring, completionReadiness] =
+    const [objectives, flows, runs, evidence, reports, authoring, relations, completionReadiness] =
       await Promise.all([
         this.database.query(
           `SELECT o.id,o.title,o.description,o.status,o.dependencies,o.completion_criteria AS "completionCriteria",o.conclusion,o.objective_order AS "order",o.latest_candidate_run_id AS "latestCandidateRunId",o.created_at AS "createdAt",o.updated_at AS "updatedAt",x.state AS "orchestrationState",x.blocker_code AS "blockerCode",x.blocker_details AS "blockerDetails",x.active_run_id AS "activeRunId",b.mode AS "executionMode" FROM mission_objectives o LEFT JOIN mission_objective_orchestration x ON x.objective_id=o.id LEFT JOIN mission_execution_bindings b ON b.plan_id=x.plan_id AND b.objective_id=o.id WHERE o.mission_id=$1 ORDER BY o.objective_order`,
@@ -252,6 +262,10 @@ export class MissionService {
         this.database.query(
           `SELECT d.id,d.objective_id AS "objectiveId",d.predecessor_run_id AS "predecessorRunId",d.name,d.state,d.version,d.updated_at AS "updatedAt",COALESCE((SELECT jsonb_agg(jsonb_build_object('id',p.id,'level',p.level,'state',p.state,'draftVersion',p.draft_version,'result',p.result,'createdAt',p.created_at) ORDER BY p.created_at DESC) FROM probe_sessions p WHERE p.draft_id=d.id),'[]'::jsonb) probes,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',c.id,'status',c.status,'draftVersion',c.draft_version,'diagnostics',c.diagnostics,'createdAt',c.created_at) ORDER BY c.created_at DESC) FROM flow_compilations c WHERE c.draft_id=d.id),'[]'::jsonb) compilations FROM flow_drafts d WHERE d.mission_id=$1 ORDER BY d.updated_at DESC`,
           [missionId],
+        ),
+        loadMissionRelationDisclosures(
+          (text, values) => this.database.query(text, values),
+          missionId,
         ),
         this.loadCompletionReadiness(
           (text, values) => this.database.query(text, values),
@@ -282,6 +296,7 @@ export class MissionService {
       acceptedEvidence: evidence.rows,
       reports: reports.rows,
       authoring: authoring.rows,
+      relatedMissions: relations,
       completionReadiness,
       flowProgress: {
         terminalRuns: runRows.filter((run) => terminalRunStates.has(run.state)).length,
@@ -349,6 +364,53 @@ export class MissionService {
         [missionId, input.fromActivityId, input.toActivityId, input.relation],
       );
       return { id: result.rows[0]!.id, ...input };
+    });
+  }
+
+  async relateMissions(
+    principal: Principal,
+    sourceMissionId: string,
+    input: CreateMissionRelationInput,
+  ) {
+    this.requireWrite(principal);
+    return this.database.transaction(async (client) => {
+      const q = bindQuery(client);
+      const source = await this.requireContext(q, principal, sourceMissionId, input.agentSessionId);
+      if (input.missionId !== sourceMissionId)
+        throw new ConflictException({ code: "MISSION_CONTEXT_MISMATCH" });
+      const target = await this.requireMission(q, principal, input.targetMissionId, false);
+      if (target.projectId !== source.projectId)
+        throw new ConflictException({ code: "MISSION_RELATION_PROJECT_MISMATCH" });
+
+      const scope = `mission:relation:${sourceMissionId}`;
+      const replay = await this.claimIdempotency(q, scope, input.idempotencyKey, input);
+      if (replay) return { ...(replay as Record<string, unknown>), replayed: true };
+
+      const relation = await insertMissionRelation(q, {
+        id: randomUUID(),
+        projectId: source.projectId,
+        sourceMissionId,
+        targetMissionId: input.targetMissionId,
+        relation: input.relation,
+        createdByAgentSessionId: input.agentSessionId,
+        reason: input.reason,
+      });
+      await this.activity(
+        q,
+        sourceMissionId,
+        null,
+        input.agentSessionId,
+        "mission_related",
+        `Mission ${input.relation} related Mission`,
+        {
+          relationId: relation.id,
+          targetMissionId: input.targetMissionId,
+          relation: input.relation,
+        },
+      );
+      const response = { ...relation, replayed: false };
+      await this.completeIdempotency(q, scope, input.idempotencyKey, response);
+      return response;
     });
   }
 
@@ -1854,6 +1916,7 @@ export class MissionService {
       revision: number;
       title: string;
       originalInstruction: string;
+      purpose: "primary" | "diagnostic" | "recovery";
       status: string;
     }>(
       `SELECT
@@ -1861,6 +1924,7 @@ export class MissionService {
          revision,
          title,
          original_instruction AS "originalInstruction",
+         purpose,
          status
        FROM missions
        WHERE id=$1`,
@@ -2157,6 +2221,7 @@ export class MissionService {
             selectedRunIdSet.has(receipt.correlation.runId),
         )
       : [];
+    const relatedMissions = await loadMissionRelationDisclosures(query, missionId);
     const compositionDigest = digestMissionReportComposition({
       missionId,
       sourceMissionRevision: mission.revision,
@@ -2164,6 +2229,7 @@ export class MissionService {
       evidenceDigest: composition.evidenceDigest,
       recordingDigest: resolvedRecording.recording?.recordingDigest ?? null,
       mutationReceipts,
+      relatedMissions,
     });
 
     return {
@@ -2171,6 +2237,7 @@ export class MissionService {
         id: mission.id,
         title: mission.title,
         originalInstruction: mission.originalInstruction,
+        purpose: mission.purpose ?? "primary",
         status: finalStatus ?? mission.status,
         sourceRevision: mission.revision,
       },
@@ -2199,6 +2266,7 @@ export class MissionService {
       recording: resolvedRecording.recording,
       recordingDigest: resolvedRecording.recording?.recordingDigest ?? null,
       mutationReceipts,
+      relatedMissions,
       compositionDigest,
 
       supersededAttemptCount: composition.supersededAttemptCount,
@@ -2315,6 +2383,7 @@ function projectAgentMissionContext(value: MissionProjectionRow) {
     projectId: mission.projectId,
     title: bounded(mission.title, 500),
     originalInstruction: bounded(mission.originalInstruction, 20_000),
+    purpose: mission.purpose,
     status: mission.status,
     currentObjectiveId: mission.currentObjectiveId,
     resumePointer: projectResumePointer(mission.resumePointer),
@@ -2328,6 +2397,7 @@ function projectAgentMissionContext(value: MissionProjectionRow) {
     terminalObjectiveCount: mission.terminalObjectiveCount,
     acceptedEvidenceCount: mission.acceptedEvidenceCount,
     completionReadiness: mission.completionReadiness,
+    relatedMissions: Array.isArray(mission.relatedMissions) ? mission.relatedMissions : [],
     objectives: rows(mission.objectives, 100).map((item) =>
       compact({
         id: item.id,

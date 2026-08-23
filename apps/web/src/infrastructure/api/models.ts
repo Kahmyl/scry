@@ -289,6 +289,7 @@ export type MissionSummary = {
   projectId: string;
   title: string;
   originalInstruction: string;
+  purpose?: "primary" | "diagnostic" | "recovery";
   status:
     "planning" | "running" | "blocked" | "awaiting_user" | "completed" | "failed" | "cancelled";
   resumePointer?: MissionResumePointer;
@@ -367,6 +368,7 @@ export type MissionObjective = {
   latestCandidateRunId?: string;
 };
 export type MissionDetail = MissionSummary & {
+  relatedMissions?: MissionRelationDisclosure[];
   flowProgress: {
     terminalRuns: number;
     passedRuns: number;
@@ -417,7 +419,12 @@ export type MissionReport = {
   revision: number;
   status: "published" | "superseded";
   snapshot: {
-    mission: { title: string; originalInstruction: string; status: string };
+    mission: {
+      title: string;
+      originalInstruction: string;
+      purpose?: "primary" | "diagnostic" | "recovery";
+      status: string;
+    };
     overallConclusion: string;
     journeySummary: string[];
     remainingActions: string[];
@@ -518,11 +525,36 @@ export type MissionReport = {
         lifecycleState: string;
       }>;
     }>;
+    relatedMissions?: MissionRelationDisclosure[];
     compositionDigest?: string;
     supersededAttemptCount: number;
     generatedAt: string;
   };
   createdAt: string;
+};
+
+export type MissionRelationDisclosure = {
+  relationId: string;
+  relation: "diagnoses" | "recovery_for" | "informs";
+  direction: "incoming" | "outgoing";
+  reason: string;
+  createdAt: string;
+  relatedMission: {
+    id: string;
+    purpose: "primary" | "diagnostic" | "recovery";
+    status:
+      "planning" | "running" | "blocked" | "awaiting_user" | "completed" | "failed" | "cancelled";
+  };
+  unresolvedProtectedOperations: Array<{
+    protectedOperationId: string;
+    operationId: string;
+    objectiveId: string;
+    state: string;
+    mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
+    recoveryClass: string | null;
+    failureCode: string | null;
+    updatedAt: string;
+  }>;
 };
 
 export type OutcomeClassification =

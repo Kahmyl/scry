@@ -20,6 +20,7 @@ const gapMigration = "20260816-231045_add_document_transition_gap.sql";
 const selectionMigration = "mission-recording-selection.sql";
 
 const operationalEventsMigration = "operational-events.sql";
+const missionDiagnosticIsolationMigration = "mission-diagnostic-isolation.sql";
 const preOperationalEventsFingerprint =
   "8abcde60d523d2e8390a686a591c4435efee6331baf15a2468743a1c8cb65a4f";
 
@@ -84,7 +85,8 @@ describe("Mission recording selection migration", () => {
             name !== unknownFenceMigration &&
             name !== gapMigration &&
             name !== selectionMigration &&
-            name !== operationalEventsMigration,
+            name !== operationalEventsMigration &&
+            name !== missionDiagnosticIsolationMigration,
         ),
       ),
     );
@@ -101,7 +103,10 @@ describe("Mission recording selection migration", () => {
         baseline,
         sources,
         OPTIONAL_BASELINE_MIGRATIONS.filter(
-          (name) => name !== selectionMigration && name !== operationalEventsMigration,
+          (name) =>
+            name !== selectionMigration &&
+            name !== operationalEventsMigration &&
+            name !== missionDiagnosticIsolationMigration,
         ),
       ),
     );
@@ -117,7 +122,10 @@ describe("Mission recording selection migration", () => {
       expandBaselineStage(
         baseline,
         sources,
-        OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== operationalEventsMigration),
+        OPTIONAL_BASELINE_MIGRATIONS.filter(
+          (name) =>
+            name !== operationalEventsMigration && name !== missionDiagnosticIsolationMigration,
+        ),
       ),
     );
     expect(digest(predecessor)).toBe(preOperationalEventsFingerprint);
@@ -201,9 +209,9 @@ describe("Mission recording selection migration", () => {
     const finalWrites =
       migrate.match(/UPDATE\s+schema_baseline[\s\S]{0,160}?schema_fingerprint=\$1/g) ?? [];
 
-    expect(operationalEventsCalls).toHaveLength(finalWrites.length);
+    expect(operationalEventsCalls).toHaveLength(finalWrites.length - 1);
 
-    expect(selectionCalls).toHaveLength(finalWrites.length - 1);
+    expect(selectionCalls).toHaveLength(finalWrites.length - 2);
 
     expect(gapCalls).toHaveLength(selectionCalls.length - 1);
 

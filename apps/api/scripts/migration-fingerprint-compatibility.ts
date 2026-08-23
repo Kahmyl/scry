@@ -113,6 +113,7 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "20260816-231045_add_document_transition_gap.sql",
   "mission-recording-selection.sql",
   "operational-events.sql",
+  "mission-diagnostic-isolation.sql",
 ] as const;
 
 export type OptionalBaselineMigration = (typeof OPTIONAL_BASELINE_MIGRATIONS)[number];
@@ -194,6 +195,7 @@ export function compatibilityBaseline(source: string): string {
     "20260816-231045_add_document_transition_gap.sql",
     "mission-recording-selection.sql",
     "operational-events.sql",
+    "mission-diagnostic-isolation.sql",
   ].reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}\\r?\\n`, "g"), ""),

@@ -150,6 +150,9 @@ const missionRecordingSelectionPath = fileURLToPath(
 const operationalEventsPath = fileURLToPath(
   new URL("../migrations/operational-events.sql", import.meta.url),
 );
+const missionDiagnosticIsolationPath = fileURLToPath(
+  new URL("../migrations/mission-diagnostic-isolation.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -219,7 +222,9 @@ const scopeUnknownFenceToResourceMutations = await readFile(
 );
 const documentTransitionGap = await readFile(documentTransitionGapPath, "utf8");
 const missionRecordingSelection = await readFile(missionRecordingSelectionPath, "utf8");
-const operationalEvents = await readFile(operationalEventsPath, "utf8");
+const operationalEventsSource = await readFile(operationalEventsPath, "utf8");
+const missionDiagnosticIsolation = await readFile(missionDiagnosticIsolationPath, "utf8");
+const operationalEvents = `${operationalEventsSource}\n${missionDiagnosticIsolation}`;
 const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
 
 const expandFoundation = (source: string) =>
@@ -263,7 +268,8 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
     scopeUnknownFenceToResourceMutations,
   "20260816-231045_add_document_transition_gap.sql": documentTransitionGap,
   "mission-recording-selection.sql": missionRecordingSelection,
-  "operational-events.sql": operationalEvents,
+  "operational-events.sql": operationalEventsSource,
+  "mission-diagnostic-isolation.sql": missionDiagnosticIsolation,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
@@ -282,7 +288,8 @@ const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
               migration !== "20260820-0910_scope_unknown_fence_to_resource_mutations.sql" &&
               migration !== "20260816-231045_add_document_transition_gap.sql" &&
               migration !== "mission-recording-selection.sql" &&
-              migration !== "operational-events.sql",
+              migration !== "operational-events.sql" &&
+              migration !== "mission-diagnostic-isolation.sql",
           ),
     ),
   );
@@ -424,6 +431,16 @@ const fingerprint = digest(baseline);
 
 assertConfiguredMigrationFingerprint(process.env.SCRY_SCHEMA_FINGERPRINT, fingerprint);
 
+const preMissionDiagnosticIsolationFingerprint = digest(
+  expandFoundation(
+    expandBaselineStage(
+      baselineSource,
+      optionalMigrationSources,
+      OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "mission-diagnostic-isolation.sql"),
+    ),
+  ),
+);
+
 const preOperationalEventsBaseline = expandFoundation(
   expandBaselineStage(
     baselineSource,
@@ -537,7 +554,27 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preOperationalEventsFingerprint) {
+    if (installedFingerprint === preMissionDiagnosticIsolationFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-mission-diagnostic-isolation'))",
+        );
+        await client.query(missionDiagnosticIsolation);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied Mission diagnostic isolation ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preOperationalEventsFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
