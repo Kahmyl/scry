@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type {
-  CapsuleFactory,
   ProtectedTransactionDependencies,
   ProtectedTransactionExecution,
 } from "@scry/executor";
+import type { CapsuleFactory } from "@scry/praxis";
 import type { Page } from "playwright";
 import type {
   Assertion,
@@ -28,12 +28,12 @@ import {
 } from "@scry/executor";
 import type { VeilRuntimeCoordinator } from "@scry/veil";
 import type { ExecuteOptions } from "@scry/executor";
-export { PlaywrightProtectedCapsuleFactory } from "@scry/executor";
+export { PlaywrightProtectedCapsuleFactory } from "@scry/praxis";
 export type {
-  CapsuleFactory,
   ProtectedTransactionDependencies,
   ProtectedTransactionExecution,
 } from "@scry/executor";
+export type { CapsuleFactory } from "@scry/praxis";
 import { ProtectedTransactionPhaseError as PhaseError } from "./protected-transaction-errors.js";
 import {
   executeProtectedPreparation,

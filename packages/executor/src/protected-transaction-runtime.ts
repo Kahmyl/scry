@@ -1,3 +1,4 @@
+import type { CapsuleFactory } from "@scry/praxis";
 import type {
   Assertion,
   ProtectedOperationClaim,
@@ -9,16 +10,6 @@ import type { SecretRedactor } from "@scry/policy";
 import type { ProtectedBrowserSession, SafeBrowserSession } from "@scry/praxis";
 import type { VeilRuntimeCoordinator } from "@scry/veil";
 import type { Page } from "playwright";
-
-export type CapsuleFactory = {
-  create(input: {
-    storageState: Awaited<ReturnType<SafeBrowserSession["context"]["storageState"]>>;
-    sessionStorage?: { origin: string; entries: Array<[string, string]> };
-    viewport?: { width: number; height: number };
-    browserChannel?: string;
-    prepare: (session: ProtectedBrowserSession) => Promise<void>;
-  }): Promise<ProtectedBrowserSession>;
-};
 
 export type ProtectedTransactionDependencies = {
   safeSession: SafeBrowserSession;

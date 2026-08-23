@@ -3,16 +3,15 @@ import type { Browser, BrowserContext, CDPSession, Page } from "playwright";
 import {
   boundedBrowserClose,
   closePraxisBrowserResources,
-  closePraxisPage,
   openPraxisCdpSession,
-} from "@scry/praxis";
+} from "./browser-session.js";
+import { closePraxisPage } from "./page-ownership.js";
 
-import type { ExecuteOptions } from "./types.js";
-
+import type { ExecutionPolicy } from "@scry/contracts";
 export function attachCapabilityGuards(
   context: BrowserContext,
   primaryPage: Page,
-  options: ExecuteOptions,
+  options: { policy: ExecutionPolicy },
   reject: (error: RuntimePolicyError) => Promise<void>,
 ) {
   context.on("page", (page) => {

@@ -32,3 +32,5 @@ export * from "./lifecycle/session-state.js";
 export * from "./lifecycle/protected-stage.js";
 export * from "./protected-acquisition.js";
 export * from "./lifecycle/protected-clipboard.js";
+export * from "./lifecycle/execution-browser-policy.js";
+export * from "./lifecycle/protected-capsule-factory.js";

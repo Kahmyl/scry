@@ -1,17 +1,27 @@
 import { randomUUID } from "node:crypto";
 
-import { destroyPraxisIsolatedSession, installPraxisSessionStorage } from "@scry/praxis";
+import { destroyPraxisIsolatedSession } from "./browser-session.js";
+import { installPraxisSessionStorage } from "./session-state.js";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 
-import {
-  BrowserSessionProvenance,
-  type ProtectedBrowserSession,
-  type SafeBrowserSession,
-} from "@scry/praxis";
-import { createVeilClipboardCollector } from "@scry/praxis";
-import type { CapsuleFactory } from "./protected-transaction-runtime.js";
-
-export type { CapsuleFactory } from "./protected-transaction-runtime.js";
+import { BrowserSessionProvenance } from "./browser-session.js";
+import type { ProtectedBrowserSession, SafeBrowserSession } from "./browser-session.js";
+import { createVeilClipboardCollector } from "./protected-clipboard.js";
+export type CapsuleFactory = {
+  create(input: {
+    storageState: Awaited<ReturnType<SafeBrowserSession["context"]["storageState"]>>;
+    sessionStorage?: {
+      origin: string;
+      entries: Array<[string, string]>;
+    };
+    viewport?: {
+      width: number;
+      height: number;
+    };
+    browserChannel?: string;
+    prepare: (session: ProtectedBrowserSession) => Promise<void>;
+  }): Promise<ProtectedBrowserSession>;
+};
 
 export class PlaywrightProtectedCapsuleFactory implements CapsuleFactory {
   constructor(

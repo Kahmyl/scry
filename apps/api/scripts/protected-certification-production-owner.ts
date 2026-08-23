@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 
 import type { Assertion, InteractionTargetIntent, ProtectedTransaction } from "@scry/contracts";
-import { PlaywrightProtectedCapsuleFactory } from "@scry/executor";
+import { PlaywrightProtectedCapsuleFactory } from "@scry/praxis";
 import type { ProtectedOperationClaim, ProtectedTransactionStore } from "@scry/contracts";
 import { BrowserSessionProvenance } from "@scry/praxis";
 import { SecretRedactor } from "@scry/policy";

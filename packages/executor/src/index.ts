@@ -6,7 +6,7 @@ export * from "./checkpoint-coordinator.js";
 export * from "./successor-checkpoint.js";
 export * from "./authoring-browser-session.js";
 export * from "./protected-transaction-runtime.js";
-export { PlaywrightProtectedCapsuleFactory } from "./protected-capsule-factory.js";
+export { PlaywrightProtectedCapsuleFactory } from "@scry/praxis";
 export * from "./calibration.js";
 export * from "./probe.js";
 export * from "./types.js";

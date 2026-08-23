@@ -53,7 +53,7 @@ import { VeilVideoSegmentAuthority } from "@scry/veil";
 import { BrowserSessionProvenance } from "@scry/praxis";
 import { createVeilClipboardCollector } from "@scry/praxis";
 import type { ProtectedTransactionExecution } from "./protected-transaction-runtime.js";
-import { PlaywrightProtectedCapsuleFactory } from "./protected-capsule-factory.js";
+import { PlaywrightProtectedCapsuleFactory } from "@scry/praxis";
 import { TraceCoordinator } from "./trace-coordinator.js";
 import { sanitizeTraceArchive } from "./trace-sanitizer.js";
 import { capturePageStructure } from "./calibration.js";
@@ -91,7 +91,7 @@ import {
   isBrowserInfrastructureFailure,
   stopBrowser,
   throwIfAborted,
-} from "./execution-browser-policy.js";
+} from "@scry/praxis";
 import { buildExecutionReport } from "./execution-report.js";
 import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
 import { ExecutionState } from "./execution-state.js";
