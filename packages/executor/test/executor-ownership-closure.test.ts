@@ -20,9 +20,7 @@ describe("Executor ownership closure", () => {
     ).resolves.toBeUndefined();
 
     await expect(
-      access(
-        new URL("../../praxis/src/lifecycle/authoring-browser-session.ts", import.meta.url),
-      ),
+      access(new URL("../../praxis/src/lifecycle/authoring-browser-session.ts", import.meta.url)),
     ).resolves.toBeUndefined();
 
     const executorIndex = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");

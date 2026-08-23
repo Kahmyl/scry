@@ -1,0 +1,25 @@
+name: Scry required qualification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fast:
+    uses: ./.github/workflows/qualification-fast.yml
+    with:
+      base_sha: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+
+  browser:
+    uses: ./.github/workflows/qualification-browser.yml
+
+  database:
+    uses: ./.github/workflows/qualification-database.yml

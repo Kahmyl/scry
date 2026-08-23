@@ -36,6 +36,12 @@ for (const forbidden of [
 }
 
 for (const required of [
+  "workflow_run:",
+  "Scry required qualification",
+  "github.event.workflow_run.head_sha || github.sha",
+  "github.event.workflow_run.conclusion == 'success'",
+  "github.event.workflow_run.event == 'push'",
+  "github.event.workflow_run.head_branch == 'main'",
   "SCRY_DEPLOYMENT_TIER: beta",
   'COMPOSE_PROFILES: ""',
   "docker/build-push-action@v6",
@@ -187,7 +193,7 @@ if (workflow.includes("push: true"))
   fail("docker/build-push-action must not rebuild/push after smoke qualification");
 
 for (const required of [
-  "SOURCE_IMAGE: scry-beta-ci:${{ github.sha }}",
+  "SOURCE_IMAGE: scry-beta-ci:${{ env.QUALIFIED_SHA }}",
   "PUBLISH_TAGS: ${{ steps.meta.outputs.tags }}",
   'docker tag "$SOURCE_IMAGE" "$tag"',
   'docker push "$tag"',

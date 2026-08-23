@@ -1,0 +1,75 @@
+name: Scry browser qualification lane
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    name: Praxis and product browser qualification
+    runs-on: ubuntu-latest
+    env:
+      SCRY_BROWSER_CHANNEL: chromium
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install exact workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify exact Playwright revision
+        run: pnpm run verify:playwright
+
+      - name: Install the pinned Chromium runtime
+        run: pnpm --filter @scry/executor exec playwright install --with-deps chromium
+
+      - name: Select bounded runner-aware concurrency
+        run: |
+          workers="$(node -e 'const os=require("node:os"); process.stdout.write(String(Math.max(1,Math.min(2,os.availableParallelism()-1))))')"
+          echo "BROWSER_WORKERS=$workers" >> "$GITHUB_ENV"
+
+      - name: Qualify Praxis browser mechanics
+        run: pnpm --filter @scry/praxis run test
+
+      - name: Qualify assurance browser journeys
+        run: pnpm --filter @scry/assurance exec vitest run --maxWorkers=$BROWSER_WORKERS
+
+      - name: Qualify complete executor behavior
+        run: pnpm --filter @scry/executor exec vitest run --maxWorkers=$BROWSER_WORKERS
+
+      - name: Qualify API browser orchestration
+        run: >-
+          pnpm --filter @scry/api exec vitest run
+          test/native-browser-driver.test.ts
+          test/protected-acquisition-adapters.test.ts
+          test/action-deadline-closure.test.ts
+          test/calibration-runner.test.ts
+          test/executor-protected-assertion-identity.test.ts
+          test/adaptive-session-runtime.restart.test.ts
+          --maxWorkers=1
+
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/
+            test-results/
+            playwright-report/
+          if-no-files-found: warn
+          retention-days: 14
