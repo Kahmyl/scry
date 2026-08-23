@@ -32,12 +32,12 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.0",
     "zod": "^4.0.0",
-    "@scry/chronicle": "workspace:*"
+    "@scry/chronicle": "workspace:*",
+    "tsx": "^4.20.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/pg": "^8.11.0",
-    "tsx": "^4.20.0",
     "typescript": "^5.8.3",
     "vitest": "^4.0.15",
     "@scry/assurance": "workspace:*"

@@ -17,22 +17,24 @@ COPY packages/praxis/package.json packages/praxis/package.json
 COPY packages/veil/package.json packages/veil/package.json
 RUN --mount=type=cache,id=scry-pnpm,target=/pnpm/store pnpm install --frozen-lockfile --store-dir /pnpm/store
 
+FROM deps AS prod-deps
+RUN --mount=type=cache,id=scry-pnpm,target=/pnpm/store \
+    rm -rf node_modules apps/*/node_modules packages/*/node_modules \
+    && pnpm install --prod --offline --frozen-lockfile --store-dir /pnpm/store
+
 FROM deps AS build
 COPY apps/web apps/web
 RUN pnpm --filter @scry/web build
 
 FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble AS runner
 ENV NODE_ENV=production
-ENV PNPM_HOME=/pnpm
-ENV PATH=$PNPM_HOME:$PATH
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /workspace
-RUN corepack enable
 
-COPY --from=deps /workspace/package.json /workspace/pnpm-workspace.yaml /workspace/tsconfig.base.json ./
-COPY --from=deps /workspace/node_modules ./node_modules
-COPY --from=deps /workspace/apps ./apps
-COPY --from=deps /workspace/packages ./packages
+COPY --from=prod-deps /workspace/package.json /workspace/pnpm-workspace.yaml /workspace/tsconfig.base.json ./
+COPY --from=prod-deps /workspace/node_modules ./node_modules
+COPY --from=prod-deps /workspace/apps ./apps
+COPY --from=prod-deps /workspace/packages ./packages
 COPY apps/api apps/api
 COPY apps/mcp apps/mcp
 COPY packages/chronicle packages/chronicle
@@ -44,4 +46,4 @@ COPY packages/veil packages/veil
 COPY --from=build /workspace/apps/web/dist ./apps/web/dist
 COPY apps/web/scripts ./apps/web/scripts
 
-CMD ["pnpm", "--filter", "@scry/api", "start"]
+CMD ["apps/api/node_modules/.bin/tsx", "apps/api/src/main.ts"]

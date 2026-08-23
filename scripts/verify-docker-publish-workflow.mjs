@@ -103,6 +103,73 @@ for (const required of [
     fail(`deployment healthcheck changed steady-state interval: ${required}`);
 }
 
+for (const application of ["api", "mcp"]) {
+  const manifest = JSON.parse(readFileSync(`apps/${application}/package.json`, "utf8"));
+
+  if (!manifest.dependencies?.tsx)
+    fail(`@scry/${application} production entrypoints require tsx as a runtime dependency`);
+
+  if (manifest.devDependencies?.tsx)
+    fail(`@scry/${application} must not classify production tsx as a dev dependency`);
+}
+
+if (!dockerfile.includes("FROM deps AS prod-deps"))
+  fail("Docker runtime requires a dedicated production dependency stage");
+
+if (!dockerfile.includes("pnpm install --prod --offline --frozen-lockfile --store-dir /pnpm/store"))
+  fail(
+    "production dependency stage must install only production dependencies from the cached store",
+  );
+
+for (const forbidden of [
+  "COPY --from=deps /workspace/node_modules ./node_modules",
+  "COPY --from=deps /workspace/apps ./apps",
+  "COPY --from=deps /workspace/packages ./packages",
+]) {
+  if (dockerfile.includes(forbidden))
+    fail(`runtime image still inherits full development dependencies: ${forbidden}`);
+}
+
+for (const required of [
+  "COPY --from=prod-deps /workspace/node_modules ./node_modules",
+  "COPY --from=prod-deps /workspace/apps ./apps",
+  "COPY --from=prod-deps /workspace/packages ./packages",
+]) {
+  if (!dockerfile.includes(required))
+    fail(`runtime image does not inherit pruned production dependencies: ${required}`);
+}
+
+for (const forbidden of [
+  'command: ["pnpm", "--filter", "@scry/api"',
+  'command: ["pnpm", "--filter", "@scry/mcp"',
+]) {
+  if (deployCompose.includes(forbidden))
+    fail(
+      `production Compose must not require pnpm/Corepack during container startup: ${forbidden}`,
+    );
+}
+
+for (const required of [
+  'command: ["apps/api/node_modules/.bin/tsx", "apps/api/src/main.ts"]',
+  'command: ["apps/api/node_modules/.bin/tsx", "apps/api/src/worker.ts"]',
+  'command: ["apps/api/node_modules/.bin/tsx", "apps/api/scripts/migrate.ts"]',
+  'command: ["apps/mcp/node_modules/.bin/tsx", "apps/mcp/src/http.ts"]',
+]) {
+  if (!deployCompose.includes(required))
+    fail(`production Compose runtime command missing: ${required}`);
+}
+
+if (!dockerfile.includes('CMD ["apps/api/node_modules/.bin/tsx", "apps/api/src/main.ts"]'))
+  fail("Docker default runtime command must invoke app-local tsx directly");
+
+const runnerSection = dockerfile.slice(dockerfile.indexOf(" AS runner"));
+
+if (runnerSection.includes("RUN corepack enable"))
+  fail("production runner must not initialize Corepack");
+
+if (runnerSection.includes("PNPM_HOME"))
+  fail("production runner must not carry pnpm runtime configuration");
+
 const qualificationIndex = workflow.indexOf("Boot and smoke-test the candidate beta topology");
 const loginIndex = workflow.indexOf("Log in to Docker Hub");
 const publishIndex = workflow.indexOf("Publish the smoke-tested Scry beta image");

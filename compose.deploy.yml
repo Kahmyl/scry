@@ -93,7 +93,7 @@ services:
       API_CORS_ORIGINS: https://${SCRY_DOMAIN:?Set SCRY_DOMAIN}
       SCRY_RELEASE_ID: ${SCRY_RELEASE_ID:?Set SCRY_RELEASE_ID}
       SCRY_SCHEMA_FINGERPRINT: ${SCRY_SCHEMA_FINGERPRINT:?Set SCRY_SCHEMA_FINGERPRINT}
-    command: ["pnpm", "--filter", "@scry/api", "start"]
+    command: ["apps/api/node_modules/.bin/tsx", "apps/api/src/main.ts"]
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -112,7 +112,7 @@ services:
   worker:
     image: ${SCRY_IMAGE_REF:?Set SCRY_IMAGE_REF to an immutable image digest}
     restart: unless-stopped
-    command: ["pnpm", "--filter", "@scry/api", "worker"]
+    command: ["apps/api/node_modules/.bin/tsx", "apps/api/src/worker.ts"]
     environment:
       <<: *api-environment
       SCRY_BROWSER_CHANNEL: chromium
@@ -132,7 +132,7 @@ services:
   migrate:
     image: ${SCRY_IMAGE_REF:?Set SCRY_IMAGE_REF to an immutable image digest}
     restart: "no"
-    command: ["pnpm", "--filter", "@scry/api", "db:migrate"]
+    command: ["apps/api/node_modules/.bin/tsx", "apps/api/scripts/migrate.ts"]
     environment:
       DATABASE_URL: postgres://scry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/scry
     depends_on:
@@ -142,7 +142,7 @@ services:
   mcp:
     image: ${SCRY_IMAGE_REF:?Set SCRY_IMAGE_REF to an immutable image digest}
     restart: unless-stopped
-    command: ["pnpm", "--filter", "@scry/mcp", "start:http"]
+    command: ["apps/mcp/node_modules/.bin/tsx", "apps/mcp/src/http.ts"]
     environment:
       MCP_HOST: 0.0.0.0
       MCP_PORT: "4100"
