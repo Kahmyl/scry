@@ -364,7 +364,9 @@ describe("Mission completion safety", () => {
       return rows();
     });
 
-    await expect(serviceFor(query).publishReport(principal, missionId, publishInput)).rejects.toMatchObject({
+    await expect(
+      serviceFor(query).publishReport(principal, missionId, publishInput),
+    ).rejects.toMatchObject({
       response: expect.objectContaining({
         code: "MISSION_TERMINAL",
         readiness: expect.objectContaining({
@@ -521,10 +523,12 @@ describe("Mission completion safety", () => {
       ) => Promise<{ ready: boolean; blockers: Array<Record<string, unknown>> }>;
     };
 
-    await expect(service.loadCompletionReadiness(query as never, missionId)).resolves.toMatchObject({
-      ready: false,
-      blockers: [expect.objectContaining({ code: "MISSION_TERMINAL", state: "completed" })],
-    });
+    await expect(service.loadCompletionReadiness(query as never, missionId)).resolves.toMatchObject(
+      {
+        ready: false,
+        blockers: [expect.objectContaining({ code: "MISSION_TERMINAL", state: "completed" })],
+      },
+    );
   });
 
   it("truthfully reports when canonical blockers are truncated", async () => {
@@ -547,7 +551,10 @@ describe("Mission completion safety", () => {
       return rows();
     });
     const service = serviceFor(query) as unknown as {
-      loadCompletionReadiness: (query: never, missionId: string) => Promise<{
+      loadCompletionReadiness: (
+        query: never,
+        missionId: string,
+      ) => Promise<{
         ready: boolean;
         blockers: Array<Record<string, unknown>>;
         truncated: boolean;
@@ -555,12 +562,14 @@ describe("Mission completion safety", () => {
       }>;
     };
 
-    await expect(service.loadCompletionReadiness(query as never, missionId)).resolves.toMatchObject({
-      ready: false,
-      truncated: true,
-      totalBlockerCount: 501,
-      blockers: expect.any(Array),
-    });
+    await expect(service.loadCompletionReadiness(query as never, missionId)).resolves.toMatchObject(
+      {
+        ready: false,
+        truncated: true,
+        totalBlockerCount: 501,
+        blockers: expect.any(Array),
+      },
+    );
     const readiness = await service.loadCompletionReadiness(query as never, missionId);
     expect(readiness.blockers).toHaveLength(500);
   });

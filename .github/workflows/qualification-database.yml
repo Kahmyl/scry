@@ -67,13 +67,21 @@ jobs:
           test/document-transition-gap-migration-authority.test.ts
           --maxWorkers=1
 
-      - name: Verify authoring, protected, and orchestration persistence
+      - name: Verify protected-operation persistence and server deadlines
+        env:
+          DATABASE_STATEMENT_TIMEOUT_MS: "250"
+          DATABASE_LOCK_TIMEOUT_MS: "100"
+        run: >-
+          pnpm --filter @scry/api exec vitest run
+          test/protected-operation.repository.integration.test.ts
+          --maxWorkers=1
+
+      - name: Verify authoring and orchestration persistence
         run: >-
           pnpm --filter @scry/api exec vitest run
           test/authoring.integration.test.ts
           test/adaptive-session.repository.integration.test.ts
           test/execution-kernel.repository.integration.test.ts
-          test/protected-operation.repository.integration.test.ts
           test/orchestration.integration.test.ts
           test/praxis.integration.test.ts
           test/external-resource-binding.integration.test.ts

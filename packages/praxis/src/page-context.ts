@@ -615,20 +615,16 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
   const previousContainers = contextContainers.get(page);
   const registeredContainers = new Map<string, ContextContainerEntry>();
   const containerControls = new Map<string, string[]>();
-  const candidateElements = (await page
-    .locator(CONTEXT_CONTROL_SELECTOR)
-    .elementHandles()) as ElementHandle<Element>[];
-  const containerElements = (await page
-    .locator(CONTEXT_CONTAINER_SELECTOR)
-    .elementHandles()) as ElementHandle<Element>[];
-  const retainedCandidateIndices = new Set<number>();
+  const controlCandidates = page.locator(CONTEXT_CONTROL_SELECTOR);
+  const containerCandidates = page.locator(CONTEXT_CONTAINER_SELECTOR);
+  const loadedContainerElements = new Map<number, ElementHandle<Element>>();
   const retainedContainerIndices = new Set<number>();
   for (const control of observed.controls) {
     const role = cleanContextText(control.role, 40);
     const name = cleanContextText(control.name, 160);
     const group = cleanContextText(control.group, 120);
     if (!role || !name) continue;
-    const locator = page.locator(CONTEXT_CONTROL_SELECTOR).nth(control.candidateIndex);
+    const locator = controlCandidates.nth(control.candidateIndex);
     const semanticIdentity = JSON.stringify({
       role,
       name,
@@ -640,7 +636,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       disabled: Boolean(control.disabled),
     });
     let reference: string | undefined;
-    const currentElement = candidateElements[control.candidateIndex] ?? null;
+    const currentElement = (await locator.elementHandle()) as ElementHandle<Element> | null;
     const currentIdentityMatches = currentElement
       ? await currentElement
           .evaluate((element, runtimeId) => {
@@ -675,11 +671,18 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       }
     }
     if (!currentElement) continue;
-    retainedCandidateIndices.add(control.candidateIndex);
     const containers: ContextContainerEntry[] = [];
     for (let index = 0; index < control.containerIndices.length; index += 1) {
-      const containerElement = containerElements[control.containerIndices[index]!] ?? null;
-      if (!containerElement) continue;
+      const containerIndex = control.containerIndices[index]!;
+      let containerElement = loadedContainerElements.get(containerIndex);
+      if (!containerElement) {
+        const loaded = (await containerCandidates
+          .nth(containerIndex)
+          .elementHandle()) as ElementHandle<Element> | null;
+        if (!loaded) continue;
+        containerElement = loaded;
+        loadedContainerElements.set(containerIndex, loaded);
+      }
       const containerIdentityMatches = await containerElement
         .evaluate((element, runtimeId) => {
           const state = globalThis as typeof globalThis & {
@@ -689,7 +692,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         }, control.containerRuntimeIds[index]!)
         .catch(() => false);
       if (!containerIdentityMatches) continue;
-      retainedContainerIndices.add(control.containerIndices[index]!);
+      retainedContainerIndices.add(containerIndex);
       const kind = control.containerKinds[index]!;
       let containerReference: string | undefined;
       for (const [candidateReference, entry] of registeredContainers) {
@@ -720,7 +723,6 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         }
       }
       if (!containerReference && registeredContainers.size >= MAX_CONTEXT_CONTAINERS) {
-        await containerElement.dispose();
         continue;
       }
       containerReference ??= `context-container-${randomBytes(16).toString("hex")}`;
@@ -774,10 +776,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
     }
   }
   await Promise.all([
-    ...candidateElements.flatMap((element, index) =>
-      retainedCandidateIndices.has(index) ? [] : [element.dispose().catch(() => undefined)],
-    ),
-    ...containerElements.flatMap((element, index) =>
+    ...[...loadedContainerElements.entries()].flatMap(([index, element]) =>
       retainedContainerIndices.has(index) ? [] : [element.dispose().catch(() => undefined)],
     ),
     ...[...(previous?.values() ?? [])].map((entry) =>

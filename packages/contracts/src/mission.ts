@@ -95,7 +95,7 @@ export const missionCompletionReadinessSchema = z
         path: ["totalBlockerCount"],
         message: "Total blocker count cannot be smaller than the returned blocker count",
       });
-    if (value.truncated !== (value.totalBlockerCount > value.blockers.length))
+    if (value.truncated !== value.totalBlockerCount > value.blockers.length)
       context.addIssue({
         code: "custom",
         path: ["truncated"],

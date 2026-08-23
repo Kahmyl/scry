@@ -1284,10 +1284,7 @@ export class MissionService {
         safeActions: ["get_operating_context", "resume_mission", "cancel_mission_orchestration"],
         nextActions: ["get_operating_context", "resume_mission"],
       });
-    if (
-      !objectiveId &&
-      ["completed", "failed", "cancelled"].includes(mission.rows[0]!.status)
-    )
+    if (!objectiveId && ["completed", "failed", "cancelled"].includes(mission.rows[0]!.status))
       add({
         code: "MISSION_TERMINAL",
         missionId,

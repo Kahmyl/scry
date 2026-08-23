@@ -228,9 +228,10 @@ export class OrchestrationService {
     this.write(p);
     if (input.missionId !== missionId)
       throw new ConflictException({ code: "MISSION_CONTEXT_MISMATCH" });
-    await this.db.transaction((c) =>
-      this.scheduleProject(c, missionId, input.agentSessionId, input.objectiveIds),
-    );
+    await this.db.transaction(async (c) => {
+      await this.reconcileMission(c, missionId);
+      await this.scheduleProject(c, missionId, input.agentSessionId, input.objectiveIds);
+    });
     return this.status(p, missionId);
   }
 

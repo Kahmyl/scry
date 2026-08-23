@@ -120,6 +120,8 @@ describe("ScryApiClient validation rejection projection", () => {
               readiness: {
                 ready: false,
                 missionId,
+                truncated: false,
+                totalBlockerCount: 1,
                 blockers: [
                   {
                     code: "MUTATION_RECONCILIATION_REQUIRED",
