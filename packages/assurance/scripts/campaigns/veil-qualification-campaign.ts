@@ -226,7 +226,7 @@ async function main() {
     const failed = results.filter((x) => x.status === "failed").length;
     const report = {
       schemaVersion: 1,
-      campaign: "veil-certification",
+      campaign: "veil-qualification",
       executedAt: new Date().toISOString(),
       environment: {
         transport: "real_http",
@@ -262,8 +262,8 @@ async function main() {
       },
       qualification:
         failed === 0 && endurance.passed
-          ? "CERTIFICATION_CORPUS_PASS"
-          : "CERTIFICATION_CORPUS_FAIL",
+          ? "QUALIFICATION_CORPUS_PASS"
+          : "QUALIFICATION_CORPUS_FAIL",
       readiness:
         failed === 0 && endurance.passed ? "PASSED_AS_COMBINED_CAMPAIGN_COMPONENT" : "NOT_READY",
       endurance,

@@ -10,16 +10,16 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "test:truth": "vitest run test/results.test.ts test/fixtures.test.ts test/browser-fixtures.test.ts test/praxis-reference-replacement.test.ts test/campaigns.test.ts test/journeys.test.ts test/agent-lab.test.ts test/support-classification.test.ts test/runtime-observability.test.ts test/experiments.test.ts test/public-boundary.test.ts",
-    "campaign:praxis": "tsx scripts/legacy-campaigns/praxis-production-campaign.ts",
-    "campaign:praxis:100": "tsx scripts/legacy-campaigns/praxis-production-campaign-100.ts",
-    "campaign:praxis:resilience": "tsx scripts/legacy-campaigns/praxis-resilience-campaign.ts",
-    "campaign:praxis:certification": "tsx scripts/legacy-campaigns/praxis-certification-campaign.ts",
-    "campaign:praxis:public-apps": "tsx scripts/legacy-campaigns/praxis-public-app-campaign.ts",
-    "campaign:veil:certification": "tsx scripts/legacy-campaigns/veil-certification-campaign.ts",
-    "campaign:veil:adversarial": "tsx scripts/legacy-campaigns/veil-adversarial-campaign.ts",
-    "campaign:veil:public-apps": "tsx scripts/legacy-campaigns/veil-public-app-campaign.ts",
-    "campaign:veil:performance": "tsx scripts/legacy-campaigns/veil-performance-campaign.ts",
-    "campaign:veil:release-scope": "tsx scripts/legacy-campaigns/veil-release-scope-campaign.ts"
+    "campaign:praxis": "tsx scripts/campaigns/praxis-production-campaign.ts",
+    "campaign:praxis:100": "tsx scripts/campaigns/praxis-production-campaign-100.ts",
+    "campaign:praxis:resilience": "tsx scripts/campaigns/praxis-resilience-campaign.ts",
+    "campaign:praxis:public-apps": "tsx scripts/campaigns/praxis-public-app-campaign.ts",
+    "campaign:veil:adversarial": "tsx scripts/campaigns/veil-adversarial-campaign.ts",
+    "campaign:veil:public-apps": "tsx scripts/campaigns/veil-public-app-campaign.ts",
+    "campaign:veil:performance": "tsx scripts/campaigns/veil-performance-campaign.ts",
+    "campaign:veil:release-scope": "tsx scripts/campaigns/veil-release-scope-campaign.ts",
+    "campaign:praxis:qualification": "tsx scripts/campaigns/praxis-qualification-campaign.ts",
+    "campaign:veil:qualification": "tsx scripts/campaigns/veil-qualification-campaign.ts"
   },
   "dependencies": {
     "@scry/contracts": "workspace:*"

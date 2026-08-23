@@ -1,93 +1,53 @@
-# Legacy Assurance Audit
+# Assurance legacy consolidation
 
-The pre-reset campaign implementation is temporarily preserved under
-`src/legacy`.
+The pre-reset Assurance compatibility surface has been retired.
 
-It is compatibility code, not the new Assurance architecture.
+## Final disposition
 
-## contracts.ts
+Reusable mechanisms were promoted narrowly into the clean Assurance system:
 
-Disposition: ARCHIVE / TRANSITION
+- campaign metrics -> `src/observability/campaign-metrics.ts`
+- report retention/readback -> `src/reporting/campaign-report.ts`
+- report sanitization -> `src/reporting/campaign-sanitization.ts`
+- deterministic adaptive fixture -> `src/fixtures/adaptive-fixture.ts`
 
-Old milestone-specific campaign contracts must not define the new Assurance
-truth model.
+Milestone-specific adaptive campaign evaluation remains beside the historical
+API campaign scripts. It is not a generic Assurance truth or runtime-admission
+API.
 
-## gates.ts
+The still-active Praxis and Veil browser campaigns are now ordinary Assurance
+qualification infrastructure under:
 
-Disposition: REWRITE OR DELETE
+`packages/assurance/scripts/campaigns`
 
-Generic gates are dangerous when observational concerns silently become
-qualification authority.
+The package no longer exposes `@scry/assurance/legacy`, contains no
+`src/legacy` implementation, and contains no `scripts/legacy-campaigns`
+directory.
 
-A retained gate must correspond to an explicit verification claim and oracle.
+Campaigns previously named `certification` were renamed `qualification` to
+avoid confusion with the retired production certification/admission model.
 
-## metrics.ts
+This does not rename historical persisted evidence or documentation merely for
+terminology consistency. Historical records remain historical facts.
 
-Disposition: RETAIN CANDIDATE -> OBSERVABILITY
+Assurance remains downstream-only: it verifies, qualifies, observes,
+experiments, synthesizes evidence, and reports support. It does not authorize
+or progress production execution.
 
-Measurement collection may be useful.
+## Change-sensitive verification ownership
 
-Metrics remain observational unless a real requirement is represented as an
-explicit verification.
+The retired `verify-praxis-change-gate.mjs` and
+`verify-veil-change-gate.mjs` scripts belonged to the former model where
+dedicated GitHub workflows ran the entire Praxis/Veil campaign matrix for
+every relevant change and Docker release.
 
-## redaction.ts
+Those dedicated workflows no longer exist, and restoring them would conflict
+with Scry's impact-aware verification model.
 
-Disposition: RELOCATE / REASSESS
+Change-sensitive test selection is owned by the repository verification
+registry/driver. Assurance owns the qualification campaigns themselves and
+their evidence, while the verification layer decides which affected
+qualification surfaces need to run for a given change.
 
-Assurance may sanitize its own output, but general privacy authority does not
-belong here.
-
-## report.ts
-
-Disposition: RETAIN CANDIDATE -> REPORTING
-
-Useful report serialization may survive.
-
-Reports present qualification; they do not establish execution truth.
-
-## verification.ts
-
-Disposition: REWRITE
-
-The new model requires:
-
-- explicit claim
-- oracle
-- evidence
-- honest inconclusive state
-
-## fixtures/adaptive-fixture.ts
-
-Disposition: RETAIN AS REGRESSION CANDIDATE
-
-Potentially useful deterministic infrastructure.
-
-It must not define the foundational fixture abstraction.
-
-## legacy-campaigns.test.ts
-
-Disposition: TEMPORARY COMPATIBILITY REGRESSION
-
-It verifies only the retained legacy surface.
-
-It does not qualify the new Assurance truth model.
-
-## Public-boundary retirement
-
-The quarantined legacy implementation is no longer exported as
-`@scry/assurance/legacy`.
-
-Reusable candidates were promoted narrowly:
-
-- campaign metrics -> `observability/campaign-metrics.ts`
-- campaign report retention/readback -> `reporting/campaign-report.ts`
-- campaign output sanitization -> internal reporting helper
-- deterministic adaptive fixture -> `fixtures/adaptive-fixture.ts`
-
-Milestone-specific verdict/release/phase gate semantics were **not** promoted
-into the clean Assurance API. They remain beside the historical adaptive
-campaign scripts until those campaigns are replaced or retired.
-
-The remaining `src/legacy/**` tree exists only for internal compatibility
-campaigns and their regression test. It has no public package export and must
-not regain active API consumers.
+Expensive full qualification remains available explicitly and for appropriate
+release/soak use; it is not silently restored as a universal synchronous gate.

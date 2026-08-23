@@ -173,10 +173,10 @@ async function main() {
       productionPathEvidence: {
         controlledReplicasAndRetainedCanaries: "veil-production-e2e",
         opaqueBrowserAndLifecycleSurfaces: "veil-adversarial",
-        corpusAndEndurance: "veil-certification",
+        corpusAndEndurance: "veil-qualification",
       },
       companionExecutableCampaigns: [
-        "veil-certification",
+        "veil-qualification",
         "veil-adversarial",
         "veil-production-e2e",
         "veil-public-application-qualification",

@@ -1,4 +1,4 @@
-import { readFile, readdir } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 
 describe("Assurance public boundary", () => {
-  it("does not publicly export the quarantined legacy surface", async () => {
+  it("does not publicly export a legacy Assurance surface", async () => {
     const packageJson = JSON.parse(
       await readFile(path.join(root, "packages/assurance/package.json"), "utf8"),
     ) as {
@@ -17,32 +17,64 @@ describe("Assurance public boundary", () => {
     expect(packageJson.exports?.["./legacy"]).toBeUndefined();
   });
 
-  it("keeps clean Assurance source independent of legacy implementation", async () => {
-    const sourceRoot = path.join(root, "packages/assurance/src");
+  it("has no retired source or campaign quarantine directories", async () => {
+    await expect(access(path.join(root, "packages/assurance/src/legacy"))).rejects.toThrow();
 
-    const files = await collectTypeScript(sourceRoot);
-
-    const cleanFiles = files.filter((file) => !file.includes(`${path.sep}legacy${path.sep}`));
-
-    for (const file of cleanFiles) {
-      const source = await readFile(file, "utf8");
-
-      expect(source, file).not.toContain("/legacy/");
-
-      expect(source, file).not.toContain("./legacy");
-    }
+    await expect(
+      access(path.join(root, "packages/assurance/scripts/legacy-campaigns")),
+    ).rejects.toThrow();
   });
 
-  it("keeps active API scripts off @scry/assurance/legacy", async () => {
+  it("keeps active API scripts off the retired Assurance legacy package", async () => {
     const scriptsRoot = path.join(root, "apps/api/scripts");
 
     const files = await collectTypeScript(scriptsRoot);
 
+    const forbidden = ["@scry", "assurance", "legacy"].join("/");
+
     for (const file of files) {
       const source = await readFile(file, "utf8");
 
-      expect(source, file).not.toContain("@scry/assurance/legacy");
+      expect(source, file).not.toContain(forbidden);
     }
+  });
+
+  it("keeps qualification campaigns in the normal Assurance campaign directory", async () => {
+    const packageJson = JSON.parse(
+      await readFile(path.join(root, "packages/assurance/package.json"), "utf8"),
+    ) as {
+      scripts?: Record<string, string>;
+    };
+
+    const campaignScripts = Object.entries(packageJson.scripts ?? {}).filter(([name]) =>
+      name.startsWith("campaign:"),
+    );
+
+    expect(campaignScripts.length).toBeGreaterThan(0);
+
+    for (const [name, command] of campaignScripts) {
+      expect(command, name).toContain("scripts/campaigns/");
+
+      expect(command, name).not.toContain("legacy-campaigns");
+    }
+  });
+
+  it("does not expose certification-named Assurance campaign commands", async () => {
+    const packageJson = JSON.parse(
+      await readFile(path.join(root, "packages/assurance/package.json"), "utf8"),
+    ) as {
+      scripts?: Record<string, string>;
+    };
+
+    const names = Object.keys(packageJson.scripts ?? {}).filter((name) =>
+      name.startsWith("campaign:"),
+    );
+
+    expect(names.some((name) => name.includes("certification"))).toBe(false);
+
+    expect(names).toContain("campaign:praxis:qualification");
+
+    expect(names).toContain("campaign:veil:qualification");
   });
 });
 

@@ -257,7 +257,7 @@ for (let i = 1; i <= 10; i++)
       { type: "activate" },
       { signal: controller.signal, timeout: 700 },
     );
-    controller.abort("certification");
+    controller.abort("qualification");
     const follower = await second;
     failure(follower, "PRAXIS_CANCELLED");
     equal(follower.mutationOutcome, "not_started", "queued cancellation mutation");
@@ -356,7 +356,7 @@ async function main() {
     const endurance = await enduranceRun(browser, primaryOrigin, () => ++ordinal);
     const report = {
       schemaVersion: 1,
-      campaign: "praxis-adversarial-certification",
+      campaign: "praxis-adversarial-qualification",
       environment: {
         transport: "real_http",
         browser: "real_chromium",
