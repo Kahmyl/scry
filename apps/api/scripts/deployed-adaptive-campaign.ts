@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
-import type { CampaignCheck, CampaignMetricsCollector } from "@scry/assurance/legacy";
+import { type CampaignCheck } from "@scry/contracts";
+import { type CampaignMetricsCollector } from "@scry/assurance";
 import pg from "pg";
 
 type ToolCall = {

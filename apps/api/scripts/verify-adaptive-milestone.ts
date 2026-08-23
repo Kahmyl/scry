@@ -3,13 +3,13 @@ import path from "node:path";
 import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { assertCampaignPassed } from "./adaptive-campaign-evaluation.js";
 import {
-  assertCampaignPassed,
   assertRequiredMetricPhases,
   latestPassingCurrentRelease,
   matchesCampaignRelease,
-  readCampaignReport,
-} from "@scry/assurance/legacy";
+} from "./adaptive-campaign-report-verification.js";
+import { readCampaignReport } from "@scry/assurance";
 
 try {
   loadEnvFile(".env");

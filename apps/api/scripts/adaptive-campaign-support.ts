@@ -6,13 +6,12 @@ import path from "node:path";
 
 import {
   CampaignMetricsCollector,
-  finalizeCampaignResult,
   retainCampaignReport,
   retainMissionLiveCampaignReport,
   startAdaptiveFixture,
-  type CampaignCheck,
-  type MilestoneCampaignResult,
-} from "@scry/assurance/legacy";
+} from "@scry/assurance";
+import { finalizeCampaignResult } from "./adaptive-campaign-evaluation.js";
+import { type CampaignCheck, type MilestoneCampaignResult } from "@scry/contracts";
 import {
   currentPlanSchema,
   executionPolicySchema,

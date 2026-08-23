@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-import { readCampaignReport } from "@scry/assurance/legacy";
+import { readCampaignReport } from "@scry/assurance";
 
 import {
   checkProductionTopology,

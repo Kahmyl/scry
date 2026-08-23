@@ -71,3 +71,23 @@ Disposition: TEMPORARY COMPATIBILITY REGRESSION
 It verifies only the retained legacy surface.
 
 It does not qualify the new Assurance truth model.
+
+## Public-boundary retirement
+
+The quarantined legacy implementation is no longer exported as
+`@scry/assurance/legacy`.
+
+Reusable candidates were promoted narrowly:
+
+- campaign metrics -> `observability/campaign-metrics.ts`
+- campaign report retention/readback -> `reporting/campaign-report.ts`
+- campaign output sanitization -> internal reporting helper
+- deterministic adaptive fixture -> `fixtures/adaptive-fixture.ts`
+
+Milestone-specific verdict/release/phase gate semantics were **not** promoted
+into the clean Assurance API. They remain beside the historical adaptive
+campaign scripts until those campaigns are replaced or retired.
+
+The remaining `src/legacy/**` tree exists only for internal compatibility
+campaigns and their regression test. It has no public package export and must
+not regain active API consumers.
