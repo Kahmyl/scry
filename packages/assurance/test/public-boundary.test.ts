@@ -76,6 +76,37 @@ describe("Assurance public boundary", () => {
 
     expect(names).toContain("campaign:veil:qualification");
   });
+
+  it("keeps Assurance downstream of production runtime source", async () => {
+    const productionRoots: string[] = [];
+
+    for (const parent of ["apps", "packages"]) {
+      const entries = await readdir(path.join(root, parent), { withFileTypes: true });
+
+      for (const entry of entries) {
+        if (!entry.isDirectory() || (parent === "packages" && entry.name === "assurance")) {
+          continue;
+        }
+
+        const sourceRoot = path.join(root, parent, entry.name, "src");
+
+        try {
+          await access(sourceRoot);
+          productionRoots.push(sourceRoot);
+        } catch {
+          // A workspace without a production source root cannot import Assurance at runtime.
+        }
+      }
+    }
+
+    for (const productionRoot of productionRoots) {
+      for (const file of await collectTypeScript(productionRoot)) {
+        const source = await readFile(file, "utf8");
+
+        expect(source, file).not.toMatch(/(?:from\s*|import\s*)["']@scry\/assurance["']/);
+      }
+    }
+  });
 });
 
 async function collectTypeScript(directory: string): Promise<string[]> {

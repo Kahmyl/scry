@@ -20,3 +20,4 @@ export * from "./observability/performance-benchmark.js";
 export * from "./observability/qualification.js";
 export * from "./reporting/campaign-report.js";
 export * from "./fixtures/adaptive-fixture.js";
+export * from "./engineering-lab/index.js";
