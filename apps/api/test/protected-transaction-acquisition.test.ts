@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { persistAcquiredProtectedOutputs } from "../src/protected-transaction-acquisition.js";
+import { persistAcquiredProtectedOutputs } from "../src/runtime/protected-transactions/protected-transaction-acquisition.js";
 
 describe("protected output persistence routing", () => {
   it("routes a mixed Run output set through one atomic authority and never legacy captures", async () => {

@@ -4,29 +4,21 @@ import { describe, expect, it } from "vitest";
 
 describe("protected transaction contract ownership", () => {
   it("keeps durable operation contracts in @scry/contracts", async () => {
-    const coordinator = await readFile(
-      new URL("../src/protected-transaction-coordinator.ts", import.meta.url),
+    const contracts = await readFile(
+      new URL("../../contracts/src/protected-operation.ts", import.meta.url),
       "utf8",
     );
 
     const types = await readFile(new URL("../src/types.ts", import.meta.url), "utf8");
 
-    expect(coordinator).toContain(
-      'export type { ProtectedOperationClaim, ProtectedTransactionStore } from "@scry/contracts"',
-    );
+    const index = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
 
-    expect(coordinator).not.toContain("export type ProtectedOperationClaim = {");
+    expect(contracts).toContain("export type ProtectedOperationClaim");
 
-    expect(coordinator).not.toContain("export type ProtectedTransactionStore = {");
+    expect(contracts).toContain("export type ProtectedTransactionStore");
 
-    expect(types).toContain("protectedTransactionStore?: ProtectedTransactionStore");
+    expect(types).not.toContain("protected-transaction-coordinator");
 
-    expect(types).not.toContain(
-      'import("./protected-transaction-coordinator.js").ProtectedOperationClaim',
-    );
-
-    expect(types).not.toContain(
-      'import("./protected-transaction-coordinator.js").ProtectedTransactionStore',
-    );
+    expect(index).not.toContain("./protected-transaction-coordinator.js");
   });
 });

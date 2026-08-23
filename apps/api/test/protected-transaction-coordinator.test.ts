@@ -16,8 +16,8 @@ import {
   ProtectedTransactionKernel,
   type MutationLedgerState,
   type ProtectedTransactionStore,
-} from "../src/protected-transaction-coordinator.js";
-import { verifyProtectedTransactionAssertions } from "../src/protected-transaction-preparation.js";
+} from "../src/runtime/protected-transactions/protected-transaction-coordinator.js";
+import { verifyProtectedTransactionAssertions } from "../src/runtime/protected-transactions/protected-transaction-preparation.js";
 
 const servers: Array<ReturnType<typeof createServer>> = [];
 const openTestBrowser = async (options?: BrowserContextOptions) => {
@@ -234,7 +234,7 @@ const transaction = (origin: string): ProtectedTransaction => ({
 
 function memoryStore(
   initial: MutationLedgerState = "planned",
-  persistedReferences?: import("../src/protected-transaction-coordinator.js").ProtectedOperationClaim["persistedReferences"],
+  persistedReferences?: import("../src/runtime/protected-transactions/protected-transaction-coordinator.js").ProtectedOperationClaim["persistedReferences"],
 ) {
   let state = initial;
   let version = 1;
@@ -286,7 +286,7 @@ function atomicProjectCapture(
   persistPublic: (value: string) => Promise<{ valueId: string }>,
 ) {
   return async (
-    input: Parameters<NonNullable<import("../src/types.js").AtomicOutputCapture>>[0],
+    input: Parameters<NonNullable<import("@scry/executor").AtomicOutputCapture>>[0],
   ) => {
     const references: Record<
       string,

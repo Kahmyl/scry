@@ -13,11 +13,12 @@ import {
 } from "@scry/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { executePlan } from "../src/executor.js";
-import type {
-  MutationLedgerState,
-  ProtectedOperationClaim,
-} from "../src/protected-transaction-coordinator.js";
+import { executePlan } from "@scry/executor";
+import {
+  ProtectedTransactionKernel,
+  type MutationLedgerState,
+  type ProtectedOperationClaim,
+} from "../src/runtime/protected-transactions/protected-transaction-coordinator.js";
 
 const servers: Array<ReturnType<typeof createServer>> = [];
 afterEach(async () =>
@@ -93,6 +94,8 @@ describe("executor protected assertion persistence identity", () => {
       outputDirectory: await mkdtemp(path.join(tmpdir(), "scry-protected-assertion-id-")),
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
       veilAdmissionKey: "protected-assertion-test-admission-key-32-bytes",
+      protectedTransactionExecutor: ({ transaction, dependencies }) =>
+        new ProtectedTransactionKernel(dependencies).execute(transaction),
       protectedTransactionStore: {
         claim: async () => ({
           id: "protected-operation",

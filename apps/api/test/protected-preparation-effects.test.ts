@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyPassivePreparationRequest } from "../src/protected-preparation-effects.js";
+import { classifyPassivePreparationRequest } from "../src/runtime/protected-transactions/protected-preparation-effects.js";
 
 describe("protected preparation passive effect policy", () => {
   const classify = (url: string, method = "POST") =>

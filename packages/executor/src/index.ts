@@ -6,9 +6,8 @@ export * from "./checkpoint-coordinator.js";
 export * from "./successor-checkpoint.js";
 export * from "./authoring-browser-session.js";
 export * from "./protected-transaction-runtime.js";
-export * from "./protected-transaction-coordinator.js";
+export { PlaywrightProtectedCapsuleFactory } from "./protected-capsule-factory.js";
 export * from "./protected-extractor.js";
-export * from "./protected-transaction-acquisition.js";
 export * from "./calibration.js";
 export * from "./probe.js";
 export * from "./types.js";
@@ -24,3 +23,5 @@ export {
   type SafeBrowserSession,
   type ProtectedBrowserSession,
 } from "@scry/praxis";
+
+export type { ProtectedOperationClaim, ProtectedTransactionStore } from "@scry/contracts";

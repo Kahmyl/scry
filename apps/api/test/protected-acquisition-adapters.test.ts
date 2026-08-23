@@ -7,15 +7,15 @@ import {
   acquireValue,
   protectedAcquisitionAdapterRegistry,
   registerProtectedAcquisitionAdapter,
-} from "../src/protected-extractor.js";
+} from "@scry/executor";
 import {
   acquireProtectedOutputs,
   extractAndPersistProtectedOutputs,
-} from "../src/protected-transaction-acquisition.js";
+} from "../src/runtime/protected-transactions/protected-transaction-acquisition.js";
 import type {
   ProtectedTransactionDependencies,
   ProtectedTransactionFacts,
-} from "../src/protected-transaction-coordinator.js";
+} from "../src/runtime/protected-transactions/protected-transaction-coordinator.js";
 
 const target = {
   concept: "generated_value",

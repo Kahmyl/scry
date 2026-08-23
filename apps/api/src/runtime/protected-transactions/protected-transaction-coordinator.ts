@@ -3,7 +3,7 @@ import type {
   CapsuleFactory,
   ProtectedTransactionDependencies,
   ProtectedTransactionExecution,
-} from "./protected-transaction-runtime.js";
+} from "@scry/executor";
 import type { Page } from "playwright";
 import type {
   Assertion,
@@ -20,20 +20,20 @@ import {
   gotoPraxisPage,
 } from "@scry/praxis";
 import type { ProtectedBrowserSession, SafeBrowserSession } from "@scry/praxis";
-import { executeProtectedReveal, verifyProtectedRevealTarget } from "./protected-extractor.js";
+import { executeProtectedReveal, verifyProtectedRevealTarget } from "@scry/executor";
 import {
   protectedTransactionDigest,
   transactionInputDigest,
   transactionInputSchemaDigest,
-} from "./calibration.js";
+} from "@scry/executor";
 import type { VeilRuntimeCoordinator } from "@scry/veil";
-import type { ExecuteOptions } from "./types.js";
-export { PlaywrightProtectedCapsuleFactory } from "./protected-capsule-factory.js";
+import type { ExecuteOptions } from "@scry/executor";
+export { PlaywrightProtectedCapsuleFactory } from "@scry/executor";
 export type {
   CapsuleFactory,
   ProtectedTransactionDependencies,
   ProtectedTransactionExecution,
-} from "./protected-transaction-runtime.js";
+} from "@scry/executor";
 import { ProtectedTransactionPhaseError as PhaseError } from "./protected-transaction-errors.js";
 import {
   executeProtectedPreparation,
@@ -51,10 +51,7 @@ import {
   reconcileProtectedMutation,
 } from "./protected-transaction-post-dispatch.js";
 import { classifyPassivePreparationRequest } from "./protected-preparation-effects.js";
-import {
-  beginProtectedResponseEnvelope,
-  type ProtectedResponseEvidence,
-} from "./protected-response-envelope.js";
+import { beginProtectedResponseEnvelope, type ProtectedResponseEvidence } from "@scry/executor";
 import { runProtectedStage } from "@scry/praxis";
 
 /** @deprecated Historical rows only. New operations use ProtectedOperationState. */

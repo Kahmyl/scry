@@ -3,7 +3,6 @@ import type { ExecutionCapabilityName, ExecutionMode, ExecutionRequest } from "@
 import {
   createExecutionCapabilityManifest,
   ExecutionKernel,
-  ProtectedTransactionKernel,
   createAuthoringBrowserSession,
   type ExecuteOptions,
   type RuntimeExecutionCapabilities,
@@ -14,6 +13,7 @@ import { ExecutionKernelRepository } from "../repositories/execution-kernel.repo
 import { ProtectedOperationRepository } from "../repositories/protected-operation.repository.js";
 import { ProtectedOutputPersistenceRepository } from "../repositories/protected-output-persistence.repository.js";
 import { NativeBrowserDriver } from "../native-browser-driver/index.js";
+import { ProtectedTransactionKernel } from "../protected-transactions/protected-transaction-coordinator.js";
 
 type BaseCapabilityInput = {
   sessionId: string;

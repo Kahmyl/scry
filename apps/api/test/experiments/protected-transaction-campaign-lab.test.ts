@@ -21,7 +21,7 @@ import {
   type MutationLedgerState,
   type ProtectedOperationClaim,
   type ProtectedTransactionStore,
-} from "../../src/protected-transaction-coordinator.js";
+} from "../../src/runtime/protected-transactions/protected-transaction-coordinator.js";
 
 type Shape = "page" | "dialog" | "drawer" | "delayed";
 

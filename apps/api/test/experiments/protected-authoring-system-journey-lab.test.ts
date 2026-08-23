@@ -20,8 +20,8 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
 
-import { compileMissionAuthoringProtectedTransaction } from "../../../../apps/api/src/adaptive-sessions/mission-authoring-protected-transaction.js";
-import { createAuthoringBrowserSession } from "../../src/authoring-browser-session.js";
+import { compileMissionAuthoringProtectedTransaction } from "../../src/adaptive-sessions/mission-authoring-protected-transaction.js";
+import { createAuthoringBrowserSession } from "@scry/executor";
 import { BrowserSessionProvenance } from "@scry/praxis";
 import {
   PlaywrightProtectedCapsuleFactory,
@@ -29,8 +29,8 @@ import {
   type MutationLedgerState,
   type ProtectedOperationClaim,
   type ProtectedTransactionStore,
-} from "../../src/protected-transaction-coordinator.js";
-import { kernelInteractionExecutor } from "../kernel-harness.js";
+} from "../../src/runtime/protected-transactions/protected-transaction-coordinator.js";
+import { kernelInteractionExecutor } from "../../../../packages/executor/test/kernel-harness.js";
 
 type Shape = "vitract_dialog" | "static_panel" | "delayed_wizard" | "network_only";
 type Prototype = "authored_strict" | "role_neutral" | "bounded_general" | "bounded_with_envelope";
@@ -490,7 +490,7 @@ async function acquireCredentials(
   let stagedOutputs:
     | Parameters<
         NonNullable<
-          import("../../src/protected-transaction-coordinator.js").ProtectedTransactionDependencies["stageResponseOutputsAtomically"]
+          import("../../src/runtime/protected-transactions/protected-transaction-coordinator.js").ProtectedTransactionDependencies["stageResponseOutputsAtomically"]
         >
       >[0]["outputs"]
     | undefined;

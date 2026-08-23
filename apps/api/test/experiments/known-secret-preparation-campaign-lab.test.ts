@@ -5,7 +5,7 @@ import { SecretRedactor } from "@scry/policy";
 import { executePraxisConsumer, registerPraxisVeilAuthority } from "@scry/praxis";
 import { compileVeilPolicy, VeilAuthority } from "@scry/veil";
 
-import { executeProtectedPreparation } from "../../src/protected-transaction-preparation.js";
+import { executeProtectedPreparation } from "../../src/runtime/protected-transactions/protected-transaction-preparation.js";
 
 const origin = "https://campaign-d.test";
 const secret = "campaign-d-synthetic-secret-canary";

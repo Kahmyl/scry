@@ -5,7 +5,6 @@ import type { Assertion, InteractionTargetIntent, ProtectedTransaction } from "@
 import {
   BrowserSessionProvenance,
   PlaywrightProtectedCapsuleFactory,
-  ProtectedTransactionKernel,
   type ProtectedOperationClaim,
   type ProtectedTransactionStore,
 } from "@scry/executor";
@@ -27,6 +26,7 @@ import {
   missionAuthoringOperationIdentity,
 } from "../src/adaptive-sessions/mission-authoring-derivation.js";
 import { missionAuthoringProtectedOperationReservation } from "../src/adaptive-sessions/mission-authoring-protected-transaction.js";
+import { ProtectedTransactionKernel } from "../src/runtime/protected-transactions/protected-transaction-coordinator.js";
 
 type OwnerFamily = "D" | "E" | "H" | "I" | "J";
 type OwnerObservation = {

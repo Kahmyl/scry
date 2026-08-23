@@ -1,10 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { missionAuthoringIntentSchema, type MissionAuthoringIntent } from "@scry/contracts";
-import {
-  persistAcquiredProtectedOutputs,
-  type AcquiredProtectedOutputSet,
-  type ProtectedTransactionDependencies,
-} from "@scry/executor";
+import { type ProtectedTransactionDependencies } from "@scry/executor";
 
 import {
   AdaptiveSessionRepository,
@@ -13,6 +9,10 @@ import {
 import { compileMissionAuthoringProtectedTransaction } from "../../src/adaptive-sessions/mission-authoring-protected-transaction.js";
 import { Database } from "../../src/infrastructure/database.js";
 import { ProtectedOutputPersistenceRepository } from "../../src/runtime/repositories/protected-output-persistence.repository.js";
+import {
+  persistAcquiredProtectedOutputs,
+  type AcquiredProtectedOutputSet,
+} from "../../src/runtime/protected-transactions/protected-transaction-acquisition.js";
 
 const runId = process.env.SCRY_LAB_RUN_ID;
 const sessionId = process.env.SCRY_LAB_PRAXIS_SESSION_ID;
