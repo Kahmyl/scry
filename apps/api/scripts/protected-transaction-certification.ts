@@ -6,11 +6,8 @@ import path from "node:path";
 
 import { SecretRedactor } from "@scry/policy";
 import { requirePraxisSuccess } from "@scry/praxis";
-import {
-  acquireValue,
-  PlaywrightProtectedCapsuleFactory,
-  registerProtectedAcquisitionAdapter,
-} from "@scry/executor";
+import { PlaywrightProtectedCapsuleFactory } from "@scry/executor";
+import { acquireValue, registerProtectedAcquisitionAdapter } from "@scry/praxis";
 import { beginProtectedResponseEnvelope } from "@scry/praxis";
 import type { ProtectedOperationClaim } from "@scry/contracts";
 import { runProtectedStage } from "@scry/praxis";

@@ -20,7 +20,7 @@ import {
   gotoPraxisPage,
 } from "@scry/praxis";
 import type { ProtectedBrowserSession, SafeBrowserSession } from "@scry/praxis";
-import { executeProtectedReveal, verifyProtectedRevealTarget } from "@scry/executor";
+import { executeProtectedReveal, verifyProtectedRevealTarget } from "@scry/praxis";
 import {
   protectedTransactionDigest,
   transactionInputDigest,

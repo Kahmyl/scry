@@ -1,6 +1,6 @@
 import type { AcquisitionIntent } from "@scry/contracts";
 import type { Page } from "playwright";
-import { acquireValue } from "./protected-extractor.js";
+import { acquireValue } from "@scry/praxis";
 
 /** Public generated values remain ordinary execution and never enter a protected Veil interval. */
 export async function capturePublicGeneratedValue(

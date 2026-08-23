@@ -4,29 +4,30 @@ import type {
   ProtectedAcquisitionEvidence,
   ProtectedTransaction,
 } from "@scry/contracts";
-import type { Locator, Page } from "playwright";
 import type { Readable } from "node:stream";
+import type { Locator, Page } from "playwright";
+
+import {
+  armExpectedEffect,
+  GroundingError,
+  resolveTarget,
+  verifyExpectedEffect,
+} from "./grounding.js";
+import { clickReferencedTarget } from "./interaction/click.js";
 import {
   clearPraxisClipboard,
   observePraxisCopyEvent,
   readPraxisClipboard,
   readPraxisElementValue,
   readPraxisSelectedText,
-  armExpectedEffect,
-  clickReferencedTarget,
-  downloadFromReferencedTarget,
-  focusReferencedTarget,
-  GroundingError,
-  observeTargetReference,
-  pressPageKey,
-  resolveTarget,
-  verifyExpectedEffect,
-} from "@scry/praxis";
-import { acquireProtectedVisualText } from "@scry/praxis";
-import { requirePraxisSuccess } from "@scry/praxis";
-import { markProtectedClipboardTouched } from "./privacy-clipboard-runtime.js";
-
-import { acquireProtectedResponseValue } from "@scry/praxis";
+} from "./interaction/clipboard.js";
+import { downloadFromReferencedTarget } from "./interaction/download.js";
+import { focusReferencedTarget, pressPageKey } from "./interaction/keyboard.js";
+import { markProtectedClipboardTouched } from "./lifecycle/protected-clipboard.js";
+import { acquireProtectedResponseValue } from "./observation/protected-response-envelope.js";
+import { observeTargetReference } from "./references/target-reference.js";
+import { acquireProtectedVisualText } from "./visual-grounding.js";
+import { requirePraxisSuccess } from "./consumer.js";
 
 type CandidateState = ExtractionDiagnostic & {
   method?: AcquisitionIntent["permittedMethods"][number];

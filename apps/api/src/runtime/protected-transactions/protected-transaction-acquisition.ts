@@ -2,7 +2,7 @@ import type { ProtectedTransaction } from "@scry/contracts";
 import { resolveTarget } from "@scry/praxis";
 import type { Page } from "playwright";
 
-import { acquireValue } from "@scry/executor";
+import { acquireValue } from "@scry/praxis";
 import type {
   ProtectedTransactionDependencies,
   ProtectedTransactionFacts,

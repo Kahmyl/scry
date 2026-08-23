@@ -7,7 +7,7 @@ import {
   acquireValue,
   protectedAcquisitionAdapterRegistry,
   registerProtectedAcquisitionAdapter,
-} from "@scry/executor";
+} from "@scry/praxis";
 import {
   acquireProtectedOutputs,
   extractAndPersistProtectedOutputs,

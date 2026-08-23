@@ -15,7 +15,7 @@ import {
   fillPraxisTarget as fillGroundedTarget,
   selectPraxisTarget as selectGroundedTarget,
 } from "./support/praxis-actions.js";
-import { acquireValue } from "../src/protected-extractor.js";
+import { acquireValue } from "@scry/praxis";
 
 type Scenario = { name: string; run(page: Page): Promise<void> };
 

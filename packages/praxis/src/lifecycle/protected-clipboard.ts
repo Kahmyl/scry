@@ -1,6 +1,7 @@
-import { clearAndVerifyPraxisClipboard } from "@scry/praxis";
 import { VeilClipboardCollector } from "@scry/veil";
 import type { Page } from "playwright";
+
+import { clearAndVerifyPraxisClipboard } from "../interaction/clipboard.js";
 
 const collectors = new WeakMap<Page, VeilClipboardCollector>();
 

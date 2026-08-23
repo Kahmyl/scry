@@ -10,7 +10,7 @@ import {
   visualRedactionInitScript,
 } from "@scry/praxis";
 import { capturePublicGeneratedValue } from "../src/public-value-capture.js";
-import { acquireValue } from "../src/protected-extractor.js";
+import { acquireValue } from "@scry/praxis";
 import { resolveTarget, verifyExpectedEffect } from "@scry/praxis";
 import {
   clickPraxisTarget as clickGroundedTarget,

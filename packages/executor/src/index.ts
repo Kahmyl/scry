@@ -7,7 +7,6 @@ export * from "./successor-checkpoint.js";
 export * from "./authoring-browser-session.js";
 export * from "./protected-transaction-runtime.js";
 export { PlaywrightProtectedCapsuleFactory } from "./protected-capsule-factory.js";
-export * from "./protected-extractor.js";
 export * from "./calibration.js";
 export * from "./probe.js";
 export * from "./types.js";

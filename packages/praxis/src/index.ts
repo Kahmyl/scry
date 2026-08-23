@@ -30,3 +30,5 @@ export * from "./lifecycle/page-ownership.js";
 export * from "./lifecycle/navigation.js";
 export * from "./lifecycle/session-state.js";
 export * from "./lifecycle/protected-stage.js";
+export * from "./protected-acquisition.js";
+export * from "./lifecycle/protected-clipboard.js";
