@@ -8,3 +8,5 @@ export * from "./campaigns/primitives.js";
 export * from "./journeys/primitives.js";
 export * from "./observability/primitives.js";
 export * from "./agent-lab/index.js";
+export * from "./support/classification.js";
+export * from "./reporting/capability-support.js";
