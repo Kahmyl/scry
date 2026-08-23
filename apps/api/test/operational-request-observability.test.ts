@@ -24,7 +24,16 @@ describe("API request operational observability", () => {
       hook!(
         {
           method: "POST",
-          headers: { "x-correlation-id": "correlation-1", authorization: "Bearer never-log" },
+          headers: {
+            "x-correlation-id": "correlation-1",
+            "x-scry-project-id": "project-1",
+            "x-scry-mission-id": "mission-1",
+            "x-scry-objective-id": "objective-1",
+            "x-scry-agent-session-id": "agent-1",
+            "x-scry-mcp-session-id": "mcp-1",
+            "x-scry-praxis-session-id": "praxis-1",
+            authorization: "Bearer never-log",
+          },
           routeOptions: { url: "/api/missions/:missionId" },
         },
         { statusCode: 400 },
@@ -37,7 +46,15 @@ describe("API request operational observability", () => {
       classification: "validation",
       reasonCode: "API_REQUEST_REJECTED_400",
       outcome: "refused",
-      causality: { correlationId: "correlation-1" },
+      causality: {
+        projectId: "project-1",
+        missionId: "mission-1",
+        objectiveId: "objective-1",
+        agentSessionId: "agent-1",
+        mcpSessionId: "mcp-1",
+        praxisSessionId: "praxis-1",
+        correlationId: "correlation-1",
+      },
       details: {
         method: "POST",
         route: "/api/missions/:missionId",

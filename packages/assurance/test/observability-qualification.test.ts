@@ -85,7 +85,7 @@ function passingObservation(scenario: ObservabilityFaultCase): ObservabilityFaul
 }
 
 describe("Assurance causal-observability fault matrix", () => {
-  it("declares the complete deterministic 13-case contract", () => {
+  it("declares the complete deterministic 14-case contract", () => {
     expect(observabilityFaultMatrix.map(({ id }) => id)).toEqual([
       "invalid_mcp_input",
       "invalid_api_input",
@@ -99,6 +99,7 @@ describe("Assurance causal-observability fault matrix", () => {
       "reconciliation_ambiguity",
       "artifact_store_failure",
       "report_finalization_failure",
+      "external_agent_harness_termination",
       "observability_sink_failure",
     ]);
     for (const scenario of observabilityFaultMatrix) {
@@ -291,12 +292,12 @@ describe("Assurance causal-observability fault matrix", () => {
     }
 
     expect(corpus.summary()).toMatchObject({
-      observationCount: 13,
+      observationCount: 14,
       capabilities: ["causal-observability"],
       failureClasses: {},
       metrics: {
-        observability_detectionCoverage: { count: 13, min: 1, max: 1, average: 1 },
-        observability_resilienceToTelemetryFailure: { count: 13, min: 1, max: 1, average: 1 },
+        observability_detectionCoverage: { count: 14, min: 1, max: 1, average: 1 },
+        observability_resilienceToTelemetryFailure: { count: 14, min: 1, max: 1, average: 1 },
       },
     });
   });

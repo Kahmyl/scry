@@ -60,14 +60,32 @@ def parser() -> argparse.ArgumentParser:
         default=None,
     )
     run.add_argument(
+        "--profile",
+        choices=["smoke", "capable_live_journey"],
+        default="smoke",
+    )
+    run.add_argument(
         "--max-turns",
         type=int,
-        default=20,
+        default=None,
     )
     run.add_argument(
         "--max-tool-calls",
         type=int,
-        default=15,
+        default=None,
+    )
+    run.add_argument(
+        "--max-wall-time-seconds",
+        type=int,
+        default=None,
+    )
+    run.add_argument(
+        "--external-run-id",
+        default=None,
+    )
+    run.add_argument(
+        "--experiment-id",
+        default=None,
     )
     run.add_argument(
         "--output-directory",
@@ -125,26 +143,48 @@ async def run_command(args: argparse.Namespace) -> int:
 
     config = model_config(args.provider, args.model)
     model = OpenAICompatibleModel(config)
+    external_run_id = args.external_run_id or str(uuid.uuid4())
+    experiment_id = args.experiment_id or external_run_id
 
     spec = AgentRunSpec(
         objective=args.objective,
         mcp_url=args.mcp_url,
+        profile=args.profile,
         max_turns=args.max_turns,
         max_tool_calls=args.max_tool_calls,
+        max_wall_time_seconds=args.max_wall_time_seconds,
+        external_run_id=external_run_id,
+        experiment_id=experiment_id,
     )
 
     async with ScryMcpClient(
         spec.mcp_url,
         token(),
+        provider=config.provider,
+        model=config.model,
+        external_run_id=external_run_id,
+        experiment_id=experiment_id,
+        correlation_id=external_run_id,
     ) as mcp:
-        result = await run_agent(
-            spec=spec,
-            model=model,
-            mcp=mcp,
-            transcript=transcript,
-            model_name=config.model,
-            provider_name=config.provider,
-        )
+        try:
+            result = await run_agent(
+                spec=spec,
+                model=model,
+                mcp=mcp,
+                transcript=transcript,
+                model_name=config.model,
+                provider_name=config.provider,
+            )
+        except asyncio.CancelledError:
+            await mcp.terminate(
+                "EXTERNAL_AGENT_HARNESS_CANCELLED"
+            )
+            raise
+        except Exception:
+            await mcp.terminate(
+                "EXTERNAL_AGENT_UNRECOVERABLE_FAILURE"
+            )
+            raise
 
     result_path = output_directory / "result.json"
     result_path.write_text(

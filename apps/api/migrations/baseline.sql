@@ -423,3 +423,4 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir mission-recording-selection.sql
 \ir operational-events.sql
 \ir mission-diagnostic-isolation.sql
+\ir external-agent-lifecycle.sql

@@ -2,7 +2,13 @@ import { z } from "zod";
 
 import { flowRevisionContentSchema, uuidSchema } from "./api.js";
 import { currentPlanSchema } from "./current.js";
-import { agentProviderSchema, objectiveCriterionSchema } from "./mission.js";
+import {
+  agentProviderSchema,
+  externalAgentExperimentIdSchema,
+  externalAgentModelSchema,
+  externalAgentRunIdSchema,
+  objectiveCriterionSchema,
+} from "./mission.js";
 import { flowDraftPurposeSchema } from "./authoring.js";
 import { missionAuthoringTurnBudgetsSchema } from "./adaptive-session.js";
 
@@ -15,7 +21,10 @@ const createPreparationSchema = z
       .object({
         title: z.string().trim().min(1).max(200),
         originalInstruction: z.string().trim().min(1).max(20_000),
-        provider: agentProviderSchema.default("codex"),
+        provider: agentProviderSchema,
+        model: externalAgentModelSchema.optional(),
+        externalRunId: externalAgentRunIdSchema.optional(),
+        experimentId: externalAgentExperimentIdSchema.optional(),
         instructionSnapshot: z.string().trim().min(1).max(20_000),
         connectionId: z.string().trim().min(1).max(500).optional(),
         distinctReason: z.string().trim().min(1).max(2_000).optional(),

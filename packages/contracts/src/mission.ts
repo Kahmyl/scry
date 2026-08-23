@@ -22,7 +22,16 @@ export const objectiveStatusSchema = z.enum([
   "blocked",
   "skipped",
 ]);
-export const agentProviderSchema = z.enum(["codex", "claude", "scry_agent", "human"]);
+/** Factual transport/provider identity. This is provenance, not an architecture switch. */
+export const agentProviderSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .regex(/^[a-z0-9][a-z0-9._-]*$/);
+export const externalAgentModelSchema = z.string().trim().min(1).max(200);
+export const externalAgentRunIdSchema = uuidSchema;
+export const externalAgentExperimentIdSchema = z.string().trim().min(1).max(200);
 export const agentSessionStatusSchema = z.enum(["active", "completed", "interrupted", "failed"]);
 export const flowVisibilitySchema = z.enum(["reusable", "mission_local", "internal"]);
 export const flowPurposeSchema = z.enum([
@@ -350,7 +359,10 @@ export const createMissionSchema = z
   .object({
     title: nameSchema,
     originalInstruction: z.string().trim().min(1).max(20_000),
-    provider: agentProviderSchema.default("codex"),
+    provider: agentProviderSchema,
+    model: externalAgentModelSchema.optional(),
+    externalRunId: externalAgentRunIdSchema.optional(),
+    experimentId: externalAgentExperimentIdSchema.optional(),
     instructionSnapshot: z.string().trim().min(1).max(20_000),
     connectionId: z.string().trim().min(1).max(500).optional(),
     purpose: missionPurposeSchema.default("primary"),
@@ -420,6 +432,9 @@ export const updateMissionSchema = missionContextSchema
 export const startAgentSessionSchema = z
   .object({
     provider: agentProviderSchema,
+    model: externalAgentModelSchema.optional(),
+    externalRunId: externalAgentRunIdSchema.optional(),
+    experimentId: externalAgentExperimentIdSchema.optional(),
     instructionSnapshot: z.string().trim().min(1).max(20_000),
     connectionId: z.string().trim().min(1).max(500).optional(),
     idempotencyKey: missionIdempotencyKeySchema,
@@ -429,6 +444,30 @@ export const startAgentSessionSchema = z
 
 export const endAgentSessionSchema = z
   .object({ status: agentSessionStatusSchema.exclude(["active"]) })
+  .strict();
+
+export const externalAgentTerminationReasonSchema = z.enum([
+  "MAX_TOOL_CALLS_EXCEEDED",
+  "MAX_TURNS_EXCEEDED",
+  "MAX_WALL_TIME_EXCEEDED",
+  "MODEL_PROVIDER_ERROR",
+  "MCP_TOOL_TRANSPORT_ERROR",
+  "EXTERNAL_AGENT_HARNESS_COMPLETED",
+  "EXTERNAL_AGENT_HARNESS_CANCELLED",
+  "EXTERNAL_AGENT_UNRECOVERABLE_FAILURE",
+  "EXTERNAL_AGENT_LEASE_EXPIRED",
+  "EXTERNAL_AGENT_PROCESS_LOST",
+]);
+export const terminateExternalAgentRunSchema = z
+  .object({ reasonCode: externalAgentTerminationReasonSchema })
+  .strict();
+export const adoptLegacyExternalAgentSessionSchema = terminateExternalAgentRunSchema
+  .extend({
+    externalRunId: externalAgentRunIdSchema,
+    provider: agentProviderSchema,
+    model: externalAgentModelSchema.optional(),
+    experimentId: externalAgentExperimentIdSchema.optional(),
+  })
   .strict();
 
 export const finalizeAgentWorkSchema = z.discriminatedUnion("kind", [
@@ -916,6 +955,10 @@ export type MissionRelationDisclosure = z.infer<typeof missionRelationDisclosure
 export type UpdateMissionInput = z.infer<typeof updateMissionSchema>;
 export type StartAgentSessionInput = z.infer<typeof startAgentSessionSchema>;
 export type EndAgentSessionInput = z.infer<typeof endAgentSessionSchema>;
+export type TerminateExternalAgentRunInput = z.infer<typeof terminateExternalAgentRunSchema>;
+export type AdoptLegacyExternalAgentSessionInput = z.infer<
+  typeof adoptLegacyExternalAgentSessionSchema
+>;
 export type FinalizeAgentWorkInput = z.infer<typeof finalizeAgentWorkSchema>;
 export type FinalizedAgentWork = z.infer<typeof finalizedAgentWorkSchema>;
 export type CreateObjectiveInput = z.infer<typeof createObjectiveSchema>;

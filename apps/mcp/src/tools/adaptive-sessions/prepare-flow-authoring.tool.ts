@@ -11,7 +11,6 @@ import {
   prepareFlowAuthoringSchema,
   preparedFlowAuthoringSchema,
   reconcileAdaptiveOperationSchema,
-  agentProviderSchema,
   flowDraftPurposeSchema,
   flowRevisionContentSchema,
   z,
@@ -43,7 +42,6 @@ export function registerPrepareFlowAuthoringTool(server: McpServer, client: Scry
           .object({
             title: z.string().trim().min(1).max(200),
             originalInstruction: z.string().trim().min(1).max(20_000),
-            provider: agentProviderSchema.default("codex"),
             instructionSnapshot: z.string().trim().min(1).max(20_000),
             connectionId: z.string().trim().min(1).max(500).optional(),
             distinctReason: z.string().trim().min(1).max(2_000).optional(),
@@ -100,7 +98,14 @@ export function registerPrepareFlowAuthoringTool(server: McpServer, client: Scry
     async (input) =>
       withAdaptiveSessionError(async () => {
         await client.requireCurrentRelease();
-        const body = prepareFlowAuthoringSchema.parse(input);
+        const body = prepareFlowAuthoringSchema.parse(
+          input.kind === "create" && input.mission
+            ? {
+                ...input,
+                mission: { ...input.mission, ...client.missionProvenance() },
+              }
+            : input,
+        );
         const prepared = preparedFlowAuthoringSchema.parse(
           await client.post("/mission-flow-authoring/prepare", body),
         );

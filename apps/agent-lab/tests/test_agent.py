@@ -5,6 +5,7 @@ import json
 import pytest
 
 from scry_agent_lab.agent import run_agent
+from scry_agent_lab.cli import parser
 from scry_agent_lab.models import (
     ModelResponse,
     ModelToolCall,
@@ -23,6 +24,7 @@ class FakeMcp:
         self.calls: list[
             tuple[str, dict[str, object]]
         ] = []
+        self.terminations: list[str] = []
 
     async def snapshot(self) -> McpSnapshot:
         return McpSnapshot(
@@ -71,6 +73,10 @@ class FakeMcp:
                 }
             ],
         )
+
+    async def terminate(self, reason_code: str):
+        self.terminations.append(reason_code)
+        return {"settled": True, "reasonCode": reason_code}
 
 
 class FakeModel:
@@ -134,6 +140,13 @@ async def test_external_agent_loop_calls_mcp_and_finishes(
     assert result.turns == 2
     assert result.completed is True
     assert result.invalid_calls == 0
+    assert result.lifecycle_settlement == {
+        "settled": True,
+        "reasonCode": "EXTERNAL_AGENT_HARNESS_COMPLETED",
+    }
+    assert mcp.terminations == [
+        "EXTERNAL_AGENT_HARNESS_COMPLETED"
+    ]
     assert mcp.calls == [
         (
             "echo",
@@ -158,6 +171,7 @@ async def test_external_agent_loop_calls_mcp_and_finishes(
         "tool_result",
         "model_request",
         "model_response",
+        "lifecycle_settlement",
     ]
 
 
@@ -250,3 +264,89 @@ async def test_agent_metrics_classify_behavior_not_prompt_strings(
     assert result.stale_reference_calls == 1
     assert result.repeated_unchanged_observations == 1
     assert result.unnecessary_capabilities_calls == 1
+
+
+class EndlessModel:
+    async def complete(self, messages, tools) -> ModelResponse:
+        return ModelResponse(
+            content=None,
+            tool_calls=[
+                ModelToolCall(
+                    id="endless",
+                    name="echo",
+                    arguments='{"value":"again"}',
+                )
+            ],
+            usage=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_harness_limit_settles_owned_lifecycle(tmp_path) -> None:
+    mcp = FakeMcp()
+    result = await run_agent(
+        spec=AgentRunSpec(
+            objective="Keep working.",
+            profile="capable_live_journey",
+            max_tool_calls=1,
+            external_run_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        ),
+        model=EndlessModel(),
+        mcp=mcp,
+        transcript=Transcript(tmp_path / "limit.jsonl"),
+        model_name="fake-model",
+        provider_name="fake-provider",
+    )
+
+    assert result.status == "limit_exceeded"
+    assert result.failure == "MAX_TOOL_CALLS_EXCEEDED"
+    assert result.termination_category == "harness_limit"
+    assert result.lifecycle_settlement == {
+        "settled": True,
+        "reasonCode": "MAX_TOOL_CALLS_EXCEEDED",
+    }
+    assert result.budget_profile == "capable_live_journey"
+    assert result.budget_limits["maxToolCalls"] == 1
+    assert mcp.terminations == ["MAX_TOOL_CALLS_EXCEEDED"]
+
+
+def test_budget_profiles_have_finite_canonical_defaults() -> None:
+    smoke = AgentRunSpec(objective="Smoke")
+    capable = AgentRunSpec(
+        objective="Full journey",
+        profile="capable_live_journey",
+    )
+
+    assert (smoke.max_turns, smoke.max_tool_calls) == (20, 15)
+    assert smoke.max_wall_time_seconds == 300
+    assert (capable.max_turns, capable.max_tool_calls) == (80, 100)
+    assert capable.max_wall_time_seconds == 3600
+
+
+def test_cli_preserves_profile_defaults_and_explicit_overrides() -> None:
+    default = parser().parse_args(
+        ["run", "--objective", "Smoke"]
+    )
+    override = parser().parse_args(
+        [
+            "run",
+            "--objective",
+            "Journey",
+            "--profile",
+            "capable_live_journey",
+            "--max-turns",
+            "90",
+            "--max-tool-calls",
+            "120",
+            "--max-wall-time-seconds",
+            "4000",
+        ]
+    )
+
+    assert default.profile == "smoke"
+    assert default.max_turns is None
+    assert default.max_tool_calls is None
+    assert default.max_wall_time_seconds is None
+    assert override.profile == "capable_live_journey"
+    assert (override.max_turns, override.max_tool_calls) == (90, 120)
+    assert override.max_wall_time_seconds == 4000

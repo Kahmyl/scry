@@ -7,7 +7,7 @@
     "db:migrate": "pnpm --filter @scry/api db:migrate",
     "qualify:live": "pnpm --filter @scry/api qualify:live",
     "dev:api": "pnpm --filter @scry/api dev",
-    "docker:up": "pnpm verify:release-fingerprint && docker compose up --build --wait",
+    "docker:up": "node scripts/docker-up.mjs",
     "docker:dev": "docker compose up --build --watch",
     "docker:watch": "docker compose watch --no-up",
     "docker:down": "docker compose down",

@@ -1038,6 +1038,25 @@ export class MissionFlowAuthoringService {
     }
   }
 
+  async settleExternalOwnerLoss(
+    principal: Principal,
+    sessionId: string,
+    reasonCode: string,
+    idempotencyKey: string,
+  ) {
+    this.requireWrite(principal);
+    try {
+      return await this.sessions.settleExternalOwnerLoss({
+        workspaceId: workspaceId(principal),
+        sessionId,
+        reasonCode,
+        idempotencyKey,
+      });
+    } finally {
+      await this.runner.close(sessionId);
+    }
+  }
+
   private requireWrite(principal: Principal) {
     if (principal.kind === "user" && principal.role === "viewer") {
       throw new ForbiddenException("Workspace viewers have read-only access");

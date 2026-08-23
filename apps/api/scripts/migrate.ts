@@ -153,6 +153,9 @@ const operationalEventsPath = fileURLToPath(
 const missionDiagnosticIsolationPath = fileURLToPath(
   new URL("../migrations/mission-diagnostic-isolation.sql", import.meta.url),
 );
+const externalAgentLifecyclePath = fileURLToPath(
+  new URL("../migrations/external-agent-lifecycle.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -224,7 +227,9 @@ const documentTransitionGap = await readFile(documentTransitionGapPath, "utf8");
 const missionRecordingSelection = await readFile(missionRecordingSelectionPath, "utf8");
 const operationalEventsSource = await readFile(operationalEventsPath, "utf8");
 const missionDiagnosticIsolation = await readFile(missionDiagnosticIsolationPath, "utf8");
-const operationalEvents = `${operationalEventsSource}\n${missionDiagnosticIsolation}`;
+const externalAgentLifecycle = await readFile(externalAgentLifecyclePath, "utf8");
+const operationalEvents = `${operationalEventsSource}\n${missionDiagnosticIsolation}\n${externalAgentLifecycle}`;
+const missionDiagnosticIsolationUpgrade = `${missionDiagnosticIsolation}\n${externalAgentLifecycle}`;
 const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
 
 const expandFoundation = (source: string) =>
@@ -270,6 +275,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "mission-recording-selection.sql": missionRecordingSelection,
   "operational-events.sql": operationalEventsSource,
   "mission-diagnostic-isolation.sql": missionDiagnosticIsolation,
+  "external-agent-lifecycle.sql": externalAgentLifecycle,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
@@ -289,7 +295,8 @@ const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
               migration !== "20260816-231045_add_document_transition_gap.sql" &&
               migration !== "mission-recording-selection.sql" &&
               migration !== "operational-events.sql" &&
-              migration !== "mission-diagnostic-isolation.sql",
+              migration !== "mission-diagnostic-isolation.sql" &&
+              migration !== "external-agent-lifecycle.sql",
           ),
     ),
   );
@@ -431,12 +438,25 @@ const fingerprint = digest(baseline);
 
 assertConfiguredMigrationFingerprint(process.env.SCRY_SCHEMA_FINGERPRINT, fingerprint);
 
+const preExternalAgentLifecycleFingerprint = digest(
+  expandFoundation(
+    expandBaselineStage(
+      baselineSource,
+      optionalMigrationSources,
+      OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "external-agent-lifecycle.sql"),
+    ),
+  ),
+);
+
 const preMissionDiagnosticIsolationFingerprint = digest(
   expandFoundation(
     expandBaselineStage(
       baselineSource,
       optionalMigrationSources,
-      OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "mission-diagnostic-isolation.sql"),
+      OPTIONAL_BASELINE_MIGRATIONS.filter(
+        (name) =>
+          name !== "mission-diagnostic-isolation.sql" && name !== "external-agent-lifecycle.sql",
+      ),
     ),
   ),
 );
@@ -445,7 +465,12 @@ const preOperationalEventsBaseline = expandFoundation(
   expandBaselineStage(
     baselineSource,
     optionalMigrationSources,
-    OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "operational-events.sql"),
+    OPTIONAL_BASELINE_MIGRATIONS.filter(
+      (name) =>
+        name !== "operational-events.sql" &&
+        name !== "mission-diagnostic-isolation.sql" &&
+        name !== "external-agent-lifecycle.sql",
+    ),
   ),
 );
 const preOperationalEventsFingerprint = digest(preOperationalEventsBaseline);
@@ -454,7 +479,13 @@ const preMissionRecordingSelectionBaseline = expandFoundation(
   expandBaselineStage(
     baselineSource,
     optionalMigrationSources,
-    OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "mission-recording-selection.sql"),
+    OPTIONAL_BASELINE_MIGRATIONS.filter(
+      (name) =>
+        name !== "mission-recording-selection.sql" &&
+        name !== "operational-events.sql" &&
+        name !== "mission-diagnostic-isolation.sql" &&
+        name !== "external-agent-lifecycle.sql",
+    ),
   ),
 );
 
@@ -554,14 +585,34 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preMissionDiagnosticIsolationFingerprint) {
+    if (installedFingerprint === preExternalAgentLifecycleFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-external-agent-lifecycle'))",
+        );
+        await client.query(externalAgentLifecycle);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied external-agent lifecycle ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preMissionDiagnosticIsolationFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query(
           "SELECT pg_advisory_xact_lock(hashtext('scry-mission-diagnostic-isolation'))",
         );
-        await client.query(missionDiagnosticIsolation);
+        await client.query(missionDiagnosticIsolationUpgrade);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],

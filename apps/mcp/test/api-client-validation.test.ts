@@ -7,6 +7,28 @@ describe("ScryApiClient validation rejection projection", () => {
     vi.unstubAllGlobals();
   });
 
+  it("projects truthful provider/model provenance without a Codex fallback", () => {
+    expect(
+      new ScryApiClient("http://scry.test/api", undefined, undefined, {
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+        externalRunId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }).missionProvenance(),
+    ).toEqual({
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+      externalRunId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    expect(
+      new ScryApiClient("http://scry.test/api", undefined, undefined, {
+        provider: "synthetic-provider",
+      }).missionProvenance(),
+    ).toEqual({ provider: "synthetic-provider" });
+    expect(new ScryApiClient("http://scry.test/api").missionProvenance()).toEqual({
+      provider: "unknown",
+    });
+  });
+
   it("classifies ordinary validation message arrays without exposing raw validation text", async () => {
     const rawValidationMessage = 'Unrecognized key: "externalResourcePresentationAuthorities"';
 
@@ -109,6 +131,7 @@ describe("ScryApiClient validation rejection projection", () => {
 
   it.each([
     ["REQUEST_INVALID", 400, "not_applied", "invalid_input", "correct_input"],
+    ["FLOW_REVISION_NOT_FOUND", 404, "not_applied", "invalid_input", "correct_input"],
     ["CONTEXT_REFERENCE_STALE", 409, "not_applied", "stale_authority", "refresh_authority"],
     [
       "PROTECTED_AUTHORIZATION_REQUIRED",
@@ -220,5 +243,45 @@ describe("ScryApiClient validation rejection projection", () => {
       },
     });
     expect(JSON.stringify(error)).not.toContain("must-not-escape");
+  });
+
+  it("propagates only factual transport and causal identities", async () => {
+    const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", request);
+    const client = new ScryApiClient(
+      "http://scry.test/api",
+      "service-token",
+      "http://scry.test/api",
+      {
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+        externalRunId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        experimentId: "experiment-1",
+        correlationId: "correlation-1",
+      },
+    );
+    client.setMcpSessionId("mcp-session-1");
+
+    await client.post("/projects/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/runs", {
+      missionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      objectiveId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      agentSessionId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      praxisSessionId: "11111111-1111-4111-8111-111111111111",
+      protectedValue: "must-not-be-a-header",
+    });
+
+    const headers = request.mock.calls[0]![1].headers as Headers;
+    expect(Object.fromEntries(headers.entries())).toMatchObject({
+      "x-correlation-id": "correlation-1",
+      "x-scry-project-id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "x-scry-mission-id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "x-scry-objective-id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "x-scry-agent-session-id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      "x-scry-mcp-session-id": "mcp-session-1",
+      "x-scry-praxis-session-id": "11111111-1111-4111-8111-111111111111",
+    });
+    expect(JSON.stringify(Object.fromEntries(headers.entries()))).not.toContain(
+      "must-not-be-a-header",
+    );
   });
 });

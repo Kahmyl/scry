@@ -45,6 +45,7 @@ export async function runAgentLab(
     ? resolve(root, spec.outputDirectory)
     : await mkdtemp(join(tmpdir(), "scry-agent-lab-"));
 
+  const profile = spec.profile ?? "smoke";
   const args = [
     "run",
     "--project",
@@ -55,12 +56,10 @@ export async function runAgentLab(
     spec.objective,
     "--provider",
     spec.provider ?? "local",
+    "--profile",
+    profile,
     "--mcp-url",
     spec.mcpUrl ?? "http://127.0.0.1:4100/mcp",
-    "--max-turns",
-    String(spec.maxTurns ?? 20),
-    "--max-tool-calls",
-    String(spec.maxToolCalls ?? 15),
     "--output-directory",
     outputDirectory,
   ];
@@ -68,6 +67,12 @@ export async function runAgentLab(
   if (spec.model) {
     args.push("--model", spec.model);
   }
+  if (spec.maxTurns !== undefined) args.push("--max-turns", String(spec.maxTurns));
+  if (spec.maxToolCalls !== undefined) args.push("--max-tool-calls", String(spec.maxToolCalls));
+  if (spec.maxWallTimeSeconds !== undefined)
+    args.push("--max-wall-time-seconds", String(spec.maxWallTimeSeconds));
+  if (spec.externalRunId) args.push("--external-run-id", spec.externalRunId);
+  if (spec.experimentId) args.push("--experiment-id", spec.experimentId);
 
   let launchError: unknown | undefined;
 

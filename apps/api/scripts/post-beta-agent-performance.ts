@@ -36,9 +36,9 @@ for (
     const invocation = await runAgentLab({
       objective: objective(journey),
       provider: "deepseek",
+      model: "deepseek-v4-flash",
       mcpUrl,
-      maxTurns: 40,
-      maxToolCalls: 32,
+      profile: "capable_live_journey",
       outputDirectory: runDirectory,
     });
     const oracle = await performanceJourneyOracle(journey);

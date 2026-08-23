@@ -57,6 +57,17 @@ export class FlowService {
     return {
       releaseId: process.env.SCRY_RELEASE_ID ?? "development",
       schemaFingerprint: process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline",
+      sourceIdentity: {
+        gitCommit: process.env.SCRY_GIT_COMMIT ?? "unknown",
+        dirty:
+          process.env.SCRY_SOURCE_DIRTY === "true"
+            ? true
+            : process.env.SCRY_SOURCE_DIRTY === "false"
+              ? false
+              : null,
+        manifestSha256: process.env.SCRY_SOURCE_MANIFEST_SHA256 ?? "unknown",
+        runtimeVersion: process.env.SCRY_RUNTIME_VERSION ?? "unknown",
+      },
       adaptiveExecution: {
         kernel: true,
         authoringTurn: false,
@@ -541,7 +552,18 @@ export class FlowService {
            AND ($3::uuid IS NULL OR p.workspace_id = $3)`,
         [input.flowRevisionId, projectId, workspaceId(principal)],
       );
-      if (!revision.rowCount) throw new NotFoundException("Flow revision not found");
+      if (!revision.rowCount)
+        throw new NotFoundException({
+          code: "FLOW_REVISION_NOT_FOUND",
+          mutationOutcome: "not_applied",
+          projectId,
+          missionId: input.missionId,
+          objectiveId: input.objectiveId,
+          agentSessionId: input.agentSessionId,
+          praxisSessionId: input.praxisSessionId,
+          flowRevisionId: input.flowRevisionId,
+          safeActions: ["publish_flow_draft"],
+        });
       const praxisSession = await query(
         `SELECT 1 FROM adaptive_sessions
          WHERE id=$1 AND project_id=$2 AND mission_id=$3 AND objective_id=$4

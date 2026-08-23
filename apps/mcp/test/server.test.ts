@@ -472,7 +472,6 @@ describe("current Scry MCP surface", () => {
       arguments: {
         missionId: context.missionId,
         instructionSnapshot: "Resume safely",
-        provider: "codex",
         continuationAuthority: {
           confirmedUserAuthorized: true,
           selection: "continue_existing_mission",
@@ -1237,6 +1236,62 @@ describe("current Scry MCP surface", () => {
       },
     });
     expect(JSON.stringify(response)).not.toContain("must-not-escape");
+    await client.close();
+    await server.close();
+  });
+
+  it("classifies a zero Flow revision as an invalid call with structured recovery", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/capabilities"))
+          return Promise.resolve(
+            new Response(JSON.stringify(admittedCapabilities), { status: 200 }),
+          );
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              statusCode: 404,
+              message: {
+                code: "FLOW_REVISION_NOT_FOUND",
+                mutationOutcome: "not_applied",
+                safeActions: ["publish_flow_draft"],
+                flowRevisionId: "00000000-0000-0000-0000-000000000000",
+              },
+            }),
+            { status: 404 },
+          ),
+        );
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "start_run",
+      arguments: {
+        projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        missionId: context.missionId,
+        objectiveId: context.objectiveId,
+        agentSessionId: context.agentSessionId,
+        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        flowRevisionId: "00000000-0000-0000-0000-000000000000",
+        praxisSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      },
+    });
+
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      rejection: {
+        code: "FLOW_REVISION_NOT_FOUND",
+        rejectionClass: "invalid_input",
+        resolution: "correct_input",
+        appliedState: "not_applied",
+        exactIds: {
+          flowRevisionId: "00000000-0000-0000-0000-000000000000",
+        },
+        safeActions: ["publish_flow_draft"],
+      },
+    });
     await client.close();
     await server.close();
   });

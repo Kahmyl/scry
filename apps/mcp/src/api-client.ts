@@ -76,6 +76,7 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "preservesCurrentFlow",
   "missionId",
   "flowDraftId",
+  "flowRevisionId",
   "sessionId",
   "environmentResourceExists",
   "refreshedDecisionBoundary",
@@ -163,7 +164,14 @@ function classifyPublicRejection(
     normalized.includes("FORBIDDEN")
   )
     return "policy_authorization";
-  if (status === 400 || normalized.includes("INVALID") || normalized.includes("VALIDATION"))
+  if (
+    status === 400 ||
+    status === 404 ||
+    normalized.includes("INVALID") ||
+    normalized.includes("VALIDATION") ||
+    normalized.includes("NOT_FOUND") ||
+    normalized.includes("MISSING")
+  )
     return "invalid_input";
   if (
     status >= 500 ||
@@ -211,30 +219,57 @@ function exactIds(context: Record<string, unknown>) {
 
 export class ScryApiClient {
   private capabilitiesPromise?: Promise<ScryCapabilities>;
+  private mcpSessionId?: string;
   constructor(
     readonly baseUrl = process.env.SCRY_API_BASE_URL ?? "http://127.0.0.1:4000/api",
     readonly serviceToken = process.env.SCRY_SERVICE_TOKEN,
     readonly publicBaseUrl = process.env.SCRY_PUBLIC_API_BASE_URL ?? baseUrl,
+    readonly externalAgentIdentity: ExternalAgentIdentity = externalAgentIdentityFromEnvironment(),
   ) {}
+
+  setMcpSessionId(sessionId: string) {
+    this.mcpSessionId = sessionId;
+  }
+
+  missionProvenance() {
+    return {
+      provider: this.externalAgentIdentity.provider,
+      ...(this.externalAgentIdentity.model ? { model: this.externalAgentIdentity.model } : {}),
+      ...(this.externalAgentIdentity.externalRunId
+        ? { externalRunId: this.externalAgentIdentity.externalRunId }
+        : {}),
+      ...(this.externalAgentIdentity.experimentId
+        ? { experimentId: this.externalAgentIdentity.experimentId }
+        : {}),
+    };
+  }
 
   async get<T>(path: string): Promise<T> {
     return this.request(path);
   }
 
   async post<T>(path: string, body: unknown = {}): Promise<T> {
-    return this.request(path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    return this.request(
+      path,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      body,
+    );
   }
 
   async patch<T>(path: string, body: unknown): Promise<T> {
-    return this.request(path, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    return this.request(
+      path,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      body,
+    );
   }
 
   async delete<T>(path: string): Promise<T> {
@@ -295,9 +330,13 @@ export class ScryApiClient {
     };
   }
 
-  private async request<T>(path: string, init?: RequestInit): Promise<T> {
+  private async request<T>(path: string, init?: RequestInit, factualBody?: unknown): Promise<T> {
     const headers = new Headers(init?.headers);
     if (this.serviceToken) headers.set("authorization", `Bearer ${this.serviceToken}`);
+    for (const [name, value] of Object.entries(
+      causalRequestHeaders(path, factualBody, this.externalAgentIdentity, this.mcpSessionId),
+    ))
+      headers.set(name, value);
     const response = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     const body = await response.json().catch(() => undefined);
     if (!response.ok) {
@@ -336,6 +375,95 @@ export class ScryApiClient {
     }
     return body as T;
   }
+}
+
+export type ExternalAgentIdentity = Readonly<{
+  provider: string;
+  model?: string;
+  externalRunId?: string;
+  experimentId?: string;
+  correlationId?: string;
+}>;
+
+const causalHeaderNames = {
+  projectId: "x-scry-project-id",
+  missionId: "x-scry-mission-id",
+  objectiveId: "x-scry-objective-id",
+  agentSessionId: "x-scry-agent-session-id",
+  runId: "x-scry-run-id",
+  attemptId: "x-scry-attempt-id",
+  praxisSessionId: "x-scry-praxis-session-id",
+  operationId: "x-scry-operation-id",
+  protectedOperationId: "x-scry-protected-operation-id",
+} as const;
+
+function causalRequestHeaders(
+  path: string,
+  body: unknown,
+  identity: ExternalAgentIdentity,
+  mcpSessionId?: string,
+) {
+  const exact = exactCausalIds(path, body);
+  return {
+    ...(identity.correlationId ? { "x-correlation-id": identity.correlationId } : {}),
+    ...(mcpSessionId ? { "x-scry-mcp-session-id": mcpSessionId } : {}),
+    ...(identity.externalRunId ? { "x-scry-external-run-id": identity.externalRunId } : {}),
+    ...Object.fromEntries(
+      Object.entries(exact).map(([key, value]) => [
+        causalHeaderNames[key as keyof typeof causalHeaderNames],
+        value,
+      ]),
+    ),
+  };
+}
+
+function exactCausalIds(path: string, body: unknown) {
+  const result: Partial<Record<keyof typeof causalHeaderNames, string>> = {};
+  const pathMappings = [
+    ["projectId", /\/projects\/([^/]+)/],
+    ["missionId", /\/missions\/([^/]+)/],
+    ["runId", /\/runs\/([^/]+)/],
+    ["agentSessionId", /\/agent-sessions\/([^/]+)/],
+    ["praxisSessionId", /\/praxis-sessions\/([^/]+)/],
+  ] as const;
+  for (const [key, pattern] of pathMappings) {
+    const value = pattern.exec(path)?.[1];
+    if (value && boundedCausalIdentity(value)) result[key] = decodeURIComponent(value);
+  }
+  const visit = (value: unknown, depth: number) => {
+    if (!value || typeof value !== "object" || Array.isArray(value) || depth > 3) return;
+    for (const [key, candidate] of Object.entries(value as Record<string, unknown>)) {
+      if (
+        key in causalHeaderNames &&
+        typeof candidate === "string" &&
+        boundedCausalIdentity(candidate)
+      )
+        result[key as keyof typeof causalHeaderNames] ??= candidate;
+      else if (candidate && typeof candidate === "object") visit(candidate, depth + 1);
+    }
+  };
+  visit(body, 0);
+  return result;
+}
+
+function boundedCausalIdentity(value: string) {
+  return value.length >= 1 && value.length <= 200 && !/[\r\n]/.test(value);
+}
+
+function externalAgentIdentityFromEnvironment(): ExternalAgentIdentity {
+  return {
+    provider: process.env.SCRY_EXTERNAL_AGENT_PROVIDER ?? "unknown",
+    ...(process.env.SCRY_EXTERNAL_AGENT_MODEL
+      ? { model: process.env.SCRY_EXTERNAL_AGENT_MODEL }
+      : {}),
+    ...(process.env.SCRY_EXTERNAL_AGENT_RUN_ID
+      ? { externalRunId: process.env.SCRY_EXTERNAL_AGENT_RUN_ID }
+      : {}),
+    ...(process.env.SCRY_EXTERNAL_AGENT_EXPERIMENT_ID
+      ? { experimentId: process.env.SCRY_EXTERNAL_AGENT_EXPERIMENT_ID }
+      : {}),
+    ...(process.env.SCRY_CORRELATION_ID ? { correlationId: process.env.SCRY_CORRELATION_ID } : {}),
+  };
 }
 
 function safeRejectionContext(value: Record<string, unknown> | undefined) {

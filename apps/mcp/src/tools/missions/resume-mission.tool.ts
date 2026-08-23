@@ -37,7 +37,6 @@ export function registerResumeMissionTool(server: McpServer, client: ScryApiClie
       inputSchema: {
         missionId: uuid,
         instructionSnapshot: z.string().trim().min(1).max(20_000),
-        provider: z.enum(["codex", "claude", "scry_agent", "human"]).default("codex"),
         connectionId: z.string().trim().min(1).max(500).optional(),
         continuationAuthority: z
           .object({
@@ -50,9 +49,12 @@ export function registerResumeMissionTool(server: McpServer, client: ScryApiClie
       },
     },
     async ({ missionId, idempotencyKey, ...body }) => {
+      const provenance = client.missionProvenance();
       const session = await client.post(`/missions/${missionId}/agent-sessions`, {
         ...body,
-        idempotencyKey: idempotencyKey ?? stableKey("mission-session", { missionId, ...body }),
+        ...provenance,
+        idempotencyKey:
+          idempotencyKey ?? stableKey("mission-session", { missionId, ...body, ...provenance }),
       });
       const mission = await client.get(`/missions/${missionId}`);
       return result({ session, mission }, "Mission resumed. Follow its persisted resume pointer.");

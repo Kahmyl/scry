@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
@@ -89,6 +90,7 @@ async def run_agent(
             "protocolVersion": snapshot.protocol_version,
             "instructions": snapshot.instructions,
             "instructionsDigest": digest,
+            "runtimeIdentity": snapshot.runtime_identity,
             "tools": [
                 tool.model_dump(mode="json")
                 for tool in snapshot.tools
@@ -122,12 +124,111 @@ async def run_agent(
     repeated_unchanged_observations = 0
     unnecessary_capabilities_calls = 0
     observation_digests: dict[str, str] = {}
+    model_inference_ms = 0
+    mcp_execution_ms = 0
+    time_to_first_mcp_call_ms: int | None = None
+    time_to_first_observation_ms: int | None = None
+    time_to_first_valid_dispatch_ms: int | None = None
+    praxis_startup_ms: int | None = None
+    acquisition_ms = 0
+    dispatch_ms = 0
+    successor_observation_ms = 0
+    evidence_finalization_ms = 0
+    report_composition_ms = 0
     capabilities_directed = any(
         term in spec.objective.lower()
         for term in ("capability", "compatibility", "release")
     )
+    max_turns = int(spec.max_turns or 0)
+    max_tool_calls = int(spec.max_tool_calls or 0)
+    max_wall_time_seconds = int(spec.max_wall_time_seconds or 0)
+    deadline = started + max_wall_time_seconds
 
-    for turn in range(1, spec.max_turns + 1):
+    async def finish(
+        *,
+        status: str,
+        turns: int,
+        completed: bool,
+        failure: str | None = None,
+        final_response: str | None = None,
+        termination_category: str = "unknown",
+    ) -> AgentRunResult:
+        settlement = None
+        if hasattr(mcp, "terminate"):
+            try:
+                settlement = await mcp.terminate(
+                    failure or "EXTERNAL_AGENT_HARNESS_COMPLETED"
+                )
+            except Exception as error:
+                settlement = {
+                    "settled": False,
+                    "reasonCode": "LIFECYCLE_SETTLEMENT_UNAVAILABLE",
+                    "errorClass": type(error).__name__,
+                }
+            transcript.write(
+                "lifecycle_settlement",
+                {
+                    "failure": failure,
+                    "result": settlement,
+                },
+            )
+        return AgentRunResult(
+            status=status,
+            objective=spec.objective,
+            provider=provider_name,
+            model=model_name,
+            mcp_url=spec.mcp_url,
+            mcp_protocol_version=snapshot.protocol_version,
+            mcp_server_info=snapshot.server_info,
+            instructions_digest=digest,
+            advertised_tools=[tool.name for tool in snapshot.tools],
+            budget_profile=spec.profile,
+            budget_limits={
+                "maxTurns": max_turns,
+                "maxToolCalls": max_tool_calls,
+                "maxWallTimeSeconds": max_wall_time_seconds,
+            },
+            runtime_identity=snapshot.runtime_identity,
+            external_run_id=spec.external_run_id,
+            experiment_id=spec.experiment_id,
+            turns=turns,
+            tool_calls=tool_call_count,
+            invalid_calls=invalid_calls,
+            stale_reference_calls=stale_reference_calls,
+            repeated_unchanged_observations=(
+                repeated_unchanged_observations
+            ),
+            unnecessary_capabilities_calls=(
+                unnecessary_capabilities_calls
+            ),
+            completed=completed,
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            latency={
+                "timeToFirstMcpCallMs": time_to_first_mcp_call_ms,
+                "timeToFirstObservationMs": time_to_first_observation_ms,
+                "timeToFirstValidDispatchMs": (
+                    time_to_first_valid_dispatch_ms
+                ),
+                "modelInferenceMs": model_inference_ms,
+                "mcpExecutionMs": mcp_execution_ms,
+                "praxisStartupMs": praxis_startup_ms,
+                "acquisitionMs": acquisition_ms,
+                "dispatchMs": dispatch_ms,
+                "successorObservationMs": successor_observation_ms,
+                "evidenceFinalizationMs": evidence_finalization_ms,
+                "reportCompositionMs": report_composition_ms,
+                "totalJourneyMs": int(
+                    (time.perf_counter() - started) * 1000
+                ),
+            },
+            final_response=final_response,
+            transcript_path=str(transcript.path),
+            failure=failure,
+            termination_category=termination_category,
+            lifecycle_settlement=settlement,
+        )
+
+    for turn in range(1, max_turns + 1):
         transcript.write(
             "model_request",
             {
@@ -137,7 +238,50 @@ async def run_agent(
             },
         )
 
-        response = await model.complete(messages, tools)
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
+            return await finish(
+                status="limit_exceeded",
+                turns=turn - 1,
+                completed=False,
+                failure="MAX_WALL_TIME_EXCEEDED",
+                termination_category="harness_limit",
+            )
+        try:
+            model_started = time.perf_counter()
+            response = await asyncio.wait_for(
+                model.complete(messages, tools),
+                timeout=remaining,
+            )
+            model_inference_ms += int(
+                (time.perf_counter() - model_started) * 1000
+            )
+        except asyncio.TimeoutError:
+            model_inference_ms += int(
+                (time.perf_counter() - model_started) * 1000
+            )
+            return await finish(
+                status="limit_exceeded",
+                turns=turn,
+                completed=False,
+                failure="MAX_WALL_TIME_EXCEEDED",
+                termination_category="harness_limit",
+            )
+        except Exception as error:
+            model_inference_ms += int(
+                (time.perf_counter() - model_started) * 1000
+            )
+            transcript.write(
+                "model_error",
+                {"turn": turn, "errorClass": type(error).__name__},
+            )
+            return await finish(
+                status="failed",
+                turns=turn,
+                completed=False,
+                failure="MODEL_PROVIDER_ERROR",
+                termination_category="provider_error",
+            )
 
         transcript.write(
             "model_response",
@@ -177,68 +321,22 @@ async def run_agent(
         messages.append(assistant_message)
 
         if not response.tool_calls:
-            return AgentRunResult(
+            return await finish(
                 status="completed",
-                objective=spec.objective,
-                provider=provider_name,
-                model=model_name,
-                mcp_url=spec.mcp_url,
-                mcp_protocol_version=snapshot.protocol_version,
-                mcp_server_info=snapshot.server_info,
-                instructions_digest=digest,
-                advertised_tools=[
-                    tool.name
-                    for tool in snapshot.tools
-                ],
                 turns=turn,
-                tool_calls=tool_call_count,
-                invalid_calls=invalid_calls,
-                stale_reference_calls=stale_reference_calls,
-                repeated_unchanged_observations=(
-                    repeated_unchanged_observations
-                ),
-                unnecessary_capabilities_calls=(
-                    unnecessary_capabilities_calls
-                ),
                 completed=True,
-                duration_ms=int(
-                    (time.perf_counter() - started) * 1000
-                ),
                 final_response=response.content,
-                transcript_path=str(transcript.path),
+                termination_category="completed",
             )
 
         for call in response.tool_calls:
-            if tool_call_count >= spec.max_tool_calls:
-                return AgentRunResult(
+            if tool_call_count >= max_tool_calls:
+                return await finish(
                     status="limit_exceeded",
-                    objective=spec.objective,
-                    provider=provider_name,
-                    model=model_name,
-                    mcp_url=spec.mcp_url,
-                    mcp_protocol_version=snapshot.protocol_version,
-                    mcp_server_info=snapshot.server_info,
-                    instructions_digest=digest,
-                    advertised_tools=[
-                        tool.name
-                        for tool in snapshot.tools
-                    ],
                     turns=turn,
-                    tool_calls=tool_call_count,
-                    invalid_calls=invalid_calls,
-                    stale_reference_calls=stale_reference_calls,
-                    repeated_unchanged_observations=(
-                        repeated_unchanged_observations
-                    ),
-                    unnecessary_capabilities_calls=(
-                        unnecessary_capabilities_calls
-                    ),
                     completed=False,
-                    duration_ms=int(
-                        (time.perf_counter() - started) * 1000
-                    ),
-                    transcript_path=str(transcript.path),
                     failure="MAX_TOOL_CALLS_EXCEEDED",
+                    termination_category="harness_limit",
                 )
 
             tool_call_count += 1
@@ -290,11 +388,90 @@ async def run_agent(
                 )
 
                 tool_started = time.perf_counter()
-                result = await mcp.call_tool(
-                    call.name,
-                    parsed,
-                )
+                if time_to_first_mcp_call_ms is None:
+                    time_to_first_mcp_call_ms = int(
+                        (tool_started - started) * 1000
+                    )
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    return await finish(
+                        status="limit_exceeded",
+                        turns=turn,
+                        completed=False,
+                        failure="MAX_WALL_TIME_EXCEEDED",
+                        termination_category="harness_limit",
+                    )
+                try:
+                    result = await asyncio.wait_for(
+                        mcp.call_tool(call.name, parsed),
+                        timeout=remaining,
+                    )
+                except asyncio.TimeoutError:
+                    return await finish(
+                        status="limit_exceeded",
+                        turns=turn,
+                        completed=False,
+                        failure="MAX_WALL_TIME_EXCEEDED",
+                        termination_category="harness_limit",
+                    )
+                except Exception as error:
+                    transcript.write(
+                        "mcp_error",
+                        {
+                            "turn": turn,
+                            "toolCallId": call.id,
+                            "tool": call.name,
+                            "errorClass": type(error).__name__,
+                        },
+                    )
+                    return await finish(
+                        status="failed",
+                        turns=turn,
+                        completed=False,
+                        failure="MCP_TOOL_TRANSPORT_ERROR",
+                        termination_category="mcp_error",
+                    )
                 tool_payload = result.for_model()
+                tool_duration_ms = int(
+                    (time.perf_counter() - tool_started) * 1000
+                )
+                mcp_execution_ms += tool_duration_ms
+                if _observation_tool(call.name) and time_to_first_observation_ms is None:
+                    time_to_first_observation_ms = int(
+                        (time.perf_counter() - started) * 1000
+                    )
+                if call.name == "start_praxis_session" and praxis_startup_ms is None:
+                    praxis_startup_ms = tool_duration_ms
+                if call.name in {
+                    "list_project_credentials",
+                    "create_project_credential",
+                    "authorize_environment_credentials",
+                }:
+                    acquisition_ms += tool_duration_ms
+                if call.name == "dispatch_run_operation":
+                    dispatch_ms += tool_duration_ms
+                    if not tool_payload.get("isError"):
+                        if time_to_first_valid_dispatch_ms is None:
+                            time_to_first_valid_dispatch_ms = int(
+                                (time.perf_counter() - started) * 1000
+                            )
+                        structured = tool_payload.get("structuredContent")
+                        if (
+                            isinstance(structured, dict)
+                            and isinstance(structured.get("result"), dict)
+                            and structured["result"].get("successorObservation")
+                        ):
+                            successor_observation_ms += tool_duration_ms
+                if call.name in {
+                    "finalize_run",
+                    "accept_objective_evidence",
+                }:
+                    evidence_finalization_ms += tool_duration_ms
+                if call.name in {
+                    "preview_mission_report",
+                    "publish_mission_report",
+                }:
+                    report_composition_ms += tool_duration_ms
 
                 rejection = _rejection(tool_payload)
                 if rejection is not None:
@@ -340,13 +517,7 @@ async def run_agent(
                         "turn": turn,
                         "toolCallId": call.id,
                         "tool": call.name,
-                        "durationMs": int(
-                            (
-                                time.perf_counter()
-                                - tool_started
-                            )
-                            * 1000
-                        ),
+                        "durationMs": tool_duration_ms,
                         "result": tool_payload,
                     },
                 )
@@ -363,33 +534,10 @@ async def run_agent(
                 }
             )
 
-    return AgentRunResult(
+    return await finish(
         status="limit_exceeded",
-        objective=spec.objective,
-        provider=provider_name,
-        model=model_name,
-        mcp_url=spec.mcp_url,
-        mcp_protocol_version=snapshot.protocol_version,
-        mcp_server_info=snapshot.server_info,
-        instructions_digest=digest,
-        advertised_tools=[
-            tool.name
-            for tool in snapshot.tools
-        ],
-        turns=spec.max_turns,
-        tool_calls=tool_call_count,
-        invalid_calls=invalid_calls,
-        stale_reference_calls=stale_reference_calls,
-        repeated_unchanged_observations=(
-            repeated_unchanged_observations
-        ),
-        unnecessary_capabilities_calls=(
-            unnecessary_capabilities_calls
-        ),
+        turns=max_turns,
         completed=False,
-        duration_ms=int(
-            (time.perf_counter() - started) * 1000
-        ),
-        transcript_path=str(transcript.path),
         failure="MAX_TURNS_EXCEEDED",
+        termination_category="harness_limit",
     )

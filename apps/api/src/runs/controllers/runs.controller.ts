@@ -8,12 +8,12 @@ import {
   type FinalizeAgentDirectedRunInput,
 } from "@scry/contracts";
 
-import { ScryRepository } from "../access/index.js";
-import { CurrentPrincipal, type Principal } from "../auth/index.js";
-import { RunQueueService } from "../runtime/index.js";
-import { RunObservationService } from "./services/run-observation.service.js";
-import { AgentDirectedRunService } from "./services/agent-directed-run.service.js";
-import { ZodValidationPipe } from "../common/validation.pipe.js";
+import { ScryRepository } from "../../access/index.js";
+import { CurrentPrincipal, type Principal } from "../../auth/index.js";
+import { ZodValidationPipe } from "../../common/validation.pipe.js";
+import { RunQueueService } from "../../runtime/index.js";
+import { AgentDirectedRunService } from "../services/agent-directed-run.service.js";
+import { RunObservationService } from "../services/run-observation.service.js";
 
 @Controller("api/runs")
 export class RunsController {

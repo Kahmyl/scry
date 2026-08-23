@@ -125,14 +125,24 @@ export class MissionService {
         [missionId, projectId, input.title, input.originalInstruction, purpose],
       );
       await query(
-        `INSERT INTO agent_sessions(id,mission_id,provider,connection_id,instruction_snapshot,idempotency_key) VALUES($1,$2,$3,$4,$5,$6)`,
+        `INSERT INTO agent_sessions(
+           id,mission_id,provider,model,external_run_id,experiment_id,connection_id,
+           instruction_snapshot,idempotency_key,heartbeat_at,lease_expires_at
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,
+           CASE WHEN $5::uuid IS NULL THEN NULL ELSE now() END,
+           CASE WHEN $5::uuid IS NULL THEN NULL ELSE now()+($10::text || ' milliseconds')::interval END
+         )`,
         [
           agentSessionId,
           missionId,
           input.provider,
+          input.model ?? null,
+          input.externalRunId ?? null,
+          input.experimentId ?? null,
           input.connectionId ?? null,
           input.instructionSnapshot,
           input.idempotencyKey,
+          externalAgentLeaseMs(),
         ],
       );
       await this.activity(
@@ -145,6 +155,10 @@ export class MissionService {
         {
           projectId,
           purpose,
+          provider: input.provider,
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.externalRunId ? { externalRunId: input.externalRunId } : {}),
+          ...(input.experimentId ? { experimentId: input.experimentId } : {}),
           ...(input.distinctReason
             ? {
                 distinctReason: input.distinctReason,
@@ -452,18 +466,28 @@ export class MissionService {
         };
       const agentSessionId = randomUUID();
       await query(
-        `INSERT INTO agent_sessions(id,mission_id,provider,connection_id,instruction_snapshot,idempotency_key) VALUES($1,$2,$3,$4,$5,$6)`,
+        `INSERT INTO agent_sessions(
+           id,mission_id,provider,model,external_run_id,experiment_id,connection_id,
+           instruction_snapshot,idempotency_key,heartbeat_at,lease_expires_at
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,
+           CASE WHEN $5::uuid IS NULL THEN NULL ELSE now() END,
+           CASE WHEN $5::uuid IS NULL THEN NULL ELSE now()+($10::text || ' milliseconds')::interval END
+         )`,
         [
           agentSessionId,
           missionId,
           input.provider,
+          input.model ?? null,
+          input.externalRunId ?? null,
+          input.experimentId ?? null,
           input.connectionId ?? null,
           input.instructionSnapshot,
           input.idempotencyKey,
+          externalAgentLeaseMs(),
         ],
       );
       await query(
-        `UPDATE missions SET status=CASE WHEN status='planning' THEN 'running' ELSE status END,updated_at=now(),revision=revision+1 WHERE id=$1`,
+        `UPDATE missions SET status=CASE WHEN status IN ('planning','blocked') THEN 'running' ELSE status END,updated_at=now(),revision=revision+1 WHERE id=$1`,
         [missionId],
       );
       await this.activity(
@@ -474,6 +498,10 @@ export class MissionService {
         "agent_session_started",
         `Agent session started (${input.provider})`,
         {
+          provider: input.provider,
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.externalRunId ? { externalRunId: input.externalRunId } : {}),
+          ...(input.experimentId ? { experimentId: input.experimentId } : {}),
           continuationAuthority: {
             confirmedUserAuthorized: true,
             selection: input.continuationAuthority.selection,
@@ -2625,4 +2653,11 @@ function bindQuery(client: PoolClient): Query {
 }
 function workspaceId(principal: Principal) {
   return principal.kind === "user" ? principal.workspaceId : null;
+}
+
+function externalAgentLeaseMs() {
+  const value = Number(process.env.SCRY_EXTERNAL_AGENT_LEASE_MS ?? 180_000);
+  if (!Number.isSafeInteger(value) || value < 30_000 || value > 3_600_000)
+    throw new Error("SCRY_EXTERNAL_AGENT_LEASE_MS_INVALID");
+  return value;
 }

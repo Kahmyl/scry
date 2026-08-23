@@ -88,9 +88,7 @@ export function installApiRequestObservability(
         reasonCode: responseCode ?? `API_REQUEST_REJECTED_${status}`,
         outcome: "refused",
         causality: {
-          ...(firstHeader(request.headers["x-correlation-id"])
-            ? { correlationId: firstHeader(request.headers["x-correlation-id"])! }
-            : {}),
+          ...requestCausality(request.headers),
         },
         details: {
           method: request.method,
@@ -143,6 +141,29 @@ function rejectionClassification(
 
 function firstHeader(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
+}
+
+const causalRequestHeaders = {
+  "x-scry-project-id": "projectId",
+  "x-scry-mission-id": "missionId",
+  "x-scry-objective-id": "objectiveId",
+  "x-scry-agent-session-id": "agentSessionId",
+  "x-scry-mcp-session-id": "mcpSessionId",
+  "x-scry-run-id": "runId",
+  "x-scry-attempt-id": "attemptId",
+  "x-scry-praxis-session-id": "praxisSessionId",
+  "x-scry-operation-id": "operationId",
+  "x-scry-protected-operation-id": "protectedOperationId",
+  "x-correlation-id": "correlationId",
+} as const;
+
+function requestCausality(headers: Record<string, string | string[] | undefined>) {
+  return Object.fromEntries(
+    Object.entries(causalRequestHeaders).flatMap(([header, key]) => {
+      const value = firstHeader(headers[header]);
+      return value && value.length <= 200 && !/[\r\n]/.test(value) ? [[key, value]] : [];
+    }),
+  );
 }
 
 function configuredInteger(name: string, fallback: number, minimum: number, maximum: number) {

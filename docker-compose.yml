@@ -31,9 +31,11 @@ x-app-environment: &app-environment
 
 x-release-environment: &release-environment
   SCRY_RELEASE_ID: "${SCRY_RELEASE_ID:-local-20260806-compiled-plan}"
-  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-ebbbf9d86305999f6cdfda6e1d980d36736619c271fb69a70a3f62665e09dadc}"
+  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-9aff049c5adfe3ada8e431d74995518a72b23657d3f9458e2407c6cc7b87c39e}"
   SCRY_GIT_COMMIT: "${SCRY_GIT_COMMIT:-development}"
   SCRY_RUNTIME_VERSION: "${SCRY_RUNTIME_VERSION:-development}"
+  SCRY_SOURCE_DIRTY: "${SCRY_SOURCE_DIRTY:-unknown}"
+  SCRY_SOURCE_MANIFEST_SHA256: "${SCRY_SOURCE_MANIFEST_SHA256:-unknown}"
 
 x-node-build: &node-build
   context: .

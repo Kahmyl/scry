@@ -2,7 +2,21 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+BUDGET_PROFILES = {
+    "smoke": {
+        "max_turns": 20,
+        "max_tool_calls": 15,
+        "max_wall_time_seconds": 300,
+    },
+    "capable_live_journey": {
+        "max_turns": 80,
+        "max_tool_calls": 100,
+        "max_wall_time_seconds": 3600,
+    },
+}
 
 
 class McpTool(BaseModel):
@@ -16,6 +30,7 @@ class McpSnapshot(BaseModel):
     protocol_version: str | None = None
     instructions: str | None = None
     tools: list[McpTool]
+    runtime_identity: dict[str, Any] | None = None
 
 
 class McpToolResult(BaseModel):
@@ -34,8 +49,29 @@ class McpToolResult(BaseModel):
 class AgentRunSpec(BaseModel):
     objective: str
     mcp_url: str = "http://127.0.0.1:4100/mcp"
-    max_turns: int = Field(default=20, ge=1, le=100)
-    max_tool_calls: int = Field(default=15, ge=1, le=100)
+    external_run_id: str | None = None
+    experiment_id: str | None = None
+    profile: Literal["smoke", "capable_live_journey"] = "smoke"
+    max_turns: int | None = Field(default=None, ge=1, le=200)
+    max_tool_calls: int | None = Field(default=None, ge=1, le=250)
+    max_wall_time_seconds: int | None = Field(
+        default=None,
+        ge=10,
+        le=7200,
+    )
+
+    @model_validator(mode="after")
+    def resolve_budget_profile(self) -> "AgentRunSpec":
+        defaults = BUDGET_PROFILES[self.profile]
+        if self.max_turns is None:
+            self.max_turns = defaults["max_turns"]
+        if self.max_tool_calls is None:
+            self.max_tool_calls = defaults["max_tool_calls"]
+        if self.max_wall_time_seconds is None:
+            self.max_wall_time_seconds = defaults[
+                "max_wall_time_seconds"
+            ]
+        return self
 
 
 class AgentRunResult(BaseModel):
@@ -48,6 +84,11 @@ class AgentRunResult(BaseModel):
     mcp_server_info: dict[str, Any] | None = None
     instructions_digest: str | None = None
     advertised_tools: list[str]
+    budget_profile: str = "smoke"
+    budget_limits: dict[str, int] = Field(default_factory=dict)
+    runtime_identity: dict[str, Any] | None = None
+    external_run_id: str | None = None
+    experiment_id: str | None = None
     turns: int
     tool_calls: int
     invalid_calls: int = 0
@@ -56,6 +97,15 @@ class AgentRunResult(BaseModel):
     unnecessary_capabilities_calls: int = 0
     completed: bool = False
     duration_ms: int
+    latency: dict[str, int | None] = Field(default_factory=dict)
     final_response: str | None = None
     transcript_path: str
     failure: str | None = None
+    termination_category: Literal[
+        "completed",
+        "harness_limit",
+        "provider_error",
+        "mcp_error",
+        "unknown",
+    ] = "unknown"
+    lifecycle_settlement: dict[str, Any] | None = None

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
-import { ScryApiClient } from "./api-client.js";
+import { ScryApiClient, type ExternalAgentIdentity } from "./api-client.js";
 import { createScryMcpServer } from "./server.js";
 import { observeMcpRequestRejected } from "./operational-events.js";
 
@@ -21,6 +21,7 @@ const allowedOrigins = new Set(
 type McpHttpSession = Readonly<{
   server: ReturnType<typeof createScryMcpServer>;
   transport: StreamableHTTPServerTransport;
+  api: ScryApiClient;
   tokenDigest: string;
 }>;
 
@@ -28,6 +29,36 @@ const mcpSessions = new Map<string, McpHttpSession>();
 
 const httpServer = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+
+  if (
+    ["/agent-lab/heartbeat", "/agent-lab/terminate"].includes(url.pathname) &&
+    request.method === "POST"
+  ) {
+    const token = bearerToken(request.headers.authorization);
+    const identity = externalAgentIdentity(request);
+    if (!token) {
+      json(response, 401, { code: "MCP_ACCESS_TOKEN_REQUIRED" });
+      return;
+    }
+    if (!identity.externalRunId) {
+      json(response, 400, { code: "EXTERNAL_AGENT_RUN_ID_REQUIRED" });
+      return;
+    }
+    try {
+      const api = new ScryApiClient(apiBaseUrl, token, publicApiBaseUrl, identity);
+      const result =
+        url.pathname === "/agent-lab/heartbeat"
+          ? await api.post(`/external-agent-runs/${identity.externalRunId}/heartbeat`)
+          : await api.post(
+              `/external-agent-runs/${identity.externalRunId}/terminate`,
+              await readJsonBody(request),
+            );
+      json(response, 200, result);
+    } catch {
+      json(response, 503, { settled: false, reasonCode: "AGENT_LIFECYCLE_CONTROL_UNAVAILABLE" });
+    }
+    return;
+  }
 
   if (url.pathname === "/health" && request.method === "GET") {
     try {
@@ -102,7 +133,13 @@ const httpServer = createServer(async (request, response) => {
   }
 
   if (session === undefined) {
-    const server = createScryMcpServer(new ScryApiClient(apiBaseUrl, token, publicApiBaseUrl));
+    const api = new ScryApiClient(
+      apiBaseUrl,
+      token,
+      publicApiBaseUrl,
+      externalAgentIdentity(request),
+    );
+    const server = createScryMcpServer(api);
 
     let initializedSession: McpHttpSession | undefined;
 
@@ -110,9 +147,11 @@ const httpServer = createServer(async (request, response) => {
       sessionIdGenerator: () => randomUUID(),
       enableJsonResponse: true,
       onsessioninitialized: (sessionId) => {
+        api.setMcpSessionId(sessionId);
         initializedSession = {
           server,
           transport,
+          api,
           tokenDigest,
         };
 
@@ -129,6 +168,7 @@ const httpServer = createServer(async (request, response) => {
     session = {
       server,
       transport,
+      api,
       tokenDigest,
     };
 
@@ -191,6 +231,30 @@ function firstHeader(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
+function externalAgentIdentity(request: IncomingMessage): ExternalAgentIdentity {
+  const provider = boundedHeader(request, "x-scry-agent-provider", /^[a-z0-9][a-z0-9._-]{0,99}$/);
+  const model = boundedHeader(request, "x-scry-agent-model");
+  const externalRunId = boundedHeader(request, "x-scry-external-run-id", uuidPattern);
+  const experimentId = boundedHeader(request, "x-scry-experiment-id");
+  const correlationId = boundedHeader(request, "x-correlation-id");
+  return {
+    provider: provider ?? "unknown",
+    ...(model ? { model } : {}),
+    ...(externalRunId ? { externalRunId } : {}),
+    ...(experimentId ? { experimentId } : {}),
+    ...(correlationId ? { correlationId } : {}),
+  };
+}
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function boundedHeader(request: IncomingMessage, name: string, pattern?: RegExp) {
+  const value = firstHeader(request.headers[name]);
+  if (!value || value.length > 200 || /[\r\n]/.test(value) || (pattern && !pattern.test(value)))
+    return undefined;
+  return value;
+}
+
 function mcpError(code: number, message: string) {
   return { jsonrpc: "2.0", error: { code, message }, id: null };
 }
@@ -198,4 +262,20 @@ function mcpError(code: number, message: string) {
 function json(response: ServerResponse, status: number, body: unknown) {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
+}
+
+async function readJsonBody(request: IncomingMessage) {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > 4_096) throw new Error("CONTROL_BODY_TOO_LARGE");
+    chunks.push(buffer);
+  }
+  if (!chunks.length) return {};
+  const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("CONTROL_BODY_INVALID");
+  return value;
 }

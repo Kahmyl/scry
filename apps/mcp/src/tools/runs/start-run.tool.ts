@@ -15,7 +15,7 @@ import {
 } from "@scry/contracts";
 import { z } from "zod";
 
-import type { ScryApiClient } from "../../api-client.js";
+import { apiRejection, ScryApiError, type ScryApiClient } from "../../api-client.js";
 import {
   missionContext,
   objectiveContext,
@@ -56,13 +56,21 @@ export function registerStartRunTool(server: McpServer, client: ScryApiClient) {
       annotations: idempotentDurableWrite,
     },
     async ({ projectId, idempotencyKey, ...body }) => {
-      await client.requireCurrentRelease();
-      const run = await client.post<Record<string, unknown>>(`/projects/${projectId}/runs`, {
-        ...body,
-        browser: "chromium",
-        idempotencyKey: idempotencyKey ?? stableKey("run", { projectId, ...body }),
-      });
-      return result({ run }, "Agent-directed Run ledger opened.");
+      try {
+        await client.requireCurrentRelease();
+        const run = await client.post<Record<string, unknown>>(`/projects/${projectId}/runs`, {
+          ...body,
+          browser: "chromium",
+          idempotencyKey: idempotencyKey ?? stableKey("run", { projectId, ...body }),
+        });
+        return result({ run }, "Agent-directed Run ledger opened.");
+      } catch (error) {
+        if (!(error instanceof ScryApiError)) throw error;
+        return {
+          ...result({ rejection: apiRejection(error) }, "Run creation was rejected."),
+          isError: true,
+        };
+      }
     },
   );
 }

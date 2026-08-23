@@ -40,7 +40,6 @@ export function registerStartMissionTool(server: McpServer, client: ScryApiClien
         title: z.string().trim().min(1).max(200),
         originalInstruction: z.string().trim().min(1).max(20_000),
         instructionSnapshot: z.string().trim().min(1).max(20_000),
-        provider: z.enum(["codex", "claude", "scry_agent", "human"]).default("codex"),
         connectionId: z.string().trim().min(1).max(500).optional(),
         purpose: missionPurposeSchema.default("primary"),
         idempotencyKey: z.string().trim().min(8).max(200).optional(),
@@ -55,13 +54,17 @@ export function registerStartMissionTool(server: McpServer, client: ScryApiClien
           .optional(),
       },
     },
-    async ({ projectId, idempotencyKey, ...body }) =>
-      result(
+    async ({ projectId, idempotencyKey, ...body }) => {
+      const provenance = client.missionProvenance();
+      return result(
         await client.post(`/projects/${projectId}/missions`, {
           ...body,
-          idempotencyKey: idempotencyKey ?? stableKey("mission", { projectId, ...body }),
+          ...provenance,
+          idempotencyKey:
+            idempotencyKey ?? stableKey("mission", { projectId, ...body, ...provenance }),
         }),
         "Mission and agent session started. Pass both IDs to every later write.",
-      ),
+      );
+    },
   );
 }

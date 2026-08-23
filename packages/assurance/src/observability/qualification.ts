@@ -22,7 +22,8 @@ export type ObservabilityFaultCaseId =
   | "reconciliation_ambiguity"
   | "artifact_store_failure"
   | "report_finalization_failure"
-  | "observability_sink_failure";
+  | "observability_sink_failure"
+  | "external_agent_harness_termination";
 
 export type QualifiedMutationTruth = "not_applicable" | "not_applied" | "applied" | "unknown";
 export type QualifiedRetrySemantics =
@@ -63,7 +64,8 @@ export type SafeDiagnosticAction =
   | "reconcile_external_effect_before_any_redispatch"
   | "restore_artifact_store_and_finalize_without_redispatch"
   | "inspect_report_blockers_and_retry_finalization_only"
-  | "use_fallback_evidence_and_restore_the_durable_sink";
+  | "use_fallback_evidence_and_restore_the_durable_sink"
+  | "resume_mission_after_harness_recovery";
 
 export interface ObservabilityFaultCase {
   id: ObservabilityFaultCaseId;
@@ -487,6 +489,33 @@ export const observabilityFaultMatrix: readonly ObservabilityFaultCase[] = [
     expectedTruth: truth("applied", "report_blocked", "report_not_finalized", "do_not_retry"),
     requiredEvents: reportFailureEvents("REPORT_FINALIZATION_FAILED"),
     safeAction: "inspect_report_blockers_and_retry_finalization_only",
+    availabilityDeadlineMs: 2_000,
+  }),
+  defineFault({
+    id: "external_agent_harness_termination",
+    title: "External-agent harness limit termination",
+    injectedFault: "The finite external-agent turn, tool, or wall-time ceiling is reached",
+    expectedTruth: truth(
+      "not_applicable",
+      "blocked",
+      "owned_lifecycles_settled_with_resume_pointer",
+      "safe_after_correction",
+    ),
+    requiredEvents: [
+      requiredEvent(
+        "external_agent.lifecycle_settled",
+        "runtime",
+        "infrastructure",
+        "MAX_TOOL_CALLS_EXCEEDED",
+        "failed",
+        ["projectId", "missionId", "objectiveId", "agentSessionId", "runId", "correlationId"],
+        {
+          details: { harnessLimit: true, reconciliationRequired: false },
+          transition: { from: "active", to: "interrupted" },
+        },
+      ),
+    ],
+    safeAction: "resume_mission_after_harness_recovery",
     availabilityDeadlineMs: 2_000,
   }),
   defineFault({

@@ -139,6 +139,10 @@ const missionDiagnosticIsolation = await readFile(
   new URL("mission-diagnostic-isolation.sql", root),
   "utf8",
 );
+const externalAgentLifecycle = await readFile(
+  new URL("external-agent-lifecycle.sql", root),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -180,6 +184,7 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "u
   ["mission-recording-selection.sql", missionRecordingSelection],
   ["operational-events.sql", operationalEvents],
   ["mission-diagnostic-isolation.sql", missionDiagnosticIsolation],
+  ["external-agent-lifecycle.sql", externalAgentLifecycle],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

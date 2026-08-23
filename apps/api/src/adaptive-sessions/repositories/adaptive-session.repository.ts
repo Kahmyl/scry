@@ -176,12 +176,20 @@ export class AdaptiveSessionRepository {
         ],
       );
       await q(
-        `INSERT INTO agent_sessions(id,mission_id,provider,connection_id,instruction_snapshot,idempotency_key)
-        VALUES($1,$2,$3,$4,$5,$6)`,
+        `INSERT INTO agent_sessions(
+           id,mission_id,provider,model,external_run_id,experiment_id,connection_id,
+           instruction_snapshot,idempotency_key,heartbeat_at,lease_expires_at
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,
+           CASE WHEN $5::uuid IS NULL THEN NULL ELSE now() END,
+           CASE WHEN $5::uuid IS NULL THEN NULL ELSE now()+interval '3 minutes' END
+         )`,
         [
           agentSessionId,
           missionId,
           input.mission.provider,
+          input.mission.model ?? null,
+          input.mission.externalRunId ?? null,
+          input.mission.experimentId ?? null,
           input.mission.connectionId ?? null,
           input.mission.instructionSnapshot,
           `prepare:${idempotencyKey}`,
@@ -2943,6 +2951,65 @@ export class AdaptiveSessionRepository {
         ],
       );
       return { replayed: false };
+    });
+  }
+
+  async settleExternalOwnerLoss(input: {
+    workspaceId: string | null;
+    sessionId: string;
+    idempotencyKey: string;
+    reasonCode: string;
+  }) {
+    return this.database.transaction(async (client) => {
+      const q = bind(client);
+      const session = await this.requireSession(q, input.workspaceId, input.sessionId, true);
+      if (["completed", "failed", "cancelled", "recovery_required"].includes(session.state))
+        return {
+          state: session.state,
+          reconciliationRequired: session.state === "recovery_required",
+          replayed: true,
+        };
+      const unsafe = await q<{ unknown: boolean }>(
+        `SELECT COALESCE(bool_or(
+           operation.mutation_outcome='unknown'
+           AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id)
+         ),false) AS unknown
+         FROM adaptive_operations operation
+         WHERE operation.session_id=$1
+           AND (
+             operation.state='running'
+             OR (
+               operation.mutation_outcome='unknown'
+               AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id)
+             )
+           )`,
+        [input.sessionId],
+      );
+      const unknownMutationOutcome = Boolean(unsafe.rows[0]?.unknown);
+      const running = await q(
+        `SELECT 1 FROM adaptive_operations WHERE session_id=$1 AND state='running' LIMIT 1`,
+        [input.sessionId],
+      );
+      const reconciliationRequired = unknownMutationOutcome || Boolean(running.rowCount);
+      const target = reconciliationRequired ? "recovery_required" : "cancelled";
+      await this.transitionLocked(
+        q,
+        input.sessionId,
+        session.state,
+        target,
+        target === "recovery_required" ? "recovery_required" : "session_cancelled",
+        {
+          reasonCode: input.reasonCode,
+          externalOwnerLost: true,
+          mutationOutcome: unknownMutationOutcome
+            ? "unknown"
+            : running.rowCount
+              ? "preserved"
+              : "not_applicable",
+        },
+        input.idempotencyKey,
+      );
+      return { state: target, reconciliationRequired, replayed: false };
     });
   }
 
