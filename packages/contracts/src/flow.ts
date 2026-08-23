@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { flowRevisionContentSchema, nameSchema, uuidSchema } from "./api.js";
 import { currentPlanSchema } from "./current.js";
+import { operationOutcomeSchema } from "./execution-kernel.js";
 import { missionAuthoringIntentSchema } from "./authoring.js";
 import { flowPurposeSchema, flowVisibilitySchema, objectiveContextSchema } from "./mission.js";
 import { outcomeClassificationSchema } from "./run.js";
@@ -166,6 +167,24 @@ export const dispatchedRunOperationResultSchema = z
         reasonCodes: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/)).max(8),
       })
       .strict(),
+    successorObservation: z
+      .object({
+        documentEpoch: z.number().int().nonnegative(),
+        url: z.string().url(),
+        semanticPageContext: operationOutcomeSchema.shape.semanticPageContext.unwrap(),
+      })
+      .strict()
+      .superRefine((observation, context) => {
+        if (
+          observation.documentEpoch !== observation.semanticPageContext.authority.documentEpoch ||
+          observation.url !== observation.semanticPageContext.authority.url
+        )
+          context.addIssue({
+            code: "custom",
+            message: "successor observation authority must match its semantic page context",
+          });
+      })
+      .optional(),
     reasonCode: z
       .string()
       .regex(/^[A-Z][A-Z0-9_]*$/)

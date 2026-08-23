@@ -153,6 +153,15 @@ export class AgentDirectedRunService {
       privacyApplicable: operation.privacyApplicable,
       privacyResult: operation.privacyResult,
       evidence: operation.evidence,
+      ...(operation.semanticPageContext
+        ? {
+            successorObservation: {
+              documentEpoch: operation.semanticPageContext.authority.documentEpoch,
+              url: operation.semanticPageContext.authority.url,
+              semanticPageContext: operation.semanticPageContext,
+            },
+          }
+        : {}),
       ...(operation.reasonCode ? { reasonCode: operation.reasonCode } : {}),
       replayed: false,
     });

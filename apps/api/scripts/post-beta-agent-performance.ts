@@ -102,6 +102,7 @@ function objective(journey: PerformanceJourney) {
     `The user explicitly chooses to continue Mission ${journey.missionId} in Project ${journey.projectId}. Resume that exact Mission and use only the returned active agentSessionId.`,
     `Complete Objective ${journey.objectiveId} using the already published Flow revision ${journey.flowRevisionId}, environment ${journey.environmentId}, and Flow draft ${journey.flowDraftId}.`,
     `Use the current agent-directed lifecycle: start one ordinary Praxis session, observe exact opaque references, start one Run, and dispatch exactly one operation at a time.`,
+    `After each succeeded dispatch, use its factual successorObservation for the next semantic decision; do not make a redundant observe_praxis_session call unless that observation is absent or the dispatch failed.`,
     `On the deterministic fixture, activate Open controls using its exact observed reference, then dispatch an ordinary navigation to ${journey.fixtureOrigin}/details, observe the new document, and verify the heading Execution complete.`,
     `After factual verification, explicitly finalize the Run as passed and close the Praxis session.`,
     `This is ordinary local fixture work: use no credentials, no protected authorization, no provider mutation, no capabilities call, and get_operating_context at most once.`,

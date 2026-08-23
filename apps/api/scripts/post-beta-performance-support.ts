@@ -180,7 +180,7 @@ export async function runScriptedPerformanceJourney(
         operation.kind === "activate"
           ? exactControl(observation, operation.role, operation.name)
           : undefined;
-      await call("dispatch_run_operation", {
+      const dispatched = await call("dispatch_run_operation", {
         runId,
         praxisSessionId,
         intent: {
@@ -209,7 +209,9 @@ export async function runScriptedPerformanceJourney(
           protectedInputReferences: [],
         },
       });
-      observation = observationFrom(await call("observe_praxis_session", { praxisSessionId }));
+      observation = useSuccessorObservation()
+        ? successorObservationFrom(dispatched)
+        : observationFrom(await call("observe_praxis_session", { praxisSessionId }));
     }
     exactControl(observation, "heading", "Execution complete");
     const finalized = await call("finalize_run", {
@@ -283,6 +285,16 @@ function exactControl(observation: PraxisObservation, role: string, name: string
 
 function observationFrom(value: Record<string, unknown>): PraxisObservation {
   return value.observation as PraxisObservation;
+}
+
+function successorObservationFrom(value: Record<string, unknown>): PraxisObservation {
+  const observation = object(value.result).successorObservation;
+  if (!observation) throw new Error("PERFORMANCE_SUCCESSOR_OBSERVATION_MISSING");
+  return observation as PraxisObservation;
+}
+
+function useSuccessorObservation() {
+  return process.env.SCRY_PERFORMANCE_USE_SUCCESSOR_OBSERVATION === "true";
 }
 
 function structured(value: unknown): Record<string, unknown> {

@@ -73,6 +73,8 @@ describe("current Scry MCP surface", () => {
     const dispatch = tools.find(({ name }) => name === "dispatch_run_operation")!;
     expect(dispatch.description).toContain("semantic-only targets");
     expect(dispatch.description).toContain("no selector fallback");
+    expect(dispatch.description).toContain("successorObservation");
+    expect(dispatch.description).toContain("next semantic decision");
     expect(dispatch.description).toContain("protectedReferenceId");
     expect(dispatch.description).toContain("protectedInputReferences");
     expect(dispatch.description).toContain("Do not send value or valueSource");

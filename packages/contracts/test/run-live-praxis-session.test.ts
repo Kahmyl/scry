@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dispatchRunOperationSchema } from "../src/flow.js";
+import { dispatchedRunOperationResultSchema, dispatchRunOperationSchema } from "../src/flow.js";
 
 const id = (digit: string) =>
   `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
@@ -37,6 +37,44 @@ describe("agent-directed Run live Praxis binding", () => {
       command(`context-control-${"b".repeat(32)}`, id("4")),
     );
     expect(parsed.praxisSessionId).toBe(id("4"));
+  });
+
+  it("binds a successor observation to its exact document authority", () => {
+    const result = {
+      runId: id("1"),
+      praxisSessionId: id("2"),
+      operationId: "operation-1",
+      artifactRefs: [],
+      intentId: "intent-1",
+      functionalResult: "succeeded",
+      mutationOutcome: "not_applied",
+      privacyApplicable: false,
+      privacyResult: "verified",
+      evidence: { state: "available", count: 0, reasonCodes: [] },
+      successorObservation: {
+        documentEpoch: 4,
+        url: "https://example.test/next",
+        semanticPageContext: {
+          schemaVersion: 2,
+          authority: {
+            pageId: "page-1",
+            documentEpoch: 4,
+            url: "https://example.test/next",
+            title: "Next",
+            readiness: "stable",
+          },
+          completeness: { kind: "bounded", observed: 0, returned: 0, truncated: false },
+          controls: [],
+        },
+      },
+      replayed: false,
+    };
+    expect(dispatchedRunOperationResultSchema.parse(result).successorObservation).toMatchObject({
+      documentEpoch: 4,
+      url: "https://example.test/next",
+    });
+    result.successorObservation.documentEpoch = 5;
+    expect(dispatchedRunOperationResultSchema.safeParse(result).success).toBe(false);
   });
 
   it("defaults an omitted expected effect to a non-authoritative mechanical assertion", () => {

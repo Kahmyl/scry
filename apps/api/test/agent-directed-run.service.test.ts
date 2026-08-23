@@ -35,10 +35,12 @@ const intent = {
   protectedInputReferences: [],
 };
 
-function harness(associated = true) {
+function harness(associated = true, existingSafeResult?: Record<string, unknown>) {
   const query = vi.fn(async (sql: string) => {
     if (sql.includes("FROM run_operation_links") && sql.includes("operation_id"))
-      return { rowCount: 0, rows: [] };
+      return existingSafeResult
+        ? { rowCount: 1, rows: [{ operationId: "m2-operation", safeResult: existingSafeResult }] }
+        : { rowCount: 0, rows: [] };
     if (sql.includes('operation_id AS "operationId"'))
       return { rowCount: 1, rows: [{ operationId: "m2-operation" }] };
     if (sql.includes("FROM runs r") && sql.includes("run_praxis_sessions"))
@@ -81,6 +83,25 @@ function harness(associated = true) {
           privacyApplicable: false,
           privacyResult: "verified",
           evidence: { state: "available", count: 0, reasonCodes: [] },
+          semanticPageContext: {
+            schemaVersion: 2,
+            authority: {
+              pageId: "page-1",
+              documentEpoch: 2,
+              url: "https://example.test/next",
+              title: "Next",
+              readiness: "stable",
+            },
+            completeness: { kind: "bounded", observed: 0, returned: 0, truncated: false },
+            controls: [],
+            containers: [],
+            containerCompleteness: {
+              kind: "bounded",
+              observed: 0,
+              returned: 0,
+              truncated: false,
+            },
+          },
         },
       ],
     })),
@@ -115,6 +136,10 @@ describe("agent-directed Run live Praxis ownership", () => {
       intentId: "activate-submit",
       functionalResult: "succeeded",
       mutationOutcome: "applied",
+      successorObservation: {
+        documentEpoch: 2,
+        url: "https://example.test/next",
+      },
     });
     expect(sessions.advance).toHaveBeenCalledWith(
       expect.anything(),
@@ -138,6 +163,52 @@ describe("agent-directed Run live Praxis ownership", () => {
         intent,
       }),
     ).rejects.toMatchObject({ response: { code: "RUN_PRAXIS_SESSION_MISMATCH_OR_STALE" } });
+    expect(sessions.advance).not.toHaveBeenCalled();
+  });
+
+  it("replays the persisted exact successor observation without redispatch", async () => {
+    const persisted = {
+      runId,
+      praxisSessionId: sessionId,
+      operationId: "m2-operation",
+      artifactRefs: [],
+      intentId: intent.intentId,
+      functionalResult: "succeeded",
+      mutationOutcome: "not_applied",
+      privacyApplicable: false,
+      privacyResult: "verified",
+      evidence: { state: "available", count: 0, reasonCodes: [] },
+      successorObservation: {
+        documentEpoch: 7,
+        url: "https://example.test/replayed",
+        semanticPageContext: {
+          schemaVersion: 2,
+          authority: {
+            pageId: "page-replayed",
+            documentEpoch: 7,
+            url: "https://example.test/replayed",
+            title: "Replayed",
+            readiness: "stable",
+          },
+          completeness: { kind: "bounded", observed: 0, returned: 0, truncated: false },
+          controls: [],
+        },
+      },
+      replayed: false,
+    };
+    const { service, sessions } = harness(true, persisted);
+    await expect(
+      service.dispatch({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        intent,
+      }),
+    ).resolves.toMatchObject({
+      replayed: true,
+      successorObservation: {
+        documentEpoch: 7,
+        url: "https://example.test/replayed",
+      },
+    });
     expect(sessions.advance).not.toHaveBeenCalled();
   });
 
