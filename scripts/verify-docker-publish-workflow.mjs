@@ -8,6 +8,7 @@ import { renderComposeOci } from "./render-compose-oci.mjs";
 const workflow = readFileSync(".github/workflows/docker-publish.yml", "utf8");
 const dockerfile = readFileSync("Dockerfile", "utf8");
 const dockerignore = readFileSync(".dockerignore", "utf8");
+const deployCompose = readFileSync("compose.deploy.yml", "utf8");
 const apiPackage = JSON.parse(readFileSync("apps/api/package.json", "utf8"));
 
 for (const retiredWorkflow of [
@@ -74,6 +75,32 @@ if (!dockerfile.includes("--store-dir /pnpm/store"))
 for (const ignored of ["**/test", "**/tests", "**/*.test.ts", "**/*.spec.ts"]) {
   if (!dockerignore.split(/\r?\n/).includes(ignored))
     fail(`Docker context does not exclude test-only source: ${ignored}`);
+}
+
+const fastStartupProbeCount = (deployCompose.match(/start_interval:\s*1s/g) ?? []).length;
+
+if (fastStartupProbeCount < 4)
+  fail(
+    `deployment requires fast startup probes for postgres, redis, api, and mcp; found ${fastStartupProbeCount}`,
+  );
+
+for (const required of [
+  'test: ["CMD-SHELL", "pg_isready -U scry -d scry"]',
+  'test: ["CMD", "redis-cli", "ping"]',
+  'test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/ready"]',
+  'test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4100/health"]',
+]) {
+  const index = deployCompose.indexOf(required);
+
+  if (index < 0) fail(`deployment healthcheck missing: ${required}`);
+
+  const section = deployCompose.slice(index, index + 300);
+
+  if (!section.includes("start_interval: 1s"))
+    fail(`deployment healthcheck lacks fast startup interval: ${required}`);
+
+  if (!section.includes("interval: 5s"))
+    fail(`deployment healthcheck changed steady-state interval: ${required}`);
 }
 
 const qualificationIndex = workflow.indexOf("Boot and smoke-test the candidate beta topology");
@@ -146,6 +173,12 @@ try {
     env: { ...environment, COMPOSE_PROFILES: "operations" },
     encoding: "utf8",
   });
+  const renderedFastStartupProbeCount = (resolvedModel.match(/start_interval:\s*1s/g) ?? []).length;
+
+  if (renderedFastStartupProbeCount < 4)
+    fail(
+      `rendered OCI Compose model lost fast startup probes; found ${renderedFastStartupProbeCount}`,
+    );
   if (!resolvedModel.includes("{{ $$labels.instance }}"))
     fail("rendered OCI Compose model did not preserve escaped Prometheus template variables");
 } finally {

@@ -103,6 +103,8 @@ services:
       - artifacts:/workspace/apps/api/artifacts/runs
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/ready"]
+      start_period: 20s
+      start_interval: 1s
       interval: 5s
       timeout: 3s
       retries: 20
@@ -155,6 +157,8 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4100/health"]
+      start_period: 20s
+      start_interval: 1s
       interval: 5s
       timeout: 3s
       retries: 20
@@ -186,6 +190,8 @@ services:
         target: /etc/postgresql/pg_hba.conf
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U scry -d scry"]
+      start_period: 10s
+      start_interval: 1s
       interval: 5s
       timeout: 5s
       retries: 10
@@ -209,6 +215,8 @@ services:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
+      start_period: 10s
+      start_interval: 1s
       interval: 5s
       timeout: 3s
       retries: 10
