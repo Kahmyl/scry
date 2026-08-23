@@ -37,7 +37,11 @@ describe("worker processor boundaries", () => {
       }),
       failAttempt: vi.fn(async () => undefined),
     };
-    const operationalEvents = { emit: vi.fn(async () => undefined) };
+    const operationalEvents = {
+      emit: vi.fn(async () => {
+        throw new Error("TELEMETRY_SINK_UNAVAILABLE");
+      }),
+    };
     const processor = createRunProcessor({
       ...identity,
       executions: executions as never,
@@ -62,13 +66,14 @@ describe("worker processor boundaries", () => {
         classification: "persistence",
         reasonCode: "DATABASE_UNAVAILABLE",
         causality: expect.objectContaining({ runId: "run-1", attemptId: "attempt-1" }),
-        transition: { from: "running", to: "failed" },
+        transition: { from: "claimed", to: "failed" },
       }),
     );
   });
 
-  it("fences Run work before claiming when release metadata differs", async () => {
-    const executions = { claimAttempt: vi.fn() };
+  it("emits a partially causal refusal and does not fail an unclaimed attempt on release mismatch", async () => {
+    const executions = { claimAttempt: vi.fn(), failAttempt: vi.fn() };
+    const operationalEvents = { emit: vi.fn(async () => undefined) };
     const processor = createRunProcessor({
       ...identity,
       executions: executions as never,
@@ -77,11 +82,58 @@ describe("worker processor boundaries", () => {
       artifactStore: {} as never,
       artifactStoreRemote: false,
       veilAdmissionKey: "test-key",
+      operationalEvents,
     });
     await expect(
       processor(job({ runId: "run-1", releaseId: "old", schemaFingerprint: "schema-1" }) as never),
     ).rejects.toThrow("WORKER_RELEASE_MISMATCH");
     expect(executions.claimAttempt).not.toHaveBeenCalled();
+    expect(executions.failAttempt).not.toHaveBeenCalled();
+    expect(operationalEvents.emit).toHaveBeenCalledWith(
+      "worker",
+      expect.objectContaining({
+        reasonCode: "WORKER_RELEASE_MISMATCH",
+        causality: expect.objectContaining({ runId: "run-1", correlationId: expect.any(String) }),
+        transition: { from: "queued", to: "failed" },
+      }),
+    );
+  });
+
+  it("emits a partially causal claim failure without inventing or failing an attempt", async () => {
+    const failure = new Error("DATABASE_CLAIM_FAILED");
+    const executions = {
+      claimAttempt: vi.fn(async () => {
+        throw failure;
+      }),
+      failAttempt: vi.fn(),
+    };
+    const operationalEvents = { emit: vi.fn(async () => undefined) };
+    const processor = createRunProcessor({
+      ...identity,
+      executions: executions as never,
+      artifactRoot: "/tmp/scry-worker-test",
+      artifactRetentionMs: 60_000,
+      artifactStore: {} as never,
+      artifactStoreRemote: false,
+      veilAdmissionKey: "test-key",
+      operationalEvents,
+    });
+
+    await expect(
+      processor(
+        job({ runId: "run-1", releaseId: "release-1", schemaFingerprint: "schema-1" }) as never,
+      ),
+    ).rejects.toBe(failure);
+    expect(executions.failAttempt).not.toHaveBeenCalled();
+    expect(operationalEvents.emit).toHaveBeenCalledWith(
+      "worker",
+      expect.objectContaining({
+        classification: "persistence",
+        reasonCode: "DATABASE_CLAIM_FAILED",
+        causality: expect.objectContaining({ runId: "run-1", correlationId: expect.any(String) }),
+        transition: { from: "queued", to: "failed" },
+      }),
+    );
   });
 
   it("fences Probe work before claiming when schema metadata differs", async () => {
@@ -498,6 +550,76 @@ describe("worker processor boundaries", () => {
     );
   });
 
+  it.each([
+    {
+      name: "claim fencing",
+      heartbeatOwned: false,
+      cancellationRequested: false,
+      code: "WORKER_CLAIM_FENCED",
+      transitionTo: "failed",
+    },
+    {
+      name: "requested cancellation",
+      heartbeatOwned: true,
+      cancellationRequested: true,
+      code: "RUN_CANCELLATION_REQUESTED",
+      transitionTo: "cancelled",
+    },
+  ])("emits a stable code for $name", async (scenario) => {
+    const executions = abortingRunExecutions(
+      scenario.heartbeatOwned,
+      scenario.cancellationRequested,
+    );
+    const operationalEvents = { emit: vi.fn(async () => undefined) };
+    const processor = createRunProcessor({
+      ...identity,
+      heartbeatMs: 1,
+      executions: executions as never,
+      artifactRoot: "/tmp/scry-worker-test",
+      artifactRetentionMs: 60_000,
+      artifactStore: {} as never,
+      artifactStoreRemote: false,
+      veilAdmissionKey: "test-key",
+      operationalEvents,
+      capabilities: {
+        createRun: (input: { options: { signal: AbortSignal } }) => ({
+          manifest: { digest: "manifest" },
+          options: input.options,
+        }),
+        request: (input: Record<string, unknown>) => input,
+      } as never,
+      kernel: {
+        execute: async (input: { capabilities: { options: { signal: AbortSignal } } }) =>
+          await new Promise((_, reject) => {
+            const signal = input.capabilities.options.signal;
+            const abort = () => reject(signal.reason);
+            if (signal.aborted) abort();
+            else signal.addEventListener("abort", abort, { once: true });
+          }),
+      } as never,
+    });
+
+    await expect(
+      processor(
+        job({ runId: "run-1", releaseId: "release-1", schemaFingerprint: "schema-1" }) as never,
+      ),
+    ).rejects.toThrow(scenario.code);
+    expect(executions.failAttempt).toHaveBeenCalledWith(
+      "run-1",
+      "attempt-1",
+      expect.any(String),
+      scenario.code,
+      false,
+    );
+    expect(operationalEvents.emit).toHaveBeenCalledWith(
+      "worker",
+      expect.objectContaining({
+        reasonCode: scenario.code,
+        transition: { from: "running", to: scenario.transitionTo },
+      }),
+    );
+  });
+
   it("sanitizes unsafe worker and dependency diagnostics", () => {
     expect(safeWorkerCode(new Error("sensitive free-form detail"))).toBe(
       "CALIBRATION_EXECUTION_FAILED",
@@ -551,5 +673,33 @@ function mutatingRunPlan() {
         captureIntent: "final",
       },
     ],
+  };
+}
+
+function abortingRunExecutions(heartbeatOwned: boolean, cancellationRequested: boolean) {
+  return {
+    claimAttempt: vi.fn(async () => ({ id: "attempt-1", attemptNumber: 1 })),
+    loadExecution: vi.fn(async () => ({
+      flowRevisionId: "flow-revision-1",
+      environmentId: "environment-1",
+      projectId: "project-1",
+      missionId: "mission-1",
+      objectiveId: "objective-1",
+      agentSessionId: "agent-1",
+      planSnapshot: mutatingRunPlan(),
+      policySnapshot: { allowedOrigins: ["https://example.test"], allowPrivateNetwork: false },
+      veilPolicySnapshot: compileDefaultVeilPolicy({
+        allowedOrigins: ["https://example.test"],
+        allowDownloads: false,
+      }),
+      executionSnapshot: { viewport: { width: 1280, height: 720 } },
+    })),
+    markRunning: vi.fn(async () => undefined),
+    setRunPhase: vi.fn(async () => undefined),
+    heartbeat: vi.fn(async () => heartbeatOwned),
+    isCancellationRequested: vi.fn(async () => cancellationRequested),
+    appendEvent: vi.fn(async () => undefined),
+    stageSuccessorCheckpoint: vi.fn(async () => undefined),
+    failAttempt: vi.fn(async () => undefined),
   };
 }

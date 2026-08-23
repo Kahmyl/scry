@@ -91,7 +91,6 @@ describe("representative causal runtime observability", () => {
         runId: "run-1",
         attemptId: "attempt-1",
         operationId: "protected-operation-1",
-        protectedOperationId: "protected-operation-1",
         correlationId: "correlation-1",
       },
       details: {
@@ -103,6 +102,38 @@ describe("representative causal runtime observability", () => {
         safeActions: ["manual_reconciliation", "abort"],
       },
     });
+  });
+
+  it("uses an actual protected claim id when one is available", async () => {
+    const events = { emit: vi.fn(async () => undefined) };
+    await observeProtectedOperationResult(
+      events as never,
+      {
+        ownerKind: "run",
+        ownerId: "run-1",
+        projectId: "project-1",
+        missionId: "mission-1",
+        objectiveId: "objective-1",
+        agentSessionId: "agent-1",
+      },
+      "logical-operation-1",
+      {
+        status: "outcome_unknown",
+        reasonCode: "MUTATION_RECONCILIATION_REQUIRED",
+        mutation: { dispatch: "started", outcome: "unknown" },
+      } as never,
+      "protected-claim-1",
+    );
+
+    expect(events.emit).toHaveBeenCalledWith(
+      "runtime",
+      expect.objectContaining({
+        causality: expect.objectContaining({
+          operationId: "logical-operation-1",
+          protectedOperationId: "protected-claim-1",
+        }),
+      }),
+    );
   });
 
   it("emits persistence and report-finalization failures without changing the failure", async () => {

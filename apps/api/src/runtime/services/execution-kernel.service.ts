@@ -369,12 +369,14 @@ export class ExecutionCapabilityFactory {
     const leaseDurationMs = 30_000;
     return {
       protectedTransactionExecutor: async ({ transaction, dependencies }) => {
+        current = undefined;
         const execution = await new ProtectedTransactionKernel(dependencies).execute(transaction);
         await observeProtectedOperationResult(
           this.operationalEvents,
           context,
           transaction.operationId,
           execution.result,
+          (current as import("@scry/contracts").ProtectedOperationClaim | undefined)?.id,
         );
         return execution;
       },
@@ -775,6 +777,7 @@ export async function observeProtectedOperationResult(
   },
   operationId: string,
   result: import("@scry/contracts").ProtectedTransactionResult,
+  protectedOperationId?: string,
 ) {
   if (result.status !== "outcome_unknown" && result.mutation.outcome !== "unknown") return;
   await events?.emit("runtime", {
@@ -792,7 +795,7 @@ export async function observeProtectedOperationResult(
       ...(context.ownerKind === "authoring_session" ? { praxisSessionId: context.ownerId } : {}),
       ...(context.correlationId ? { correlationId: context.correlationId } : {}),
       operationId,
-      protectedOperationId: operationId,
+      ...(protectedOperationId ? { protectedOperationId } : {}),
     },
     details: {
       mutationDispatch: result.mutation.dispatch,

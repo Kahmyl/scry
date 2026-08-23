@@ -24,6 +24,7 @@ export type OperationalCausality = Readonly<{
   missionId?: string;
   objectiveId?: string;
   agentSessionId?: string;
+  mcpSessionId?: string;
   runId?: string;
   attemptId?: string;
   praxisSessionId?: string;
