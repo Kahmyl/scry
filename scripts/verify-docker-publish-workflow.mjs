@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { renderComposeOci } from "./render-compose-oci.mjs";
 
 const workflow = readFileSync(".github/workflows/docker-publish.yml", "utf8");
+const dockerfile = readFileSync("Dockerfile", "utf8");
+const dockerignore = readFileSync(".dockerignore", "utf8");
+const apiPackage = JSON.parse(readFileSync("apps/api/package.json", "utf8"));
 
 for (const retiredWorkflow of [
   ".github/workflows/praxis-verification.yml",
@@ -41,6 +44,36 @@ for (const required of [
   "Boot and smoke-test the candidate beta topology",
 ]) {
   if (!workflow.includes(required)) fail(`beta publication contract missing: ${required}`);
+}
+
+const runtimePackages = ["chronicle", "contracts", "executor", "policy", "praxis", "veil"];
+
+if (apiPackage.dependencies?.["@scry/assurance"])
+  fail("@scry/api must not classify Assurance as a production dependency");
+
+if (apiPackage.devDependencies?.["@scry/assurance"] !== "workspace:*")
+  fail("@scry/api must retain Assurance only as qualification/tooling dependency");
+
+if (!dockerfile.includes("COPY packages/assurance/package.json packages/assurance/package.json"))
+  fail("Docker dependency resolution must retain the Assurance workspace manifest");
+
+if (/^COPY packages packages$/m.test(dockerfile))
+  fail("Docker runtime image must not broadly copy every workspace package");
+
+if (/^COPY packages\/assurance packages\/assurance$/m.test(dockerfile))
+  fail("Docker runtime image must not ship Assurance implementation source");
+
+for (const packageName of runtimePackages) {
+  const copy = `COPY packages/${packageName} packages/${packageName}`;
+  if (!dockerfile.includes(copy)) fail(`Docker runtime package source missing: ${packageName}`);
+}
+
+if (!dockerfile.includes("--store-dir /pnpm/store"))
+  fail("pnpm cache mount exists but pnpm is not explicitly bound to it");
+
+for (const ignored of ["**/test", "**/tests", "**/*.test.ts", "**/*.spec.ts"]) {
+  if (!dockerignore.split(/\r?\n/).includes(ignored))
+    fail(`Docker context does not exclude test-only source: ${ignored}`);
 }
 
 const qualificationIndex = workflow.indexOf("Boot and smoke-test the candidate beta topology");

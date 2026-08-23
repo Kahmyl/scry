@@ -17,7 +17,6 @@
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-fastify": "^11.0.0",
-    "@scry/assurance": "workspace:*",
     "@scry/contracts": "workspace:*",
     "@scry/executor": "workspace:*",
     "@scry/policy": "workspace:*",
@@ -40,6 +39,7 @@
     "@types/pg": "^8.11.0",
     "tsx": "^4.20.0",
     "typescript": "^5.8.3",
-    "vitest": "^4.0.15"
+    "vitest": "^4.0.15",
+    "@scry/assurance": "workspace:*"
   }
 }

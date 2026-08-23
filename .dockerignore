@@ -12,3 +12,7 @@ coverage
 test-results
 playwright-report
 *.log
+**/test
+**/tests
+**/*.test.ts
+**/*.spec.ts
