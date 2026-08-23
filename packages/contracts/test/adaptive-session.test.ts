@@ -11,6 +11,8 @@ import {
   reconcileAdaptiveOperationSchema,
   adaptiveOperationReconciliationResultSchema,
   grantMissionAuthorizationSchema,
+  praxisSessionCloseResultSchema,
+  praxisSessionStartResultSchema,
 } from "../src/index.js";
 
 const ids = {
@@ -522,6 +524,17 @@ describe("adaptive session contracts", () => {
       events: [],
     };
     expect(adaptiveSessionSchema.parse(base)).toMatchObject({ missionId: ids.missionId });
+    expect(praxisSessionStartResultSchema.parse({ ...base, replayed: false })).toMatchObject({
+      id: base.id,
+      replayed: false,
+    });
+    expect(
+      praxisSessionCloseResultSchema.parse({
+        id: base.id,
+        state: "completed",
+        replayed: false,
+      }),
+    ).toEqual({ id: base.id, state: "completed", replayed: false });
     expect(() =>
       adaptiveSessionTransitionSchema.parse({
         expectedVersion: 0,

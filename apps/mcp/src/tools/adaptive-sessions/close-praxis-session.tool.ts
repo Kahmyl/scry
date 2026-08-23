@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   randomUUID,
   advanceAdaptiveSessionSchema,
-  adaptiveSessionSchema,
+  praxisSessionCloseResultSchema,
   agentDecisionBoundarySchema,
   closeAdaptiveSessionSchema,
   missionAuthoringTurnBudgetsSchema,
@@ -40,7 +40,9 @@ export function registerClosePraxisSessionTool(server: McpServer, client: ScryAp
         praxisSessionId: uuid,
         idempotencyKey: closeAdaptiveSessionSchema.shape.idempotencyKey.optional(),
       },
-      outputSchema: z.object({ message: z.string(), session: adaptiveSessionSchema }).strict(),
+      outputSchema: z
+        .object({ message: z.string(), session: praxisSessionCloseResultSchema })
+        .strict(),
       annotations: idempotentPotentiallyDestructiveExternalOperation,
     },
     async ({ praxisSessionId, idempotencyKey }) =>
@@ -49,8 +51,18 @@ export function registerClosePraxisSessionTool(server: McpServer, client: ScryAp
         const body = closeAdaptiveSessionSchema.parse({
           idempotencyKey: idempotencyKey ?? stableKey("praxis-session-close", { praxisSessionId }),
         });
+        const closed = await client.post<{ replayed: boolean }>(
+          `/praxis-sessions/${praxisSessionId}/close`,
+          body,
+        );
         return toolResult(
-          { session: await client.post(`/praxis-sessions/${praxisSessionId}/close`, body) },
+          {
+            session: praxisSessionCloseResultSchema.parse({
+              id: praxisSessionId,
+              state: "completed",
+              replayed: closed.replayed,
+            }),
+          },
           "Praxis session closed; all references from it are stale.",
         );
       }, "Session close refused."),

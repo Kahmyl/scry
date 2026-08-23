@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   randomUUID,
   advanceAdaptiveSessionSchema,
-  adaptiveSessionSchema,
+  praxisSessionStartResultSchema,
   agentDecisionBoundarySchema,
   closeAdaptiveSessionSchema,
   missionAuthoringTurnBudgetsSchema,
@@ -40,7 +40,9 @@ export function registerStartPraxisSessionTool(server: McpServer, client: ScryAp
         ...startAdaptiveSessionSchema.omit({ idempotencyKey: true }).shape,
         idempotencyKey: startAdaptiveSessionSchema.shape.idempotencyKey.optional(),
       },
-      outputSchema: z.object({ message: z.string(), session: adaptiveSessionSchema }).strict(),
+      outputSchema: z
+        .object({ message: z.string(), session: praxisSessionStartResultSchema })
+        .strict(),
       annotations: idempotentExternalOpenWorldOperation,
     },
     async ({ idempotencyKey, ...input }) =>

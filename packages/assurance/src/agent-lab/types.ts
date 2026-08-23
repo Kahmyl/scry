@@ -2,6 +2,7 @@ export type AgentLabRunStatus = "completed" | "failed" | "limit_exceeded";
 
 export type AgentLabRunSpec = Readonly<{
   objective: string;
+  provider?: "local" | "deepseek";
   mcpUrl?: string;
   model?: string;
   maxTurns?: number;

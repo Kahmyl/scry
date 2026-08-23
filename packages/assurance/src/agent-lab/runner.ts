@@ -53,6 +53,8 @@ export async function runAgentLab(
     "run",
     "--objective",
     spec.objective,
+    "--provider",
+    spec.provider ?? "local",
     "--mcp-url",
     spec.mcpUrl ?? "http://127.0.0.1:4100/mcp",
     "--max-turns",

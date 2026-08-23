@@ -9,6 +9,9 @@ const workflow = readFileSync(".github/workflows/docker-publish.yml", "utf8");
 const databaseQualification = readFileSync(".github/workflows/qualification-database.yml", "utf8");
 const fastQualification = readFileSync(".github/workflows/qualification-fast.yml", "utf8");
 const dockerfile = readFileSync("Dockerfile", "utf8");
+const developmentDockerfiles = ["docker/Dockerfile.dev", "docker/Dockerfile.worker"].map(
+  (file) => ({ file, source: readFileSync(file, "utf8") }),
+);
 const dockerignore = readFileSync(".dockerignore", "utf8");
 const deployCompose = readFileSync("compose.deploy.yml", "utf8");
 const apiPackage = JSON.parse(readFileSync("apps/api/package.json", "utf8"));
@@ -100,6 +103,21 @@ const runtimePackages = [
   "praxis",
   "veil",
 ];
+
+const workspaceManifests = [
+  "apps/api/package.json",
+  "apps/mcp/package.json",
+  "apps/web/package.json",
+  "packages/assurance/package.json",
+  ...runtimePackages.map((packageName) => `packages/${packageName}/package.json`),
+];
+
+for (const { file, source } of developmentDockerfiles) {
+  for (const manifest of workspaceManifests) {
+    if (!source.includes(`COPY ${manifest} ${manifest}`))
+      fail(`${file} dependency layer omits workspace manifest: ${manifest}`);
+  }
+}
 
 if (apiPackage.dependencies?.["@scry/assurance"])
   fail("@scry/api must not classify Assurance as a production dependency");

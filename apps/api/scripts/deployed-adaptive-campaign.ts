@@ -77,6 +77,14 @@ export async function runDeployedCampaign(input: {
           source: "mcp_http",
           eventId: `${eventId}-restart-retry`,
         });
+        input.metrics.countBrowserRestart({
+          source: "browser_event",
+          eventId: `${eventId}-browser-restart`,
+        });
+        input.metrics.countBrowserReacquisition({
+          source: "browser_event",
+          eventId: `${eventId}-browser-reacquisition`,
+        });
         if (!sessionStart)
           input.metrics.countMcpRequest({
             source: "mcp_http",
@@ -389,10 +397,11 @@ export async function collectPersistedTelemetry(
   try {
     const commands = await pool.query<{
       id: string;
+      browserLeaseId: string;
       queueMs: number | null;
       browserMs: number | null;
     }>(
-      `SELECT command.id,
+      `SELECT command.id,lease.id AS "browserLeaseId",
               extract(epoch FROM (command.claimed_at-command.created_at))*1000 AS "queueMs",
               extract(epoch FROM (lease.activated_at-lease.created_at))*1000 AS "browserMs"
        FROM authoring_runtime_commands command
@@ -401,6 +410,16 @@ export async function collectPersistedTelemetry(
        ORDER BY command.created_at`,
       [correlationId],
     );
+    const browserLeaseIds = new Set(commands.rows.map((command) => command.browserLeaseId));
+    if (browserLeaseIds.size > 0) {
+      metrics.countBrowserLaunch(
+        {
+          source: "browser_event",
+          eventId: `browser-launch-${correlationId}`,
+        },
+        browserLeaseIds.size,
+      );
+    }
     for (const command of commands.rows) {
       if (command.queueMs !== null) {
         metrics.record(command.id, "queue_wait", Number(command.queueMs), {
@@ -440,6 +459,12 @@ export async function collectPersistedTelemetry(
     );
     const firstObservation = observations.rows[0];
     if (firstObservation) {
+      if (browserLeaseIds.size === 0) {
+        metrics.countBrowserLaunch({
+          source: "browser_event",
+          eventId: `browser-launch-${correlationId}`,
+        });
+      }
       metrics.record(
         firstObservation.operationId,
         "browser_startup",
@@ -550,6 +575,10 @@ export async function collectPersistedTelemetry(
     );
     for (const event of effects.rows) {
       const duration = event.safeFacts.durationMs;
+      metrics.countReconciliationWait({
+        source: "worker_event",
+        eventId: `reconciliation-${event.operationId}-${event.sequence}`,
+      });
       if (typeof duration === "number") {
         metrics.record(event.operationId, "expected_effect_verification", duration, {
           source: "worker_event",
@@ -580,6 +609,10 @@ async function retrieveArtifacts(
   }
   for (const [index, artifactId] of artifactIds.entries()) {
     const eventId = `artifact-${input.correlationId}-${index + 1}`;
+    input.metrics.countEvidenceFinalization({
+      source: "artifact_event",
+      eventId: `${eventId}-finalization-count`,
+    });
     await input.metrics.phase(
       artifactId,
       "evidence_finalization",

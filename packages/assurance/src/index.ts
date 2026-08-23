@@ -15,5 +15,6 @@ export * from "./corpus/experience.js";
 export * from "./experiments/primitives.js";
 export * from "./reporting/experiment-synthesis.js";
 export * from "./observability/campaign-metrics.js";
+export * from "./observability/performance-benchmark.js";
 export * from "./reporting/campaign-report.js";
 export * from "./fixtures/adaptive-fixture.js";

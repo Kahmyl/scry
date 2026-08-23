@@ -427,6 +427,18 @@ export const adaptiveSessionSchema = z
   })
   .strict();
 
+export const praxisSessionStartResultSchema = adaptiveSessionSchema.extend({
+  replayed: z.boolean(),
+});
+
+export const praxisSessionCloseResultSchema = z
+  .object({
+    id: uuid,
+    state: z.literal("completed"),
+    replayed: z.boolean(),
+  })
+  .strict();
+
 export type AdaptiveSessionState = z.infer<typeof adaptiveSessionStateSchema>;
 export type AdaptiveSessionEventType = z.infer<typeof adaptiveSessionEventTypeSchema>;
 export type StartAdaptiveSessionInput = z.input<typeof startAdaptiveSessionSchema>;
@@ -446,3 +458,5 @@ export type AdaptiveOperationReconciliationResult = z.infer<
 >;
 export type PraxisObservation = z.infer<typeof praxisObservationSchema>;
 export type AdaptiveSession = z.infer<typeof adaptiveSessionSchema>;
+export type PraxisSessionStartResult = z.infer<typeof praxisSessionStartResultSchema>;
+export type PraxisSessionCloseResult = z.infer<typeof praxisSessionCloseResultSchema>;

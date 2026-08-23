@@ -46,8 +46,10 @@ export type CampaignContext = {
   secretValue: string;
   forbiddenValues: string[];
   campaignProjectId?: string;
+  campaignEnvironmentId?: string;
   campaignMissionId?: string;
   campaignObjectiveId?: string;
+  campaignAgentSessionId?: string;
   campaignFlowDraftId?: string;
   beforeCounts?: Record<string, number>;
   requiredChecks: CampaignCheck[];
@@ -174,8 +176,10 @@ export async function generatedCoreCampaignSpec(
     await pool.end();
   }
   context.campaignProjectId = projectId;
+  context.campaignEnvironmentId = environmentId;
   context.campaignMissionId = missionId;
   context.campaignObjectiveId = objectiveId;
+  context.campaignAgentSessionId = agentSessionId;
   context.campaignFlowDraftId = flowDraftId;
   context.forbiddenValues.push(emailValue);
 

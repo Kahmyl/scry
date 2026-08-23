@@ -14,6 +14,13 @@ export class CampaignMetricsCollector {
   private idleMs = 0;
   private bytesReturned = 0;
   private unchangedReads = 0;
+  private invalidCalls = 0;
+  private staleReferenceCalls = 0;
+  private browserLaunches = 0;
+  private browserRestarts = 0;
+  private browserReacquisitions = 0;
+  private reconciliationWaits = 0;
+  private evidenceFinalizations = 0;
   private readonly measurements: Measurement[] = [];
 
   constructor(private readonly correlationId: string) {}
@@ -73,6 +80,41 @@ export class CampaignMetricsCollector {
     this.count("unchangedStateReads", observation, count);
   }
 
+  countInvalidCall(observation: Observation, count = 1): void {
+    this.invalidCalls += count;
+    this.count("invalidCalls", observation, count);
+  }
+
+  countStaleReferenceCall(observation: Observation, count = 1): void {
+    this.staleReferenceCalls += count;
+    this.count("staleReferenceCalls", observation, count);
+  }
+
+  countBrowserLaunch(observation: Observation, count = 1): void {
+    this.browserLaunches += count;
+    this.count("browserLaunches", observation, count);
+  }
+
+  countBrowserRestart(observation: Observation, count = 1): void {
+    this.browserRestarts += count;
+    this.count("browserRestarts", observation, count);
+  }
+
+  countBrowserReacquisition(observation: Observation, count = 1): void {
+    this.browserReacquisitions += count;
+    this.count("browserReacquisitions", observation, count);
+  }
+
+  countReconciliationWait(observation: Observation, count = 1): void {
+    this.reconciliationWaits += count;
+    this.count("reconciliationWaits", observation, count);
+  }
+
+  countEvidenceFinalization(observation: Observation, count = 1): void {
+    this.evidenceFinalizations += count;
+    this.count("evidenceFinalizations", observation, count);
+  }
+
   countRetry(reasonCode: string, observation: Observation): void {
     this.retries.set(reasonCode, (this.retries.get(reasonCode) ?? 0) + 1);
     this.count(`retry:${reasonCode}`, observation, 1);
@@ -93,6 +135,13 @@ export class CampaignMetricsCollector {
       modelClientIdleMs: this.idleMs,
       bytesReturnedToAgent: this.bytesReturned,
       unchangedStateReads: this.unchangedReads,
+      invalidCalls: this.invalidCalls,
+      staleReferenceCalls: this.staleReferenceCalls,
+      browserLaunches: this.browserLaunches,
+      browserRestarts: this.browserRestarts,
+      browserReacquisitions: this.browserReacquisitions,
+      reconciliationWaits: this.reconciliationWaits,
+      evidenceFinalizations: this.evidenceFinalizations,
       retriesByReason: Object.fromEntries(
         [...this.retries.entries()].sort(([a], [b]) => a.localeCompare(b)),
       ),

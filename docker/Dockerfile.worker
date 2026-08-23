@@ -17,6 +17,7 @@ COPY packages/chronicle/package.json packages/chronicle/package.json
 COPY packages/assurance/package.json packages/assurance/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/executor/package.json packages/executor/package.json
+COPY packages/observability/package.json packages/observability/package.json
 COPY packages/policy/package.json packages/policy/package.json
 COPY packages/praxis/package.json packages/praxis/package.json
 COPY packages/veil/package.json packages/veil/package.json

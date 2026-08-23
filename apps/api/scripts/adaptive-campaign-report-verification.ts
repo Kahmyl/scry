@@ -104,6 +104,13 @@ export function measurementIntegrityFailures(
     modelClientIdleMs: metrics.modelClientIdleMs,
     bytesReturnedToAgent: metrics.bytesReturnedToAgent,
     unchangedStateReads: metrics.unchangedStateReads,
+    invalidCalls: metrics.invalidCalls,
+    staleReferenceCalls: metrics.staleReferenceCalls,
+    browserLaunches: metrics.browserLaunches,
+    browserRestarts: metrics.browserRestarts,
+    browserReacquisitions: metrics.browserReacquisitions,
+    reconciliationWaits: metrics.reconciliationWaits,
+    evidenceFinalizations: metrics.evidenceFinalizations,
   };
   for (const [metric, claimed] of Object.entries(countClaims)) {
     const observed = metrics.measurements

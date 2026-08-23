@@ -49,6 +49,7 @@ describe("Agent Lab Assurance bridge", () => {
     const invocation = await runAgentLab(
       {
         objective: "Inspect Scry.",
+        provider: "deepseek",
         mcpUrl: "http://fake/mcp",
         outputDirectory,
       },
@@ -63,6 +64,8 @@ describe("Agent Lab Assurance bridge", () => {
     expect(observedArgs).toContain("apps/agent-lab");
 
     expect(observedArgs).toContain("Inspect Scry.");
+
+    expect(observedArgs).toContain("deepseek");
 
     expect(invocation.result.tool_calls).toBe(1);
 

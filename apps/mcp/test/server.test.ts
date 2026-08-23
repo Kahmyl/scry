@@ -87,6 +87,15 @@ describe("current Scry MCP surface", () => {
       "authoring.reusable.sessionId is not an agentSessionId",
     );
     expect(startPraxis.description).toContain("runtime_admitted is not proof");
+    expect((startPraxis.outputSchema as any).properties.session.properties.replayed).toMatchObject({
+      type: "boolean",
+    });
+    const closePraxis = tools.find(({ name }) => name === "close_praxis_session")!;
+    expect((closePraxis.outputSchema as any).properties.session.properties).toMatchObject({
+      id: { type: "string", format: "uuid" },
+      state: { type: "string", const: "completed" },
+      replayed: { type: "boolean" },
+    });
 
     const listMissions = tools.find(({ name }) => name === "list_missions")!;
     expect(listMissions.description).toContain("ignore clearly unrelated Missions");
