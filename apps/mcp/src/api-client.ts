@@ -1,4 +1,5 @@
 import {
+  missionCompletionReadinessSchema,
   PRAXIS_CONTRACT_VERSION,
   PRAXIS_RUNTIME_VERSION,
   PRAXIS_SCORING_POLICY_VERSION,
@@ -76,6 +77,7 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "missionFenceCleared",
   "validationIssueCount",
   "safeActions",
+  "readiness",
 ]);
 
 export function apiRejection(error: ScryApiError) {
@@ -220,11 +222,13 @@ export class ScryApiClient {
 }
 
 function safeRejectionContext(value: Record<string, unknown> | undefined) {
-  return Object.fromEntries(
+  const safe = Object.fromEntries(
     Object.entries(value ?? {}).filter(
       ([key, candidate]) => SAFE_REJECTION_CONTEXT_KEYS.has(key) && isSafeRejectionValue(candidate),
     ),
   );
+  const readiness = missionCompletionReadinessSchema.safeParse(value?.readiness);
+  return readiness.success ? { ...safe, readiness: readiness.data } : safe;
 }
 
 function isSafeRejectionValue(value: unknown): boolean {

@@ -101,4 +101,71 @@ describe("ScryApiClient validation rejection projection", () => {
       safeActions: ["resume_mission"],
     });
   });
+
+  it("preserves the canonical Mission readiness blocker facts and drops adjacent unsafe data", async () => {
+    const missionId = "11111111-1111-4111-8111-111111111111";
+    const objectiveId = "22222222-2222-4222-8222-222222222222";
+    const protectedOperationId = "33333333-3333-4333-8333-333333333333";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            statusCode: 409,
+            message: {
+              code: "MUTATION_RECONCILIATION_REQUIRED",
+              safeActions: ["get_mission", "reconcile_unknown_operation", "do_not_retry"],
+              mutationOutcome: "unknown",
+              retry: "reconciliation_required",
+              readiness: {
+                ready: false,
+                missionId,
+                blockers: [
+                  {
+                    code: "MUTATION_RECONCILIATION_REQUIRED",
+                    missionId,
+                    objectiveId,
+                    protectedOperationId,
+                    operationId: "protected-mutation",
+                    state: "unknown",
+                    reasonCode: "MUTATION_OUTCOME_UNKNOWN",
+                    resolution: "mutation_reconciliation_required",
+                    safeActions: ["get_mission", "reconcile_unknown_operation", "do_not_retry"],
+                    nextActions: ["reconcile_unknown_operation"],
+                  },
+                ],
+              },
+              protectedValue: "must-not-escape",
+            },
+          }),
+          { status: 409 },
+        ),
+      ),
+    );
+
+    const error = (await new ScryApiClient("http://scry.test/api")
+      .post(`/missions/${missionId}/reports`)
+      .catch((cause: unknown) => cause)) as ScryApiError;
+
+    expect(apiRejection(error)).toMatchObject({
+      code: "MUTATION_RECONCILIATION_REQUIRED",
+      appliedState: "unknown",
+      retry: "reconciliation_required",
+      context: {
+        readiness: {
+          ready: false,
+          missionId,
+          blockers: [
+            expect.objectContaining({
+              objectiveId,
+              protectedOperationId,
+              operationId: "protected-mutation",
+              resolution: "mutation_reconciliation_required",
+            }),
+          ],
+        },
+      },
+    });
+    expect(JSON.stringify(error)).not.toContain("must-not-escape");
+  });
 });

@@ -32,7 +32,7 @@ export function registerGetMissionTool(server: McpServer, client: ScryApiClient)
     {
       title: "Get Mission context",
       description:
-        "Read objectives, supporting Flows, classified Runs, accepted evidence, reports, and resume pointer.",
+        "Read objectives, supporting Flows, classified Runs, accepted evidence, reports, resume pointer, and the canonical completion/report-publication readiness projection with factual blocker identities and safe next actions.",
       inputSchema: { missionId: uuid },
       annotations: readOnly,
     },

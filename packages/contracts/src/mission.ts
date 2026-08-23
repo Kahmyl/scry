@@ -44,6 +44,50 @@ export const runRoleSchema = z.enum([
   "invalidated",
 ]);
 export const reportStatusSchema = z.enum(["published", "superseded"]);
+export const missionReadinessResolutionSchema = z.enum([
+  "automatic",
+  "fresh_observation_required",
+  "mutation_reconciliation_required",
+  "evidence_selection_required",
+  "external_agent_action_required",
+  "human_action_required",
+]);
+export const missionReadinessBlockerSchema = z
+  .object({
+    code: z.string().trim().min(1).max(200),
+    missionId: uuidSchema,
+    objectiveId: uuidSchema.optional(),
+    runId: uuidSchema.optional(),
+    attemptId: uuidSchema.optional(),
+    praxisSessionId: uuidSchema.optional(),
+    protectedOperationId: uuidSchema.optional(),
+    operationId: z.string().trim().min(1).max(200).optional(),
+    evidenceId: uuidSchema.optional(),
+    evidenceRecommendationId: uuidSchema.optional(),
+    recordingId: uuidSchema.optional(),
+    state: z.string().trim().min(1).max(200),
+    reasonCode: z.string().trim().min(1).max(200).optional(),
+    reason: z.string().trim().min(1).max(500).optional(),
+    resolution: missionReadinessResolutionSchema,
+    safeActions: z.array(z.string().trim().min(1).max(200)).max(20),
+    nextActions: z.array(z.string().trim().min(1).max(200)).max(20),
+  })
+  .strict();
+export const missionCompletionReadinessSchema = z
+  .object({
+    ready: z.boolean(),
+    missionId: uuidSchema,
+    blockers: z.array(missionReadinessBlockerSchema).max(500),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.ready !== (value.blockers.length === 0))
+      context.addIssue({
+        code: "custom",
+        path: ["ready"],
+        message: "Mission readiness is true exactly when no blockers remain",
+      });
+  });
 export const resumeActionSchema = z.enum([
   "revise_flow",
   "run_candidate",
@@ -466,6 +510,8 @@ export const publishMissionReportSchema = missionContextSchema
   .strict();
 
 export type MissionStatus = z.infer<typeof missionStatusSchema>;
+export type MissionCompletionReadiness = z.infer<typeof missionCompletionReadinessSchema>;
+export type MissionReadinessBlocker = z.infer<typeof missionReadinessBlockerSchema>;
 export type ObjectiveStatus = z.infer<typeof objectiveStatusSchema>;
 export type FlowVisibility = z.infer<typeof flowVisibilitySchema>;
 export type FlowPurpose = z.infer<typeof flowPurposeSchema>;

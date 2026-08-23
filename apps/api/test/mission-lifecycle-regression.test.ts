@@ -273,10 +273,27 @@ describe("Mission lifecycle regression", () => {
         return { rowCount: 1, rows: [{ requestHash, response: null }] };
       if (text.includes("FROM missions m JOIN projects"))
         return { rowCount: 1, rows: [{ status: "running", revision: 1 }] };
+      if (text.includes("FROM missions WHERE id=$1"))
+        return {
+          rowCount: 1,
+          rows: [{ status: "running", finalReportId: null, resumePointer: null }],
+        };
       if (text.includes("FROM agent_sessions") || text.includes("FROM mission_objectives"))
         return { rowCount: 1, rows: [{ status: "running" }] };
+      if (text.includes("FROM protected_operations") || text.includes("FROM adaptive_operations"))
+        return { rowCount: 0, rows: [] };
       if (text.includes("FROM adaptive_sessions"))
-        return { rowCount: 1, rows: [{ state: "active" }] };
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              praxisSessionId: "55555555-5555-4555-8555-555555555555",
+              objectiveId: "22222222-2222-4222-8222-222222222222",
+              state: "active",
+              reasonCode: null,
+            },
+          ],
+        };
       return { rowCount: 1, rows: [] };
     });
     const service = new MissionService({ transaction: (work: any) => work({ query }) } as never);
@@ -296,7 +313,7 @@ describe("Mission lifecycle regression", () => {
         },
       ),
     ).rejects.toMatchObject({
-      response: expect.objectContaining({ code: "MISSION_AUTHORING_CLOSE_REQUIRED" }),
+      response: expect.objectContaining({ code: "MISSION_RUNTIME_CLOSE_REQUIRED" }),
     });
     expect(
       query.mock.calls.some(([text]) => String(text).includes("UPDATE mission_objectives")),
