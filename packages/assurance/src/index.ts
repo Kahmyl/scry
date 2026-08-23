@@ -12,3 +12,5 @@ export * from "./support/classification.js";
 export * from "./reporting/capability-support.js";
 export * from "./observability/runtime-observation.js";
 export * from "./corpus/experience.js";
+export * from "./experiments/primitives.js";
+export * from "./reporting/experiment-synthesis.js";
