@@ -78,14 +78,28 @@ export const missionCompletionReadinessSchema = z
     ready: z.boolean(),
     missionId: uuidSchema,
     blockers: z.array(missionReadinessBlockerSchema).max(500),
+    truncated: z.boolean(),
+    totalBlockerCount: z.number().int().nonnegative(),
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.ready !== (value.blockers.length === 0))
+    if (value.ready !== (value.totalBlockerCount === 0))
       context.addIssue({
         code: "custom",
         path: ["ready"],
         message: "Mission readiness is true exactly when no blockers remain",
+      });
+    if (value.totalBlockerCount < value.blockers.length)
+      context.addIssue({
+        code: "custom",
+        path: ["totalBlockerCount"],
+        message: "Total blocker count cannot be smaller than the returned blocker count",
+      });
+    if (value.truncated !== (value.totalBlockerCount > value.blockers.length))
+      context.addIssue({
+        code: "custom",
+        path: ["truncated"],
+        message: "Truncation must report whether blockers were omitted",
       });
   });
 export const resumeActionSchema = z.enum([

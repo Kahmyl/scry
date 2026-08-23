@@ -1225,6 +1225,7 @@ export class MissionService {
   ): Promise<MissionCompletionReadiness> {
     const blockers: MissionReadinessBlocker[] = [];
     const seen = new Set<string>();
+    let totalBlockerCount = 0;
     const add = (blocker: MissionReadinessBlocker) => {
       const identity = [
         blocker.code,
@@ -1237,10 +1238,10 @@ export class MissionService {
         blocker.evidenceId,
         blocker.evidenceRecommendationId,
       ].join(":");
-      if (!seen.has(identity) && blockers.length < 500) {
-        seen.add(identity);
-        blockers.push(blocker);
-      }
+      if (seen.has(identity)) return;
+      seen.add(identity);
+      totalBlockerCount += 1;
+      if (blockers.length < 500) blockers.push(blocker);
     };
     const scope = [missionId, objectiveId ?? null];
     const mission = await q<{
@@ -1267,6 +1268,8 @@ export class MissionService {
             nextActions: ["list_missions"],
           },
         ],
+        truncated: false,
+        totalBlockerCount: 1,
       };
 
     if (!objectiveId && mission.rows[0]!.status === "awaiting_user")
@@ -1283,8 +1286,7 @@ export class MissionService {
       });
     if (
       !objectiveId &&
-      (["failed", "cancelled"].includes(mission.rows[0]!.status) ||
-        (mission.rows[0]!.status === "completed" && !mission.rows[0]!.finalReportId))
+      ["completed", "failed", "cancelled"].includes(mission.rows[0]!.status)
     )
       add({
         code: "MISSION_TERMINAL",
@@ -1586,7 +1588,13 @@ export class MissionService {
         });
     }
 
-    return { ready: blockers.length === 0, missionId, blockers };
+    return {
+      ready: totalBlockerCount === 0,
+      missionId,
+      blockers,
+      truncated: totalBlockerCount > blockers.length,
+      totalBlockerCount,
+    };
   }
 
   private requireCompletionReadiness(readiness: MissionCompletionReadiness) {
@@ -1595,6 +1603,14 @@ export class MissionService {
     throw new ConflictException({
       ...blocker,
       readiness,
+      ...(blocker.code === "AWAITING_USER_REPORT_NOT_FINAL"
+        ? {
+            terminal: false,
+            sameMissionResumable: true,
+            sameObjectiveResumable: true,
+            shouldPublishFinalReport: false,
+          }
+        : {}),
       ...(blocker.resolution === "mutation_reconciliation_required"
         ? { mutationOutcome: "unknown", retry: "reconciliation_required" }
         : {}),
@@ -1652,14 +1668,14 @@ export class MissionService {
           replayed: true,
         };
 
-      if (["completed", "failed", "cancelled"].includes(mission.status))
-        throw new ConflictException({ code: "MISSION_TERMINAL" });
-
       if (mission.revision !== input.expectedRevision)
         throw new ConflictException({
           code: "MISSION_REVISION_CONFLICT",
           actualRevision: mission.revision,
         });
+
+      const completionReadiness = await this.loadCompletionReadiness(q, missionId, undefined, true);
+      this.requireCompletionReadiness(completionReadiness);
 
       const agentSession = await q(
         `SELECT 1
@@ -1676,17 +1692,6 @@ export class MissionService {
           code: "AGENT_SESSION_CONTEXT_INVALID",
         });
 
-      if (mission.status === "awaiting_user")
-        throw new ConflictException({
-          code: "AWAITING_USER_REPORT_NOT_FINAL",
-          terminal: false,
-          sameMissionResumable: true,
-          sameObjectiveResumable: true,
-          shouldPublishFinalReport: false,
-          safeActions: ["get_operating_context", "resume_mission", "cancel_mission_orchestration"],
-        });
-      const completionReadiness = await this.loadCompletionReadiness(q, missionId, undefined, true);
-      this.requireCompletionReadiness(completionReadiness);
       const snapshot = await this.buildReportSnapshot(
         q,
         missionId,

@@ -103,6 +103,11 @@ describe("Mission lifecycle regression", () => {
             },
           ],
         };
+      if (text.includes("FROM missions WHERE id=$1"))
+        return {
+          rowCount: 1,
+          rows: [{ status: "awaiting_user", finalReportId: null, resumePointer: null }],
+        };
       if (text.includes("FROM agent_sessions")) return { rowCount: 1, rows: [{}] };
       if (text.includes("SELECT 1 FROM mission_objectives")) return { rowCount: 1, rows: [{}] };
       return { rowCount: 0, rows: [] };
@@ -195,11 +200,15 @@ describe("Mission lifecycle regression", () => {
       response: expect.objectContaining({
         code: "AWAITING_USER_REPORT_NOT_FINAL",
         shouldPublishFinalReport: false,
+        readiness: expect.objectContaining({
+          ready: false,
+          blockers: [expect.objectContaining({ code: "AWAITING_USER_REPORT_NOT_FINAL" })],
+        }),
       }),
     });
     expect(
       query.mock.calls.some(([text]) => String(text).includes("FROM mission_objectives o")),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("does not attach an awaiting-user pointer to an already terminal Objective", async () => {

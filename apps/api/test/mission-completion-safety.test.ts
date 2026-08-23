@@ -341,6 +341,41 @@ describe("Mission completion safety", () => {
     ).toBe(false);
   });
 
+  it("refuses a fresh-key publication of a completed Mission with the canonical terminal readiness", async () => {
+    let requestHash = "";
+    const query = vi.fn(async (text: string, values: unknown[] = []) => {
+      if (text.includes("FROM missions m JOIN projects"))
+        return rows([
+          {
+            id: missionId,
+            projectId: "55555555-5555-4555-8555-555555555555",
+            status: "completed",
+            revision: 4,
+          },
+        ]);
+      if (text.includes("INSERT INTO idempotency_records")) {
+        requestHash = String(values[2]);
+        return rows();
+      }
+      if (text.includes('SELECT request_hash AS "requestHash"'))
+        return rows([{ requestHash, response: null }]);
+      if (text.includes("FROM missions WHERE id=$1"))
+        return rows([{ status: "completed", finalReportId: reportId, resumePointer: null }]);
+      return rows();
+    });
+
+    await expect(serviceFor(query).publishReport(principal, missionId, publishInput)).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: "MISSION_TERMINAL",
+        readiness: expect.objectContaining({
+          ready: false,
+          missionId,
+          blockers: [expect.objectContaining({ code: "MISSION_TERMINAL", state: "completed" })],
+        }),
+      }),
+    });
+  });
+
   it("projects unknown mutation identity without recommending a retry", async () => {
     const query = publicationQuery("operation");
     const service = serviceFor(query);
@@ -352,6 +387,8 @@ describe("Mission completion safety", () => {
         readiness: {
           ready: false,
           missionId,
+          truncated: false,
+          totalBlockerCount: 1,
           blockers: [
             expect.objectContaining({
               objectiveId,
@@ -420,7 +457,7 @@ describe("Mission completion safety", () => {
     expect(readiness.blockers[0]).not.toMatchObject({ state: "not_applied" });
   });
 
-  it("projects evidence-selection context and reports a terminal Mission as ready", async () => {
+  it("projects evidence-selection context and reports a reportable running Mission as ready", async () => {
     const runId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     const evidenceRecommendationId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     let awaitingEvidence = true;
@@ -466,7 +503,66 @@ describe("Mission completion safety", () => {
       ready: true,
       missionId,
       blockers: [],
+      truncated: false,
+      totalBlockerCount: 0,
     });
+  });
+
+  it("projects a completed Mission as canonically terminal even with an existing report", async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text.includes("FROM missions WHERE id=$1"))
+        return rows([{ status: "completed", finalReportId: reportId, resumePointer: null }]);
+      return rows();
+    });
+    const service = serviceFor(query) as unknown as {
+      loadCompletionReadiness: (
+        query: never,
+        missionId: string,
+      ) => Promise<{ ready: boolean; blockers: Array<Record<string, unknown>> }>;
+    };
+
+    await expect(service.loadCompletionReadiness(query as never, missionId)).resolves.toMatchObject({
+      ready: false,
+      blockers: [expect.objectContaining({ code: "MISSION_TERMINAL", state: "completed" })],
+    });
+  });
+
+  it("truthfully reports when canonical blockers are truncated", async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text.includes("FROM missions WHERE id=$1"))
+        return rows([{ status: "running", finalReportId: null, resumePointer: null }]);
+      if (text.includes("FROM protected_operations"))
+        return rows(
+          Array.from({ length: 501 }, (_, index) => ({
+            protectedOperationId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+            operationId: `operation-${index}`,
+            objectiveId,
+            runId: null,
+            praxisSessionId: null,
+            state: "recovery_required",
+            mutationOutcome: "unknown",
+            failureCode: "MUTATION_OUTCOME_UNKNOWN",
+          })),
+        );
+      return rows();
+    });
+    const service = serviceFor(query) as unknown as {
+      loadCompletionReadiness: (query: never, missionId: string) => Promise<{
+        ready: boolean;
+        blockers: Array<Record<string, unknown>>;
+        truncated: boolean;
+        totalBlockerCount: number;
+      }>;
+    };
+
+    await expect(service.loadCompletionReadiness(query as never, missionId)).resolves.toMatchObject({
+      ready: false,
+      truncated: true,
+      totalBlockerCount: 501,
+      blockers: expect.any(Array),
+    });
+    const readiness = await service.loadCompletionReadiness(query as never, missionId);
+    expect(readiness.blockers).toHaveLength(500);
   });
 
   it("applies Mission and Objective scope to every Objective-finalization readiness query", async () => {
