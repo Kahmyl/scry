@@ -36,4 +36,6 @@ export {
 export {
   ExecutionCapabilityFactory,
   ExecutionKernelService,
+  observePraxisFailure,
+  observeProtectedOperationResult,
 } from "./services/execution-kernel.service.js";

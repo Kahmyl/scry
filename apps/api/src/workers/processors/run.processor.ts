@@ -11,6 +11,8 @@ import {
 } from "@scry/contracts";
 import type { ExecutionReport } from "@scry/executor";
 import type { Job } from "bullmq";
+import type { OperationalCausality } from "@scry/observability";
+import type { ApiOperationalEventWriter } from "../../infrastructure/index.js";
 
 import {
   type ExecutionCapabilityFactory,
@@ -33,6 +35,7 @@ export interface RunProcessorOptions {
   browserChannel: string;
   kernel: ExecutionKernelService;
   capabilities: ExecutionCapabilityFactory;
+  operationalEvents?: ApiOperationalEventWriter;
 }
 
 export function createRunProcessor(options: RunProcessorOptions) {
@@ -52,6 +55,13 @@ export function createRunProcessor(options: RunProcessorOptions) {
     if (!attempt) return { state: "cancelled" };
     const controller = new AbortController();
     const finalAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+    const startedAt = performance.now();
+    const correlationId = randomUUID();
+    let causality: OperationalCausality = {
+      runId: job.data.runId,
+      attemptId: attempt.id,
+      correlationId,
+    };
     let heartbeat: NodeJS.Timeout | undefined;
     let cancellation: NodeJS.Timeout | undefined;
 
@@ -64,6 +74,13 @@ export function createRunProcessor(options: RunProcessorOptions) {
         viewport: { width: number; height: number };
         readinessTimeoutMultiplier?: number;
         protectedAuthorizations?: Record<string, string>;
+      };
+      causality = {
+        ...causality,
+        projectId: String(snapshot.projectId),
+        missionId: String(snapshot.missionId),
+        objectiveId: String(snapshot.objectiveId),
+        agentSessionId: String(snapshot.agentSessionId),
       };
       await options.executions.markRunning(job.data.runId, attempt.id, claimToken);
       await options.executions.setRunPhase(job.data.runId, "executing_action");
@@ -87,7 +104,6 @@ export function createRunProcessor(options: RunProcessorOptions) {
         job.data.runId,
         `attempt-${attempt.attemptNumber}`,
       );
-      const correlationId = randomUUID();
       const mode = "run";
       const capabilities = options.capabilities.createRun({
         sessionId: job.data.runId,
@@ -138,7 +154,7 @@ export function createRunProcessor(options: RunProcessorOptions) {
       const report = (await options.kernel.execute({ request, capabilities })).report;
       await options.executions.markFinalizing(job.data.runId, attempt.id, claimToken);
       await options.executions.setRunPhase(job.data.runId, "finalizing");
-      await persistReport(options, report, outputDirectory, attempt.id, claimToken);
+      await persistReport(options, report, outputDirectory, attempt.id, claimToken, causality);
       if (report.state === "infrastructure_error")
         throw new Error(report.error ?? "Executor infrastructure error");
       await options.executions.completeAttempt(
@@ -151,6 +167,19 @@ export function createRunProcessor(options: RunProcessorOptions) {
       );
       return { state: report.state, attemptId: attempt.id };
     } catch (error) {
+      await options.operationalEvents?.emit("worker", {
+        name: "worker.execution_failed",
+        classification: workerFailureClassification(error),
+        reasonCode: workerFailureCode(error),
+        outcome: "failed",
+        causality,
+        durationMs: performance.now() - startedAt,
+        transition: { from: "running", to: "failed" },
+        details: {
+          attemptsMade: job.attemptsMade,
+          finalAttempt,
+        },
+      });
       await options.executions.failAttempt(
         job.data.runId,
         attempt.id,
@@ -172,6 +201,7 @@ async function persistReport(
   outputDirectory: string,
   attemptId: string,
   claimToken: string,
+  causality: OperationalCausality,
 ) {
   await commitExecutionReport(
     {
@@ -180,12 +210,28 @@ async function persistReport(
       artifactRetentionMs: options.artifactRetentionMs,
       artifactStore: options.artifactStore,
       artifactStoreRemote: options.artifactStoreRemote,
+      ...(options.operationalEvents ? { operationalEvents: options.operationalEvents } : {}),
+      causality,
     },
     report,
     outputDirectory,
     attemptId,
     claimToken,
   );
+}
+
+function workerFailureCode(error: unknown) {
+  const candidate = error instanceof Error ? error.message : String(error);
+  return /^[A-Z][A-Z0-9_]*$/.test(candidate) ? candidate : "WORKER_EXECUTION_FAILED";
+}
+
+function workerFailureClassification(error: unknown) {
+  const code = workerFailureCode(error);
+  if (/PERSIST|DATABASE|ARTIFACT|STORAGE|SQL/.test(code)) return "persistence" as const;
+  if (/POLICY|VEIL|DENIED|REFUSED/.test(code)) return "policy_refusal" as const;
+  if (/STALE|FENCED|REFERENCE|AUTHORITY/.test(code)) return "stale_authority" as const;
+  if (/UNKNOWN|RECONCILIATION/.test(code)) return "reconciliation_unknown" as const;
+  return "infrastructure" as const;
 }
 
 function phaseForEvent(type: string) {

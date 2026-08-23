@@ -28,6 +28,45 @@ afterEach(() => {
 });
 
 describe("worker processor boundaries", () => {
+  it("emits a causal worker failure while preserving the original failure path", async () => {
+    const failure = new Error("DATABASE_UNAVAILABLE");
+    const executions = {
+      claimAttempt: vi.fn(async () => ({ id: "attempt-1", attemptNumber: 1 })),
+      loadExecution: vi.fn(async () => {
+        throw failure;
+      }),
+      failAttempt: vi.fn(async () => undefined),
+    };
+    const operationalEvents = { emit: vi.fn(async () => undefined) };
+    const processor = createRunProcessor({
+      ...identity,
+      executions: executions as never,
+      artifactRoot: "/tmp/scry-worker-test",
+      artifactRetentionMs: 60_000,
+      artifactStore: {} as never,
+      artifactStoreRemote: false,
+      veilAdmissionKey: "test-key",
+      operationalEvents,
+    });
+
+    await expect(
+      processor(
+        job({ runId: "run-1", releaseId: "release-1", schemaFingerprint: "schema-1" }) as never,
+      ),
+    ).rejects.toBe(failure);
+    expect(executions.failAttempt).toHaveBeenCalledOnce();
+    expect(operationalEvents.emit).toHaveBeenCalledWith(
+      "worker",
+      expect.objectContaining({
+        name: "worker.execution_failed",
+        classification: "persistence",
+        reasonCode: "DATABASE_UNAVAILABLE",
+        causality: expect.objectContaining({ runId: "run-1", attemptId: "attempt-1" }),
+        transition: { from: "running", to: "failed" },
+      }),
+    );
+  });
+
   it("fences Run work before claiming when release metadata differs", async () => {
     const executions = { claimAttempt: vi.fn() };
     const processor = createRunProcessor({

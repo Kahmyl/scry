@@ -24,6 +24,7 @@ import {
 } from "./authoring/index.js";
 import { CalibrationRuntimeRepository } from "./calibration/index.js";
 import { Database } from "./infrastructure/database.js";
+import { OperationalEvents } from "./infrastructure/index.js";
 import {
   ExecutionCapabilityFactory,
   ExecutionKernelRepository,
@@ -61,6 +62,7 @@ const praxis = app.get(PraxisRuntimeRepository);
 const authoringRuntimes = app.get(AuthoringRuntimeRepository);
 const authoringRuntimeCommands = app.get(AuthoringRuntimeCommandRepository);
 const database = app.get(Database);
+const operationalEvents = app.get(OperationalEvents);
 const nativeBrowser = app.get(NativeBrowserDriver);
 const workerId = `${os.hostname()}:${process.pid}:${randomUUID()}`;
 const artifactRoot = path.resolve(process.env.ARTIFACT_ROOT ?? "artifacts/runs");
@@ -324,6 +326,7 @@ await authoringRuntimeOwner.start();
 const workers = createWorkerFleet({
   connection: redis.client,
   staleMs,
+  operationalEvents,
   runConcurrency: Number(process.env.WORKER_CONCURRENCY ?? 1),
   processRun: createRunProcessor({
     executions,
@@ -339,6 +342,7 @@ const workers = createWorkerFleet({
     browserChannel,
     kernel: executionKernel,
     capabilities: executionCapabilities,
+    operationalEvents,
   }),
   processCalibration: createCalibrationProcessor({
     calibrations,

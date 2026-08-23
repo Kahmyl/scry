@@ -73,6 +73,7 @@ const allowedMcpRootFiles = new Set([
   "api-client.ts",
   "http.ts",
   "main.ts",
+  "operational-events.ts",
   "server-composition.ts",
   "server.ts",
   "tool-registry.ts",

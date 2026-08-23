@@ -14,6 +14,7 @@ import { ProtectedOperationRepository } from "../repositories/protected-operatio
 import { ProtectedOutputPersistenceRepository } from "../repositories/protected-output-persistence.repository.js";
 import { NativeBrowserDriver } from "../native-browser-driver/index.js";
 import { ProtectedTransactionKernel } from "../protected-transactions/protected-transaction-coordinator.js";
+import { OperationalEvents } from "../../infrastructure/index.js";
 
 type BaseCapabilityInput = {
   sessionId: string;
@@ -37,6 +38,9 @@ export class ExecutionCapabilityFactory {
     @Optional()
     @Inject(ProtectedOutputPersistenceRepository)
     private readonly protectedOutputs?: ProtectedOutputPersistenceRepository,
+    @Optional()
+    @Inject(OperationalEvents)
+    private readonly operationalEvents?: OperationalEvents,
   ) {}
 
   createSession(input: BaseCapabilityInput): RuntimeExecutionCapabilities {
@@ -229,6 +233,8 @@ export class ExecutionCapabilityFactory {
           missionId: input.missionId,
           objectiveId: input.objectiveId,
           agentSessionId: input.agentSessionId,
+          attemptId: input.attemptId,
+          correlationId: input.correlationId,
           flowRevisionId: input.flowRevisionId,
           protectedAuthorizations: input.protectedAuthorizations ?? {},
         }),
@@ -243,8 +249,10 @@ export class ExecutionCapabilityFactory {
         recoverAcquisition: async () => ({ action: "retry" as const }),
         groundingHistory: (intentDigest) =>
           this.executions.groundingHistory(input.runId, intentDigest),
-        onPraxisResult: (result) =>
-          this.executions.recordPraxisResult(input.runId, input.attemptId, result),
+        onPraxisResult: async (result) => {
+          await observePraxisFailure(this.operationalEvents, input, result);
+          await this.executions.recordPraxisResult(input.runId, input.attemptId, result);
+        },
       },
     });
   }
@@ -320,6 +328,7 @@ export class ExecutionCapabilityFactory {
           missionId: input.missionId,
           objectiveId: input.objectiveId,
           agentSessionId: input.agentSessionId,
+          correlationId: input.correlationId,
           flowDraftId: input.flowDraftId,
           authorizationId: input.authorizationId,
         }),
@@ -336,6 +345,8 @@ export class ExecutionCapabilityFactory {
     missionId: string;
     objectiveId: string;
     agentSessionId: string;
+    attemptId?: string;
+    correlationId?: string;
     flowDraftId?: string;
     flowRevisionId?: string;
     authorizationId?: string;
@@ -357,8 +368,16 @@ export class ExecutionCapabilityFactory {
     const outputs = this.protectedOutputs;
     const leaseDurationMs = 30_000;
     return {
-      protectedTransactionExecutor: ({ transaction, dependencies }) =>
-        new ProtectedTransactionKernel(dependencies).execute(transaction),
+      protectedTransactionExecutor: async ({ transaction, dependencies }) => {
+        const execution = await new ProtectedTransactionKernel(dependencies).execute(transaction);
+        await observeProtectedOperationResult(
+          this.operationalEvents,
+          context,
+          transaction.operationId,
+          execution.result,
+        );
+        return execution;
+      },
       protectedTransactionStore: {
         claim: async (claim) => {
           const runAuthorizationId = context.protectedAuthorizations?.[claim.operationId];
@@ -691,6 +710,99 @@ function restrictCapabilityState(
 ) {
   if (derived === "unavailable") return "unavailable" as const;
   return requested ?? derived;
+}
+
+function praxisFailureClassification(
+  result: Exclude<import("@scry/contracts").PraxisResult, { status: "succeeded" }>,
+) {
+  if (/STALE|CHANGED|DOCUMENT|REFERENCE/.test(result.code)) return "stale_authority" as const;
+  if (result.provenance === "policy") return "policy_refusal" as const;
+  if (result.provenance === "infrastructure") return "infrastructure" as const;
+  return "application_provider" as const;
+}
+
+export async function observePraxisFailure(
+  events: OperationalEvents | undefined,
+  context: {
+    projectId: string;
+    missionId: string;
+    objectiveId: string;
+    agentSessionId: string;
+    runId: string;
+    attemptId: string;
+    correlationId: string;
+  },
+  result: import("@scry/contracts").PraxisResult,
+) {
+  if (result.status === "succeeded") return;
+  await events?.emit("praxis", {
+    name: "praxis.action_failed",
+    classification: praxisFailureClassification(result),
+    reasonCode: result.code,
+    outcome: result.status === "inconclusive" ? "inconclusive" : "failed",
+    causality: {
+      projectId: context.projectId,
+      missionId: context.missionId,
+      objectiveId: context.objectiveId,
+      agentSessionId: context.agentSessionId,
+      runId: context.runId,
+      attemptId: context.attemptId,
+      operationId: result.operationId,
+      correlationId: context.correlationId,
+    },
+    durationMs: result.timing.totalMs,
+    details: {
+      status: result.status,
+      phase: result.phase,
+      provenance: result.provenance,
+      mutationOutcome: result.mutationOutcome,
+      retry: result.retry,
+    },
+  });
+}
+
+export async function observeProtectedOperationResult(
+  events: OperationalEvents | undefined,
+  context: {
+    ownerKind: "authoring_session" | "run";
+    ownerId: string;
+    projectId: string;
+    missionId: string;
+    objectiveId: string;
+    agentSessionId: string;
+    attemptId?: string;
+    correlationId?: string;
+  },
+  operationId: string,
+  result: import("@scry/contracts").ProtectedTransactionResult,
+) {
+  if (result.status !== "outcome_unknown" && result.mutation.outcome !== "unknown") return;
+  await events?.emit("runtime", {
+    name: "protected_operation.reconciliation_required",
+    classification: "reconciliation_unknown",
+    reasonCode: result.reasonCode ?? "MUTATION_RECONCILIATION_REQUIRED",
+    outcome: "reconciliation_required",
+    causality: {
+      projectId: context.projectId,
+      missionId: context.missionId,
+      objectiveId: context.objectiveId,
+      agentSessionId: context.agentSessionId,
+      ...(context.ownerKind === "run" ? { runId: context.ownerId } : {}),
+      ...(context.attemptId ? { attemptId: context.attemptId } : {}),
+      ...(context.ownerKind === "authoring_session" ? { praxisSessionId: context.ownerId } : {}),
+      ...(context.correlationId ? { correlationId: context.correlationId } : {}),
+      operationId,
+      protectedOperationId: operationId,
+    },
+    details: {
+      mutationDispatch: result.mutation.dispatch,
+      mutationOutcome: result.mutation.outcome,
+      reconciliation: result.reconciliation,
+      failurePhase: result.failurePhase,
+      retryClass: result.retryClass,
+      safeActions: result.safeActions,
+    },
+  });
 }
 
 @Injectable()

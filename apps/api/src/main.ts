@@ -4,8 +4,11 @@ import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 
 import { AppModule } from "./app.module.js";
+import { installApiRequestObservability, OperationalEvents } from "./infrastructure/index.js";
 
-const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
+const adapter = new FastifyAdapter();
+const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter);
+installApiRequestObservability(adapter.getInstance(), app.get(OperationalEvents));
 app.enableCors({
   origin: (process.env.API_CORS_ORIGINS ?? "http://127.0.0.1:5173,http://localhost:5173")
     .split(",")

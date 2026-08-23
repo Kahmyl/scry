@@ -19,6 +19,7 @@
     "@nestjs/platform-fastify": "^11.0.0",
     "@scry/contracts": "workspace:*",
     "@scry/executor": "workspace:*",
+    "@scry/observability": "workspace:*",
     "@scry/policy": "workspace:*",
     "@scry/praxis": "workspace:*",
     "@scry/veil": "workspace:*",

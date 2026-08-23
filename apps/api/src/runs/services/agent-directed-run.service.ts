@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { ConflictException, Inject, Injectable } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, Optional } from "@nestjs/common";
 import { createArtifactStoreFromEnv } from "@scry/chronicle/legacy";
 import {
   missionAuthoringIntentSchema,
@@ -17,12 +17,16 @@ import {
   type MissionRunEvidenceContext,
 } from "../../adaptive-sessions/index.js";
 import type { Principal } from "../../auth/index.js";
-import { Database } from "../../infrastructure/index.js";
+import { Database, OperationalEvents } from "../../infrastructure/index.js";
 import { ExecutionRepository, ReleaseAdmissionService } from "../../runtime/index.js";
 import { commitExecutionReport } from "../../runtime/report-commit.js";
 
 type AssociatedAgentDirectedRun = {
+  projectId: string;
+  missionId: string;
   objectiveId: string;
+  agentSessionId: string;
+  praxisSessionId: string;
   flowDraftId: string | null;
   attemptId: string;
   claimToken: string;
@@ -46,6 +50,9 @@ export class AgentDirectedRunService {
     @Inject(MissionFlowAuthoringService) private readonly sessions: MissionFlowAuthoringService,
     @Inject(ExecutionRepository) private readonly executions: ExecutionRepository,
     @Inject(ReleaseAdmissionService) private readonly admission: ReleaseAdmissionService,
+    @Optional()
+    @Inject(OperationalEvents)
+    private readonly operationalEvents?: OperationalEvents,
   ) {}
 
   async dispatch(principal: Principal, runId: string, input: DispatchRunOperationInput) {
@@ -301,7 +308,7 @@ export class AgentDirectedRunService {
         const timelineSequenceOffset = Number(offsets.rows[0]?.timelineSequenceOffset ?? 0);
 
         await commitExecutionReport(
-          this.evidenceCommitOptions(),
+          this.evidenceCommitOptions(runId, run),
           report,
           outputDirectory,
           run.attemptId,
@@ -318,7 +325,7 @@ export class AgentDirectedRunService {
     };
   }
 
-  private evidenceCommitOptions() {
+  private evidenceCommitOptions(runId: string, run: AssociatedAgentDirectedRun) {
     const veilAdmissionKey = process.env.VEIL_ADMISSION_KEY;
 
     if (!veilAdmissionKey)
@@ -337,6 +344,16 @@ export class AgentDirectedRunService {
       artifactRetentionMs: this.artifactRetentionMs,
       artifactStore: storage.store,
       artifactStoreRemote: storage.remote,
+      ...(this.operationalEvents ? { operationalEvents: this.operationalEvents } : {}),
+      causality: {
+        projectId: run.projectId,
+        missionId: run.missionId,
+        objectiveId: run.objectiveId,
+        agentSessionId: run.agentSessionId,
+        runId,
+        attemptId: run.attemptId,
+        praxisSessionId: run.praxisSessionId,
+      },
     };
   }
 
@@ -445,14 +462,20 @@ export class AgentDirectedRunService {
     await this.scry.getRun(principal, runId);
 
     const result = await this.database.query<{
+      projectId: string;
+      missionId: string;
       objectiveId: string;
+      agentSessionId: string;
       flowDraftId: string | null;
       attemptId: string | null;
       claimToken: string | null;
       veilPolicySnapshot: unknown;
     }>(
       `SELECT
+         r.project_id AS "projectId",
+         r.mission_id AS "missionId",
          r.objective_id AS "objectiveId",
+         r.agent_session_id AS "agentSessionId",
          s.flow_draft_id AS "flowDraftId",
          attempt.id AS "attemptId",
          attempt.claim_token::text AS "claimToken",
@@ -502,7 +525,11 @@ export class AgentDirectedRunService {
       });
 
     return {
+      projectId: row.projectId,
+      missionId: row.missionId,
       objectiveId: row.objectiveId,
+      agentSessionId: row.agentSessionId,
+      praxisSessionId,
       flowDraftId: row.flowDraftId,
       attemptId: row.attemptId,
       claimToken: row.claimToken,

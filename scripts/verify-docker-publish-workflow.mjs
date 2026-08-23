@@ -53,7 +53,15 @@ for (const required of [
   if (!workflow.includes(required)) fail(`beta publication contract missing: ${required}`);
 }
 
-const runtimePackages = ["chronicle", "contracts", "executor", "policy", "praxis", "veil"];
+const runtimePackages = [
+  "chronicle",
+  "contracts",
+  "executor",
+  "observability",
+  "policy",
+  "praxis",
+  "veil",
+];
 
 if (apiPackage.dependencies?.["@scry/assurance"])
   fail("@scry/api must not classify Assurance as a production dependency");
