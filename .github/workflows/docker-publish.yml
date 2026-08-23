@@ -62,6 +62,7 @@ jobs:
             org.scry.schema-fingerprint=${{ env.SCRY_SCHEMA_FINGERPRINT }}
             org.scry.release-id=${{ github.sha }}
           cache-from: type=gha,scope=scry
+          cache-to: type=gha,mode=max,scope=scry
 
       - name: Boot and smoke-test the candidate beta topology
         env:
@@ -88,22 +89,48 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and publish the Scry beta image
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: |
-            ${{ steps.meta.outputs.labels }}
-            org.scry.privacy-authority=veil-only
-            org.scry.schema-fingerprint=${{ env.SCRY_SCHEMA_FINGERPRINT }}
-            org.scry.release-id=${{ github.sha }}
-          cache-from: type=gha,scope=scry
-          cache-to: type=gha,mode=max,scope=scry
+      - name: Publish the smoke-tested Scry beta image
+        id: publish-image
+        shell: bash
+        env:
+          SOURCE_IMAGE: scry-beta-ci:${{ github.sha }}
+          PUBLISH_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+
+          published_digest=""
+
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+
+            docker tag "$SOURCE_IMAGE" "$tag"
+
+            push_output="$(docker push "$tag" 2>&1)"
+            printf '%s\n' "$push_output"
+
+            tag_digest="$(
+              printf '%s\n' "$push_output"                 | sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p'                 | tail -n 1
+            )"
+
+            if [ -z "$tag_digest" ]; then
+              echo "Unable to determine registry digest after publishing $tag."
+              exit 1
+            fi
+
+            if [ -z "$published_digest" ]; then
+              published_digest="$tag_digest"
+            elif [ "$published_digest" != "$tag_digest" ]; then
+              echo "Published tags resolved to different image digests."
+              exit 1
+            fi
+          done <<< "$PUBLISH_TAGS"
+
+          if [ -z "$published_digest" ]; then
+            echo "No Docker publication tags were produced."
+            exit 1
+          fi
+
+          echo "digest=$published_digest" >> "$GITHUB_OUTPUT"
 
       - name: Select stack tag
         id: stack
@@ -135,7 +162,7 @@ jobs:
           VEIL_ADMISSION_KEY: publish-placeholder-at-least-32-bytes
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_PUBLISHABLE_KEY: publish-placeholder
-          SCRY_IMAGE_REF: ${{ env.APP_IMAGE }}@${{ steps.build.outputs.digest }}
+          SCRY_IMAGE_REF: ${{ env.APP_IMAGE }}@${{ steps.publish-image.outputs.digest }}
           SCRY_RELEASE_ID: ${{ github.sha }}
         run: |
           docker compose -f "$SCRY_COMPOSE_FILE" publish -y \

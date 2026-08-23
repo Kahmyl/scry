@@ -45,9 +45,31 @@ for (const required of [
 
 const qualificationIndex = workflow.indexOf("Boot and smoke-test the candidate beta topology");
 const loginIndex = workflow.indexOf("Log in to Docker Hub");
-const publishIndex = workflow.indexOf("Build and publish the Scry beta image");
+const publishIndex = workflow.indexOf("Publish the smoke-tested Scry beta image");
 if (!(qualificationIndex < loginIndex && loginIndex < publishIndex))
   fail("Docker publication must occur only after the candidate beta topology smoke test");
+
+const imageBuildCount = (workflow.match(/uses: docker\/build-push-action@v6/g) ?? []).length;
+if (imageBuildCount !== 1)
+  fail(`beta publication must build the application image exactly once; found ${imageBuildCount}`);
+
+if (!workflow.includes("load: true"))
+  fail("the single candidate image build must load the exact image used by smoke qualification");
+
+if (workflow.includes("push: true"))
+  fail("docker/build-push-action must not rebuild/push after smoke qualification");
+
+for (const required of [
+  "SOURCE_IMAGE: scry-beta-ci:${{ github.sha }}",
+  "PUBLISH_TAGS: ${{ steps.meta.outputs.tags }}",
+  'docker tag "$SOURCE_IMAGE" "$tag"',
+  'docker push "$tag"',
+  'echo "digest=$published_digest" >> "$GITHUB_OUTPUT"',
+  "${{ steps.publish-image.outputs.digest }}",
+  "cache-to: type=gha,mode=max,scope=scry",
+]) {
+  if (!workflow.includes(required)) fail(`single-build publication contract missing: ${required}`);
+}
 
 const environment = {
   ...process.env,
@@ -106,7 +128,7 @@ for (const service of services) {
 }
 
 process.stdout.write(
-  `Docker beta publication verified: build-and-smoke policy; ${services.length} core services; no test or backup image dependency.\n`,
+  `Docker beta publication verified: single-build smoke-and-publish policy; ${services.length} core services; no test or backup image dependency.\n`,
 );
 
 function fail(message) {
