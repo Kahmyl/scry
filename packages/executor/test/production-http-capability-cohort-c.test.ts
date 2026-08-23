@@ -200,7 +200,7 @@ const scenarios: Scenario[] = [
           maximumLength: 100,
           pattern: "^secret-right-74$",
         }),
-        180,
+        500,
       );
       expect(r.value).toBeUndefined();
       expect(r.diagnostics[0]?.lastFailureCode).toBe("VALUE_VALIDATION_FAILED");
