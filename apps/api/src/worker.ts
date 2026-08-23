@@ -77,6 +77,10 @@ const retentionIntervalMs = Math.max(
   10_000,
   Number(process.env.ARTIFACT_RETENTION_INTERVAL_MS ?? 60_000),
 );
+const operationalRetentionIntervalMs = Math.max(
+  60_000,
+  Number(process.env.SCRY_OPERATIONAL_EVENT_RETENTION_INTERVAL_MS ?? 60 * 60 * 1_000),
+);
 const artifactRetentionMs = Math.max(
   60_000,
   Number(process.env.ARTIFACT_RETENTION_MS ?? 30 * 24 * 60 * 60 * 1_000),
@@ -124,7 +128,12 @@ const workerHeartbeat = setInterval(
 
 await recoverStaleWork();
 await runArtifactRetention();
+await runOperationalEventRetention();
 const retentionSweep = setInterval(() => void runArtifactRetention(), retentionIntervalMs);
+const operationalRetentionSweep = setInterval(
+  () => void runOperationalEventRetention(),
+  operationalRetentionIntervalMs,
+);
 let recoveryRunning = false;
 const staleRecovery = setInterval(
   () => {
@@ -408,6 +417,19 @@ async function runArtifactRetention() {
   }
 }
 
+async function runOperationalEventRetention() {
+  try {
+    const result = await operationalEvents.pruneExpired();
+    process.stdout.write(
+      `${JSON.stringify({ event: "operational_event.retention", ...result })}\n`,
+    );
+  } catch (error) {
+    process.stderr.write(
+      `${JSON.stringify({ event: "operational_event.retention_failed", code: error instanceof Error ? error.name : "UNKNOWN" })}\n`,
+    );
+  }
+}
+
 function requireVeilAdmissionKey() {
   const key = process.env.VEIL_ADMISSION_KEY;
   if (!key) throw new Error("VEIL_ADMISSION_KEY_REQUIRED");
@@ -418,6 +440,7 @@ async function shutdown() {
   clearInterval(workerHeartbeat);
   clearInterval(staleRecovery);
   clearInterval(retentionSweep);
+  clearInterval(operationalRetentionSweep);
   await authoringRuntimeOwner.close();
   await workers.close();
   await app.close();

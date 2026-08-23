@@ -421,3 +421,4 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir 20260820-0910_scope_unknown_fence_to_resource_mutations.sql
 \ir 20260816-231045_add_document_transition_gap.sql
 \ir mission-recording-selection.sql
+\ir operational-events.sql

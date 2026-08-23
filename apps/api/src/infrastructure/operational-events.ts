@@ -1,14 +1,29 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import {
+  createFanOutOperationalEventSink,
   OperationalEventEmitter,
+  parseOperationalEvent,
+  stdoutOperationalEventSink,
   type OperationalComponent,
+  type OperationalEvent,
   type OperationalEventClassification,
   type OperationalEventInput,
+  type OperationalEventSink,
 } from "@scry/observability";
+
+import { OperationalEventStore } from "./operational-event-store.js";
 
 @Injectable()
 export class OperationalEvents {
   private readonly emitters = new Map<OperationalComponent, OperationalEventEmitter>();
+  private readonly sink: OperationalEventSink;
+
+  constructor(@Inject(OperationalEventStore) private readonly store: OperationalEventStore) {
+    this.sink = createFanOutOperationalEventSink([
+      stdoutOperationalEventSink,
+      (event) => this.store.write(event),
+    ]);
+  }
 
   emit(component: OperationalComponent, input: OperationalEventInput) {
     let emitter = this.emitters.get(component);
@@ -19,10 +34,27 @@ export class OperationalEvents {
         ...(process.env.SCRY_SCHEMA_FINGERPRINT
           ? { schemaFingerprint: process.env.SCRY_SCHEMA_FINGERPRINT }
           : {}),
+        sink: this.sink,
       });
       this.emitters.set(component, emitter);
     }
     return emitter.emit(input);
+  }
+
+  /** Service-authenticated central ingestion for components that do not own a database connection. */
+  async ingest(value: OperationalEvent) {
+    const event = parseOperationalEvent(value);
+    // Preserve fallback evidence even when the durable ingestion response must report failure.
+    stdoutOperationalEventSink(event);
+    await this.store.write(event);
+  }
+
+  pruneExpired(now = new Date()) {
+    return this.store.prune({
+      retentionDays: configuredInteger("SCRY_OPERATIONAL_EVENT_RETENTION_DAYS", 30, 1, 3_650),
+      batchSize: configuredInteger("SCRY_OPERATIONAL_EVENT_RETENTION_BATCH_SIZE", 1_000, 1, 5_000),
+      now,
+    });
   }
 }
 
@@ -111,4 +143,11 @@ function rejectionClassification(
 
 function firstHeader(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function configuredInteger(name: string, fallback: number, minimum: number, maximum: number) {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum)
+    throw new Error(`${name}_INVALID`);
+  return value;
 }

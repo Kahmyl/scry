@@ -19,6 +19,10 @@ const gapMigration = "20260816-231045_add_document_transition_gap.sql";
 
 const selectionMigration = "mission-recording-selection.sql";
 
+const operationalEventsMigration = "operational-events.sql";
+const preOperationalEventsFingerprint =
+  "8abcde60d523d2e8390a686a591c4435efee6331baf15a2468743a1c8cb65a4f";
+
 const migrationDirectory = fileURLToPath(new URL("../migrations/", import.meta.url));
 
 const historicalFixtureDirectory = fileURLToPath(new URL("./fixtures/d647/", import.meta.url));
@@ -77,7 +81,10 @@ describe("Mission recording selection migration", () => {
         sources,
         OPTIONAL_BASELINE_MIGRATIONS.filter(
           (name) =>
-            name !== unknownFenceMigration && name !== gapMigration && name !== selectionMigration,
+            name !== unknownFenceMigration &&
+            name !== gapMigration &&
+            name !== selectionMigration &&
+            name !== operationalEventsMigration,
         ),
       ),
     );
@@ -93,13 +100,35 @@ describe("Mission recording selection migration", () => {
       expandBaselineStage(
         baseline,
         sources,
-        OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== selectionMigration),
+        OPTIONAL_BASELINE_MIGRATIONS.filter(
+          (name) => name !== selectionMigration && name !== operationalEventsMigration,
+        ),
       ),
     );
 
     expect(preSelection).toContain("document_transition_gap");
 
     expect(digest(preSelection)).not.toBe(deployedPreGapFingerprint);
+  });
+
+  it("models the exact current predecessor and applies only the additive operational store", async () => {
+    const { baseline, sources, expandFoundation } = await currentInputs();
+    const predecessor = expandFoundation(
+      expandBaselineStage(
+        baseline,
+        sources,
+        OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== operationalEventsMigration),
+      ),
+    );
+    expect(digest(predecessor)).toBe(preOperationalEventsFingerprint);
+
+    const migrate = await readFile(new URL("../scripts/migrate.ts", import.meta.url), "utf8");
+    const block = migrate.match(
+      /if \(installedFingerprint === preOperationalEventsFingerprint\) \{([\s\S]*?)\n\s*\} else if/,
+    );
+    expect(block).not.toBeNull();
+    expect(block![1]).toContain("await client.query(operationalEvents);");
+    expect(block![1]).not.toContain("missionRecordingSelection");
   });
 
   it("orders unknown fencing and document-transition authority before recording selection", async () => {
@@ -145,10 +174,13 @@ describe("Mission recording selection migration", () => {
 
     const selection = body.indexOf("await client.query(missionRecordingSelection);");
 
+    const operationalEvents = body.indexOf("await client.query(operationalEvents);");
+
     expect(projection).toBeGreaterThanOrEqual(0);
     expect(projection).toBeLessThan(unknownFence);
     expect(unknownFence).toBeLessThan(gap);
     expect(gap).toBeLessThan(selection);
+    expect(selection).toBeLessThan(operationalEvents);
     expect(body).toContain("UPDATE schema_baseline");
   });
 
@@ -158,6 +190,9 @@ describe("Mission recording selection migration", () => {
     const selectionCalls =
       migrate.match(/await client\.query\(missionRecordingSelection\);/g) ?? [];
 
+    const operationalEventsCalls =
+      migrate.match(/await client\.query\(operationalEvents\);/g) ?? [];
+
     const gapCalls = migrate.match(/await client\.query\(documentTransitionGap\);/g) ?? [];
 
     const unknownFenceCalls =
@@ -166,7 +201,9 @@ describe("Mission recording selection migration", () => {
     const finalWrites =
       migrate.match(/UPDATE\s+schema_baseline[\s\S]{0,160}?schema_fingerprint=\$1/g) ?? [];
 
-    expect(selectionCalls).toHaveLength(finalWrites.length);
+    expect(operationalEventsCalls).toHaveLength(finalWrites.length);
+
+    expect(selectionCalls).toHaveLength(finalWrites.length - 1);
 
     expect(gapCalls).toHaveLength(selectionCalls.length - 1);
 

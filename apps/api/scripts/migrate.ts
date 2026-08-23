@@ -147,6 +147,9 @@ const documentTransitionGapPath = fileURLToPath(
 const missionRecordingSelectionPath = fileURLToPath(
   new URL("../migrations/mission-recording-selection.sql", import.meta.url),
 );
+const operationalEventsPath = fileURLToPath(
+  new URL("../migrations/operational-events.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -216,6 +219,7 @@ const scopeUnknownFenceToResourceMutations = await readFile(
 );
 const documentTransitionGap = await readFile(documentTransitionGapPath, "utf8");
 const missionRecordingSelection = await readFile(missionRecordingSelectionPath, "utf8");
+const operationalEvents = await readFile(operationalEventsPath, "utf8");
 const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
 
 const expandFoundation = (source: string) =>
@@ -259,6 +263,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
     scopeUnknownFenceToResourceMutations,
   "20260816-231045_add_document_transition_gap.sql": documentTransitionGap,
   "mission-recording-selection.sql": missionRecordingSelection,
+  "operational-events.sql": operationalEvents,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
@@ -276,7 +281,8 @@ const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
               migration !== "resource-effect-reconciliation.sql" &&
               migration !== "20260820-0910_scope_unknown_fence_to_resource_mutations.sql" &&
               migration !== "20260816-231045_add_document_transition_gap.sql" &&
-              migration !== "mission-recording-selection.sql",
+              migration !== "mission-recording-selection.sql" &&
+              migration !== "operational-events.sql",
           ),
     ),
   );
@@ -418,6 +424,15 @@ const fingerprint = digest(baseline);
 
 assertConfiguredMigrationFingerprint(process.env.SCRY_SCHEMA_FINGERPRINT, fingerprint);
 
+const preOperationalEventsBaseline = expandFoundation(
+  expandBaselineStage(
+    baselineSource,
+    optionalMigrationSources,
+    OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "operational-events.sql"),
+  ),
+);
+const preOperationalEventsFingerprint = digest(preOperationalEventsBaseline);
+
 const preMissionRecordingSelectionBaseline = expandFoundation(
   expandBaselineStage(
     baselineSource,
@@ -522,7 +537,25 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === AUTHORITATIVE_D647_FINGERPRINT) {
+    if (installedFingerprint === preOperationalEventsFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-operational-events'))");
+        await client.query(operationalEvents);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied durable operational events ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === AUTHORITATIVE_D647_FINGERPRINT) {
       const client = await pool.connect();
 
       try {
@@ -537,6 +570,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
 
         await client.query(
           `UPDATE schema_baseline
@@ -565,6 +599,7 @@ try {
           "SELECT pg_advisory_xact_lock(hashtext('scry-mission-recording-selection'))",
         );
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline
            SET schema_fingerprint=$1,applied_at=now()
@@ -590,6 +625,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -614,6 +650,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -640,6 +677,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -671,6 +709,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -698,6 +737,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -725,6 +765,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -749,6 +790,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -774,6 +816,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -800,6 +843,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -827,6 +871,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -855,6 +900,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -884,6 +930,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -916,6 +963,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -947,6 +995,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -980,6 +1029,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -1014,6 +1064,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -1047,6 +1098,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -1097,6 +1149,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now()
            WHERE singleton=true`,
@@ -1153,6 +1206,7 @@ try {
         await client.query(scopeUnknownFenceToResourceMutations);
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline
            SET schema_fingerprint=$1,applied_at=now()
@@ -1259,6 +1313,7 @@ try {
 
         await client.query(documentTransitionGap);
         await client.query(missionRecordingSelection);
+        await client.query(operationalEvents);
         await client.query(
           `UPDATE schema_baseline
            SET schema_fingerprint=$1,

@@ -7547,3 +7547,105 @@ select:focus-visible {
   margin-top: 12px;
   text-transform: capitalize;
 }
+/* Privacy-safe operator diagnostics */
+.operational-alert-panel,
+.operational-event-panel {
+  margin-bottom: 24px;
+}
+.operational-alert-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+.operational-alert {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border, #28322d);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.operational-alert.critical {
+  border-color: rgba(255, 95, 95, 0.45);
+}
+.operational-alert.warning {
+  border-color: rgba(246, 193, 67, 0.38);
+}
+.operational-alert div {
+  display: grid;
+  gap: 4px;
+}
+.operational-alert span,
+.operational-alert small {
+  color: var(--muted, #98a39d);
+}
+.operational-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.operational-filter select {
+  min-height: 38px;
+  border: 1px solid var(--border, #28322d);
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  padding: 0 10px;
+}
+.operational-events-list {
+  display: grid;
+  gap: 8px;
+}
+.operational-event-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(300px, 1.2fr);
+  gap: 20px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border, #28322d);
+}
+.operational-event-row > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+.operational-event-row small {
+  color: var(--muted, #98a39d);
+}
+.operational-classification {
+  width: max-content;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted, #98a39d);
+}
+.operational-classification.reconciliation_unknown,
+.operational-classification.persistence,
+.operational-classification.infrastructure {
+  color: #ff8f8f;
+}
+.operational-causality {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  gap: 6px;
+}
+.operational-causality button {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--border, #28322d);
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: transparent;
+  color: var(--muted, #98a39d);
+  font-size: 11px;
+}
+.operational-causality button:not(:disabled) {
+  cursor: pointer;
+  color: inherit;
+}
+@media (max-width: 800px) {
+  .operational-event-row {
+    grid-template-columns: 1fr;
+  }
+}

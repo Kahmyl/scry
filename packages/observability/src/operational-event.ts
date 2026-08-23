@@ -1,67 +1,98 @@
-export type OperationalEventName =
-  | "api.request_rejected"
-  | "mcp.request_rejected"
-  | "worker.execution_failed"
-  | "praxis.action_failed"
-  | "protected_operation.reconciliation_required"
-  | "persistence.write_failed"
-  | "report.finalization_failed";
+import { z } from "zod";
 
-export type OperationalEventClassification =
-  | "validation"
-  | "policy_refusal"
-  | "stale_authority"
-  | "application_provider"
-  | "infrastructure"
-  | "persistence"
-  | "reconciliation_unknown";
+export const operationalEventNameSchema = z.enum([
+  "api.request_rejected",
+  "mcp.request_rejected",
+  "worker.execution_failed",
+  "praxis.action_failed",
+  "protected_operation.reconciliation_required",
+  "persistence.write_failed",
+  "report.finalization_failed",
+]);
 
-export type OperationalComponent = "api" | "mcp" | "worker" | "praxis" | "runtime";
+export const operationalEventClassificationSchema = z.enum([
+  "validation",
+  "policy_refusal",
+  "stale_authority",
+  "application_provider",
+  "infrastructure",
+  "persistence",
+  "reconciliation_unknown",
+]);
 
-export type OperationalCausality = Readonly<{
-  projectId?: string;
-  workspaceId?: string;
-  missionId?: string;
-  objectiveId?: string;
-  agentSessionId?: string;
-  mcpSessionId?: string;
-  runId?: string;
-  attemptId?: string;
-  praxisSessionId?: string;
-  operationId?: string;
-  protectedOperationId?: string;
-  correlationId?: string;
-  browserContextId?: string;
-  documentAuthorityId?: string;
-}>;
+export const operationalComponentSchema = z.enum(["api", "mcp", "worker", "praxis", "runtime"]);
+export const operationalEventOutcomeSchema = z.enum([
+  "failed",
+  "refused",
+  "inconclusive",
+  "reconciliation_required",
+]);
 
-export type OperationalEventInput = Readonly<{
-  name: OperationalEventName;
-  classification: OperationalEventClassification;
-  reasonCode: string;
-  outcome: "failed" | "refused" | "inconclusive" | "reconciliation_required";
-  causality?: OperationalCausality;
-  durationMs?: number;
-  transition?: Readonly<{ from: string; to: string }>;
-  details?: Readonly<Record<string, unknown>>;
-}>;
+const boundedIdentitySchema = z.string().trim().min(1).max(200);
+export const operationalCausalitySchema = z
+  .object({
+    projectId: boundedIdentitySchema.optional(),
+    workspaceId: boundedIdentitySchema.optional(),
+    missionId: boundedIdentitySchema.optional(),
+    objectiveId: boundedIdentitySchema.optional(),
+    agentSessionId: boundedIdentitySchema.optional(),
+    mcpSessionId: boundedIdentitySchema.optional(),
+    runId: boundedIdentitySchema.optional(),
+    attemptId: boundedIdentitySchema.optional(),
+    praxisSessionId: boundedIdentitySchema.optional(),
+    operationId: boundedIdentitySchema.optional(),
+    protectedOperationId: boundedIdentitySchema.optional(),
+    correlationId: boundedIdentitySchema.optional(),
+    browserContextId: boundedIdentitySchema.optional(),
+    documentAuthorityId: boundedIdentitySchema.optional(),
+  })
+  .strict();
 
-export type OperationalEvent = Readonly<{
-  schemaVersion: 1;
-  name: OperationalEventName;
-  component: OperationalComponent;
-  occurredAt: string;
-  critical: true;
-  classification: OperationalEventClassification;
-  reasonCode: string;
-  outcome: OperationalEventInput["outcome"];
-  releaseId: string;
-  schemaFingerprint: string;
-  causality: OperationalCausality;
-  durationMs?: number;
-  transition?: Readonly<{ from: string; to: string }>;
-  details?: Readonly<Record<string, unknown>>;
-}>;
+const operationalTransitionSchema = z
+  .object({
+    from: z.string().regex(/^[a-z][a-z0-9_]{0,79}$/i),
+    to: z.string().regex(/^[a-z][a-z0-9_]{0,79}$/i),
+  })
+  .strict();
+
+export const operationalEventInputSchema = z
+  .object({
+    name: operationalEventNameSchema,
+    classification: operationalEventClassificationSchema,
+    reasonCode: z.string(),
+    outcome: operationalEventOutcomeSchema,
+    causality: operationalCausalitySchema.optional(),
+    durationMs: z.number().finite().nonnegative().optional(),
+    transition: operationalTransitionSchema.optional(),
+    details: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+export const operationalEventSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    name: operationalEventNameSchema,
+    component: operationalComponentSchema,
+    occurredAt: z.iso.datetime({ offset: true }),
+    critical: z.literal(true),
+    classification: operationalEventClassificationSchema,
+    reasonCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,119}$/),
+    outcome: operationalEventOutcomeSchema,
+    releaseId: boundedIdentitySchema,
+    schemaFingerprint: boundedIdentitySchema,
+    causality: operationalCausalitySchema,
+    durationMs: z.number().finite().nonnegative().optional(),
+    transition: operationalTransitionSchema.optional(),
+    details: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+export type OperationalEventName = z.infer<typeof operationalEventNameSchema>;
+export type OperationalEventClassification = z.infer<typeof operationalEventClassificationSchema>;
+export type OperationalComponent = z.infer<typeof operationalComponentSchema>;
+export type OperationalCausality = Readonly<z.infer<typeof operationalCausalitySchema>>;
+export type OperationalEventInput = Readonly<z.infer<typeof operationalEventInputSchema>>;
+export type OperationalEvent = Readonly<z.infer<typeof operationalEventSchema>>;
 
 export type OperationalEventSink = (event: OperationalEvent) => void | Promise<void>;
 export type OperationalEventWriter = Pick<OperationalEventEmitter, "emit">;
@@ -84,7 +115,7 @@ export class OperationalEventEmitter {
   private readonly now: () => Date;
 
   constructor(private readonly options: OperationalEventEmitterOptions) {
-    this.sink = options.sink ?? stdoutSink;
+    this.sink = options.sink ?? stdoutOperationalEventSink;
     this.now = options.now ?? (() => new Date());
   }
 
@@ -116,7 +147,7 @@ export function buildOperationalEvent(options: {
   const durationMs = safeDuration(options.input.durationMs);
   const transition = sanitizeTransition(options.input.transition);
 
-  return {
+  return operationalEventSchema.parse({
     schemaVersion: 1,
     name: options.input.name,
     component: options.component,
@@ -132,7 +163,34 @@ export function buildOperationalEvent(options: {
     ...(durationMs === undefined ? {} : { durationMs }),
     ...(transition ? { transition } : {}),
     ...(details && Object.keys(details).length > 0 ? { details } : {}),
+  });
+}
+
+/** Reject central-ingestion payloads that did not already pass canonical emission sanitization. */
+export function parseOperationalEvent(value: unknown): OperationalEvent {
+  const parsed = operationalEventSchema.parse(value);
+  const sanitizedCausality = sanitizeCausality(parsed.causality);
+  const sanitizedDetails = sanitizeDetails(parsed.details);
+  if (
+    JSON.stringify(sanitizedCausality) !== JSON.stringify(parsed.causality) ||
+    JSON.stringify(sanitizedDetails) !== JSON.stringify(parsed.details)
+  ) {
+    throw new Error("OPERATIONAL_EVENT_NOT_SANITIZED");
+  }
+  return parsed;
+}
+
+/** Every sink is attempted so a durable transport failure cannot suppress fallback evidence. */
+export function createFanOutOperationalEventSink(
+  sinks: readonly OperationalEventSink[],
+): OperationalEventSink {
+  return async (event) => {
+    await Promise.allSettled(sinks.map((sink) => Promise.resolve().then(() => sink(event))));
   };
+}
+
+export function stdoutOperationalEventSink(event: OperationalEvent) {
+  process.stdout.write(`${JSON.stringify({ kind: "scry.operational_event", ...event })}\n`);
 }
 
 export function safeOperationalReasonCode(value: unknown, fallback = "OPERATIONAL_FAILURE") {
@@ -210,8 +268,4 @@ function safeDuration(value: unknown) {
 
 function toSnakeCase(value: string) {
   return value.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
-}
-
-function stdoutSink(event: OperationalEvent) {
-  process.stdout.write(`${JSON.stringify({ kind: "scry.operational_event", ...event })}\n`);
 }

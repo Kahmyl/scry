@@ -65,6 +65,7 @@ describe("schema migration manifest", () => {
 
       expect(source).toContain("veil-observation-preferences.sql");
       expect(source).toContain("veil-artifact-retention.sql");
+      expect(source).toContain("operational-events.sql");
       expect(source).toContain("compiled-plan-cutover.sql");
       expect(source).toContain("stateful-probe-authoring.sql");
       expect(source).toContain("interactive-runtime-commands.sql");

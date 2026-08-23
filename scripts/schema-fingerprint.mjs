@@ -134,6 +134,8 @@ const missionRecordingSelection = await readFile(
   "utf8",
 );
 
+const operationalEvents = await readFile(new URL("operational-events.sql", root), "utf8");
+
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
   ["praxis-reporting.sql", reporting],
@@ -172,6 +174,7 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "u
   ],
   ["20260816-231045_add_document_transition_gap.sql", documentTransitionGap],
   ["mission-recording-selection.sql", missionRecordingSelection],
+  ["operational-events.sql", operationalEvents],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

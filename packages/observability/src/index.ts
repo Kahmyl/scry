@@ -1,7 +1,17 @@
 export {
   OperationalEventEmitter,
   buildOperationalEvent,
+  createFanOutOperationalEventSink,
+  parseOperationalEvent,
   safeOperationalReasonCode,
+  stdoutOperationalEventSink,
+  operationalCausalitySchema,
+  operationalComponentSchema,
+  operationalEventClassificationSchema,
+  operationalEventInputSchema,
+  operationalEventNameSchema,
+  operationalEventOutcomeSchema,
+  operationalEventSchema,
   type OperationalCausality,
   type OperationalComponent,
   type OperationalEvent,
@@ -11,3 +21,4 @@ export {
   type OperationalEventSink,
   type OperationalEventWriter,
 } from "./operational-event.js";
+export * from "./operational-query.js";

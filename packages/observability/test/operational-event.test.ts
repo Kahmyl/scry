@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   OperationalEventEmitter,
   buildOperationalEvent,
+  createFanOutOperationalEventSink,
+  parseOperationalEvent,
   type OperationalEvent,
 } from "../src/index.js";
 
@@ -113,5 +115,44 @@ describe("canonical operational events", () => {
       }),
     });
     await expect(broken.emit(input)).resolves.toBeUndefined();
+  });
+
+  it("attempts every fan-out sink when durable persistence fails", async () => {
+    const fallback = vi.fn();
+    const sink = createFanOutOperationalEventSink([
+      vi.fn(async () => {
+        throw new Error("database unavailable");
+      }),
+      fallback,
+    ]);
+    const event = buildOperationalEvent({
+      component: "api",
+      input: {
+        name: "persistence.write_failed",
+        classification: "persistence",
+        reasonCode: "DATABASE_WRITE_FAILED",
+        outcome: "failed",
+      },
+    });
+
+    await expect(sink(event)).resolves.toBeUndefined();
+    expect(fallback).toHaveBeenCalledWith(event);
+  });
+
+  it("rejects unsanitized central-ingestion events", () => {
+    const event = buildOperationalEvent({
+      component: "mcp",
+      input: {
+        name: "mcp.request_rejected",
+        classification: "policy_refusal",
+        reasonCode: "MCP_AUTHORIZATION_REJECTED",
+        outcome: "refused",
+      },
+    });
+
+    expect(() =>
+      parseOperationalEvent({ ...event, details: { authorization: "Bearer unsafe" } }),
+    ).toThrow("OPERATIONAL_EVENT_NOT_SANITIZED");
+    expect(parseOperationalEvent(event)).toEqual(event);
   });
 });

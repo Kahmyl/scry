@@ -42,6 +42,7 @@ export function Sidebar({
     ["missions", "Missions", <Eye size={17} />],
     ["runs", "Runs", <Activity size={17} />],
     ["reports", "Reports", <FileText size={17} />],
+    ["operations", "Operations", <AlertTriangle size={17} />],
   ];
 
   useEffect(() => {
