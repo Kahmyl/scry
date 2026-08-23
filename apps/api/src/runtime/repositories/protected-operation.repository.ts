@@ -1,9 +1,12 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import {
   assertProtectedOperationTransition,
+  projectMutationReceipt,
   protectedOperationDispatchMayBegin,
   protectedOperationLeaseExpiryState,
   protectedOperationTerminalStates,
+  type MutationReceipt,
+  type MutationReceiptProjectionSource,
   type ProtectedOperationOwnerKind,
   type ProtectedOperationState,
 } from "@scry/contracts";
@@ -88,6 +91,31 @@ type ProtectedOperationBinding = {
   flowDraftId?: string;
   flowRevisionId?: string;
   authorizationId?: string;
+};
+
+type ReceiptOperationRow = {
+  receiptId: string;
+  operationId: string;
+  ownerKind: ProtectedOperationOwnerKind;
+  ownerId: string;
+  projectId: string;
+  environmentId: string;
+  missionId: string;
+  objectiveId: string;
+  agentSessionId: string;
+  runId: string | null;
+  praxisSessionId: string | null;
+  dispatchSemantics: "mutation" | "read_only";
+  programDigest: string | null;
+  syntheticInputSetCommitment: string | null;
+  payloadCommitment: string | null;
+  providerIdempotencyCommitment: string | null;
+  state: ProtectedOperationState;
+  dispatchState: "not_started" | "authorized" | "started" | "acknowledged";
+  mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
+  persistenceState: "not_started" | "running" | "committed" | "failed" | "uncertain";
+  persistedReferences: MutationReceiptProjectionSource["persistedReferences"];
+  failureCode: string | null;
 };
 
 @Injectable()
@@ -467,22 +495,139 @@ export class ProtectedOperationRepository {
     safeDiagnostics?: Record<string, unknown>;
     durationMs?: number;
   }) {
-    const result = await this.database.query(
-      `UPDATE protected_operations SET phase=$4::text,safe_diagnostics=$5::jsonb,
-         phase_timings=CASE WHEN $6::double precision IS NULL THEN phase_timings
-           ELSE phase_timings || jsonb_build_object($4::text,round($6::numeric,3)) END,updated_at=now()
-       WHERE id=$1 AND lease_owner=$2 AND fencing_token=$3 AND lease_expires_at>now()
-         AND completed_at IS NULL RETURNING id`,
-      [
+    await this.database.transaction(async (client) => {
+      const diagnostics = input.safeDiagnostics ?? {};
+      const result = await client.query<{ id: string; state: ProtectedOperationState }>(
+        `UPDATE protected_operations SET phase=$4::text,safe_diagnostics=$5::jsonb,
+           dispatch_state=CASE
+             WHEN $4='dispatch_authorized' AND dispatch_state='not_started' THEN 'authorized'
+             ELSE dispatch_state
+           END,
+           phase_timings=CASE WHEN $6::double precision IS NULL THEN phase_timings
+             ELSE phase_timings || jsonb_build_object($4::text,round($6::numeric,3)) END,updated_at=now()
+         WHERE id=$1 AND lease_owner=$2 AND fencing_token=$3 AND lease_expires_at>now()
+           AND completed_at IS NULL RETURNING id,state`,
+        [
+          input.id,
+          input.leaseOwner,
+          input.fencingToken,
+          input.phase,
+          JSON.stringify(diagnostics),
+          input.durationMs ?? null,
+        ],
+      );
+      if (!result.rowCount) throw new ConflictException("PROTECTED_OPERATION_FENCED");
+      const state = result.rows[0]!.state;
+      const reasonCode =
+        typeof diagnostics.reasonCode === "string" &&
+        /^[A-Z][A-Z0-9_]*$/.test(diagnostics.reasonCode)
+          ? diagnostics.reasonCode
+          : undefined;
+      await appendTransition(
+        client,
         input.id,
-        input.leaseOwner,
-        input.fencingToken,
+        state,
+        state,
         input.phase,
-        JSON.stringify(input.safeDiagnostics ?? {}),
-        input.durationMs ?? null,
-      ],
+        input.fencingToken,
+        reasonCode,
+        diagnostics,
+      );
+    });
+  }
+
+  async getMutationReceiptByAuthoringOperation(
+    authoringSessionId: string,
+    operationId: string,
+  ): Promise<MutationReceipt | undefined> {
+    const operations = await this.database.query<ReceiptOperationRow>(
+      `${receiptOperationSelect}
+       WHERE operation.owner_kind='authoring_session'
+         AND operation.authoring_session_id=$1 AND operation.operation_id=$2`,
+      [authoringSessionId, operationId],
     );
-    if (!result.rowCount) throw new ConflictException("PROTECTED_OPERATION_FENCED");
+    return (await this.projectReceipts(operations.rows))[0];
+  }
+
+  async listMutationReceiptsForRun(runId: string): Promise<MutationReceipt[]> {
+    const operations = await this.database.query<ReceiptOperationRow>(
+      `${receiptOperationSelect}
+       WHERE operation.run_id=$1 OR operation.id IN (
+         SELECT protected.id
+           FROM protected_operations protected
+           JOIN run_operation_links link
+             ON link.praxis_session_id=protected.authoring_session_id
+            AND link.operation_id=protected.operation_id
+          WHERE link.run_id=$1
+       )
+       ORDER BY operation.created_at,operation.id`,
+      [runId],
+    );
+    return this.projectReceipts(operations.rows);
+  }
+
+  private async projectReceipts(rows: ReceiptOperationRow[]): Promise<MutationReceipt[]> {
+    if (!rows.length) return [];
+    const ids = rows.map(({ receiptId }) => receiptId);
+    const [transitions, identities] = await Promise.all([
+      this.database.query<{
+        protectedOperationId: string;
+        sequence: string;
+        fromState: ProtectedOperationState | null;
+        toState: ProtectedOperationState;
+        phase: string;
+        reasonCode: string | null;
+        safeDiagnostics: Record<string, unknown>;
+        occurredAt: Date;
+      }>(
+        `SELECT protected_operation_id AS "protectedOperationId",sequence,
+                from_state AS "fromState",to_state AS "toState",phase,
+                reason_code AS "reasonCode",safe_diagnostics AS "safeDiagnostics",
+                occurred_at AS "occurredAt"
+           FROM protected_operation_transitions
+          WHERE protected_operation_id=ANY($1::uuid[])
+          ORDER BY protected_operation_id,sequence`,
+        [ids],
+      ),
+      this.database.query<{
+        protectedOperationId: string;
+        bindingId: string;
+        publicValueId: string | null;
+        provider: string;
+        resourceKind: string;
+        resourceScope: string;
+        identityContractVersion: number;
+        identitySource: "response" | null;
+        lifecycleState: "active" | "unavailable" | "invalidated" | "desynchronized";
+      }>(
+        `SELECT source_protected_operation_id AS "protectedOperationId",id AS "bindingId",
+                generated_public_value_id AS "publicValueId",provider,
+                resource_kind AS "resourceKind",resource_scope AS "resourceScope",
+                identity_contract_version AS "identityContractVersion",
+                identity_source AS "identitySource",lifecycle_state AS "lifecycleState"
+           FROM external_resource_bindings
+          WHERE source_protected_operation_id=ANY($1::uuid[])
+          ORDER BY source_protected_operation_id,created_at,id`,
+        [ids],
+      ),
+    ]);
+    return rows.map(({ runId, praxisSessionId, ...row }) =>
+      projectMutationReceipt({
+        ...row,
+        ...(runId ? { runId } : {}),
+        ...(praxisSessionId ? { praxisSessionId } : {}),
+        transitions: transitions.rows
+          .filter(({ protectedOperationId }) => protectedOperationId === row.receiptId)
+          .map(({ sequence, occurredAt, ...transition }) => ({
+            ...transition,
+            sequence: Number(sequence),
+            occurredAt: occurredAt.toISOString(),
+          })),
+        responseIdentities: identities.rows.filter(
+          ({ protectedOperationId }) => protectedOperationId === row.receiptId,
+        ),
+      }),
+    );
   }
 
   private appendTransition(
@@ -497,6 +642,40 @@ export class ProtectedOperationRepository {
     );
   }
 }
+
+const receiptOperationSelect = `SELECT operation.id AS "receiptId",operation.operation_id AS "operationId",
+  operation.owner_kind AS "ownerKind",
+  CASE WHEN operation.owner_kind='authoring_session' THEN operation.authoring_session_id ELSE operation.run_id END AS "ownerId",
+  operation.project_id AS "projectId",operation.environment_id AS "environmentId",
+  operation.mission_id AS "missionId",operation.objective_id AS "objectiveId",
+  operation.agent_session_id AS "agentSessionId",
+  COALESCE(operation.run_id,linked_run.run_id) AS "runId",
+  CASE WHEN operation.owner_kind='authoring_session' THEN operation.authoring_session_id
+       ELSE live_session.praxis_session_id END AS "praxisSessionId",
+  operation.dispatch_semantics AS "dispatchSemantics",operation.program_digest AS "programDigest",
+  operation.synthetic_input_set_commitment AS "syntheticInputSetCommitment",
+  operation.payload_commitment AS "payloadCommitment",
+  operation.provider_idempotency_commitment AS "providerIdempotencyCommitment",
+  operation.state,operation.dispatch_state AS "dispatchState",
+  operation.mutation_outcome AS "mutationOutcome",
+  operation.persistence_state AS "persistenceState",
+  operation.persisted_references AS "persistedReferences",
+  operation.failure_code AS "failureCode"
+ FROM protected_operations operation
+ LEFT JOIN LATERAL (
+   SELECT link.run_id
+     FROM run_operation_links link
+    WHERE operation.owner_kind='authoring_session'
+      AND link.praxis_session_id=operation.authoring_session_id
+      AND link.operation_id=operation.operation_id
+    ORDER BY link.created_at DESC,link.run_id LIMIT 1
+ ) linked_run ON operation.owner_kind='authoring_session'
+ LEFT JOIN LATERAL (
+   SELECT binding.praxis_session_id
+     FROM run_praxis_sessions binding
+    WHERE binding.run_id=operation.run_id
+    ORDER BY binding.epoch DESC LIMIT 1
+ ) live_session ON operation.owner_kind='run'`;
 
 async function destroyOperationBoundInputs(
   client: { query: (text: string, values?: unknown[]) => Promise<unknown> },

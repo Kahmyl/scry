@@ -167,6 +167,12 @@ describe("current Scry MCP surface", () => {
       "publish_mission_report",
     ])
       expect(tools.find((tool) => tool.name === name)?.outputSchema, name).toBeDefined();
+    expect(
+      JSON.stringify(tools.find(({ name }) => name === "dispatch_run_operation")?.outputSchema),
+    ).toContain("mutationReceipt");
+    expect(JSON.stringify(tools.find(({ name }) => name === "get_run")?.outputSchema)).toContain(
+      "mutationReceipts",
+    );
 
     const grant = tools.find(({ name }) => name === "grant_mission_execution_authorization")!;
     expect(grant.description).toContain("operationId");

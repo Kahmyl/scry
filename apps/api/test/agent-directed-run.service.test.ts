@@ -93,6 +93,7 @@ function harness(associated = true) {
       scry as never,
       sessions as never,
       executions as never,
+      { getMutationReceiptByAuthoringOperation: vi.fn(async () => undefined) } as never,
       admission as never,
     ),
     sessions,

@@ -2110,4 +2110,99 @@ integration("protected operation repository integration", () => {
       failureCode: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID",
     });
   });
+
+  it("projects append-only request and owned-response chronology without protected diagnostics", async () => {
+    const operationId = `receipt-${randomUUID()}`;
+    await create(operationId);
+    let claim = await claimOperation(operationId, "receipt-owner");
+    for (const next of ["preparing", "ready_to_dispatch"] as const) {
+      claim = await operations.transition({
+        id: claim.id,
+        leaseOwner: "receipt-owner",
+        fencingToken: claim.fencingToken,
+        version: claim.version,
+        expected: claim.state,
+        next,
+        phase: next,
+      });
+    }
+    await operations.record({
+      id: claim.id,
+      leaseOwner: "receipt-owner",
+      fencingToken: claim.fencingToken,
+      phase: "dispatch_authorized",
+      safeDiagnostics: {
+        requestContract: {
+          method: "POST",
+          pathTemplate: "/clients/{clientId}",
+          transports: ["fetch"],
+        },
+        reconciliationStrategy: "public_api_state",
+      },
+    });
+    claim = await operations.transition({
+      id: claim.id,
+      leaseOwner: "receipt-owner",
+      fencingToken: claim.fencingToken,
+      version: claim.version,
+      expected: "ready_to_dispatch",
+      next: "dispatching",
+      phase: "mutation_dispatching",
+    });
+    await operations.record({
+      id: claim.id,
+      leaseOwner: "receipt-owner",
+      fencingToken: claim.fencingToken,
+      phase: "request_initiated",
+      safeDiagnostics: {
+        mutation: {
+          request: { status: "initiated", method: "POST", transport: "fetch" },
+        },
+      },
+    });
+    await operations.record({
+      id: claim.id,
+      leaseOwner: "receipt-owner",
+      fencingToken: claim.fencingToken,
+      phase: "response_settled",
+      safeDiagnostics: {
+        responseEvidence: {
+          responseEventObserved: true,
+          eligibleResponseSelected: true,
+          ownershipStatus: "unique",
+          ignoredProtectedValue: "integration-protected-canary",
+        },
+      },
+    });
+    claim = await operations.transition({
+      id: claim.id,
+      leaseOwner: "receipt-owner",
+      fencingToken: claim.fencingToken,
+      version: claim.version,
+      expected: "dispatching",
+      next: "recovery_required",
+      phase: "recovery_required",
+      reasonCode: "MUTATION_RECONCILIATION_REQUIRED",
+    });
+
+    const receipt = await operations.getMutationReceiptByAuthoringOperation(sessionId, operationId);
+    expect(receipt).toMatchObject({
+      receiptId: claim.id,
+      operationId,
+      dispatch: { state: "started" },
+      request: {
+        methodClass: "POST",
+        endpointClass: "/clients/{clientId}",
+        responseEventObserved: true,
+        ownershipProof: "unique",
+      },
+      mutationOutcome: "unknown",
+      redispatchAllowed: false,
+      reconciliation: { strategy: "public_api_state", state: "unknown" },
+    });
+    expect(
+      receipt?.transitions.filter(({ fromState, toState }) => fromState === toState),
+    ).toHaveLength(3);
+    expect(JSON.stringify(receipt)).not.toContain("integration-protected-canary");
+  });
 });

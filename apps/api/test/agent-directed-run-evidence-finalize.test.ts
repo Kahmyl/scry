@@ -81,6 +81,7 @@ function harness(evidenceComplete: boolean) {
     } as never,
     sessions as never,
     executions as never,
+    { getMutationReceiptByAuthoringOperation: vi.fn(async () => undefined) } as never,
     {
       assertAcceptingWork: vi.fn(),
     } as never,

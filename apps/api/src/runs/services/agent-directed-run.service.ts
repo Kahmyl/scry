@@ -21,7 +21,11 @@ import {
 } from "../../adaptive-sessions/index.js";
 import type { Principal } from "../../auth/index.js";
 import { Database, OperationalEvents } from "../../infrastructure/index.js";
-import { ExecutionRepository, ReleaseAdmissionService } from "../../runtime/index.js";
+import {
+  ExecutionRepository,
+  ProtectedOperationRepository,
+  ReleaseAdmissionService,
+} from "../../runtime/index.js";
 import { commitExecutionReport } from "../../runtime/report-commit.js";
 
 type AssociatedAgentDirectedRun = {
@@ -52,6 +56,8 @@ export class AgentDirectedRunService {
     @Inject(ScryRepository) private readonly scry: ScryRepository,
     @Inject(MissionFlowAuthoringService) private readonly sessions: MissionFlowAuthoringService,
     @Inject(ExecutionRepository) private readonly executions: ExecutionRepository,
+    @Inject(ProtectedOperationRepository)
+    private readonly protectedOperations: ProtectedOperationRepository,
     @Inject(ReleaseAdmissionService) private readonly admission: ReleaseAdmissionService,
     @Optional()
     @Inject(OperationalEvents)
@@ -62,18 +68,24 @@ export class AgentDirectedRunService {
     await this.admission.assertAcceptingWork();
     this.scry.requireWriteAccess(principal);
     const run = await this.requireAssociatedRun(principal, runId, input.praxisSessionId, true);
-    const existing = await this.database.query<{ safeResult: unknown }>(
-      `SELECT link.safe_result AS "safeResult" FROM run_operation_links link
+    const existing = await this.database.query<{ safeResult: unknown; operationId: string }>(
+      `SELECT link.safe_result AS "safeResult",operation.operation_id AS "operationId" FROM run_operation_links link
        JOIN adaptive_operations operation
          ON operation.session_id=link.praxis_session_id AND operation.operation_id=link.operation_id
        WHERE link.run_id=$1 AND operation.authoring_intent->>'intentId'=$2`,
       [runId, input.intent.intentId],
     );
-    if (existing.rowCount)
+    if (existing.rowCount) {
+      const mutationReceipt = await this.protectedOperations.getMutationReceiptByAuthoringOperation(
+        input.praxisSessionId,
+        existing.rows[0]!.operationId,
+      );
       return dispatchedRunOperationResultSchema.parse({
         ...(existing.rows[0]!.safeResult as object),
+        ...(mutationReceipt ? { mutationReceipt } : {}),
         replayed: true,
       });
+    }
     if (
       input.intent.objectiveId !== run.objectiveId ||
       input.intent.flowDraftId !== run.flowDraftId
@@ -119,7 +131,6 @@ export class AgentDirectedRunService {
     if (!persistedOperation.rowCount)
       throw new ConflictException({ code: "RUN_OPERATION_IDENTITY_UNAVAILABLE" });
     const operationId = persistedOperation.rows[0]!.operationId;
-
     const artifacts = await this.database.query<{
       id: string;
     }>(
@@ -167,7 +178,14 @@ export class AgentDirectedRunService {
         runId,
       ]);
     });
-    return safeResult;
+    const mutationReceipt = await this.protectedOperations.getMutationReceiptByAuthoringOperation(
+      input.praxisSessionId,
+      operationId,
+    );
+    return dispatchedRunOperationResultSchema.parse({
+      ...safeResult,
+      ...(mutationReceipt ? { mutationReceipt } : {}),
+    });
   }
 
   async attach(principal: Principal, runId: string, input: AttachRunPraxisSessionInput) {

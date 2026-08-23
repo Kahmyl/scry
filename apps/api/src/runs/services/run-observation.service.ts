@@ -10,6 +10,7 @@ import { compileDefaultVeilPolicy } from "@scry/veil";
 import type { Principal } from "../../auth/index.js";
 import { Database } from "../../infrastructure/index.js";
 import { ScryRepository } from "../../access/index.js";
+import { ProtectedOperationRepository } from "../../runtime/index.js";
 
 const terminalStates = new Set([
   "passed",
@@ -24,10 +25,13 @@ export class RunObservationService {
   constructor(
     @Inject(Database) private readonly database: Database,
     @Inject(ScryRepository) private readonly repository: ScryRepository,
+    @Inject(ProtectedOperationRepository)
+    private readonly protectedOperations: ProtectedOperationRepository,
   ) {}
 
   async observe(principal: Principal, runId: string): Promise<RunObservation> {
     const run = normalizeObservedRun(await this.repository.getRun(principal, runId));
+    const mutationReceipts = await this.protectedOperations.listMutationReceiptsForRun(runId);
     const attempts = (
       await this.database.query(
         `SELECT id, attempt_number AS "attemptNumber", state, started_at AS "startedAt",
@@ -244,6 +248,7 @@ export class RunObservationService {
       privacy: {
         intervals: intervals.rows,
         operations: operations.rows,
+        mutationReceipts,
         credentialIncidents: incidents.rows,
       },
       veil,

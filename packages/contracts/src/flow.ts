@@ -5,6 +5,7 @@ import { currentPlanSchema } from "./current.js";
 import { missionAuthoringIntentSchema } from "./authoring.js";
 import { flowPurposeSchema, flowVisibilitySchema, objectiveContextSchema } from "./mission.js";
 import { outcomeClassificationSchema } from "./run.js";
+import { mutationReceiptSchema } from "./protected-operation.js";
 
 export const idempotencyKeySchema = z.string().trim().min(8).max(200);
 
@@ -169,6 +170,7 @@ export const dispatchedRunOperationResultSchema = z
       .string()
       .regex(/^[A-Z][A-Z0-9_]*$/)
       .optional(),
+    mutationReceipt: mutationReceiptSchema.optional(),
     replayed: z.boolean(),
   })
   .strict();

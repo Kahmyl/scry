@@ -465,6 +465,12 @@ export class ProtectedTransactionKernel {
           operationId: transaction.operationId,
           fencingToken: claim.fencingToken,
           phase: "dispatch_authorized",
+          facts: {
+            ...(transaction.mutation.request
+              ? { requestContract: transaction.mutation.request }
+              : {}),
+            reconciliationStrategy: transaction.mutation.reconciliation.strategy,
+          },
         });
         await d.onReadyToDispatch?.({
           operationId: transaction.operationId,

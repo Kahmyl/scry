@@ -1,4 +1,6 @@
 import { z } from "zod";
+
+import { mutationReceiptSchema } from "./protected-operation.js";
 import { praxisRunObservationSchema } from "./praxis/index.js";
 import { veilRunObservationSchema } from "./veil/index.js";
 
@@ -419,6 +421,7 @@ export const runObservationSchema = z
     privacy: z.object({
       intervals: z.array(z.record(z.string(), z.unknown())),
       operations: z.array(z.record(z.string(), z.unknown())),
+      mutationReceipts: z.array(mutationReceiptSchema).default([]),
       credentialIncidents: z.array(z.record(z.string(), z.unknown())),
     }),
     veil: veilRunObservationSchema,
@@ -490,6 +493,10 @@ export const agentRunObservationSchema = z
         })
         .passthrough(),
     ),
+    privacy: z
+      .object({ mutationReceipts: z.array(mutationReceiptSchema) })
+      .passthrough()
+      .optional(),
     artifactTimeline: z.array(z.record(z.string(), z.unknown())),
     integrity: z
       .object({

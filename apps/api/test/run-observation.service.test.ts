@@ -7,11 +7,13 @@ const attemptId = "22222222-2222-4222-8222-222222222222";
 const artifactId = "33333333-3333-4333-8333-333333333333";
 const timelineId = "44444444-4444-4444-8444-444444444444";
 
+const receipts = () => ({ listMutationReceiptsForRun: vi.fn(async () => []) }) as never;
+
 describe("canonical run observation", () => {
   it("assembles failure channels and safe artifact resources from one authoritative model", async () => {
     const repository = { getRun: vi.fn().mockResolvedValue(failedRun()) };
     const database = { query: vi.fn(async (text: string) => rowsFor(text)) };
-    const service = new RunObservationService(database as never, repository as never);
+    const service = new RunObservationService(database as never, repository as never, receipts());
 
     const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
 
@@ -66,7 +68,7 @@ describe("canonical run observation", () => {
   it("scopes protected operations and credential incidents to the current attempt", async () => {
     const repository = { getRun: vi.fn().mockResolvedValue(failedRun()) };
     const database = { query: vi.fn(async (text: string) => rowsFor(text)) };
-    const service = new RunObservationService(database as never, repository as never);
+    const service = new RunObservationService(database as never, repository as never, receipts());
 
     await service.observe({ kind: "service", subject: "scry-service" }, runId);
 
@@ -103,7 +105,7 @@ describe("canonical run observation", () => {
         return rowsFor(text);
       }),
     };
-    const service = new RunObservationService(database as never, repository as never);
+    const service = new RunObservationService(database as never, repository as never, receipts());
 
     const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
 
@@ -141,7 +143,7 @@ describe("canonical run observation", () => {
         return rowsFor(text);
       }),
     };
-    const service = new RunObservationService(database as never, repository as never);
+    const service = new RunObservationService(database as never, repository as never, receipts());
 
     const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
 
@@ -177,7 +179,7 @@ describe("canonical run observation", () => {
         return result;
       }),
     };
-    const service = new RunObservationService(database as never, repository as never);
+    const service = new RunObservationService(database as never, repository as never, receipts());
 
     const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
 

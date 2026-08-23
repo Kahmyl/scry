@@ -80,6 +80,27 @@ function runHarness(authorized: boolean) {
 }
 
 describe("protected operation immutable claims", () => {
+  it("persists non-state receipt observations as fenced append-only self transitions", async () => {
+    const { repository, client } = harness();
+    await repository.record({
+      id: "88888888-8888-4888-8888-888888888888",
+      leaseOwner: "worker-a",
+      fencingToken: 3,
+      phase: "request_initiated",
+      safeDiagnostics: {
+        mutation: {
+          request: { status: "initiated", method: "POST", transport: "fetch" },
+        },
+      },
+    });
+
+    expect(client.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("INSERT INTO protected_operation_transitions"),
+      expect.arrayContaining(["acquiring", "acquiring", "request_initiated"]),
+    );
+  });
+
   it("returns an idempotent same-owner claim without rotating its fence", async () => {
     const { repository, client } = harness();
     const claim = await repository.claim({

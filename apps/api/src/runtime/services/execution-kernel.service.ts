@@ -585,6 +585,8 @@ function projectProtectedDiagnostics(facts: Record<string, unknown>) {
     "recoveryExpiresAt",
     "acquisitionContractDigest",
     "preparationEffects",
+    "requestContract",
+    "reconciliationStrategy",
     "responseEvidence",
     "protectedAcquisitionEvidence",
   ]);
