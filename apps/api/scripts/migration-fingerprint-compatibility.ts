@@ -12,18 +12,18 @@ export const AUTHORITATIVE_D647_SHAPE_SQL = `
     COALESCE((
       SELECT pg_get_constraintdef(oid) LIKE '%document_transition_gap%'
       FROM pg_constraint
-      WHERE conrelid='artifact_timeline_entries'::regclass
+      WHERE conrelid=to_regclass('public.artifact_timeline_entries')
         AND conname='artifact_timeline_entries_entry_type_check'
     ),false) AS "hasDocumentTransitionGap",
     COALESCE((
       SELECT pg_get_functiondef(oid) LIKE '%action'' ->> ''kind'' <> ''authenticate''%'
       FROM pg_proc
-      WHERE oid='adaptive_operation_unknown_unresolved(uuid,text)'::regprocedure
+      WHERE oid=to_regprocedure('public.adaptive_operation_unknown_unresolved(uuid,text)')
     ),false) AS "hasScopedUnknownFence",
     COALESCE((
       SELECT pg_get_functiondef(oid) LIKE '%Applied recovery adaptive protected projection%'
       FROM pg_proc
-      WHERE oid='protect_adaptive_operation_identity()'::regprocedure
+      WHERE oid=to_regprocedure('public.protect_adaptive_operation_identity()')
     ),false) AS "hasAppliedRecoveryProjection"
 `;
 

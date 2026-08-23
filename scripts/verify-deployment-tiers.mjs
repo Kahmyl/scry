@@ -18,6 +18,7 @@ const base = {
 
 const staging = { ...base, SCRY_DEPLOYMENT_TIER: "staging", COMPOSE_PROFILES: "" };
 runPreflight(staging);
+runPreflight({ ...staging, SCRY_SCHEMA_FINGERPRINT: "" });
 const stagingServices = renderServices(staging);
 for (const service of ["api", "worker", "mcp", "web", "postgres", "redis"])
   if (!stagingServices.includes(service))
@@ -45,6 +46,17 @@ const invalid = spawnSync("node", ["scripts/verify-deployment-preflight.mjs"], {
   env: { ...base, SCRY_DEPLOYMENT_TIER: "production", COMPOSE_PROFILES: "" },
 });
 if (invalid.status === 0) throw new Error("production accepted disabled operations");
+
+for (const tier of ["beta", "production"]) {
+  const missingFingerprint = spawnSync("node", ["scripts/verify-deployment-preflight.mjs"], {
+    env: { ...base, SCRY_DEPLOYMENT_TIER: tier, SCRY_SCHEMA_FINGERPRINT: "" },
+    encoding: "utf8",
+  });
+  if (missingFingerprint.status === 0)
+    throw new Error(`${tier} accepted a missing SCRY_SCHEMA_FINGERPRINT`);
+  if (!missingFingerprint.stderr.includes(`${tier} requires explicit SCRY_SCHEMA_FINGERPRINT`))
+    throw new Error(`${tier} did not report the explicit schema fingerprint requirement`);
+}
 
 const mismatchedSchema = spawnSync("node", ["scripts/verify-deployment-preflight.mjs"], {
   env: { ...staging, SCRY_SCHEMA_FINGERPRINT: "2".repeat(64) },

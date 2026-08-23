@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  AUTHORITATIVE_D647_SHAPE_SQL,
   calculateHistoricalFingerprints,
   assertAuthoritativeD647Shape,
   assertConfiguredMigrationFingerprint,
@@ -19,6 +20,19 @@ import {
 } from "../scripts/migration-fingerprint-compatibility.js";
 
 describe("migration fingerprint compatibility", () => {
+  it("probes an incomplete authoritative predecessor without PostgreSQL casts that can escape the stable refusal", () => {
+    expect(AUTHORITATIVE_D647_SHAPE_SQL).toContain(
+      "to_regclass('public.artifact_timeline_entries')",
+    );
+    expect(AUTHORITATIVE_D647_SHAPE_SQL).toContain(
+      "to_regprocedure('public.adaptive_operation_unknown_unresolved(uuid,text)')",
+    );
+    expect(AUTHORITATIVE_D647_SHAPE_SQL).toContain(
+      "to_regprocedure('public.protect_adaptive_operation_identity()')",
+    );
+    expect(AUTHORITATIVE_D647_SHAPE_SQL).not.toMatch(/'[^']+'::reg(?:class|procedure)/);
+  });
+
   it("admits only the authoritative d647 structural predecessor", () => {
     const authoritative = {
       hasProtectedOperations: true,

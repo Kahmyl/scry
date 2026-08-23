@@ -8,6 +8,8 @@ const configuredSchemaFingerprint = process.env.SCRY_SCHEMA_FINGERPRINT;
 const sourceSchemaFingerprint = execFileSync("node", ["scripts/schema-fingerprint.mjs"], {
   encoding: "utf8",
 }).trim();
+if (["beta", "production"].includes(tier) && !configuredSchemaFingerprint?.trim())
+  fail(`${tier} requires explicit SCRY_SCHEMA_FINGERPRINT`);
 if (configuredSchemaFingerprint && configuredSchemaFingerprint !== sourceSchemaFingerprint)
   fail(
     `SCRY_SCHEMA_FINGERPRINT must match current source: configured=${configuredSchemaFingerprint} expected=${sourceSchemaFingerprint}`,
