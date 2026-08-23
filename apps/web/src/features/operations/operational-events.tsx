@@ -2,6 +2,7 @@ import { AlertTriangle, Download, Filter, Search, ShieldAlert } from "lucide-rea
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api, apiBlob } from "../../infrastructure/api/client.js";
+import { downloadBlob } from "../../infrastructure/browser/index.js";
 import {
   EmptyBlock,
   PageSkeleton,
@@ -94,12 +95,7 @@ export function OperationalEventsView({ projectId }: { projectId: string }) {
       if (classification) parameters.set("classification", classification);
       if (correlationId) parameters.set("correlationId", correlationId);
       const blob = await apiBlob(`/operations/events/export?${parameters}`);
-      const href = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = href;
-      link.download = `scry-incident-${projectId}.jsonl`;
-      link.click();
-      URL.revokeObjectURL(href);
+      downloadBlob(blob, `scry-incident-${projectId}.jsonl`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }

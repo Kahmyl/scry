@@ -32,6 +32,7 @@ const executionFlags = [
 const scanRoots = ["apps", "packages", "scripts", "docker-compose.yml", "compose.deploy.yml"];
 const ignoredDirectories = new Set(["node_modules", "dist", "coverage", ".next", "artifacts"]);
 const sourceExtensions = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".json", ".yml", ".yaml"]);
+const operatorUiDownloadAdapter = "apps/web/src/infrastructure/browser/download-blob.ts";
 
 for (const candidate of deletedPaths) {
   if (existsSync(path.join(root, candidate)))
@@ -49,6 +50,7 @@ for (const file of filesToScan()) {
   const productionSource =
     !relative.includes("/test/") &&
     !relative.includes("/scripts/") &&
+    !relative.startsWith("scripts/") &&
     !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(relative);
   if (productionSource && /\b(?:chromium|firefox|webkit)\.launch\s*\(/.test(source)) {
     const allowed = new Set(["packages/praxis/src/lifecycle/browser-session.ts"]);
@@ -64,12 +66,23 @@ for (const file of filesToScan()) {
   ) {
     violations.push(`${relative}: browser lifecycle mechanics are outside Praxis`);
   }
+  const browserActionPattern =
+    /\.(?:click|dblclick|fill|type|selectOption|setChecked|check|uncheck|press|hover|dragTo|setInputFiles|waitForEvent)\s*\(|\.(?:keyboard|mouse)\.(?:press|type|down|up|click|dblclick|move|wheel)\s*\(/g;
+  const browserActionMatches = source.match(browserActionPattern) ?? [];
+  const admittedOperatorUiDownload =
+    relative === operatorUiDownloadAdapter &&
+    browserActionMatches.length === 1 &&
+    browserActionMatches[0].startsWith(".click(") &&
+    /document\.createElement\(["']a["']\)/.test(source) &&
+    /\.download\s*=/.test(source) &&
+    /URL\.createObjectURL\s*\(/.test(source) &&
+    /URL\.revokeObjectURL\s*\(/.test(source);
+
   if (
     productionSource &&
     !relative.startsWith("packages/praxis/src/") &&
-    /\.(?:click|dblclick|fill|type|selectOption|setChecked|check|uncheck|press|hover|dragTo|setInputFiles|waitForEvent)\s*\(|\.(?:keyboard|mouse)\.(?:press|type|down|up|click|dblclick|move|wheel)\s*\(/.test(
-      source,
-    )
+    browserActionMatches.length > 0 &&
+    !admittedOperatorUiDownload
   ) {
     violations.push(`${relative}: browser action mechanics are outside Praxis`);
   }
