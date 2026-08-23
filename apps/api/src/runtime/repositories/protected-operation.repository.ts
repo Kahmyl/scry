@@ -550,18 +550,24 @@ export class ProtectedOperationRepository {
   }
 
   async listMutationReceiptsForRun(runId: string): Promise<MutationReceipt[]> {
+    return this.listMutationReceiptsForRuns([runId]);
+  }
+
+  async listMutationReceiptsForRuns(runIds: readonly string[]): Promise<MutationReceipt[]> {
+    if (!runIds.length) return [];
+
     const operations = await this.database.query<ReceiptOperationRow>(
       `${receiptOperationSelect}
-       WHERE operation.run_id=$1 OR operation.id IN (
+       WHERE operation.run_id=ANY($1::uuid[]) OR operation.id IN (
          SELECT protected.id
            FROM protected_operations protected
            JOIN run_operation_links link
              ON link.praxis_session_id=protected.authoring_session_id
             AND link.operation_id=protected.operation_id
-          WHERE link.run_id=$1
+          WHERE link.run_id=ANY($1::uuid[])
        )
        ORDER BY operation.created_at,operation.id`,
-      [runId],
+      [runIds],
     );
     return this.projectReceipts(operations.rows);
   }

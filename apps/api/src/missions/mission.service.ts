@@ -1,10 +1,12 @@
-import { composeMissionEvidence } from "@scry/chronicle";
+import { composeMissionEvidence, digestMissionReportComposition } from "@scry/chronicle";
+import type { ArtifactStore } from "@scry/chronicle/legacy";
 import {
   ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient, QueryResultRow } from "pg";
@@ -28,11 +30,14 @@ import type {
   MissionCompletionReadiness,
   MissionReadinessBlocker,
 } from "@scry/contracts";
-import { publishedMissionReportSchema } from "@scry/contracts";
+import { missionReportPreviewSchema, publishedMissionReportSchema } from "@scry/contracts";
 
 import type { Principal } from "../auth/index.js";
+import { ARTIFACT_STORE } from "../artifacts/index.js";
 import { Database } from "../infrastructure/index.js";
+import { ProtectedOperationRepository } from "../runtime/index.js";
 import { resolveMissionRecording } from "./mission-recording-resolver.js";
+import { loadMissionReportCompositionReadiness } from "./mission-report-readiness.js";
 
 type Query = <T extends QueryResultRow = QueryResultRow>(
   text: string,
@@ -44,7 +49,13 @@ const reportableObjectivePredicate = (alias: string) =>
 
 @Injectable()
 export class MissionService {
-  constructor(@Inject(Database) private readonly database: Database) {}
+  constructor(
+    @Inject(Database) private readonly database: Database,
+    @Optional() @Inject(ARTIFACT_STORE) private readonly artifactStore?: ArtifactStore,
+    @Optional()
+    @Inject(ProtectedOperationRepository)
+    private readonly protectedOperations?: ProtectedOperationRepository,
+  ) {}
 
   async create(principal: Principal, projectId: string, input: CreateMissionInput) {
     this.requireWrite(principal);
@@ -895,7 +906,11 @@ export class MissionService {
         input.agentSessionId,
         "run_accepted",
         "Run accepted as objective evidence",
-        { runId: input.runId, artifactCount: input.artifactIds.length },
+        {
+          runId: input.runId,
+          artifactCount: input.artifactIds.length,
+          orderedArtifactIds: input.artifactIds,
+        },
       );
       return { objectiveId, runId: input.runId, status: "accepted" };
     });
@@ -1075,6 +1090,10 @@ export class MissionService {
         {
           id: string;
           objectiveId: string;
+          state: string;
+          canonicalAttemptId: string | null;
+          canonicalAttemptState: string | null;
+          canonicalAttemptCompletedAt: string | null;
         }
       >();
 
@@ -1082,13 +1101,28 @@ export class MissionService {
         const found = await q<{
           id: string;
           objectiveId: string;
+          state: string;
+          canonicalAttemptId: string | null;
+          canonicalAttemptState: string | null;
+          canonicalAttemptCompletedAt: string | null;
         }>(
           `SELECT
-             id,
-             objective_id AS "objectiveId"
-           FROM runs
-           WHERE mission_id=$1
-             AND id=ANY($2::uuid[])`,
+             run.id,
+             run.objective_id AS "objectiveId",
+             run.state,
+             canonical.id::text AS "canonicalAttemptId",
+             canonical.state AS "canonicalAttemptState",
+             canonical.completed_at::text AS "canonicalAttemptCompletedAt"
+           FROM runs run
+           LEFT JOIN LATERAL (
+             SELECT attempt.id,attempt.state,attempt.completed_at
+             FROM attempts attempt
+             WHERE attempt.run_id=run.id
+             ORDER BY attempt.attempt_number DESC,attempt.id DESC
+             LIMIT 1
+           ) canonical ON true
+           WHERE run.mission_id=$1
+             AND run.id=ANY($2::uuid[])`,
           [missionId, orderedRunIds],
         );
 
@@ -1097,6 +1131,23 @@ export class MissionService {
         if (runById.size !== orderedRunIds.length)
           throw new ConflictException({
             code: "MISSION_RECORDING_SELECTION_RUN_CONTEXT_MISMATCH",
+          });
+
+        if (
+          [...runById.values()].some(
+            (run) =>
+              !["passed", "failed", "cancelled", "timed_out", "infrastructure_error"].includes(
+                run.state,
+              ) ||
+              !run.canonicalAttemptId ||
+              !run.canonicalAttemptCompletedAt ||
+              !["passed", "failed", "cancelled", "timed_out", "infrastructure_error"].includes(
+                run.canonicalAttemptState ?? "",
+              ),
+          )
+        )
+          throw new ConflictException({
+            code: "MISSION_RECORDING_SELECTED_SOURCE_INADMISSIBLE",
           });
       } else {
         const existingRun = await q(
@@ -1125,6 +1176,11 @@ export class MissionService {
 
       const selectionRevision = (previous.rows[0]?.revision ?? 0) + 1;
       const selectionId = randomUUID();
+      const sources = orderedRunIds.map((runId, order) => ({
+        order,
+        runId,
+        canonicalAttemptId: runById.get(runId)!.canonicalAttemptId!,
+      }));
 
       await q(
         `UPDATE mission_recording_selections
@@ -1194,6 +1250,7 @@ export class MissionService {
           selectionRevision,
           sourceMissionRevision: mission.revision,
           orderedRunIds,
+          sources,
         },
       );
 
@@ -1203,6 +1260,7 @@ export class MissionService {
         selectionRevision,
         sourceMissionRevision: mission.revision,
         orderedRunIds,
+        sources,
         missionRevision: updated.rows[0]!.revision,
         replayed: false,
       };
@@ -1238,6 +1296,8 @@ export class MissionService {
         blocker.operationId,
         blocker.evidenceId,
         blocker.evidenceRecommendationId,
+        blocker.artifactId,
+        blocker.evidenceClass,
       ].join(":");
       if (seen.has(identity)) return;
       seen.add(identity);
@@ -1247,10 +1307,11 @@ export class MissionService {
     const scope = [missionId, objectiveId ?? null];
     const mission = await q<{
       status: string;
+      revision: number;
       finalReportId: string | null;
       resumePointer: { explanation?: string } | null;
     }>(
-      `SELECT status,final_report_id AS "finalReportId",resume_pointer AS "resumePointer"
+      `SELECT status,revision,final_report_id AS "finalReportId",resume_pointer AS "resumePointer"
        FROM missions WHERE id=$1`,
       [missionId],
     );
@@ -1584,6 +1645,14 @@ export class MissionService {
           safeActions: ["get_mission"],
           nextActions: ["get_mission"],
         });
+
+      await loadMissionReportCompositionReadiness({
+        query: q,
+        missionId,
+        missionRevision: Number(mission.rows[0]!.revision ?? 0),
+        ...(this.artifactStore ? { artifactStore: this.artifactStore } : {}),
+        add,
+      });
     }
 
     return {
@@ -1616,8 +1685,16 @@ export class MissionService {
   }
 
   async previewReport(principal: Principal, missionId: string) {
-    await this.requireMission((t, v) => this.database.query(t, v), principal, missionId, false);
-    return this.buildReportSnapshot((t, v) => this.database.query(t, v), missionId, "", [], []);
+    const q: Query = (text, values) => this.database.query(text, values);
+    await this.requireMission(q, principal, missionId, false);
+    const completionReadiness = await this.loadCompletionReadiness(q, missionId);
+    const compositionBlocked = completionReadiness.blockers.some((blocker) =>
+      isReportCompositionBlocker(blocker.code),
+    );
+    const snapshot = compositionBlocked
+      ? null
+      : await this.buildReportSnapshot(q, missionId, "", [], []);
+    return missionReportPreviewSchema.parse({ completionReadiness, snapshot });
   }
 
   async publishReport(principal: Principal, missionId: string, input: PublishMissionReportInput) {
@@ -1816,6 +1893,7 @@ export class MissionService {
       objectiveId: string;
       runId: string;
       artifactId: string | null;
+      selectionOrder: number | string | null;
       acceptanceConclusion: string;
       acceptedByAgentSessionId: string;
       acceptedAt: string;
@@ -1835,6 +1913,7 @@ export class MissionService {
       canonicalAttemptStartedAt: string | null;
       canonicalAttemptCompletedAt: string | null;
       artifactAttemptId: string | null;
+      artifactStepId: string | null;
       artifactKind: string | null;
       artifactAvailability: string | null;
       artifactPrivacyClassification: string | null;
@@ -1851,6 +1930,8 @@ export class MissionService {
          e.objective_id::text AS "objectiveId",
          e.run_id::text AS "runId",
          e.artifact_id::text AS "artifactId",
+         explicit_order.selection_order
+           AS "selectionOrder",
          e.conclusion AS "acceptanceConclusion",
          e.accepted_by_agent_session_id::text
            AS "acceptedByAgentSessionId",
@@ -1887,6 +1968,8 @@ export class MissionService {
 
          a.attempt_id::text
            AS "artifactAttemptId",
+         a.step_id
+           AS "artifactStepId",
          a.kind AS "artifactKind",
          a.availability
            AS "artifactAvailability",
@@ -1933,6 +2016,34 @@ export class MissionService {
        LEFT JOIN artifacts a
          ON a.id=e.artifact_id
 
+       LEFT JOIN LATERAL (
+         SELECT
+           (ordered.ordinality-1)::integer
+             AS selection_order
+         FROM mission_activities activity
+         CROSS JOIN LATERAL
+           jsonb_array_elements_text(
+             COALESCE(
+               activity.safe_metadata->'orderedArtifactIds',
+               '[]'::jsonb
+             )
+           ) WITH ORDINALITY
+             ordered(artifact_id,ordinality)
+         WHERE e.artifact_id IS NOT NULL
+           AND activity.mission_id=e.mission_id
+           AND activity.objective_id=e.objective_id
+           AND activity.agent_session_id=
+                 e.accepted_by_agent_session_id
+           AND activity.type='run_accepted'
+           AND activity.safe_metadata->>'runId'=
+                 e.run_id::text
+           AND ordered.artifact_id=e.artifact_id::text
+         ORDER BY
+           activity.occurred_at DESC,
+           activity.id DESC
+         LIMIT 1
+       ) explicit_order ON true
+
        WHERE e.mission_id=$1
          AND e.superseded_at IS NULL
          AND e.invalidated_at IS NULL
@@ -1974,6 +2085,14 @@ export class MissionService {
         objectiveId: row.objectiveId,
         runId: row.runId,
         artifactId: row.artifactId,
+        selectionOrder:
+          row.selectionOrder == null
+            ? row.artifactId === null
+              ? 0
+              : accepted.rows
+                  .filter((candidate) => candidate.objectiveId === row.objectiveId)
+                  .findIndex((candidate) => candidate.id === row.id)
+            : Number(row.selectionOrder),
         acceptanceConclusion: row.acceptanceConclusion,
         acceptedByAgentSessionId: row.acceptedByAgentSessionId,
         acceptedAt: row.acceptedAt,
@@ -2001,6 +2120,7 @@ export class MissionService {
           ? {
               id: row.artifactId,
               attemptId: row.artifactAttemptId!,
+              stepId: row.artifactStepId,
               kind: row.artifactKind!,
               availability: row.artifactAvailability!,
               privacyClassification: row.artifactPrivacyClassification!,
@@ -2022,6 +2142,29 @@ export class MissionService {
     );
 
     const resolvedRecording = await resolveMissionRecording(query, missionId);
+    const selectedRunIds = [
+      ...new Set([
+        ...composition.objectives.flatMap(({ acceptedRunIds }) => acceptedRunIds),
+        ...(resolvedRecording.recording?.runs.map(({ run }) => run.id) ?? []),
+      ]),
+    ];
+    const selectedRunIdSet = new Set(selectedRunIds);
+    const mutationReceipts = this.protectedOperations
+      ? (await this.protectedOperations.listMutationReceiptsForRuns(selectedRunIds)).filter(
+          (receipt) =>
+            receipt.correlation.missionId === missionId &&
+            receipt.correlation.runId !== undefined &&
+            selectedRunIdSet.has(receipt.correlation.runId),
+        )
+      : [];
+    const compositionDigest = digestMissionReportComposition({
+      missionId,
+      sourceMissionRevision: mission.revision,
+      selectedRunIds,
+      evidenceDigest: composition.evidenceDigest,
+      recordingDigest: resolvedRecording.recording?.recordingDigest ?? null,
+      mutationReceipts,
+    });
 
     return {
       mission: {
@@ -2055,6 +2198,8 @@ export class MissionService {
       recordingSelection: resolvedRecording.selection,
       recording: resolvedRecording.recording,
       recordingDigest: resolvedRecording.recording?.recordingDigest ?? null,
+      mutationReceipts,
+      compositionDigest,
 
       supersededAttemptCount: composition.supersededAttemptCount,
 
@@ -2395,6 +2540,14 @@ function bounded(value: unknown, maximum: number) {
 
 function compact<T extends MissionProjectionRow>(value: T) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
+}
+
+function isReportCompositionBlocker(code: string) {
+  return (
+    code.startsWith("MISSION_RECORDING_") ||
+    code.startsWith("CHRONICLE_RECORDING_") ||
+    code.startsWith("REPORT_")
+  );
 }
 
 function bindQuery(client: PoolClient): Query {

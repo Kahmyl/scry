@@ -164,6 +164,8 @@ describe("current Scry MCP surface", () => {
       "attach_run_praxis_session",
       "finalize_run",
       "get_run",
+      "set_mission_recording_selection",
+      "preview_mission_report",
       "publish_mission_report",
     ])
       expect(tools.find((tool) => tool.name === name)?.outputSchema, name).toBeDefined();
@@ -216,6 +218,60 @@ describe("current Scry MCP surface", () => {
     expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("request clarification");
     const { client, server } = await connected();
     expect(client.getInstructions()).toContain(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS);
+    await client.close();
+    await server.close();
+  });
+
+  it("returns the typed publication-readiness envelope through report preview", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        const body = path.endsWith("/capabilities")
+          ? admittedCapabilities
+          : {
+              completionReadiness: {
+                ready: false,
+                missionId: context.missionId,
+                blockers: [
+                  {
+                    code: "REPORT_REQUIRED_EVIDENCE_CLASS_MISSING",
+                    missionId: context.missionId,
+                    objectiveId: context.objectiveId,
+                    runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    evidenceClass: "network",
+                    state: "missing",
+                    resolution: "evidence_selection_required",
+                    safeActions: ["get_run", "accept_objective_evidence"],
+                    nextActions: ["get_run", "accept_objective_evidence"],
+                  },
+                ],
+                truncated: false,
+                totalBlockerCount: 1,
+              },
+              snapshot: null,
+            };
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "preview_mission_report",
+      arguments: { missionId: context.missionId },
+    });
+    expect(response.structuredContent).toMatchObject({
+      preview: {
+        snapshot: null,
+        completionReadiness: {
+          blockers: [
+            expect.objectContaining({
+              code: "REPORT_REQUIRED_EVIDENCE_CLASS_MISSING",
+              evidenceClass: "network",
+            }),
+          ],
+        },
+      },
+    });
     await client.close();
     await server.close();
   });
@@ -422,6 +478,7 @@ describe("current Scry MCP surface", () => {
       "attach_flow_to_mission",
       "finalize_agent_work",
       "set_mission_recording_selection",
+      "preview_mission_report",
       "publish_mission_report",
       "list_environments",
       "create_test_environment",
@@ -1234,7 +1291,14 @@ describe("current Scry MCP surface", () => {
                     journeySummary: ["Verified"],
                     remainingActions: [],
                     objectiveResults: [],
-                    evidence: {},
+                    evidence: {
+                      schemaVersion: 1,
+                      missionId: context.missionId,
+                      sourceMissionRevision: 1,
+                      objectives: [],
+                      supersededAttemptCount: 0,
+                      evidenceDigest: "a".repeat(64),
+                    },
                     evidenceDigest: "a".repeat(64),
                     recordingSelection: null,
                     recording: null,

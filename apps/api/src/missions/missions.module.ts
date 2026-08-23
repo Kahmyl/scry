@@ -1,12 +1,14 @@
 import { Module } from "@nestjs/common";
 
 import { InfrastructureModule } from "../infrastructure/index.js";
+import { ArtifactsModule } from "../artifacts/index.js";
 import { OrchestrationModule } from "../orchestration/index.js";
+import { RuntimeModule } from "../runtime/runtime.module.js";
 import { MissionController } from "./mission.controller.js";
 import { MissionService } from "./mission.service.js";
 
 @Module({
-  imports: [InfrastructureModule, OrchestrationModule],
+  imports: [InfrastructureModule, OrchestrationModule, ArtifactsModule, RuntimeModule],
   controllers: [MissionController],
   providers: [MissionService],
   exports: [MissionService],

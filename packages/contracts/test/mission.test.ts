@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   acceptEvidenceSchema,
   createMissionSchema,
+  missionReportPreviewSchema,
   missionResumePointerSchema,
   publishMissionReportSchema,
 } from "../src/index.js";
@@ -251,6 +252,41 @@ describe("Mission contracts", () => {
       acceptEvidenceSchema.safeParse({ runId: ids.runId, artifactIds: [], conclusion: "Passed" })
         .success,
     ).toBe(false);
+    expect(
+      acceptEvidenceSchema.safeParse({
+        missionId: ids.missionId,
+        agentSessionId: ids.agentSessionId,
+        runId: ids.runId,
+        artifactIds: [ids.objectiveId, ids.objectiveId],
+        conclusion: "Duplicate selection",
+      }).success,
+    ).toBe(false);
+  });
+  it("types an inadmissible report preview without fabricating a snapshot", () => {
+    expect(
+      missionReportPreviewSchema.safeParse({
+        completionReadiness: {
+          ready: false,
+          missionId: ids.missionId,
+          blockers: [
+            {
+              code: "REPORT_REQUIRED_EVIDENCE_CLASS_MISSING",
+              missionId: ids.missionId,
+              objectiveId: ids.objectiveId,
+              runId: ids.runId,
+              evidenceClass: "network",
+              state: "missing",
+              resolution: "evidence_selection_required",
+              safeActions: ["get_run", "accept_objective_evidence"],
+              nextActions: ["get_run", "accept_objective_evidence"],
+            },
+          ],
+          truncated: false,
+          totalBlockerCount: 1,
+        },
+        snapshot: null,
+      }).success,
+    ).toBe(true);
   });
   it("requires optimistic report publication", () => {
     expect(

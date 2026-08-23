@@ -12,6 +12,7 @@ function accepted(
     objectiveId: "objective-a",
     runId,
     artifactId: "artifact-a",
+    selectionOrder: 0,
     acceptanceConclusion: "Agent accepted this evidence.",
     acceptedByAgentSessionId: "agent-a",
     acceptedAt: "2026-08-16T22:34:01.000Z",
@@ -40,6 +41,7 @@ function accepted(
     artifact: {
       id: "artifact-a",
       attemptId,
+      stepId: "step-a",
       kind: "screenshot",
       availability: "available",
       privacyClassification: "safe",
@@ -64,6 +66,7 @@ describe("Mission evidence composition", () => {
       id: "acceptance-b",
       artifactId: null,
       artifact: null,
+      selectionOrder: 1,
       acceptedAt: "2026-08-16T22:34:02.000Z",
     });
 
@@ -147,6 +150,29 @@ describe("Mission evidence composition", () => {
     });
 
     expect(left.evidenceDigest).not.toBe(right.evidenceDigest);
+  });
+
+  it("preserves explicit Artifact selection order instead of sorting identifiers", () => {
+    const laterIdentifier = accepted({
+      id: "acceptance-z",
+      artifactId: "artifact-z",
+      selectionOrder: 0,
+      artifact: { ...accepted().artifact!, id: "artifact-z" },
+    });
+    const earlierIdentifier = accepted({
+      id: "acceptance-a",
+      artifactId: "artifact-a",
+      selectionOrder: 1,
+    });
+    const composition = composeMissionEvidence({
+      missionId: "mission-a",
+      sourceMissionRevision: 11,
+      objectives: [{ objectiveId: "objective-a", order: 0 }],
+      acceptedEvidence: [earlierIdentifier, laterIdentifier],
+      supersededAttemptCount: 0,
+    });
+
+    expect(composition.objectives[0]!.acceptedArtifactIds).toEqual(["artifact-z", "artifact-a"]);
   });
 
   it("fails closed when an accepted Artifact is not from the canonical Attempt", () => {

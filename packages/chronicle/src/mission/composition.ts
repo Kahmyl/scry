@@ -25,6 +25,7 @@ export type MissionEvidenceAttemptFact = Readonly<{
 export type MissionEvidenceArtifactFact = Readonly<{
   id: string;
   attemptId: string;
+  stepId: string | null;
   kind: string;
   availability: string;
   privacyClassification: string;
@@ -42,6 +43,8 @@ export type MissionAcceptedEvidenceFact = Readonly<{
   objectiveId: string;
   runId: string;
   artifactId: string | null;
+  /** Explicit external-agent order within the active Objective selection. */
+  selectionOrder: number;
   acceptanceConclusion: string;
   acceptedByAgentSessionId: string;
   acceptedAt: string;
@@ -137,13 +140,19 @@ export function composeMissionEvidence(
         compareAcceptedEvidence,
       );
 
-      const acceptedRunIds = [...new Set(acceptedEvidence.map((entry) => entry.runId))].sort();
+      if (
+        new Set(acceptedEvidence.map(({ selectionOrder }) => selectionOrder)).size !==
+        acceptedEvidence.length
+      )
+        throw new Error("CHRONICLE_EVIDENCE_SELECTION_ORDER_DUPLICATE");
+
+      const acceptedRunIds = [...new Set(acceptedEvidence.map((entry) => entry.runId))];
 
       const acceptedArtifactIds = [
         ...new Set(
           acceptedEvidence.flatMap((entry) => (entry.artifactId ? [entry.artifactId] : [])),
         ),
-      ].sort();
+      ];
 
       return {
         objectiveId: objective.objectiveId,
@@ -171,6 +180,9 @@ export function composeMissionEvidence(
 }
 
 function normalizeAcceptedEvidence(fact: MissionAcceptedEvidenceFact): MissionAcceptedEvidenceFact {
+  if (!Number.isInteger(fact.selectionOrder) || fact.selectionOrder < 0)
+    throw new Error("CHRONICLE_EVIDENCE_SELECTION_ORDER_INVALID");
+
   if (fact.run.id !== fact.runId) throw new Error("CHRONICLE_EVIDENCE_RUN_MISMATCH");
 
   if (fact.canonicalAttempt.runId !== fact.runId)
@@ -197,6 +209,7 @@ function normalizeAcceptedEvidence(fact: MissionAcceptedEvidenceFact): MissionAc
     objectiveId: fact.objectiveId,
     runId: fact.runId,
     artifactId: fact.artifactId,
+    selectionOrder: fact.selectionOrder,
     acceptanceConclusion: fact.acceptanceConclusion,
     acceptedByAgentSessionId: fact.acceptedByAgentSessionId,
     acceptedAt: timestamp(fact.acceptedAt, "acceptedAt"),
@@ -231,6 +244,7 @@ function compareAcceptedEvidence(
   right: MissionAcceptedEvidenceFact,
 ) {
   return (
+    left.selectionOrder - right.selectionOrder ||
     left.acceptedAt.localeCompare(right.acceptedAt) ||
     left.runId.localeCompare(right.runId) ||
     (left.artifactId ?? "").localeCompare(right.artifactId ?? "") ||

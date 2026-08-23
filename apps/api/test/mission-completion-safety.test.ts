@@ -295,7 +295,14 @@ describe("Mission completion safety", () => {
         journeySummary: ["Verified completion."],
         remainingActions: [],
         objectiveResults: [],
-        evidence: {},
+        evidence: {
+          schemaVersion: 1,
+          missionId,
+          sourceMissionRevision: 4,
+          objectives: [],
+          supersededAttemptCount: 0,
+          evidenceDigest: "a".repeat(64),
+        },
         evidenceDigest: "a".repeat(64),
         recordingSelection: null,
         recording: null,
@@ -353,6 +360,42 @@ describe("Mission completion safety", () => {
       query.mock.calls.some(([text]) =>
         String(text).includes("UPDATE missions SET status='completed'"),
       ),
+    ).toBe(false);
+  });
+
+  it("requires the publication owner to be an active agent session in the same Mission", async () => {
+    let requestHash = "";
+    const query = vi.fn(async (text: string, values: unknown[] = []) => {
+      if (text.includes("FROM missions m JOIN projects"))
+        return rows([
+          {
+            id: missionId,
+            projectId: "55555555-5555-4555-8555-555555555555",
+            status: "running",
+            revision: 4,
+          },
+        ]);
+      if (text.includes("INSERT INTO idempotency_records")) {
+        requestHash = String(values[2]);
+        return rows();
+      }
+      if (text.includes('SELECT request_hash AS "requestHash"'))
+        return rows([{ requestHash, response: null }]);
+      if (text.includes("FROM missions WHERE id=$1"))
+        return rows([{ status: "running", revision: 4, finalReportId: null, resumePointer: null }]);
+      if (text.includes("FROM mission_recording_selections")) return rows();
+      if (text.includes("count(*)::integer") && text.includes("FROM runs"))
+        return rows([{ count: 0 }]);
+      return rows();
+    });
+
+    await expect(
+      serviceFor(query).publishReport(principal, missionId, publishInput),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "AGENT_SESSION_CONTEXT_INVALID" }),
+    });
+    expect(
+      query.mock.calls.some(([text]) => String(text).includes("INSERT INTO mission_reports")),
     ).toBe(false);
   });
 

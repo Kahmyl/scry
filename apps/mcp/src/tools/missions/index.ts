@@ -24,6 +24,7 @@ import { registerAttachFlowToMissionTool } from "./attach-flow-to-mission.tool.j
 import { registerFinalizeAgentWorkTool } from "./finalize-agent-work.tool.js";
 import { registerPublishMissionReportTool } from "./publish-mission-report.tool.js";
 import { registerSetMissionRecordingSelectionTool } from "./set-mission-recording-selection.tool.js";
+import { registerPreviewMissionReportTool } from "./preview-mission-report.tool.js";
 
 export function registerMissionsTools(server: McpServer, client: ScryApiClient) {
   registerStartMissionTool(server, client);
@@ -50,5 +51,6 @@ export function registerMissionsTools(server: McpServer, client: ScryApiClient) 
   registerAttachFlowToMissionTool(server, client);
   registerFinalizeAgentWorkTool(server, client);
   registerSetMissionRecordingSelectionTool(server, client);
+  registerPreviewMissionReportTool(server, client);
   registerPublishMissionReportTool(server, client);
 }

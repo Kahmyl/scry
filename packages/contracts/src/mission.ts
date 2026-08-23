@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { nameSchema, uuidSchema } from "./api.js";
+import { mutationReceiptSchema } from "./protected-operation.js";
 
 const missionIdempotencyKeySchema = z.string().trim().min(8).max(200);
 
@@ -65,6 +66,8 @@ export const missionReadinessBlockerSchema = z
     evidenceId: uuidSchema.optional(),
     evidenceRecommendationId: uuidSchema.optional(),
     recordingId: uuidSchema.optional(),
+    artifactId: uuidSchema.optional(),
+    evidenceClass: z.string().trim().min(1).max(100).optional(),
     state: z.string().trim().min(1).max(200),
     reasonCode: z.string().trim().min(1).max(200).optional(),
     reason: z.string().trim().min(1).max(500).optional(),
@@ -488,7 +491,15 @@ export const acceptEvidenceSchema = missionContextSchema
     artifactIds: z.array(uuidSchema).max(500).default([]),
     conclusion: z.string().trim().min(1).max(10_000),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (new Set(value.artifactIds).size !== value.artifactIds.length)
+      context.addIssue({
+        code: "custom",
+        path: ["artifactIds"],
+        message: "Evidence selection cannot contain duplicate Artifact IDs",
+      });
+  });
 export const createActivityRelationSchema = missionContextSchema
   .extend({
     fromActivityId: uuidSchema,
@@ -513,6 +524,29 @@ export const setMissionRecordingSelectionSchema = missionContextSchema
       });
   });
 
+export const missionRecordingSelectionResultSchema = z
+  .object({
+    selectionId: uuidSchema,
+    missionId: uuidSchema,
+    selectionRevision: z.number().int().positive(),
+    sourceMissionRevision: z.number().int().nonnegative(),
+    orderedRunIds: z.array(uuidSchema),
+    sources: z
+      .array(
+        z
+          .object({
+            order: z.number().int().nonnegative(),
+            runId: uuidSchema,
+            canonicalAttemptId: uuidSchema,
+          })
+          .strict(),
+      )
+      .default([]),
+    missionRevision: z.number().int().nonnegative(),
+    replayed: z.boolean(),
+  })
+  .strict();
+
 export const publishMissionReportSchema = missionContextSchema
   .extend({
     overallConclusion: z.string().trim().min(1).max(20_000),
@@ -520,6 +554,216 @@ export const publishMissionReportSchema = missionContextSchema
     remainingActions: z.array(z.string().trim().min(1).max(2_000)).max(100).default([]),
     expectedRevision: z.number().int().nonnegative(),
     idempotencyKey: missionIdempotencyKeySchema,
+  })
+  .strict();
+
+export const missionEvidenceArtifactFactSchema = z
+  .object({
+    id: uuidSchema,
+    attemptId: uuidSchema,
+    stepId: z.string().nullable().optional(),
+    kind: z.string().trim().min(1).max(100),
+    availability: z.string().trim().min(1).max(100),
+    privacyClassification: z.string().trim().min(1).max(100),
+    contentType: z.string().trim().min(1).max(500),
+    sizeBytes: z.string().nullable(),
+    checksumSha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable(),
+    contextId: uuidSchema.nullable(),
+    captureEpoch: z.number().int().positive().nullable(),
+    retentionUntil: z.string().datetime().nullable(),
+    createdAt: z.string().datetime(),
+  })
+  .strict();
+
+export const missionAcceptedEvidenceFactSchema = z
+  .object({
+    id: uuidSchema,
+    objectiveId: uuidSchema,
+    runId: uuidSchema,
+    artifactId: uuidSchema.nullable(),
+    selectionOrder: z.number().int().nonnegative().optional(),
+    acceptanceConclusion: z.string().max(10_000),
+    acceptedByAgentSessionId: uuidSchema,
+    acceptedAt: z.string().datetime(),
+    run: z
+      .object({
+        id: uuidSchema,
+        state: z.string().trim().min(1).max(100),
+        outcomeClassification: z.string().trim().min(1).max(200).nullable(),
+        resultClassification: z.string().trim().min(1).max(200).nullable(),
+        reliabilityEligible: z.boolean(),
+        flowRevisionId: uuidSchema,
+        environmentId: uuidSchema,
+        executionModel: z.string().trim().min(1).max(200).nullable(),
+        createdAt: z.string().datetime(),
+        updatedAt: z.string().datetime(),
+      })
+      .strict(),
+    canonicalAttempt: z
+      .object({
+        id: uuidSchema,
+        runId: uuidSchema,
+        attemptNumber: z.number().int().positive(),
+        state: z.string().trim().min(1).max(100),
+        startedAt: z.string().datetime().nullable(),
+        completedAt: z.string().datetime().nullable(),
+      })
+      .strict(),
+    artifact: missionEvidenceArtifactFactSchema.nullable(),
+  })
+  .strict();
+
+export const missionEvidenceCompositionSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    missionId: uuidSchema,
+    sourceMissionRevision: z.number().int().nonnegative(),
+    objectives: z.array(
+      z
+        .object({
+          objectiveId: uuidSchema,
+          order: z.number().int().nonnegative(),
+          acceptedRunIds: z.array(uuidSchema),
+          acceptedArtifactIds: z.array(uuidSchema),
+          acceptedEvidence: z.array(missionAcceptedEvidenceFactSchema),
+        })
+        .strict(),
+    ),
+    supersededAttemptCount: z.number().int().nonnegative(),
+    evidenceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+export const missionRecordingSelectionSnapshotSchema = z
+  .object({
+    id: uuidSchema,
+    revision: z.number().int().positive(),
+    sourceMissionRevision: z.number().int().nonnegative(),
+    selectedByAgentSessionId: uuidSchema,
+    createdAt: z.string().datetime(),
+    sources: z
+      .array(
+        z
+          .object({
+            order: z.number().int().nonnegative(),
+            runId: uuidSchema,
+            canonicalAttemptId: uuidSchema,
+          })
+          .strict(),
+      )
+      .default([]),
+  })
+  .strict();
+
+const missionRecordingArtifactFactSchema = missionEvidenceArtifactFactSchema.omit({
+  retentionUntil: true,
+  stepId: true,
+});
+
+const missionRecordingTimelineEntrySchema = z
+  .object({
+    sequence: z.number().int().nonnegative(),
+    entryType: z.enum([
+      "capture_epoch",
+      "video_segment",
+      "trace_segment",
+      "protected_gap",
+      "document_transition_gap",
+      "unavailable_interval",
+      "quarantine_record",
+      "checkpoint_boundary",
+    ]),
+    operationId: z.string().nullable(),
+    channel: z.string().nullable(),
+    startedAt: z.string().datetime(),
+    endedAt: z.string().datetime().nullable(),
+    reason: z.string().nullable(),
+    status: z.string().nullable(),
+    privacyStatus: z.string().nullable(),
+    contextId: uuidSchema.nullable(),
+    captureEpoch: z.number().int().positive().nullable(),
+    checkpointId: z.string().nullable(),
+    checkpointBoundary: z.string().nullable(),
+    artifactId: uuidSchema.nullable(),
+    artifact: missionRecordingArtifactFactSchema.nullable(),
+    mediaDisposition: z.enum(["playable", "omitted"]).nullable(),
+  })
+  .strict();
+
+export const missionRecordingManifestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    missionId: uuidSchema,
+    sourceMissionRevision: z.number().int().nonnegative(),
+    runs: z.array(
+      z
+        .object({
+          order: z.number().int().nonnegative(),
+          run: z
+            .object({
+              id: uuidSchema,
+              objectiveId: uuidSchema,
+              state: z.string().trim().min(1).max(100),
+              outcomeClassification: z.string().trim().min(1).max(200).nullable(),
+              resultClassification: z.string().trim().min(1).max(200).nullable(),
+              createdAt: z.string().datetime(),
+              completedAt: z.string().datetime().nullable(),
+            })
+            .strict(),
+          canonicalAttempt: z
+            .object({
+              id: uuidSchema,
+              runId: uuidSchema,
+              attemptNumber: z.number().int().positive(),
+              state: z.string().trim().min(1).max(100),
+              startedAt: z.string().datetime().nullable(),
+              completedAt: z.string().datetime().nullable(),
+            })
+            .strict(),
+          continuityFromPrevious: z
+            .object({
+              kind: z.literal("successor_checkpoint"),
+              predecessorRunId: uuidSchema,
+              checkpointId: uuidSchema,
+              restoredByPraxisSessionId: uuidSchema,
+            })
+            .strict()
+            .nullable(),
+          timeline: z.array(missionRecordingTimelineEntrySchema),
+        })
+        .strict(),
+    ),
+    boundaries: z
+      .array(
+        z.discriminatedUnion("kind", [
+          z
+            .object({
+              order: z.number().int().nonnegative(),
+              kind: z.literal("verified_checkpoint"),
+              predecessorRunId: uuidSchema,
+              successorRunId: uuidSchema,
+              checkpointId: uuidSchema,
+              restoredByPraxisSessionId: uuidSchema,
+            })
+            .strict(),
+          z
+            .object({
+              order: z.number().int().nonnegative(),
+              kind: z.literal("recording_gap"),
+              predecessorRunId: uuidSchema,
+              successorRunId: uuidSchema,
+              startedAt: z.string().datetime().nullable(),
+              endedAt: z.string().datetime().nullable(),
+              reason: z.literal("browser_authority_changed_without_verified_continuity"),
+            })
+            .strict(),
+        ]),
+      )
+      .default([]),
+    recordingDigest: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict();
 
@@ -549,16 +793,28 @@ export const missionReportSnapshotSchema = z
         })
         .strict(),
     ),
-    evidence: z.record(z.string(), z.unknown()),
+    evidence: missionEvidenceCompositionSchema,
     evidenceDigest: z.string().regex(/^[a-f0-9]{64}$/),
-    recordingSelection: z.unknown().nullable(),
-    recording: z.unknown().nullable(),
+    recordingSelection: missionRecordingSelectionSnapshotSchema.nullable(),
+    recording: missionRecordingManifestSchema.nullable(),
     recordingDigest: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .nullable(),
+    mutationReceipts: z.array(mutationReceiptSchema).default([]),
+    compositionDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     supersededAttemptCount: z.number().int().nonnegative(),
     generatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export const missionReportPreviewSchema = z
+  .object({
+    completionReadiness: missionCompletionReadinessSchema,
+    snapshot: missionReportSnapshotSchema.nullable(),
   })
   .strict();
 
@@ -600,3 +856,4 @@ export type CreateActivityRelationInput = z.infer<typeof createActivityRelationS
 export type SetMissionRecordingSelectionInput = z.infer<typeof setMissionRecordingSelectionSchema>;
 export type PublishMissionReportInput = z.infer<typeof publishMissionReportSchema>;
 export type PublishedMissionReport = z.infer<typeof publishedMissionReportSchema>;
+export type MissionReportPreview = z.infer<typeof missionReportPreviewSchema>;

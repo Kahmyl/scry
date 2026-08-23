@@ -6,5 +6,6 @@ export * from "./artifacts/storage-key.js";
 
 export * from "./mission/composition.js";
 export * from "./mission/recording.js";
+export * from "./mission/report.js";
 
 export * from "./artifacts/materialization.js";

@@ -6,54 +6,30 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
-  LoaderCircle,
   Play,
   ShieldCheck,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { api, type MissionReport, type Report } from "../../infrastructure/api/client.js";
+import {
+  api,
+  type MissionReport,
+  type RecordingTimelineEntry,
+  type Report,
+} from "../../infrastructure/api/client.js";
 import { PageSkeleton } from "../../shared/components/dashboard-primitives.js";
-import { AuthenticatedArtifact, AuthenticatedVideo } from "../evidence/evidence-media.js";
+import {
+  AuthenticatedArtifact,
+  AuthenticatedVideo,
+  RecordingPlaylist,
+} from "../evidence/evidence-media.js";
 
 export function MissionReportView({ reportId, onBack }: { reportId: string; onBack: () => void }) {
   const [report, setReport] = useState<MissionReport>();
-  const [evidenceRuns, setEvidenceRuns] = useState<Record<string, Report>>({});
-  const [evidenceLoading, setEvidenceLoading] = useState(false);
-  const [evidenceError, setEvidenceError] = useState("");
   const [openEvidenceObjective, setOpenEvidenceObjective] = useState<string | null>(null);
-  const [openEvidenceRun, setOpenEvidenceRun] = useState<string | null>(null);
   useEffect(() => {
     void api<MissionReport>(`/mission-reports/${reportId}`).then(setReport);
   }, [reportId]);
-  useEffect(() => {
-    if (!report) return;
-    const runIds = [
-      ...new Set(report.snapshot.objectiveResults.flatMap((objective) => objective.acceptedRunIds)),
-    ];
-    if (!runIds.length) {
-      setEvidenceRuns({});
-      return;
-    }
-    let active = true;
-    setEvidenceLoading(true);
-    setEvidenceError("");
-    void Promise.all(
-      runIds.map(async (runId) => [runId, await api<Report>(`/runs/${runId}`)] as const),
-    )
-      .then((entries) => {
-        if (active) setEvidenceRuns(Object.fromEntries(entries));
-      })
-      .catch((cause) => {
-        if (active) setEvidenceError(message(cause));
-      })
-      .finally(() => {
-        if (active) setEvidenceLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [report]);
   if (!report) return <PageSkeleton />;
   const snapshot = report.snapshot;
   const passed = snapshot.objectiveResults.filter(
@@ -65,6 +41,7 @@ export function MissionReportView({ reportId, onBack }: { reportId: string; onBa
   const artifactCount = new Set(
     snapshot.objectiveResults.flatMap((objective) => objective.acceptedArtifactIds),
   ).size;
+  const missionRecording = recordingPlayback(snapshot.recording ?? null);
   return (
     <div className="mission-report-detail">
       <button className="back-button mission-report-back" onClick={onBack}>
@@ -224,6 +201,21 @@ export function MissionReportView({ reportId, onBack }: { reportId: string; onBa
           )}
         </div>
       </section>
+      {missionRecording.entries.length > 0 && (
+        <section className="mission-report-section" aria-label="Mission recording composition">
+          <div className="mission-report-section-head">
+            <div>
+              <span>Immutable segment manifest</span>
+              <h2>Mission recording</h2>
+            </div>
+            <small>{missionRecording.entries.length} segments and boundaries</small>
+          </div>
+          <RecordingPlaylist
+            entries={missionRecording.entries}
+            artifacts={missionRecording.artifacts}
+          />
+        </section>
+      )}
       <section
         className="mission-report-section mission-report-evidence-appendix"
         id="report-evidence"
@@ -237,191 +229,97 @@ export function MissionReportView({ reportId, onBack }: { reportId: string; onBa
             {runCount} accepted run{runCount === 1 ? "" : "s"}
           </small>
         </div>
-        {evidenceLoading && (
-          <div className="mission-report-evidence-loading">
-            <LoaderCircle className="spin" size={18} /> Loading accepted evidence…
-          </div>
-        )}
-        {evidenceError && (
-          <div className="form-error mission-report-evidence-error">
-            <AlertTriangle size={14} />
-            {evidenceError}
-          </div>
-        )}
-        {!evidenceLoading &&
-          snapshot.objectiveResults.map((objective, objectiveIndex) => {
-            const objectiveOpen = openEvidenceObjective === objective.id;
-            return (
-              <div
-                className={`mission-report-evidence-objective ${objectiveOpen ? "open" : ""}`}
-                key={objective.id}
+        {snapshot.objectiveResults.map((objective, objectiveIndex) => {
+          const objectiveOpen = openEvidenceObjective === objective.id;
+          return (
+            <div
+              className={`mission-report-evidence-objective ${objectiveOpen ? "open" : ""}`}
+              key={objective.id}
+            >
+              <button
+                className="mission-report-evidence-objective-head"
+                aria-expanded={objectiveOpen}
+                onClick={() => {
+                  setOpenEvidenceObjective(objectiveOpen ? null : objective.id);
+                }}
               >
-                <button
-                  className="mission-report-evidence-objective-head"
-                  aria-expanded={objectiveOpen}
-                  onClick={() => {
-                    setOpenEvidenceObjective(objectiveOpen ? null : objective.id);
-                    setOpenEvidenceRun(null);
-                  }}
-                >
-                  <span>{String(objectiveIndex + 1).padStart(2, "0")}</span>
-                  <div>
-                    <small>Objective</small>
-                    <h3>{objective.title}</h3>
-                    <p>{objective.conclusion}</p>
-                  </div>
-                  <div className="mission-report-evidence-summary">
-                    <strong>{objective.acceptedRunIds.length}</strong>
-                    <small>accepted run{objective.acceptedRunIds.length === 1 ? "" : "s"}</small>
-                    <em>{objectiveOpen ? "Hide runs" : "Explore runs"}</em>
-                    {objectiveOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
-                  </div>
-                </button>
-                {objectiveOpen && (
-                  <div className="mission-report-evidence-objective-body">
-                    {objective.acceptedRunIds.map((runId, runIndex) => {
-                      const runReport = evidenceRuns[runId];
-                      if (!runReport) return null;
-                      const runOpen = openEvidenceRun === runId;
-                      const stepOrder = new Map(
-                        runReport.steps.map((step, index) => [step.stepId, index]),
-                      );
-                      const orderedArtifacts = [...runReport.artifacts].sort(
-                        (left, right) =>
-                          (stepOrder.get(left.stepId ?? "") ?? Number.MAX_SAFE_INTEGER) -
-                          (stepOrder.get(right.stepId ?? "") ?? Number.MAX_SAFE_INTEGER),
-                      );
-                      return (
-                        <article
-                          className={`mission-report-evidence-run ${runOpen ? "open" : ""}`}
-                          key={runId}
-                        >
-                          <button
-                            className="mission-report-evidence-run-head"
-                            aria-expanded={runOpen}
-                            onClick={() => setOpenEvidenceRun(runOpen ? null : runId)}
-                          >
-                            <div>
-                              <span className="mission-result-pass">
-                                <CheckCircle2 size={12} />
-                                {runReport.run.state}
-                              </span>
-                              <h4>Accepted Run {runIndex + 1}</h4>
-                              <code>{runId.slice(0, 8)}</code>
-                            </div>
-                            <div>
-                              <span>Integrity</span>
-                              <strong>{runReport.integrity.status}</strong>
-                            </div>
-                            <div>
-                              <span>Environment</span>
-                              <strong>{runReport.run.environmentSnapshot.name}</strong>
-                            </div>
-                            <div>
-                              <span>Artifacts</span>
-                              <strong>{runReport.artifacts.length}</strong>
-                            </div>
-                            <span className="mission-report-run-toggle">
-                              <small>{runOpen ? "Hide evidence" : "View evidence"}</small>
-                              {runOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+                <span>{String(objectiveIndex + 1).padStart(2, "0")}</span>
+                <div>
+                  <small>Objective</small>
+                  <h3>{objective.title}</h3>
+                  <p>{objective.conclusion}</p>
+                </div>
+                <div className="mission-report-evidence-summary">
+                  <strong>{objective.acceptedRunIds.length}</strong>
+                  <small>accepted run{objective.acceptedRunIds.length === 1 ? "" : "s"}</small>
+                  <em>{objectiveOpen ? "Hide runs" : "Explore runs"}</em>
+                  {objectiveOpen ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+                </div>
+              </button>
+              {objectiveOpen && (
+                <div className="mission-report-evidence-objective-body">
+                  {selectedEvidenceByRun(snapshot, objective.id).map((acceptedRun, runIndex) => {
+                    return (
+                      <article className="mission-report-evidence-run open" key={acceptedRun.id}>
+                        <div className="mission-report-evidence-run-head">
+                          <div>
+                            <span className="mission-result-pass">
+                              <CheckCircle2 size={12} />
+                              {acceptedRun.state}
                             </span>
-                          </button>
-                          {runOpen && (
-                            <div className="mission-report-evidence-run-body">
-                              <div className="mission-report-evidence-steps">
-                                {runReport.steps.map((step, stepIndex) => (
-                                  <div
-                                    className="mission-report-evidence-step"
-                                    key={`${step.attemptId}-${step.stepId}`}
-                                  >
-                                    <span>{String(stepIndex + 1).padStart(2, "0")}</span>
-                                    <div>
-                                      <div>
-                                        <strong>{step.title}</strong>
-                                        <code>
-                                          {runReport.run.planSnapshot.steps.find(
-                                            (candidate) => candidate.id === step.stepId,
-                                          )?.action.type ?? "step"}
-                                        </code>
-                                        <em
-                                          className={
-                                            step.action.status === "passed"
-                                              ? "evidence-step-pass"
-                                              : "evidence-step-neutral"
-                                          }
-                                        >
-                                          {step.action.status}
-                                        </em>
-                                      </div>
-                                      {step.readiness && (
-                                        <small>
-                                          Readiness: {step.readiness.status?.replaceAll("_", " ")}
-                                        </small>
-                                      )}
-                                      {step.assertions.length > 0 && (
-                                        <ul>
-                                          {step.assertions.map((assertion) => (
-                                            <li key={assertion.index}>
-                                              <CheckCircle2 size={12} />
-                                              <span>{assertion.type}</span>
-                                              <em>{assertion.status}</em>
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      )}
+                            <h4>Accepted Run {runIndex + 1}</h4>
+                            <code>{acceptedRun.id.slice(0, 8)}</code>
+                          </div>
+                          <div>
+                            <span>Canonical Attempt</span>
+                            <strong>{acceptedRun.canonicalAttemptId.slice(0, 8)}</strong>
+                          </div>
+                          <div>
+                            <span>Environment</span>
+                            <strong>{acceptedRun.environmentId.slice(0, 8)}</strong>
+                          </div>
+                          <div>
+                            <span>Selected artifacts</span>
+                            <strong>{acceptedRun.artifacts.length}</strong>
+                          </div>
+                        </div>
+                        <div className="mission-report-evidence-run-body">
+                          <p>{acceptedRun.conclusion}</p>
+                          {acceptedRun.artifacts.length > 0 && (
+                            <div className="mission-report-run-artifacts">
+                              {acceptedRun.artifacts.map((artifact) => (
+                                <div
+                                  className={`mission-report-artifact mission-report-artifact-${artifact.kind}`}
+                                  key={artifact.id}
+                                >
+                                  {artifact.stepId && <code>{artifact.stepId}</code>}
+                                  {artifact.kind === "video" ? (
+                                    <AuthenticatedVideo artifact={artifact} />
+                                  ) : artifact.kind === "screenshot" ? (
+                                    <div className="evidence-grid">
+                                      <AuthenticatedArtifact artifact={artifact} image />
                                     </div>
-                                  </div>
-                                ))}
-                              </div>
-                              {orderedArtifacts.length > 0 && (
-                                <div className="mission-report-run-artifacts">
-                                  {orderedArtifacts.map((artifact) => (
-                                    <div
-                                      className={`mission-report-artifact mission-report-artifact-${artifact.kind}`}
-                                      key={artifact.id}
-                                    >
-                                      {artifact.availability !== "available" ? (
-                                        <div className="mission-report-unavailable-artifact">
-                                          <ShieldCheck size={15} />
-                                          <span>
-                                            <strong>{artifact.kind}</strong>
-                                            <small>
-                                              {artifact.availability} · no artifact bytes exposed
-                                            </small>
-                                          </span>
-                                        </div>
-                                      ) : artifact.kind === "video" ? (
-                                        <AuthenticatedVideo artifact={artifact} />
-                                      ) : artifact.kind === "screenshot" ? (
-                                        <div className="evidence-grid">
-                                          <AuthenticatedArtifact artifact={artifact} image />
-                                        </div>
-                                      ) : (
-                                        <div className="artifact-strip">
-                                          <AuthenticatedArtifact artifact={artifact} />
-                                        </div>
-                                      )}
+                                  ) : (
+                                    <div className="artifact-strip">
+                                      <AuthenticatedArtifact artifact={artifact} />
                                     </div>
-                                  ))}
+                                  )}
                                 </div>
-                              )}
+                              ))}
                             </div>
                           )}
-                        </article>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </section>
     </div>
   );
-}
-
-function message(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function relativeTime(value: string) {
@@ -430,4 +328,142 @@ function relativeTime(value: string) {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
   return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+export function selectedEvidenceByRun(snapshot: MissionReport["snapshot"], objectiveId: string) {
+  const selected = snapshot.evidence.objectives.find(
+    (objective) => objective.objectiveId === objectiveId,
+  );
+  const grouped = new Map<
+    string,
+    {
+      id: string;
+      state: string;
+      environmentId: string;
+      canonicalAttemptId: string;
+      conclusion: string;
+      artifacts: Report["artifacts"];
+    }
+  >();
+  for (const fact of selected?.acceptedEvidence ?? []) {
+    const run = grouped.get(fact.runId) ?? {
+      id: fact.runId,
+      state: fact.run.state,
+      environmentId: fact.run.environmentId,
+      canonicalAttemptId: fact.canonicalAttempt.id,
+      conclusion: fact.acceptanceConclusion,
+      artifacts: [],
+    };
+    if (fact.artifact)
+      run.artifacts.push({
+        id: fact.artifact.id,
+        attemptId: fact.artifact.attemptId,
+        ...(fact.artifact.stepId ? { stepId: fact.artifact.stepId } : {}),
+        kind: fact.artifact.kind,
+        availability: fact.artifact.availability as Report["artifacts"][number]["availability"],
+        privacyClassification: fact.artifact
+          .privacyClassification as Report["artifacts"][number]["privacyClassification"],
+        contentType: fact.artifact.contentType,
+        ...(fact.artifact.sizeBytes === null ? {} : { sizeBytes: fact.artifact.sizeBytes }),
+      });
+    grouped.set(fact.runId, run);
+  }
+  return [...grouped.values()];
+}
+
+export function recordingPlayback(recording: MissionReport["snapshot"]["recording"]) {
+  if (!recording)
+    return {
+      entries: [] as RecordingTimelineEntry[],
+      artifacts: [] as Report["artifacts"],
+    };
+  const entries: RecordingTimelineEntry[] = [];
+  const artifacts: Report["artifacts"] = [];
+  const boundaryBySuccessor = new Map(
+    recording.boundaries.map((boundary) => [boundary.successorRunId, boundary]),
+  );
+
+  for (const selected of [...recording.runs].sort((left, right) => left.order - right.order)) {
+    const boundary = boundaryBySuccessor.get(selected.run.id);
+    if (boundary)
+      entries.push({
+        type: "recording_boundary",
+        id: `boundary-${boundary.predecessorRunId}-${boundary.successorRunId}`,
+        sequence: entries.length,
+        boundaryKind: boundary.kind,
+        ...(boundary.kind === "recording_gap"
+          ? { startedAt: boundary.startedAt, endedAt: boundary.endedAt, reason: boundary.reason }
+          : { reason: "successor_checkpoint_verified" }),
+      });
+
+    for (const fact of selected.timeline) {
+      if (fact.artifact && fact.artifact.availability === "available")
+        artifacts.push({
+          id: fact.artifact.id,
+          attemptId: fact.artifact.attemptId,
+          kind: fact.artifact.kind,
+          availability: "available",
+          privacyClassification: fact.artifact.privacyClassification as "safe" | "sanitized",
+          contentType: fact.artifact.contentType,
+          ...(fact.artifact.sizeBytes === null ? {} : { sizeBytes: fact.artifact.sizeBytes }),
+        });
+
+      if (fact.entryType === "video_segment") {
+        if (!fact.endedAt) {
+          entries.push({
+            type: "unavailable_interval",
+            id: `${selected.canonicalAttempt.id}-${fact.sequence}`,
+            sequence: entries.length,
+            startedAt: fact.startedAt,
+            endedAt: fact.startedAt,
+            failureCode: "SEGMENT_END_UNAVAILABLE",
+          });
+          continue;
+        }
+        entries.push({
+          type: "video_segment",
+          id: `${selected.canonicalAttempt.id}-${fact.sequence}`,
+          sequence: entries.length,
+          pageId: selected.run.id,
+          startedAt: fact.startedAt,
+          endedAt: fact.endedAt,
+          reason: fact.reason ?? "run_started",
+          status: fact.mediaDisposition === "playable" ? "available" : "quarantined",
+          privacyStatus: fact.mediaDisposition === "playable" ? "verified_safe" : "quarantined",
+          ...(fact.artifactId ? { artifactId: fact.artifactId } : {}),
+          ...(fact.mediaDisposition === "playable" ? {} : { failureCode: "SEGMENT_OMITTED" }),
+        });
+      } else if (fact.entryType === "protected_gap" && fact.operationId && fact.endedAt)
+        entries.push({
+          type: "protected_gap",
+          id: `${selected.canonicalAttempt.id}-${fact.sequence}`,
+          sequence: entries.length,
+          operationId: fact.operationId,
+          startedAt: fact.startedAt,
+          endedAt: fact.endedAt,
+          reason: fact.reason ?? "protected_operation",
+          privacyStatus: "capture_suppressed",
+        });
+      else if (fact.entryType === "document_transition_gap" && fact.operationId && fact.endedAt)
+        entries.push({
+          type: "document_transition_gap",
+          id: `${selected.canonicalAttempt.id}-${fact.sequence}`,
+          sequence: entries.length,
+          operationId: fact.operationId,
+          startedAt: fact.startedAt,
+          endedAt: fact.endedAt,
+          reason: fact.reason ?? "navigation_boundary",
+        });
+      else if (fact.entryType === "unavailable_interval" && fact.endedAt)
+        entries.push({
+          type: "unavailable_interval",
+          id: `${selected.canonicalAttempt.id}-${fact.sequence}`,
+          sequence: entries.length,
+          startedAt: fact.startedAt,
+          endedAt: fact.endedAt,
+          failureCode: fact.reason ?? "RECORDING_UNAVAILABLE",
+        });
+    }
+  }
+  return { entries, artifacts };
 }
