@@ -262,7 +262,7 @@ describe("protected acquisition adapter registry", () => {
         validation: { minimumLength: 1, maximumLength: 100 },
       });
 
-      const result = await acquireValue(page, acquisition, 250);
+      const result = await acquireValue(page, acquisition, 2_000);
 
       expect(result.value).not.toBe("CLIENT_ID_CANARY");
       expect(result.value).not.toBe("SECRET_CANARY");

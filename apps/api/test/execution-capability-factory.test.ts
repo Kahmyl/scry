@@ -508,6 +508,45 @@ describe("execution capability factory", () => {
     expect(kernelRepository.persistSecret).not.toHaveBeenCalled();
   });
 
+  it("provides the protected transaction execution port for calibration sessions", () => {
+    const kernelRepository = {
+      appendEvent: vi.fn(),
+      persistSecret: vi.fn(),
+      persistPublicValue: vi.fn(),
+      resolvePublicValue: vi.fn(),
+      establishCheckpoint: vi.fn(),
+      claimCheckpoint: vi.fn(),
+      completeCheckpoint: vi.fn(),
+      recordContextProvenance: vi.fn(),
+    };
+    const factory = new ExecutionCapabilityFactory(
+      {} as never,
+      kernelRepository as never,
+      { openBrowser: vi.fn() } as never,
+    );
+
+    const capabilities = factory.createSession({
+      sessionId: "calibration-session",
+      operationId: "calibration-operation",
+      correlationId: randomUUID(),
+      mode: "certify",
+      beforeMutationTransition: vi.fn(async () => true),
+      options: {
+        outputDirectory: "/tmp/calibration",
+        browserChannel: "chrome",
+        environmentId: "environment",
+        veilAdmissionKey: "test-key",
+        veilPolicySnapshot: {} as never,
+        secretResolver: vi.fn(),
+      },
+    });
+
+    expect(capabilities.options.protectedTransactionExecutor).toBeDefined();
+    expect(capabilities.options.protectedTransactionStore).toBeDefined();
+    expect(capabilities.options.atomicOutputCapture).toBeDefined();
+    expect(capabilities.manifest.capabilities.protected_operations.state).toBe("available");
+  });
+
   it("does not make calibration evidence a runtime capability requirement", () => {
     const kernelRepository = {
       begin: vi.fn(),

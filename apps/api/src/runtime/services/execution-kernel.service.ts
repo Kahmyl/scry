@@ -596,7 +596,10 @@ function calibrationProtectedCapabilities(
   beforeTransition: (input: { expected: string; next: string }) => Promise<boolean>,
   persistSecret: NonNullable<ExecuteOptions["atomicSecretCapture"]>,
   persistPublic: NonNullable<ExecuteOptions["publicValueCapture"]>,
-): Pick<ExecuteOptions, "protectedTransactionStore" | "atomicOutputCapture"> {
+): Pick<
+  ExecuteOptions,
+  "protectedTransactionExecutor" | "protectedTransactionStore" | "atomicOutputCapture"
+> {
   let state: import("@scry/contracts").ProtectedOperationState = "planned";
   let version = 1;
   let mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown" = "not_attempted";
@@ -611,6 +614,8 @@ function calibrationProtectedCapabilities(
     return { id: operationId, state, version, fencingToken: 1, mutationOutcome };
   };
   return {
+    protectedTransactionExecutor: ({ transaction, dependencies }) =>
+      new ProtectedTransactionKernel(dependencies).execute(transaction),
     protectedTransactionStore: {
       claim: async () => ({ id: operationId, state, version, fencingToken: 1, mutationOutcome }),
       transition: async ({ expected, next }) => transition(expected, next),
@@ -683,6 +688,7 @@ function deriveCapabilityStates(
   const evidence = Boolean(browser && veil && options.outputDirectory);
   const protectedInput = Boolean(browser && veil && options.secretResolver);
   const protectedOperations = Boolean(
+    options.protectedTransactionExecutor &&
     options.secretResolver &&
     options.atomicSecretCapture &&
     options.publicValueCapture &&
