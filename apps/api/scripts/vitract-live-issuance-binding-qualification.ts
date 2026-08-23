@@ -29,10 +29,8 @@ import {
   findAdaptiveSessionId,
   rejectToolError,
 } from "./deployed-adaptive-campaign.js";
-import {
-  navigateAndWaitNative,
-  type AuthoritativeExternalResourceObservation,
-} from "@scry/executor";
+import type { AuthoritativeExternalResourceObservation } from "@scry/executor";
+import { navigateAndWaitNative } from "@scry/praxis";
 
 export const LIVE_QUALIFICATION = {
   projectId: "6b3b5011-0f41-430c-a8a2-d4abfd9ff3f1",

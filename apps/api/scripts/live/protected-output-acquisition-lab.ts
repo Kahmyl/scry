@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { missionAuthoringIntentSchema, type MissionAuthoringIntent } from "@scry/contracts";
-import { type ProtectedTransactionDependencies } from "@scry/executor";
+import type { ProtectedTransactionDependencies } from "@scry/executor";
 
 import {
   AdaptiveSessionRepository,

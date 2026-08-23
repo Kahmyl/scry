@@ -11,8 +11,8 @@ import {
   beginProtectedResponseEnvelope,
   PlaywrightProtectedCapsuleFactory,
   registerProtectedAcquisitionAdapter,
-  type ProtectedOperationClaim,
 } from "@scry/executor";
+import type { ProtectedOperationClaim } from "@scry/contracts";
 import { runProtectedStage } from "@scry/praxis";
 import { VeilChannelCollector, VeilClipboardCollector, VeilRuntimeCoordinator } from "@scry/veil";
 import { ProtectedCertificationDatabase } from "./protected-certification-database.js";

@@ -1,12 +1,8 @@
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import {
-  structureFingerprint,
-  type ExecuteOptions,
-  type ExecutionReport,
-  type CalibrationStructure,
-} from "@scry/executor";
+import { structureFingerprint } from "@scry/executor";
+import type { ExecuteOptions, ExecutionReport, CalibrationStructure } from "@scry/executor";
 import { unzipSync } from "fflate";
 
 import type {

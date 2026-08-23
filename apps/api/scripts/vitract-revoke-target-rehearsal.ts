@@ -8,7 +8,7 @@ import {
 } from "@scry/contracts";
 import { resolveTarget, resolveTargetLocator } from "@scry/praxis";
 import { SecretRedactor } from "@scry/policy";
-import { navigateAndWaitNative } from "@scry/executor";
+import { navigateAndWaitNative } from "@scry/praxis";
 
 import { AdaptiveSessionRepository } from "../src/adaptive-sessions/repositories/adaptive-session.repository.js";
 import { Database } from "../src/infrastructure/database.js";

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { ProtectedOperationState } from "@scry/contracts";
-import type { ProtectedOperationClaim, ProtectedTransactionStore } from "@scry/executor";
+import type { ProtectedOperationClaim, ProtectedTransactionStore } from "@scry/contracts";
 
 import { AdaptiveSessionRepository } from "../src/adaptive-sessions/repositories/adaptive-session.repository.js";
 import { Database } from "../src/infrastructure/index.js";

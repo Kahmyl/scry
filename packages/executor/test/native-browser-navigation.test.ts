@@ -3,7 +3,7 @@ import { createServer, type RequestListener, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { chromium, type Browser } from "playwright";
 
-import { navigateAndWaitNative } from "../src/native-browser-navigation.js";
+import { navigateAndWaitNative } from "@scry/praxis";
 
 const servers: Server[] = [];
 let browser: Browser | undefined;

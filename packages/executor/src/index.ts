@@ -13,15 +13,5 @@ export * from "./probe.js";
 export * from "./types.js";
 export * from "./execution-kernel.js";
 export * from "./interaction-lifecycle.js";
-export * from "./native-browser-navigation.js";
-export * from "@scry/praxis";
 export * from "./protected-response-envelope.js";
 export * from "./external-resource-target-preparation.js";
-
-export {
-  BrowserSessionProvenance,
-  type SafeBrowserSession,
-  type ProtectedBrowserSession,
-} from "@scry/praxis";
-
-export type { ProtectedOperationClaim, ProtectedTransactionStore } from "@scry/contracts";

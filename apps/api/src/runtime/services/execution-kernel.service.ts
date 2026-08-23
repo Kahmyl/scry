@@ -4,9 +4,8 @@ import {
   createExecutionCapabilityManifest,
   ExecutionKernel,
   createAuthoringBrowserSession,
-  type ExecuteOptions,
-  type RuntimeExecutionCapabilities,
 } from "@scry/executor";
+import type { ExecuteOptions, RuntimeExecutionCapabilities } from "@scry/executor";
 
 import { ExecutionRepository } from "../repositories/execution.repository.js";
 import { ExecutionKernelRepository } from "../repositories/execution-kernel.repository.js";

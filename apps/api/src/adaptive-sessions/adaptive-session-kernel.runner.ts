@@ -11,11 +11,8 @@ import type {
   ExpectedEffect,
   OperationOutcome,
 } from "@scry/contracts";
-import {
-  captureSuccessorCheckpointPayload,
-  type AuthoringBrowserSession,
-  type ExecutionReport,
-} from "@scry/executor";
+import { captureSuccessorCheckpointPayload } from "@scry/executor";
+import type { AuthoringBrowserSession, ExecutionReport } from "@scry/executor";
 import { runProtectedStage } from "@scry/praxis";
 import {
   observeSemanticPageContext,
@@ -745,7 +742,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     fencingToken: number;
     browser: import("playwright").Browser;
     context: import("playwright").BrowserContext;
-    provenance: import("@scry/executor").BrowserSessionProvenance;
+    provenance: import("@scry/praxis").BrowserSessionProvenance;
     page: Parameters<AuthoringBrowserSession["interact"]>[0] extends never
       ? never
       : import("playwright").Page;

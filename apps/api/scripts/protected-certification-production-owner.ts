@@ -2,12 +2,9 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 
 import type { Assertion, InteractionTargetIntent, ProtectedTransaction } from "@scry/contracts";
-import {
-  BrowserSessionProvenance,
-  PlaywrightProtectedCapsuleFactory,
-  type ProtectedOperationClaim,
-  type ProtectedTransactionStore,
-} from "@scry/executor";
+import { PlaywrightProtectedCapsuleFactory } from "@scry/executor";
+import type { ProtectedOperationClaim, ProtectedTransactionStore } from "@scry/contracts";
+import { BrowserSessionProvenance } from "@scry/praxis";
 import { SecretRedactor } from "@scry/policy";
 import { registerPraxisVeilAuthority, resolveTargetLocator } from "@scry/praxis";
 import {
@@ -89,7 +86,7 @@ export async function runKernelOwnerCertification(input: {
   let credentialCompromiseActions = 0;
   let releaseHeartbeat: (() => void) | undefined;
   let releaseReconciliation: (() => void) | undefined;
-  let capsuleSession: import("@scry/executor").ProtectedBrowserSession | undefined;
+  let capsuleSession: import("@scry/praxis").ProtectedBrowserSession | undefined;
   let capsuleForceClose: (() => Promise<void>) | undefined;
   const server = createServer((request, response) => {
     if (request.url === "/dispatch" && request.method === "POST") {

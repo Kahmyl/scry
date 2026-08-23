@@ -51,7 +51,8 @@ import {
   reconcileProtectedMutation,
 } from "./protected-transaction-post-dispatch.js";
 import { classifyPassivePreparationRequest } from "./protected-preparation-effects.js";
-import { beginProtectedResponseEnvelope, type ProtectedResponseEvidence } from "@scry/executor";
+import { beginProtectedResponseEnvelope } from "@scry/executor";
+import type { ProtectedResponseEvidence } from "@scry/executor";
 import { runProtectedStage } from "@scry/praxis";
 
 /** @deprecated Historical rows only. New operations use ProtectedOperationState. */
