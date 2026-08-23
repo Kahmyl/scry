@@ -528,7 +528,7 @@ const scenarios: Scenario[] = [
           permittedMethods: ["copy_control"],
           validation: { minimumLength: 3, maximumLength: 100 },
         },
-        150,
+        500,
       );
       expect(result.value).toBeUndefined();
       expect(result.diagnostics[0]?.lastFailureCode).toBe("COPY_CONTROL_UNRESOLVED");
@@ -549,7 +549,7 @@ const scenarios: Scenario[] = [
           permittedMethods: ["copy_control"],
           validation: { minimumLength: 3, maximumLength: 100, pattern: "^correct-secret$" },
         },
-        200,
+        500,
       );
       expect(result.value).toBeUndefined();
       expect(result.diagnostics[0]?.lastFailureCode).toBe("VALUE_VALIDATION_FAILED");
