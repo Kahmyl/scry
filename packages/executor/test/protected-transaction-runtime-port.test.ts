@@ -39,3 +39,14 @@ describe("protected transaction runtime port", () => {
     expect(coordinator).toContain("ProtectedTransactionFacts");
   });
 });
+
+describe("protected transaction runtime port independence", () => {
+  it("runtime port has no coordinator implementation dependency", async () => {
+    const runtime = await readFile(
+      new URL("../src/protected-transaction-runtime.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(runtime).not.toContain("protected-transaction-coordinator");
+  });
+});

@@ -143,5 +143,5 @@ export type ProtectedTransactionExecution = {
 
 export type ProtectedTransactionExecutor = (input: {
   transaction: import("@scry/contracts").ProtectedTransaction;
-  dependencies: import("./protected-transaction-coordinator.js").ProtectedTransactionDependencies;
-}) => Promise<import("./protected-transaction-coordinator.js").ProtectedTransactionExecution>;
+  dependencies: ProtectedTransactionDependencies;
+}) => Promise<ProtectedTransactionExecution>;
