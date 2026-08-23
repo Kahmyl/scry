@@ -104,6 +104,7 @@ function objective(journey: PerformanceJourney) {
     `Use the current agent-directed lifecycle: start one ordinary Praxis session, observe exact opaque references, start one Run, and dispatch exactly one operation at a time.`,
     `After each succeeded dispatch, use its factual successorObservation for the next semantic decision; do not make a redundant observe_praxis_session call unless that observation is absent or the dispatch failed.`,
     `On the deterministic fixture, activate Open controls using its exact observed reference, then dispatch an ordinary navigation to ${journey.fixtureOrigin}/details, observe the new document, and verify the heading Execution complete.`,
+    `For Open controls, use action kind activate with activationMechanism dom, authorization kind ordinary, expectedEffect kind none, and omit semanticEffect; do not request live_read authority. For the terminal step use action kind navigate with the exact details URL and an ordinary navigation expectedEffect.`,
     `After factual verification, explicitly finalize the Run as passed and close the Praxis session.`,
     `This is ordinary local fixture work: use no credentials, no protected authorization, no provider mutation, no capabilities call, and get_operating_context at most once.`,
     `Never invent references or IDs. If Scry refuses safely, stop and report the exact blocker rather than bypassing authority or stale-reference rules.`,
