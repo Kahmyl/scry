@@ -21,3 +21,5 @@ export * from "./observability/qualification.js";
 export * from "./reporting/campaign-report.js";
 export * from "./fixtures/adaptive-fixture.js";
 export * from "./engineering-lab/index.js";
+export * from "./reporting/experiment-cluster-synthesis.js";
+export * from "./fixtures/sibling-experiment-cluster.js";
