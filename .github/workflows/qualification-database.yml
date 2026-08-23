@@ -80,15 +80,27 @@ jobs:
           test/project-credential-scope.integration.test.ts
           --maxWorkers=1
 
-      - name: Preserve truthful unavailable M1 qualification
+      - name: Classify historical M1 qualification outcome
         run: |
           set +e
           output="$(node scripts/verify-m1-preflight.mjs --migration-only)"
           status=$?
           set -e
           printf '%s\n' "$output"
-          test "$status" -ne 0
-          printf '%s' "$output" | grep -q '"reasonCode":"M1_SNAPSHOT_REQUIRED"'
+          QUALIFICATION_OUTPUT="$output" QUALIFICATION_STATUS="$status" node --input-type=module <<'NODE'
+          const status = Number(process.env.QUALIFICATION_STATUS);
+          const lines = process.env.QUALIFICATION_OUTPUT.trim().split(/\r?\n/);
+          const report = JSON.parse(lines.at(-1));
+          const passed = status === 0 && report.verdict === "pass";
+          const truthfullyUnavailable =
+            status !== 0 &&
+            report.verdict === "blocked" &&
+            report.reasonCode === "M1_SNAPSHOT_REQUIRED";
+          if (!passed && !truthfullyUnavailable) {
+            console.error("M1 qualification neither passed nor reported the exact admitted unavailable state.");
+            process.exit(1);
+          }
+          NODE
 
       - name: Upload database failure evidence
         if: failure()

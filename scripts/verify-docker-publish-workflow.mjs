@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { renderComposeOci } from "./render-compose-oci.mjs";
 
 const workflow = readFileSync(".github/workflows/docker-publish.yml", "utf8");
+const databaseQualification = readFileSync(".github/workflows/qualification-database.yml", "utf8");
+const fastQualification = readFileSync(".github/workflows/qualification-fast.yml", "utf8");
 const dockerfile = readFileSync("Dockerfile", "utf8");
 const dockerignore = readFileSync(".dockerignore", "utf8");
 const deployCompose = readFileSync("compose.deploy.yml", "utf8");
@@ -38,10 +40,24 @@ for (const forbidden of [
 for (const required of [
   "workflow_run:",
   "Scry required qualification",
-  "github.event.workflow_run.head_sha || github.sha",
+  "qualified_sha:",
+  "publication_reason:",
+  "residual_risk_acknowledgement:",
+  "publish_latest:",
+  "github.event.workflow_run.head_sha || inputs.qualified_sha",
   "github.event.workflow_run.conclusion == 'success'",
   "github.event.workflow_run.event == 'push'",
   "github.event.workflow_run.head_branch == 'main'",
+  "startsWith(github.event.workflow_run.head_branch, 'v')",
+  "Verify manual publication authority",
+  "Automated publication requires qualification from main or a semantic version tag.",
+  "^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$",
+  "I_ACKNOWLEDGE_RESIDUAL_RISK",
+  "Record publication audit evidence",
+  "artifacts/publication-audit.json",
+  "Upload publication audit evidence",
+  "sha-${{ env.QUALIFIED_SHA }}",
+  "env.PUBLISH_LATEST == 'true'",
   "SCRY_DEPLOYMENT_TIER: beta",
   'COMPOSE_PROFILES: ""',
   "docker/build-push-action@v6",
@@ -52,6 +68,28 @@ for (const required of [
 ]) {
   if (!workflow.includes(required)) fail(`beta publication contract missing: ${required}`);
 }
+
+for (const forbidden of [
+  "github.event.workflow_run.head_sha || github.sha",
+  "github.ref == 'refs/heads/main'",
+]) {
+  if (workflow.includes(forbidden))
+    fail(`beta publication retains ambiguous publication authority: ${forbidden}`);
+}
+
+for (const required of [
+  'status === 0 && report.verdict === "pass"',
+  'report.reasonCode === "M1_SNAPSHOT_REQUIRED"',
+]) {
+  if (!databaseQualification.includes(required))
+    fail(`database qualification outcome contract missing: ${required}`);
+}
+
+if (databaseQualification.includes('grep -q \'"reasonCode":"M1_SNAPSHOT_REQUIRED"\''))
+  fail("database qualification still accepts M1 unavailability by substring grep");
+
+if (!fastQualification.includes("artifacts/verification-ci-unit-results.json"))
+  fail("fast qualification artifact omits CI unit results");
 
 const runtimePackages = [
   "chronicle",

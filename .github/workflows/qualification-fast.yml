@@ -70,5 +70,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: affected-verification-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/verification-affected-*.json
+          path: |
+            artifacts/verification-affected-*.json
+            artifacts/verification-ci-unit-results.json
           if-no-files-found: warn

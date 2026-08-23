@@ -7,6 +7,24 @@ on:
     types:
       - completed
   workflow_dispatch:
+    inputs:
+      qualified_sha:
+        description: Exact 40-character commit SHA to publish
+        required: true
+        type: string
+      publication_reason:
+        description: Why this manually qualified commit must be published
+        required: true
+        type: string
+      residual_risk_acknowledgement:
+        description: Enter I_ACKNOWLEDGE_RESIDUAL_RISK to accept remaining publication risk
+        required: true
+        type: string
+      publish_latest:
+        description: Also move the mutable latest tag to this exact commit
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -18,7 +36,9 @@ env:
   COMPOSE_PROFILES: ""
   POSTGRES_ARCHIVE_MODE: off
   SCRY_BROWSER_CHANNEL: chromium
-  QUALIFIED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+  QUALIFIED_SHA: ${{ github.event.workflow_run.head_sha || inputs.qualified_sha }}
+  QUALIFIED_VERSION_TAG: ${{ github.event_name == 'workflow_run' && startsWith(github.event.workflow_run.head_branch, 'v') && github.event.workflow_run.head_branch || '' }}
+  PUBLISH_LATEST: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main') || (github.event_name == 'workflow_dispatch' && inputs.publish_latest) }}
 
 jobs:
   publish:
@@ -28,13 +48,87 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main')
+      (github.event.workflow_run.head_branch == 'main' ||
+      startsWith(github.event.workflow_run.head_branch, 'v')))
 
     steps:
+      - name: Verify manual publication authority
+        shell: bash
+        env:
+          PUBLICATION_REASON: ${{ inputs.publication_reason }}
+          RESIDUAL_RISK_ACKNOWLEDGEMENT: ${{ inputs.residual_risk_acknowledgement }}
+          QUALIFIED_SOURCE_REF: ${{ github.event.workflow_run.head_branch || '' }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            if [[ "$QUALIFIED_SOURCE_REF" == "main" ]] ||
+               [[ "$QUALIFIED_SOURCE_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              exit 0
+            fi
+            echo "Automated publication requires qualification from main or a semantic version tag."
+            exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+            echo "Unsupported publication event."
+            exit 1
+          fi
+          if ! [[ "$QUALIFIED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Manual publication requires an exact lowercase 40-character commit SHA."
+            exit 1
+          fi
+          if [[ -z "${PUBLICATION_REASON//[[:space:]]/}" ]]; then
+            echo "Manual publication requires a non-empty reason."
+            exit 1
+          fi
+          if [[ "$RESIDUAL_RISK_ACKNOWLEDGEMENT" != "I_ACKNOWLEDGE_RESIDUAL_RISK" ]]; then
+            echo "Manual publication requires the exact residual-risk acknowledgement."
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v4
         with:
           ref: ${{ env.QUALIFIED_SHA }}
+
+      - name: Record publication audit evidence
+        shell: bash
+        env:
+          PUBLICATION_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.publication_reason || 'Successful required qualification for an admitted push' }}
+          RESIDUAL_RISK_ACKNOWLEDGEMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.residual_risk_acknowledgement || 'Automated publication after required qualification' }}
+          REQUESTED_LATEST: ${{ env.PUBLISH_LATEST }}
+          QUALIFICATION_RUN_ID: ${{ github.event.workflow_run.id || '' }}
+          QUALIFIED_SOURCE_REF: ${{ github.event.workflow_run.head_branch || '' }}
+        run: |
+          mkdir -p artifacts
+          node --input-type=module <<'NODE'
+          import { appendFileSync, writeFileSync } from "node:fs";
+
+          const audit = {
+            schemaVersion: 1,
+            eventName: process.env.GITHUB_EVENT_NAME,
+            actor: process.env.GITHUB_ACTOR,
+            publicationRunId: process.env.GITHUB_RUN_ID,
+            publicationRunAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            qualifiedSha: process.env.QUALIFIED_SHA,
+            qualifiedSourceRef: process.env.QUALIFIED_SOURCE_REF || null,
+            qualificationRunId: process.env.QUALIFICATION_RUN_ID || null,
+            reason: process.env.PUBLICATION_REASON,
+            residualRiskAcknowledgement: process.env.RESIDUAL_RISK_ACKNOWLEDGEMENT,
+            publishLatest: process.env.REQUESTED_LATEST === "true",
+          };
+          writeFileSync("artifacts/publication-audit.json", `${JSON.stringify(audit, null, 2)}\n`);
+          appendFileSync(
+            process.env.GITHUB_STEP_SUMMARY,
+            `## Publication authority\n\n- Qualified SHA: \`${audit.qualifiedSha}\`\n- Source: \`${audit.eventName}\`\n- Move latest: \`${audit.publishLatest}\`\n- Reason: ${audit.reason}\n`,
+          );
+          NODE
+
+      - name: Upload publication audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/publication-audit.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -52,7 +146,8 @@ jobs:
           images: ${{ env.APP_IMAGE }}
           tags: |
             type=raw,value=sha-${{ env.QUALIFIED_SHA }}
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_run' || github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ env.QUALIFIED_VERSION_TAG }},enable=${{ env.QUALIFIED_VERSION_TAG != '' }}
+            type=raw,value=latest,enable=${{ env.PUBLISH_LATEST == 'true' }}
 
       - name: Build the combined Scry beta image
         id: candidate-build
@@ -143,12 +238,12 @@ jobs:
         id: stack
         shell: bash
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+          if [[ -n "$QUALIFIED_VERSION_TAG" ]]; then
+            echo "tag=$QUALIFIED_VERSION_TAG" >> "$GITHUB_OUTPUT"
+          elif [[ "$PUBLISH_LATEST" == "true" ]]; then
             echo "tag=latest" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
+            echo "tag=sha-$QUALIFIED_SHA" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Require OCI-capable Docker Compose
