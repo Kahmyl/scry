@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   randomUUID,
   advanceAdaptiveSessionSchema,
+  adaptiveOperationReconciliationResultSchema,
   agentDecisionBoundarySchema,
   closeAdaptiveSessionSchema,
   missionAuthoringTurnBudgetsSchema,
@@ -15,6 +16,7 @@ import {
   flowDraftPurposeSchema,
   flowRevisionContentSchema,
   z,
+  idempotentDurableWrite,
   readOnly,
   stableKey,
   toolResult,
@@ -43,7 +45,13 @@ export function registerReconcilePraxisUnknownOperationTool(
         operationId: reconcileAdaptiveOperationSchema.shape.operationId,
         idempotencyKey: reconcileAdaptiveOperationSchema.shape.idempotencyKey.optional(),
       },
-      annotations: writes,
+      outputSchema: z
+        .object({
+          message: z.string(),
+          reconciliation: adaptiveOperationReconciliationResultSchema,
+        })
+        .strict(),
+      annotations: idempotentDurableWrite,
     },
     async ({ praxisSessionId, missionId, operationId, idempotencyKey }) =>
       withAdaptiveSessionError(async () => {

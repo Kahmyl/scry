@@ -454,5 +454,64 @@ export const runObservationSchema = z
   })
   .strict();
 
+/** Date-free, bounded MCP projection of the canonical Run observation. */
+export const agentRunObservationSchema = z
+  .object({
+    run: z
+      .object({
+        id: z.string().uuid(),
+        state: runStateSchema,
+        phase: z.string().min(1).optional(),
+        currentPhase: z.string().min(1).optional(),
+        outcomeClassification: outcomeClassificationSchema.nullish(),
+      })
+      .passthrough(),
+    steps: z.array(
+      z
+        .object({
+          stepId: z.string().min(1),
+          action: z
+            .object({
+              status: z.enum(["passed", "failed", "unevaluated"]),
+              error: z.string().nullish(),
+            })
+            .strict(),
+        })
+        .passthrough(),
+    ),
+    artifacts: z.array(
+      z
+        .object({
+          id: z.string().uuid(),
+          resource: z
+            .string()
+            .regex(/^scry:\/\/artifact\/[0-9a-f-]+$/)
+            .nullish(),
+        })
+        .passthrough(),
+    ),
+    artifactTimeline: z.array(z.record(z.string(), z.unknown())),
+    integrity: z
+      .object({
+        status: z.enum(["complete", "partial", "failed"]),
+        issues: z.array(z.object({ code: z.string(), message: z.string() })),
+      })
+      .strict(),
+    failure: z
+      .object({
+        provenance: z.enum(["product", "plan", "policy", "infrastructure", "privacy", "executor"]),
+        code: z.string(),
+        message: z.string().optional(),
+        stepId: z.string().optional(),
+        channel: z.string().optional(),
+      })
+      .nullish()
+      .optional(),
+    safeActions: z.array(z.enum(["cancel", "rerun", "revise_flow", "read_artifact"])),
+    release: z.object({ releaseId: z.string(), schemaFingerprint: z.string() }).strict().optional(),
+  })
+  .passthrough();
+
 export type RunObservation = z.infer<typeof runObservationSchema>;
+export type AgentRunObservation = z.infer<typeof agentRunObservationSchema>;
 export type EvidenceChannelOutcome = z.infer<typeof runEvidenceChannelOutcomeSchema>;

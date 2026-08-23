@@ -32,7 +32,7 @@ export function registerActOnProtectedRecoveryTool(server: McpServer, client: Sc
     {
       title: "Act on protected acquisition recovery",
       description:
-        "Retry an approved acquisition method, request secure assistance, revoke, or abandon. This never repeats the mutation.",
+        "Apply one returned protected-output recovery action: retry an approved acquisition method, request secure assistance, revoke, or abandon. This never repeats the mutation. Do not convert unknown to not_applied; reconcile mutation truth separately and use only the exact Run/operation/recovery IDs returned by Scry.",
       inputSchema: {
         runId: uuid,
         operationId: z.string().min(1).max(128),

@@ -3,7 +3,10 @@ import path from "node:path";
 import { ConflictException, Inject, Injectable, Optional } from "@nestjs/common";
 import { createArtifactStoreFromEnv } from "@scry/chronicle/legacy";
 import {
+  dispatchedRunOperationResultSchema,
+  finalizedAgentDirectedRunResultSchema,
   missionAuthoringIntentSchema,
+  runPraxisAttachmentResultSchema,
   type OutcomeClassification,
   type VeilPolicySnapshot,
   type AttachRunPraxisSessionInput,
@@ -66,7 +69,11 @@ export class AgentDirectedRunService {
        WHERE link.run_id=$1 AND operation.authoring_intent->>'intentId'=$2`,
       [runId, input.intent.intentId],
     );
-    if (existing.rowCount) return { ...(existing.rows[0]!.safeResult as object), replayed: true };
+    if (existing.rowCount)
+      return dispatchedRunOperationResultSchema.parse({
+        ...(existing.rows[0]!.safeResult as object),
+        replayed: true,
+      });
     if (
       input.intent.objectiveId !== run.objectiveId ||
       input.intent.flowDraftId !== run.flowDraftId
@@ -124,7 +131,7 @@ export class AgentDirectedRunService {
       [run.attemptId, operationId],
     );
 
-    const safeResult = {
+    const safeResult = dispatchedRunOperationResultSchema.parse({
       runId,
       praxisSessionId: input.praxisSessionId,
       operationId,
@@ -137,7 +144,7 @@ export class AgentDirectedRunService {
       evidence: operation.evidence,
       ...(operation.reasonCode ? { reasonCode: operation.reasonCode } : {}),
       replayed: false,
-    };
+    });
     await this.database.transaction(async (client) => {
       await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [runId]);
       const sequence = await client.query<{ sequence: number }>(
@@ -172,7 +179,7 @@ export class AgentDirectedRunService {
       (run.executionSnapshot as Record<string, unknown>).executionModel !== "agent_directed_v1"
     )
       throw new ConflictException({ code: "RUN_NOT_AGENT_DIRECTED" });
-    return this.database.transaction(async (client) => {
+    const binding = await this.database.transaction(async (client) => {
       await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [runId]);
       const session = await client.query(
         `SELECT 1 FROM adaptive_sessions WHERE id=$1 AND project_id=$2 AND mission_id=$3
@@ -204,6 +211,7 @@ export class AgentDirectedRunService {
         replayed: false,
       };
     });
+    return runPraxisAttachmentResultSchema.parse(binding);
   }
 
   async finalize(principal: Principal, runId: string, input: FinalizeAgentDirectedRunInput) {
@@ -248,12 +256,12 @@ export class AgentDirectedRunService {
       input.outcome === "passed" ? undefined : input.reason,
     );
 
-    return {
+    return finalizedAgentDirectedRunResultSchema.parse({
       runId,
       state: input.outcome,
       outcomeClassification,
       reason: input.reason,
-    };
+    });
   }
 
   private async heartbeatAttempt(run: AssociatedAgentDirectedRun) {

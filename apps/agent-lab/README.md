@@ -43,12 +43,18 @@ Every run writes:
 - `result.json`
 - `transcript.jsonl`
 
+`result.json` includes behavioral counts for invalid calls, stale-reference
+calls, repeated unchanged observations, unnecessary capability preflights,
+turns, tool calls, duration, and completion. Assurance evaluates these facts
+across the readiness, authoring, exact-reference, protected authorization,
+dispatch, UNKNOWN recovery, evidence-selection, and final-reporting scenarios.
+
 under `apps/agent-lab/.runs/`.
 
 Agent Lab does not decide qualification PASS or FAIL. Assurance owns claims,
 oracles, evidence interpretation, and qualification.
 
-## DeepSeek challenger
+## DeepSeek cohort
 
 Agent Lab can run the same external-agent objective through DeepSeek V4 Flash:
 
@@ -60,5 +66,8 @@ Agent Lab can run the same external-agent objective through DeepSeek V4 Flash:
 The default DeepSeek profile uses `deepseek-v4-flash` in non-thinking mode.
 This keeps its tool-call loop directly comparable with the local model.
 
-DeepSeek is a separate experimental/qualification result. A DeepSeek success
-must never silently turn a failed local-model qualification into a PASS.
+DeepSeek is a separate experimental/qualification cohort. Selecting it as the
+primary cohort is an operator decision and sends the published MCP surface and
+tool transcript to that external service. Regardless of cohort order, a
+challenger success must never silently turn a failed primary qualification
+into a PASS.

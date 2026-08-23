@@ -121,6 +121,81 @@ describe("current Scry MCP surface", () => {
     expect(operatingContext.description).toContain("sole Mission candidate is never auto-selected");
     expect(operatingContext.description).toContain("Project/environment metadata only");
 
+    const approvedProfiles = new Set([
+      JSON.stringify([true, false, null, false]),
+      JSON.stringify([true, false, null, true]),
+      JSON.stringify([false, false, true, false]),
+      JSON.stringify([false, false, false, false]),
+      JSON.stringify([false, false, true, true]),
+      JSON.stringify([false, true, false, true]),
+      JSON.stringify([false, true, true, true]),
+    ]);
+    const observedProfiles = new Set(
+      tools.map(({ annotations }) =>
+        JSON.stringify([
+          annotations?.readOnlyHint ?? false,
+          annotations?.destructiveHint ?? true,
+          annotations?.idempotentHint ?? null,
+          annotations?.openWorldHint ?? true,
+        ]),
+      ),
+    );
+    expect(observedProfiles).toEqual(approvedProfiles);
+    expect(
+      tools.every(({ annotations }) =>
+        approvedProfiles.has(
+          JSON.stringify([
+            annotations?.readOnlyHint ?? false,
+            annotations?.destructiveHint ?? true,
+            annotations?.idempotentHint ?? null,
+            annotations?.openWorldHint ?? true,
+          ]),
+        ),
+      ),
+    ).toBe(true);
+
+    for (const name of [
+      "start_praxis_session",
+      "observe_praxis_session",
+      "get_praxis_session",
+      "reconcile_unknown_operation",
+      "close_praxis_session",
+      "dispatch_run_operation",
+      "attach_run_praxis_session",
+      "finalize_run",
+      "get_run",
+      "publish_mission_report",
+    ])
+      expect(tools.find((tool) => tool.name === name)?.outputSchema, name).toBeDefined();
+
+    const grant = tools.find(({ name }) => name === "grant_mission_execution_authorization")!;
+    expect(grant.description).toContain("operationId");
+    expect(grant.description).toContain("praxisSessionId");
+
+    expect(tools.find(({ name }) => name === "get_run")?.annotations).toMatchObject({
+      readOnlyHint: true,
+      openWorldHint: false,
+    });
+    expect(tools.find(({ name }) => name === "observe_praxis_session")?.annotations).toMatchObject({
+      readOnlyHint: true,
+      openWorldHint: true,
+    });
+    expect(tools.find(({ name }) => name === "start_praxis_session")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    });
+    expect(tools.find(({ name }) => name === "finalize_run")?.annotations).toMatchObject({
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+    expect(tools.find(({ name }) => name === "dispatch_run_operation")?.annotations).toMatchObject({
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    });
+
     await client.close();
     await server.close();
   });
@@ -297,10 +372,17 @@ describe("current Scry MCP surface", () => {
     );
     const { client, server } = await connected();
     const tools = (await client.listTools()).tools;
-    expect(
-      tools.find(({ name }) => name === "grant_mission_execution_authorization")?.inputSchema
-        .properties,
-    ).toHaveProperty("operationId");
+    const authorizationInput = tools.find(
+      ({ name }) => name === "grant_mission_execution_authorization",
+    )?.inputSchema as any;
+    const authorizationSchema = authorizationInput.properties?.authorization ?? {};
+    const authorizationVariants = authorizationSchema.anyOf ?? authorizationSchema.oneOf ?? [];
+    const protectedAuthorization = authorizationVariants.find(
+      (variant: any) => variant.properties?.kind?.const === "protected_mutation",
+    );
+    expect(protectedAuthorization?.required).toEqual(
+      expect.arrayContaining(["operationId", "praxisSessionId"]),
+    );
     expect(tools.map(({ name }) => name)).toEqual([
       "get_capabilities",
       "list_projects",
@@ -1128,7 +1210,35 @@ describe("current Scry MCP surface", () => {
 
           const body = path.endsWith("/capabilities")
             ? admittedCapabilities
-            : { id: "terminal-resource" };
+            : path.endsWith("/reports")
+              ? {
+                  id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                  missionId: context.missionId,
+                  revision: 1,
+                  status: "published",
+                  snapshot: {
+                    mission: {
+                      id: context.missionId,
+                      title: "Mission",
+                      originalInstruction: "Verify the current objective.",
+                      status: "completed",
+                      sourceRevision: 1,
+                    },
+                    overallConclusion: "Mission complete",
+                    journeySummary: ["Verified"],
+                    remainingActions: [],
+                    objectiveResults: [],
+                    evidence: {},
+                    evidenceDigest: "a".repeat(64),
+                    recordingSelection: null,
+                    recording: null,
+                    recordingDigest: null,
+                    supersededAttemptCount: 0,
+                    generatedAt: new Date(0).toISOString(),
+                  },
+                  replayed: false,
+                }
+              : { id: "terminal-resource" };
 
           return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
         }),

@@ -28,6 +28,7 @@ import type {
   MissionCompletionReadiness,
   MissionReadinessBlocker,
 } from "@scry/contracts";
+import { publishedMissionReportSchema } from "@scry/contracts";
 
 import type { Principal } from "../auth/index.js";
 import { Database } from "../infrastructure/index.js";
@@ -1660,10 +1661,10 @@ export class MissionService {
         });
 
       if (replay.rows[0]!.response)
-        return {
+        return publishedMissionReportSchema.parse({
           ...replay.rows[0]!.response,
           replayed: true,
-        };
+        });
 
       if (mission.revision !== input.expectedRevision)
         throw new ConflictException({
@@ -1724,14 +1725,14 @@ export class MissionService {
         `Mission report revision ${revision} published`,
         { reportId, revision },
       );
-      const response = {
+      const response = publishedMissionReportSchema.parse({
         id: reportId,
         missionId,
         revision,
         status: "published" as const,
         snapshot,
         replayed: false,
-      };
+      });
 
       await q(
         `UPDATE idempotency_records

@@ -21,6 +21,11 @@ export type AgentLabRunResult = Readonly<{
   advertised_tools: string[];
   turns: number;
   tool_calls: number;
+  invalid_calls: number;
+  stale_reference_calls: number;
+  repeated_unchanged_observations: number;
+  unnecessary_capabilities_calls: number;
+  completed: boolean;
   duration_ms: number;
   final_response?: string | null;
   transcript_path: string;

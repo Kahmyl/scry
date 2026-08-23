@@ -54,32 +54,30 @@ export const authorizationKindSchema = z.enum([
   "protected_mutation",
   "authentication_calibration",
 ]);
-export const grantMissionAuthorizationSchema = missionContextSchema
-  .extend({
-    objectiveId: uuidSchema,
-    environmentId: uuidSchema,
-    kind: authorizationKindSchema,
-    operationId: z.string().trim().min(1).max(200).optional(),
-    praxisSessionId: uuidSchema.optional(),
-    reason: z.string().trim().min(1).max(2000),
-    expiresAt: z.string().datetime().optional(),
-    confirmedUserAuthorized: z.literal(true),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if (value.kind === "protected_mutation" && !value.operationId)
-      context.addIssue({
-        code: "custom",
-        path: ["operationId"],
-        message: "Protected mutation authorization must name the exact operation",
-      });
-    if (value.kind === "protected_mutation" && !value.praxisSessionId)
-      context.addIssue({
-        code: "custom",
-        path: ["praxisSessionId"],
-        message: "Protected mutation authorization must bind the live protected Praxis session",
-      });
-  });
+const grantMissionAuthorizationBase = missionContextSchema.extend({
+  objectiveId: uuidSchema,
+  environmentId: uuidSchema,
+  reason: z.string().trim().min(1).max(2000),
+  expiresAt: z.string().datetime().optional(),
+  confirmedUserAuthorized: z.literal(true),
+});
+
+export const grantMissionAuthorizationSchema = z.discriminatedUnion("kind", [
+  grantMissionAuthorizationBase
+    .extend({
+      kind: authorizationKindSchema.exclude(["protected_mutation"]),
+      operationId: z.string().trim().min(1).max(200).optional(),
+      praxisSessionId: uuidSchema.optional(),
+    })
+    .strict(),
+  grantMissionAuthorizationBase
+    .extend({
+      kind: z.literal("protected_mutation"),
+      operationId: z.string().trim().min(1).max(200),
+      praxisSessionId: uuidSchema,
+    })
+    .strict(),
+]);
 export type GrantMissionAuthorizationInput = z.infer<typeof grantMissionAuthorizationSchema>;
 export const createExecutionPlanSchema = missionContextSchema
   .extend({

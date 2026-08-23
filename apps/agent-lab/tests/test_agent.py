@@ -132,6 +132,8 @@ async def test_external_agent_loop_calls_mcp_and_finishes(
     assert result.status == "completed"
     assert result.tool_calls == 1
     assert result.turns == 2
+    assert result.completed is True
+    assert result.invalid_calls == 0
     assert mcp.calls == [
         (
             "echo",
@@ -157,3 +159,94 @@ async def test_external_agent_loop_calls_mcp_and_finishes(
         "model_request",
         "model_response",
     ]
+
+
+class MetricsMcp(FakeMcp):
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, object],
+    ) -> McpToolResult:
+        self.calls.append((name, arguments))
+        if name == "stale_action":
+            return McpToolResult(
+                is_error=True,
+                structured_content={
+                    "rejection": {
+                        "code": "CONTEXT_REFERENCE_STALE",
+                        "rejectionClass": "stale_authority",
+                        "safeActions": ["observe_praxis_session"],
+                    }
+                },
+            )
+        if name == "invalid_action":
+            return McpToolResult(
+                is_error=True,
+                structured_content={
+                    "rejection": {
+                        "code": "REQUEST_INVALID",
+                        "rejectionClass": "invalid_input",
+                        "safeActions": [],
+                    }
+                },
+            )
+        return McpToolResult(
+            is_error=False,
+            structured_content={"state": "unchanged"},
+        )
+
+
+class MetricsModel:
+    def __init__(self) -> None:
+        self.calls = [
+            "get_capabilities",
+            "get_state",
+            "get_state",
+            "stale_action",
+            "invalid_action",
+        ]
+        self.turn = 0
+
+    async def complete(self, messages, tools) -> ModelResponse:
+        self.turn += 1
+        if self.calls:
+            name = self.calls.pop(0)
+            return ModelResponse(
+                content=None,
+                tool_calls=[
+                    ModelToolCall(
+                        id=f"call-{self.turn}",
+                        name=name,
+                        arguments="{}",
+                    )
+                ],
+                usage=None,
+            )
+        return ModelResponse(
+            content="Stopped safely.",
+            tool_calls=[],
+            usage=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_agent_metrics_classify_behavior_not_prompt_strings(
+    tmp_path,
+) -> None:
+    result = await run_agent(
+        spec=AgentRunSpec(
+            objective="Inspect the current state safely.",
+            mcp_url="http://fake/mcp",
+        ),
+        model=MetricsModel(),
+        mcp=MetricsMcp(),
+        transcript=Transcript(tmp_path / "metrics.jsonl"),
+        model_name="fake-model",
+        provider_name="fake",
+    )
+
+    assert result.completed is True
+    assert result.invalid_calls == 1
+    assert result.stale_reference_calls == 1
+    assert result.repeated_unchanged_observations == 1
+    assert result.unnecessary_capabilities_calls == 1

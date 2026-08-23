@@ -1,8 +1,13 @@
 import {
+  agentRetrySemanticsSchema,
   missionCompletionReadinessSchema,
+  mutationAppliedStateSchema,
+  publicApiRejectionSchema,
   PRAXIS_CONTRACT_VERSION,
   PRAXIS_RUNTIME_VERSION,
   PRAXIS_SCORING_POLICY_VERSION,
+  type AgentResolutionClass,
+  type PublicRejectionClass,
 } from "@scry/contracts";
 
 export class ScryApiError extends Error {
@@ -33,6 +38,15 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "sourceMissionRevision",
   "currentMissionRevision",
   "objectiveId",
+  "projectId",
+  "runId",
+  "attemptId",
+  "agentSessionId",
+  "praxisSessionId",
+  "protectedOperationId",
+  "evidenceId",
+  "evidenceRecommendationId",
+  "recordingId",
   "dependencyId",
   "mutationOutcome",
   "retry",
@@ -77,19 +91,122 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "missionFenceCleared",
   "validationIssueCount",
   "safeActions",
+  "nextActions",
+  "resolution",
+  "reason",
   "readiness",
 ]);
 
 export function apiRejection(error: ScryApiError) {
   const { mutationOutcome, retry, retryClass, ...context } = error.context;
-  return {
+  const appliedState = mutationAppliedStateSchema.catch("not_applicable").parse(mutationOutcome);
+  const rejectionClass = classifyPublicRejection(error.code, error.status, appliedState);
+  const factualRetry = agentRetrySemanticsSchema
+    .catch("unspecified")
+    .parse(appliedState === "unknown" ? "reconciliation_required" : (retry ?? retryClass));
+  const safeActions = error.safeActions.slice(0, 20);
+  const projectedNextActions = Array.isArray(context.nextActions)
+    ? context.nextActions.filter((value): value is string => typeof value === "string").slice(0, 20)
+    : safeActions.filter((action) => action !== "do_not_retry");
+  const nextActions =
+    appliedState === "unknown"
+      ? projectedNextActions.filter(
+          (action) => action.includes("reconcil") || action.startsWith("get_"),
+        )
+      : projectedNextActions;
+
+  return publicApiRejectionSchema.parse({
     code: error.code,
     status: error.status,
-    appliedState: mutationOutcome ?? "unknown",
-    retry: retry ?? retryClass ?? "unspecified",
-    safeActions: error.safeActions,
+    rejectionClass,
+    reason:
+      typeof context.reason === "string"
+        ? context.reason.slice(0, 500)
+        : error.code.toLowerCase().replaceAll("_", " "),
+    exactIds: exactIds(context),
+    resolution: resolutionFor(rejectionClass),
+    appliedState,
+    retry: factualRetry,
+    safeActions,
+    nextActions,
     ...(Object.keys(context).length ? { context } : {}),
+  });
+}
+
+function classifyPublicRejection(
+  code: string,
+  status: number,
+  appliedState: string,
+): PublicRejectionClass {
+  const normalized = code.toUpperCase();
+  if (
+    appliedState === "unknown" ||
+    normalized.includes("UNKNOWN") ||
+    normalized.includes("RECONCIL")
+  )
+    return "reconciliation_unknown";
+  if (
+    normalized.includes("STALE") ||
+    normalized.includes("REVISION_CONFLICT") ||
+    normalized.includes("VERSION_CONFLICT") ||
+    normalized.includes("REFERENCE_") ||
+    normalized.includes("DOCUMENT_CHANGED") ||
+    normalized.includes("FENCED")
+  )
+    return "stale_authority";
+  if (
+    status === 401 ||
+    status === 403 ||
+    normalized.includes("AUTHORIZ") ||
+    normalized.includes("POLICY") ||
+    normalized.includes("PERMISSION") ||
+    normalized.includes("FORBIDDEN")
+  )
+    return "policy_authorization";
+  if (status === 400 || normalized.includes("INVALID") || normalized.includes("VALIDATION"))
+    return "invalid_input";
+  if (
+    status >= 500 ||
+    normalized.includes("INFRASTRUCTURE") ||
+    normalized.includes("PERSIST") ||
+    normalized.includes("DATABASE") ||
+    normalized.includes("STORAGE") ||
+    normalized.includes("RUNTIME_UNAVAILABLE") ||
+    normalized.includes("RELEASE_MISMATCH") ||
+    normalized.includes("VERSION_MISMATCH")
+  )
+    return "infrastructure_persistence";
+  return "application_provider";
+}
+
+function resolutionFor(rejectionClass: PublicRejectionClass): AgentResolutionClass {
+  return {
+    invalid_input: "correct_input",
+    stale_authority: "refresh_authority",
+    policy_authorization: "obtain_authorization",
+    application_provider: "inspect_application",
+    infrastructure_persistence: "restore_infrastructure",
+    reconciliation_unknown: "reconcile_unknown",
+  }[rejectionClass] as AgentResolutionClass;
+}
+
+function exactIds(context: Record<string, unknown>) {
+  const result: Record<string, string> = {};
+  const visit = (value: unknown, depth: number) => {
+    if (!value || typeof value !== "object" || Array.isArray(value) || depth > 3) return;
+    for (const [key, candidate] of Object.entries(value as Record<string, unknown>)) {
+      if (
+        Object.keys(result).length < 20 &&
+        /^[a-z][A-Za-z0-9]{0,99}Id$/.test(key) &&
+        typeof candidate === "string" &&
+        candidate.length <= 200
+      )
+        result[key] ??= candidate;
+      else if (candidate && typeof candidate === "object") visit(candidate, depth + 1);
+    }
   };
+  visit(context, 0);
+  return result;
 }
 
 export class ScryApiClient {

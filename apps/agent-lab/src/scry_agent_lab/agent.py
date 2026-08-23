@@ -47,6 +47,28 @@ def model_tools(snapshot: McpSnapshot) -> list[dict[str, Any]]:
     ]
 
 
+def _rejection(payload: dict[str, Any]) -> dict[str, Any] | None:
+    structured = payload.get("structuredContent")
+    if not isinstance(structured, dict):
+        return None
+    rejection = structured.get("rejection")
+    return rejection if isinstance(rejection, dict) else None
+
+
+def _observation_tool(name: str) -> bool:
+    return name.startswith(("get_", "list_", "observe_", "search_"))
+
+
+def _safe_actions(payload: dict[str, Any]) -> list[str]:
+    rejection = _rejection(payload)
+    if rejection is None:
+        return []
+    actions = rejection.get("safeActions")
+    if not isinstance(actions, list):
+        return []
+    return [value for value in actions if isinstance(value, str)]
+
+
 async def run_agent(
     *,
     spec: AgentRunSpec,
@@ -95,6 +117,15 @@ async def run_agent(
 
     tools = model_tools(snapshot)
     tool_call_count = 0
+    invalid_calls = 0
+    stale_reference_calls = 0
+    repeated_unchanged_observations = 0
+    unnecessary_capabilities_calls = 0
+    observation_digests: dict[str, str] = {}
+    capabilities_directed = any(
+        term in spec.objective.lower()
+        for term in ("capability", "compatibility", "release")
+    )
 
     for turn in range(1, spec.max_turns + 1):
         transcript.write(
@@ -161,6 +192,15 @@ async def run_agent(
                 ],
                 turns=turn,
                 tool_calls=tool_call_count,
+                invalid_calls=invalid_calls,
+                stale_reference_calls=stale_reference_calls,
+                repeated_unchanged_observations=(
+                    repeated_unchanged_observations
+                ),
+                unnecessary_capabilities_calls=(
+                    unnecessary_capabilities_calls
+                ),
+                completed=True,
                 duration_ms=int(
                     (time.perf_counter() - started) * 1000
                 ),
@@ -185,6 +225,15 @@ async def run_agent(
                     ],
                     turns=turn,
                     tool_calls=tool_call_count,
+                    invalid_calls=invalid_calls,
+                    stale_reference_calls=stale_reference_calls,
+                    repeated_unchanged_observations=(
+                        repeated_unchanged_observations
+                    ),
+                    unnecessary_capabilities_calls=(
+                        unnecessary_capabilities_calls
+                    ),
+                    completed=False,
                     duration_ms=int(
                         (time.perf_counter() - started) * 1000
                     ),
@@ -194,6 +243,9 @@ async def run_agent(
 
             tool_call_count += 1
 
+            if call.name == "get_capabilities" and not capabilities_directed:
+                unnecessary_capabilities_calls += 1
+
             try:
                 parsed = json.loads(call.arguments or "{}")
                 if not isinstance(parsed, dict):
@@ -201,6 +253,7 @@ async def run_agent(
                         "Tool arguments must be a JSON object."
                     )
             except Exception as error:
+                invalid_calls += 1
                 tool_payload = {
                     "isError": True,
                     "content": [
@@ -242,6 +295,44 @@ async def run_agent(
                     parsed,
                 )
                 tool_payload = result.for_model()
+
+                rejection = _rejection(tool_payload)
+                if rejection is not None:
+                    rejection_class = rejection.get("rejectionClass")
+                    code = str(rejection.get("code", "")).upper()
+                    if rejection_class == "invalid_input":
+                        invalid_calls += 1
+                    if rejection_class == "stale_authority" or any(
+                        marker in code
+                        for marker in (
+                            "STALE",
+                            "REFERENCE",
+                            "DOCUMENT_CHANGED",
+                        )
+                    ):
+                        stale_reference_calls += 1
+
+                if _observation_tool(call.name):
+                    digest_value = hashlib.sha256(
+                        json.dumps(
+                            tool_payload,
+                            sort_keys=True,
+                            ensure_ascii=False,
+                            default=str,
+                        ).encode("utf-8")
+                    ).hexdigest()
+                    if observation_digests.get(call.name) == digest_value:
+                        repeated_unchanged_observations += 1
+                    observation_digests[call.name] = digest_value
+
+                capabilities_directed = capabilities_directed or any(
+                    action in {
+                        "get_capabilities",
+                        "verify_api_release",
+                        "restart_mcp_with_current_release",
+                    }
+                    for action in _safe_actions(tool_payload)
+                )
 
                 transcript.write(
                     "tool_result",
@@ -287,6 +378,15 @@ async def run_agent(
         ],
         turns=spec.max_turns,
         tool_calls=tool_call_count,
+        invalid_calls=invalid_calls,
+        stale_reference_calls=stale_reference_calls,
+        repeated_unchanged_observations=(
+            repeated_unchanged_observations
+        ),
+        unnecessary_capabilities_calls=(
+            unnecessary_capabilities_calls
+        ),
+        completed=False,
         duration_ms=int(
             (time.perf_counter() - started) * 1000
         ),

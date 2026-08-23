@@ -285,8 +285,23 @@ describe("Mission completion safety", () => {
       status: "published",
       snapshot: {
         mission: {
+          id: missionId,
+          title: "Completed Mission",
+          originalInstruction: "Verify completion safety.",
           status: "completed",
+          sourceRevision: 4,
         },
+        overallConclusion: "Mission complete.",
+        journeySummary: ["Verified completion."],
+        remainingActions: [],
+        objectiveResults: [],
+        evidence: {},
+        evidenceDigest: "a".repeat(64),
+        recordingSelection: null,
+        recording: null,
+        recordingDigest: null,
+        supersededAttemptCount: 0,
+        generatedAt: new Date(0).toISOString(),
       },
       replayed: false,
     };

@@ -7,6 +7,7 @@ import {
   flowPurposeSchema,
   flowVisibilitySchema,
   runRoleSchema,
+  agentRunObservationSchema,
   missionResumePointerSchema,
   executionBindingSchema,
   authorizationKindSchema,
@@ -34,6 +35,9 @@ export function registerGetRunTool(server: McpServer, client: ScryApiClient) {
       description:
         "Read the canonical run observation: current attempt, independent step channels, typed failure, safe artifact manifest, privacy timeline, integrity status, and permitted next actions.",
       inputSchema: { runId: uuid },
+      outputSchema: z
+        .object({ message: z.string(), observation: agentRunObservationSchema })
+        .strict(),
       annotations: readOnly,
     },
     async ({ runId }) =>

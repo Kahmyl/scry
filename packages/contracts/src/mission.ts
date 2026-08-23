@@ -523,6 +523,56 @@ export const publishMissionReportSchema = missionContextSchema
   })
   .strict();
 
+export const missionReportSnapshotSchema = z
+  .object({
+    mission: z
+      .object({
+        id: uuidSchema,
+        title: z.string().trim().min(1).max(2_000),
+        originalInstruction: z.string().max(20_000),
+        status: missionStatusSchema,
+        sourceRevision: z.number().int().nonnegative(),
+      })
+      .strict(),
+    overallConclusion: z.string().max(20_000),
+    journeySummary: z.array(z.string().max(2_000)).max(500),
+    remainingActions: z.array(z.string().max(2_000)).max(100),
+    objectiveResults: z.array(
+      z
+        .object({
+          id: uuidSchema,
+          title: z.string().max(2_000),
+          status: objectiveStatusSchema,
+          conclusion: z.string().nullable(),
+          acceptedRunIds: z.array(uuidSchema),
+          acceptedArtifactIds: z.array(uuidSchema),
+        })
+        .strict(),
+    ),
+    evidence: z.record(z.string(), z.unknown()),
+    evidenceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    recordingSelection: z.unknown().nullable(),
+    recording: z.unknown().nullable(),
+    recordingDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable(),
+    supersededAttemptCount: z.number().int().nonnegative(),
+    generatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export const publishedMissionReportSchema = z
+  .object({
+    id: uuidSchema,
+    missionId: uuidSchema,
+    revision: z.number().int().positive(),
+    status: z.literal("published"),
+    snapshot: missionReportSnapshotSchema,
+    replayed: z.boolean(),
+  })
+  .strict();
+
 export type MissionStatus = z.infer<typeof missionStatusSchema>;
 export type MissionCompletionReadiness = z.infer<typeof missionCompletionReadinessSchema>;
 export type MissionReadinessBlocker = z.infer<typeof missionReadinessBlockerSchema>;
@@ -549,3 +599,4 @@ export type AcceptEvidenceInput = z.infer<typeof acceptEvidenceSchema>;
 export type CreateActivityRelationInput = z.infer<typeof createActivityRelationSchema>;
 export type SetMissionRecordingSelectionInput = z.infer<typeof setMissionRecordingSelectionSchema>;
 export type PublishMissionReportInput = z.infer<typeof publishMissionReportSchema>;
+export type PublishedMissionReport = z.infer<typeof publishedMissionReportSchema>;

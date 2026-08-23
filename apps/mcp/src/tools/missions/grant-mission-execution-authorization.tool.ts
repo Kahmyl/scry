@@ -9,12 +9,11 @@ import {
   runRoleSchema,
   missionResumePointerSchema,
   executionBindingSchema,
-  authorizationKindSchema,
+  grantMissionAuthorizationSchema,
   protectedRecoveryCommandSchema,
   veilPreferenceUpdateSchema,
 } from "@scry/contracts";
 import { z } from "zod";
-
 import type { ScryApiClient } from "../../api-client.js";
 import {
   missionContext,
@@ -35,20 +34,11 @@ export function registerGrantMissionExecutionAuthorizationTool(
     {
       title: "Grant Mission execution authorization",
       description:
-        "Persist explicit owner/admin authorization for a scoped Live or protected operation. Protected mutation authorization binds the exact live protected Praxis session. Authorization is never inferred.",
-      inputSchema: {
-        ...objectiveContext,
-        environmentId: uuid,
-        kind: authorizationKindSchema,
-        operationId: z.string().trim().min(1).max(200).optional(),
-        praxisSessionId: uuid.optional(),
-        reason: z.string().trim().min(1).max(2000),
-        expiresAt: z.string().datetime().optional(),
-        confirmedUserAuthorized: z.literal(true),
-      },
+        "Persist explicit owner/admin authorization for one scoped Live or protected operation. Set authorization.kind=protected_mutation with authorization.operationId for the exact intent/operation and authorization.praxisSessionId for the exact live protected Praxis session, alongside the current Mission, Objective, agent-session, and environment IDs in that canonical authorization object. Use the returned authorization ID only for that bound operation; authorization is never inferred or portable across a new session/document.",
+      inputSchema: z.object({ authorization: grantMissionAuthorizationSchema }).strict(),
       annotations: writes,
     },
-    async ({ missionId, ...body }) =>
+    async ({ authorization: { missionId, ...body } }) =>
       result(
         {
           authorization: await client.post(`/missions/${missionId}/authorizations`, {

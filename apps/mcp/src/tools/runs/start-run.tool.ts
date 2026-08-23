@@ -19,6 +19,7 @@ import type { ScryApiClient } from "../../api-client.js";
 import {
   missionContext,
   objectiveContext,
+  idempotentDurableWrite,
   readOnly,
   stableKey,
   toolResult as result,
@@ -52,7 +53,7 @@ export function registerStartRunTool(server: McpServer, client: ScryApiClient) {
         seed: z.number().int().min(0).max(4_294_967_295).default(1),
         idempotencyKey: z.string().trim().min(8).max(200).optional(),
       },
-      annotations: writes,
+      annotations: idempotentDurableWrite,
     },
     async ({ projectId, idempotencyKey, ...body }) => {
       await client.requireCurrentRelease();

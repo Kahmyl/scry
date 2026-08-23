@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   randomUUID,
   advanceAdaptiveSessionSchema,
+  adaptiveSessionSchema,
   agentDecisionBoundarySchema,
   closeAdaptiveSessionSchema,
   missionAuthoringTurnBudgetsSchema,
@@ -15,6 +16,7 @@ import {
   flowDraftPurposeSchema,
   flowRevisionContentSchema,
   z,
+  idempotentPotentiallyDestructiveExternalOperation,
   readOnly,
   stableKey,
   toolResult,
@@ -38,7 +40,8 @@ export function registerClosePraxisSessionTool(server: McpServer, client: ScryAp
         praxisSessionId: uuid,
         idempotencyKey: closeAdaptiveSessionSchema.shape.idempotencyKey.optional(),
       },
-      annotations: writes,
+      outputSchema: z.object({ message: z.string(), session: adaptiveSessionSchema }).strict(),
+      annotations: idempotentPotentiallyDestructiveExternalOperation,
     },
     async ({ praxisSessionId, idempotencyKey }) =>
       withAdaptiveSessionError(async () => {

@@ -31,7 +31,8 @@ export function registerGetProtectedRecoveryTool(server: McpServer, client: Scry
     "get_protected_recovery",
     {
       title: "Get protected acquisition recovery",
-      description: "Inspect the bounded recovery state without exposing protected values.",
+      description:
+        "Inspect bounded protected-output acquisition recovery without exposing protected values. Read the factual mutation outcome and retry class first: unknown never permits mutation redispatch. Use only returned safe actions and exact Run/operation IDs.",
       inputSchema: { runId: uuid, operationId: z.string().min(1).max(128) },
       annotations: readOnly,
     },

@@ -2,6 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import {
   advanceAdaptiveSessionSchema,
+  adaptiveOperationReconciliationResultSchema,
+  adaptiveSessionSchema,
   agentDecisionBoundarySchema,
   closeAdaptiveSessionSchema,
   missionAuthoringTurnBudgetsSchema,
@@ -9,6 +11,7 @@ import {
   startAdaptiveSessionSchema,
   prepareFlowAuthoringSchema,
   preparedFlowAuthoringSchema,
+  praxisObservationSchema,
   reconcileAdaptiveOperationSchema,
   agentProviderSchema,
   flowDraftPurposeSchema,
@@ -17,7 +20,19 @@ import {
 import { z } from "zod";
 
 import { apiRejection, ScryApiError, type ScryApiClient } from "../../api-client.js";
-import { readOnly, stableKey, toolResult, uuid, writes } from "../../tool-registry.js";
+import {
+  externalFactualRead,
+  externalOpenWorldOperation,
+  idempotentDurableWrite,
+  idempotentExternalOpenWorldOperation,
+  idempotentPotentiallyDestructiveExternalOperation,
+  potentiallyDestructiveExternalOperation,
+  readOnly,
+  stableKey,
+  toolResult,
+  uuid,
+  writes,
+} from "../../tool-registry.js";
 import { publicPlanSchema } from "../authoring/create-flow-draft.tool.js";
 
 export const navigationExpectedEffectGuidance =
@@ -282,6 +297,8 @@ export async function withAdaptiveSessionError<T>(
 export {
   randomUUID,
   advanceAdaptiveSessionSchema,
+  adaptiveOperationReconciliationResultSchema,
+  adaptiveSessionSchema,
   agentDecisionBoundarySchema,
   closeAdaptiveSessionSchema,
   missionAuthoringTurnBudgetsSchema,
@@ -289,11 +306,18 @@ export {
   startAdaptiveSessionSchema,
   prepareFlowAuthoringSchema,
   preparedFlowAuthoringSchema,
+  praxisObservationSchema,
   reconcileAdaptiveOperationSchema,
   agentProviderSchema,
   flowDraftPurposeSchema,
   flowRevisionContentSchema,
   z,
+  externalFactualRead,
+  externalOpenWorldOperation,
+  idempotentDurableWrite,
+  idempotentExternalOpenWorldOperation,
+  idempotentPotentiallyDestructiveExternalOperation,
+  potentiallyDestructiveExternalOperation,
   readOnly,
   stableKey,
   toolResult,

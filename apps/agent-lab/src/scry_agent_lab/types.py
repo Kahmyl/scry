@@ -50,6 +50,11 @@ class AgentRunResult(BaseModel):
     advertised_tools: list[str]
     turns: int
     tool_calls: int
+    invalid_calls: int = 0
+    stale_reference_calls: int = 0
+    repeated_unchanged_observations: int = 0
+    unnecessary_capabilities_calls: int = 0
+    completed: bool = False
     duration_ms: int
     final_response: str | None = None
     transcript_path: str

@@ -46,9 +46,14 @@ describe("ScryApiClient validation rejection projection", () => {
     expect(rejection).toEqual({
       code: "SCRY_API_REQUEST_VALIDATION_FAILED",
       status: 400,
+      rejectionClass: "invalid_input",
+      reason: "scry api request validation failed",
+      exactIds: {},
+      resolution: "correct_input",
       appliedState: "not_applied",
       retry: "unspecified",
       safeActions: [],
+      nextActions: [],
       context: {
         validationIssueCount: 1,
       },
@@ -101,6 +106,52 @@ describe("ScryApiClient validation rejection projection", () => {
       safeActions: ["resume_mission"],
     });
   });
+
+  it.each([
+    ["REQUEST_INVALID", 400, "not_applied", "invalid_input", "correct_input"],
+    ["CONTEXT_REFERENCE_STALE", 409, "not_applied", "stale_authority", "refresh_authority"],
+    [
+      "PROTECTED_AUTHORIZATION_REQUIRED",
+      409,
+      "not_applied",
+      "policy_authorization",
+      "obtain_authorization",
+    ],
+    ["PROVIDER_RESPONSE_FAILED", 409, "not_applied", "application_provider", "inspect_application"],
+    [
+      "PERSISTENCE_FAILED",
+      500,
+      "not_applied",
+      "infrastructure_persistence",
+      "restore_infrastructure",
+    ],
+    ["MUTATION_OUTCOME_UNKNOWN", 409, "unknown", "reconciliation_unknown", "reconcile_unknown"],
+  ] as const)(
+    "classifies %s as stable public class %s",
+    (code, status, mutationOutcome, rejectionClass, resolution) => {
+      const rejection = apiRejection(
+        new ScryApiError(code, status, ["get_run", "reconcile_unknown_operation"], {
+          missionId: "11111111-1111-4111-8111-111111111111",
+          runId: "22222222-2222-4222-8222-222222222222",
+          operationId: "operation-1",
+          mutationOutcome,
+        }),
+      );
+      expect(rejection).toMatchObject({
+        rejectionClass,
+        resolution,
+        exactIds: {
+          missionId: "11111111-1111-4111-8111-111111111111",
+          runId: "22222222-2222-4222-8222-222222222222",
+          operationId: "operation-1",
+        },
+      });
+      if (mutationOutcome === "unknown") {
+        expect(rejection.retry).toBe("reconciliation_required");
+        expect(rejection.nextActions).toEqual(["get_run", "reconcile_unknown_operation"]);
+      }
+    },
+  );
 
   it("preserves the canonical Mission readiness blocker facts and drops adjacent unsafe data", async () => {
     const missionId = "11111111-1111-4111-8111-111111111111";

@@ -196,6 +196,14 @@ export const adaptiveOperationReconciliationResultSchema = z
   })
   .strict();
 
+export const praxisObservationSchema = z
+  .object({
+    documentEpoch: z.number().int().nonnegative(),
+    url: z.string().url(),
+    semanticPageContext: operationOutcomeSchema.shape.semanticPageContext.unwrap(),
+  })
+  .strict();
+
 export const advanceAdaptiveSessionSchema = z.discriminatedUnion("kind", [
   advanceAdaptiveSessionIntentsSchema,
   continueAdaptiveSessionTurnSchema,
@@ -436,4 +444,5 @@ export type ReconcileAdaptiveOperationInput = z.infer<typeof reconcileAdaptiveOp
 export type AdaptiveOperationReconciliationResult = z.infer<
   typeof adaptiveOperationReconciliationResultSchema
 >;
+export type PraxisObservation = z.infer<typeof praxisObservationSchema>;
 export type AdaptiveSession = z.infer<typeof adaptiveSessionSchema>;
