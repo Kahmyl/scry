@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { executionPolicySchema, type InteractionTargetIntent } from "@scry/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createAuthoringBrowserSession } from "../src/authoring-browser-session.js";
+import { createAuthoringBrowserSession } from "@scry/praxis";
 import { kernelInteractionExecutor, openTestBrowser } from "./kernel-harness.js";
 
 let server: Server;
@@ -633,9 +633,7 @@ describe("persistent authoring browser session", () => {
 });
 
 function outcomeOf(
-  result: Awaited<
-    ReturnType<import("../src/authoring-browser-session.js").AuthoringBrowserSession["interact"]>
-  >,
+  result: Awaited<ReturnType<import("@scry/praxis").AuthoringBrowserSession["interact"]>>,
 ) {
   return result.outcome;
 }

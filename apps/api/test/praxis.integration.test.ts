@@ -8,7 +8,7 @@ import {
   AuthoringRuntimeRepository,
 } from "../src/authoring/index.js";
 import { createAuthoringRuntimeOwner } from "../src/workers/index.js";
-import { createAuthoringBrowserSession } from "@scry/executor";
+import { createAuthoringBrowserSession } from "@scry/praxis";
 import { PraxisRuntimeRepository } from "../src/praxis/index.js";
 import { createPraxisProcessor } from "../src/workers/index.js";
 

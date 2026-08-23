@@ -3,8 +3,9 @@ import type { ExecutionCapabilityName, ExecutionMode, ExecutionRequest } from "@
 import {
   createExecutionCapabilityManifest,
   ExecutionKernel,
-  createAuthoringBrowserSession,
+  type ExecutionReport,
 } from "@scry/executor";
+import { createAuthoringBrowserSession } from "@scry/praxis";
 import type { ExecuteOptions, RuntimeExecutionCapabilities } from "@scry/executor";
 
 import { ExecutionRepository } from "../repositories/execution.repository.js";
@@ -697,9 +698,9 @@ export class ExecutionKernelService extends ExecutionKernel {
   openAuthoringSession(input: {
     request: ExecutionRequest;
     capabilities: RuntimeExecutionCapabilities;
-    session: Parameters<typeof createAuthoringBrowserSession>[0];
+    session: Parameters<typeof createAuthoringBrowserSession<ExecutionReport>>[0];
   }) {
     this.admitOnly({ request: input.request, capabilities: input.capabilities });
-    return createAuthoringBrowserSession(input.session);
+    return createAuthoringBrowserSession<ExecutionReport>(input.session);
   }
 }

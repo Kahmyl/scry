@@ -1,3 +1,4 @@
+import type { ExecutionReport } from "@scry/executor";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -9,7 +10,7 @@ import {
   type InteractionTargetIntent,
   type PraxisCandidateResponse,
 } from "@scry/contracts";
-import type { createAuthoringBrowserSession, AuthoringBrowserSession } from "@scry/executor";
+import type { createAuthoringBrowserSession, AuthoringBrowserSession } from "@scry/praxis";
 import { runProtectedStage } from "@scry/praxis";
 import { inspectPraxisCandidates } from "@scry/praxis";
 
@@ -18,7 +19,9 @@ import type {
   AuthoringRuntimeRepository,
 } from "../authoring/index.js";
 
-type CreateSession = typeof createAuthoringBrowserSession;
+type CreateSession = (
+  input: Parameters<typeof createAuthoringBrowserSession<ExecutionReport>>[0],
+) => Promise<AuthoringBrowserSession<ExecutionReport>>;
 
 export type AuthoringRuntimeOwner = {
   start(): Promise<void>;
@@ -34,7 +37,7 @@ type OwnedSession = {
   probeSessionId: string;
   environmentId: string;
   policy: import("@scry/contracts").ExecutionPolicy;
-  session: AuthoringBrowserSession;
+  session: AuthoringBrowserSession<ExecutionReport>;
   heartbeat: NodeJS.Timeout;
   commandPoll: NodeJS.Timeout;
   processingCommand: boolean;
@@ -101,7 +104,7 @@ export function createAuthoringRuntimeOwner(options: {
         return;
       }
 
-      let session: AuthoringBrowserSession | undefined;
+      let session: AuthoringBrowserSession<ExecutionReport> | undefined;
 
       try {
         if (!createSession) {

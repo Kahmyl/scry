@@ -13,7 +13,7 @@ import type { RuntimePolicyViolationCode } from "@scry/policy";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 import type { CalibrationStructure } from "./calibration.js";
 
-import type { ProtectedTransactionExecutor } from "./protected-transaction-runtime.js";
+import type { ProtectedTransactionExecutor } from "./protected-transaction-port.js";
 import type { RecordingCoordinator } from "./recording-coordinator.js";
 import type { VeilRuntimeCoordinator } from "@scry/veil";
 

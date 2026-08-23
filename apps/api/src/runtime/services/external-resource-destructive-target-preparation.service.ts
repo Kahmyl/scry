@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import type { InteractionTargetIntent } from "@scry/contracts";
-import { prepareExternalResourceDestructiveTarget } from "@scry/executor";
-import type { AuthoritativeExternalResourceObservation } from "@scry/executor";
+import { prepareExternalResourceDestructiveTarget } from "@scry/praxis";
+import type { AuthoritativeExternalResourceObservation } from "@scry/praxis";
 import type { Page } from "playwright";
 
 import { ExternalResourceBindingRepository } from "../repositories/external-resource-binding.repository.js";

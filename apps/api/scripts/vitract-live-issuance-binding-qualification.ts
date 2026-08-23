@@ -29,7 +29,7 @@ import {
   findAdaptiveSessionId,
   rejectToolError,
 } from "./deployed-adaptive-campaign.js";
-import type { AuthoritativeExternalResourceObservation } from "@scry/executor";
+import type { AuthoritativeExternalResourceObservation } from "@scry/praxis";
 import { navigateAndWaitNative } from "@scry/praxis";
 
 export const LIVE_QUALIFICATION = {

@@ -1,3 +1,10 @@
+/**
+ * Execution-kernel port for protected transactions.
+ *
+ * The API runtime owns protected transaction orchestration, persistence,
+ * recovery, acquisition and reconciliation. Executor owns only the narrow
+ * capability boundary required by the execution kernel.
+ */
 import type { CapsuleFactory } from "@scry/praxis";
 import type {
   Assertion,

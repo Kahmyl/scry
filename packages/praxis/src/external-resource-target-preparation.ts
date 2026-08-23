@@ -2,7 +2,7 @@ import {
   externalResourcePresentationContractSchema,
   type ExternalResourcePresentationContract,
 } from "@scry/contracts";
-import { inspectSemanticScope, resolveTarget, type GroundingResult } from "@scry/praxis";
+import { inspectSemanticScope, resolveTarget, type GroundingResult } from "./grounding.js";
 import type { Page } from "playwright";
 
 export const externalResourcePresentationFailureCodes = [

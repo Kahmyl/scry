@@ -21,7 +21,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
 
 import { compileMissionAuthoringProtectedTransaction } from "../../src/adaptive-sessions/mission-authoring-protected-transaction.js";
-import { createAuthoringBrowserSession } from "@scry/executor";
+import { createAuthoringBrowserSession } from "@scry/praxis";
 import { BrowserSessionProvenance } from "@scry/praxis";
 import {
   PlaywrightProtectedCapsuleFactory,

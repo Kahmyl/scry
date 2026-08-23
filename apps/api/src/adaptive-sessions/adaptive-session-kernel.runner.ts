@@ -12,7 +12,8 @@ import type {
   OperationOutcome,
 } from "@scry/contracts";
 import { captureSuccessorCheckpointPayload } from "@scry/executor";
-import type { AuthoringBrowserSession, ExecutionReport } from "@scry/executor";
+import type { ExecutionReport } from "@scry/executor";
+import type { AuthoringBrowserSession } from "@scry/praxis";
 import { runProtectedStage } from "@scry/praxis";
 import {
   observeSemanticPageContext,
@@ -48,7 +49,7 @@ type TestRuntimeBinding = (
 ) => Promise<AdaptiveKernelExecutionResult>;
 
 type OwnedRuntime = {
-  session: AuthoringBrowserSession;
+  session: AuthoringBrowserSession<ExecutionReport>;
   fencingToken: number;
   tail: Promise<void>;
 };
@@ -593,7 +594,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       capabilities: capability,
       idempotencyKey: operationId,
     });
-    let browser: AuthoringBrowserSession | undefined;
+    let browser: AuthoringBrowserSession<ExecutionReport> | undefined;
     let successorCheckpoint: Awaited<
       ReturnType<AdaptiveSessionRepository["claimSuccessorCheckpoint"]>
     >;

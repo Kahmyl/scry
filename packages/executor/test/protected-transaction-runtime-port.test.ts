@@ -5,13 +5,14 @@ import { describe, expect, it } from "vitest";
 describe("protected transaction runtime port", () => {
   it("is independent of protected transaction orchestration", async () => {
     const runtime = await readFile(
-      new URL("../src/protected-transaction-runtime.ts", import.meta.url),
+      new URL("../src/protected-transaction-port.ts", import.meta.url),
       "utf8",
     );
 
     const index = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
 
-    expect(runtime).toContain("export type CapsuleFactory");
+    expect(runtime).toContain('import type { CapsuleFactory } from "@scry/praxis";');
+    expect(runtime).not.toContain("export type CapsuleFactory");
 
     expect(runtime).toContain("export type ProtectedTransactionDependencies");
 

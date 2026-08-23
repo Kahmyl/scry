@@ -52,7 +52,7 @@ import { VeilVisualCaptureAuthority } from "@scry/veil";
 import { VeilVideoSegmentAuthority } from "@scry/veil";
 import { BrowserSessionProvenance } from "@scry/praxis";
 import { createVeilClipboardCollector } from "@scry/praxis";
-import type { ProtectedTransactionExecution } from "./protected-transaction-runtime.js";
+import type { ProtectedTransactionExecution } from "./protected-transaction-port.js";
 import { PlaywrightProtectedCapsuleFactory } from "@scry/praxis";
 import { TraceCoordinator } from "./trace-coordinator.js";
 import { sanitizeTraceArchive } from "./trace-sanitizer.js";

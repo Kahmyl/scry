@@ -9,31 +9,29 @@ import {
   type OperationOutcome,
 } from "@scry/contracts";
 import {
-  closePraxisPage,
-  closePraxisBrowser,
-  closePraxisContext,
-  createPraxisExpectedPageOwnership,
-  observeSemanticPageContext,
   playwrightBrowserChannel,
-  registerPraxisVeilAuthority,
-  settlePraxisPopup,
-  installPraxisInitScript,
-  installThirdPartyScriptFence,
   visualRedactionInitScript,
-  waitForPraxisLoadState,
-} from "@scry/praxis";
+} from "../browser-runtime-artifacts.js";
+import { installPraxisInitScript } from "../evidence/browser-evidence.js";
+import { observeSemanticPageContext } from "../page-context.js";
+import { registerPraxisVeilAuthority } from "../veil-bridge.js";
+import { closePraxisBrowser, closePraxisContext } from "./browser-session.js";
+import { installThirdPartyScriptFence, waitForPraxisLoadState } from "./navigation.js";
+import {
+  closePraxisPage,
+  createPraxisExpectedPageOwnership,
+  settlePraxisPopup,
+} from "./page-ownership.js";
 import { VeilAuthority, VeilRuntimeCoordinator } from "@scry/veil";
+import { compileDefaultVeilPolicy } from "@scry/veil";
 import type { Browser, BrowserContext, Page } from "playwright";
 
-import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
-import { BrowserSessionProvenance } from "@scry/praxis";
-import { runProtectedStage } from "@scry/praxis";
-import type { ExecutionReport } from "./types.js";
-
+import { BrowserSessionProvenance } from "./browser-session.js";
+import { runProtectedStage } from "./protected-stage.js";
 export type AuthoringBrowserSessionState =
   "active" | "suspended" | "releasing" | "released" | "crashed";
 
-export type AuthoringBrowserSession = {
+export type AuthoringBrowserSession<Report = unknown> = {
   readonly browser: Browser;
   readonly context: BrowserContext;
   readonly page: Page;
@@ -58,7 +56,7 @@ export type AuthoringBrowserSession = {
     documentEpoch: number;
     url: string;
     outcome: OperationOutcome;
-    report?: ExecutionReport;
+    report?: Report;
   }>;
   suspend(): void;
   resume(): void;
@@ -66,7 +64,7 @@ export type AuthoringBrowserSession = {
   close(): Promise<void>;
 };
 
-export async function createAuthoringBrowserSession(input: {
+export async function createAuthoringBrowserSession<Report = unknown>(input: {
   sessionId: string;
   environmentId: string;
   veilAdmissionKey: string;
@@ -95,8 +93,8 @@ export async function createAuthoringBrowserSession(input: {
     objectiveDelta?: string;
     signal?: AbortSignal;
     privacyGate: VeilRuntimeCoordinator;
-  }): Promise<OperationOutcome | { outcome: OperationOutcome; report?: ExecutionReport }>;
-}): Promise<AuthoringBrowserSession> {
+  }): Promise<OperationOutcome | { outcome: OperationOutcome; report?: Report }>;
+}): Promise<AuthoringBrowserSession<Report>> {
   if (!input.sessionId) {
     throw new Error("AUTHORING_SESSION_ID_REQUIRED");
   }
@@ -119,7 +117,7 @@ export async function createAuthoringBrowserSession(input: {
   try {
     await installPraxisInitScript(context, visualRedactionInitScript);
 
-    const veilPolicy = resolveVeilPolicyForExecution(input.policy);
+    const veilPolicy = compileDefaultVeilPolicy(input.policy);
     const veilRegistration = {
       authority: new VeilAuthority(veilPolicy),
       userId: "probe-authoring",
