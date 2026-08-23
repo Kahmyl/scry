@@ -55,10 +55,57 @@ describe("release admission", () => {
     await expect(admission.status()).resolves.toMatchObject({
       ready: true,
       compatibleWorkerCount: 1,
+      installedSchemaFingerprint: schemaFingerprint,
     });
     await expect(admission.assertAcceptingWork()).rejects.toMatchObject({
       status: 503,
       response: expect.objectContaining({ code: "RELEASE_ADMISSION_BLOCKED" }),
+    });
+  });
+
+  it("admits a code-only release when API and worker release identities change over the same schema", async () => {
+    configureRelease();
+    const { runtimeHash, capabilityManifestHash } = (
+      await import("@scry/praxis")
+    ).browserObservationRuntimeHealth();
+    const database = {
+      query: vi
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ schemaFingerprint }] })
+        .mockResolvedValueOnce({
+          rows: [{ workerId: "code-only", releaseId, schemaFingerprint, ...praxis }],
+        })
+        .mockResolvedValueOnce({ rows: [{ ready: true, runtimeHash, capabilityManifestHash }] }),
+    };
+
+    await expect(new ReleaseAdmissionService(database as never).status()).resolves.toMatchObject({
+      ready: true,
+      schemaReady: true,
+      installedSchemaFingerprint: schemaFingerprint,
+      releaseId,
+      schemaFingerprint,
+    });
+  });
+
+  it("reports the installed fingerprint when database schema admission is refused", async () => {
+    configureRelease();
+    const { runtimeHash, capabilityManifestHash } = (
+      await import("@scry/praxis")
+    ).browserObservationRuntimeHealth();
+    const database = {
+      query: vi
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ schemaFingerprint: "unsupported-lineage" }] })
+        .mockResolvedValueOnce({
+          rows: [{ workerId: "current", releaseId, schemaFingerprint, ...praxis }],
+        })
+        .mockResolvedValueOnce({ rows: [{ ready: true, runtimeHash, capabilityManifestHash }] }),
+    };
+
+    await expect(new ReleaseAdmissionService(database as never).status()).resolves.toMatchObject({
+      ready: false,
+      schemaReady: false,
+      installedSchemaFingerprint: "unsupported-lineage",
     });
   });
 

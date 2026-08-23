@@ -3,6 +3,63 @@ import { createHash } from "node:crypto";
 export const AUTHORITATIVE_D647_FINGERPRINT =
   "d647df341b454e74f0e2263dc7e54c4c41b05e440b59adceac5566ef5d7a05c3";
 
+export const AUTHORITATIVE_D647_SHAPE_SQL = `
+  SELECT
+    to_regclass('public.protected_operations') IS NOT NULL AS "hasProtectedOperations",
+    to_regclass('public.adaptive_operations') IS NOT NULL AS "hasAdaptiveOperations",
+    to_regclass('public.adaptive_operation_reconciliations') IS NOT NULL AS "hasReconciliations",
+    to_regclass('public.mission_recording_selections') IS NOT NULL AS "hasRecordingSelections",
+    COALESCE((
+      SELECT pg_get_constraintdef(oid) LIKE '%document_transition_gap%'
+      FROM pg_constraint
+      WHERE conrelid='artifact_timeline_entries'::regclass
+        AND conname='artifact_timeline_entries_entry_type_check'
+    ),false) AS "hasDocumentTransitionGap",
+    COALESCE((
+      SELECT pg_get_functiondef(oid) LIKE '%action'' ->> ''kind'' <> ''authenticate''%'
+      FROM pg_proc
+      WHERE oid='adaptive_operation_unknown_unresolved(uuid,text)'::regprocedure
+    ),false) AS "hasScopedUnknownFence",
+    COALESCE((
+      SELECT pg_get_functiondef(oid) LIKE '%Applied recovery adaptive protected projection%'
+      FROM pg_proc
+      WHERE oid='protect_adaptive_operation_identity()'::regprocedure
+    ),false) AS "hasAppliedRecoveryProjection"
+`;
+
+export type AuthoritativeD647Shape = {
+  hasProtectedOperations: boolean;
+  hasAdaptiveOperations: boolean;
+  hasReconciliations: boolean;
+  hasRecordingSelections: boolean;
+  hasDocumentTransitionGap: boolean;
+  hasScopedUnknownFence: boolean;
+  hasAppliedRecoveryProjection: boolean;
+};
+
+export function assertAuthoritativeD647Shape(shape: AuthoritativeD647Shape | undefined): void {
+  if (
+    !shape?.hasProtectedOperations ||
+    !shape.hasAdaptiveOperations ||
+    !shape.hasReconciliations ||
+    shape.hasRecordingSelections ||
+    shape.hasDocumentTransitionGap ||
+    shape.hasScopedUnknownFence ||
+    shape.hasAppliedRecoveryProjection
+  )
+    throw new Error("AUTHORITATIVE_D647_LINEAGE_SHAPE_MISMATCH");
+}
+
+export function assertConfiguredMigrationFingerprint(
+  configured: string | undefined,
+  embedded: string,
+): void {
+  if (configured && configured !== embedded)
+    throw new Error(
+      `MIGRATION_IMAGE_SCHEMA_FINGERPRINT_MISMATCH: configured=${configured} embedded=${embedded}`,
+    );
+}
+
 export const SUPPORTED_HISTORICAL_BASELINES = [
   "base",
   "authoring",

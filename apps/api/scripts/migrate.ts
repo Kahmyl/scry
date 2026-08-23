@@ -8,6 +8,9 @@ import pg from "pg";
 
 import {
   AUTHORITATIVE_D647_FINGERPRINT,
+  AUTHORITATIVE_D647_SHAPE_SQL,
+  assertAuthoritativeD647Shape,
+  assertConfiguredMigrationFingerprint,
   calculateHistoricalFingerprints,
   assertReleasedFingerprintReconstruction,
   expandBaselineStage,
@@ -413,6 +416,8 @@ const preStructuredSyntheticProtectedInputBaseline = stagedBaseline(
 
 const fingerprint = digest(baseline);
 
+assertConfiguredMigrationFingerprint(process.env.SCRY_SCHEMA_FINGERPRINT, fingerprint);
+
 const preMissionRecordingSelectionBaseline = expandFoundation(
   expandBaselineStage(
     baselineSource,
@@ -524,6 +529,9 @@ try {
         await client.query("BEGIN");
 
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-d647-terminal-r0.7'))");
+
+        const shape = await client.query(AUTHORITATIVE_D647_SHAPE_SQL);
+        assertAuthoritativeD647Shape(shape.rows[0]);
 
         await client.query(protectedOperationAuthoritativeProjection);
         await client.query(scopeUnknownFenceToResourceMutations);

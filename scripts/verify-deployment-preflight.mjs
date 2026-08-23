@@ -1,6 +1,17 @@
+import { execFileSync } from "node:child_process";
+
 const tier = process.env.SCRY_DEPLOYMENT_TIER ?? "staging";
 const validTiers = new Set(["staging", "beta", "production"]);
 if (!validTiers.has(tier)) fail("SCRY_DEPLOYMENT_TIER must be staging, beta, or production");
+
+const configuredSchemaFingerprint = process.env.SCRY_SCHEMA_FINGERPRINT;
+const sourceSchemaFingerprint = execFileSync("node", ["scripts/schema-fingerprint.mjs"], {
+  encoding: "utf8",
+}).trim();
+if (configuredSchemaFingerprint && configuredSchemaFingerprint !== sourceSchemaFingerprint)
+  fail(
+    `SCRY_SCHEMA_FINGERPRINT must match current source: configured=${configuredSchemaFingerprint} expected=${sourceSchemaFingerprint}`,
+  );
 
 const profiles = new Set(
   (process.env.COMPOSE_PROFILES ?? "")
@@ -37,7 +48,7 @@ if (
   fail("production remote artifact storage requires ARTIFACT_STORE_VERSIONING_CONFIRMED=true");
 
 console.log(
-  `Deployment preflight passed: tier=${tier}, operations=${operationsEnabled ? "enabled" : "disabled"}, artifactProvider=${artifactProvider}.`,
+  `Deployment preflight passed: tier=${tier}, operations=${operationsEnabled ? "enabled" : "disabled"}, artifactProvider=${artifactProvider}, schemaFingerprint=${sourceSchemaFingerprint}.`,
 );
 
 function requireValue(name) {

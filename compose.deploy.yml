@@ -135,6 +135,8 @@ services:
     command: ["apps/api/node_modules/.bin/tsx", "apps/api/scripts/migrate.ts"]
     environment:
       DATABASE_URL: postgres://scry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/scry
+      SCRY_RELEASE_ID: ${SCRY_RELEASE_ID:?Set SCRY_RELEASE_ID}
+      SCRY_SCHEMA_FINGERPRINT: ${SCRY_SCHEMA_FINGERPRINT:?Set SCRY_SCHEMA_FINGERPRINT}
     depends_on:
       postgres:
         condition: service_healthy

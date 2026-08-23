@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   calculateHistoricalFingerprints,
+  assertAuthoritativeD647Shape,
+  assertConfiguredMigrationFingerprint,
   assertReleasedFingerprintReconstruction,
   compatibilityBaseline,
   expandBaselineStage,
@@ -17,6 +19,34 @@ import {
 } from "../scripts/migration-fingerprint-compatibility.js";
 
 describe("migration fingerprint compatibility", () => {
+  it("admits only the authoritative d647 structural predecessor", () => {
+    const authoritative = {
+      hasProtectedOperations: true,
+      hasAdaptiveOperations: true,
+      hasReconciliations: true,
+      hasRecordingSelections: false,
+      hasDocumentTransitionGap: false,
+      hasScopedUnknownFence: false,
+      hasAppliedRecoveryProjection: false,
+    };
+
+    expect(() => assertAuthoritativeD647Shape(authoritative)).not.toThrow();
+    expect(() =>
+      assertAuthoritativeD647Shape({ ...authoritative, hasRecordingSelections: true }),
+    ).toThrow("AUTHORITATIVE_D647_LINEAGE_SHAPE_MISMATCH");
+    expect(() =>
+      assertAuthoritativeD647Shape({ ...authoritative, hasProtectedOperations: false }),
+    ).toThrow("AUTHORITATIVE_D647_LINEAGE_SHAPE_MISMATCH");
+  });
+
+  it("refuses a configured deployment fingerprint that differs from the image migration source", () => {
+    const embedded = "a".repeat(64);
+    expect(() => assertConfiguredMigrationFingerprint(undefined, embedded)).not.toThrow();
+    expect(() => assertConfiguredMigrationFingerprint(embedded, embedded)).not.toThrow();
+    expect(() => assertConfiguredMigrationFingerprint("b".repeat(64), embedded)).toThrow(
+      "MIGRATION_IMAGE_SCHEMA_FINGERPRINT_MISMATCH",
+    );
+  });
   it("removes every migration newer than each historical baseline", async () => {
     const baseline = await readFile(
       fileURLToPath(new URL("../migrations/baseline.sql", import.meta.url)),

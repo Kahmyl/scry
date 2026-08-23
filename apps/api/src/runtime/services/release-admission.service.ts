@@ -11,6 +11,7 @@ import { Database } from "../../infrastructure/index.js";
 export type ReleaseAdmissionStatus = {
   ready: boolean;
   schemaReady: boolean;
+  installedSchemaFingerprint: string | null;
   compatibleWorkerCount: number;
   incompatibleWorkers: Array<{
     workerId: string;
@@ -75,6 +76,7 @@ export class ReleaseAdmissionService {
     return {
       ready: schemaReady && browserRuntimeReady && praxisReady,
       schemaReady,
+      installedSchemaFingerprint: baseline.rows[0]?.schemaFingerprint ?? null,
       compatibleWorkerCount,
       incompatibleWorkers,
       releaseId,
