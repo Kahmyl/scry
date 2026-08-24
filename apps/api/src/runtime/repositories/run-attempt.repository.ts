@@ -163,6 +163,12 @@ export class RunAttemptRepository {
     claimToken: string,
     state: Extract<RunState, "passed" | "failed" | "cancelled" | "timed_out">,
     outcomeClassification: OutcomeClassification,
+    successorCheckpoint:
+      | { kind: "required" }
+      | {
+          kind: "forbidden";
+          reason: "run_not_successful" | "terminal_protected_operation";
+        },
     error?: string,
   ) {
     return this.database.transaction(async (client) => {
@@ -227,7 +233,7 @@ export class RunAttemptRepository {
          WHERE id = $1 AND state IN ('preparing','running','finalizing')`,
         [runId, state, outcomeClassification, resultClassification],
       );
-      if (state === "passed" && resultClassification === "application_pass") {
+      if (successorCheckpoint.kind === "required") {
         const checkpoint = await client.query(
           `UPDATE run_successor_checkpoints checkpoint
            SET state='available',sealed_at=now(),updated_at=now()
@@ -267,9 +273,14 @@ OR (
         await client.query(
           `UPDATE run_successor_checkpoints
            SET state='destroyed',ciphertext=NULL,initialization_vector=NULL,
-               authentication_tag=NULL,reason_code='RUN_NOT_SUCCESSFUL',updated_at=now()
+               authentication_tag=NULL,reason_code=$2,updated_at=now()
            WHERE run_id=$1 AND state='establishing'`,
-          [runId],
+          [
+            runId,
+            successorCheckpoint.reason === "terminal_protected_operation"
+              ? "TERMINAL_PROTECTED_OPERATION"
+              : "RUN_NOT_SUCCESSFUL",
+          ],
         );
       }
       await client.query(

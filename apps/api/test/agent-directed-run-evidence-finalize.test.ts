@@ -148,6 +148,7 @@ describe("agent-directed Run evidence finalization", () => {
       claimToken,
       "passed",
       "passed",
+      { kind: "required" },
       undefined,
     );
 
@@ -236,6 +237,10 @@ describe("agent-directed Run evidence finalization", () => {
       claimToken,
       "failed",
       "inconclusive_plan",
+      {
+        kind: "forbidden",
+        reason: "run_not_successful",
+      },
       "application assertion failed",
     );
   });

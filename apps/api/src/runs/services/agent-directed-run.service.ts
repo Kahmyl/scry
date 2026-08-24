@@ -296,6 +296,7 @@ export class AgentDirectedRunService {
       run.claimToken,
       input.outcome,
       outcomeClassification,
+      lifecycleDecision.successorCheckpoint,
       input.outcome === "passed" ? undefined : input.reason,
     );
 

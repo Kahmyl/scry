@@ -36,6 +36,23 @@ describe("lifecycle transition authority", () => {
     });
   });
 
+  it("does not require successor continuity when a passed state is not classified as passed", () => {
+    expect(
+      decideLifecycleTransition({
+        kind: "complete_run",
+        state: "passed",
+        outcomeClassification: "assertion_failure",
+        terminalProtectedBoundary: { kind: "not_requested" },
+      }),
+    ).toEqual({
+      accepted: true,
+      successorCheckpoint: {
+        kind: "forbidden",
+        reason: "run_not_successful",
+      },
+    });
+  });
+
   it("admits proven terminal protected completion without a browser checkpoint", () => {
     expect(
       decideLifecycleTransition({

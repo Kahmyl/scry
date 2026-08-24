@@ -68,7 +68,7 @@ function decideRunCompletion(command: CompleteRunLifecycleCommand): CompleteRunL
     };
   }
 
-  if (command.state === "passed") {
+  if (command.state === "passed" && command.outcomeClassification === "passed") {
     return {
       accepted: true,
       successorCheckpoint: {

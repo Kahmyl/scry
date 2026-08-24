@@ -14,6 +14,8 @@ import type { Job } from "bullmq";
 import type { OperationalCausality } from "@scry/observability";
 import type { ApiOperationalEventWriter } from "../../infrastructure/index.js";
 
+import { decideLifecycleTransition } from "../../lifecycle/lifecycle-transition.policy.js";
+
 import {
   type ExecutionCapabilityFactory,
   type ExecutionKernelService,
@@ -162,12 +164,23 @@ export function createRunProcessor(options: RunProcessorOptions) {
       await persistReport(options, report, outputDirectory, attempt.id, claimToken, causality);
       if (report.state === "infrastructure_error")
         throw new Error(report.error ?? "Executor infrastructure error");
+
+      const lifecycleDecision = decideLifecycleTransition({
+        kind: "complete_run",
+        state: report.state,
+        outcomeClassification: report.outcomeClassification,
+        terminalProtectedBoundary: { kind: "not_requested" },
+      });
+
+      if (!lifecycleDecision.accepted) throw new Error(lifecycleDecision.code);
+
       await options.executions.completeAttempt(
         job.data.runId,
         attempt.id,
         claimToken,
         report.state,
         report.outcomeClassification,
+        lifecycleDecision.successorCheckpoint,
         report.error,
       );
       return { state: report.state, attemptId: attempt.id };

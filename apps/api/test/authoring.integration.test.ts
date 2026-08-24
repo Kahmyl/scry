@@ -559,6 +559,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
         claimToken,
         "passed",
         "passed",
+        { kind: "required" },
       );
       const pendingReplay = await pendingReplayPromise;
       expect(pendingReplay).toMatchObject({
@@ -1620,7 +1621,9 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     await attempts.markRunning(certificationRun, attempt!.id, claimToken);
     await stageCertificationEvidence(database, certificationRun, attempt!.id);
     await attempts.markFinalizing(certificationRun, attempt!.id, claimToken);
-    await attempts.completeAttempt(certificationRun, attempt!.id, claimToken, "passed", "passed");
+    await attempts.completeAttempt(certificationRun, attempt!.id, claimToken, "passed", "passed", {
+      kind: "required",
+    });
 
     await database.query(
       `INSERT INTO artifact_timeline_entries(
@@ -1883,6 +1886,7 @@ async function completeCertification(
     claimToken,
     "passed",
     "passed",
+    { kind: "required" },
   );
 }
 
