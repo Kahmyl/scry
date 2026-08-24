@@ -356,11 +356,44 @@ export class AdaptiveSessionRepository {
         input.initialProtectedReferenceIds ?? [],
       );
       const initialFlow = await this.validateControlPlaneLinks(q, input);
-      const replay = await q<{ id: string }>(
-        `SELECT id FROM adaptive_sessions WHERE project_id=$1 AND idempotency_key=$2`,
+      await q(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [
+        `praxis-session-create:${input.projectId}:${input.idempotencyKey}`,
+      ]);
+      const replay = await q<{
+        id: string;
+        missionId: string;
+        objectiveId: string;
+        flowDraftId: string;
+        environmentId: string;
+        agentSessionId: string;
+        correlationId: string;
+        objective: string;
+        allowedOrigins: string[];
+        turnBudgets: { maxOperations?: unknown; maxDurationMs?: unknown };
+        protectedReferences: string[];
+        protection: string;
+      }>(
+        `SELECT id,mission_id AS "missionId",objective_id AS "objectiveId",
+                flow_draft_id AS "flowDraftId",environment_id AS "environmentId",
+                agent_session_id AS "agentSessionId",correlation_id AS "correlationId",
+                objective,allowed_origins AS "allowedOrigins",
+                authoring_turn_budgets AS "turnBudgets",
+                protected_reference_allowlist AS "protectedReferences",protection
+           FROM adaptive_sessions WHERE project_id=$1 AND idempotency_key=$2`,
         [input.projectId, input.idempotencyKey],
       );
-      if (replay.rowCount) return { id: replay.rows[0]!.id, replayed: true };
+      if (replay.rowCount) {
+        if (!adaptiveSessionReplayMatches(replay.rows[0]!, input, allowedOrigins)) {
+          throw new ConflictException({
+            code: "PRAXIS_SESSION_IDEMPOTENCY_CONFLICT",
+            mutationOutcome: "not_applied",
+            retry: "safe_after_prerequisite",
+            requiresFreshIdempotencyKey: true,
+            safeActions: ["get_operating_context", "start_praxis_session"],
+          });
+        }
+        return { id: replay.rows[0]!.id, replayed: true };
+      }
 
       const unknownMutation = await q(
         `SELECT 1 FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
@@ -4047,6 +4080,40 @@ function policyDigest(policy: ExecutionPolicy) {
 
 function stableDigest(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function adaptiveSessionReplayMatches(
+  existing: {
+    missionId: string;
+    objectiveId: string;
+    flowDraftId: string;
+    environmentId: string;
+    agentSessionId: string;
+    correlationId: string;
+    objective: string;
+    allowedOrigins: string[];
+    turnBudgets: { maxOperations?: unknown; maxDurationMs?: unknown };
+    protectedReferences: string[];
+    protection: string;
+  },
+  input: StartAdaptiveSessionInput,
+  allowedOrigins: string[],
+) {
+  return (
+    existing.missionId === input.missionId &&
+    existing.objectiveId === input.objectiveId &&
+    existing.flowDraftId === input.flowDraftId &&
+    existing.environmentId === input.environmentId &&
+    existing.agentSessionId === input.agentSessionId &&
+    (!input.correlationId || existing.correlationId === input.correlationId) &&
+    existing.objective === input.objective &&
+    stableDigest(existing.allowedOrigins) === stableDigest(allowedOrigins) &&
+    existing.turnBudgets.maxOperations === (input.turnBudgets?.maxOperations ?? 20) &&
+    existing.turnBudgets.maxDurationMs === (input.turnBudgets?.maxDurationMs ?? 60_000) &&
+    stableDigest([...existing.protectedReferences].sort()) ===
+      stableDigest([...(input.initialProtectedReferenceIds ?? [])].sort()) &&
+    existing.protection === (input.protection ?? "ordinary")
+  );
 }
 
 function canonicalReplayUrl(value: string) {

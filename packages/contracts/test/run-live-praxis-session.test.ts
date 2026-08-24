@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { dispatchedRunOperationResultSchema, dispatchRunOperationSchema } from "../src/flow.js";
+import { agentRunObservationSchema } from "../src/run.js";
 
 const id = (digit: string) =>
   `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
@@ -37,6 +38,27 @@ describe("agent-directed Run live Praxis binding", () => {
       command(`context-control-${"b".repeat(32)}`, id("4")),
     );
     expect(parsed.praxisSessionId).toBe(id("4"));
+  });
+
+  it("projects the exact current Praxis association separately from launch provenance", () => {
+    const observation = agentRunObservationSchema.parse({
+      run: {
+        id: id("1"),
+        state: "running",
+        executionSnapshot: { praxisSessionId: id("2") },
+        currentPraxisSession: { id: id("3"), epoch: 2, state: "active" },
+      },
+      steps: [],
+      artifacts: [],
+      artifactTimeline: [],
+      integrity: { status: "complete", issues: [] },
+      safeActions: [],
+    });
+
+    expect(observation.run).toMatchObject({
+      executionSnapshot: { praxisSessionId: id("2") },
+      currentPraxisSession: { id: id("3"), epoch: 2, state: "active" },
+    });
   });
 
   it("binds a successor observation to its exact document authority", () => {

@@ -10,6 +10,40 @@ const timelineId = "44444444-4444-4444-8444-444444444444";
 const receipts = () => ({ listMutationReceiptsForRun: vi.fn(async () => []) }) as never;
 
 describe("canonical run observation", () => {
+  it("distinguishes the current Praxis association from immutable launch provenance", async () => {
+    const currentPraxisSessionId = "99999999-9999-4999-8999-999999999999";
+    const launchPraxisSessionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const repository = {
+      getRun: vi.fn().mockResolvedValue({
+        ...failedRun(),
+        executionSnapshot: {
+          browser: "chromium",
+          viewport: { width: 1280, height: 720 },
+          seed: 1,
+          praxisSessionId: launchPraxisSessionId,
+        },
+        currentPraxisSession: {
+          id: currentPraxisSessionId,
+          epoch: 2,
+          state: "active",
+        },
+      }),
+    };
+    const database = { query: vi.fn(async (text: string) => rowsFor(text)) };
+    const service = new RunObservationService(database as never, repository as never, receipts());
+
+    const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
+
+    expect(observation.run.executionSnapshot).toMatchObject({
+      praxisSessionId: launchPraxisSessionId,
+    });
+    expect(observation.run.currentPraxisSession).toEqual({
+      id: currentPraxisSessionId,
+      epoch: 2,
+      state: "active",
+    });
+  });
+
   it("assembles failure channels and safe artifact resources from one authoritative model", async () => {
     const repository = { getRun: vi.fn().mockResolvedValue(failedRun()) };
     const database = { query: vi.fn(async (text: string) => rowsFor(text)) };

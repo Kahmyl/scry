@@ -112,6 +112,13 @@ export class ScryRepository {
               runs.policy_snapshot AS "policySnapshot",
               runs.veil_policy_snapshot AS "veilPolicySnapshot",
               runs.execution_snapshot AS "executionSnapshot",
+              CASE WHEN current_praxis.praxis_session_id IS NULL THEN NULL
+                ELSE jsonb_build_object(
+                  'id',current_praxis.praxis_session_id,
+                  'epoch',current_praxis.epoch,
+                  'state',current_praxis.state
+                )
+              END AS "currentPraxisSession",
               CASE
                 WHEN runs.state = 'finalizing' THEN 'finalizing'
                 WHEN latest_event.type = 'step.evidence_started' THEN 'capturing_evidence'
@@ -128,6 +135,13 @@ export class ScryRepository {
          WHERE attempt.run_id = runs.id
          ORDER BY events.created_at DESC, events.sequence DESC LIMIT 1
        ) latest_event ON true
+       LEFT JOIN LATERAL (
+         SELECT binding.praxis_session_id,binding.epoch,session.state
+         FROM run_praxis_sessions binding
+         JOIN adaptive_sessions session ON session.id=binding.praxis_session_id
+         WHERE binding.run_id=runs.id AND binding.detached_at IS NULL
+         ORDER BY binding.epoch DESC LIMIT 1
+       ) current_praxis ON true
        WHERE runs.id = $1 AND ($2::uuid IS NULL OR p.workspace_id = $2)`,
       [runId, workspaceId],
     );

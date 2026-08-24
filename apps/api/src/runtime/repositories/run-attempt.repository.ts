@@ -167,7 +167,13 @@ export class RunAttemptRepository {
       | { kind: "required" }
       | {
           kind: "forbidden";
-          reason: "run_not_successful" | "terminal_protected_operation";
+          reason: "run_not_successful";
+        }
+      | {
+          kind: "forbidden";
+          reason: "terminal_protected_operation";
+          praxisSessionId: string;
+          protectedOperationId: string;
         },
     error?: string,
   ) {
@@ -233,6 +239,55 @@ export class RunAttemptRepository {
          WHERE id = $1 AND state IN ('preparing','running','finalizing')`,
         [runId, state, outcomeClassification, resultClassification],
       );
+      if (
+        successorCheckpoint.kind === "forbidden" &&
+        successorCheckpoint.reason === "terminal_protected_operation"
+      ) {
+        const terminalProof = await client.query(
+          `SELECT 1
+             FROM run_praxis_sessions binding
+             JOIN adaptive_sessions session
+               ON session.id=binding.praxis_session_id
+             JOIN run_operation_links link
+               ON link.run_id=binding.run_id
+              AND link.praxis_session_id=binding.praxis_session_id
+             JOIN protected_operations protected
+               ON protected.operation_id=link.operation_id
+            WHERE binding.run_id=$1
+              AND binding.praxis_session_id=$2
+              AND protected.id=$3
+              AND EXISTS (
+                SELECT 1
+                  FROM runs completed_run
+                 WHERE completed_run.id=$1
+                   AND completed_run.state='passed'
+                   AND completed_run.outcome_classification='passed'
+                   AND completed_run.result_classification='application_pass'
+              )
+              AND EXISTS (
+                SELECT 1
+                  FROM runs completed_run
+                 WHERE completed_run.id=$1
+                   AND completed_run.state='passed'
+                   AND completed_run.outcome_classification='passed'
+                   AND completed_run.result_classification='application_pass'
+              )
+              AND session.state='cancelled'
+              AND session.decision_boundary='PROTECTED_OPERATION_COMPLETED'
+              AND protected.state='completed'
+              AND protected.dispatch_state='acknowledged'
+              AND protected.mutation_outcome='applied'
+              AND protected.acquisition_state='complete'
+              AND protected.persistence_state='committed'
+              AND protected.failure_code IS NULL
+            ORDER BY link.created_at DESC
+            LIMIT 1`,
+          [runId, successorCheckpoint.praxisSessionId, successorCheckpoint.protectedOperationId],
+        );
+
+        if (!terminalProof.rowCount) throw new Error("RUN_TERMINAL_PROTECTED_COMPLETION_UNPROVEN");
+      }
+
       if (successorCheckpoint.kind === "required") {
         const checkpoint = await client.query(
           `UPDATE run_successor_checkpoints checkpoint

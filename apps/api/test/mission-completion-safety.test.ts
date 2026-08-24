@@ -13,6 +13,8 @@ const missionId = "11111111-1111-4111-8111-111111111111";
 const objectiveId = "22222222-2222-4222-8222-222222222222";
 const agentSessionId = "33333333-3333-4333-8333-333333333333";
 const reportId = "44444444-4444-4444-8444-444444444444";
+const currentPraxisSessionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const runningRunId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 const publishInput = {
   missionId,
@@ -104,9 +106,18 @@ function publicationQuery(
           ])
         : rows();
 
-    if (text.includes("FROM runs WHERE mission_id"))
+    if (text.includes("FROM runs r") && text.includes("r.mission_id"))
       return blocker === "run"
-        ? rows([{ id: "88888888-8888-4888-8888-888888888888", objectiveId, state: "running" }])
+        ? rows([
+            {
+              id: "88888888-8888-4888-8888-888888888888",
+              objectiveId,
+              state: "running",
+              reasonCode: null,
+              praxisSessionId: null,
+              executionModel: null,
+            },
+          ])
         : rows();
 
     if (text.includes("FROM attempts a") && text.includes("a.completed_at IS NULL"))
@@ -273,6 +284,95 @@ describe("Mission completion safety", () => {
         String(text).includes("UPDATE missions SET status='completed'"),
       ),
     ).toBe(false);
+  });
+
+  it("finalizes an agent-directed Run through its exact current Praxis binding before closure", async () => {
+    let requestHash = "";
+    const query = vi.fn(async (text: string, values: unknown[] = []) => {
+      if (text.includes("FROM missions m JOIN projects"))
+        return rows([
+          {
+            id: missionId,
+            projectId: "55555555-5555-4555-8555-555555555555",
+            status: "running",
+            revision: 4,
+          },
+        ]);
+      if (text.includes("FROM missions WHERE id=$1"))
+        return rows([{ status: "running", revision: 4, finalReportId: null, resumePointer: null }]);
+      if (text.includes("INSERT INTO idempotency_records")) {
+        requestHash = String(values[2]);
+        return rows();
+      }
+      if (
+        text.includes('SELECT request_hash AS "requestHash"') &&
+        text.includes("idempotency_records")
+      )
+        return rows([{ requestHash, response: null }]);
+      if (text.includes("FROM agent_sessions") && text.includes("status='active'"))
+        return rows([{}]);
+      if (text.includes("FROM protected_operations")) return rows();
+      if (text.includes("FROM adaptive_operations o")) return rows();
+      if (text.includes("FROM adaptive_sessions")) {
+        const excludesRunBoundSessions =
+          text.includes("NOT EXISTS") &&
+          text.includes("run_praxis_sessions") &&
+          text.includes("executionModel");
+        return excludesRunBoundSessions
+          ? rows()
+          : rows([
+              {
+                praxisSessionId: currentPraxisSessionId,
+                objectiveId,
+                state: "active",
+                reasonCode: "POPUP_NOT_ALLOWED",
+              },
+            ]);
+      }
+      if (text.includes("FROM runs") && text.includes("state NOT IN")) {
+        const projectsCurrentBinding =
+          text.includes('AS "praxisSessionId"') && text.includes('AS "executionModel"');
+        return rows([
+          {
+            id: runningRunId,
+            objectiveId,
+            state: "running",
+            reasonCode: null,
+            ...(projectsCurrentBinding
+              ? {
+                  praxisSessionId: currentPraxisSessionId,
+                  executionModel: "agent_directed_v1",
+                }
+              : {}),
+          },
+        ]);
+      }
+      if (text.includes("FROM attempts a") && text.includes("a.completed_at IS NULL"))
+        return rows([
+          {
+            attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            runId: runningRunId,
+            objectiveId,
+            state: "running",
+          },
+        ]);
+      if (text.includes("count(*)::integer") && text.includes("FROM runs"))
+        return rows([{ count: 0 }]);
+      return rows();
+    });
+
+    await expect(
+      serviceFor(query).publishReport(principal, missionId, publishInput),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: "MISSION_RUNS_NOT_TERMINAL",
+        runId: runningRunId,
+        praxisSessionId: currentPraxisSessionId,
+        resolution: "external_agent_action_required",
+        safeActions: ["get_mission", "get_run", "finalize_run"],
+        nextActions: ["get_run", "finalize_run"],
+      }),
+    });
   });
 
   it("replays an already committed final report before terminal/session checks", async () => {

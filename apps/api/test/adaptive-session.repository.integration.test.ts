@@ -191,6 +191,85 @@ integration("adaptive session repository integration", () => {
     ]);
   });
 
+  it("never replays a Project-scoped idempotency collision across Mission ownership", async () => {
+    const idempotencyKey = `cross-mission-${randomUUID()}`;
+    const original = await repository.create(workspaceId, startInput(idempotencyKey));
+    sessionIds.push(original.id);
+
+    const otherMissionId = randomUUID();
+    const otherObjectiveId = randomUUID();
+    const otherAgentSessionId = randomUUID();
+    const otherFlowDraftId = randomUUID();
+    await database.query(
+      `INSERT INTO missions(id,project_id,title,original_instruction)
+       VALUES($1,$2,'Other Mission','Prove exact idempotency ownership')`,
+      [otherMissionId, projectId],
+    );
+    await database.query(
+      `INSERT INTO mission_objectives(id,mission_id,title,completion_criteria,objective_order)
+       VALUES($1,$2,'Other objective','{}'::jsonb,0)`,
+      [otherObjectiveId, otherMissionId],
+    );
+    await database.query(
+      `INSERT INTO agent_sessions(id,mission_id,provider,instruction_snapshot,idempotency_key)
+       VALUES($1,$2,'scry_agent','Other integration session',$3)`,
+      [otherAgentSessionId, otherMissionId, `other-owner-${randomUUID()}`],
+    );
+    await database.query(
+      `INSERT INTO flow_drafts(
+         id,project_id,mission_id,objective_id,environment_id,name,content,plan,
+         created_by_agent_session_id
+       ) VALUES($1,$2,$3,$4,$5,'Other exact owner','{}'::jsonb,'{}'::jsonb,$6)`,
+      [
+        otherFlowDraftId,
+        projectId,
+        otherMissionId,
+        otherObjectiveId,
+        environmentId,
+        otherAgentSessionId,
+      ],
+    );
+
+    try {
+      await expect(
+        repository.create(workspaceId, {
+          ...startInput(idempotencyKey),
+          missionId: otherMissionId,
+          objectiveId: otherObjectiveId,
+          agentSessionId: otherAgentSessionId,
+          flowDraftId: otherFlowDraftId,
+        }),
+      ).rejects.toMatchObject({
+        response: {
+          code: "PRAXIS_SESSION_IDEMPOTENCY_CONFLICT",
+          mutationOutcome: "not_applied",
+          retry: "safe_after_prerequisite",
+          requiresFreshIdempotencyKey: true,
+          safeActions: ["get_operating_context", "start_praxis_session"],
+        },
+      });
+      await expect(
+        database.query(`SELECT 1 FROM adaptive_sessions WHERE mission_id=$1`, [otherMissionId]),
+      ).resolves.toMatchObject({ rowCount: 0 });
+      await expect(repository.create(workspaceId, startInput(idempotencyKey))).resolves.toEqual({
+        id: original.id,
+        replayed: true,
+      });
+    } finally {
+      await database.query(`UPDATE agent_sessions SET status='failed',ended_at=now() WHERE id=$1`, [
+        otherAgentSessionId,
+      ]);
+      await database.query(
+        `UPDATE mission_objectives SET status='failed',conclusion='Integration fixture settled' WHERE id=$1`,
+        [otherObjectiveId],
+      );
+      await database.query(
+        `UPDATE missions SET status='completed',completed_at=now() WHERE id=$1`,
+        [otherMissionId],
+      );
+    }
+  });
+
   it("prepares one coherent lifecycle atomically and replays the durable ID tuple", async () => {
     const input = preparationInput(`prepare-${randomUUID()}`);
     const prepared = await repository.prepare(workspaceId, input);

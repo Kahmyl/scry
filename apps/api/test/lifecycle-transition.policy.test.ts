@@ -59,13 +59,19 @@ describe("lifecycle transition authority", () => {
         kind: "complete_run",
         state: "passed",
         outcomeClassification: "passed",
-        terminalProtectedBoundary: { kind: "proven" },
+        terminalProtectedBoundary: {
+          kind: "proven",
+          praxisSessionId: "11111111-1111-4111-8111-111111111111",
+          protectedOperationId: "22222222-2222-4222-8222-222222222222",
+        },
       }),
     ).toEqual({
       accepted: true,
       successorCheckpoint: {
         kind: "forbidden",
         reason: "terminal_protected_operation",
+        praxisSessionId: "11111111-1111-4111-8111-111111111111",
+        protectedOperationId: "22222222-2222-4222-8222-222222222222",
       },
     });
   });
@@ -90,7 +96,11 @@ describe("lifecycle transition authority", () => {
         kind: "complete_run",
         state: "failed",
         outcomeClassification: "inconclusive_plan",
-        terminalProtectedBoundary: { kind: "proven" },
+        terminalProtectedBoundary: {
+          kind: "proven",
+          praxisSessionId: "11111111-1111-4111-8111-111111111111",
+          protectedOperationId: "22222222-2222-4222-8222-222222222222",
+        },
       }),
     ).toEqual({
       accepted: false,

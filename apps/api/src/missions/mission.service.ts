@@ -488,6 +488,7 @@ export class MissionService {
           status: existing.rows[0]!.status,
           replayed: true,
         };
+      const resumedObjectiveId = await this.reopenInterruptedObjective(query, mission);
       const { agentSessionId, attachedPreMission } = await attachOrCreateExternalAgentSession(
         query,
         {
@@ -505,9 +506,26 @@ export class MissionService {
         },
       );
       await query(
-        `UPDATE missions SET status=CASE WHEN status IN ('planning','blocked') THEN 'running' ELSE status END,updated_at=now(),revision=revision+1 WHERE id=$1`,
-        [missionId],
+        `UPDATE missions SET
+           status=CASE WHEN status IN ('planning','blocked') THEN 'running' ELSE status END,
+           resume_pointer=CASE
+             WHEN $2::uuid IS NOT NULL AND resume_pointer->>'objectiveId'=$2::text THEN NULL
+             ELSE resume_pointer
+           END,
+           updated_at=now(),revision=revision+1
+         WHERE id=$1`,
+        [missionId, resumedObjectiveId],
       );
+      if (resumedObjectiveId)
+        await this.activity(
+          query,
+          missionId,
+          resumedObjectiveId,
+          agentSessionId,
+          "objective_updated",
+          "Objective resumed after external agent interruption",
+          { source: "external_agent_interruption" },
+        );
       await this.activity(
         query,
         missionId,
@@ -526,6 +544,7 @@ export class MissionService {
             selection: input.continuationAuthority.selection,
             source: input.continuationAuthority.source,
           },
+          ...(resumedObjectiveId ? { resumedObjectiveId } : {}),
         },
       );
       return { missionId, agentSessionId, status: "active", replayed: false };
@@ -1584,12 +1603,11 @@ export class MissionService {
               decision_boundary->>'reasonCode' AS "reasonCode"
        FROM adaptive_sessions WHERE mission_id=$1
          AND ($2::uuid IS NULL OR objective_id=$2 OR active_objective_id=$2)
-         AND state NOT IN ('completed','failed','cancelled') ORDER BY created_at,id${
-           lockRows ? " FOR UPDATE" : ""
-         }`,
+         AND state NOT IN ('completed','failed','cancelled')
+       ORDER BY created_at,id${lockRows ? " FOR UPDATE" : ""}`,
       scope,
     );
-    for (const session of praxisSessions.rows)
+    const addPraxisSessionBlocker = (session: (typeof praxisSessions.rows)[number]) =>
       add({
         code: "MISSION_RUNTIME_CLOSE_REQUIRED",
         missionId,
@@ -1603,32 +1621,62 @@ export class MissionService {
         nextActions: ["get_praxis_session", "close_praxis_session"],
       });
 
+    if (objectiveId) for (const session of praxisSessions.rows) addPraxisSessionBlocker(session);
+
     if (!objectiveId) {
       const runs = await q<{
         id: string;
         objectiveId: string;
         state: string;
         reasonCode: string | null;
+        praxisSessionId: string | null;
+        executionModel: string | null;
       }>(
-        `SELECT id,objective_id AS "objectiveId",state,outcome_classification AS "reasonCode"
-         FROM runs WHERE mission_id=$1 AND state NOT IN
-           ('passed','failed','cancelled','timed_out','infrastructure_error') ORDER BY created_at,id${
-             lockRows ? " FOR UPDATE" : ""
-           }`,
+        `SELECT r.id,r.objective_id AS "objectiveId",r.state,
+                r.outcome_classification AS "reasonCode",
+                current_binding.praxis_session_id AS "praxisSessionId",
+                r.execution_snapshot->>'executionModel' AS "executionModel"
+         FROM runs r
+         LEFT JOIN LATERAL (
+           SELECT binding.praxis_session_id
+           FROM run_praxis_sessions binding
+           WHERE binding.run_id=r.id AND binding.detached_at IS NULL
+           ORDER BY binding.epoch DESC LIMIT 1
+         ) current_binding ON true
+         WHERE r.mission_id=$1 AND r.state NOT IN
+           ('passed','failed','cancelled','timed_out','infrastructure_error')
+         ORDER BY r.created_at,r.id${lockRows ? " FOR UPDATE OF r" : ""}`,
         [missionId],
       );
-      for (const run of runs.rows)
+      const agentFinalizationSessionIds = new Set<string>();
+      for (const run of runs.rows) {
+        const requiresAgentFinalization =
+          run.executionModel === "agent_directed_v1" && Boolean(run.praxisSessionId);
+        if (requiresAgentFinalization) agentFinalizationSessionIds.add(run.praxisSessionId!);
         add({
           code: "MISSION_RUNS_NOT_TERMINAL",
           missionId,
           objectiveId: run.objectiveId,
           runId: run.id,
+          ...(run.praxisSessionId ? { praxisSessionId: run.praxisSessionId } : {}),
           state: run.state,
           ...(run.reasonCode ? { reasonCode: run.reasonCode.slice(0, 200) } : {}),
-          resolution: "automatic",
-          safeActions: ["get_mission", "get_run"],
-          nextActions: ["get_run"],
+          ...(requiresAgentFinalization
+            ? {
+                reason:
+                  "Finalize this Run through its exact current Praxis association before closing that session.",
+              }
+            : {}),
+          resolution: requiresAgentFinalization ? "external_agent_action_required" : "automatic",
+          safeActions: requiresAgentFinalization
+            ? ["get_mission", "get_run", "finalize_run"]
+            : ["get_mission", "get_run"],
+          nextActions: requiresAgentFinalization ? ["get_run", "finalize_run"] : ["get_run"],
         });
+      }
+      for (const session of praxisSessions.rows)
+        if (!agentFinalizationSessionIds.has(session.praxisSessionId))
+          addPraxisSessionBlocker(session);
 
       const attempts = await q<{
         attemptId: string;
@@ -2373,12 +2421,191 @@ export class MissionService {
     if (!r.rowCount) throw new NotFoundException("Project not found");
   }
   private async requireMission(q: Query, principal: Principal, id: string, lock: boolean) {
-    const r = await q<{ id: string; projectId: string; status: string; revision: number }>(
-      `SELECT m.id,m.project_id AS "projectId",m.status,m.revision FROM missions m JOIN projects p ON p.id=m.project_id WHERE m.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2) ${lock ? "FOR UPDATE OF m" : ""}`,
+    const r = await q<{
+      id: string;
+      projectId: string;
+      status: string;
+      revision: number;
+      currentObjectiveId: string | null;
+      resumePointer: unknown;
+    }>(
+      `SELECT m.id,m.project_id AS "projectId",m.status,m.revision,
+              m.current_objective_id AS "currentObjectiveId",m.resume_pointer AS "resumePointer"
+         FROM missions m JOIN projects p ON p.id=m.project_id
+        WHERE m.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2) ${lock ? "FOR UPDATE OF m" : ""}`,
       [id, workspaceId(principal)],
     );
     if (!r.rowCount) throw new NotFoundException("Mission not found");
     return r.rows[0]!;
+  }
+
+  private async reopenInterruptedObjective(
+    q: Query,
+    mission: {
+      id: string;
+      status: string;
+      currentObjectiveId: string | null;
+      resumePointer: unknown;
+    },
+  ) {
+    if (mission.status !== "blocked") return null;
+    const pointer = asRow(mission.resumePointer);
+    const objectiveId =
+      typeof pointer.objectiveId === "string"
+        ? pointer.objectiveId
+        : (mission.currentObjectiveId ?? undefined);
+    if (!objectiveId) return null;
+    if (mission.currentObjectiveId && mission.currentObjectiveId !== objectiveId)
+      throw new ConflictException({
+        code: "MISSION_RESUME_POINTER_OBJECTIVE_MISMATCH",
+        safeActions: ["get_operating_context"],
+      });
+
+    const objective = await q<{ status: string; executionMode: string | null }>(
+      `SELECT objective.status,binding.mode AS "executionMode"
+         FROM mission_objectives objective
+         LEFT JOIN mission_objective_orchestration orchestration
+           ON orchestration.objective_id=objective.id
+         LEFT JOIN mission_execution_bindings binding
+           ON binding.plan_id=orchestration.plan_id AND binding.objective_id=objective.id
+        WHERE objective.mission_id=$1 AND objective.id::text=$2
+        FOR UPDATE OF objective`,
+      [mission.id, objectiveId],
+    );
+    if (!objective.rowCount)
+      throw new ConflictException({
+        code: "MISSION_RESUME_POINTER_OBJECTIVE_MISMATCH",
+        safeActions: ["get_operating_context"],
+      });
+    if (objective.rows[0]!.status !== "blocked") return null;
+    if (
+      pointer.recommendedAction !== "review_failure" ||
+      pointer.objectiveId !== objectiveId ||
+      typeof pointer.runId !== "string" ||
+      typeof pointer.explanation !== "string"
+    )
+      throw new ConflictException({
+        code: "MISSION_OBJECTIVE_RESUME_NOT_AVAILABLE",
+        objectiveId,
+        safeActions: ["get_operating_context", "create_mission_objective"],
+      });
+    if (objective.rows[0]!.executionMode === "automatic")
+      throw new ConflictException({
+        code: "MISSION_AUTOMATIC_OBJECTIVE_RESUME_REQUIRES_ORCHESTRATION",
+        safeActions: ["get_orchestration_status", "resume_mission_orchestration"],
+      });
+
+    const settlement = await q<{
+      terminalOutcome: string | null;
+      terminationReason: string | null;
+    }>(
+      `SELECT session.terminal_outcome AS "terminalOutcome",
+              session.termination_reason AS "terminationReason"
+         FROM runs run
+         JOIN agent_sessions session ON session.id=run.agent_session_id
+        WHERE run.mission_id=$1 AND run.objective_id::text=$2 AND run.id::text=$3
+          AND run.state='infrastructure_error'
+          AND session.termination_reason=$4
+        ORDER BY session.ended_at DESC NULLS LAST
+        LIMIT 1
+        FOR UPDATE OF run,session`,
+      [mission.id, pointer.objectiveId, pointer.runId, pointer.explanation],
+    );
+    const resumableInterruptions = new Set([
+      "provider_failure",
+      "limit_exceeded",
+      "cancelled",
+      "model_stopped_without_completion",
+    ]);
+    if (
+      !settlement.rowCount ||
+      !resumableInterruptions.has(settlement.rows[0]!.terminalOutcome ?? "")
+    )
+      throw new ConflictException({
+        code: "MISSION_OBJECTIVE_RESUME_NOT_AVAILABLE",
+        objectiveId: pointer.objectiveId,
+        safeActions: ["get_operating_context", "create_mission_objective"],
+      });
+
+    const safety = await q<{
+      unresolvedMutation: boolean;
+      unresolvedProtectedOperation: boolean;
+      unresolvedEffectObservation: boolean;
+      livePraxisSession: boolean;
+      nonterminalRun: boolean;
+    }>(
+      `SELECT
+         EXISTS(
+           SELECT 1 FROM unresolved_adaptive_unknown_operations operation
+            WHERE operation.mission_id=$1 AND operation.objective_id::text=$2
+         ) AS "unresolvedMutation",
+         EXISTS(
+           SELECT 1 FROM protected_operations protected
+            WHERE protected.mission_id=$1 AND protected.objective_id::text=$2
+              AND (protected.mutation_outcome='unknown'
+                OR protected.state IN ('recovery_required','compromised'))
+         ) AS "unresolvedProtectedOperation",
+         EXISTS(
+           SELECT 1 FROM adaptive_operations operation
+            WHERE operation.mission_id=$1 AND operation.objective_id::text=$2
+              AND operation.decision_boundary->>'type'='effect_observation_required'
+              AND NOT EXISTS(
+                SELECT 1 FROM adaptive_observations effect_observation
+                JOIN adaptive_observations later_observation
+                  ON later_observation.session_id=effect_observation.session_id
+                 AND later_observation.id>effect_observation.id
+                WHERE effect_observation.session_id=operation.session_id
+                  AND effect_observation.operation_id=operation.operation_id
+              )
+         ) AS "unresolvedEffectObservation",
+         EXISTS(
+           SELECT 1 FROM adaptive_sessions session
+            WHERE session.mission_id=$1
+              AND (session.objective_id::text=$2 OR session.active_objective_id::text=$2)
+              AND session.state NOT IN ('completed','failed','cancelled')
+         ) AS "livePraxisSession",
+         EXISTS(
+           SELECT 1 FROM runs run
+            WHERE run.mission_id=$1 AND run.objective_id::text=$2
+              AND run.state NOT IN
+                ('passed','failed','cancelled','timed_out','infrastructure_error')
+         ) AS "nonterminalRun"`,
+      [mission.id, pointer.objectiveId],
+    );
+    const facts = safety.rows[0]!;
+    if (facts.unresolvedMutation || facts.unresolvedProtectedOperation)
+      throw new ConflictException({
+        code: "MISSION_RECONCILIATION_REQUIRED",
+        mutationOutcome: "unknown",
+        safeActions: ["get_operating_context", "reconcile_unknown_operation", "do_not_retry"],
+      });
+    if (facts.unresolvedEffectObservation)
+      throw new ConflictException({
+        code: "MISSION_EFFECT_OBSERVATION_REQUIRED",
+        safeActions: ["get_operating_context", "observe_praxis_session"],
+      });
+    if (facts.livePraxisSession || facts.nonterminalRun)
+      throw new ConflictException({
+        code: "MISSION_RESUME_SETTLEMENT_INCOMPLETE",
+        safeActions: ["get_mission", "get_run", "get_praxis_session", "finalize_run"],
+      });
+
+    const reopened = await q<{ id: string }>(
+      `UPDATE mission_objectives SET status='pending',conclusion=NULL,updated_at=now()
+        WHERE mission_id=$1 AND id::text=$2 AND status='blocked'
+        RETURNING id::text`,
+      [mission.id, pointer.objectiveId],
+    );
+    if (!reopened.rowCount)
+      throw new ConflictException({ code: "MISSION_OBJECTIVE_RESUME_FENCED" });
+    await q(
+      `UPDATE mission_objective_orchestration
+          SET state='ready',active_run_id=NULL,blocker_code=NULL,
+              blocker_details='{}'::jsonb,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+        WHERE objective_id::text=$1 AND state='blocked' AND active_run_id::text=$2`,
+      [pointer.objectiveId, pointer.runId],
+    );
+    return pointer.objectiveId;
   }
   private activity(
     q: Query,

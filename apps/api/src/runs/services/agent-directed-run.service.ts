@@ -40,6 +40,8 @@ type AssociatedAgentDirectedRun = {
   attemptId: string;
   claimToken: string;
   veilPolicySnapshot: VeilPolicySnapshot;
+  praxisState: string;
+  praxisDecisionBoundary: { type?: string; reasonCode?: string } | null;
 };
 
 @Injectable()
@@ -247,19 +249,25 @@ export class AgentDirectedRunService {
     await this.admission.assertAcceptingWork();
     this.scry.requireWriteAccess(principal);
 
-    const run = await this.requireAssociatedRun(
-      principal,
-      runId,
-      input.praxisSessionId,
-      input.outcome === "passed",
-    );
+    const run = await this.requireAssociatedRun(principal, runId, input.praxisSessionId, false);
 
     const outcomeClassification = finalizeOutcomeClassification(input);
+    const terminalProtectedCompletion =
+      input.outcome === "passed"
+        ? await this.resolveTerminalProtectedCompletion(runId, input.praxisSessionId)
+        : null;
+
     const lifecycleDecision = decideLifecycleTransition({
       kind: "complete_run",
       state: input.outcome,
       outcomeClassification,
-      terminalProtectedBoundary: { kind: "not_requested" },
+      terminalProtectedBoundary: terminalProtectedCompletion
+        ? {
+            kind: "proven",
+            praxisSessionId: input.praxisSessionId,
+            protectedOperationId: terminalProtectedCompletion.protectedOperationId,
+          }
+        : { kind: "not_requested" },
     });
 
     if (!lifecycleDecision.accepted) {
@@ -273,20 +281,24 @@ export class AgentDirectedRunService {
     if (lifecycleDecision.successorCheckpoint.kind === "required") {
       await this.assertPassEvidenceComplete(runId, run.attemptId);
 
-      try {
-        const checkpoint = await this.sessions.captureRunSuccessorCheckpoint(
-          principal,
-          input.praxisSessionId,
-        );
+      if (livePraxisState(run.praxisState)) {
+        try {
+          const checkpoint = await this.sessions.captureRunSuccessorCheckpoint(
+            principal,
+            input.praxisSessionId,
+          );
 
-        await this.executions.stageSuccessorCheckpoint(runId, checkpoint);
-      } catch (error) {
-        throw new ConflictException({
-          code: "SUCCESSOR_CHECKPOINT_ESTABLISHMENT_FAILED",
-          reasonCode: successorCheckpointFailureCode(error),
-          mutationOutcome: "not_applied",
-          safeActions: ["get_run"],
-        });
+          await this.executions.stageSuccessorCheckpoint(runId, checkpoint);
+        } catch (error) {
+          throw new ConflictException({
+            code: "SUCCESSOR_CHECKPOINT_ESTABLISHMENT_FAILED",
+            reasonCode: successorCheckpointFailureCode(error),
+            mutationOutcome: "not_applied",
+            safeActions: ["get_run"],
+          });
+        }
+      } else {
+        await this.assertTerminalProtectedBoundary(runId, run);
       }
     }
 
@@ -409,6 +421,49 @@ export class AgentDirectedRunService {
     };
   }
 
+  private async resolveTerminalProtectedCompletion(
+    runId: string,
+    praxisSessionId: string,
+  ): Promise<{ protectedOperationId: string } | null> {
+    const result = await this.database.query<{ protectedOperationId: string }>(
+      `SELECT protected.id AS "protectedOperationId"
+         FROM run_praxis_sessions binding
+         JOIN adaptive_sessions session
+           ON session.id=binding.praxis_session_id
+         JOIN LATERAL (
+           SELECT link.operation_id
+             FROM run_operation_links link
+            WHERE link.run_id=binding.run_id
+              AND link.praxis_session_id=binding.praxis_session_id
+            ORDER BY link.sequence DESC,link.created_at DESC
+            LIMIT 1
+         ) last_link ON true
+         JOIN protected_operations protected
+           ON protected.operation_id=last_link.operation_id
+        WHERE binding.run_id=$1
+          AND binding.praxis_session_id=$2
+          AND binding.detached_at IS NULL
+          AND session.state='cancelled'
+          AND session.decision_boundary='PROTECTED_OPERATION_COMPLETED'
+          AND protected.state='completed'
+          AND protected.dispatch_state='acknowledged'
+          AND protected.mutation_outcome='applied'
+          AND protected.acquisition_state='complete'
+          AND protected.persistence_state='committed'
+          AND protected.failure_code IS NULL
+        LIMIT 1`,
+      [runId, praxisSessionId],
+    );
+
+    const row = result.rows[0];
+    return result.rowCount &&
+      row &&
+      typeof row.protectedOperationId === "string" &&
+      row.protectedOperationId.length > 0
+      ? { protectedOperationId: row.protectedOperationId }
+      : null;
+  }
+
   private async assertPassEvidenceComplete(runId: string, attemptId: string) {
     const result = await this.database.query<{
       operationCount: number | string;
@@ -427,14 +482,28 @@ export class AgentDirectedRunService {
            SELECT count(DISTINCT link.operation_id)::integer
            FROM run_operation_links link
            WHERE link.run_id=$1
-             AND EXISTS(
-               SELECT 1
-               FROM step_results step
-               WHERE step.attempt_id=$2
-                 AND position(
-                   link.operation_id || '::'
-                   in step.step_id
-                 )=1
+             AND (
+               EXISTS(
+                 SELECT 1
+                 FROM step_results step
+                 WHERE step.attempt_id=$2
+                   AND position(
+                     link.operation_id || '::'
+                     in step.step_id
+                   )=1
+               )
+               OR EXISTS(
+                 SELECT 1
+                 FROM protected_operations protected
+                 WHERE protected.authoring_session_id=link.praxis_session_id
+                   AND protected.operation_id=link.operation_id
+                   AND protected.state='completed'
+                   AND protected.dispatch_state='acknowledged'
+                   AND protected.mutation_outcome='applied'
+                   AND protected.acquisition_state='complete'
+                   AND protected.persistence_state='committed'
+                   AND protected.failure_code IS NULL
+               )
              )
          ) AS "evidencedOperationCount",
          (
@@ -505,6 +574,39 @@ export class AgentDirectedRunService {
       });
   }
 
+  private async assertTerminalProtectedBoundary(runId: string, run: AssociatedAgentDirectedRun) {
+    if (
+      run.praxisState !== "cancelled" ||
+      run.praxisDecisionBoundary?.type !== "objective_completed" ||
+      run.praxisDecisionBoundary.reasonCode !== "PROTECTED_OPERATION_COMPLETED"
+    )
+      throw terminalPraxisBoundaryUnproven();
+
+    const result = await this.database.query(
+      `SELECT 1
+       FROM run_operation_links link
+       JOIN protected_operations protected
+         ON protected.authoring_session_id=link.praxis_session_id
+        AND protected.operation_id=link.operation_id
+       WHERE link.run_id=$1
+         AND link.praxis_session_id=$2
+         AND link.sequence=(
+           SELECT max(candidate.sequence)
+           FROM run_operation_links candidate
+           WHERE candidate.run_id=link.run_id
+         )
+         AND protected.state='completed'
+         AND protected.dispatch_state='acknowledged'
+         AND protected.mutation_outcome='applied'
+         AND protected.acquisition_state='complete'
+         AND protected.persistence_state='committed'
+         AND protected.failure_code IS NULL`,
+      [runId, run.praxisSessionId],
+    );
+
+    if (!result.rowCount) throw terminalPraxisBoundaryUnproven();
+  }
+
   private async requireAssociatedRun(
     principal: Principal,
     runId: string,
@@ -522,6 +624,8 @@ export class AgentDirectedRunService {
       attemptId: string | null;
       claimToken: string | null;
       veilPolicySnapshot: unknown;
+      praxisState: string;
+      praxisDecisionBoundary: unknown;
     }>(
       `SELECT
          r.project_id AS "projectId",
@@ -531,7 +635,9 @@ export class AgentDirectedRunService {
          s.flow_draft_id AS "flowDraftId",
          attempt.id AS "attemptId",
          attempt.claim_token::text AS "claimToken",
-         r.veil_policy_snapshot AS "veilPolicySnapshot"
+         r.veil_policy_snapshot AS "veilPolicySnapshot",
+         s.state AS "praxisState",
+         s.decision_boundary AS "praxisDecisionBoundary"
        FROM runs r
        JOIN run_praxis_sessions binding
          ON binding.run_id=r.id
@@ -586,8 +692,25 @@ export class AgentDirectedRunService {
       attemptId: row.attemptId,
       claimToken: row.claimToken,
       veilPolicySnapshot: row.veilPolicySnapshot as VeilPolicySnapshot,
+      praxisState: row.praxisState,
+      praxisDecisionBoundary: row.praxisDecisionBoundary as {
+        type?: string;
+        reasonCode?: string;
+      } | null,
     };
   }
+}
+
+function livePraxisState(state: string) {
+  return ["created", "provisioning", "active", "suspended"].includes(state);
+}
+
+function terminalPraxisBoundaryUnproven() {
+  return new ConflictException({
+    code: "RUN_TERMINAL_PRAXIS_BOUNDARY_UNPROVEN",
+    mutationOutcome: "not_applied",
+    safeActions: ["get_run"],
+  });
 }
 
 function successorCheckpointFailureCode(error: unknown) {

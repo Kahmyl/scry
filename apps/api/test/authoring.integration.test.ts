@@ -1757,6 +1757,153 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     expect(fixture.observedOutcome.failureCode).toBe("TARGET_NOT_FOUND");
     expect(replayRun).not.toBe(certificationRun);
   });
+
+  it("opens fresh authoring authority after a policy-failed Run without claiming checkpoint continuity", async () => {
+    const recoveryEnvironment = randomUUID();
+    const sourceRunId = randomUUID();
+    const source = await database.query<{ revisionId: string; plan: unknown }>(
+      `SELECT revision.id AS "revisionId",revision.plan
+       FROM flow_revisions revision
+       JOIN flows flow ON flow.id=revision.flow_id
+       WHERE flow.owner_mission_id=$1
+       ORDER BY revision.created_at DESC,revision.id DESC
+       LIMIT 1`,
+      [mission],
+    );
+    if (!source.rowCount) throw new Error("expected a published source Flow revision");
+
+    await database.query(
+      `INSERT INTO environments(id,project_id,name,base_origin,policy)
+       VALUES($1,$2,'Popup recovery','https://preview.vitract.com',$3::jsonb)`,
+      [
+        recoveryEnvironment,
+        project,
+        JSON.stringify({
+          allowedOrigins: ["https://preview.vitract.com"],
+          allowPrivateNetwork: false,
+          allowDownloads: false,
+          allowPopups: true,
+          maxActions: 10,
+          maxDurationMs: 120_000,
+          maxNavigations: 3,
+        }),
+      ],
+    );
+    await database.query(
+      `INSERT INTO runs(
+         id,project_id,mission_id,objective_id,agent_session_id,environment_id,
+         flow_revision_id,state,phase,outcome_classification,result_classification,
+         plan_snapshot,environment_snapshot,policy_snapshot,veil_policy_snapshot,
+         execution_snapshot,idempotency_key
+       ) VALUES(
+         $1,$2,$3,$4,$5,$6,$7,'failed','completed','policy_failure','application_failure',
+         $8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13
+       )`,
+      [
+        sourceRunId,
+        project,
+        mission,
+        objective,
+        session,
+        environment,
+        source.rows[0]!.revisionId,
+        JSON.stringify(source.rows[0]!.plan),
+        JSON.stringify({ id: environment, baseOrigin: "https://preview.vitract.com" }),
+        JSON.stringify({
+          allowedOrigins: ["https://preview.vitract.com"],
+          allowPrivateNetwork: false,
+          allowDownloads: false,
+          allowPopups: false,
+          maxActions: 10,
+          maxDurationMs: 120_000,
+          maxNavigations: 3,
+        }),
+        JSON.stringify({ artifactRetention: "sanitized" }),
+        JSON.stringify({ executionModel: "agent_directed_v1" }),
+        `policy-failed-source-${randomUUID()}`,
+      ],
+    );
+
+    const plan = currentPlanSchema.parse({
+      name: "Consult Developer documentation",
+      objective: "Consult Developer documentation in a popup-enabled environment",
+      preconditions: [],
+      allowedOrigins: ["https://preview.vitract.com"],
+      budgets: { maxActions: 3, maxDurationMs: 30_000, maxNavigations: 2 },
+      checkpoints: [],
+      steps: [
+        {
+          id: "open-preview",
+          title: "Open Vitract preview",
+          action: { type: "navigate", url: "https://preview.vitract.com" },
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "final",
+        },
+      ],
+    });
+    const draftInput = {
+      ...context,
+      projectId: project,
+      environmentId: recoveryEnvironment,
+      name: `Popup recovery ${randomUUID()}`,
+      description: "Fresh browser authority after a policy refusal",
+      content: {
+        objective: "Consult Developer documentation",
+        preconditions: [],
+        expectedOutcomes: ["Developer documentation is observed"],
+        prohibitedSideEffects: ["Do not create an order"],
+      },
+      plan,
+    };
+
+    await expect(
+      service.createDraft(principal, {
+        ...draftInput,
+        predecessorRunId: sourceRunId,
+        idempotencyKey: `invalid-policy-predecessor-${randomUUID()}`,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "SUCCESSOR_CHECKPOINT_UNAVAILABLE",
+      },
+    });
+
+    const draft = await service.createDraft(principal, {
+      ...draftInput,
+      idempotencyKey: `fresh-policy-authority-${randomUUID()}`,
+    });
+    const repository = new AdaptiveSessionRepository(database);
+    const praxis = await repository.create(null, {
+      ...context,
+      projectId: project,
+      environmentId: recoveryEnvironment,
+      flowDraftId: draft.id!,
+      objective: "Consult Developer documentation",
+      allowedOrigins: ["https://preview.vitract.com"],
+      idempotencyKey: `fresh-policy-praxis-${randomUUID()}`,
+    });
+    await repository.activateProvisionedSession(praxis.id);
+    await expect(repository.get(null, praxis.id)).resolves.toMatchObject({ state: "active" });
+
+    const publication = await service.publish(principal, draft.id!, {
+      ...context,
+      expectedVersion: 1,
+      visibility: "mission_local",
+      purpose: "primary",
+      reason: "Publish the explicit fresh-authority recovery representation",
+      idempotencyKey: `publish-policy-recovery-${randomUUID()}`,
+    });
+    expect(publication).toMatchObject({ replayed: false });
+    await expect(
+      database.query(
+        `SELECT predecessor_run_id AS "predecessorRunId"
+         FROM flow_drafts WHERE id=$1`,
+        [draft.id],
+      ),
+    ).resolves.toMatchObject({ rows: [{ predecessorRunId: null }] });
+  });
 });
 
 async function insertCompletedProbe(

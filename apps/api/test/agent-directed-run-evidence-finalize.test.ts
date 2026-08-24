@@ -6,6 +6,7 @@ const runId = "11111111-1111-4111-8111-111111111111";
 const sessionId = "22222222-2222-4222-8222-222222222222";
 const attemptId = "33333333-3333-4333-8333-333333333333";
 const claimToken = "44444444-4444-4444-8444-444444444444";
+const protectedOperationId = "88888888-8888-4888-8888-888888888888";
 
 const checkpoint = {
   schemaVersion: 1 as const,
@@ -22,7 +23,14 @@ const checkpoint = {
   },
 };
 
-function harness(evidenceComplete: boolean) {
+function harness(
+  evidenceComplete: boolean,
+  options: {
+    praxisState?: string;
+    praxisDecisionBoundary?: { type: string; reasonCode: string } | null;
+    terminalProtectedBoundary?: boolean;
+  } = {},
+) {
   const query = vi.fn(async (sql: string) => {
     if (sql.includes("FROM runs r") && sql.includes("run_praxis_sessions")) {
       return {
@@ -34,10 +42,17 @@ function harness(evidenceComplete: boolean) {
             attemptId,
             claimToken,
             veilPolicySnapshot: {},
+            praxisState: options.praxisState ?? "active",
+            praxisDecisionBoundary: options.praxisDecisionBoundary ?? null,
           },
         ],
       };
     }
+
+    if (sql.includes("JOIN protected_operations protected") && sql.includes("link.sequence=("))
+      return options.terminalProtectedBoundary
+        ? { rowCount: 1, rows: [{ protectedOperationId }] }
+        : { rowCount: 0, rows: [] };
 
     if (sql.includes('AS "operationCount"')) {
       return {
@@ -163,6 +178,80 @@ describe("agent-directed Run evidence finalization", () => {
 
     // Finalization no longer owns a second direct Attempt/Run SQL writer.
     expect(database.transaction).not.toHaveBeenCalled();
+  });
+
+  it("finalizes after a completed protected transaction retires browser authority", async () => {
+    const { service, sessions, executions } = harness(true, {
+      praxisState: "cancelled",
+      praxisDecisionBoundary: {
+        type: "objective_completed",
+        reasonCode: "PROTECTED_OPERATION_COMPLETED",
+      },
+      terminalProtectedBoundary: true,
+    });
+
+    vi.spyOn(service as any, "resolveTerminalProtectedCompletion").mockResolvedValue({
+      protectedOperationId,
+    });
+
+    await expect(
+      service.finalize({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        outcome: "passed",
+        reason: "protected output persisted",
+        idempotencyKey: "finalize-terminal-protected-boundary",
+      }),
+    ).resolves.toMatchObject({
+      runId,
+      state: "passed",
+      outcomeClassification: "passed",
+    });
+
+    expect(sessions.captureRunSuccessorCheckpoint).not.toHaveBeenCalled();
+    expect(executions.stageSuccessorCheckpoint).not.toHaveBeenCalled();
+    expect(executions.completeAttempt).toHaveBeenCalledWith(
+      runId,
+      attemptId,
+      claimToken,
+      "passed",
+      "passed",
+      {
+        kind: "forbidden",
+        reason: "terminal_protected_operation",
+        praxisSessionId: sessionId,
+        protectedOperationId,
+      },
+      undefined,
+    );
+  });
+
+  it("refuses a dead Praxis session without an exact completed protected boundary", async () => {
+    const { service, sessions, executions } = harness(true, {
+      praxisState: "cancelled",
+      praxisDecisionBoundary: {
+        type: "objective_completed",
+        reasonCode: "PROTECTED_OPERATION_COMPLETED",
+      },
+      terminalProtectedBoundary: false,
+    });
+
+    await expect(
+      service.finalize({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        outcome: "passed",
+        reason: "unproven terminal boundary",
+        idempotencyKey: "finalize-unproven-terminal-boundary",
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "RUN_TERMINAL_PRAXIS_BOUNDARY_UNPROVEN",
+        mutationOutcome: "not_applied",
+      },
+    });
+
+    expect(sessions.captureRunSuccessorCheckpoint).not.toHaveBeenCalled();
+    expect(executions.stageSuccessorCheckpoint).not.toHaveBeenCalled();
+    expect(executions.completeAttempt).not.toHaveBeenCalled();
   });
 
   it("fails closed when final Praxis checkpoint capture cannot be established", async () => {

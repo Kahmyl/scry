@@ -308,6 +308,14 @@ export const runEvidenceChannelsSchema = z
       });
   });
 
+export const currentRunPraxisSessionSchema = z
+  .object({
+    id: z.string().uuid(),
+    epoch: z.number().int().positive(),
+    state: z.string().trim().min(1).max(100),
+  })
+  .strict();
+
 export const runObservationSchema = z
   .object({
     run: z
@@ -324,6 +332,7 @@ export const runObservationSchema = z
         environmentSnapshot: z.record(z.string(), z.unknown()),
         policySnapshot: z.record(z.string(), z.unknown()),
         executionSnapshot: z.record(z.string(), z.unknown()),
+        currentPraxisSession: currentRunPraxisSessionSchema.nullable().default(null),
         rerunOfRunId: z.string().uuid().nullish(),
         createdAt: z.union([z.string(), z.date()]),
         updatedAt: z.union([z.string(), z.date()]),
@@ -467,6 +476,7 @@ export const agentRunObservationSchema = z
         phase: z.string().min(1).optional(),
         currentPhase: z.string().min(1).optional(),
         outcomeClassification: outcomeClassificationSchema.nullish(),
+        currentPraxisSession: currentRunPraxisSessionSchema.nullable().default(null),
       })
       .passthrough(),
     steps: z.array(

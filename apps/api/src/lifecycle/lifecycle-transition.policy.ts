@@ -3,13 +3,25 @@ import type { OutcomeClassification } from "@scry/contracts";
 export type RunCompletionState = "passed" | "failed" | "cancelled" | "timed_out";
 
 export type TerminalProtectedBoundary =
-  { kind: "not_requested" } | { kind: "proven" } | { kind: "unproven" };
+  | { kind: "not_requested" }
+  | {
+      kind: "proven";
+      praxisSessionId: string;
+      protectedOperationId: string;
+    }
+  | { kind: "unproven" };
 
 export type SuccessorCheckpointDisposition =
   | { kind: "required" }
   | {
       kind: "forbidden";
-      reason: "run_not_successful" | "terminal_protected_operation";
+      reason: "run_not_successful";
+    }
+  | {
+      kind: "forbidden";
+      reason: "terminal_protected_operation";
+      praxisSessionId: string;
+      protectedOperationId: string;
     };
 
 export type CompleteRunLifecycleCommand = {
@@ -64,6 +76,8 @@ function decideRunCompletion(command: CompleteRunLifecycleCommand): CompleteRunL
       successorCheckpoint: {
         kind: "forbidden",
         reason: "terminal_protected_operation",
+        praxisSessionId: command.terminalProtectedBoundary.praxisSessionId,
+        protectedOperationId: command.terminalProtectedBoundary.protectedOperationId,
       },
     };
   }
