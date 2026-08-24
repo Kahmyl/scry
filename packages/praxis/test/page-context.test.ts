@@ -32,6 +32,8 @@ describe("bounded semantic page context", () => {
         <section aria-label="Environment">
           <button role="tab" aria-selected="true">Test mode</button>
           <button role="tab" aria-selected="false">Live mode</button>
+          <button aria-pressed="true">Sandbox enabled</button>
+          <button aria-pressed="false">Production enabled</button>
         </section>
         <section aria-label="Applications">
           <h2>Existing application</h2>
@@ -54,6 +56,8 @@ describe("bounded semantic page context", () => {
         expect.objectContaining({ role: "heading", name: "Developer" }),
         expect.objectContaining({ role: "tab", name: "Test mode", selected: true }),
         expect.objectContaining({ role: "tab", name: "Live mode", selected: false }),
+        expect.objectContaining({ role: "button", name: "Sandbox enabled", pressed: true }),
+        expect.objectContaining({ role: "button", name: "Production enabled", pressed: false }),
         expect.objectContaining({ role: "button", name: "Manage credentials" }),
         expect.objectContaining({ role: "link", name: "Developer documentation" }),
       ]),

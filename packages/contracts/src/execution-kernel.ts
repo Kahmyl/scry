@@ -236,6 +236,7 @@ export const operationOutcomeSchema = z
                   .optional(),
                 selected: z.boolean().optional(),
                 expanded: z.boolean().optional(),
+                pressed: z.boolean().optional(),
                 checked: z.boolean().optional(),
                 disabled: z.boolean().optional(),
                 current: z.boolean().optional(),

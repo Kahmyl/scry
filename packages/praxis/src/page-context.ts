@@ -496,6 +496,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
             : undefined;
         const selectedAttribute = element.getAttribute("aria-selected");
         const expandedAttribute = element.getAttribute("aria-expanded");
+        const pressedAttribute = element.getAttribute("aria-pressed");
         const checkedAttribute = element.getAttribute("aria-checked");
         const containerElements: Element[] = [];
         let ancestor = element.parentElement;
@@ -526,6 +527,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         }) as ContextContainerKind[];
         const selected = selectedAttribute === null ? undefined : selectedAttribute === "true";
         const expanded = expandedAttribute === null ? undefined : expandedAttribute === "true";
+        const pressed = pressedAttribute === null ? undefined : pressedAttribute === "true";
         const ariaChecked = checkedAttribute === null ? undefined : checkedAttribute === "true";
         projected.push({
           candidateIndex,
@@ -544,6 +546,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
           ...(inputSources ? { inputSources } : {}),
           ...(selected === undefined ? {} : { selected }),
           ...(expanded === undefined ? {} : { expanded }),
+          ...(pressed === undefined ? {} : { pressed }),
           ...("checked" in input && ["checkbox", "radio"].includes(input.type)
             ? { checked: Boolean(input.checked) }
             : ariaChecked === undefined
