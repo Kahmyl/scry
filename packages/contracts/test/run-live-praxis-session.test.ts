@@ -99,6 +99,44 @@ describe("agent-directed Run live Praxis binding", () => {
     expect(dispatchedRunOperationResultSchema.safeParse(result).success).toBe(false);
   });
 
+  it("preserves typed popup recovery in an agent-directed operation result", () => {
+    const result = dispatchedRunOperationResultSchema.parse({
+      runId: id("1"),
+      praxisSessionId: id("2"),
+      operationId: "open-documentation",
+      artifactRefs: [],
+      intentId: "open-documentation",
+      functionalResult: "failed",
+      mutationOutcome: "not_applied",
+      privacyApplicable: false,
+      privacyResult: "verified",
+      evidence: { state: "available", count: 1, reasonCodes: [] },
+      reasonCode: "POPUP_NOT_ALLOWED",
+      decisionBoundary: {
+        type: "environment_unavailable",
+        reasonCode: "POPUP_NOT_ALLOWED",
+        safeActions: ["create_test_environment", "create_flow_draft"],
+        popupRecovery: {
+          environmentId: id("3"),
+          currentAllowPopups: false,
+          requiredAllowPopups: true,
+          currentAllowedOrigins: ["https://app.example.test"],
+          recoveryTools: ["create_test_environment", "create_flow_draft"],
+          requiresNewFlowDraftAndAuthoringSession: true,
+        },
+      },
+      replayed: false,
+    });
+
+    expect(result.decisionBoundary).toMatchObject({
+      reasonCode: "POPUP_NOT_ALLOWED",
+      popupRecovery: {
+        currentAllowPopups: false,
+        requiredAllowPopups: true,
+      },
+    });
+  });
+
   it("defaults an omitted expected effect to a non-authoritative mechanical assertion", () => {
     const input = command(`context-control-${"c".repeat(32)}`);
     delete (input.intent as { expectedEffect?: unknown }).expectedEffect;

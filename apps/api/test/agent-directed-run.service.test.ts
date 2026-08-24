@@ -193,6 +193,86 @@ describe("agent-directed Run live Praxis ownership", () => {
     });
   });
 
+  it("projects the fresh intent identity required after protected-reference admission", async () => {
+    const { service, sessions } = harness();
+    sessions.advance.mockResolvedValueOnce({
+      state: "decision_required",
+      completed: [],
+      decisionBoundary: {
+        type: "authorization_required",
+        reasonCode: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+        safeActions: ["authorize_environment_credentials", "dispatch_run_operation"],
+        requiresFreshIntentId: true,
+      },
+    });
+
+    await expect(
+      service.dispatch({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        intent,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+        safeActions: ["authorize_environment_credentials", "dispatch_run_operation"],
+        requiresFreshIntentId: true,
+      },
+    });
+  });
+
+  it("preserves a completed popup-policy failure and its exact recovery boundary", async () => {
+    const { service, sessions } = harness();
+    sessions.advance.mockResolvedValueOnce({
+      state: "decision_required",
+      completed: [
+        {
+          intentId: intent.intentId,
+          functionalResult: "failed",
+          mutationOutcome: "not_applied",
+          privacyApplicable: false,
+          privacyResult: "verified",
+          evidence: { state: "available", count: 1, reasonCodes: [] },
+          reasonCode: "POPUP_NOT_ALLOWED",
+        },
+      ],
+      decisionBoundary: {
+        type: "environment_unavailable",
+        reasonCode: "POPUP_NOT_ALLOWED",
+        safeActions: ["create_test_environment", "create_flow_draft"],
+        popupRecovery: {
+          environmentId: "55555555-5555-4555-8555-555555555555",
+          currentAllowPopups: false,
+          requiredAllowPopups: true,
+          currentAllowedOrigins: ["https://example.test"],
+          recoveryTools: ["create_test_environment", "create_flow_draft"],
+          requiresNewFlowDraftAndAuthoringSession: true,
+        },
+      },
+    });
+
+    await expect(
+      service.dispatch({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        intent,
+      }),
+    ).resolves.toMatchObject({
+      functionalResult: "failed",
+      mutationOutcome: "not_applied",
+      reasonCode: "POPUP_NOT_ALLOWED",
+      decisionBoundary: {
+        type: "environment_unavailable",
+        reasonCode: "POPUP_NOT_ALLOWED",
+        safeActions: ["create_test_environment", "create_flow_draft"],
+        popupRecovery: {
+          currentAllowPopups: false,
+          requiredAllowPopups: true,
+        },
+      },
+    });
+  });
+
   it("replays the persisted exact successor observation without redispatch", async () => {
     const persisted = {
       runId,

@@ -35,6 +35,8 @@ import {
   type ProtectedInputDeliveryBinding,
 } from "./protected-input-capability.js";
 
+import { resolveRecoveryBoundary } from "../recovery/recovery-registry.js";
+
 export type AdaptiveKernelExecutionResult = {
   outcome: OperationOutcome;
   capabilityManifestDigest: string;
@@ -185,10 +187,11 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         return {
           outcome: result.outcome,
           capabilityManifestDigest: capability.manifest.digest,
-          decisionBoundary: decisionBoundary(result.outcome, {
+          decisionBoundary: resolveRecoveryBoundary(result.outcome, {
             environmentId: context.environmentId,
             allowedOrigins: context.policy.allowedOrigins,
             trustedScriptOrigins: context.policy.trustedScriptOrigins ?? [],
+            allowPopups: context.policy.allowPopups ?? false,
           }),
           timings: { resolveMs, executeMs: performance.now() - executeStartedAt, verifyMs },
           safeState: { url: result.url, documentEpoch: result.documentEpoch },
@@ -287,10 +290,11 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         return {
           outcome: result.outcome,
           capabilityManifestDigest: capability.manifest.digest,
-          decisionBoundary: decisionBoundary(result.outcome, {
+          decisionBoundary: resolveRecoveryBoundary(result.outcome, {
             environmentId: context.environmentId,
             allowedOrigins: context.policy.allowedOrigins,
             trustedScriptOrigins: context.policy.trustedScriptOrigins ?? [],
+            allowPopups: context.policy.allowPopups ?? false,
           }),
           timings: { resolveMs, executeMs: performance.now() - executeStartedAt, verifyMs },
           safeState: { url: result.url, documentEpoch: result.documentEpoch },
@@ -1100,75 +1104,6 @@ function composeSignals(...signals: Array<AbortSignal | undefined>) {
   const present = signals.filter((signal): signal is AbortSignal => Boolean(signal));
   if (present.length === 0) return undefined;
   return present.length === 1 ? present[0] : AbortSignal.any(present);
-}
-
-function decisionBoundary(
-  outcome: OperationOutcome,
-  environment?: {
-    environmentId: string;
-    allowedOrigins: string[];
-    trustedScriptOrigins: string[];
-  },
-): AgentDecisionBoundary {
-  if (outcome.nextDecisionBoundary) return outcome.nextDecisionBoundary;
-  if (outcome.reasonCode === "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED") {
-    return {
-      type: "environment_unavailable",
-      reasonCode: outcome.reasonCode,
-      safeActions: ["create_test_environment", "create_flow_draft"],
-      ...(environment && outcome.environmentFailure
-        ? {
-            environmentRecovery: {
-              environmentId: environment.environmentId,
-              missingTrustedScriptOrigins: outcome.environmentFailure.missingTrustedScriptOrigins,
-              missingOriginClassification: outcome.environmentFailure.missingOriginClassification,
-              currentTrustedScriptOrigins: environment.trustedScriptOrigins,
-              recoveryTool: "create_test_environment" as const,
-              requiresNewFlowDraftAndAuthoringSession: true as const,
-            },
-          }
-        : {}),
-    };
-  }
-  if (
-    outcome.reasonCode === "EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED" &&
-    environment &&
-    outcome.navigationEnvironmentFailure
-  ) {
-    return {
-      type: "environment_unavailable",
-      reasonCode: outcome.reasonCode,
-      safeActions: ["create_test_environment", "create_flow_draft"],
-      navigationRecovery: {
-        environmentId: environment.environmentId,
-        missingAllowedOrigin: outcome.navigationEnvironmentFailure.missingAllowedOrigin,
-        currentAllowedOrigins: environment.allowedOrigins,
-        recoveryTools: ["create_test_environment", "create_flow_draft"],
-        requiresNewFlowDraftAndAuthoringSession: true,
-      },
-    };
-  }
-  if (outcome.mutationOutcome === "unknown") {
-    return {
-      type: "mutation_reconciliation_required",
-      reasonCode: "MUTATION_OUTCOME_UNKNOWN",
-      safeActions: ["get_run", "get_praxis_session", "reconcile_unknown_operation"],
-    };
-  }
-  if (outcome.mutationOutcome === "applied" && outcome.functionalResult !== "succeeded") {
-    return {
-      type: "effect_observation_required",
-      reasonCode: outcome.reasonCode ?? "EXPECTED_EFFECT_NOT_OBSERVED",
-      safeActions: ["get_run", "get_praxis_session", "observe_praxis_session"],
-    };
-  }
-  return outcome.functionalResult === "succeeded"
-    ? { type: "objective_completed", reasonCode: "OPERATION_COMPLETED", safeActions: [] }
-    : {
-        type: "environment_unavailable",
-        reasonCode: outcome.reasonCode ?? "ADAPTIVE_OPERATION_FAILED",
-        safeActions: ["get_run", "get_praxis_session", "observe_praxis_session"],
-      };
 }
 
 function safeContinuationUrl(candidate: string | undefined, allowedOrigins: string[]) {

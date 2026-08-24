@@ -66,6 +66,7 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "recoveryBinding",
   "recoveryKind",
   "requiresFreshIdempotencyKey",
+  "requiresFreshIntentId",
   "requiresPendingTurn",
   "failedAuthoringSessionId",
   "failedOperationId",

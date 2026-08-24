@@ -92,6 +92,7 @@ export const agentDecisionBoundarySchema = z
     ]),
     reasonCode: z.string().trim().min(1).max(120),
     safeActions: z.array(z.string().trim().min(1).max(120)).default([]),
+    requiresFreshIntentId: z.literal(true).optional(),
     candidateDistinctions: z
       .array(
         z
@@ -118,6 +119,20 @@ export const agentDecisionBoundarySchema = z
       .object({
         environmentId: z.string().uuid(),
         missingAllowedOrigin: z.string().url(),
+        currentAllowedOrigins: z.array(z.string().url()).max(20),
+        recoveryTools: z.tuple([
+          z.literal("create_test_environment"),
+          z.literal("create_flow_draft"),
+        ]),
+        requiresNewFlowDraftAndAuthoringSession: z.literal(true),
+      })
+      .strict()
+      .optional(),
+    popupRecovery: z
+      .object({
+        environmentId: z.string().uuid(),
+        currentAllowPopups: z.literal(false),
+        requiredAllowPopups: z.literal(true),
         currentAllowedOrigins: z.array(z.string().url()).max(20),
         recoveryTools: z.tuple([
           z.literal("create_test_environment"),

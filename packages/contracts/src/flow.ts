@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { flowRevisionContentSchema, nameSchema, uuidSchema } from "./api.js";
 import { currentPlanSchema } from "./current.js";
-import { operationOutcomeSchema } from "./execution-kernel.js";
+import { agentDecisionBoundarySchema, operationOutcomeSchema } from "./execution-kernel.js";
 import { missionAuthoringIntentSchema } from "./authoring.js";
 import { flowPurposeSchema, flowVisibilitySchema, objectiveContextSchema } from "./mission.js";
 import { outcomeClassificationSchema } from "./run.js";
@@ -189,6 +189,7 @@ export const dispatchedRunOperationResultSchema = z
       .string()
       .regex(/^[A-Z][A-Z0-9_]*$/)
       .optional(),
+    decisionBoundary: agentDecisionBoundarySchema.optional(),
     mutationReceipt: mutationReceiptSchema.optional(),
     replayed: z.boolean(),
   })

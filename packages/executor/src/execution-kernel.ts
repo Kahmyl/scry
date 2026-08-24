@@ -1210,6 +1210,9 @@ function outcomeFromReport(
   lifecycle?: InteractionLifecycleTracker,
 ): OperationOutcome {
   const observedMutation = praxisMutationOutcome(praxisResults);
+  const fatalPolicyReason = report.policyViolations.find(
+    (violation) => violation.disposition === "fatal",
+  )?.code;
   const praxisFailureReason = [...praxisResults]
     .reverse()
     .flatMap((result) => (result.status === "succeeded" ? [] : [result.code]))
@@ -1239,11 +1242,13 @@ function outcomeFromReport(
     durationMs: performance.now() - startedAt,
     ...(protectedTelemetryReason
       ? { reasonCode: protectedTelemetryReason }
-      : report.error
-        ? { reasonCode: safeCode(report.error) }
-        : praxisFailureReason
-          ? { reasonCode: praxisFailureReason }
-          : {}),
+      : fatalPolicyReason
+        ? { reasonCode: fatalPolicyReason }
+        : report.error
+          ? { reasonCode: safeCode(report.error) }
+          : praxisFailureReason
+            ? { reasonCode: praxisFailureReason }
+            : {}),
   });
 }
 

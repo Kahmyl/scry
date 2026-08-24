@@ -132,6 +132,7 @@ export class AgentDirectedRunService {
         mutationOutcome: "not_applied",
         retry: "safe_after_prerequisite",
         safeActions: result.decisionBoundary.safeActions,
+        ...(result.decisionBoundary.requiresFreshIntentId ? { requiresFreshIntentId: true } : {}),
         decisionBoundary: result.decisionBoundary,
       });
     }
@@ -176,6 +177,9 @@ export class AgentDirectedRunService {
           }
         : {}),
       ...(operation.reasonCode ? { reasonCode: operation.reasonCode } : {}),
+      ...(result.state === "decision_required" && result.decisionBoundary
+        ? { decisionBoundary: result.decisionBoundary }
+        : {}),
       replayed: false,
     });
     await this.database.transaction(async (client) => {

@@ -1110,6 +1110,97 @@ describe("current Scry MCP surface", () => {
     await server.close();
   });
 
+  it("preserves popup recovery facts through the external MCP result", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/capabilities"))
+          return Promise.resolve(
+            new Response(JSON.stringify(admittedCapabilities), { status: 200 }),
+          );
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              praxisSessionId: "11111111-1111-4111-8111-111111111111",
+              operationId: "m2-open-docs",
+              artifactRefs: [],
+              intentId: "open-documentation",
+              functionalResult: "failed",
+              mutationOutcome: "not_applied",
+              privacyApplicable: false,
+              privacyResult: "verified",
+              evidence: { state: "available", count: 1, reasonCodes: [] },
+              reasonCode: "POPUP_NOT_ALLOWED",
+              decisionBoundary: {
+                type: "environment_unavailable",
+                reasonCode: "POPUP_NOT_ALLOWED",
+                safeActions: ["create_test_environment", "create_flow_draft"],
+                popupRecovery: {
+                  environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                  currentAllowPopups: false,
+                  requiredAllowPopups: true,
+                  currentAllowedOrigins: ["https://app.example.test"],
+                  recoveryTools: ["create_test_environment", "create_flow_draft"],
+                  requiresNewFlowDraftAndAuthoringSession: true,
+                },
+              },
+              replayed: false,
+            }),
+            { status: 201 },
+          ),
+        );
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "dispatch_run_operation",
+      arguments: {
+        runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        praxisSessionId: "11111111-1111-4111-8111-111111111111",
+        intent: {
+          intentId: "open-documentation",
+          objectiveId: context.objectiveId,
+          flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          action: {
+            kind: "activate",
+            target: {
+              concept: "Developer documentation",
+              reference: `context-control-${"a".repeat(32)}`,
+              role: "link",
+              name: "Developer documentation",
+            },
+            semanticEffect: "read_context_transition",
+            activationMechanism: "pointer",
+          },
+          expectedEffect: { kind: "navigation" },
+          constraints: { timeoutMs: 30_000, allowNewPage: false, allowNonExact: false },
+          authorization: {
+            kind: "live_read",
+            authorizationId: "99999999-9999-4999-8999-999999999999",
+          },
+          protectedInputReferences: [],
+        },
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      result: {
+        reasonCode: "POPUP_NOT_ALLOWED",
+        decisionBoundary: {
+          safeActions: ["create_test_environment", "create_flow_draft"],
+          popupRecovery: {
+            currentAllowPopups: false,
+            requiredAllowPopups: true,
+          },
+        },
+      },
+    });
+    await client.close();
+    await server.close();
+  });
+
   it("preserves the complete typed rejection for dispatch_run_operation", async () => {
     vi.stubGlobal(
       "fetch",
@@ -1952,6 +2043,70 @@ describe("current Scry MCP surface", () => {
         ...context,
         reasonCode: "USER_AUTHORIZED_AGENT_CALIBRATION",
         confirmedUserAuthorized: true,
+      },
+    });
+    await client.close();
+    await server.close();
+  });
+
+  it("preserves the fresh intent recovery directive through the external MCP result", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/capabilities"))
+          return Promise.resolve(
+            new Response(JSON.stringify(admittedCapabilities), { status: 200 }),
+          );
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              statusCode: 409,
+              message: {
+                code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+                mutationOutcome: "not_applied",
+                retry: "safe_after_prerequisite",
+                safeActions: ["authorize_environment_credentials", "dispatch_run_operation"],
+                requiresFreshIntentId: true,
+              },
+            }),
+            { status: 409 },
+          ),
+        );
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "dispatch_run_operation",
+      arguments: {
+        runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        praxisSessionId: "11111111-1111-4111-8111-111111111111",
+        intent: {
+          intentId: "login-password-before-admission",
+          objectiveId: context.objectiveId,
+          flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          action: {
+            kind: "fill",
+            target: {
+              concept: "password",
+              reference: `context-control-${"a".repeat(32)}`,
+            },
+            protectedReferenceId: "88888888-8888-4888-8888-888888888888",
+          },
+          expectedEffect: { kind: "none" },
+          constraints: { timeoutMs: 30_000, allowNewPage: false, allowNonExact: false },
+          authorization: { kind: "authentication" },
+          protectedInputReferences: ["88888888-8888-4888-8888-888888888888"],
+        },
+      },
+    });
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      rejection: {
+        code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+        retry: "safe_after_prerequisite",
+        safeActions: ["authorize_environment_credentials", "dispatch_run_operation"],
+        context: { requiresFreshIntentId: true },
       },
     });
     await client.close();

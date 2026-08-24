@@ -530,7 +530,11 @@ export const missionAuthoringIntentSchema = z
           .describe(
             "live_mutation excludes any mutation that may create, reveal, copy, rotate, or return a protected value. Such operations require protected_mutation and action.kind=acquire_protected_outputs.",
           ),
-        authorizationId: uuid.optional(),
+        authorizationId: uuid
+          .optional()
+          .describe(
+            "Use only with live_read, live_mutation, or protected_mutation. Authentication, ordinary, and reversible authority never consume a grant authorization ID.",
+          ),
       })
       .strict(),
     protectedInputReferences: z.array(uuid).max(20).default([]),
@@ -544,6 +548,16 @@ export const missionAuthoringIntentSchema = z
   })
   .strict()
   .superRefine((intent, context) => {
+    if (
+      intent.authorization.authorizationId &&
+      !["live_read", "live_mutation", "protected_mutation"].includes(intent.authorization.kind)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["authorization", "authorizationId"],
+        message:
+          "authentication, ordinary, and reversible authority must omit authorizationId; authentication_calibration grants are not browser-login authority",
+      });
     if (
       (intent.action.kind === "activate" || intent.action.kind === "press") &&
       intent.action.semanticEffect === "read_context_transition" &&

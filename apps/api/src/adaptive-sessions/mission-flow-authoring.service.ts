@@ -1196,7 +1196,8 @@ function admissionDecisionBoundary(
     return {
       type: "authorization_required",
       reasonCode: code,
-      safeActions: ["authorize_environment_credentials"],
+      safeActions: ["authorize_environment_credentials", "dispatch_run_operation"],
+      requiresFreshIntentId: true,
     };
   }
   if (code === "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED") {

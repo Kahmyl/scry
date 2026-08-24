@@ -256,7 +256,11 @@ export const hostAuthoringIntentSchema = z
           "live_mutation",
           "protected_mutation",
         ]),
-        authorizationId: uuid.optional(),
+        authorizationId: uuid
+          .optional()
+          .describe(
+            "Use only with live_read, live_mutation, or protected_mutation. Omit for authentication; authentication_calibration grants are not browser-login authority.",
+          ),
       })
       .strict(),
     protectedInputReferences: z

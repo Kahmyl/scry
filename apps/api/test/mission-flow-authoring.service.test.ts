@@ -179,7 +179,8 @@ describe("MissionFlowAuthoringService grouped turns", () => {
       decisionBoundary: {
         type: "authorization_required",
         reasonCode: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
-        safeActions: ["authorize_environment_credentials"],
+        safeActions: ["authorize_environment_credentials", "dispatch_run_operation"],
+        requiresFreshIntentId: true,
       },
     });
     expect(repository.settleTurn).toHaveBeenCalledOnce();

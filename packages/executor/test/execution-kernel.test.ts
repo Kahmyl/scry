@@ -1469,3 +1469,67 @@ it("requires readiness before agent-directed final evidence on a reaction action
     ],
   });
 });
+
+it("preserves a fatal execution-policy reason in the operation outcome", async () => {
+  const correlationId = "55555555-5555-4555-8555-555555555555";
+  const manifest = createExecutionCapabilityManifest({
+    mode: "observe",
+    correlationId,
+  });
+  const dispatch = vi.fn(async () => ({
+    ...reportFixture(),
+    outcomeClassification: "policy_failure" as const,
+    steps: [
+      {
+        ...reportFixture().steps[0]!,
+        error: "Action was blocked by execution policy",
+      },
+    ],
+    policyViolations: [
+      {
+        code: "POPUP_NOT_ALLOWED",
+        message: "Popup or new page was blocked",
+        occurredAt: new Date().toISOString(),
+        disposition: "fatal" as const,
+      },
+    ],
+  }));
+  const kernel = new ExecutionKernel(dispatch as never);
+
+  await expect(
+    kernel.interactWithReport({
+      request: {
+        sessionId: "popup-policy-session",
+        operationId: "open-documentation",
+        correlationId,
+        mode: "observe",
+        policy,
+      },
+      capabilities: {
+        manifest,
+        journal: {
+          begin: vi.fn(async () => undefined),
+          complete: vi.fn(async () => undefined),
+          fail: vi.fn(async () => undefined),
+          settle: vi.fn(async () => undefined),
+        },
+        options: { outputDirectory: "/tmp/unused" },
+      },
+      page: { url: () => "https://example.test/developer" } as never,
+      action: {
+        type: "click",
+        target: target("Developer documentation", "link", ["focusable", "pointer_activatable"]),
+        expectedEffect: { type: "none" },
+        dispatchSemantics: "read_only",
+      },
+      expectedEffect: { type: "none" },
+      ordinal: 1,
+    }),
+  ).resolves.toMatchObject({
+    outcome: {
+      functionalResult: "failed",
+      mutationOutcome: "not_applied",
+      reasonCode: "POPUP_NOT_ALLOWED",
+    },
+  });
+});

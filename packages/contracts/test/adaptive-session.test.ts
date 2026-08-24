@@ -263,6 +263,27 @@ describe("adaptive session contracts", () => {
     ).toMatchObject({ authorization: { kind: "live_mutation" } });
   });
 
+  it("rejects grant IDs on authentication authority", () => {
+    const protectedFill = intent({
+      action: { kind: "fill", target, protectedReferenceId: ids.protectedReferenceId },
+      protectedInputReferences: [ids.protectedReferenceId],
+      authorization: {
+        kind: "authentication",
+        authorizationId: ids.authorizationId,
+      },
+    });
+
+    expect(() => missionAuthoringIntentSchema.parse(protectedFill)).toThrow(
+      "authentication_calibration grants are not browser-login authority",
+    );
+    expect(
+      missionAuthoringIntentSchema.parse({
+        ...protectedFill,
+        authorization: { kind: "authentication" },
+      }),
+    ).toMatchObject({ authorization: { kind: "authentication" } });
+  });
+
   it("requires one exact operation-scoped binding for protected authentication", () => {
     const reference = "context-control-0123456789abcdef0123456789abcdef";
     const passwordReference = "00000000-0000-4000-8000-000000000009";
