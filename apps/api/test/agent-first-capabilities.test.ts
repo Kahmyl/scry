@@ -20,6 +20,7 @@ describe("agent-first public capabilities", () => {
     expect(capabilities.adaptiveExecution.modes).not.toContain("certify");
     expect(capabilities.groundingCapabilities).not.toContain("risk-thresholds");
     expect(capabilities.groundingCapabilities).not.toContain("effect-verification");
+    expect(capabilities.groundingCapabilities).not.toContain("bounded-protected-recovery");
   });
 
   it("reports the startup-captured source and runtime identity", () => {

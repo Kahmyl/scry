@@ -98,7 +98,7 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "readiness",
 ]);
 
-export function apiRejection(error: ScryApiError) {
+function baseApiRejection(error: ScryApiError) {
   const { mutationOutcome, retry, retryClass, ...context } = error.context;
   const appliedState = mutationAppliedStateSchema.catch("not_applicable").parse(mutationOutcome);
   const rejectionClass = classifyPublicRejection(error.code, error.status, appliedState);
@@ -132,6 +132,20 @@ export function apiRejection(error: ScryApiError) {
     nextActions,
     ...(Object.keys(context).length ? { context } : {}),
   });
+}
+
+export function apiRejection(error: ScryApiError) {
+  const rejection = baseApiRejection(error);
+
+  if (error.code !== "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED") {
+    return rejection;
+  }
+
+  return {
+    ...rejection,
+    rejectionClass: "policy_authorization" as const,
+    resolution: "obtain_authorization" as const,
+  };
 }
 
 function classifyPublicRejection(

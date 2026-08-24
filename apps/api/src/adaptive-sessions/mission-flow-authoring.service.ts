@@ -1199,6 +1199,13 @@ function admissionDecisionBoundary(
       safeActions: ["authorize_environment_credentials"],
     };
   }
+  if (code === "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED") {
+    return {
+      type: "authorization_required",
+      reasonCode: code,
+      safeActions: ["start_praxis_session", "attach_run_praxis_session"],
+    };
+  }
   if (code.includes("ORIGIN_NOT_ALLOWED") || code.includes("AUTHORIZATION")) {
     return { type: "policy_refused", reasonCode: code, safeActions: [] };
   }

@@ -5,6 +5,10 @@ export class SecretRedactor {
     if (value.length > 0) this.secrets.add(value);
   }
 
+  clear() {
+    this.secrets.clear();
+  }
+
   redact(value: string): string {
     let result = value;
     for (const secret of [...this.secrets].sort((left, right) => right.length - left.length)) {

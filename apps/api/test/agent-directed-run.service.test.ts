@@ -166,6 +166,33 @@ describe("agent-directed Run live Praxis ownership", () => {
     expect(sessions.advance).not.toHaveBeenCalled();
   });
 
+  it("projects a predispatch protected-session prerequisite without hiding it as a missing result", async () => {
+    const { service, sessions } = harness();
+    sessions.advance.mockResolvedValueOnce({
+      state: "decision_required",
+      completed: [],
+      decisionBoundary: {
+        type: "authorization_required",
+        reasonCode: "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED",
+        safeActions: ["start_praxis_session", "attach_run_praxis_session"],
+      },
+    });
+
+    await expect(
+      service.dispatch({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        intent,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED",
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+        safeActions: ["start_praxis_session", "attach_run_praxis_session"],
+      },
+    });
+  });
+
   it("replays the persisted exact successor observation without redispatch", async () => {
     const persisted = {
       runId,

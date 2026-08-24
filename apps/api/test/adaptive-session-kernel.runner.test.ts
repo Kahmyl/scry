@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 
 import { AdaptiveSessionKernelRunner } from "../src/adaptive-sessions/adaptive-session-kernel.runner.js";
+import { SecretRedactor } from "@scry/policy";
 
 describe("AdaptiveSessionKernelRunner timing propagation", () => {
   it("binds protected input resolution to the exact session, operation, reference, and target", async () => {
@@ -887,5 +888,90 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     expect(kernel.interact).toHaveBeenCalledOnce();
     expect(result.timings).toMatchObject({ resolveMs: 7, verifyMs: 11 });
     expect(result.timings.executeMs).toBeGreaterThan(0);
+  });
+
+  it("retains protected redaction knowledge across live-session operations and clears it on close", async () => {
+    const sessionId = "99999999-9999-4999-8999-999999999999";
+    const secret = "session-protected-email@example.test";
+    const observedRedactors: SecretRedactor[] = [];
+    const outcome = {
+      operationId: "operation",
+      functionalResult: "succeeded" as const,
+      mutationOutcome: "not_applied" as const,
+      privacyResult: "unverified" as const,
+      evidenceResult: [],
+      qualityFindings: [],
+      durationMs: 1,
+    };
+    const kernel = {
+      interact: vi.fn(
+        async ({ capabilities }: { capabilities: { options: Record<string, unknown> } }) => {
+          const redactor = capabilities.options.secretRedactor as SecretRedactor;
+          observedRedactors.push(redactor);
+          if (observedRedactors.length === 1) redactor.add(secret);
+          else expect(redactor.redact(`account=${secret}`)).toBe("account=[REDACTED]");
+          return outcome;
+        },
+      ),
+    };
+    const capabilities = {
+      createSession: vi.fn((input: { options: unknown }) => ({
+        manifest: { digest: "a".repeat(64) },
+        options: input.options,
+      })),
+    };
+    const releaseRuntimeLease = vi.fn(async () => true);
+    const close = vi.fn(async () => undefined);
+    const runner = new AdaptiveSessionKernelRunner(
+      kernel as never,
+      capabilities as never,
+      { releaseRuntimeLease } as never,
+      {} as never,
+    );
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
+      session: { close },
+      fencingToken: 4,
+      tail: Promise.resolve(),
+    });
+    const executeInteraction = (
+      runner as unknown as { executeInteraction(input: Record<string, unknown>): Promise<unknown> }
+    ).executeInteraction.bind(runner);
+    const base = {
+      sessionId,
+      environmentId: "environment",
+      policy: {
+        allowedOrigins: ["https://example.test"],
+        allowPrivateNetwork: false,
+        allowDownloads: false,
+        allowPopups: false,
+        maxActions: 2,
+        maxDurationMs: 30_000,
+        maxNavigations: 1,
+      },
+      mode: "rehearse",
+      fencingToken: 4,
+      browser: {},
+      context: {},
+      provenance: {},
+      page: {},
+      action: { type: "waitFor", target: {}, state: "visible" },
+      ordinal: 1,
+      correlationId: "correlation",
+      privacyGate: {},
+    };
+
+    await executeInteraction({ ...base, operationId: "operation-1" });
+    await executeInteraction({ ...base, operationId: "operation-2" });
+
+    expect(observedRedactors).toHaveLength(2);
+    expect(observedRedactors[1]).toBe(observedRedactors[0]);
+    await runner.close(sessionId);
+    expect(observedRedactors[0]!.redact(secret)).toBe(secret);
+    expect(close).toHaveBeenCalledOnce();
+    expect(releaseRuntimeLease).toHaveBeenCalledWith({
+      sessionId,
+      ownerId: expect.any(String),
+      fencingToken: 4,
+    });
   });
 });

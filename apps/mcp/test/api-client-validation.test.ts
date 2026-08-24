@@ -140,6 +140,13 @@ describe("ScryApiClient validation rejection projection", () => {
       "policy_authorization",
       "obtain_authorization",
     ],
+    [
+      "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED",
+      409,
+      "not_applied",
+      "policy_authorization",
+      "obtain_authorization",
+    ],
     ["PROVIDER_RESPONSE_FAILED", 409, "not_applied", "application_provider", "inspect_application"],
     [
       "PERSISTENCE_FAILED",

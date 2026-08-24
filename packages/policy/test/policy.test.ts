@@ -30,6 +30,18 @@ describe("runtime policy helpers", () => {
     });
   });
 
+  it("forgets session-scoped secrets when browser authority ends", () => {
+    const redactor = new SecretRedactor();
+    redactor.add("session-only-protected-value");
+    expect(redactor.redact("value=session-only-protected-value")).toBe("value=[REDACTED]");
+
+    redactor.clear();
+
+    expect(redactor.redact("value=session-only-protected-value")).toBe(
+      "value=session-only-protected-value",
+    );
+  });
+
   it("allows environment-approved page dependencies outside plan navigation origins", async () => {
     const plan = {
       name: "Page dependency policy",

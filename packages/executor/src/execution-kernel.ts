@@ -834,7 +834,7 @@ export async function executeInteractionCompatibility(input: {
         policy: input.policy,
       },
       input.options.signal ?? new AbortController().signal,
-      new SecretRedactor(),
+      input.options.secretRedactor ?? new SecretRedactor(),
       new Map(),
       new Map(),
       input.privacyGate,

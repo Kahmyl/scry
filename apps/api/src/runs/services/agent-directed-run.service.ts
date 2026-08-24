@@ -126,6 +126,15 @@ export class AgentDirectedRunService {
       );
     }
     const operation = result.completed.find((item) => item.intentId === input.intent.intentId);
+    if (!operation && result.state === "decision_required" && result.decisionBoundary) {
+      throw new ConflictException({
+        code: result.decisionBoundary.reasonCode,
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+        safeActions: result.decisionBoundary.safeActions,
+        decisionBoundary: result.decisionBoundary,
+      });
+    }
     if (!operation) throw new ConflictException({ code: "RUN_OPERATION_RESULT_UNAVAILABLE" });
     const persistedOperation = await this.database.query<{ operationId: string }>(
       `SELECT operation_id AS "operationId" FROM adaptive_operations

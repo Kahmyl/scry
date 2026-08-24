@@ -97,12 +97,26 @@ export function throwIfAborted(signal: AbortSignal) {
 export function isBrowserInfrastructureFailure(error: unknown) {
   const message = errorMessage(error).toLowerCase();
   return (
+    browserAuthorityLossCode(error) === "PRAXIS_BROWSER_AUTHORITY_LOST" ||
     message.includes("browser has been closed") ||
     message.includes("browser closed") ||
     message.includes("browser disconnected") ||
     message.includes("target page, context or browser has been closed") ||
-    message.includes("target closed")
+    message.includes("target closed") ||
+    message.includes("target crashed")
   );
+}
+
+export function isBrowserAuthorityLoss(error: unknown) {
+  return (
+    browserAuthorityLossCode(error) === "PRAXIS_BROWSER_AUTHORITY_LOST" ||
+    isBrowserInfrastructureFailure(error)
+  );
+}
+
+function browserAuthorityLossCode(error: unknown) {
+  if (!error || typeof error !== "object" || !("code" in error)) return undefined;
+  return (error as { code?: unknown }).code;
 }
 
 export function errorMessage(error: unknown) {

@@ -66,6 +66,8 @@ describe("current Scry MCP surface", () => {
         "start_ready_objectives",
         "pause_mission_orchestration",
         "resume_mission_orchestration",
+        "get_protected_recovery",
+        "act_on_protected_recovery",
       ]),
     );
     const observe = tools.find(({ name }) => name === "observe_praxis_session")!;
@@ -576,8 +578,6 @@ describe("current Scry MCP surface", () => {
       "get_run",
       "get_veil_findings",
       "tighten_veil_preferences",
-      "get_protected_recovery",
-      "act_on_protected_recovery",
       "accept_objective_evidence",
       "classify_run",
       "set_mission_resume_pointer",

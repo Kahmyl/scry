@@ -10,6 +10,7 @@ import type {
   ProtectedOperationClaim,
 } from "@scry/contracts";
 import type { RuntimePolicyViolationCode } from "@scry/policy";
+import type { SecretRedactor } from "@scry/policy";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 import type { CalibrationStructure } from "./calibration.js";
 
@@ -156,6 +157,11 @@ export type ExecuteOptions = {
     };
   }) => void | Promise<void>;
   secretResolver?: SecretResolver;
+  /**
+   * Ephemeral browser-session redaction knowledge. The owner must clear it
+   * when browser authority ends; protected values must never be persisted.
+   */
+  secretRedactor?: SecretRedactor;
   secretCapture?: SecretCapture;
   atomicSecretCapture?: AtomicSecretCapture;
   publicValueCapture?: PublicValueCapture;
@@ -236,6 +242,8 @@ export type ExecuteOptions = {
   veilPolicySnapshot?: import("@scry/contracts").VeilPolicySnapshot;
   /** Phase 1 synthetic-gap hook. It must never handle real protected values. */
   recordingTestHook?: (input: { page: Page; recording: RecordingCoordinator }) => Promise<void>;
+  /** Synthetic screencast-start failure hook. It must never handle real protected values. */
+  recordingSegmentStartTestHook?: (reason: string) => Promise<void>;
   /** Phase 2 synthetic privacy interval hook. It must never handle real protected values. */
   privacyTestHook?: (input: { page: Page; privacy: VeilRuntimeCoordinator }) => Promise<void>;
 };

@@ -5,8 +5,6 @@ import { registerStartRunTool } from "./start-run.tool.js";
 import { registerGetRunTool } from "./get-run.tool.js";
 import { registerGetVeilFindingsTool } from "./get-veil-findings.tool.js";
 import { registerTightenVeilPreferencesTool } from "./tighten-veil-preferences.tool.js";
-import { registerGetProtectedRecoveryTool } from "./get-protected-recovery.tool.js";
-import { registerActOnProtectedRecoveryTool } from "./act-on-protected-recovery.tool.js";
 import { registerAcceptObjectiveEvidenceTool } from "./accept-objective-evidence.tool.js";
 import { registerClassifyRunTool } from "./classify-run.tool.js";
 import { registerSetMissionResumePointerTool } from "./set-mission-resume-pointer.tool.js";
@@ -22,8 +20,6 @@ export function registerRunsTools(server: McpServer, client: ScryApiClient) {
   registerGetRunTool(server, client);
   registerGetVeilFindingsTool(server, client);
   registerTightenVeilPreferencesTool(server, client);
-  registerGetProtectedRecoveryTool(server, client);
-  registerActOnProtectedRecoveryTool(server, client);
   registerAcceptObjectiveEvidenceTool(server, client);
   registerClassifyRunTool(server, client);
   registerSetMissionResumePointerTool(server, client);

@@ -17,6 +17,7 @@ import { observeSemanticPageContext } from "../page-context.js";
 import { registerPraxisVeilAuthority } from "../veil-bridge.js";
 import { closePraxisBrowser, closePraxisContext } from "./browser-session.js";
 import { installThirdPartyScriptFence, waitForPraxisLoadState } from "./navigation.js";
+import { isBrowserInfrastructureFailure } from "./execution-browser-policy.js";
 import {
   closePraxisPage,
   createPraxisExpectedPageOwnership,
@@ -30,6 +31,18 @@ import { BrowserSessionProvenance } from "./browser-session.js";
 import { runProtectedStage } from "./protected-stage.js";
 export type AuthoringBrowserSessionState =
   "active" | "suspended" | "releasing" | "released" | "crashed";
+
+export class PraxisBrowserAuthorityLostError extends Error {
+  readonly code = "PRAXIS_BROWSER_AUTHORITY_LOST";
+
+  constructor(cause?: unknown) {
+    super("PRAXIS_BROWSER_AUTHORITY_LOST");
+    this.name = "PraxisBrowserAuthorityLostError";
+    if (cause !== undefined) {
+      Object.defineProperty(this, "cause", { value: cause, configurable: true });
+    }
+  }
+}
 
 export type AuthoringBrowserSession<Report = unknown> = {
   readonly browser: Browser;
@@ -138,6 +151,7 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
     let lastDocumentToken: string | undefined;
     let interactionOrdinal = 0;
     let closed = false;
+    const authorityCrashed = () => lifecycle === "crashed";
     const pageOwnership = createPraxisExpectedPageOwnership(context, () => page!);
     const allowedDocumentOrigins = new Set(input.policy.allowedOrigins);
     await context.route("**/*", async (route) => {
@@ -162,39 +176,56 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
       }
     });
 
+    const observePageAuthority = (candidate: Page) => {
+      candidate.on("crash", () => {
+        if (!closed) lifecycle = "crashed";
+      });
+    };
+    observePageAuthority(page);
+
     async function observe(maximumWaitMs?: number) {
+      if (authorityCrashed()) {
+        throw new PraxisBrowserAuthorityLostError();
+      }
       if (lifecycle !== "active") {
         throw new Error("AUTHORING_BROWSER_SESSION_NOT_ACTIVE");
       }
+      try {
+        await waitForPraxisLoadState(
+          page!,
+          "domcontentloaded",
+          maximumWaitMs === undefined ? {} : { timeout: maximumWaitMs },
+        );
 
-      await waitForPraxisLoadState(
-        page!,
-        "domcontentloaded",
-        maximumWaitMs === undefined ? {} : { timeout: maximumWaitMs },
-      );
+        const documentToken = await page!.evaluate(() => {
+          const key = "__scryAuthoringDocumentToken";
+          const documentState = document as unknown as Record<string, unknown>;
 
-      const documentToken = await page!.evaluate(() => {
-        const key = "__scryAuthoringDocumentToken";
-        const documentState = document as unknown as Record<string, unknown>;
+          if (typeof documentState[key] !== "string") {
+            documentState[key] = `${Date.now()}-${Math.random()}`;
+          }
 
-        if (typeof documentState[key] !== "string") {
-          documentState[key] = `${Date.now()}-${Math.random()}`;
+          return documentState[key] as string;
+        });
+
+        if (documentToken !== lastDocumentToken) {
+          lastDocumentToken = documentToken;
+          epoch += 1;
         }
 
-        return documentState[key] as string;
-      });
-
-      if (documentToken !== lastDocumentToken) {
-        lastDocumentToken = documentToken;
-        epoch += 1;
+        const semanticPageContext = await observeSemanticPageContext(page!);
+        return {
+          documentEpoch: epoch,
+          url: page!.url(),
+          semanticPageContext,
+        };
+      } catch (error) {
+        if (authorityCrashed() || isBrowserInfrastructureFailure(error)) {
+          lifecycle = "crashed";
+          throw new PraxisBrowserAuthorityLostError(error);
+        }
+        throw error;
       }
-
-      const semanticPageContext = await observeSemanticPageContext(page!);
-      return {
-        documentEpoch: epoch,
-        url: page!.url(),
-        semanticPageContext,
-      };
     }
 
     return {
@@ -215,6 +246,9 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
       observeDocument: observe,
 
       async interact(candidate, interactionContext = {}) {
+        if (authorityCrashed()) {
+          throw new PraxisBrowserAuthorityLostError();
+        }
         if (lifecycle !== "active") {
           throw new Error("AUTHORING_BROWSER_SESSION_NOT_ACTIVE");
         }
@@ -285,6 +319,7 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
                     const previousPage = page!;
                     page = popup;
                     popupCandidate.adopt(popup);
+                    observePageAuthority(popup);
                     unregisterVeil.push(registerPraxisVeilAuthority(popup, veilRegistration));
                     await closePraxisPage(previousPage);
                     return popup;
@@ -296,7 +331,14 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
               : {}),
             ...(interactionContext.signal ? { signal: interactionContext.signal } : {}),
           })
-          .finally(() => popupCandidate?.dispose());
+          .finally(() => popupCandidate?.dispose())
+          .catch((error: unknown) => {
+            if (authorityCrashed() || isBrowserInfrastructureFailure(error)) {
+              lifecycle = "crashed";
+              throw new PraxisBrowserAuthorityLostError(error);
+            }
+            throw error;
+          });
         const outcome =
           typeof execution === "object" && execution && "outcome" in execution
             ? execution.outcome

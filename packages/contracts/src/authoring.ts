@@ -266,13 +266,19 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
         .refine(
           (values) => new Set(values).size === values.length,
           "preparation intent IDs must be unique",
+        )
+        .describe(
+          "For dispatch_run_operation: exact intentIds of earlier successful non-mutating preparation operations from the same live Praxis session, Mission, Objective, and Flow. The protected mutation itself must not already have been dispatched.",
         ),
       mutation: z
         .object({
           kind: z.enum(["one_time", "read_only"]),
           target: missionAuthoringSemanticTargetSchema,
         })
-        .strict(),
+        .strict()
+        .describe(
+          "The mutation performed atomically with protected output acquisition. Use kind=one_time when the UI creates, reveals, copies, rotates, or returns a secret, credential, token, key, password, or other one-time protected value.",
+        ),
       syntheticProtectedInputs: z
         .array(
           z
@@ -328,7 +334,9 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
                 .max(100)
                 .regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
               classification: z.enum(["public", "protected"]),
-              target: missionAuthoringSemanticTargetSchema,
+              target: missionAuthoringSemanticTargetSchema.describe(
+                "Post-mutation value target. For one_time acquisition the output does not exist before dispatch: provide concept plus observable role/name/label and omit reference. Never reuse the mutation target reference. Classify safe public identity as public and only secrets or otherwise protected values as protected.",
+              ),
               storageName: z.string().trim().min(1).max(200),
             })
             .strict(),
@@ -338,6 +346,9 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
         .refine(
           (outputs) => new Set(outputs.map((output) => output.reference)).size === outputs.length,
           "output references must be unique",
+        )
+        .describe(
+          "Typed post-mutation outputs acquired and persisted inside the same protected transaction. Safe public identity such as a client ID uses classification=public; a secret or otherwise protected value uses classification=protected and must never be read through an ordinary observation or public artifact. For one_time acquisition output targets are semantic descriptions without a pre-mutation reference.",
         ),
       externalResourceBindings: z
         .array(
@@ -507,14 +518,18 @@ export const missionAuthoringIntentSchema = z
       .strict(),
     authorization: z
       .object({
-        kind: z.enum([
-          "ordinary",
-          "authentication",
-          "reversible",
-          "live_read",
-          "live_mutation",
-          "protected_mutation",
-        ]),
+        kind: z
+          .enum([
+            "ordinary",
+            "authentication",
+            "reversible",
+            "live_read",
+            "live_mutation",
+            "protected_mutation",
+          ])
+          .describe(
+            "live_mutation excludes any mutation that may create, reveal, copy, rotate, or return a protected value. Such operations require protected_mutation and action.kind=acquire_protected_outputs.",
+          ),
         authorizationId: uuid.optional(),
       })
       .strict(),

@@ -29,6 +29,7 @@ import {
   NativeBrowserDriver,
 } from "../runtime/index.js";
 import { AdaptiveSessionRepository } from "./repositories/adaptive-session.repository.js";
+import { SecretRedactor } from "@scry/policy";
 import {
   bindProtectedInputDelivery,
   type ProtectedInputDeliveryBinding,
@@ -74,6 +75,7 @@ type OperationLeaseGuard = {
 export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
   private readonly testBindings = new Map<string, TestRuntimeBinding>();
   private readonly runtimes = new Map<string, OwnedRuntime>();
+  private readonly sessionRedactors = new Map<string, SecretRedactor>();
   private readonly provisioning = new Map<string, Promise<OwnedRuntime>>();
   private readonly operationModes = new Map<string, ExecutionMode>();
   private readonly operationTimingCollectors = new Map<string, OperationTimingCollector>();
@@ -540,6 +542,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         work: () => runtime.session.close(),
       }).catch(() => undefined);
     } finally {
+      this.clearSessionRedactor(sessionId);
       await this.sessions.releaseRuntimeLease?.({
         sessionId,
         ownerId: this.ownerId,
@@ -557,9 +560,12 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     if (current) return Promise.resolve(current);
     const pending = this.provisioning.get(sessionId);
     if (pending) return pending;
-    const provisioning = this.provision(sessionId, operation).finally(() =>
-      this.provisioning.delete(sessionId),
-    );
+    const provisioning = this.provision(sessionId, operation)
+      .catch((error) => {
+        this.clearSessionRedactor(sessionId);
+        throw error;
+      })
+      .finally(() => this.provisioning.delete(sessionId));
     this.provisioning.set(sessionId, provisioning);
     return provisioning;
   }
@@ -874,6 +880,21 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         });
   }
 
+  private clearSessionRedactor(sessionId: string) {
+    const redactor = this.sessionRedactors.get(sessionId);
+    redactor?.clear();
+    this.sessionRedactors.delete(sessionId);
+  }
+
+  private sessionRedactor(sessionId: string) {
+    let redactor = this.sessionRedactors.get(sessionId);
+    if (!redactor) {
+      redactor = new SecretRedactor();
+      this.sessionRedactors.set(sessionId, redactor);
+    }
+    return redactor;
+  }
+
   private createCapabilities(input: {
     sessionId: string;
     environmentId: string;
@@ -914,6 +935,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       correlationId: input.correlationId,
       mode: input.mode,
       options: {
+        secretRedactor: this.sessionRedactor(input.sessionId),
         outputDirectory:
           input.outputDirectory ?? path.join(this.artifactRoot, "adaptive", input.sessionId),
         browserChannel: this.browserChannel,

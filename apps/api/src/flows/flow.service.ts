@@ -138,7 +138,6 @@ export class FlowService {
         "environment-history",
         "exact-reference-stale-rejection",
         "typed-acquisition",
-        "bounded-protected-recovery",
       ],
       groundingManifest: {
         browserObservationRuntime: "available",

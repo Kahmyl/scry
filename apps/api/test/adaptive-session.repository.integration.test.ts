@@ -750,6 +750,51 @@ integration("adaptive session repository integration", () => {
     });
   });
 
+  it("requires a protected Praxis session before admitting protected references", async () => {
+    const protectedReferenceId = randomUUID();
+
+    await expect(
+      repository.create(workspaceId, {
+        ...startInput(`ordinary-protected-start-${randomUUID()}`),
+        initialProtectedReferenceIds: [protectedReferenceId],
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED",
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+      },
+    });
+
+    const created = await createActive(startInput(`ordinary-protected-dispatch-${randomUUID()}`));
+    sessionIds.push(created.id);
+    await expect(
+      repository.validateIntentAdmission({
+        sessionId: created.id,
+        intent: {
+          intentId: "ordinary-session-protected-fill",
+          objectiveId,
+          flowDraftId,
+          action: {
+            kind: "fill",
+            target: { concept: "email", role: "textbox", name: "Email", exact: true },
+            protectedReferenceId,
+          },
+          expectedEffect: { kind: "none" },
+          constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
+          authorization: { kind: "authentication" },
+          protectedInputReferences: [protectedReferenceId],
+        },
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED",
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+      },
+    });
+  });
+
   it("stores a functionally successful unknown mutation as reconciliation-required", async () => {
     const created = await createActive(startInput("unknown-mutation-start"));
     sessionIds.push(created.id);
@@ -1301,6 +1346,7 @@ integration("adaptive session repository integration", () => {
     const created = await createActive({
       ...startInput("credential-revocation-start"),
       initialProtectedReferenceIds: credentialIds,
+      protection: "protected" as const,
     });
     sessionIds.push(created.id);
     const operationId = "credential-revocation";
@@ -1345,6 +1391,7 @@ integration("adaptive session repository integration", () => {
       repository.create(workspaceId, {
         ...startInput("revoked-credential-new-session"),
         initialProtectedReferenceIds: [credentialIds[0]!],
+        protection: "protected" as const,
       }),
     ).rejects.toMatchObject({ response: { code: "PROTECTED_REFERENCE_INACTIVE" } });
 
@@ -1388,6 +1435,7 @@ integration("adaptive session repository integration", () => {
       const existing = await createActive({
         ...startInput(`lifecycle-${securityStatus}-existing`),
         initialProtectedReferenceIds: [credentialId],
+        protection: "protected" as const,
       });
       sessionIds.push(existing.id);
       const intent = protectedFillIntent(`use-${securityStatus}`, credentialId);
@@ -1407,6 +1455,7 @@ integration("adaptive session repository integration", () => {
         repository.create(workspaceId, {
           ...startInput(`lifecycle-${securityStatus}-new`),
           initialProtectedReferenceIds: [credentialId],
+          protection: "protected" as const,
         }),
       ).rejects.toMatchObject({ response: { code: "PROTECTED_REFERENCE_INACTIVE" } });
     },
@@ -1445,6 +1494,7 @@ integration("adaptive session repository integration", () => {
     const created = await createActive({
       ...startInput("credential-pair-atomicity-start"),
       initialProtectedReferenceIds: [credentialId],
+      protection: "protected" as const,
     });
     sessionIds.push(created.id);
     const operationId = "credential-pair-atomicity";
@@ -1711,6 +1761,7 @@ integration("adaptive session repository integration", () => {
       const created = await createActive({
         ...startInput(`${operationId}-start`),
         initialProtectedReferenceIds: [credentialId],
+        protection: "protected" as const,
       });
       sessionIds.push(created.id);
       const intent = credentialRevocationIntent(operationId, [credentialId], authorizationId);

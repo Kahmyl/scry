@@ -311,6 +311,12 @@ export class AdaptiveSessionRepository {
   create(workspaceId: string | null, input: StartAdaptiveSessionInput) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
+      if (
+        (input.initialProtectedReferenceIds?.length ?? 0) > 0 &&
+        input.protection !== "protected"
+      ) {
+        throw protectedSessionRequired();
+      }
       const lifecycle = await q<{ missionStatus: string; objectiveStatus: string }>(
         `SELECT m.status AS "missionStatus",o.status AS "objectiveStatus"
          FROM missions m JOIN mission_objectives o ON o.mission_id=m.id AND o.id=$2
@@ -1093,14 +1099,18 @@ export class AdaptiveSessionRepository {
       activeObjectiveId: string;
       protectedAllowlist: string[];
       allowedOrigins: string[];
+      protection: "ordinary" | "protected";
     }>(
       `SELECT environment_id AS "environmentId",mission_id AS "missionId",active_objective_id AS "activeObjectiveId",
-              protected_reference_allowlist AS "protectedAllowlist",allowed_origins AS "allowedOrigins"
+              protected_reference_allowlist AS "protectedAllowlist",allowed_origins AS "allowedOrigins",protection
        FROM adaptive_sessions WHERE id=$1`,
       [input.sessionId],
     );
     if (!session.rowCount) throw new NotFoundException("Adaptive session not found");
     const current = session.rows[0]!;
+    if (intentRequiresProtectedSession(input.intent) && current.protection !== "protected") {
+      throw protectedSessionRequired();
+    }
     if (isAuthoringMutation(input.intent)) {
       const unresolved = await this.database.query(
         `SELECT 1 FROM protected_operations WHERE owner_kind='authoring_session'
@@ -4068,6 +4078,22 @@ function isAuthoringMutation(intent: MissionAuthoringIntent) {
     ) ||
     (intent.action.kind === "same_origin_request" && intent.action.method !== "GET")
   );
+}
+
+function intentRequiresProtectedSession(intent: MissionAuthoringIntent) {
+  return (
+    intent.protectedInputReferences.length > 0 || intent.action.kind === "acquire_protected_outputs"
+  );
+}
+
+function protectedSessionRequired() {
+  return new ConflictException({
+    code: "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED",
+    mutationOutcome: "not_applied",
+    retry: "safe_after_prerequisite",
+    requiresFreshIdempotencyKey: true,
+    safeActions: ["start_praxis_session", "attach_run_praxis_session"],
+  });
 }
 
 function safeReasonCode(value: string | null | undefined, fallback: string) {

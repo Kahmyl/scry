@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 
 import { executionPolicySchema, type InteractionTargetIntent } from "@scry/contracts";
+import { SecretRedactor } from "@scry/policy";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createAuthoringBrowserSession } from "@scry/praxis";
@@ -546,6 +547,7 @@ describe("persistent authoring browser session", () => {
       ["66666666-6666-4666-8666-666666666666", "user@example.test"],
       ["77777777-7777-4777-8777-777777777777", "protected-test-value"],
     ]);
+    const secretRedactor = new SecretRedactor();
     const session = await createAuthoringBrowserSession({
       sessionId: "88888888-8888-4888-8888-888888888888",
       environmentId: "authoring-test-environment",
@@ -559,6 +561,7 @@ describe("persistent authoring browser session", () => {
         environmentId: "authoring-test-environment",
         policy,
         secretResolver: async (reference) => values.get(reference)!,
+        secretRedactor,
       }),
     });
     try {
@@ -626,6 +629,7 @@ describe("persistent authoring browser session", () => {
       expect(await session.page.locator("body").getAttribute("data-authenticated")).toBe("yes");
       expect(JSON.stringify(result)).not.toContain("protected-test-value");
       expect(JSON.stringify(result)).not.toContain("user@example.test");
+      expect(secretRedactor.redact("later page user@example.test")).toBe("later page [REDACTED]");
     } finally {
       await session.close();
     }

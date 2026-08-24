@@ -111,6 +111,10 @@ function registerPraxisGroundingObservers(page: Page, options: ExecuteOptions) {
   if (options.onGroundingDiagnostic) registerGroundingObserver(page, options.onGroundingDiagnostic);
 }
 
+function isDocumentRecordingResumeFailure(error: unknown) {
+  return error instanceof Error && error.message === "DOCUMENT_TRANSITION_RECORDING_RESUME_FAILED";
+}
+
 export async function executePlan(options: ExecuteOptions): Promise<ExecutionReport> {
   const violations = validatePlanAgainstPolicy(options.plan, options.policy);
   if (violations.length > 0) {
@@ -129,7 +133,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   const pendingNetworkBodies = new Set<Promise<void>>();
   const networkActivity = { active: new Map<string, { url: string; resourceType: string }>() };
   const policyViolations: PolicyViolationRecord[] = [];
-  const redactor = new SecretRedactor();
+  const redactor = options.secretRedactor ?? new SecretRedactor();
   const capturedSecrets = new Map<string, string>();
   const capturedValues = new Map<string, string>();
   const usesProtectedValues = options.plan.steps.some(
@@ -303,6 +307,9 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       abortCapture: async () => {
         if (context) await closePraxisContext(context);
       },
+      ...(options.recordingSegmentStartTestHook
+        ? { beforeStartScreencast: options.recordingSegmentStartTestHook }
+        : {}),
     });
     trace = new TraceCoordinator({
       context,
@@ -698,13 +705,20 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               await recording.completeDocumentTransition(page);
               documentTransitionOpen = false;
             } catch (error) {
-              if (documentTransitionOpen) {
-                await recording
-                  .failDocumentTransition("DOCUMENT_TRANSITION_QUALIFICATION_FAILED")
-                  .catch(() => undefined);
+              if (isDocumentRecordingResumeFailure(error)) {
+                // The action and the new document have already been observed.
+                // Preserve that product truth while the sealed recording
+                // timeline carries the independent evidence failure.
                 documentTransitionOpen = false;
+              } else {
+                if (documentTransitionOpen) {
+                  await recording
+                    .failDocumentTransition("DOCUMENT_TRANSITION_QUALIFICATION_FAILED")
+                    .catch(() => undefined);
+                  documentTransitionOpen = false;
+                }
+                throw error;
               }
-              throw error;
             }
           }
         }

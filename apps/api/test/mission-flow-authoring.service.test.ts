@@ -188,6 +188,43 @@ describe("MissionFlowAuthoringService grouped turns", () => {
     expect(runner.execute).not.toHaveBeenCalled();
   });
 
+  it("directs protected work to a protected Praxis session before browser execution", async () => {
+    const sessionId = randomUUID();
+    const repository = {
+      beginTurn: vi.fn().mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
+      validateIntentAdmission: vi.fn().mockRejectedValue(
+        new ConflictException({
+          code: "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED",
+          mutationOutcome: "not_applied",
+        }),
+      ),
+      handoff: vi.fn(),
+      beginMissionOperation: vi.fn(),
+      settleTurn: vi.fn(async ({ result }) => result),
+    };
+    const runner = { execute: vi.fn() };
+    const service = new MissionFlowAuthoringService(
+      repository as never,
+      runner as never,
+      { assertAcceptingWork: vi.fn() } as never,
+    );
+
+    const result = await service.advance(principal, sessionId, input());
+
+    expect(result).toMatchObject({
+      state: "decision_required",
+      completed: [],
+      decisionBoundary: {
+        type: "authorization_required",
+        reasonCode: "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED",
+        safeActions: ["start_praxis_session", "attach_run_praxis_session"],
+      },
+    });
+    expect(repository.handoff).not.toHaveBeenCalled();
+    expect(repository.beginMissionOperation).not.toHaveBeenCalled();
+    expect(runner.execute).not.toHaveBeenCalled();
+  });
+
   it("projects inactive protected references before preparation or kernel launch", async () => {
     const sessionId = randomUUID();
     const protectedReferenceId = randomUUID();
