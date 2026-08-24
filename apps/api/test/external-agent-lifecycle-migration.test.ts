@@ -33,7 +33,8 @@ describe("external-agent lifecycle migration", () => {
       OPTIONAL_BASELINE_MIGRATIONS.filter(
         (name) =>
           name !== "external-agent-lifecycle.sql" &&
-          name !== "pre-mission-external-agent-lifecycle.sql",
+          name !== "pre-mission-external-agent-lifecycle.sql" &&
+          name !== "flow-name-identity-cutover.sql",
       ),
     )
       .replace("\\ir calibration-foundation.sql", () => calibration)
@@ -63,7 +64,9 @@ describe("external-agent lifecycle migration", () => {
       baseline,
       sources,
       OPTIONAL_BASELINE_MIGRATIONS.filter(
-        (name) => name !== "pre-mission-external-agent-lifecycle.sql",
+        (name) =>
+          name !== "pre-mission-external-agent-lifecycle.sql" &&
+          name !== "flow-name-identity-cutover.sql",
       ),
     )
       .replace("\\ir calibration-foundation.sql", () => calibration)

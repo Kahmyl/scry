@@ -22,7 +22,9 @@ const selectionMigration = "mission-recording-selection.sql";
 const operationalEventsMigration = "operational-events.sql";
 const missionDiagnosticIsolationMigration = "mission-diagnostic-isolation.sql";
 const externalAgentLifecycleMigration = "external-agent-lifecycle.sql";
+
 const preMissionExternalAgentLifecycleMigration = "pre-mission-external-agent-lifecycle.sql";
+const flowNameIdentityCutoverMigration = "flow-name-identity-cutover.sql";
 const preOperationalEventsFingerprint =
   "8abcde60d523d2e8390a686a591c4435efee6331baf15a2468743a1c8cb65a4f";
 
@@ -90,7 +92,8 @@ describe("Mission recording selection migration", () => {
             name !== operationalEventsMigration &&
             name !== missionDiagnosticIsolationMigration &&
             name !== externalAgentLifecycleMigration &&
-            name !== preMissionExternalAgentLifecycleMigration,
+            name !== preMissionExternalAgentLifecycleMigration &&
+            name !== flowNameIdentityCutoverMigration,
         ),
       ),
     );
@@ -112,7 +115,8 @@ describe("Mission recording selection migration", () => {
             name !== operationalEventsMigration &&
             name !== missionDiagnosticIsolationMigration &&
             name !== externalAgentLifecycleMigration &&
-            name !== preMissionExternalAgentLifecycleMigration,
+            name !== preMissionExternalAgentLifecycleMigration &&
+            name !== flowNameIdentityCutoverMigration,
         ),
       ),
     );
@@ -133,7 +137,8 @@ describe("Mission recording selection migration", () => {
             name !== operationalEventsMigration &&
             name !== missionDiagnosticIsolationMigration &&
             name !== externalAgentLifecycleMigration &&
-            name !== preMissionExternalAgentLifecycleMigration,
+            name !== preMissionExternalAgentLifecycleMigration &&
+            name !== flowNameIdentityCutoverMigration,
         ),
       ),
     );
@@ -218,9 +223,9 @@ describe("Mission recording selection migration", () => {
     const finalWrites =
       migrate.match(/UPDATE\s+schema_baseline[\s\S]{0,160}?schema_fingerprint=\$1/g) ?? [];
 
-    expect(operationalEventsCalls).toHaveLength(finalWrites.length - 3);
+    expect(operationalEventsCalls).toHaveLength(finalWrites.length - 4);
 
-    expect(selectionCalls).toHaveLength(finalWrites.length - 4);
+    expect(selectionCalls).toHaveLength(finalWrites.length - 5);
 
     expect(gapCalls).toHaveLength(selectionCalls.length - 1);
 
