@@ -147,6 +147,10 @@ const preMissionExternalAgentLifecycle = await readFile(
   new URL("pre-mission-external-agent-lifecycle.sql", root),
   "utf8",
 );
+const flowNameIdentityCutover = await readFile(
+  new URL("flow-name-identity-cutover.sql", root),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -190,6 +194,7 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "u
   ["mission-diagnostic-isolation.sql", missionDiagnosticIsolation],
   ["external-agent-lifecycle.sql", externalAgentLifecycle],
   ["pre-mission-external-agent-lifecycle.sql", preMissionExternalAgentLifecycle],
+  ["flow-name-identity-cutover.sql", flowNameIdentityCutover],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

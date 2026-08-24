@@ -116,6 +116,7 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "mission-diagnostic-isolation.sql",
   "external-agent-lifecycle.sql",
   "pre-mission-external-agent-lifecycle.sql",
+  "flow-name-identity-cutover.sql",
 ] as const;
 
 export type OptionalBaselineMigration = (typeof OPTIONAL_BASELINE_MIGRATIONS)[number];
@@ -200,6 +201,7 @@ export function compatibilityBaseline(source: string): string {
     "mission-diagnostic-isolation.sql",
     "external-agent-lifecycle.sql",
     "pre-mission-external-agent-lifecycle.sql",
+    "flow-name-identity-cutover.sql",
   ].reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}\\r?\\n`, "g"), ""),

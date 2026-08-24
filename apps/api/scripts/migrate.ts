@@ -159,6 +159,9 @@ const externalAgentLifecyclePath = fileURLToPath(
 const preMissionExternalAgentLifecyclePath = fileURLToPath(
   new URL("../migrations/pre-mission-external-agent-lifecycle.sql", import.meta.url),
 );
+const flowNameIdentityCutoverPath = fileURLToPath(
+  new URL("../migrations/flow-name-identity-cutover.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -235,8 +238,10 @@ const preMissionExternalAgentLifecycle = await readFile(
   preMissionExternalAgentLifecyclePath,
   "utf8",
 );
-const operationalEvents = `${operationalEventsSource}\n${missionDiagnosticIsolation}\n${externalAgentLifecycle}\n${preMissionExternalAgentLifecycle}`;
-const missionDiagnosticIsolationUpgrade = `${missionDiagnosticIsolation}\n${externalAgentLifecycle}\n${preMissionExternalAgentLifecycle}`;
+const flowNameIdentityCutover = await readFile(flowNameIdentityCutoverPath, "utf8");
+const preMissionExternalAgentLifecycleUpgrade = `${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutover}`;
+const operationalEvents = `${operationalEventsSource}\n${missionDiagnosticIsolation}\n${externalAgentLifecycle}\n${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutover}`;
+const missionDiagnosticIsolationUpgrade = `${missionDiagnosticIsolation}\n${externalAgentLifecycle}\n${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutover}`;
 const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
 
 const expandFoundation = (source: string) =>
@@ -284,6 +289,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "mission-diagnostic-isolation.sql": missionDiagnosticIsolation,
   "external-agent-lifecycle.sql": externalAgentLifecycle,
   "pre-mission-external-agent-lifecycle.sql": preMissionExternalAgentLifecycle,
+  "flow-name-identity-cutover.sql": flowNameIdentityCutover,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
@@ -305,7 +311,8 @@ const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
               migration !== "operational-events.sql" &&
               migration !== "mission-diagnostic-isolation.sql" &&
               migration !== "external-agent-lifecycle.sql" &&
-              migration !== "pre-mission-external-agent-lifecycle.sql",
+              migration !== "pre-mission-external-agent-lifecycle.sql" &&
+              migration !== "flow-name-identity-cutover.sql",
           ),
     ),
   );
@@ -447,13 +454,25 @@ const fingerprint = digest(baseline);
 
 assertConfiguredMigrationFingerprint(process.env.SCRY_SCHEMA_FINGERPRINT, fingerprint);
 
+const preFlowNameIdentityCutoverFingerprint = digest(
+  expandFoundation(
+    expandBaselineStage(
+      baselineSource,
+      optionalMigrationSources,
+      OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "flow-name-identity-cutover.sql"),
+    ),
+  ),
+);
+
 const preMissionExternalAgentLifecycleFingerprint = digest(
   expandFoundation(
     expandBaselineStage(
       baselineSource,
       optionalMigrationSources,
       OPTIONAL_BASELINE_MIGRATIONS.filter(
-        (name) => name !== "pre-mission-external-agent-lifecycle.sql",
+        (name) =>
+          name !== "pre-mission-external-agent-lifecycle.sql" &&
+          name !== "flow-name-identity-cutover.sql",
       ),
     ),
   ),
@@ -467,7 +486,8 @@ const preExternalAgentLifecycleFingerprint = digest(
       OPTIONAL_BASELINE_MIGRATIONS.filter(
         (name) =>
           name !== "external-agent-lifecycle.sql" &&
-          name !== "pre-mission-external-agent-lifecycle.sql",
+          name !== "pre-mission-external-agent-lifecycle.sql" &&
+          name !== "flow-name-identity-cutover.sql",
       ),
     ),
   ),
@@ -482,7 +502,8 @@ const preMissionDiagnosticIsolationFingerprint = digest(
         (name) =>
           name !== "mission-diagnostic-isolation.sql" &&
           name !== "external-agent-lifecycle.sql" &&
-          name !== "pre-mission-external-agent-lifecycle.sql",
+          name !== "pre-mission-external-agent-lifecycle.sql" &&
+          name !== "flow-name-identity-cutover.sql",
       ),
     ),
   ),
@@ -497,7 +518,8 @@ const preOperationalEventsBaseline = expandFoundation(
         name !== "operational-events.sql" &&
         name !== "mission-diagnostic-isolation.sql" &&
         name !== "external-agent-lifecycle.sql" &&
-        name !== "pre-mission-external-agent-lifecycle.sql",
+        name !== "pre-mission-external-agent-lifecycle.sql" &&
+        name !== "flow-name-identity-cutover.sql",
     ),
   ),
 );
@@ -513,7 +535,8 @@ const preMissionRecordingSelectionBaseline = expandFoundation(
         name !== "operational-events.sql" &&
         name !== "mission-diagnostic-isolation.sql" &&
         name !== "external-agent-lifecycle.sql" &&
-        name !== "pre-mission-external-agent-lifecycle.sql",
+        name !== "pre-mission-external-agent-lifecycle.sql" &&
+        name !== "flow-name-identity-cutover.sql",
     ),
   ),
 );
@@ -614,14 +637,34 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preMissionExternalAgentLifecycleFingerprint) {
+    if (installedFingerprint === preFlowNameIdentityCutoverFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-flow-name-identity-cutover'))",
+        );
+        await client.query(flowNameIdentityCutover);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied Flow name identity cutover ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preMissionExternalAgentLifecycleFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query(
           "SELECT pg_advisory_xact_lock(hashtext('scry-pre-mission-external-agent-lifecycle'))",
         );
-        await client.query(preMissionExternalAgentLifecycle);
+        await client.query(preMissionExternalAgentLifecycleUpgrade);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -642,7 +685,7 @@ try {
           "SELECT pg_advisory_xact_lock(hashtext('scry-external-agent-lifecycle'))",
         );
         await client.query(externalAgentLifecycle);
-        await client.query(preMissionExternalAgentLifecycle);
+        await client.query(preMissionExternalAgentLifecycleUpgrade);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],

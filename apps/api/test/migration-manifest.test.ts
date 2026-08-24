@@ -86,6 +86,7 @@ describe("schema migration manifest", () => {
       expect(source).toContain("external-resource-bindings.sql");
       expect(source).toContain("segmented-flow-successor-checkpoints.sql");
       expect(source).toContain("20260820-0910_scope_unknown_fence_to_resource_mutations.sql");
+      expect(source).toContain("flow-name-identity-cutover.sql");
     }
   });
 

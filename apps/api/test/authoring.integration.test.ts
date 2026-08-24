@@ -99,6 +99,114 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     ).resolves.toMatchObject({ rows: [{ count: 0 }] });
   });
 
+  it("publishes same-named mission-local Flows under distinct Mission owners", async () => {
+    const priorMission = randomUUID();
+    const priorObjective = randomUUID();
+    const priorSession = randomUUID();
+    const name = `Mission-local label ${randomUUID()}`;
+    const plan = currentPlanSchema.parse({
+      name,
+      objective: "Open preview",
+      preconditions: [],
+      allowedOrigins: ["https://example.test"],
+      budgets: { maxActions: 1, maxDurationMs: 10_000, maxNavigations: 1 },
+      checkpoints: [],
+      steps: [
+        {
+          id: "open",
+          title: "Open preview",
+          action: { type: "navigate", url: "https://example.test" },
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "final",
+        },
+      ],
+    });
+
+    await database.query(
+      `INSERT INTO missions(id,project_id,title,original_instruction)
+       VALUES($1,$2,'Prior Mission','Preserve an independently owned Flow')`,
+      [priorMission, project],
+    );
+    await database.query(
+      `INSERT INTO mission_objectives(
+         id,mission_id,title,dependencies,completion_criteria,objective_order)
+       VALUES($1,$2,'Open application','[]','[{"description":"Page opens","required":true}]',0)`,
+      [priorObjective, priorMission],
+    );
+    await database.query(
+      `INSERT INTO agent_sessions(
+         id,mission_id,provider,instruction_snapshot,idempotency_key)
+       VALUES($1,$2,'scry_agent','Prior Mission authoring',$3)`,
+      [priorSession, priorMission, `session-${priorSession}`],
+    );
+
+    const content = {
+      objective: "Open preview",
+      preconditions: [],
+      expectedOutcomes: ["Preview opens"],
+      prohibitedSideEffects: [],
+    };
+    const priorContext = {
+      missionId: priorMission,
+      objectiveId: priorObjective,
+      agentSessionId: priorSession,
+    };
+    const priorDraft = await service.createDraft(principal, {
+      ...priorContext,
+      projectId: project,
+      environmentId: environment,
+      name,
+      description: "Prior Mission representation",
+      content,
+      plan,
+      idempotencyKey: `prior-draft-${randomUUID()}`,
+    });
+    const priorPublication = await service.publish(principal, priorDraft.id!, {
+      ...priorContext,
+      expectedVersion: 1,
+      visibility: "mission_local",
+      purpose: "primary",
+      reason: "Publish prior Mission representation",
+      idempotencyKey: `prior-publish-${randomUUID()}`,
+    });
+
+    const currentDraft = await service.createDraft(principal, {
+      ...context,
+      projectId: project,
+      environmentId: environment,
+      name,
+      description: "Current Mission representation",
+      content,
+      plan,
+      idempotencyKey: `current-draft-${randomUUID()}`,
+    });
+    const currentPublication = await service.publish(principal, currentDraft.id!, {
+      ...context,
+      expectedVersion: 1,
+      visibility: "mission_local",
+      purpose: "primary",
+      reason: "Publish independently owned current Mission representation",
+      idempotencyKey: `current-publish-${randomUUID()}`,
+    });
+
+    expect(currentPublication.flowId).not.toBe(priorPublication.flowId);
+    await expect(
+      database.query(
+        `SELECT id,owner_mission_id AS "ownerMissionId"
+         FROM flows WHERE project_id=$1 AND name=$2 ORDER BY owner_mission_id`,
+        [project, name],
+      ),
+    ).resolves.toMatchObject({
+      rowCount: 2,
+      rows: expect.arrayContaining([
+        { id: priorPublication.flowId, ownerMissionId: priorMission },
+        { id: currentPublication.flowId, ownerMissionId: mission },
+      ]),
+    });
+  });
+
   beforeAll(async () => {
     process.env.DATABASE_URL = process.env.SCRY_AUTHORING_TEST_DATABASE_URL;
     process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS = "0";
