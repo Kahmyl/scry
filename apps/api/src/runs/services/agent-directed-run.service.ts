@@ -28,6 +28,8 @@ import {
 } from "../../runtime/index.js";
 import { commitExecutionReport } from "../../runtime/report-commit.js";
 
+import { decideLifecycleTransition } from "../../lifecycle/lifecycle-transition.policy.js";
+
 type AssociatedAgentDirectedRun = {
   projectId: string;
   missionId: string;
@@ -252,7 +254,23 @@ export class AgentDirectedRunService {
       input.outcome === "passed",
     );
 
-    if (input.outcome === "passed") {
+    const outcomeClassification = finalizeOutcomeClassification(input);
+    const lifecycleDecision = decideLifecycleTransition({
+      kind: "complete_run",
+      state: input.outcome,
+      outcomeClassification,
+      terminalProtectedBoundary: { kind: "not_requested" },
+    });
+
+    if (!lifecycleDecision.accepted) {
+      throw new ConflictException({
+        code: lifecycleDecision.code,
+        mutationOutcome: "not_applied",
+        safeActions: ["get_run"],
+      });
+    }
+
+    if (lifecycleDecision.successorCheckpoint.kind === "required") {
       await this.assertPassEvidenceComplete(runId, run.attemptId);
 
       try {
@@ -271,8 +289,6 @@ export class AgentDirectedRunService {
         });
       }
     }
-
-    const outcomeClassification = finalizeOutcomeClassification(input);
 
     await this.executions.completeAttempt(
       runId,
