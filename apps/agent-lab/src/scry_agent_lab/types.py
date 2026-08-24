@@ -75,7 +75,14 @@ class AgentRunSpec(BaseModel):
 
 
 class AgentRunResult(BaseModel):
-    status: Literal["completed", "failed", "limit_exceeded"]
+    status: Literal[
+        "completed",
+        "blocked",
+        "stopped",
+        "failed",
+        "limit_exceeded",
+        "cancelled",
+    ]
     objective: str
     provider: str
     model: str
@@ -101,8 +108,22 @@ class AgentRunResult(BaseModel):
     final_response: str | None = None
     transcript_path: str
     failure: str | None = None
+    terminal_outcome: Literal[
+        "objective_completed",
+        "blocked_user_authority",
+        "blocked_system",
+        "limit_exceeded",
+        "provider_failure",
+        "cancelled",
+        "model_stopped_without_completion",
+    ]
+    terminal_blocker: dict[str, Any] | None = None
+    completion_evidence: dict[str, Any] | None = None
     termination_category: Literal[
         "completed",
+        "blocked",
+        "model_stopped",
+        "cancelled",
         "harness_limit",
         "provider_error",
         "mcp_error",

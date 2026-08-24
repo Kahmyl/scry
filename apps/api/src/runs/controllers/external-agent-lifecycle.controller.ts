@@ -1,8 +1,10 @@
 import { Body, Controller, ForbiddenException, Inject, Param, Post } from "@nestjs/common";
 import {
   adoptLegacyExternalAgentSessionSchema,
+  startExternalAgentRunSchema,
   terminateExternalAgentRunSchema,
   type AdoptLegacyExternalAgentSessionInput,
+  type StartExternalAgentRunInput,
   type TerminateExternalAgentRunInput,
 } from "@scry/contracts";
 
@@ -16,6 +18,16 @@ export class ExternalAgentLifecycleController {
     @Inject(ExternalAgentLifecycleService)
     private readonly lifecycle: ExternalAgentLifecycleService,
   ) {}
+
+  @Post(":externalRunId/start")
+  start(
+    @Param("externalRunId") externalRunId: string,
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodValidationPipe(startExternalAgentRunSchema))
+    input: StartExternalAgentRunInput,
+  ) {
+    return this.lifecycle.start(principal, externalRunId, input);
+  }
 
   @Post(":externalRunId/heartbeat")
   heartbeat(

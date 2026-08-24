@@ -1,4 +1,5 @@
-export type AgentLabRunStatus = "completed" | "failed" | "limit_exceeded";
+export type AgentLabRunStatus =
+  "completed" | "blocked" | "stopped" | "failed" | "limit_exceeded" | "cancelled";
 
 export type AgentLabRunSpec = Readonly<{
   objective: string;
@@ -41,7 +42,25 @@ export type AgentLabRunResult = Readonly<{
   final_response?: string | null;
   transcript_path: string;
   failure?: string | null;
-  termination_category?: "completed" | "harness_limit" | "provider_error" | "mcp_error" | "unknown";
+  terminal_outcome?:
+    | "objective_completed"
+    | "blocked_user_authority"
+    | "blocked_system"
+    | "limit_exceeded"
+    | "provider_failure"
+    | "cancelled"
+    | "model_stopped_without_completion";
+  terminal_blocker?: Record<string, unknown> | null;
+  completion_evidence?: Record<string, unknown> | null;
+  termination_category?:
+    | "completed"
+    | "blocked"
+    | "model_stopped"
+    | "cancelled"
+    | "harness_limit"
+    | "provider_error"
+    | "mcp_error"
+    | "unknown";
   lifecycle_settlement?: Record<string, unknown> | null;
 }>;
 

@@ -631,7 +631,7 @@ describe("Mission lifecycle regression", () => {
     expect(queries.join("\n")).not.toContain("Execution failed and requires review");
   });
 
-  it("requires continuation when related non-terminal work already exists", async () => {
+  it("requires selection when related non-terminal work already exists", async () => {
     let requestHash = "";
     const query = vi.fn(async (text: string, values: unknown[] = []) => {
       if (text.includes("SELECT 1 FROM projects")) return { rowCount: 1, rows: [{}] };
@@ -641,7 +641,7 @@ describe("Mission lifecycle regression", () => {
       }
       if (text.includes("SELECT request_hash"))
         return { rowCount: 1, rows: [{ requestHash, response: null }] };
-      if (text.includes("SELECT id,title,status,resume_pointer"))
+      if (text.includes("FROM missions mission") && text.includes('"activeExecutionOwnership"'))
         return {
           rowCount: 1,
           rows: [
@@ -649,7 +649,14 @@ describe("Mission lifecycle regression", () => {
               id: "33333333-3333-4333-8333-333333333333",
               title: "Existing",
               status: "planning",
-              resumePointer: null,
+              purpose: "primary",
+              latestExternalRunId: null,
+              latestAgentSessionStatus: null,
+              knownExternalRunIds: [],
+              activeExternalRunIds: [],
+              activeExecutionOwnership: true,
+              unresolvedMutationRisk: false,
+              outstandingReconciliation: false,
             },
           ],
         };
@@ -671,7 +678,7 @@ describe("Mission lifecycle regression", () => {
           idempotencyKey: "mission-regression-1",
         },
       ),
-    ).rejects.toMatchObject({ response: { code: "MISSION_CONTINUATION_REQUIRED" } });
+    ).rejects.toMatchObject({ response: { code: "MISSION_SELECTION_REQUIRED" } });
   });
 
   it("writes the final completed state into an immutable report snapshot", async () => {

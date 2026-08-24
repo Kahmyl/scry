@@ -25,7 +25,12 @@ import {
 } from "@scry/contracts";
 
 import { decryptCredential } from "../../access/index.js";
+import { attachOrCreateExternalAgentSession } from "../../external-agents/index.js";
 import { Database } from "../../infrastructure/index.js";
+import {
+  decideMissionSelection,
+  loadMissionSelectionFacts,
+} from "../../missions/mission-selection-policy.js";
 
 type Query = <T extends QueryResultRow = QueryResultRow>(
   text: string,
@@ -149,18 +154,31 @@ export class AdaptiveSessionRepository {
         input.environmentId,
         input.authoring.initialProtectedReferenceIds,
       );
-      if (!input.mission.distinctReason) {
-        const duplicate = await q(
-          `SELECT id FROM missions WHERE project_id=$1
-          AND status NOT IN ('completed','failed','cancelled')
-          AND (lower(title)=lower($2) OR lower(original_instruction)=lower($3))`,
-          [input.projectId, input.mission.title, input.mission.originalInstruction],
-        );
-        if (duplicate.rowCount)
-          throw new ConflictException({ code: "MISSION_CONTINUATION_REQUIRED" });
-      }
+      const missionCandidates = await loadMissionSelectionFacts(q, {
+        projectId: input.projectId,
+        title: input.mission.title,
+        originalInstruction: input.mission.originalInstruction,
+        limit: 20,
+      });
+      const missionSelection = decideMissionSelection({
+        ...(input.mission.externalRunId
+          ? { currentExternalRunId: input.mission.externalRunId }
+          : {}),
+        intendedPurpose: "primary",
+        distinctAuthorityConfirmed:
+          input.mission.distinctAuthority?.confirmedUserAuthorized === true,
+        candidates: missionCandidates,
+      });
+      if (missionSelection.decision !== "fresh_primary_permitted")
+        throw new ConflictException({
+          code:
+            missionSelection.decision === "continuation_available"
+              ? "MISSION_CONTINUATION_REQUIRED"
+              : (missionSelection.blockerCode ?? "MISSION_SELECTION_REQUIRED"),
+          candidates: missionSelection.candidates,
+          safeActions: missionSelection.safeActions,
+        });
       const missionId = randomUUID();
-      const agentSessionId = randomUUID();
       const objectiveId = randomUUID();
       const flowDraftId = randomUUID();
       const authoringSessionId = randomUUID();
@@ -175,26 +193,19 @@ export class AdaptiveSessionRepository {
           objectiveId,
         ],
       );
-      await q(
-        `INSERT INTO agent_sessions(
-           id,mission_id,provider,model,external_run_id,experiment_id,connection_id,
-           instruction_snapshot,idempotency_key,heartbeat_at,lease_expires_at
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,
-           CASE WHEN $5::uuid IS NULL THEN NULL ELSE now() END,
-           CASE WHEN $5::uuid IS NULL THEN NULL ELSE now()+interval '3 minutes' END
-         )`,
-        [
-          agentSessionId,
-          missionId,
-          input.mission.provider,
-          input.mission.model ?? null,
-          input.mission.externalRunId ?? null,
-          input.mission.experimentId ?? null,
-          input.mission.connectionId ?? null,
-          input.mission.instructionSnapshot,
-          `prepare:${idempotencyKey}`,
-        ],
-      );
+      const { agentSessionId } = await attachOrCreateExternalAgentSession(q, {
+        missionId,
+        projectId: input.projectId,
+        workspaceId,
+        provider: input.mission.provider,
+        ...(input.mission.model ? { model: input.mission.model } : {}),
+        ...(input.mission.externalRunId ? { externalRunId: input.mission.externalRunId } : {}),
+        ...(input.mission.experimentId ? { experimentId: input.mission.experimentId } : {}),
+        ...(input.mission.connectionId ? { connectionId: input.mission.connectionId } : {}),
+        instructionSnapshot: input.mission.instructionSnapshot,
+        idempotencyKey: `prepare:${idempotencyKey}`,
+        leaseMs: 180_000,
+      });
       await q(
         `INSERT INTO mission_objectives(id,mission_id,title,description,dependencies,completion_criteria,objective_order)
         VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7)`,

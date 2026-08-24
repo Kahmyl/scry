@@ -113,8 +113,7 @@ function objective(journey: PerformanceJourney) {
 
 function clean(record: PerformanceAgentIteration) {
   return (
-    record.status === "completed" &&
-    record.completed &&
+    (record.status === "completed" || record.status === "stopped") &&
     record.scenarioCompleted &&
     record.invalidCalls === 0 &&
     record.staleReferenceCalls === 0 &&

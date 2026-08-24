@@ -342,7 +342,15 @@ describe("current Scry MCP surface", () => {
         requiresProjectSelection: false,
         projectCandidates: { items: [], truncated: false },
       },
-      missions: { candidates: { items: [], truncated: false } },
+      missions: {
+        candidates: { items: [], truncated: false },
+        policy: {
+          decision: "selection_required",
+          freshPrimaryMissionPermitted: false,
+          continuationAvailable: false,
+          historicalMissionCount: 0,
+        },
+      },
       credentials: { items: [], truncated: false },
       environments: { items: [], truncated: false },
       authoring: {

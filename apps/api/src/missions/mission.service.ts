@@ -35,11 +35,13 @@ import { missionReportPreviewSchema, publishedMissionReportSchema } from "@scry/
 
 import type { Principal } from "../auth/index.js";
 import { ARTIFACT_STORE } from "../artifacts/index.js";
+import { attachOrCreateExternalAgentSession } from "../external-agents/index.js";
 import { Database } from "../infrastructure/index.js";
 import { ProtectedOperationRepository } from "../runtime/index.js";
 import { resolveMissionRecording } from "./mission-recording-resolver.js";
 import { loadMissionReportCompositionReadiness } from "./mission-report-readiness.js";
 import { insertMissionRelation, loadMissionRelationDisclosures } from "./mission-relations.js";
+import { decideMissionSelection, loadMissionSelectionFacts } from "./mission-selection-policy.js";
 
 type Query = <T extends QueryResultRow = QueryResultRow>(
   text: string,
@@ -94,56 +96,77 @@ export class MissionService {
           replayed: true,
         };
       if (!input.distinctReason) {
-        const candidates = await query<{
-          id: string;
-          title: string;
-          status: string;
-          resumePointer: unknown;
-        }>(
-          `SELECT id,title,status,resume_pointer AS "resumePointer" FROM missions WHERE project_id=$1 AND status NOT IN ('completed','failed','cancelled') AND (lower(title)=lower($2) OR lower(original_instruction)=lower($3)) ORDER BY created_at DESC,id DESC`,
-          [projectId, input.title, input.originalInstruction],
-        );
-        if (candidates.rowCount)
+        const candidates = await loadMissionSelectionFacts(query, {
+          projectId,
+          title: input.title,
+          originalInstruction: input.originalInstruction,
+          limit: 20,
+        });
+        const selection = decideMissionSelection({
+          ...(input.externalRunId ? { currentExternalRunId: input.externalRunId } : {}),
+          intendedPurpose: purpose,
+          candidates,
+        });
+        if (selection.decision !== "fresh_primary_permitted")
           throw new ConflictException({
-            code: "MISSION_CONTINUATION_REQUIRED",
+            code:
+              selection.decision === "continuation_available"
+                ? "MISSION_CONTINUATION_REQUIRED"
+                : (selection.blockerCode ?? "MISSION_SELECTION_REQUIRED"),
             message:
-              "A non-terminal Mission with the same durable identity already exists. Do not infer continuation authority from this collision. Ask the user whether to continue a candidate or create distinct work; call resume_mission only after explicit continuation, or retry start_mission with distinctReason only after explicit new-work choice.",
-            candidates: candidates.rows,
-            safeActions: [
-              "list_missions",
-              "resume_mission",
-              "update_mission",
-              "cancel_mission",
-              "start_distinct_mission",
-            ],
+              "Mission identity is not safely available for fresh primary creation. Inspect the factual candidates and preserve active ownership or mutation reconciliation boundaries.",
+            candidates: selection.candidates.map((candidate) => ({
+              id: candidate.id,
+              title: candidate.title,
+              status: candidate.status,
+              purpose: candidate.purpose,
+              classification: candidate.classification,
+              unresolvedMutationRisk: candidate.unresolvedMutationRisk,
+              outstandingReconciliation: candidate.outstandingReconciliation,
+              continuationAvailable: candidate.continuationAvailable,
+            })),
+            safeActions: selection.safeActions,
+          });
+      } else {
+        const candidates = await loadMissionSelectionFacts(query, {
+          projectId,
+          title: input.title,
+          originalInstruction: input.originalInstruction,
+          limit: 20,
+        });
+        const selection = decideMissionSelection({
+          ...(input.externalRunId ? { currentExternalRunId: input.externalRunId } : {}),
+          intendedPurpose: purpose,
+          distinctAuthorityConfirmed: true,
+          candidates,
+        });
+        if (selection.decision !== "fresh_primary_permitted")
+          throw new ConflictException({
+            code: selection.blockerCode ?? "MISSION_SELECTION_REQUIRED",
+            candidates: selection.candidates,
+            safeActions: selection.safeActions,
           });
       }
       const missionId = randomUUID();
-      const agentSessionId = randomUUID();
       await query(
         `INSERT INTO missions(id,project_id,title,original_instruction,purpose,status) VALUES($1,$2,$3,$4,$5,'planning')`,
         [missionId, projectId, input.title, input.originalInstruction, purpose],
       );
-      await query(
-        `INSERT INTO agent_sessions(
-           id,mission_id,provider,model,external_run_id,experiment_id,connection_id,
-           instruction_snapshot,idempotency_key,heartbeat_at,lease_expires_at
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,
-           CASE WHEN $5::uuid IS NULL THEN NULL ELSE now() END,
-           CASE WHEN $5::uuid IS NULL THEN NULL ELSE now()+($10::text || ' milliseconds')::interval END
-         )`,
-        [
-          agentSessionId,
+      const { agentSessionId, attachedPreMission } = await attachOrCreateExternalAgentSession(
+        query,
+        {
           missionId,
-          input.provider,
-          input.model ?? null,
-          input.externalRunId ?? null,
-          input.experimentId ?? null,
-          input.connectionId ?? null,
-          input.instructionSnapshot,
-          input.idempotencyKey,
-          externalAgentLeaseMs(),
-        ],
+          projectId,
+          workspaceId: workspaceId(principal),
+          provider: input.provider,
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.externalRunId ? { externalRunId: input.externalRunId } : {}),
+          ...(input.experimentId ? { experimentId: input.experimentId } : {}),
+          ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+          instructionSnapshot: input.instructionSnapshot,
+          idempotencyKey: input.idempotencyKey,
+          leaseMs: externalAgentLeaseMs(),
+        },
       );
       await this.activity(
         query,
@@ -159,6 +182,7 @@ export class MissionService {
           ...(input.model ? { model: input.model } : {}),
           ...(input.externalRunId ? { externalRunId: input.externalRunId } : {}),
           ...(input.experimentId ? { experimentId: input.experimentId } : {}),
+          attachedPreMission,
           ...(input.distinctReason
             ? {
                 distinctReason: input.distinctReason,
@@ -464,27 +488,21 @@ export class MissionService {
           status: existing.rows[0]!.status,
           replayed: true,
         };
-      const agentSessionId = randomUUID();
-      await query(
-        `INSERT INTO agent_sessions(
-           id,mission_id,provider,model,external_run_id,experiment_id,connection_id,
-           instruction_snapshot,idempotency_key,heartbeat_at,lease_expires_at
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,
-           CASE WHEN $5::uuid IS NULL THEN NULL ELSE now() END,
-           CASE WHEN $5::uuid IS NULL THEN NULL ELSE now()+($10::text || ' milliseconds')::interval END
-         )`,
-        [
-          agentSessionId,
+      const { agentSessionId, attachedPreMission } = await attachOrCreateExternalAgentSession(
+        query,
+        {
           missionId,
-          input.provider,
-          input.model ?? null,
-          input.externalRunId ?? null,
-          input.experimentId ?? null,
-          input.connectionId ?? null,
-          input.instructionSnapshot,
-          input.idempotencyKey,
-          externalAgentLeaseMs(),
-        ],
+          projectId: mission.projectId,
+          workspaceId: workspaceId(principal),
+          provider: input.provider,
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.externalRunId ? { externalRunId: input.externalRunId } : {}),
+          ...(input.experimentId ? { experimentId: input.experimentId } : {}),
+          ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+          instructionSnapshot: input.instructionSnapshot,
+          idempotencyKey: input.idempotencyKey,
+          leaseMs: externalAgentLeaseMs(),
+        },
       );
       await query(
         `UPDATE missions SET status=CASE WHEN status IN ('planning','blocked') THEN 'running' ELSE status END,updated_at=now(),revision=revision+1 WHERE id=$1`,
@@ -502,6 +520,7 @@ export class MissionService {
           ...(input.model ? { model: input.model } : {}),
           ...(input.externalRunId ? { externalRunId: input.externalRunId } : {}),
           ...(input.experimentId ? { experimentId: input.experimentId } : {}),
+          attachedPreMission,
           continuationAuthority: {
             confirmedUserAuthorized: true,
             selection: input.continuationAuthority.selection,

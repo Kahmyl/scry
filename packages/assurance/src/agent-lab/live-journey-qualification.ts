@@ -9,18 +9,51 @@ export type LiveJourneyDimension = Readonly<{
 
 export type AgentLabLiveJourneyObservation = Readonly<{
   result: AgentLabRunResult;
+  completionEvidence?:
+    | Readonly<{
+        kind: "mission";
+        missionId: string;
+        missionStatus: string;
+        relevantRunsTerminal: boolean;
+        unresolvedTerminalBlocker: boolean;
+        requiredEvidenceFinalized: boolean;
+        reportRequired: boolean;
+        finalReportAvailable: boolean;
+      }>
+    | Readonly<{
+        kind: "scenario_oracle";
+        oracleId: string;
+        scenarioCompleted: boolean;
+      }>;
   semanticOwnership?: "external_agent";
-  lifecycle?: Readonly<{
-    missionStatus: string;
-    objectiveStatus: string;
-    runStatus: string;
-    praxisStatus: string;
-    agentSessionStatus: string;
-  }>;
+  lifecycle?:
+    | Readonly<{
+        stage?: "mission";
+        missionStatus: string;
+        objectiveStatus: string;
+        runStatus: string;
+        praxisStatus: string;
+        agentSessionStatus: string;
+      }>
+    | Readonly<{
+        stage: "pre_mission";
+        missionCreated: false;
+        agentSessionStatus: string;
+        blockerCode: string | null;
+        terminationReason: string;
+      }>;
   causalJoinability?: Readonly<{
+    stage?: "mission" | "pre_mission";
     publicMcpToApi: boolean;
     runtimeToDurableStore: boolean;
     projectDashboardVisible: boolean;
+    identities?: Readonly<{
+      projectId: boolean;
+      correlationId: boolean;
+      agentSessionId: boolean;
+      missionId: boolean;
+      runId: boolean;
+    }>;
   }>;
   privacy?: Readonly<{ protectedValueExposed: boolean; evidenceSanitized: boolean }>;
   finalization?: Readonly<{ evidenceAvailable: boolean; reportFinalized: boolean }>;
@@ -62,8 +95,7 @@ export function evaluateAgentLabLiveJourney(input: {
   const observation = input.observation;
   const result = observation.result;
   const dimensions = {
-    completion:
-      result.status === "completed" && result.completed ? pass() : fail("LIVE_JOURNEY_INCOMPLETE"),
+    completion: qualifyCompletion(result, observation.completionEvidence),
     callQuality:
       result.invalid_calls ||
       result.stale_reference_calls ||
@@ -94,11 +126,7 @@ export function evaluateAgentLabLiveJourney(input: {
         ? pass()
         : inconclusive("SEMANTIC_OWNERSHIP_EVIDENCE_UNAVAILABLE"),
     lifecycleSettlement: qualifyLifecycle(observation.lifecycle),
-    causalJoinability: qualifyBooleans(
-      observation.causalJoinability,
-      "CAUSAL_JOINABILITY_EVIDENCE_UNAVAILABLE",
-      "CAUSAL_CHAIN_INCOMPLETE",
-    ),
+    causalJoinability: qualifyCausalJoinability(observation.causalJoinability),
     privacy: observation.privacy
       ? !observation.privacy.protectedValueExposed && observation.privacy.evidenceSanitized
         ? pass()
@@ -147,6 +175,12 @@ function qualifyLifecycle(
   value: AgentLabLiveJourneyObservation["lifecycle"],
 ): LiveJourneyDimension {
   if (!value) return inconclusive("DURABLE_LIFECYCLE_UNAVAILABLE");
+  if (value.stage === "pre_mission")
+    return value.missionCreated === false &&
+      ["blocked", "completed", "interrupted", "failed"].includes(value.agentSessionStatus) &&
+      Boolean(value.terminationReason)
+      ? pass()
+      : fail("PRE_MISSION_EXTERNAL_AGENT_NOT_SETTLED");
   const settled =
     ["completed", "blocked", "failed", "cancelled"].includes(value.missionStatus) &&
     ["passed", "failed", "blocked", "skipped"].includes(value.objectiveStatus) &&
@@ -154,8 +188,54 @@ function qualifyLifecycle(
       value.runStatus,
     ) &&
     ["completed", "failed", "cancelled", "recovery_required"].includes(value.praxisStatus) &&
-    ["completed", "interrupted", "failed"].includes(value.agentSessionStatus);
+    ["blocked", "completed", "interrupted", "failed"].includes(value.agentSessionStatus);
   return settled ? pass() : fail("OWNED_LIFECYCLE_NOT_SETTLED");
+}
+
+function qualifyCompletion(
+  result: AgentLabRunResult,
+  evidence: AgentLabLiveJourneyObservation["completionEvidence"],
+): LiveJourneyDimension {
+  if (evidence?.kind === "scenario_oracle")
+    return !evidence.scenarioCompleted
+      ? fail("SCENARIO_COMPLETION_ORACLE_FAILED")
+      : ["failed", "limit_exceeded", "cancelled", "blocked"].includes(result.status)
+        ? fail("LIVE_JOURNEY_INCOMPLETE")
+        : pass();
+  if (result.status !== "completed" || !result.completed) return fail("LIVE_JOURNEY_INCOMPLETE");
+  if (!evidence) return fail("COMPLETION_EVIDENCE_UNAVAILABLE");
+  const productCompleted =
+    evidence.missionStatus === "completed" &&
+    evidence.relevantRunsTerminal &&
+    !evidence.unresolvedTerminalBlocker &&
+    evidence.requiredEvidenceFinalized &&
+    (!evidence.reportRequired || evidence.finalReportAvailable);
+  if (!productCompleted) return fail("MISSION_COMPLETION_EVIDENCE_FAILED");
+  return result.status === "completed" &&
+    result.completed &&
+    result.terminal_outcome !== "blocked_user_authority" &&
+    result.terminal_outcome !== "blocked_system"
+    ? pass()
+    : fail("LIVE_JOURNEY_INCOMPLETE");
+}
+
+function qualifyCausalJoinability(
+  value: AgentLabLiveJourneyObservation["causalJoinability"],
+): LiveJourneyDimension {
+  if (!value) return inconclusive("CAUSAL_JOINABILITY_EVIDENCE_UNAVAILABLE");
+  if (!value.publicMcpToApi || !value.runtimeToDurableStore || !value.projectDashboardVisible)
+    return fail("CAUSAL_CHAIN_INCOMPLETE");
+  if (value.stage === "pre_mission") {
+    const identities = value.identities;
+    return identities?.projectId &&
+      identities.correlationId &&
+      identities.agentSessionId &&
+      !identities.missionId &&
+      !identities.runId
+      ? pass()
+      : fail("PRE_MISSION_CAUSAL_IDENTITIES_INCORRECT");
+  }
+  return pass();
 }
 
 function qualifyBooleans(

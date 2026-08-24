@@ -238,6 +238,7 @@ export function performanceAgentIterationFromResult(input: {
     completed: input.result.completed,
     scenarioCompleted: input.scenarioCompleted,
     status: input.result.status,
+    ...(input.result.terminal_outcome ? { terminalOutcome: input.result.terminal_outcome } : {}),
     resultRef: input.resultRef,
     oracleRef: input.oracleRef,
     ...(input.result.failure ? { failure: input.result.failure } : {}),
@@ -333,8 +334,7 @@ function assertComparableAgentIterations(
 
 function isCleanAgentIteration(iteration: PerformanceAgentIteration) {
   return (
-    iteration.status === "completed" &&
-    iteration.completed &&
+    (iteration.status === "completed" || iteration.status === "stopped") &&
     iteration.scenarioCompleted &&
     iteration.invalidCalls === 0 &&
     iteration.staleReferenceCalls === 0 &&

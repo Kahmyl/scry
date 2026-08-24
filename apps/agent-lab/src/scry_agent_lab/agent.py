@@ -70,6 +70,90 @@ def _safe_actions(payload: dict[str, Any]) -> list[str]:
     return [value for value in actions if isinstance(value, str)]
 
 
+def _structured_blocker(
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    structured = payload.get("structuredContent")
+    if not isinstance(structured, dict):
+        return None
+    continuation = structured.get("continuation")
+    if isinstance(continuation, dict):
+        code = continuation.get("blockerCode")
+        if isinstance(code, str):
+            actions = continuation.get("safeActions")
+            return {
+                "code": code,
+                "userAuthorityRequired": bool(
+                    continuation.get("userAuthorityRequired")
+                ),
+                "safeActions": (
+                    [
+                        value
+                        for value in actions
+                        if isinstance(value, str)
+                    ]
+                    if isinstance(actions, list)
+                    else []
+                ),
+            }
+    rejection = structured.get("rejection")
+    if isinstance(rejection, dict):
+        code = rejection.get("code")
+        if isinstance(code, str) and (
+            rejection.get("userAuthorityRequired") is True
+            or "AUTHORITY" in code.upper()
+            or "SELECTION_REQUIRED" in code.upper()
+            or "RECONCILIATION_REQUIRED" in code.upper()
+        ):
+            actions = rejection.get("safeActions")
+            return {
+                "code": code,
+                "userAuthorityRequired": bool(
+                    rejection.get("userAuthorityRequired")
+                    or "AUTHORITY" in code.upper()
+                    or "SELECTION_REQUIRED" in code.upper()
+                ),
+                "safeActions": (
+                    [
+                        value
+                        for value in actions
+                        if isinstance(value, str)
+                    ]
+                    if isinstance(actions, list)
+                    else []
+                ),
+            }
+    return None
+
+
+def _mission_completion_evidence(
+    tool_name: str,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    if tool_name != "publish_mission_report" or payload.get("isError"):
+        return None
+    structured = payload.get("structuredContent")
+    if not isinstance(structured, dict):
+        return None
+    report = structured.get("report")
+    if not isinstance(report, dict):
+        return None
+    report_id = report.get("id")
+    mission_id = report.get("missionId")
+    if (
+        not isinstance(report_id, str)
+        or not isinstance(mission_id, str)
+        or report.get("status") != "published"
+    ):
+        return None
+    return {
+        "kind": "mission_report",
+        "missionId": mission_id,
+        "reportId": report_id,
+        "reportStatus": "published",
+    }
+
+
 async def run_agent(
     *,
     spec: AgentRunSpec,
@@ -135,6 +219,8 @@ async def run_agent(
     successor_observation_ms = 0
     evidence_finalization_ms = 0
     report_composition_ms = 0
+    unresolved_blocker: dict[str, Any] | None = None
+    completion_evidence: dict[str, Any] | None = None
     capabilities_directed = any(
         term in spec.objective.lower()
         for term in ("capability", "compatibility", "release")
@@ -152,12 +238,20 @@ async def run_agent(
         failure: str | None = None,
         final_response: str | None = None,
         termination_category: str = "unknown",
+        terminal_outcome: str,
+        termination_reason_code: str,
     ) -> AgentRunResult:
         settlement = None
         if hasattr(mcp, "terminate"):
             try:
                 settlement = await mcp.terminate(
-                    failure or "EXTERNAL_AGENT_HARNESS_COMPLETED"
+                    termination_reason_code,
+                    (
+                        str(unresolved_blocker["code"])
+                        if unresolved_blocker
+                        else None
+                    ),
+                    terminal_outcome,
                 )
             except Exception as error:
                 settlement = {
@@ -224,6 +318,9 @@ async def run_agent(
             final_response=final_response,
             transcript_path=str(transcript.path),
             failure=failure,
+            terminal_outcome=terminal_outcome,
+            terminal_blocker=unresolved_blocker,
+            completion_evidence=completion_evidence,
             termination_category=termination_category,
             lifecycle_settlement=settlement,
         )
@@ -246,6 +343,8 @@ async def run_agent(
                 completed=False,
                 failure="MAX_WALL_TIME_EXCEEDED",
                 termination_category="harness_limit",
+                terminal_outcome="limit_exceeded",
+                termination_reason_code="MAX_WALL_TIME_EXCEEDED",
             )
         try:
             model_started = time.perf_counter()
@@ -255,6 +354,21 @@ async def run_agent(
             )
             model_inference_ms += int(
                 (time.perf_counter() - model_started) * 1000
+            )
+        except asyncio.CancelledError:
+            model_inference_ms += int(
+                (time.perf_counter() - model_started) * 1000
+            )
+            return await finish(
+                status="cancelled",
+                turns=turn,
+                completed=False,
+                failure="EXTERNAL_AGENT_HARNESS_CANCELLED",
+                termination_category="cancelled",
+                terminal_outcome="cancelled",
+                termination_reason_code=(
+                    "EXTERNAL_AGENT_HARNESS_CANCELLED"
+                ),
             )
         except asyncio.TimeoutError:
             model_inference_ms += int(
@@ -266,6 +380,8 @@ async def run_agent(
                 completed=False,
                 failure="MAX_WALL_TIME_EXCEEDED",
                 termination_category="harness_limit",
+                terminal_outcome="limit_exceeded",
+                termination_reason_code="MAX_WALL_TIME_EXCEEDED",
             )
         except Exception as error:
             model_inference_ms += int(
@@ -281,6 +397,8 @@ async def run_agent(
                 completed=False,
                 failure="MODEL_PROVIDER_ERROR",
                 termination_category="provider_error",
+                terminal_outcome="provider_failure",
+                termination_reason_code="MODEL_PROVIDER_ERROR",
             )
 
         transcript.write(
@@ -321,12 +439,54 @@ async def run_agent(
         messages.append(assistant_message)
 
         if not response.tool_calls:
+            if completion_evidence is not None:
+                return await finish(
+                    status="completed",
+                    turns=turn,
+                    completed=True,
+                    final_response=response.content,
+                    termination_category="completed",
+                    terminal_outcome="objective_completed",
+                    termination_reason_code=(
+                        "EXTERNAL_AGENT_OBJECTIVE_COMPLETED"
+                    ),
+                )
+            if unresolved_blocker is not None:
+                user_authority = bool(
+                    unresolved_blocker.get(
+                        "userAuthorityRequired"
+                    )
+                )
+                return await finish(
+                    status="blocked",
+                    turns=turn,
+                    completed=False,
+                    final_response=response.content,
+                    failure=str(unresolved_blocker["code"]),
+                    termination_category="blocked",
+                    terminal_outcome=(
+                        "blocked_user_authority"
+                        if user_authority
+                        else "blocked_system"
+                    ),
+                    termination_reason_code=(
+                        "EXTERNAL_AGENT_BLOCKED_USER_AUTHORITY"
+                        if user_authority
+                        else "EXTERNAL_AGENT_BLOCKED_SYSTEM"
+                    ),
+                )
             return await finish(
-                status="completed",
+                status="stopped",
                 turns=turn,
-                completed=True,
+                completed=False,
                 final_response=response.content,
-                termination_category="completed",
+                termination_category="model_stopped",
+                terminal_outcome=(
+                    "model_stopped_without_completion"
+                ),
+                termination_reason_code=(
+                    "EXTERNAL_AGENT_MODEL_STOPPED_WITHOUT_COMPLETION"
+                ),
             )
 
         for call in response.tool_calls:
@@ -337,6 +497,8 @@ async def run_agent(
                     completed=False,
                     failure="MAX_TOOL_CALLS_EXCEEDED",
                     termination_category="harness_limit",
+                    terminal_outcome="limit_exceeded",
+                    termination_reason_code="MAX_TOOL_CALLS_EXCEEDED",
                 )
 
             tool_call_count += 1
@@ -400,11 +562,27 @@ async def run_agent(
                         completed=False,
                         failure="MAX_WALL_TIME_EXCEEDED",
                         termination_category="harness_limit",
+                        terminal_outcome="limit_exceeded",
+                        termination_reason_code="MAX_WALL_TIME_EXCEEDED",
                     )
                 try:
                     result = await asyncio.wait_for(
                         mcp.call_tool(call.name, parsed),
                         timeout=remaining,
+                    )
+                except asyncio.CancelledError:
+                    return await finish(
+                        status="cancelled",
+                        turns=turn,
+                        completed=False,
+                        failure=(
+                            "EXTERNAL_AGENT_HARNESS_CANCELLED"
+                        ),
+                        termination_category="cancelled",
+                        terminal_outcome="cancelled",
+                        termination_reason_code=(
+                            "EXTERNAL_AGENT_HARNESS_CANCELLED"
+                        ),
                     )
                 except asyncio.TimeoutError:
                     return await finish(
@@ -413,6 +591,8 @@ async def run_agent(
                         completed=False,
                         failure="MAX_WALL_TIME_EXCEEDED",
                         termination_category="harness_limit",
+                        terminal_outcome="limit_exceeded",
+                        termination_reason_code="MAX_WALL_TIME_EXCEEDED",
                     )
                 except Exception as error:
                     transcript.write(
@@ -430,6 +610,10 @@ async def run_agent(
                         completed=False,
                         failure="MCP_TOOL_TRANSPORT_ERROR",
                         termination_category="mcp_error",
+                        terminal_outcome="blocked_system",
+                        termination_reason_code=(
+                            "MCP_TOOL_TRANSPORT_ERROR"
+                        ),
                     )
                 tool_payload = result.for_model()
                 tool_duration_ms = int(
@@ -489,6 +673,30 @@ async def run_agent(
                     ):
                         stale_reference_calls += 1
 
+                blocker = _structured_blocker(tool_payload)
+                if call.name == "get_operating_context":
+                    unresolved_blocker = blocker
+                elif blocker is not None:
+                    unresolved_blocker = blocker
+                elif (
+                    not tool_payload.get("isError")
+                    and call.name
+                    in {
+                        "start_mission",
+                        "prepare_flow_authoring",
+                        "resume_mission",
+                    }
+                ):
+                    unresolved_blocker = None
+
+                proven_completion = _mission_completion_evidence(
+                    call.name,
+                    tool_payload,
+                )
+                if proven_completion is not None:
+                    completion_evidence = proven_completion
+                    unresolved_blocker = None
+
                 if _observation_tool(call.name):
                     digest_value = hashlib.sha256(
                         json.dumps(
@@ -540,4 +748,6 @@ async def run_agent(
         completed=False,
         failure="MAX_TURNS_EXCEEDED",
         termination_category="harness_limit",
+        terminal_outcome="limit_exceeded",
+        termination_reason_code="MAX_TURNS_EXCEEDED",
     )

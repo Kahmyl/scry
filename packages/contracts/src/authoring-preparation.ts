@@ -7,6 +7,7 @@ import {
   externalAgentExperimentIdSchema,
   externalAgentModelSchema,
   externalAgentRunIdSchema,
+  missionDistinctWorkAuthoritySchema,
   objectiveCriterionSchema,
 } from "./mission.js";
 import { flowDraftPurposeSchema } from "./authoring.js";
@@ -28,8 +29,23 @@ const createPreparationSchema = z
         instructionSnapshot: z.string().trim().min(1).max(20_000),
         connectionId: z.string().trim().min(1).max(500).optional(),
         distinctReason: z.string().trim().min(1).max(2_000).optional(),
+        distinctAuthority: missionDistinctWorkAuthoritySchema.optional(),
       })
-      .strict(),
+      .strict()
+      .superRefine((value, context) => {
+        if (value.distinctReason && !value.distinctAuthority)
+          context.addIssue({
+            code: "custom",
+            path: ["distinctAuthority"],
+            message: "Distinct Mission preparation requires explicit current-user authority.",
+          });
+        if (!value.distinctReason && value.distinctAuthority)
+          context.addIssue({
+            code: "custom",
+            path: ["distinctAuthority"],
+            message: "Distinct authority requires a distinctReason.",
+          });
+      }),
     objective: z
       .object({
         title: z.string().trim().min(1).max(200),

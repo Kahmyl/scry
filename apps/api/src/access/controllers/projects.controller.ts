@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Inject, Param, Post, Query } from "@nestjs/common";
 import {
   createCredentialSchema,
   createEnvironmentSchema,
@@ -14,11 +14,16 @@ import {
 
 import { CurrentPrincipal, type Principal } from "../../auth/index.js";
 import { ZodValidationPipe } from "../../common/validation.pipe.js";
+import { ExternalAgentLifecycleService } from "../../runs/services/external-agent-lifecycle.service.js";
 import { ScryRepository } from "../repositories/scry.repository.js";
 
 @Controller("api/projects")
 export class ProjectsController {
-  constructor(@Inject(ScryRepository) private readonly repository: ScryRepository) {}
+  constructor(
+    @Inject(ScryRepository) private readonly repository: ScryRepository,
+    @Inject(ExternalAgentLifecycleService)
+    private readonly externalAgents: ExternalAgentLifecycleService,
+  ) {}
 
   @Post()
   create(
@@ -34,11 +39,26 @@ export class ProjectsController {
   }
 
   @Post("operating-context")
-  operatingContext(
+  async operatingContext(
     @CurrentPrincipal() principal: Principal,
     @Body(new ZodValidationPipe(getOperatingContextSchema)) input: GetOperatingContextInput,
+    @Headers("x-scry-external-run-id") externalRunId?: string,
   ) {
-    return this.repository.operatingContext(principal, input);
+    const validExternalRunId =
+      externalRunId && uuidPattern.test(externalRunId) ? externalRunId : undefined;
+    const context = await this.repository.operatingContext(
+      principal,
+      input,
+      validExternalRunId ? { externalRunId: validExternalRunId } : {},
+    );
+    if (validExternalRunId && context.selection.project)
+      await this.externalAgents.observeOperatingContext(
+        principal,
+        validExternalRunId,
+        context.selection.project.id,
+        context,
+      );
+    return context;
   }
 
   @Post(":projectId/environments")
@@ -94,3 +114,5 @@ export class ProjectsController {
     return this.repository.listRuns(principal, projectId);
   }
 }
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

@@ -26,6 +26,15 @@ import {
 import type { Principal } from "../../auth/index.js";
 import { Database } from "../../infrastructure/index.js";
 import { encryptCredential } from "../credential.crypto.js";
+import {
+  decideMissionSelection,
+  loadMissionSelectionFacts,
+  type MissionSelectionPurpose,
+} from "../../missions/mission-selection-policy.js";
+
+export type OperatingContextExecutionIdentity = Readonly<{
+  externalRunId?: string;
+}>;
 
 export class ProjectConfigurationRepository {
   constructor(private readonly database: Database) {}
@@ -57,6 +66,7 @@ export class ProjectConfigurationRepository {
   async operatingContext(
     principal: Principal,
     input: GetOperatingContextInput,
+    executionIdentity: OperatingContextExecutionIdentity = {},
   ): Promise<OperatingContext> {
     return this.database.transaction(async (query) => {
       await query.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
@@ -84,7 +94,15 @@ export class ProjectConfigurationRepository {
           requiresProjectSelection: projectCount > 1,
           projectCandidates: { items: projectCandidates, truncated: projectCount > 5 },
         },
-        missions: { candidates: { items: [], truncated: false } },
+        missions: {
+          candidates: { items: [], truncated: false },
+          policy: {
+            decision: "selection_required",
+            freshPrimaryMissionPermitted: false,
+            continuationAvailable: false,
+            historicalMissionCount: 0,
+          },
+        },
         credentials: { items: [], truncated: false },
         environments: { items: [], truncated: false },
         authoring: {
@@ -114,20 +132,27 @@ export class ProjectConfigurationRepository {
       if (!selected) return operatingContextSchema.parse(empty);
 
       const requiredCredentialReferences = input.requiredCredentialReferences;
-      const [missions, credentials, environments, authoring, uncertainAuthoring] =
+      const [missions, credentials, environments, authoring, uncertainAuthoring, selectionFacts] =
         await Promise.all([
           query.query<{
             id: string;
             title: string;
-            status: "planning" | "running" | "blocked" | "awaiting_user";
+            status:
+              | "planning"
+              | "running"
+              | "blocked"
+              | "awaiting_user"
+              | "completed"
+              | "failed"
+              | "cancelled";
+            purpose: MissionSelectionPurpose;
             revision: number;
             currentObjectiveId: string | null;
             resumePointer: unknown;
           }>(
-            `SELECT id,title,status,revision,current_objective_id AS "currentObjectiveId",
+            `SELECT id,title,status,purpose,revision,current_objective_id AS "currentObjectiveId",
                   resume_pointer AS "resumePointer"
            FROM missions WHERE project_id=$1
-             AND status IN ('planning','running','blocked','awaiting_user')
              AND ($2::uuid IS NULL OR id=$2)
            ORDER BY updated_at DESC LIMIT 6`,
             [selected.id, input.missionId ?? null],
@@ -280,12 +305,35 @@ export class ProjectConfigurationRepository {
                FROM ranked WHERE rank<=6 ORDER BY "missionId",rank`,
             [selected.id, input.missionId ?? null],
           ),
+          loadMissionSelectionFacts((text, values) => query.query(text, values), {
+            projectId: selected.id,
+            ...(input.missionId ? { missionId: input.missionId } : {}),
+          }),
         ]);
       const snapshot = { missions, credentials, environments, authoring, uncertainAuthoring };
-      const missionItems = snapshot.missions.rows.slice(0, 5).map((mission) => ({
-        ...mission,
-        resumePointer: projectOperatingResumePointer(mission.resumePointer),
-      }));
+      const missionSelection = decideMissionSelection({
+        ...(executionIdentity.externalRunId
+          ? { currentExternalRunId: executionIdentity.externalRunId }
+          : {}),
+        intendedPurpose: input.intendedPurpose ?? "primary",
+        ...(input.missionId ? { selectedMissionId: input.missionId } : {}),
+        candidates: selectionFacts,
+      });
+      const selectionByMission = new Map(
+        missionSelection.candidates.map((candidate) => [candidate.id, candidate]),
+      );
+      const missionItems = snapshot.missions.rows.slice(0, 5).map((mission) => {
+        const selection = selectionByMission.get(mission.id)!;
+        return {
+          ...mission,
+          resumePointer: projectOperatingResumePointer(mission.resumePointer),
+          classification: selection.classification,
+          activeExecutionOwnership: selection.activeExecutionOwnership,
+          unresolvedMutationRisk: selection.unresolvedMutationRisk,
+          outstandingReconciliation: selection.outstandingReconciliation,
+          continuationAvailable: selection.continuationAvailable,
+        };
+      });
       if (input.missionId && missionItems.length === 0)
         throw new NotFoundException({ code: "MISSION_NOT_FOUND" });
       const selectedMissionId = input.missionId ? missionItems[0]!.id : undefined;
@@ -445,6 +493,14 @@ export class ProjectConfigurationRepository {
             items: missionItems,
             truncated: (snapshot.missions.rowCount ?? snapshot.missions.rows.length) > 5,
           },
+          policy: {
+            decision: missionSelection.decision,
+            freshPrimaryMissionPermitted: missionSelection.freshPrimaryMissionPermitted,
+            continuationAvailable: missionSelection.continuationAvailable,
+            historicalMissionCount: missionSelection.candidates.filter(
+              ({ classification }) => classification === "settled_history",
+            ).length,
+          },
         },
         credentials: {
           items: credentialItems,
@@ -469,9 +525,9 @@ export class ProjectConfigurationRepository {
             uncertain.length === 0 &&
             (recoverable.length > 0 ||
               compatibleReusable.length > 0 ||
-              (missionItems.length === 0 && compatibleEnvironment)),
+              (missionSelection.freshPrimaryMissionPermitted && compatibleEnvironment)),
           userAuthorityRequired:
-            (!selectedMissionId && missionItems.length > 0) ||
+            missionSelection.userAuthorityRequired ||
             (uncertainCandidates.some(
               ({ dispatchSemantics }) => dispatchSemantics === "read_only",
             ) &&
@@ -486,17 +542,19 @@ export class ProjectConfigurationRepository {
                 ]
               : recoverable.length > 0
                 ? ["get_flow_authoring", "advance_flow_authoring"]
-                : missing.length === 0
-                  ? ["advance_flow_authoring"]
-                  : !selectedMissionId && missionItems.length > 0
-                    ? ["list_missions"]
-                    : requirementBlocked
-                      ? ["create_test_environment_or_authorize_credentials"]
-                      : missionItems.length === 0
-                        ? ["prepare_flow_authoring"]
-                        : ["resume_or_start_distinct_mission"],
-          ...(!selectedMissionId && missionItems.length > 0
-            ? { blockerCode: "MISSION_SELECTION_REQUIRED" as const }
+                : !selectedMissionId && missionSelection.freshPrimaryMissionPermitted
+                  ? ["start_mission"]
+                  : !selectedMissionId && missionSelection.decision !== "explicit_mission_selected"
+                    ? [...missionSelection.safeActions]
+                    : missing.length === 0
+                      ? ["advance_flow_authoring"]
+                      : requirementBlocked
+                        ? ["create_test_environment_or_authorize_credentials"]
+                        : missionItems.length === 0
+                          ? ["prepare_flow_authoring"]
+                          : ["resume_or_start_distinct_mission"],
+          ...(!selectedMissionId && missionSelection.blockerCode
+            ? { blockerCode: missionSelection.blockerCode }
             : requirementBlocked
               ? { blockerCode: "REQUIREMENTS_UNSATISFIED" as const }
               : {}),

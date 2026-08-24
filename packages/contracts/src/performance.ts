@@ -146,7 +146,18 @@ export const performanceAgentIterationSchema = z
     unnecessaryCapabilitiesCalls: z.number().int().nonnegative(),
     completed: z.boolean(),
     scenarioCompleted: z.boolean(),
-    status: z.enum(["completed", "failed", "limit_exceeded"]),
+    status: z.enum(["completed", "blocked", "stopped", "failed", "limit_exceeded", "cancelled"]),
+    terminalOutcome: z
+      .enum([
+        "objective_completed",
+        "blocked_user_authority",
+        "blocked_system",
+        "limit_exceeded",
+        "provider_failure",
+        "cancelled",
+        "model_stopped_without_completion",
+      ])
+      .optional(),
     resultRef: z.string().trim().min(1).max(1_000),
     oracleRef: z.string().trim().min(1).max(1_000),
     failure: z.string().trim().min(1).max(500).nullable().optional(),

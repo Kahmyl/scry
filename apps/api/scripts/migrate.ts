@@ -156,6 +156,9 @@ const missionDiagnosticIsolationPath = fileURLToPath(
 const externalAgentLifecyclePath = fileURLToPath(
   new URL("../migrations/external-agent-lifecycle.sql", import.meta.url),
 );
+const preMissionExternalAgentLifecyclePath = fileURLToPath(
+  new URL("../migrations/pre-mission-external-agent-lifecycle.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -228,8 +231,12 @@ const missionRecordingSelection = await readFile(missionRecordingSelectionPath, 
 const operationalEventsSource = await readFile(operationalEventsPath, "utf8");
 const missionDiagnosticIsolation = await readFile(missionDiagnosticIsolationPath, "utf8");
 const externalAgentLifecycle = await readFile(externalAgentLifecyclePath, "utf8");
-const operationalEvents = `${operationalEventsSource}\n${missionDiagnosticIsolation}\n${externalAgentLifecycle}`;
-const missionDiagnosticIsolationUpgrade = `${missionDiagnosticIsolation}\n${externalAgentLifecycle}`;
+const preMissionExternalAgentLifecycle = await readFile(
+  preMissionExternalAgentLifecyclePath,
+  "utf8",
+);
+const operationalEvents = `${operationalEventsSource}\n${missionDiagnosticIsolation}\n${externalAgentLifecycle}\n${preMissionExternalAgentLifecycle}`;
+const missionDiagnosticIsolationUpgrade = `${missionDiagnosticIsolation}\n${externalAgentLifecycle}\n${preMissionExternalAgentLifecycle}`;
 const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
 
 const expandFoundation = (source: string) =>
@@ -276,6 +283,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "operational-events.sql": operationalEventsSource,
   "mission-diagnostic-isolation.sql": missionDiagnosticIsolation,
   "external-agent-lifecycle.sql": externalAgentLifecycle,
+  "pre-mission-external-agent-lifecycle.sql": preMissionExternalAgentLifecycle,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
@@ -296,7 +304,8 @@ const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
               migration !== "mission-recording-selection.sql" &&
               migration !== "operational-events.sql" &&
               migration !== "mission-diagnostic-isolation.sql" &&
-              migration !== "external-agent-lifecycle.sql",
+              migration !== "external-agent-lifecycle.sql" &&
+              migration !== "pre-mission-external-agent-lifecycle.sql",
           ),
     ),
   );
@@ -438,12 +447,28 @@ const fingerprint = digest(baseline);
 
 assertConfiguredMigrationFingerprint(process.env.SCRY_SCHEMA_FINGERPRINT, fingerprint);
 
+const preMissionExternalAgentLifecycleFingerprint = digest(
+  expandFoundation(
+    expandBaselineStage(
+      baselineSource,
+      optionalMigrationSources,
+      OPTIONAL_BASELINE_MIGRATIONS.filter(
+        (name) => name !== "pre-mission-external-agent-lifecycle.sql",
+      ),
+    ),
+  ),
+);
+
 const preExternalAgentLifecycleFingerprint = digest(
   expandFoundation(
     expandBaselineStage(
       baselineSource,
       optionalMigrationSources,
-      OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "external-agent-lifecycle.sql"),
+      OPTIONAL_BASELINE_MIGRATIONS.filter(
+        (name) =>
+          name !== "external-agent-lifecycle.sql" &&
+          name !== "pre-mission-external-agent-lifecycle.sql",
+      ),
     ),
   ),
 );
@@ -455,7 +480,9 @@ const preMissionDiagnosticIsolationFingerprint = digest(
       optionalMigrationSources,
       OPTIONAL_BASELINE_MIGRATIONS.filter(
         (name) =>
-          name !== "mission-diagnostic-isolation.sql" && name !== "external-agent-lifecycle.sql",
+          name !== "mission-diagnostic-isolation.sql" &&
+          name !== "external-agent-lifecycle.sql" &&
+          name !== "pre-mission-external-agent-lifecycle.sql",
       ),
     ),
   ),
@@ -469,7 +496,8 @@ const preOperationalEventsBaseline = expandFoundation(
       (name) =>
         name !== "operational-events.sql" &&
         name !== "mission-diagnostic-isolation.sql" &&
-        name !== "external-agent-lifecycle.sql",
+        name !== "external-agent-lifecycle.sql" &&
+        name !== "pre-mission-external-agent-lifecycle.sql",
     ),
   ),
 );
@@ -484,7 +512,8 @@ const preMissionRecordingSelectionBaseline = expandFoundation(
         name !== "mission-recording-selection.sql" &&
         name !== "operational-events.sql" &&
         name !== "mission-diagnostic-isolation.sql" &&
-        name !== "external-agent-lifecycle.sql",
+        name !== "external-agent-lifecycle.sql" &&
+        name !== "pre-mission-external-agent-lifecycle.sql",
     ),
   ),
 );
@@ -585,7 +614,27 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preExternalAgentLifecycleFingerprint) {
+    if (installedFingerprint === preMissionExternalAgentLifecycleFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-pre-mission-external-agent-lifecycle'))",
+        );
+        await client.query(preMissionExternalAgentLifecycle);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied pre-Mission external-agent lifecycle ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preExternalAgentLifecycleFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -593,6 +642,7 @@ try {
           "SELECT pg_advisory_xact_lock(hashtext('scry-external-agent-lifecycle'))",
         );
         await client.query(externalAgentLifecycle);
+        await client.query(preMissionExternalAgentLifecycle);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],

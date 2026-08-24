@@ -9,6 +9,7 @@ export const operationalEventNameSchema = z.enum([
   "persistence.write_failed",
   "report.finalization_failed",
   "external_agent.lifecycle_settled",
+  "external_agent.blocked",
 ]);
 
 export const operationalEventClassificationSchema = z.enum([

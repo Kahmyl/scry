@@ -133,12 +133,22 @@ const httpServer = createServer(async (request, response) => {
   }
 
   if (session === undefined) {
-    const api = new ScryApiClient(
-      apiBaseUrl,
-      token,
-      publicApiBaseUrl,
-      externalAgentIdentity(request),
-    );
+    const identity = externalAgentIdentity(request);
+    const api = new ScryApiClient(apiBaseUrl, token, publicApiBaseUrl, identity);
+    if (identity.externalRunId) {
+      try {
+        await api.post(`/external-agent-runs/${identity.externalRunId}/start`, {
+          provider: identity.provider,
+          ...(identity.model ? { model: identity.model } : {}),
+          ...(identity.experimentId ? { experimentId: identity.experimentId } : {}),
+          ...(identity.correlationId ? { correlationId: identity.correlationId } : {}),
+        });
+      } catch {
+        await observeRejection(request, 503, "EXTERNAL_AGENT_LIFECYCLE_START_UNAVAILABLE");
+        json(response, 503, mcpError(-32603, "External-agent lifecycle start unavailable."));
+        return;
+      }
+    }
     const server = createScryMcpServer(api);
 
     let initializedSession: McpHttpSession | undefined;

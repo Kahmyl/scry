@@ -159,13 +159,30 @@ class ScryMcpClient:
         except Exception:
             return None
 
-    async def terminate(self, reason_code: str) -> dict[str, Any] | None:
+    async def terminate(
+        self,
+        reason_code: str,
+        blocker_code: str | None = None,
+        terminal_outcome: str | None = None,
+    ) -> dict[str, Any] | None:
         if self._http_client is None or not self.external_run_id:
             return None
         try:
             response = await self._http_client.post(
                 self._control_url("/agent-lab/terminate"),
-                json={"reasonCode": reason_code},
+                json={
+                    "reasonCode": reason_code,
+                    **(
+                        {"blockerCode": blocker_code}
+                        if blocker_code
+                        else {}
+                    ),
+                    **(
+                        {"terminalOutcome": terminal_outcome}
+                        if terminal_outcome
+                        else {}
+                    ),
+                },
             )
             payload = response.json()
             return payload if isinstance(payload, dict) else None

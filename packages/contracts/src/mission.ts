@@ -32,7 +32,13 @@ export const agentProviderSchema = z
 export const externalAgentModelSchema = z.string().trim().min(1).max(200);
 export const externalAgentRunIdSchema = uuidSchema;
 export const externalAgentExperimentIdSchema = z.string().trim().min(1).max(200);
-export const agentSessionStatusSchema = z.enum(["active", "completed", "interrupted", "failed"]);
+export const agentSessionStatusSchema = z.enum([
+  "active",
+  "blocked",
+  "completed",
+  "interrupted",
+  "failed",
+]);
 export const flowVisibilitySchema = z.enum(["reusable", "mission_local", "internal"]);
 export const flowPurposeSchema = z.enum([
   "primary",
@@ -372,6 +378,12 @@ export const createMissionSchema = z
   })
   .strict()
   .superRefine((value, context) => {
+    if (value.purpose !== "primary" && !value.distinctReason)
+      context.addIssue({
+        code: "custom",
+        path: ["distinctReason"],
+        message: "Diagnostic and recovery Missions require explicit distinct-work authority.",
+      });
     if (value.distinctReason && !value.distinctAuthority)
       context.addIssue({
         code: "custom",
@@ -457,9 +469,37 @@ export const externalAgentTerminationReasonSchema = z.enum([
   "EXTERNAL_AGENT_UNRECOVERABLE_FAILURE",
   "EXTERNAL_AGENT_LEASE_EXPIRED",
   "EXTERNAL_AGENT_PROCESS_LOST",
+  "EXTERNAL_AGENT_OBJECTIVE_COMPLETED",
+  "EXTERNAL_AGENT_BLOCKED_USER_AUTHORITY",
+  "EXTERNAL_AGENT_BLOCKED_SYSTEM",
+  "EXTERNAL_AGENT_MODEL_STOPPED_WITHOUT_COMPLETION",
 ]);
+export const externalAgentTerminalOutcomeSchema = z.enum([
+  "objective_completed",
+  "blocked_user_authority",
+  "blocked_system",
+  "limit_exceeded",
+  "provider_failure",
+  "cancelled",
+  "model_stopped_without_completion",
+]);
+export const startExternalAgentRunSchema = z
+  .object({
+    provider: agentProviderSchema,
+    model: externalAgentModelSchema.optional(),
+    experimentId: externalAgentExperimentIdSchema.optional(),
+    correlationId: externalAgentRunIdSchema.optional(),
+  })
+  .strict();
 export const terminateExternalAgentRunSchema = z
-  .object({ reasonCode: externalAgentTerminationReasonSchema })
+  .object({
+    reasonCode: externalAgentTerminationReasonSchema,
+    terminalOutcome: externalAgentTerminalOutcomeSchema.optional(),
+    blockerCode: z
+      .string()
+      .regex(/^[A-Z][A-Z0-9_]{0,119}$/)
+      .optional(),
+  })
   .strict();
 export const adoptLegacyExternalAgentSessionSchema = terminateExternalAgentRunSchema
   .extend({
@@ -956,6 +996,7 @@ export type UpdateMissionInput = z.infer<typeof updateMissionSchema>;
 export type StartAgentSessionInput = z.infer<typeof startAgentSessionSchema>;
 export type EndAgentSessionInput = z.infer<typeof endAgentSessionSchema>;
 export type TerminateExternalAgentRunInput = z.infer<typeof terminateExternalAgentRunSchema>;
+export type StartExternalAgentRunInput = z.infer<typeof startExternalAgentRunSchema>;
 export type AdoptLegacyExternalAgentSessionInput = z.infer<
   typeof adoptLegacyExternalAgentSessionSchema
 >;
