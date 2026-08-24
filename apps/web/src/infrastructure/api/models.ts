@@ -784,6 +784,44 @@ export type Report = {
   privacy: {
     intervals: Array<Record<string, unknown>>;
     operations: Array<Record<string, unknown>>;
+    mutationReceipts: Array<{
+      receiptId: string;
+      operationId: string;
+      owner: { kind: "authoring_session" | "run"; id: string };
+      correlation: {
+        projectId: string;
+        environmentId: string;
+        missionId: string;
+        objectiveId: string;
+        agentSessionId: string;
+        runId?: string;
+        praxisSessionId?: string;
+      };
+      operationClass: "protected_mutation" | "protected_read";
+      dispatch: { state: "not_started" | "authorized" | "started" | "acknowledged" };
+      persistence: {
+        state: "not_started" | "running" | "committed" | "failed" | "uncertain";
+        references: Array<{
+          reference: string;
+          classification: "public" | "protected";
+          credentialId?: string;
+          valueId?: string;
+          scope: "run" | "project";
+        }>;
+      };
+      mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
+      reconciliation: {
+        state:
+          | "not_configured"
+          | "pending"
+          | "proven_applied"
+          | "proven_not_applied"
+          | "unknown"
+          | "failed";
+      };
+      redispatchAllowed: boolean;
+      reasonCodes: string[];
+    }>;
     credentialIncidents: Array<Record<string, unknown>>;
   };
   veil: VeilRunObservation;

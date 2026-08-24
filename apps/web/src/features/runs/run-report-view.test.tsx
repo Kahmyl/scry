@@ -66,6 +66,30 @@ describe("Run report view", () => {
       expect(view.container.querySelector<HTMLDetailsElement>("#advanced")?.open).toBe(true),
     );
   });
+
+  it("renders only the safe protected-operation receipt projection", async () => {
+    const report = reportFixture();
+    Object.assign(report.privacy.mutationReceipts[0]!, {
+      plaintext: "MUST_NOT_RENDER_PROTECTED_VALUE",
+    });
+    vi.mocked(api).mockResolvedValue(report);
+    const view = render(<ReportView runId="run-1" onBack={vi.fn()} onOpenReport={vi.fn()} />);
+
+    await screen.findByText("Fixture run");
+    fireEvent.click(screen.getByText("Advanced").closest("summary")!);
+
+    expect(screen.getByText("Protected operations")).toBeTruthy();
+    expect(screen.getByText("1 RECEIPTS")).toBeTruthy();
+    expect(screen.getByText("protected mutation · applied")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "dispatch acknowledged · persistence committed · reconciliation proven applied",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("redispatch blocked · 2 stored references")).toBeTruthy();
+    expect(screen.getByText(/client_secret · protected · project · credential-1/)).toBeTruthy();
+    expect(screen.queryByText("MUST_NOT_RENDER_PROTECTED_VALUE")).toBeNull();
+  });
 });
 
 function reportFixture(): Report {
@@ -91,7 +115,50 @@ function reportFixture(): Report {
     steps: [],
     artifacts: [],
     artifactTimeline: [],
-    privacy: { intervals: [], operations: [], credentialIncidents: [] },
+    privacy: {
+      intervals: [],
+      operations: [],
+      mutationReceipts: [
+        {
+          receiptId: "receipt-1",
+          operationId: "operation-1",
+          owner: { kind: "authoring_session", id: "praxis-1" },
+          correlation: {
+            projectId: "project-1",
+            environmentId: "environment-1",
+            missionId: "mission-1",
+            objectiveId: "objective-1",
+            agentSessionId: "agent-1",
+            runId: "run-1",
+            praxisSessionId: "praxis-1",
+          },
+          operationClass: "protected_mutation",
+          dispatch: { state: "acknowledged" },
+          persistence: {
+            state: "committed",
+            references: [
+              {
+                reference: "client_id",
+                classification: "public",
+                valueId: "value-1",
+                scope: "project",
+              },
+              {
+                reference: "client_secret",
+                classification: "protected",
+                credentialId: "credential-1",
+                scope: "project",
+              },
+            ],
+          },
+          mutationOutcome: "applied",
+          reconciliation: { state: "proven_applied" },
+          redispatchAllowed: false,
+          reasonCodes: [],
+        },
+      ],
+      credentialIncidents: [],
+    },
     veil: {
       schemaVersion: 1,
       effectiveProfile: "balanced",

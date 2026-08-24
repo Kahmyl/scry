@@ -653,6 +653,39 @@ function AdvancedRunDetails({
         </section>
         <section className="panel">
           <PanelHeader
+            title="Protected operations"
+            kicker={`${report.privacy.mutationReceipts.length} RECEIPTS`}
+          />
+          <div className="diagnostics">
+            {report.privacy.mutationReceipts.map((receipt) => (
+              <div key={receipt.receiptId}>
+                <ShieldCheck size={15} />
+                <div>
+                  <strong>
+                    {receipt.operationClass.replaceAll("_", " ")} · {receipt.mutationOutcome}
+                  </strong>
+                  <span>
+                    dispatch {receipt.dispatch.state.replaceAll("_", " ")} · persistence{" "}
+                    {receipt.persistence.state.replaceAll("_", " ")} · reconciliation{" "}
+                    {receipt.reconciliation.state.replaceAll("_", " ")}
+                  </span>
+                  <code>
+                    {receipt.redispatchAllowed ? "redispatch allowed" : "redispatch blocked"} ·{" "}
+                    {receipt.persistence.references.length} stored references
+                  </code>
+                  {receipt.persistence.references.map((reference) => (
+                    <code key={`${receipt.receiptId}-${reference.reference}`}>
+                      {reference.reference} · {reference.classification} · {reference.scope} ·{" "}
+                      {reference.credentialId ?? reference.valueId ?? "stored"}
+                    </code>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="panel">
+          <PanelHeader
             title="Praxis interactions"
             kicker={`${report.praxis.transactions.length} TRANSACTIONS · ${report.praxis.findings.length} FINDINGS`}
           />
