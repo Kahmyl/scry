@@ -175,12 +175,17 @@ export function createAuthoringRuntimeOwner(options: {
         };
 
         owned.commandPoll = setInterval(
-          () => void processNextCommand(runtime.browserLeaseId),
+          () =>
+            void processNextCommand(runtime.browserLeaseId).catch(() =>
+              reportPollingFailure("authoring.command.poll_failed"),
+            ),
           options.pollMs,
         );
 
         sessions.set(runtime.browserLeaseId, owned);
-        await processNextCommand(runtime.browserLeaseId);
+        await processNextCommand(runtime.browserLeaseId).catch(() =>
+          reportPollingFailure("authoring.command.poll_failed"),
+        );
       } catch (error) {
         await session?.close().catch(() => undefined);
 
@@ -699,6 +704,17 @@ export function createAuthoringRuntimeOwner(options: {
       : perform();
   }
 
+  function reportPollingFailure(
+    event: "authoring.runtime.poll_failed" | "authoring.command.poll_failed",
+  ) {
+    process.stderr.write(
+      `${JSON.stringify({
+        event,
+        code: "AUTHORING_POLL_DEPENDENCY_UNAVAILABLE",
+      })}\n`,
+    );
+  }
+
   return {
     inspect,
     async start() {
@@ -706,8 +722,12 @@ export function createAuthoringRuntimeOwner(options: {
         return;
       }
 
-      await claimAvailable();
-      poll = setInterval(() => void claimAvailable(), options.pollMs);
+      await claimAvailable().catch(() => reportPollingFailure("authoring.runtime.poll_failed"));
+      poll = setInterval(
+        () =>
+          void claimAvailable().catch(() => reportPollingFailure("authoring.runtime.poll_failed")),
+        options.pollMs,
+      );
     },
 
     async close() {

@@ -158,6 +158,49 @@ describe("authoring runtime owner", () => {
     );
   });
 
+  it("contains a transient runtime-claim dependency failure and retries on the next poll", async () => {
+    const { owner, repository } = harness();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    repository.claimNext
+      .mockReset()
+      .mockRejectedValueOnce(new Error("Connection terminated due to connection timeout"))
+      .mockResolvedValueOnce(runtime)
+      .mockResolvedValue(undefined);
+
+    await expect(owner.start()).resolves.toBeUndefined();
+
+    await vi.waitFor(() => expect(repository.activate).toHaveBeenCalledOnce());
+
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("authoring.runtime.poll_failed"));
+
+    await owner.close();
+    stderr.mockRestore();
+  });
+
+  it("contains a transient command-poll dependency failure without discarding the owned session", async () => {
+    const claimed = command("observe_document");
+    const { owner, repository, commands, close } = harness();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    commands.claimNext
+      .mockReset()
+      .mockRejectedValueOnce(new Error("Connection terminated due to connection timeout"))
+      .mockResolvedValueOnce(claimed)
+      .mockResolvedValue(undefined);
+
+    await owner.start();
+
+    await vi.waitFor(() => expect(commands.complete).toHaveBeenCalledOnce());
+
+    expect(repository.activate).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("authoring.command.poll_failed"));
+
+    await owner.close();
+    stderr.mockRestore();
+  });
+
   it("executes an observation command and persists its safe state", async () => {
     const claimed = command("observe_document");
     const { owner, repository, commands, observeDocument } = harness({
