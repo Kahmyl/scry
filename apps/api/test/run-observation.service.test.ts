@@ -99,6 +99,53 @@ describe("canonical run observation", () => {
     });
   });
 
+  it("keeps the public artifact manifest bounded without projecting evidence authority", async () => {
+    const repository = { getRun: vi.fn().mockResolvedValue(failedRun()) };
+    const regions = Array.from({ length: 1_786 }, (_, index) => ({
+      id: `region-${index}`,
+      masked: true,
+      bounds: { x: index, y: index, width: 10, height: 10 },
+    }));
+    const database = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes("FROM artifacts WHERE"))
+          return {
+            rows: [
+              {
+                ...rowsFor(text).rows[0],
+                kind: "screenshot",
+                contentType: "image/png",
+                observation: {
+                  documentIdentity: "https://example.test/orders",
+                  revision: 2,
+                  screenshotMode: "viewport-fallback",
+                  regions,
+                  veilManifest: { contentDigest: "b".repeat(64) },
+                  veilSanitation: { structuredEvidence: "sanitized" },
+                  veilAdmissionToken: "internal-admission-authority",
+                },
+              },
+            ],
+          };
+        return rowsFor(text);
+      }),
+    };
+    const service = new RunObservationService(database as never, repository as never, receipts());
+
+    const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
+
+    expect(observation.artifacts[0]?.observation).toMatchObject({
+      documentIdentity: "https://example.test/orders",
+      revision: 2,
+      screenshotMode: "viewport-fallback",
+      visualRegionCount: 1_786,
+      omittedFields: ["regions", "veilAdmissionToken"],
+    });
+    expect(observation.artifacts[0]?.observation).not.toHaveProperty("regions");
+    expect(observation.artifacts[0]?.observation).not.toHaveProperty("veilAdmissionToken");
+    expect(JSON.stringify(observation.artifacts[0]).length).toBeLessThan(10_000);
+  });
+
   it("scopes protected operations and credential incidents to the current attempt", async () => {
     const repository = { getRun: vi.fn().mockResolvedValue(failedRun()) };
     const database = { query: vi.fn(async (text: string) => rowsFor(text)) };

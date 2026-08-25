@@ -12,6 +12,8 @@ import {
   type ReconcileAdaptiveOperationInput,
 } from "@scry/contracts";
 
+import { readPraxisPublicValueInputSchema, type ReadPraxisPublicValueInput } from "@scry/contracts";
+
 import { CurrentPrincipal, type Principal } from "../auth/index.js";
 import { ZodValidationPipe } from "../common/validation.pipe.js";
 import { MissionFlowAuthoringService } from "./mission-flow-authoring.service.js";
@@ -96,6 +98,16 @@ export class PraxisSessionController {
   @Get(":sessionId/observation")
   observe(@CurrentPrincipal() principal: Principal, @Param("sessionId") sessionId: string) {
     return this.sessions.observe(principal, sessionId);
+  }
+
+  @Post(":sessionId/public-values/read")
+  readPublicValue(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(readPraxisPublicValueInputSchema))
+    input: ReadPraxisPublicValueInput,
+  ) {
+    return this.sessions.readPublicValue(principal, sessionId, input);
   }
 
   @Post(":sessionId/reconcile-unknown")

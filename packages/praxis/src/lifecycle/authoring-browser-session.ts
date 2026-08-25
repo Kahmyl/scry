@@ -14,6 +14,7 @@ import {
 } from "../browser-runtime-artifacts.js";
 import { installPraxisInitScript } from "../evidence/browser-evidence.js";
 import { observeSemanticPageContext } from "../page-context.js";
+import { readPraxisPublicValue, type PraxisPublicValueReadInput } from "../public-value.js";
 import { registerPraxisVeilAuthority } from "../veil-bridge.js";
 import { closePraxisBrowser, closePraxisContext } from "./browser-session.js";
 import { installThirdPartyScriptFence, waitForPraxisLoadState } from "./navigation.js";
@@ -55,6 +56,9 @@ export type AuthoringBrowserSession<Report = unknown> = {
     url: string;
     semanticPageContext: NonNullable<OperationOutcome["semanticPageContext"]>;
   }>;
+  readPublicValue(
+    input: PraxisPublicValueReadInput,
+  ): Promise<import("../public-value.js").PraxisPublicValueRead>;
   interact(
     action: CurrentAction,
     context?: {
@@ -244,6 +248,16 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
       },
 
       observeDocument: observe,
+
+      async readPublicValue(input) {
+        if (authorityCrashed()) {
+          throw new PraxisBrowserAuthorityLostError();
+        }
+        if (lifecycle !== "active" && lifecycle !== "suspended") {
+          throw new Error("AUTHORING_BROWSER_SESSION_NOT_OBSERVABLE");
+        }
+        return readPraxisPublicValue(page!, input);
+      },
 
       async interact(candidate, interactionContext = {}) {
         if (authorityCrashed()) {

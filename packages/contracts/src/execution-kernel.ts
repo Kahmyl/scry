@@ -263,6 +263,33 @@ export const operationOutcomeSchema = z
               .strict(),
           )
           .max(64),
+        readableValues: z
+          .array(
+            z
+              .object({
+                reference: z.string().regex(/^context-value-[a-f0-9]{32}$/),
+                kind: z.enum(["code", "pre", "output", "annotated"]),
+                classification: z.enum(["public", "protected", "unknown"]),
+                context: z.string().trim().min(1).max(160).optional(),
+              })
+              .strict(),
+          )
+          .max(24)
+          .default([]),
+        readableValueCompleteness: z
+          .object({
+            kind: z.literal("bounded"),
+            observed: z.number().int().nonnegative(),
+            returned: z.number().int().nonnegative().max(24),
+            truncated: z.boolean(),
+          })
+          .strict()
+          .default({
+            kind: "bounded",
+            observed: 0,
+            returned: 0,
+            truncated: false,
+          }),
         containers: z
           .array(
             z
@@ -419,6 +446,51 @@ export const operationOutcomeSchema = z
       .optional(),
   })
   .strict();
+
+export const readPraxisPublicValueInputSchema = z
+  .object({
+    reference: z.string().regex(/^context-value-[a-f0-9]{32}$/),
+    offset: z.number().int().min(0).max(2_097_152).default(0),
+    maxBytes: z.number().int().min(1).max(4_096).default(2_048),
+  })
+  .strict();
+
+export const readPraxisPublicValueResultSchema = z
+  .object({
+    reference: z.string().regex(/^context-value-[a-f0-9]{32}$/),
+    classification: z.literal("public"),
+    provenance: z
+      .object({
+        pageId: z.string().trim().min(1).max(120),
+        frameId: z.string().trim().min(1).max(120),
+        documentEpoch: z.number().int().nonnegative(),
+        documentIdentity: z.string().trim().min(1).max(2_000),
+      })
+      .strict(),
+    element: z
+      .object({
+        kind: z.enum(["code", "pre", "output", "annotated"]),
+        context: z.string().trim().min(1).max(160).optional(),
+      })
+      .strict(),
+    text: z.string().max(4_096),
+    offset: z.number().int().nonnegative(),
+    returnedBytes: z.number().int().nonnegative().max(4_096),
+    totalBytes: z.number().int().nonnegative().max(2_097_152),
+    truncated: z.boolean(),
+    nextOffset: z.number().int().positive().max(2_097_152).optional(),
+    admission: z
+      .object({
+        admissionRevision: z.number().int().min(1),
+        contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
+        admissionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type ReadPraxisPublicValueInput = z.infer<typeof readPraxisPublicValueInputSchema>;
+export type ReadPraxisPublicValueResult = z.infer<typeof readPraxisPublicValueResultSchema>;
 
 export const executionRequestSchema = z
   .object({

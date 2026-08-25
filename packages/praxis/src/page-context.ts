@@ -5,6 +5,7 @@ import type { ElementHandle, Locator, Page } from "playwright";
 
 import { observationIdentity, PraxisDocumentEpoch, PraxisDocumentIdentity } from "./observation.js";
 import { PraxisTargetHandle } from "./observation.js";
+import { observePublicValueCandidates } from "./public-value.js";
 
 type SemanticPageContext = NonNullable<OperationOutcome["semanticPageContext"]>;
 
@@ -791,9 +792,12 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
   ]);
   contextControls.set(page, registered);
   contextContainers.set(page, registeredContainers);
+  const readableValueObservation = await observePublicValueCandidates(page);
   const pageId = observationIdentity(page, { kind: "page" }, "public", documentEpoch, frame).pageId;
   return {
     schemaVersion: 2,
+    readableValues: readableValueObservation.values.map((value) => ({ ...value })),
+    readableValueCompleteness: readableValueObservation.completeness,
     authority: {
       pageId,
       documentEpoch,

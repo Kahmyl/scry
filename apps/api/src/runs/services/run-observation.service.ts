@@ -205,7 +205,7 @@ export class RunObservationService {
       reasonCode: artifact.reasonCode ?? null,
       sizeBytes: artifact.sizeBytes ?? null,
       checksumSha256: artifact.checksumSha256 ?? null,
-      observation: artifact.observation ?? {},
+      observation: publicArtifactObservation(artifact.observation),
       resource: artifact.availability === "available" ? `scry://artifact/${artifact.id}` : null,
     }));
     const artifactTimeline = timelineRows.rows.map(({ metadata, id, sequence, type }) => ({
@@ -288,6 +288,36 @@ export class RunObservationService {
       },
     });
   }
+}
+
+const publicArtifactObservationKeys = new Set([
+  "bytesDestroyed",
+  "captureIntent",
+  "documentIdentity",
+  "millisecondsSinceAction",
+  "readiness",
+  "reasonCode",
+  "revision",
+  "screenshotMode",
+  "stabilization",
+  "timelineEntry",
+  "veilManifest",
+  "veilSanitation",
+  "visualRedaction",
+]);
+
+function publicArtifactObservation(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const source = value as Record<string, unknown>;
+  const observation = Object.fromEntries(
+    Object.entries(source).filter(([key]) => publicArtifactObservationKeys.has(key)),
+  );
+  if (Array.isArray(source.regions)) observation.visualRegionCount = source.regions.length;
+  const omittedFields = Object.keys(source)
+    .filter((key) => !publicArtifactObservationKeys.has(key))
+    .sort();
+  if (omittedFields.length) observation.omittedFields = omittedFields;
+  return observation;
 }
 
 function normalizeObservedRun(run: Record<string, any>): Record<string, any> {
