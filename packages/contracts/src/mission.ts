@@ -454,6 +454,75 @@ export const startAgentSessionSchema = z
   })
   .strict();
 
+export const missionAgentSessionReplayFactsSchema = z
+  .object({
+    idempotencyScope: z.literal("mission_agent_session"),
+    owner: z
+      .object({
+        missionId: uuidSchema,
+        agentSessionId: uuidSchema,
+      })
+      .strict(),
+    sessionTerminal: z.boolean(),
+    requiresFreshIdempotencyKey: z.boolean(),
+    safeActions: z
+      .array(z.enum(["get_mission", "resume_mission"]))
+      .min(1)
+      .max(2),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.sessionTerminal !== value.requiresFreshIdempotencyKey) {
+      context.addIssue({
+        code: "custom",
+        path: ["requiresFreshIdempotencyKey"],
+        message: "a terminal replay requires a fresh idempotency key; an active replay does not",
+      });
+    }
+  });
+
+export const startedAgentSessionSchema = z
+  .object({
+    missionId: uuidSchema,
+    agentSessionId: uuidSchema,
+    status: agentSessionStatusSchema,
+    replayed: z.boolean(),
+    replay: missionAgentSessionReplayFactsSchema.optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.replayed !== Boolean(value.replay)) {
+      context.addIssue({
+        code: "custom",
+        path: ["replay"],
+        message: "replay facts must exist exactly when replayed is true",
+      });
+    }
+
+    if (!value.replay) return;
+
+    if (
+      value.replay.owner.missionId !== value.missionId ||
+      value.replay.owner.agentSessionId !== value.agentSessionId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["replay", "owner"],
+        message: "replay owner must identify the returned Mission agent session",
+      });
+    }
+
+    if (value.replay.sessionTerminal !== (value.status !== "active")) {
+      context.addIssue({
+        code: "custom",
+        path: ["replay", "sessionTerminal"],
+        message: "replay terminality must match the returned agent-session status",
+      });
+    }
+  });
+
+export type StartedAgentSession = z.infer<typeof startedAgentSessionSchema>;
+
 export const endAgentSessionSchema = z
   .object({ status: agentSessionStatusSchema.exclude(["active"]) })
   .strict();

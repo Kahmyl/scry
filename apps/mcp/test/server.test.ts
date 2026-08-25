@@ -466,6 +466,7 @@ describe("current Scry MCP surface", () => {
                 missionId: context.missionId,
                 agentSessionId: context.agentSessionId,
                 status: "active",
+                replayed: false,
               }
             : safeMission;
         return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));

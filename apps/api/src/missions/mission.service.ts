@@ -1,3 +1,4 @@
+import { startedAgentSessionSchema } from "@scry/contracts";
 import { composeMissionEvidence, digestMissionReportComposition } from "@scry/chronicle";
 import type { ArtifactStore } from "@scry/chronicle/legacy";
 import {
@@ -477,17 +478,11 @@ export class MissionService {
             "A terminal Mission cannot start a new agent session through ordinary continuation. Reopen it explicitly before continuing.",
         });
 
-      const existing = await query(
+      const existing = await query<{ id: string; status: string }>(
         `SELECT id,status FROM agent_sessions WHERE mission_id=$1 AND idempotency_key=$2`,
         [missionId, input.idempotencyKey],
       );
-      if (existing.rowCount)
-        return {
-          missionId,
-          agentSessionId: existing.rows[0]!.id,
-          status: existing.rows[0]!.status,
-          replayed: true,
-        };
+      if (existing.rowCount) return projectMissionAgentSessionReplay(missionId, existing.rows[0]!);
       const resumedObjectiveId = await this.reopenInterruptedObjective(query, mission);
       const { agentSessionId, attachedPreMission } = await attachOrCreateExternalAgentSession(
         query,
@@ -547,7 +542,12 @@ export class MissionService {
           ...(resumedObjectiveId ? { resumedObjectiveId } : {}),
         },
       );
-      return { missionId, agentSessionId, status: "active", replayed: false };
+      return startedAgentSessionSchema.parse({
+        missionId,
+        agentSessionId,
+        status: "active",
+        replayed: false,
+      });
     });
   }
 
@@ -2906,4 +2906,28 @@ function externalAgentLeaseMs() {
   if (!Number.isSafeInteger(value) || value < 30_000 || value > 3_600_000)
     throw new Error("SCRY_EXTERNAL_AGENT_LEASE_MS_INVALID");
   return value;
+}
+
+export function projectMissionAgentSessionReplay(
+  missionId: string,
+  session: { id: string; status: string },
+) {
+  const sessionTerminal = session.status !== "active";
+
+  return startedAgentSessionSchema.parse({
+    missionId,
+    agentSessionId: session.id,
+    status: session.status,
+    replayed: true,
+    replay: {
+      idempotencyScope: "mission_agent_session",
+      owner: {
+        missionId,
+        agentSessionId: session.id,
+      },
+      sessionTerminal,
+      requiresFreshIdempotencyKey: sessionTerminal,
+      safeActions: sessionTerminal ? ["get_mission", "resume_mission"] : ["get_mission"],
+    },
+  });
 }
