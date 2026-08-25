@@ -37,6 +37,7 @@ import { PraxisRuntimeRepository } from "./praxis/index.js";
 import { RunQueueService } from "./runtime/index.js";
 import { RedisConnection } from "./infrastructure/redis.js";
 import { createAuthoringRuntimeOwner, createWorkerFleet } from "./workers/index.js";
+import { waitForHealthyObservationRuntime } from "./workers/observation-runtime-readiness.js";
 import { learnedInteractionsFromAction } from "./authoring/learned-interaction.js";
 import {
   createCalibrationProcessor,
@@ -96,8 +97,12 @@ const praxisVersions = {
   scoringPolicyVersion: PRAXIS_SCORING_POLICY_VERSION,
 };
 
-const observationRuntime = await verifyBrowserObservationRuntime(browserChannel, () =>
-  nativeBrowser.openBrowser(),
+const observationRuntime = await waitForHealthyObservationRuntime(
+  () => verifyBrowserObservationRuntime(browserChannel, () => nativeBrowser.openBrowser()),
+  {
+    timeoutMs: 45_000,
+    retryIntervalMs: 1_000,
+  },
 );
 if (!observationRuntime.healthy) {
   throw new Error(
