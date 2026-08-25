@@ -14,6 +14,10 @@ import {
 } from "../browser-runtime-artifacts.js";
 import { installPraxisInitScript } from "../evidence/browser-evidence.js";
 import { observeSemanticPageContext } from "../page-context.js";
+import {
+  closePraxisReadOnlyCdpSensors,
+  enrichPraxisSemanticPageContextWithReadOnlyCdp,
+} from "./read-only-cdp-sensor.js";
 import { readPraxisPublicValue, type PraxisPublicValueReadInput } from "../public-value.js";
 import { registerPraxisVeilAuthority } from "../veil-bridge.js";
 import { closePraxisBrowser, closePraxisContext } from "./browser-session.js";
@@ -217,7 +221,11 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
           epoch += 1;
         }
 
-        const semanticPageContext = await observeSemanticPageContext(page!);
+        const semanticPageContext = await enrichPraxisSemanticPageContextWithReadOnlyCdp(
+          context!,
+          page!,
+          await observeSemanticPageContext(page!),
+        );
         return {
           documentEpoch: epoch,
           url: page!.url(),
@@ -387,11 +395,22 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
           );
           return undefined;
         });
+        const enrichedSemanticPageContext = semanticPageContext
+          ? await enrichPraxisSemanticPageContextWithReadOnlyCdp(
+              context!,
+              page!,
+              semanticPageContext,
+            ).catch(() => semanticPageContext)
+          : undefined;
         return {
           ...observation,
           outcome: operationOutcomeSchema.parse({
             ...outcome,
-            ...(semanticPageContext ? { semanticPageContext } : {}),
+            ...(enrichedSemanticPageContext
+              ? {
+                  semanticPageContext: enrichedSemanticPageContext,
+                }
+              : {}),
           }),
           ...(report ? { report } : {}),
         };
@@ -420,6 +439,7 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
         try {
           unregisterVeil.forEach((unregister) => unregister());
           await privacyGate.seal({ code: "AUTHORING_OPERATION_CANCELLED" }).catch(() => undefined);
+          await closePraxisReadOnlyCdpSensors(context!).catch(() => undefined);
           await boundedAuthoringClose("authoring_context_cancel", () =>
             closePraxisContext(context!),
           );
@@ -443,6 +463,7 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
         );
 
         try {
+          await closePraxisReadOnlyCdpSensors(context!).catch(() => undefined);
           await boundedAuthoringClose("authoring_context_close", () =>
             closePraxisContext(context!),
           );

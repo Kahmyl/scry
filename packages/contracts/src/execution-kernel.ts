@@ -290,6 +290,61 @@ export const operationOutcomeSchema = z
             returned: 0,
             truncated: false,
           }),
+        browserSensor: z
+          .object({
+            kind: z.literal("chromium_read_only"),
+            authority: z
+              .object({
+                frameId: z.string().trim().min(1).max(200),
+                loaderId: z.string().trim().min(1).max(200),
+                previousLoaderId: z.string().trim().min(1).max(200).optional(),
+                loaderChanged: z.boolean(),
+                loaderTransitionsObserved: z.number().int().nonnegative(),
+              })
+              .strict(),
+            network: z
+              .object({
+                observedRequests: z.number().int().nonnegative(),
+                recentRequests: z
+                  .array(
+                    z
+                      .object({
+                        requestId: z.string().trim().min(1).max(200),
+                        loaderId: z.string().trim().min(1).max(200),
+                        frameId: z.string().trim().min(1).max(200).optional(),
+                        type: z.string().trim().min(1).max(40).optional(),
+                        monotonicTimestamp: z.number().nonnegative(),
+                      })
+                      .strict(),
+                  )
+                  .max(12),
+                observedFailures: z.number().int().nonnegative(),
+                recentFailures: z
+                  .array(
+                    z
+                      .object({
+                        requestId: z.string().trim().min(1).max(200),
+                        type: z.string().trim().min(1).max(40).optional(),
+                        monotonicTimestamp: z.number().nonnegative(),
+                        reasonCode: z.string().regex(/^(?:NET::[A-Z0-9_]+|NETWORK_FAILURE)$/),
+                        canceled: z.boolean(),
+                        blockedReason: z.string().trim().min(1).max(80).optional(),
+                      })
+                      .strict(),
+                  )
+                  .max(6),
+                truncated: z.boolean(),
+              })
+              .strict(),
+            layout: z
+              .object({
+                clientWidth: z.number().nonnegative(),
+                clientHeight: z.number().nonnegative(),
+              })
+              .strict(),
+          })
+          .strict()
+          .optional(),
         containers: z
           .array(
             z
