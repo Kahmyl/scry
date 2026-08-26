@@ -20,6 +20,7 @@ class ModelResponse:
     content: str | None
     tool_calls: list[ModelToolCall]
     usage: dict[str, Any] | None
+    finish_reason: str | None = None
 
 
 class OpenAICompatibleModel:
@@ -92,4 +93,7 @@ class OpenAICompatibleModel:
             content=message.content,
             tool_calls=tool_calls,
             usage=usage,
+            finish_reason=(
+                response.choices[0].finish_reason
+            ),
         )

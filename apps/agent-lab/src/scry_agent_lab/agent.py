@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import time
 from typing import Any
 
@@ -46,6 +47,75 @@ def model_tools(snapshot: McpSnapshot) -> list[dict[str, Any]]:
         }
         for tool in snapshot.tools
     ]
+
+
+def _model_tool_payload(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Project an MCP tool result for the external model.
+
+    full:
+        Preserve the existing Agent Lab representation.
+
+    structured:
+        Remove text content only when it is provably an exact JSON
+        serialization of structuredContent.
+
+    The complete MCP result remains available to transcript, metrics,
+    blocker/completion detection, and lifecycle handling.
+    """
+    projection = os.getenv(
+        "SCRY_AGENT_LAB_TOOL_RESULT_PROJECTION",
+        "full",
+    ).strip().lower()
+
+    if projection == "full":
+        return payload
+
+    if projection != "structured":
+        raise ValueError(
+            "SCRY_AGENT_LAB_TOOL_RESULT_PROJECTION "
+            "must be 'full' or 'structured'"
+        )
+
+    structured = payload.get(
+        "structuredContent"
+    )
+    content = payload.get("content")
+
+    if (
+        structured is None
+        or not isinstance(content, list)
+        or len(content) != 1
+    ):
+        return payload
+
+    block = content[0]
+
+    if (
+        not isinstance(block, dict)
+        or block.get("type") != "text"
+        or not isinstance(
+            block.get("text"),
+            str,
+        )
+    ):
+        return payload
+
+    try:
+        parsed = json.loads(
+            block["text"]
+        )
+    except Exception:
+        return payload
+
+    if parsed != structured:
+        return payload
+
+    projected = dict(payload)
+    projected.pop("content", None)
+
+    return projected
 
 
 def _rejection(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -415,6 +485,11 @@ async def run_agent(
                     for call in response.tool_calls
                 ],
                 "usage": response.usage,
+                "finishReason": getattr(
+                    response,
+                    "finish_reason",
+                    None,
+                ),
             },
         )
 
@@ -735,7 +810,9 @@ async def run_agent(
                     "role": "tool",
                     "tool_call_id": call.id,
                     "content": json.dumps(
-                        tool_payload,
+                        _model_tool_payload(
+                            tool_payload
+                        ),
                         ensure_ascii=False,
                         default=str,
                     ),
