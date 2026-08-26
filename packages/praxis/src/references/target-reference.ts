@@ -27,7 +27,8 @@ export class PraxisTargetReference {
   readonly frameId: string;
   readonly documentEpoch: number;
   readonly documentIdentity: string;
-  readonly referenceVersion = PRAXIS_TARGET_REFERENCE_VERSION;
+  readonly referenceVersion: typeof PRAXIS_TARGET_REFERENCE_VERSION =
+    PRAXIS_TARGET_REFERENCE_VERSION;
 
   readonly #handle: PraxisTargetHandle;
   readonly #element: ElementHandle<HTMLElement>;

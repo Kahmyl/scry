@@ -516,6 +516,7 @@ export const readPraxisPublicValueResultSchema = z
     classification: z.literal("public"),
     provenance: z
       .object({
+        referenceVersion: z.literal(1),
         pageId: z.string().trim().min(1).max(120),
         frameId: z.string().trim().min(1).max(120),
         documentEpoch: z.number().int().nonnegative(),

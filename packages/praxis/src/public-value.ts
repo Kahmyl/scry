@@ -48,6 +48,7 @@ export type PraxisPublicValueRead = Readonly<{
   reference: string;
   classification: "public";
   provenance: Readonly<{
+    referenceVersion: 1;
     pageId: string;
     frameId: string;
     documentEpoch: number;

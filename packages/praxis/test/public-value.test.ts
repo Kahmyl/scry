@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { readPraxisPublicValueResultSchema } from "@scry/contracts";
 import { chromium, type Browser } from "playwright";
 
 import { observePublicValueCandidates, readPraxisPublicValue } from "../src/public-value.js";
@@ -54,6 +55,9 @@ describe("Praxis bounded public value reads", () => {
       reference: retrieve!.reference,
     });
 
+    const contractResult = readPraxisPublicValueResultSchema.parse(read);
+
+    expect(contractResult.provenance.referenceVersion).toBe(1);
     expect(read).toMatchObject({
       classification: "public",
       text: "/api/v1/partner/reservations/{reservationId}",
