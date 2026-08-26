@@ -279,12 +279,12 @@ export class PraxisTargetHandle {
   readonly runtimeVersion = PRAXIS_OBSERVATION_RUNTIME_VERSION;
   #page: Page;
   #frame: Frame;
-  #locator: Locator;
+  #locator: Locator | undefined;
 
   constructor(
     page: Page,
     frame: Frame,
-    locator: Locator,
+    locator: Locator | undefined,
     documentEpoch: number,
     documentIdentity: string,
   ) {
@@ -299,11 +299,13 @@ export class PraxisTargetHandle {
 
   async use<T>(work: (locator: Locator) => Promise<T>): Promise<T> {
     await this.assertCurrent();
+    if (!this.#locator) throw new Error("PRAXIS_EXACT_REFERENCE_HAS_NO_LOCATOR");
     return work(this.#locator);
   }
 
   async reconcile<T>(work: (locator: Locator) => Promise<T>): Promise<T> {
     await this.assertDocumentCurrent();
+    if (!this.#locator) throw new Error("PRAXIS_EXACT_REFERENCE_HAS_NO_LOCATOR");
     return work(this.#locator);
   }
 
@@ -319,6 +321,7 @@ export class PraxisTargetHandle {
 
   async readAfterDispatch<T>(work: (locator: Locator) => Promise<T>): Promise<T> {
     if (this.#page.isClosed()) throw new PraxisStaleTargetError();
+    if (!this.#locator) throw new Error("PRAXIS_EXACT_REFERENCE_HAS_NO_LOCATOR");
     return work(this.#locator);
   }
 

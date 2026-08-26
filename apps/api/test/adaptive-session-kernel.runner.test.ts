@@ -85,6 +85,37 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     });
   });
 
+  it("inspects a region through the already-owned browser session without dispatch", async () => {
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const input = {
+      contextControlReference: "context-control-0123456789abcdef0123456789abcdef",
+    };
+    const inspection = {
+      contextControlReference: input.contextControlReference,
+      readableValues: [],
+      readableValueCompleteness: { kind: "bounded", observed: 0, returned: 0, truncated: false },
+    };
+    const inspectRegion = vi.fn(async () => inspection);
+    const interact = vi.fn();
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set("live-session", {
+      session: { inspectRegion, interact },
+      fencingToken: 1,
+      tail: Promise.resolve(),
+    });
+
+    await expect(runner.inspectRegion("live-session", input)).resolves.toBe(inspection);
+    expect(inspectRegion).toHaveBeenCalledWith(input);
+    expect(interact).not.toHaveBeenCalled();
+    await expect(runner.inspectRegion("dead-session", input)).rejects.toMatchObject({
+      response: { code: "PRAXIS_SESSION_NOT_LIVE" },
+    });
+  });
+
   it("projects the exact safe missing origin and replacement-session recovery", async () => {
     const sessionId = "11111111-1111-4111-8111-111111111111";
     const environmentId = "22222222-2222-4222-8222-222222222222";

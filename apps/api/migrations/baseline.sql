@@ -426,3 +426,4 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir external-agent-lifecycle.sql
 \ir pre-mission-external-agent-lifecycle.sql
 \ir flow-name-identity-cutover.sql
+\ir targeted-region-perception.sql

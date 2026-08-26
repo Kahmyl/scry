@@ -374,6 +374,38 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     });
   }
 
+  async inspectRegion(
+    sessionId: string,
+    input: import("@scry/contracts").InspectPraxisRegionInput,
+  ) {
+    const runtime = this.runtimes.get(sessionId);
+
+    if (!runtime) {
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    }
+
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.inspectRegion(input);
+      } catch (error) {
+        const code =
+          error && typeof error === "object" && "code" in error && typeof error.code === "string"
+            ? error.code
+            : undefined;
+
+        if (code?.startsWith("REGION_")) {
+          throw new ConflictException({
+            code,
+            mutationOutcome: "not_applied",
+            safeActions: ["observe_praxis_session"],
+          });
+        }
+
+        throw error;
+      }
+    });
+  }
+
   /**
    * Capture factual portable state from the already-owned live Praxis runtime.
    * This does not stage, seal, select, restore, or close a checkpoint.

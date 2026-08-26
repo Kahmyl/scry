@@ -6,6 +6,8 @@ import {
   type CurrentAction,
   type ExecutionPolicy,
   type ExpectedEffect,
+  type InspectPraxisRegionInput,
+  type InspectPraxisRegionResult,
   type OperationOutcome,
 } from "@scry/contracts";
 import {
@@ -13,7 +15,7 @@ import {
   visualRedactionInitScript,
 } from "../browser-runtime-artifacts.js";
 import { installPraxisInitScript } from "../evidence/browser-evidence.js";
-import { observeSemanticPageContext } from "../page-context.js";
+import { inspectPraxisRegion, observeSemanticPageContext } from "../page-context.js";
 import {
   closePraxisReadOnlyCdpSensors,
   enrichPraxisSemanticPageContextWithReadOnlyCdp,
@@ -63,6 +65,7 @@ export type AuthoringBrowserSession<Report = unknown> = {
   readPublicValue(
     input: PraxisPublicValueReadInput,
   ): Promise<import("../public-value.js").PraxisPublicValueRead>;
+  inspectRegion(input: InspectPraxisRegionInput): Promise<InspectPraxisRegionResult>;
   interact(
     action: CurrentAction,
     context?: {
@@ -265,6 +268,16 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
           throw new Error("AUTHORING_BROWSER_SESSION_NOT_OBSERVABLE");
         }
         return readPraxisPublicValue(page!, input);
+      },
+
+      async inspectRegion(input) {
+        if (authorityCrashed()) {
+          throw new PraxisBrowserAuthorityLostError();
+        }
+        if (lifecycle !== "active" && lifecycle !== "suspended") {
+          throw new Error("AUTHORING_BROWSER_SESSION_NOT_OBSERVABLE");
+        }
+        return inspectPraxisRegion(page!, input.contextControlReference);
       },
 
       async interact(candidate, interactionContext = {}) {

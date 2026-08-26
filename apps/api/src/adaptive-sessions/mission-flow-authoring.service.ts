@@ -193,6 +193,20 @@ export class MissionFlowAuthoringService {
     return this.runner.readPublicValue(sessionId, input);
   }
 
+  async inspectRegion(
+    principal: Principal,
+    sessionId: string,
+    input: import("@scry/contracts").InspectPraxisRegionInput,
+  ) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+
+    if (session.state !== "active" && session.state !== "suspended") {
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    }
+
+    return this.runner.inspectRegion(sessionId, input);
+  }
+
   async reconcileUnknown(
     principal: Principal,
     sessionId: string,

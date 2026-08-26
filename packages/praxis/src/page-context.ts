@@ -1,11 +1,14 @@
 import { randomBytes } from "node:crypto";
 
-import type { OperationOutcome } from "@scry/contracts";
+import type { InspectPraxisRegionResult, OperationOutcome } from "@scry/contracts";
 import type { ElementHandle, Locator, Page } from "playwright";
 
 import { observationIdentity, PraxisDocumentEpoch, PraxisDocumentIdentity } from "./observation.js";
 import { PraxisTargetHandle } from "./observation.js";
-import { observePublicValueCandidates } from "./public-value.js";
+import {
+  observePublicValueCandidates,
+  observePublicValueCandidatesInRegion,
+} from "./public-value.js";
 
 type SemanticPageContext = NonNullable<OperationOutcome["semanticPageContext"]>;
 
@@ -71,6 +74,21 @@ export function resolveSemanticPageContextControl(page: Page, reference: string)
   return contextControls.get(page)?.get(reference);
 }
 
+export class PraxisRegionInspectionError extends Error {
+  override readonly name = "PraxisRegionInspectionError";
+
+  constructor(
+    readonly code:
+      | "REGION_CONTEXT_CONTROL_REFERENCE_UNKNOWN"
+      | "REGION_CONTEXT_CONTROL_REFERENCE_STALE"
+      | "REGION_CONTEXT_CONTROL_REFERENCE_AMBIGUOUS"
+      | "REGION_PROTECTED_BOUNDARY_REFUSED"
+      | "REGION_SEMANTIC_BOUNDARY_NOT_FOUND",
+  ) {
+    super(code);
+  }
+}
+
 export type SemanticPageContextReferenceState = {
   state: "visible" | "hidden" | "absent" | "ambiguous_stale";
   reasonCode:
@@ -126,6 +144,102 @@ export async function observeSemanticPageContextReferenceState(
   if (candidateCount > examined)
     return { state: "ambiguous_stale", reasonCode: "CONTEXT_REFERENCE_OBSERVATION_TRUNCATED" };
   return { state: "absent", reasonCode: "CONTEXT_REFERENCE_ABSENT" };
+}
+
+const SEMANTIC_REGION_SELECTOR =
+  "dialog,[role=dialog],[role=region],[role=form],section,article,form,main,aside";
+
+/**
+ * Inspect ordinary public-value candidates beneath the closest exact semantic
+ * region owned by one current context-control reference. This returns only
+ * opaque value references and bounded metadata; exact text remains exclusively
+ * available through readPraxisPublicValue.
+ */
+export async function inspectPraxisRegion(
+  page: Page,
+  contextControlReference: string,
+): Promise<InspectPraxisRegionResult> {
+  const entry = resolveSemanticPageContextControl(page, contextControlReference);
+  if (!entry) throw new PraxisRegionInspectionError("REGION_CONTEXT_CONTROL_REFERENCE_UNKNOWN");
+
+  const state = await observeSemanticPageContextReferenceState(page, contextControlReference);
+  if (state.state === "absent")
+    throw new PraxisRegionInspectionError("REGION_CONTEXT_CONTROL_REFERENCE_STALE");
+  if (state.state === "ambiguous_stale")
+    throw new PraxisRegionInspectionError("REGION_CONTEXT_CONTROL_REFERENCE_AMBIGUOUS");
+
+  try {
+    await entry.handle.assertCurrent();
+  } catch {
+    throw new PraxisRegionInspectionError("REGION_CONTEXT_CONTROL_REFERENCE_STALE");
+  }
+
+  const protectedBoundary = await entry.element
+    .evaluate((element, regionSelector) => {
+      const protectedInputSelector =
+        'input[type=password],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]';
+      const boundary = element.closest(regionSelector);
+      const boundaryIsProtectedForm =
+        Boolean(boundary) &&
+        (boundary!.tagName.toLowerCase() === "form" || boundary!.getAttribute("role") === "form") &&
+        Boolean(boundary!.querySelector(protectedInputSelector));
+      return (
+        Boolean(element.closest('[data-scry-redacted="true"]')) ||
+        element.matches(protectedInputSelector) ||
+        boundaryIsProtectedForm
+      );
+    }, SEMANTIC_REGION_SELECTOR)
+    .catch(() => true);
+  if (entry.valueProtected || protectedBoundary)
+    throw new PraxisRegionInspectionError("REGION_PROTECTED_BOUNDARY_REFUSED");
+
+  const regionCandidate = await entry.element
+    .evaluateHandle((element, selector) => element.closest(selector), SEMANTIC_REGION_SELECTOR)
+    .catch(() => undefined);
+  const region = regionCandidate?.asElement() as ElementHandle<HTMLElement> | null | undefined;
+  if (!region) {
+    await regionCandidate?.dispose().catch(() => undefined);
+    throw new PraxisRegionInspectionError("REGION_SEMANTIC_BOUNDARY_NOT_FOUND");
+  }
+
+  try {
+    const kind = await region.evaluate((element) => {
+      const role = element.getAttribute("role");
+      const tag = element.tagName.toLowerCase();
+      if (role === "dialog" || tag === "dialog") return "dialog" as const;
+      if (role === "region") return "region" as const;
+      if (role === "form" || tag === "form") return "form" as const;
+      if (tag === "section") return "section" as const;
+      if (tag === "article") return "article" as const;
+      if (tag === "main") return "main" as const;
+      return "aside" as const;
+    });
+    const readableValueObservation = await observePublicValueCandidatesInRegion(page, region);
+    const authority = entry.handle.toJSON();
+
+    return {
+      contextControlReference,
+      authority: {
+        referenceVersion: 1,
+        pageId: authority.pageId,
+        frameId: authority.frameId,
+        documentEpoch: authority.documentEpoch,
+        documentIdentity: authority.documentIdentity,
+      },
+      region: { kind },
+      readableValues: readableValueObservation.values.map((value) => ({ ...value })),
+      readableValueCompleteness: readableValueObservation.completeness,
+    };
+  } catch (error) {
+    if (error instanceof PraxisRegionInspectionError) throw error;
+    const current = await entry.element
+      .evaluate((element) => element.isConnected)
+      .catch(() => false);
+    if (!current) throw new PraxisRegionInspectionError("REGION_CONTEXT_CONTROL_REFERENCE_STALE");
+    throw error;
+  } finally {
+    await region.dispose().catch(() => undefined);
+  }
 }
 
 async function semanticIdentityForLocator(locator: Locator) {

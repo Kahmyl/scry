@@ -156,6 +156,10 @@ const flowNameIdentityCutover = await readFile(
   new URL("flow-name-identity-cutover.sql", migrations),
   "utf8",
 );
+const targetedRegionPerception = await readFile(
+  new URL("targeted-region-perception.sql", migrations),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", migrations), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -200,6 +204,7 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", migration
   ["external-agent-lifecycle.sql", externalAgentLifecycle],
   ["pre-mission-external-agent-lifecycle.sql", preMissionExternalAgentLifecycle],
   ["flow-name-identity-cutover.sql", flowNameIdentityCutover],
+  ["targeted-region-perception.sql", targetedRegionPerception],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

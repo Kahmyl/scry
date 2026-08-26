@@ -162,6 +162,9 @@ const preMissionExternalAgentLifecyclePath = fileURLToPath(
 const flowNameIdentityCutoverPath = fileURLToPath(
   new URL("../migrations/flow-name-identity-cutover.sql", import.meta.url),
 );
+const targetedRegionPerceptionPath = fileURLToPath(
+  new URL("../migrations/targeted-region-perception.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -239,9 +242,11 @@ const preMissionExternalAgentLifecycle = await readFile(
   "utf8",
 );
 const flowNameIdentityCutover = await readFile(flowNameIdentityCutoverPath, "utf8");
-const preMissionExternalAgentLifecycleUpgrade = `${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutover}`;
-const operationalEvents = `${operationalEventsSource}\n${missionDiagnosticIsolation}\n${externalAgentLifecycle}\n${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutover}`;
-const missionDiagnosticIsolationUpgrade = `${missionDiagnosticIsolation}\n${externalAgentLifecycle}\n${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutover}`;
+const targetedRegionPerception = await readFile(targetedRegionPerceptionPath, "utf8");
+const flowNameIdentityCutoverUpgrade = `${flowNameIdentityCutover}\n${targetedRegionPerception}`;
+const preMissionExternalAgentLifecycleUpgrade = `${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutoverUpgrade}`;
+const operationalEvents = `${operationalEventsSource}\n${missionDiagnosticIsolation}\n${externalAgentLifecycle}\n${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutoverUpgrade}`;
+const missionDiagnosticIsolationUpgrade = `${missionDiagnosticIsolation}\n${externalAgentLifecycle}\n${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutoverUpgrade}`;
 const segmentedFlowSuccessorCheckpointsUpgrade = `${segmentedFlowSuccessorCheckpoints}\n${adaptiveCertificationProvenance}`;
 
 const expandFoundation = (source: string) =>
@@ -290,6 +295,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "external-agent-lifecycle.sql": externalAgentLifecycle,
   "pre-mission-external-agent-lifecycle.sql": preMissionExternalAgentLifecycle,
   "flow-name-identity-cutover.sql": flowNameIdentityCutover,
+  "targeted-region-perception.sql": targetedRegionPerception,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
@@ -312,7 +318,8 @@ const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
               migration !== "mission-diagnostic-isolation.sql" &&
               migration !== "external-agent-lifecycle.sql" &&
               migration !== "pre-mission-external-agent-lifecycle.sql" &&
-              migration !== "flow-name-identity-cutover.sql",
+              migration !== "flow-name-identity-cutover.sql" &&
+              migration !== "targeted-region-perception.sql",
           ),
     ),
   );
@@ -454,12 +461,21 @@ const fingerprint = digest(baseline);
 
 assertConfiguredMigrationFingerprint(process.env.SCRY_SCHEMA_FINGERPRINT, fingerprint);
 
+const preTargetedRegionPerceptionFingerprint = digest(
+  stagedBaseline(
+    OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "targeted-region-perception.sql"),
+  ),
+);
+
 const preFlowNameIdentityCutoverFingerprint = digest(
   expandFoundation(
     expandBaselineStage(
       baselineSource,
       optionalMigrationSources,
-      OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "flow-name-identity-cutover.sql"),
+      OPTIONAL_BASELINE_MIGRATIONS.filter(
+        (name) =>
+          name !== "flow-name-identity-cutover.sql" && name !== "targeted-region-perception.sql",
+      ),
     ),
   ),
 );
@@ -472,7 +488,8 @@ const preMissionExternalAgentLifecycleFingerprint = digest(
       OPTIONAL_BASELINE_MIGRATIONS.filter(
         (name) =>
           name !== "pre-mission-external-agent-lifecycle.sql" &&
-          name !== "flow-name-identity-cutover.sql",
+          name !== "flow-name-identity-cutover.sql" &&
+          name !== "targeted-region-perception.sql",
       ),
     ),
   ),
@@ -487,7 +504,8 @@ const preExternalAgentLifecycleFingerprint = digest(
         (name) =>
           name !== "external-agent-lifecycle.sql" &&
           name !== "pre-mission-external-agent-lifecycle.sql" &&
-          name !== "flow-name-identity-cutover.sql",
+          name !== "flow-name-identity-cutover.sql" &&
+          name !== "targeted-region-perception.sql",
       ),
     ),
   ),
@@ -503,7 +521,8 @@ const preMissionDiagnosticIsolationFingerprint = digest(
           name !== "mission-diagnostic-isolation.sql" &&
           name !== "external-agent-lifecycle.sql" &&
           name !== "pre-mission-external-agent-lifecycle.sql" &&
-          name !== "flow-name-identity-cutover.sql",
+          name !== "flow-name-identity-cutover.sql" &&
+          name !== "targeted-region-perception.sql",
       ),
     ),
   ),
@@ -519,7 +538,8 @@ const preOperationalEventsBaseline = expandFoundation(
         name !== "mission-diagnostic-isolation.sql" &&
         name !== "external-agent-lifecycle.sql" &&
         name !== "pre-mission-external-agent-lifecycle.sql" &&
-        name !== "flow-name-identity-cutover.sql",
+        name !== "flow-name-identity-cutover.sql" &&
+        name !== "targeted-region-perception.sql",
     ),
   ),
 );
@@ -536,7 +556,8 @@ const preMissionRecordingSelectionBaseline = expandFoundation(
         name !== "mission-diagnostic-isolation.sql" &&
         name !== "external-agent-lifecycle.sql" &&
         name !== "pre-mission-external-agent-lifecycle.sql" &&
-        name !== "flow-name-identity-cutover.sql",
+        name !== "flow-name-identity-cutover.sql" &&
+        name !== "targeted-region-perception.sql",
     ),
   ),
 );
@@ -637,14 +658,34 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preFlowNameIdentityCutoverFingerprint) {
+    if (installedFingerprint === preTargetedRegionPerceptionFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-targeted-region-perception'))",
+        );
+        await client.query(targetedRegionPerception);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied targeted region perception ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preFlowNameIdentityCutoverFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query(
           "SELECT pg_advisory_xact_lock(hashtext('scry-flow-name-identity-cutover'))",
         );
-        await client.query(flowNameIdentityCutover);
+        await client.query(flowNameIdentityCutoverUpgrade);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],

@@ -6,6 +6,7 @@ import {
   advanceAuthoringTurnResultSchema,
   currentActionSchema,
   executionPolicySchema,
+  inspectPraxisRegionInputSchema,
   type ClaimedAuthoringRuntimeCommand,
   type InteractionTargetIntent,
   type PraxisCandidateResponse,
@@ -270,6 +271,22 @@ export function createAuthoringRuntimeOwner(options: {
           );
 
           await complete(command, observation);
+          return;
+        }
+
+        case "inspect_region": {
+          const input = inspectPraxisRegionInputSchema.parse(command.payload);
+          const inspection = options.executeObservation
+            ? await options.executeObservation({
+                sessionId: owned.probeSessionId,
+                environmentId: owned.environmentId,
+                policy: owned.policy,
+                operationId: `authoring-command-${command.id}`,
+                perform: () => owned.session.inspectRegion(input),
+              })
+            : await owned.session.inspectRegion(input);
+
+          await complete(command, inspection);
           return;
         }
 

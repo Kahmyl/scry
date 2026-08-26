@@ -7,10 +7,11 @@ import {
   type VeilPublicValueClassification,
   type VeilPublicValueKind,
 } from "@scry/veil";
-import type { Page } from "playwright";
+import type { ElementHandle, Locator, Page } from "playwright";
 
 import { PraxisStaleTargetError } from "./observation.js";
 import {
+  observeExactTargetReference,
   observeTargetReference,
   type PraxisTargetReference,
 } from "./references/target-reference.js";
@@ -18,6 +19,8 @@ import {
 const PUBLIC_VALUE_SELECTOR = "code,pre,output,[data-scry-public-value]";
 const MAX_PUBLIC_VALUE_CANDIDATES = 100;
 const MAX_PUBLIC_VALUE_REFERENCES = 24;
+export const MAX_REGION_PUBLIC_VALUE_CANDIDATES = 128;
+export const MAX_REGION_PUBLIC_VALUE_REFERENCES = 32;
 const DEFAULT_PUBLIC_VALUE_READ_BYTES = 2_048;
 const MAX_PUBLIC_VALUE_READ_BYTES = 4_096;
 
@@ -78,7 +81,12 @@ type ReadableValueEntry = {
   context?: string;
 };
 
-const readableValues = new WeakMap<Page, Map<string, ReadableValueEntry>>();
+type ReadableValueRegistry = {
+  entries: Map<string, ReadableValueEntry>;
+  regionReferences: Set<string>;
+};
+
+const readableValues = new WeakMap<Page, ReadableValueRegistry>();
 
 export class PraxisPublicValueReadError extends Error {
   override readonly name = "PraxisPublicValueReadError";
@@ -97,71 +105,108 @@ export class PraxisPublicValueReadError extends Error {
 export async function observePublicValueCandidates(
   page: Page,
 ): Promise<PraxisReadableValueObservation> {
-  const previous = readableValues.get(page);
-
-  if (previous) {
-    await Promise.all([...previous.values()].map(({ target }) => target.dispose()));
-  }
-
-  const registry = new Map<string, ReadableValueEntry>();
-  readableValues.set(page, registry);
-
   const candidates = page.locator(PUBLIC_VALUE_SELECTOR);
-  const observed = await candidates.count();
-  const examined = Math.min(observed, MAX_PUBLIC_VALUE_CANDIDATES);
+  return observePublicValueCandidateSource(page, {
+    observed: await candidates.count(),
+    maximumCandidates: MAX_PUBLIC_VALUE_CANDIDATES,
+    maximumReferences: MAX_PUBLIC_VALUE_REFERENCES,
+    registryScope: "document",
+    candidate: async (index) => ({ locator: candidates.nth(index) }),
+  });
+}
+
+/**
+ * Discover public-value candidates beneath one exact semantic region handle.
+ * This never scans the document outside that handle and never reads candidates
+ * within hidden, editable, inert, aria-hidden, or explicitly redacted bounds.
+ */
+export async function observePublicValueCandidatesInRegion(
+  page: Page,
+  region: ElementHandle<HTMLElement>,
+): Promise<PraxisReadableValueObservation> {
+  const observed = await region.evaluate(
+    (element, selector) =>
+      (element.matches(selector) ? 1 : 0) + element.querySelectorAll(selector).length,
+    PUBLIC_VALUE_SELECTOR,
+  );
+
+  return observePublicValueCandidateSource(page, {
+    observed,
+    maximumCandidates: MAX_REGION_PUBLIC_VALUE_CANDIDATES,
+    maximumReferences: MAX_REGION_PUBLIC_VALUE_REFERENCES,
+    registryScope: "region",
+    excludeUnsafeBoundaries: true,
+    candidate: async (index) => {
+      const candidate = await region.evaluateHandle(
+        (element, input) => {
+          if (element.matches(input.selector)) {
+            if (input.index === 0) return element;
+            return element.querySelectorAll(input.selector).item(input.index - 1);
+          }
+          return element.querySelectorAll(input.selector).item(input.index);
+        },
+        { selector: PUBLIC_VALUE_SELECTOR, index },
+      );
+      const element = candidate.asElement() as ElementHandle<HTMLElement> | null;
+      if (!element) {
+        await candidate.dispose().catch(() => undefined);
+        return undefined;
+      }
+      return { element };
+    },
+  });
+}
+
+type PublicValueCandidate =
+  | Readonly<{ locator: Locator; element?: never }>
+  | Readonly<{ element: ElementHandle<HTMLElement>; locator?: never }>;
+
+async function observePublicValueCandidateSource(
+  page: Page,
+  input: Readonly<{
+    observed: number;
+    maximumCandidates: number;
+    maximumReferences: number;
+    registryScope: "document" | "region";
+    excludeUnsafeBoundaries?: boolean;
+    candidate(index: number): Promise<PublicValueCandidate | undefined>;
+  }>,
+): Promise<PraxisReadableValueObservation> {
+  const registry = await prepareReadableValueRegistry(page, input.registryScope);
+
+  const examined = Math.min(input.observed, input.maximumCandidates);
   const values: PraxisReadableValue[] = [];
 
   for (let index = 0; index < examined; index += 1) {
-    if (values.length >= MAX_PUBLIC_VALUE_REFERENCES) break;
+    if (values.length >= input.maximumReferences) break;
 
-    const locator = candidates.nth(index);
+    const candidate = await input.candidate(index).catch(() => undefined);
+    if (!candidate) continue;
+    const metadata = await (
+      candidate.locator
+        ? candidate.locator.evaluate(
+            readPublicValueCandidateMetadata,
+            Boolean(input.excludeUnsafeBoundaries),
+          )
+        : candidate.element.evaluate(
+            readPublicValueCandidateMetadata,
+            Boolean(input.excludeUnsafeBoundaries),
+          )
+    ).catch(() => null);
 
-    const metadata = await locator
-      .evaluate((element) => {
-        const html = element as HTMLElement;
-        const style = getComputedStyle(html);
-        const rect = html.getBoundingClientRect();
-
-        if (
-          style.display === "none" ||
-          style.visibility === "hidden" ||
-          rect.width <= 0 ||
-          rect.height <= 0 ||
-          element.closest('[aria-hidden="true"],[inert]')
-        ) {
-          return null;
-        }
-
-        const tag = element.tagName.toLowerCase();
-        const headingBoundary = element.closest("section,article,main,[role=region],[role=group]");
-        const heading = headingBoundary?.querySelector("h1,h2,h3,h4,h5,h6,[role=heading]");
-
-        return {
-          kind: (tag === "code" || tag === "pre" || tag === "output" ? tag : "annotated") as
-            "code" | "pre" | "output" | "annotated",
-          text: element.textContent ?? "",
-          redactedBoundary: Boolean(element.closest('[data-scry-redacted="true"]')),
-          editableBoundary: Boolean(
-            element.closest('input,textarea,[contenteditable]:not([contenteditable="false"])'),
-          ),
-          contextLabel:
-            element.getAttribute("aria-label") ||
-            heading?.textContent ||
-            headingBoundary?.getAttribute("aria-label") ||
-            "",
-        };
-      })
-      .catch(() => null);
-
-    if (!metadata) continue;
+    if (!metadata) {
+      await candidate.element?.dispose().catch(() => undefined);
+      continue;
+    }
 
     let target: PraxisTargetReference;
 
     try {
-      target = await observeTargetReference(page, locator, {
-        timeoutMs: 1_000,
-      });
+      target = candidate.locator
+        ? await observeTargetReference(page, candidate.locator, { timeoutMs: 1_000 })
+        : await observeExactTargetReference(page, candidate.element);
     } catch {
+      await candidate.element?.dispose().catch(() => undefined);
       continue;
     }
 
@@ -170,7 +215,7 @@ export async function observePublicValueCandidates(
 
     if (classification === "public") {
       try {
-        context = admitVeilPublicValue(metadata).safeContext;
+        context = observationSafeContext(admitVeilPublicValue(metadata).safeContext, metadata.text);
       } catch {
         context = undefined;
       }
@@ -178,12 +223,13 @@ export async function observePublicValueCandidates(
 
     const reference = `context-value-${randomBytes(16).toString("hex")}`;
 
-    registry.set(reference, {
+    registry.entries.set(reference, {
       target,
       kind: metadata.kind,
       classification,
       ...(context ? { context } : {}),
     });
+    if (input.registryScope === "region") registry.regionReferences.add(reference);
 
     values.push({
       reference,
@@ -197,13 +243,90 @@ export async function observePublicValueCandidates(
     values,
     completeness: {
       kind: "bounded",
-      observed,
+      observed: input.observed,
       returned: values.length,
       truncated:
-        observed > examined ||
+        input.observed > examined ||
         examined > values.length ||
-        values.length >= MAX_PUBLIC_VALUE_REFERENCES,
+        values.length >= input.maximumReferences,
     },
+  };
+}
+
+async function prepareReadableValueRegistry(page: Page, scope: "document" | "region") {
+  const previous = readableValues.get(page);
+  if (scope === "document") {
+    if (previous)
+      await Promise.all([...previous.entries.values()].map(({ target }) => target.dispose()));
+    const registry: ReadableValueRegistry = {
+      entries: new Map(),
+      regionReferences: new Set(),
+    };
+    readableValues.set(page, registry);
+    return registry;
+  }
+
+  const registry =
+    previous ??
+    ({ entries: new Map(), regionReferences: new Set() } satisfies ReadableValueRegistry);
+  for (const reference of registry.regionReferences) {
+    await registry.entries.get(reference)?.target.dispose();
+    registry.entries.delete(reference);
+  }
+  registry.regionReferences.clear();
+  readableValues.set(page, registry);
+  return registry;
+}
+
+function observationSafeContext(context: string | undefined, exactText: string) {
+  if (!context) return undefined;
+  const normalizedContext = context.replace(/\s+/g, " ").trim();
+  const normalizedText = exactText.replace(/\s+/g, " ").trim();
+  if (normalizedText && normalizedContext.includes(normalizedText)) return undefined;
+  return context;
+}
+
+function readPublicValueCandidateMetadata(element: Element, excludeUnsafeBoundaries: boolean) {
+  const html = element as HTMLElement;
+  const style = getComputedStyle(html);
+  const rect = html.getBoundingClientRect();
+
+  if (
+    style.display === "none" ||
+    style.visibility === "hidden" ||
+    rect.width <= 0 ||
+    rect.height <= 0 ||
+    element.closest('[aria-hidden="true"],[inert]')
+  ) {
+    return null;
+  }
+
+  const redactedBoundary = Boolean(element.closest('[data-scry-redacted="true"]'));
+  const editableBoundary = Boolean(
+    element.closest('input,textarea,[contenteditable]:not([contenteditable="false"])'),
+  );
+  if (excludeUnsafeBoundaries && (redactedBoundary || editableBoundary)) return null;
+
+  const tag = element.tagName.toLowerCase();
+  const headingBoundary = element.closest("section,article,main,[role=region],[role=group]");
+  const headingCandidate = headingBoundary?.querySelector("h1,h2,h3,h4,h5,h6,[role=heading]");
+  const heading = headingCandidate?.closest(
+    '[data-scry-redacted="true"],[aria-hidden="true"],[inert]',
+  )
+    ? undefined
+    : headingCandidate;
+
+  return {
+    kind: (tag === "code" || tag === "pre" || tag === "output" ? tag : "annotated") as
+      "code" | "pre" | "output" | "annotated",
+    text: element.textContent ?? "",
+    redactedBoundary,
+    editableBoundary,
+    contextLabel:
+      element.getAttribute("aria-label") ||
+      heading?.textContent ||
+      headingBoundary?.getAttribute("aria-label") ||
+      "",
   };
 }
 
@@ -211,7 +334,7 @@ export async function readPraxisPublicValue(
   page: Page,
   input: PraxisPublicValueReadInput,
 ): Promise<PraxisPublicValueRead> {
-  const entry = readableValues.get(page)?.get(input.reference);
+  const entry = readableValues.get(page)?.entries.get(input.reference);
 
   if (!entry) {
     throw new PraxisPublicValueReadError("PUBLIC_VALUE_REFERENCE_UNKNOWN");

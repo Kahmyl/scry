@@ -145,6 +145,46 @@ describe("authoring runtime command transport", () => {
     expect(sql).toContain("lease.runtime_owner_id=$2");
     expect(sql).toContain("lease.state='active'");
     expect(sql).toContain("command.state='pending'");
+    expect(sql).toContain("'inspect_region'");
+  });
+
+  it("admits read-only region inspection for active and suspended owned runtimes", async () => {
+    const { repository, client } = harness([
+      {
+        rowCount: 1,
+        rows: [
+          {
+            probeSessionId: "11111111-1111-4111-8111-111111111111",
+            browserLeaseId: "22222222-2222-4222-8222-222222222222",
+          },
+        ],
+      },
+      {
+        rowCount: 1,
+        rows: [
+          {
+            id: "33333333-3333-4333-8333-333333333333",
+            state: "pending",
+            replayed: false,
+          },
+        ],
+      },
+    ]);
+
+    await repository.enqueue({
+      probeSessionId: "11111111-1111-4111-8111-111111111111",
+      missionId: "44444444-4444-4444-8444-444444444444",
+      agentSessionId: "55555555-5555-4555-8555-555555555555",
+      type: "inspect_region",
+      payload: {
+        contextControlReference: "context-control-0123456789abcdef0123456789abcdef",
+      },
+      idempotencyKey: "inspect-region-command",
+    });
+
+    const sql = String(client.query.mock.calls[1]![0]);
+    expect(sql).toContain("$4 IN ('observe_document','inspect_region'");
+    expect(sql).toContain("$4 IN ('inspect_region','resume','cancel')");
   });
 
   it("completes a claimed command and persists one safe result atomically", async () => {

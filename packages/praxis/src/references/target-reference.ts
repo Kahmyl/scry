@@ -36,7 +36,7 @@ export class PraxisTargetReference {
   constructor(
     page: Page,
     frame: Frame,
-    locator: Locator,
+    locator: Locator | undefined,
     element: ElementHandle<HTMLElement>,
     documentEpoch: number,
     documentIdentity: string,
@@ -107,4 +107,26 @@ export async function observeTargetReference(
   const documentEpoch = await PraxisDocumentEpoch.current(page, frame);
   const documentIdentity = await PraxisDocumentIdentity.current(page, frame);
   return new PraxisTargetReference(page, frame, locator, element, documentEpoch, documentIdentity);
+}
+
+/**
+ * Pin an element that was discovered beneath an already-authoritative exact
+ * region handle. The element is never converted back into a selector or
+ * semantically re-resolved.
+ */
+export async function observeExactTargetReference(
+  page: Page,
+  element: ElementHandle<HTMLElement>,
+): Promise<PraxisTargetReference> {
+  const frame = (await element.ownerFrame()) ?? page.mainFrame();
+  const documentEpoch = await PraxisDocumentEpoch.current(page, frame);
+  const documentIdentity = await PraxisDocumentIdentity.current(page, frame);
+  return new PraxisTargetReference(
+    page,
+    frame,
+    undefined,
+    element,
+    documentEpoch,
+    documentIdentity,
+  );
 }

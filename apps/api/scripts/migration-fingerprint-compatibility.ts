@@ -117,6 +117,7 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "external-agent-lifecycle.sql",
   "pre-mission-external-agent-lifecycle.sql",
   "flow-name-identity-cutover.sql",
+  "targeted-region-perception.sql",
 ] as const;
 
 export type OptionalBaselineMigration = (typeof OPTIONAL_BASELINE_MIGRATIONS)[number];

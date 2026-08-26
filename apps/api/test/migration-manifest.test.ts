@@ -25,6 +25,7 @@ describe("schema migration manifest", () => {
     const protectedResponseStaging = baseline.indexOf("\\ir protected-response-output-staging.sql");
     const protectedReadOnlyDispatch = baseline.indexOf("\\ir protected-read-only-dispatch.sql");
     const externalResourceBindings = baseline.indexOf("\\ir external-resource-bindings.sql");
+    const targetedRegionPerception = baseline.indexOf("\\ir targeted-region-perception.sql");
 
     expect(preferences).toBeGreaterThan(-1);
     expect(retention).toBeGreaterThan(preferences);
@@ -41,6 +42,7 @@ describe("schema migration manifest", () => {
     expect(protectedResponseStaging).toBeGreaterThan(protectedProjection);
     expect(protectedReadOnlyDispatch).toBeGreaterThan(protectedResponseStaging);
     expect(externalResourceBindings).toBeGreaterThan(protectedReadOnlyDispatch);
+    expect(targetedRegionPerception).toBeGreaterThan(externalResourceBindings);
   });
 
   it("recognizes the compiled-plan schema and applies the guarded interactive command cutover", async () => {
@@ -87,6 +89,7 @@ describe("schema migration manifest", () => {
       expect(source).toContain("segmented-flow-successor-checkpoints.sql");
       expect(source).toContain("20260820-0910_scope_unknown_fence_to_resource_mutations.sql");
       expect(source).toContain("flow-name-identity-cutover.sql");
+      expect(source).toContain("targeted-region-perception.sql");
     }
   });
 
@@ -222,5 +225,18 @@ describe("schema migration manifest", () => {
     expect(cutover).toContain("'suspend'");
     expect(cutover).toContain("'resume'");
     expect(cutover).toContain("'cancel'");
+  });
+
+  it("admits targeted region inspection through a forward-only runtime command migration", async () => {
+    const migration = await readFile(
+      new URL("migrations/targeted-region-perception.sql", root),
+      "utf8",
+    );
+    const migrate = await readFile(new URL("scripts/migrate.ts", root), "utf8");
+
+    expect(migration).toContain("DROP CONSTRAINT authoring_runtime_commands_type_check");
+    expect(migration).toContain("'inspect_region'");
+    expect(migrate).toContain("preTargetedRegionPerceptionFingerprint");
+    expect(migrate).toContain("scry-targeted-region-perception");
   });
 });

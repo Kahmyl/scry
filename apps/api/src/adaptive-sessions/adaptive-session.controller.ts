@@ -12,7 +12,12 @@ import {
   type ReconcileAdaptiveOperationInput,
 } from "@scry/contracts";
 
-import { readPraxisPublicValueInputSchema, type ReadPraxisPublicValueInput } from "@scry/contracts";
+import {
+  inspectPraxisRegionInputSchema,
+  readPraxisPublicValueInputSchema,
+  type InspectPraxisRegionInput,
+  type ReadPraxisPublicValueInput,
+} from "@scry/contracts";
 
 import { CurrentPrincipal, type Principal } from "../auth/index.js";
 import { ZodValidationPipe } from "../common/validation.pipe.js";
@@ -108,6 +113,16 @@ export class PraxisSessionController {
     input: ReadPraxisPublicValueInput,
   ) {
     return this.sessions.readPublicValue(principal, sessionId, input);
+  }
+
+  @Post(":sessionId/regions/inspect")
+  inspectRegion(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(inspectPraxisRegionInputSchema))
+    input: InspectPraxisRegionInput,
+  ) {
+    return this.sessions.inspectRegion(principal, sessionId, input);
   }
 
   @Post(":sessionId/reconcile-unknown")

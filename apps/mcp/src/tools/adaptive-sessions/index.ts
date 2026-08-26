@@ -10,6 +10,7 @@ import { registerReconcileUnknownOperationTool } from "./reconcile-unknown-opera
 import { registerCloseFlowAuthoringTool } from "./close-flow-authoring.tool.js";
 import { registerStartPraxisSessionTool } from "./start-praxis-session.tool.js";
 import { registerObservePraxisSessionTool } from "./observe-praxis-session.tool.js";
+import { registerInspectPraxisRegionTool } from "./inspect-praxis-region.tool.js";
 import { registerReadPraxisPublicValueTool } from "./read-praxis-public-value.tool.js";
 import { registerGetPraxisSessionTool } from "./get-praxis-session.tool.js";
 import { registerReconcilePraxisUnknownOperationTool } from "./reconcile-praxis-unknown-operation.tool.js";
@@ -28,6 +29,7 @@ export function registerAdaptiveSessionTools(server: McpServer, client: ScryApiC
 export function registerPraxisSessionTools(server: McpServer, client: ScryApiClient) {
   registerStartPraxisSessionTool(server, client);
   registerObservePraxisSessionTool(server, client);
+  registerInspectPraxisRegionTool(server, client);
   registerReadPraxisPublicValueTool(server, client);
   registerGetPraxisSessionTool(server, client);
   registerReconcilePraxisUnknownOperationTool(server, client);

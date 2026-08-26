@@ -42,10 +42,12 @@ describe("current Scry MCP surface", () => {
     const { client, server } = await connected();
     const tools = (await client.listTools()).tools;
     const names = tools.map(({ name }) => name);
+    expect(tools).toHaveLength(54);
     expect(names).toEqual(
       expect.arrayContaining([
         "start_praxis_session",
         "observe_praxis_session",
+        "inspect_praxis_region",
         "get_praxis_session",
         "close_praxis_session",
         "start_run",
@@ -72,6 +74,11 @@ describe("current Scry MCP surface", () => {
     );
     const observe = tools.find(({ name }) => name === "observe_praxis_session")!;
     expect(observe.description).toContain("opaque context-control references");
+    const inspectRegion = tools.find(({ name }) => name === "inspect_praxis_region")!;
+    expect(inspectRegion.description).toContain("First call observe_praxis_session");
+    expect(inspectRegion.description).toContain("exact context-control reference");
+    expect(inspectRegion.description).toContain("read_praxis_public_value");
+    expect(inspectRegion.description).toContain("without returning its plaintext");
     const dispatch = tools.find(({ name }) => name === "dispatch_run_operation")!;
     expect(dispatch.description).toContain("semantic-only targets");
     expect(dispatch.description).toContain("no selector fallback");
@@ -233,6 +240,8 @@ describe("current Scry MCP surface", () => {
     expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain(
       "not action targets or resource identity",
     );
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("inspect_praxis_region");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("no region plaintext");
     expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("Never select by list order");
     expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("request clarification");
     const { client, server } = await connected();

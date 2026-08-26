@@ -545,8 +545,76 @@ export const readPraxisPublicValueResultSchema = z
   })
   .strict();
 
+export const inspectPraxisRegionInputSchema = z
+  .object({
+    contextControlReference: z.string().regex(/^context-control-[a-f0-9]{32}$/),
+  })
+  .strict();
+
+export const inspectPraxisRegionResultSchema = z
+  .object({
+    contextControlReference: z.string().regex(/^context-control-[a-f0-9]{32}$/),
+    authority: z
+      .object({
+        referenceVersion: z.literal(1),
+        pageId: z.string().trim().min(1).max(120),
+        frameId: z.string().trim().min(1).max(120),
+        documentEpoch: z.number().int().nonnegative(),
+        documentIdentity: z.string().trim().min(1).max(2_000),
+      })
+      .strict(),
+    region: z
+      .object({
+        kind: z.enum(["dialog", "region", "form", "section", "article", "main", "aside"]),
+      })
+      .strict(),
+    readableValues: z
+      .array(
+        z
+          .object({
+            reference: z.string().regex(/^context-value-[a-f0-9]{32}$/),
+            kind: z.enum(["code", "pre", "output", "annotated"]),
+            classification: z.enum(["public", "protected", "unknown"]),
+            context: z.string().trim().min(1).max(160).optional(),
+          })
+          .strict(),
+      )
+      .max(32),
+    readableValueCompleteness: z
+      .object({
+        kind: z.literal("bounded"),
+        observed: z.number().int().nonnegative(),
+        returned: z.number().int().nonnegative().max(32),
+        truncated: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (
+      result.readableValueCompleteness.returned !== result.readableValues.length ||
+      result.readableValueCompleteness.observed < result.readableValueCompleteness.returned
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["readableValueCompleteness"],
+        message: "readable value completeness must match the bounded region projection",
+      });
+    if (
+      new Set(result.readableValues.map((value) => value.reference)).size !==
+      result.readableValues.length
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["readableValues"],
+        message: "region readable value references must be unique",
+      });
+  });
+
 export type ReadPraxisPublicValueInput = z.infer<typeof readPraxisPublicValueInputSchema>;
 export type ReadPraxisPublicValueResult = z.infer<typeof readPraxisPublicValueResultSchema>;
+export type InspectPraxisRegionInput = z.infer<typeof inspectPraxisRegionInputSchema>;
+export type InspectPraxisRegionResult = z.infer<typeof inspectPraxisRegionResultSchema>;
 
 export const executionRequestSchema = z
   .object({

@@ -13,7 +13,14 @@ const runtime = {
 };
 
 function command(
-  type: "observe_document" | "interact" | "advance_turn" | "suspend" | "resume" | "cancel",
+  type:
+    | "observe_document"
+    | "inspect_region"
+    | "interact"
+    | "advance_turn"
+    | "suspend"
+    | "resume"
+    | "cancel",
   payload: Record<string, unknown> = {},
 ) {
   return {
@@ -74,6 +81,19 @@ function harness(input?: {
 
   const suspend = vi.fn();
   const resume = vi.fn();
+  const inspectRegion = vi.fn(async (regionInput) => ({
+    contextControlReference: regionInput.contextControlReference,
+    authority: {
+      referenceVersion: 1,
+      pageId: "page-1",
+      frameId: "frame-1",
+      documentEpoch: 2,
+      documentIdentity: "document-1",
+    },
+    region: { kind: "section" },
+    readableValues: [],
+    readableValueCompleteness: { kind: "bounded", observed: 0, returned: 0, truncated: false },
+  }));
 
   const repository = {
     claimNext: vi.fn().mockResolvedValueOnce(runtime).mockResolvedValue(undefined),
@@ -103,6 +123,7 @@ function harness(input?: {
     state: () => "active" as const,
     documentEpoch: () => 0,
     observeDocument,
+    inspectRegion,
     interact,
     suspend,
     resume,
@@ -128,6 +149,7 @@ function harness(input?: {
     createSession,
     close,
     observeDocument,
+    inspectRegion,
     interact,
     suspend,
     resume,
@@ -226,6 +248,33 @@ describe("authoring runtime owner", () => {
         url: "https://example.com/dashboard",
       },
     });
+
+    await owner.close();
+  });
+
+  it("executes a read-only region command through the owned browser session", async () => {
+    const input = {
+      contextControlReference: "context-control-0123456789abcdef0123456789abcdef",
+    };
+    const claimed = command("inspect_region", input);
+    const { owner, repository, commands, inspectRegion, interact } = harness({
+      commands: [claimed],
+    });
+
+    await owner.start();
+    await vi.waitFor(() => expect(commands.complete).toHaveBeenCalledOnce());
+
+    expect(inspectRegion).toHaveBeenCalledWith(input);
+    expect(interact).not.toHaveBeenCalled();
+    expect(repository.recordObservation).not.toHaveBeenCalled();
+    expect(commands.complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        safeResult: expect.objectContaining({
+          contextControlReference: input.contextControlReference,
+          readableValues: [],
+        }),
+      }),
+    );
 
     await owner.close();
   });
