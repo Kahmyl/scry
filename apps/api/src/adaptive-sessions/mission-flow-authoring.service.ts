@@ -225,6 +225,42 @@ export class MissionFlowAuthoringService {
     return this.runner.readPublicResource(sessionId, input);
   }
 
+  async inspectStructure(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.inspectStructure(sessionId);
+  }
+
+  async readPublicStructureValue(
+    principal: Principal,
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicStructureValueInput,
+  ) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.readPublicStructureValue(sessionId, input);
+  }
+
+  async inspectRuntimeState(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.inspectRuntimeState(sessionId);
+  }
+
+  async readPublicRuntimeValue(
+    principal: Principal,
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicRuntimeValueInput,
+  ) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.readPublicRuntimeValue(sessionId, input);
+  }
+
   async reconcileUnknown(
     principal: Principal,
     sessionId: string,

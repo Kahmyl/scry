@@ -15,9 +15,15 @@ import {
 import {
   inspectPraxisRegionInputSchema,
   inspectPraxisBrowserResourcesInputSchema,
+  inspectPraxisStructureInputSchema,
+  inspectPraxisRuntimeStateInputSchema,
   readPraxisPublicResourceInputSchema,
+  readPraxisPublicStructureValueInputSchema,
+  readPraxisPublicRuntimeValueInputSchema,
   readPraxisPublicValueInputSchema,
   type ReadPraxisPublicResourceInput,
+  type ReadPraxisPublicStructureValueInput,
+  type ReadPraxisPublicRuntimeValueInput,
   type InspectPraxisRegionInput,
   type ReadPraxisPublicValueInput,
 } from "@scry/contracts";
@@ -145,6 +151,44 @@ export class PraxisSessionController {
     input: ReadPraxisPublicResourceInput,
   ) {
     return this.sessions.readPublicResource(principal, sessionId, input);
+  }
+
+  @Post(":sessionId/structure/inspect")
+  inspectStructure(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(inspectPraxisStructureInputSchema)) _input: object,
+  ) {
+    return this.sessions.inspectStructure(principal, sessionId);
+  }
+
+  @Post(":sessionId/public-structure-values/read")
+  readPublicStructureValue(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(readPraxisPublicStructureValueInputSchema))
+    input: ReadPraxisPublicStructureValueInput,
+  ) {
+    return this.sessions.readPublicStructureValue(principal, sessionId, input);
+  }
+
+  @Post(":sessionId/runtime-state/inspect")
+  inspectRuntimeState(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(inspectPraxisRuntimeStateInputSchema)) _input: object,
+  ) {
+    return this.sessions.inspectRuntimeState(principal, sessionId);
+  }
+
+  @Post(":sessionId/public-runtime-values/read")
+  readPublicRuntimeValue(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(readPraxisPublicRuntimeValueInputSchema))
+    input: ReadPraxisPublicRuntimeValueInput,
+  ) {
+    return this.sessions.readPublicRuntimeValue(principal, sessionId, input);
   }
 
   @Post(":sessionId/reconcile-unknown")

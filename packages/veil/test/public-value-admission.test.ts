@@ -92,6 +92,7 @@ describe("Veil public value admission", () => {
     "access_token=<<ACCESS_TOKEN>>",
     "access_token=%3CACCESS_TOKEN%3E",
     "access_token=<ACCESS-TOKEN>",
+    '"client_secret":"refused-example-value"',
   ])("keeps ambiguous or credential-like sensitive values protected: %s", (text) => {
     expect(classifyVeilPublicValue(publicCandidate(text))).toBe("protected");
   });

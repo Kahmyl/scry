@@ -42,7 +42,7 @@ describe("current Scry MCP surface", () => {
     const { client, server } = await connected();
     const tools = (await client.listTools()).tools;
     const names = tools.map(({ name }) => name);
-    expect(tools).toHaveLength(56);
+    expect(tools).toHaveLength(60);
     expect(names).toEqual(
       expect.arrayContaining([
         "start_praxis_session",
@@ -50,6 +50,10 @@ describe("current Scry MCP surface", () => {
         "inspect_praxis_region",
         "inspect_praxis_resources",
         "read_praxis_public_resource",
+        "inspect_praxis_structure",
+        "read_praxis_public_structure_value",
+        "inspect_praxis_runtime_state",
+        "read_praxis_public_runtime_value",
         "get_praxis_session",
         "close_praxis_session",
         "start_run",
@@ -82,7 +86,44 @@ describe("current Scry MCP surface", () => {
     expect(inspectRegion.description).toContain("read_praxis_public_value");
     expect(inspectRegion.description).toContain("without returning its plaintext");
     expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("inspect_praxis_resources");
-    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("never infer a resource URL");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("Never infer a resource URL");
+    const inspectStructure = tools.find(({ name }) => name === "inspect_praxis_structure")!;
+    const readStructure = tools.find(({ name }) => name === "read_praxis_public_structure_value")!;
+    const inspectRuntime = tools.find(({ name }) => name === "inspect_praxis_runtime_state")!;
+    const readRuntime = tools.find(({ name }) => name === "read_praxis_public_runtime_value")!;
+    expect(Object.keys((inspectStructure.inputSchema as any).properties)).toEqual([
+      "praxisSessionId",
+    ]);
+    expect(Object.keys((readStructure.inputSchema as any).properties).sort()).toEqual([
+      "field",
+      "praxisSessionId",
+      "reference",
+    ]);
+    expect(Object.keys((inspectRuntime.inputSchema as any).properties)).toEqual([
+      "praxisSessionId",
+    ]);
+    expect(Object.keys((readRuntime.inputSchema as any).properties).sort()).toEqual([
+      "praxisSessionId",
+      "reference",
+    ]);
+    expect(
+      JSON.stringify([inspectStructure.outputSchema, inspectRuntime.outputSchema]),
+    ).not.toMatch(
+      /nodeId|backendNodeId|objectId|html|expression|javascript|cookie|storage|secret/i,
+    );
+    const guidance = SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS;
+    const escalationPositions = [
+      guidance.indexOf("ordinary semantic perception"),
+      guidance.indexOf("targeted semantic-region perception"),
+      guidance.indexOf("browser-resource perception"),
+      guidance.indexOf("DOMSnapshot/accessibility structural perception"),
+      guidance.indexOf("constrained runtime-state perception"),
+    ];
+    expect(
+      escalationPositions.every(
+        (value, index) => value >= 0 && (index === 0 || value > escalationPositions[index - 1]!),
+      ),
+    ).toBe(true);
     const dispatch = tools.find(({ name }) => name === "dispatch_run_operation")!;
     expect(dispatch.description).toContain("semantic-only targets");
     expect(dispatch.description).toContain("no selector fallback");

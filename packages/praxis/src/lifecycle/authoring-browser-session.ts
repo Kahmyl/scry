@@ -9,6 +9,10 @@ import {
   type InspectPraxisRegionInput,
   type InspectPraxisRegionResult,
   type InspectPraxisBrowserResourcesResult,
+  type InspectPraxisStructureResult,
+  type InspectPraxisRuntimeStateResult,
+  type ReadPraxisPublicStructureValueInput,
+  type ReadPraxisPublicRuntimeValueInput,
   type OperationOutcome,
 } from "@scry/contracts";
 import {
@@ -23,6 +27,16 @@ import {
   readPraxisPublicResource,
   type PraxisPublicResourceReadInput,
 } from "../browser-resource.js";
+import {
+  inspectPraxisStructure,
+  installPraxisStructurePerception,
+  readPraxisPublicStructureValue,
+} from "../structure-perception.js";
+import {
+  inspectPraxisRuntimeState,
+  installPraxisRuntimeStatePerception,
+  readPraxisPublicRuntimeValue,
+} from "../runtime-state-perception.js";
 import {
   closePraxisReadOnlyCdpSensors,
   enrichPraxisSemanticPageContextWithReadOnlyCdp,
@@ -77,6 +91,14 @@ export type AuthoringBrowserSession<Report = unknown> = {
   readPublicResource(
     input: PraxisPublicResourceReadInput,
   ): Promise<import("../browser-resource.js").PraxisPublicResourceRead>;
+  inspectStructure(): Promise<InspectPraxisStructureResult>;
+  readPublicStructureValue(
+    input: ReadPraxisPublicStructureValueInput,
+  ): Promise<import("@scry/contracts").ReadPraxisPublicStructureValueResult>;
+  inspectRuntimeState(): Promise<InspectPraxisRuntimeStateResult>;
+  readPublicRuntimeValue(
+    input: ReadPraxisPublicRuntimeValueInput,
+  ): Promise<import("@scry/contracts").ReadPraxisPublicRuntimeValueResult>;
   interact(
     action: CurrentAction,
     context?: {
@@ -174,6 +196,8 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
     let interactionOrdinal = 0;
     let closed = false;
     let closeResourcePerception = installPraxisBrowserResourcePerception(page);
+    let closeStructurePerception = installPraxisStructurePerception(page);
+    let closeRuntimeStatePerception = await installPraxisRuntimeStatePerception(page);
     const authorityCrashed = () => lifecycle === "crashed";
     const pageOwnership = createPraxisExpectedPageOwnership(context, () => page!);
     const allowedDocumentOrigins = new Set(input.policy.allowedOrigins);
@@ -306,6 +330,31 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
         return readPraxisPublicResource(page!, input);
       },
 
+      async inspectStructure() {
+        if (authorityCrashed()) throw new PraxisBrowserAuthorityLostError();
+        if (lifecycle !== "active" && lifecycle !== "suspended")
+          throw new Error("AUTHORING_BROWSER_SESSION_NOT_OBSERVABLE");
+        return inspectPraxisStructure(page!);
+      },
+      async readPublicStructureValue(input) {
+        if (authorityCrashed()) throw new PraxisBrowserAuthorityLostError();
+        if (lifecycle !== "active" && lifecycle !== "suspended")
+          throw new Error("AUTHORING_BROWSER_SESSION_NOT_OBSERVABLE");
+        return readPraxisPublicStructureValue(page!, input);
+      },
+      async inspectRuntimeState() {
+        if (authorityCrashed()) throw new PraxisBrowserAuthorityLostError();
+        if (lifecycle !== "active" && lifecycle !== "suspended")
+          throw new Error("AUTHORING_BROWSER_SESSION_NOT_OBSERVABLE");
+        return inspectPraxisRuntimeState(page!);
+      },
+      async readPublicRuntimeValue(input) {
+        if (authorityCrashed()) throw new PraxisBrowserAuthorityLostError();
+        if (lifecycle !== "active" && lifecycle !== "suspended")
+          throw new Error("AUTHORING_BROWSER_SESSION_NOT_OBSERVABLE");
+        return readPraxisPublicRuntimeValue(page!, input);
+      },
+
       async interact(candidate, interactionContext = {}) {
         if (authorityCrashed()) {
           throw new PraxisBrowserAuthorityLostError();
@@ -379,8 +428,12 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
                     }
                     const previousPage = page!;
                     closeResourcePerception();
+                    closeStructurePerception();
+                    closeRuntimeStatePerception();
                     page = popup;
                     closeResourcePerception = installPraxisBrowserResourcePerception(popup);
+                    closeStructurePerception = installPraxisStructurePerception(popup);
+                    closeRuntimeStatePerception = await installPraxisRuntimeStatePerception(popup);
                     popupCandidate.adopt(popup);
                     observePageAuthority(popup);
                     unregisterVeil.push(registerPraxisVeilAuthority(popup, veilRegistration));
@@ -480,6 +533,8 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
         try {
           unregisterVeil.forEach((unregister) => unregister());
           closeResourcePerception();
+          closeStructurePerception();
+          closeRuntimeStatePerception();
           await privacyGate.seal({ code: "AUTHORING_OPERATION_CANCELLED" }).catch(() => undefined);
           await closePraxisReadOnlyCdpSensors(context!).catch(() => undefined);
           await boundedAuthoringClose("authoring_context_cancel", () =>
@@ -501,6 +556,8 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
         lifecycle = "releasing";
         unregisterVeil.forEach((unregister) => unregister());
         closeResourcePerception();
+        closeStructurePerception();
+        closeRuntimeStatePerception();
         await boundedAuthoringClose("authoring_veil_finalize", () => privacyGate.finalize()).catch(
           () => privacyGate.seal({ code: "AUTHORING_FINALIZATION_TIMEOUT" }),
         );

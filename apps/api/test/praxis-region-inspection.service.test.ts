@@ -36,6 +36,44 @@ const inspection = {
 };
 
 describe("Praxis region inspection API service", () => {
+  it("delegates structure and runtime factual reads without persistence or plaintext logging", async () => {
+    const repository = {
+      get: vi.fn(async () => ({ id: sessionId, state: "active" })),
+      beginMissionOperation: vi.fn(),
+    };
+    const structure = { structures: [] };
+    const runtime = { values: [] };
+    const structureRead = { text: "public structure" };
+    const runtimeRead = { text: "public runtime" };
+    const runner = {
+      inspectStructure: vi.fn(async () => structure),
+      readPublicStructureValue: vi.fn(async () => structureRead),
+      inspectRuntimeState: vi.fn(async () => runtime),
+      readPublicRuntimeValue: vi.fn(async () => runtimeRead),
+    };
+    const service = new MissionFlowAuthoringService(
+      repository as never,
+      runner as never,
+      { assertAcceptingWork: vi.fn() } as never,
+    );
+    const structureInput = {
+      reference: "context-structure-0123456789abcdef0123456789abcdef",
+      field: "name" as const,
+    };
+    const runtimeInput = { reference: "context-runtime-0123456789abcdef0123456789abcdef" };
+    await expect(service.inspectStructure(principal, sessionId)).resolves.toBe(structure);
+    await expect(
+      service.readPublicStructureValue(principal, sessionId, structureInput),
+    ).resolves.toBe(structureRead);
+    await expect(service.inspectRuntimeState(principal, sessionId)).resolves.toBe(runtime);
+    await expect(service.readPublicRuntimeValue(principal, sessionId, runtimeInput)).resolves.toBe(
+      runtimeRead,
+    );
+    expect(repository.beginMissionOperation).not.toHaveBeenCalled();
+    expect(JSON.stringify({ structure, runtime })).not.toMatch(
+      /protected|nodeId|backendNodeId|objectId|cookie|storage/i,
+    );
+  });
   it("delegates browser-resource inspection and exact reads without creating an operation", async () => {
     const repository = {
       get: vi.fn(async () => ({ id: sessionId, state: "active" })),

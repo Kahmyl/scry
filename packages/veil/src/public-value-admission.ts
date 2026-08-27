@@ -155,7 +155,7 @@ function containsProtectedMaterial(value: string) {
  */
 function containsSensitiveLabelValue(text: string) {
   const pattern =
-    /\b(?:password|passcode|secret|client[_ -]?secret|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization)\b\s*[:=]\s*(?:(<[A-Z][A-Z_]{1,61}[A-Z]>)(?=$|[\s"'&])|\S+)/gi;
+    /(?:\b|["'])(?:password|passcode|secret|client[_ -]?secret|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization)\b["']?\s*[:=]\s*(?:(<[A-Z][A-Z_]{1,61}[A-Z]>)(?=$|[\s"'&])|\S+)/gi;
 
   for (const match of text.matchAll(pattern)) {
     if (!match[1]) return true;

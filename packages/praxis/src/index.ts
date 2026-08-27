@@ -40,3 +40,5 @@ export * from "./lifecycle/authoring-browser-session.js";
 
 export * from "./public-value.js";
 export * from "./browser-resource.js";
+export * from "./structure-perception.js";
+export * from "./runtime-state-perception.js";

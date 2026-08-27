@@ -14,6 +14,10 @@ import { registerInspectPraxisRegionTool } from "./inspect-praxis-region.tool.js
 import { registerReadPraxisPublicValueTool } from "./read-praxis-public-value.tool.js";
 import { registerInspectPraxisResourcesTool } from "./inspect-praxis-resources.tool.js";
 import { registerReadPraxisPublicResourceTool } from "./read-praxis-public-resource.tool.js";
+import { registerInspectPraxisStructureTool } from "./inspect-praxis-structure.tool.js";
+import { registerReadPraxisPublicStructureValueTool } from "./read-praxis-public-structure-value.tool.js";
+import { registerInspectPraxisRuntimeStateTool } from "./inspect-praxis-runtime-state.tool.js";
+import { registerReadPraxisPublicRuntimeValueTool } from "./read-praxis-public-runtime-value.tool.js";
 import { registerGetPraxisSessionTool } from "./get-praxis-session.tool.js";
 import { registerReconcilePraxisUnknownOperationTool } from "./reconcile-praxis-unknown-operation.tool.js";
 import { registerClosePraxisSessionTool } from "./close-praxis-session.tool.js";
@@ -35,6 +39,10 @@ export function registerPraxisSessionTools(server: McpServer, client: ScryApiCli
   registerReadPraxisPublicValueTool(server, client);
   registerInspectPraxisResourcesTool(server, client);
   registerReadPraxisPublicResourceTool(server, client);
+  registerInspectPraxisStructureTool(server, client);
+  registerReadPraxisPublicStructureValueTool(server, client);
+  registerInspectPraxisRuntimeStateTool(server, client);
+  registerReadPraxisPublicRuntimeValueTool(server, client);
   registerGetPraxisSessionTool(server, client);
   registerReconcilePraxisUnknownOperationTool(server, client);
   registerClosePraxisSessionTool(server, client);

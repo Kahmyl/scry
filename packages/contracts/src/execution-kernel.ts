@@ -692,6 +692,175 @@ export type InspectPraxisBrowserResourcesResult = z.infer<
 export type ReadPraxisPublicResourceInput = z.infer<typeof readPraxisPublicResourceInputSchema>;
 export type ReadPraxisPublicResourceResult = z.infer<typeof readPraxisPublicResourceResultSchema>;
 
+const praxisSnapshotAuthoritySchema = praxisResourceAuthoritySchema;
+const praxisStructureFieldSchema = z.enum(["text", "name", "value", "description"]);
+const praxisRuntimeValueKindSchema = z.enum(["scalar", "object", "array"]);
+
+export const inspectPraxisStructureInputSchema = z.object({}).strict();
+export const inspectPraxisStructureResultSchema = z
+  .object({
+    authority: praxisSnapshotAuthoritySchema,
+    structures: z
+      .array(
+        z
+          .object({
+            reference: z.string().regex(/^context-structure-[a-f0-9]{32}$/),
+            source: z.enum(["dom", "accessibility"]),
+            role: z
+              .enum([
+                "button",
+                "checkbox",
+                "combobox",
+                "dialog",
+                "field",
+                "form",
+                "heading",
+                "link",
+                "region",
+                "text",
+                "value",
+              ])
+              .optional(),
+            depth: z.number().int().nonnegative().max(128),
+            childCount: z.number().int().nonnegative().max(10_000),
+            readableFields: z.array(praxisStructureFieldSchema).min(1).max(4),
+          })
+          .strict(),
+      )
+      .max(32),
+    completeness: z
+      .object({
+        kind: z.literal("bounded"),
+        observed: z.number().int().nonnegative(),
+        returned: z.number().int().nonnegative().max(32),
+        truncated: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (
+      result.completeness.returned !== result.structures.length ||
+      result.completeness.observed < result.completeness.returned ||
+      result.completeness.truncated !== result.completeness.observed > result.completeness.returned
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["completeness"],
+        message: "structure completeness must match the bounded metadata projection",
+      });
+    if (
+      new Set(result.structures.map((structure) => structure.reference)).size !==
+      result.structures.length
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["structures"],
+        message: "structure references must be unique",
+      });
+  });
+export const readPraxisPublicStructureValueInputSchema = z
+  .object({
+    reference: z.string().regex(/^context-structure-[a-f0-9]{32}$/),
+    field: praxisStructureFieldSchema,
+  })
+  .strict();
+export const readPraxisPublicStructureValueResultSchema = z
+  .object({
+    reference: z.string().regex(/^context-structure-[a-f0-9]{32}$/),
+    field: praxisStructureFieldSchema,
+    classification: z.literal("public"),
+    provenance: praxisSnapshotAuthoritySchema,
+    text: z.string().max(4_096),
+    admission: z
+      .object({
+        admissionRevision: z.number().int().min(1),
+        contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
+        admissionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const inspectPraxisRuntimeStateInputSchema = z.object({}).strict();
+export const inspectPraxisRuntimeStateResultSchema = z
+  .object({
+    authority: praxisSnapshotAuthoritySchema,
+    values: z
+      .array(
+        z
+          .object({
+            reference: z.string().regex(/^context-runtime-[a-f0-9]{32}$/),
+            kind: praxisRuntimeValueKindSchema,
+            bytes: z.number().int().positive().max(524_288),
+            memberCount: z.number().int().nonnegative().max(512),
+          })
+          .strict(),
+      )
+      .max(16),
+    completeness: z
+      .object({
+        kind: z.literal("bounded"),
+        observed: z.number().int().nonnegative(),
+        returned: z.number().int().nonnegative().max(16),
+        truncated: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (
+      result.completeness.returned !== result.values.length ||
+      result.completeness.observed < result.completeness.returned ||
+      result.completeness.truncated !== result.completeness.observed > result.completeness.returned
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["completeness"],
+        message: "runtime completeness must match the bounded metadata projection",
+      });
+    if (new Set(result.values.map((value) => value.reference)).size !== result.values.length)
+      context.addIssue({
+        code: "custom",
+        path: ["values"],
+        message: "runtime references must be unique",
+      });
+  });
+export const readPraxisPublicRuntimeValueInputSchema = z
+  .object({ reference: z.string().regex(/^context-runtime-[a-f0-9]{32}$/) })
+  .strict();
+export const readPraxisPublicRuntimeValueResultSchema = z
+  .object({
+    reference: z.string().regex(/^context-runtime-[a-f0-9]{32}$/),
+    classification: z.literal("public"),
+    provenance: praxisSnapshotAuthoritySchema,
+    kind: praxisRuntimeValueKindSchema,
+    text: z.string().max(4_096),
+    admission: z
+      .object({
+        admissionRevision: z.number().int().min(1),
+        contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
+        admissionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type InspectPraxisStructureResult = z.infer<typeof inspectPraxisStructureResultSchema>;
+export type ReadPraxisPublicStructureValueInput = z.infer<
+  typeof readPraxisPublicStructureValueInputSchema
+>;
+export type ReadPraxisPublicStructureValueResult = z.infer<
+  typeof readPraxisPublicStructureValueResultSchema
+>;
+export type InspectPraxisRuntimeStateResult = z.infer<typeof inspectPraxisRuntimeStateResultSchema>;
+export type ReadPraxisPublicRuntimeValueInput = z.infer<
+  typeof readPraxisPublicRuntimeValueInputSchema
+>;
+export type ReadPraxisPublicRuntimeValueResult = z.infer<
+  typeof readPraxisPublicRuntimeValueResultSchema
+>;
+
 export const executionRequestSchema = z
   .object({
     sessionId: z.string().trim().min(1).max(200),

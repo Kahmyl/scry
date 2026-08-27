@@ -433,6 +433,60 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     });
   }
 
+  async inspectStructure(sessionId: string) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.inspectStructure();
+      } catch (error) {
+        throw perceptionReadConflict(error, "structure");
+      }
+    });
+  }
+
+  async readPublicStructureValue(
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicStructureValueInput,
+  ) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.readPublicStructureValue(input);
+      } catch (error) {
+        throw perceptionReadConflict(error, "structure");
+      }
+    });
+  }
+
+  async inspectRuntimeState(sessionId: string) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.inspectRuntimeState();
+      } catch (error) {
+        throw perceptionReadConflict(error, "runtime");
+      }
+    });
+  }
+
+  async readPublicRuntimeValue(
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicRuntimeValueInput,
+  ) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.readPublicRuntimeValue(input);
+      } catch (error) {
+        throw perceptionReadConflict(error, "runtime");
+      }
+    });
+  }
+
   /**
    * Capture factual portable state from the already-owned live Praxis runtime.
    * This does not stage, seal, select, restore, or close a checkpoint.
@@ -1203,6 +1257,24 @@ function resourceReadConflict(error: unknown): never {
       safeActions:
         code === "PUBLIC_RESOURCE_REFERENCE_UNKNOWN" || code === "PUBLIC_RESOURCE_REFERENCE_STALE"
           ? ["inspect_praxis_resources"]
+          : [],
+    });
+  throw error;
+}
+
+function perceptionReadConflict(error: unknown, channel: "structure" | "runtime"): never {
+  const code =
+    error && typeof error === "object" && "code" in error && typeof error.code === "string"
+      ? error.code
+      : undefined;
+  const prefix = channel === "structure" ? "PUBLIC_STRUCTURE_" : "PUBLIC_RUNTIME_";
+  if (code?.startsWith(prefix))
+    throw new ConflictException({
+      code,
+      mutationOutcome: "not_applied",
+      safeActions:
+        code.endsWith("REFERENCE_UNKNOWN") || code.endsWith("REFERENCE_STALE")
+          ? [channel === "structure" ? "inspect_praxis_structure" : "inspect_praxis_runtime_state"]
           : [],
     });
   throw error;

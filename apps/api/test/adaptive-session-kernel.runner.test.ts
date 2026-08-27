@@ -146,6 +146,72 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     expect(interact).not.toHaveBeenCalled();
   });
 
+  it("serializes direct structure and runtime reads through the owned session without dispatch", async () => {
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const session = {
+      inspectStructure: vi.fn(async () => ({ structures: [] })),
+      readPublicStructureValue: vi.fn(async () => ({ text: "structure" })),
+      inspectRuntimeState: vi.fn(async () => ({ values: [] })),
+      readPublicRuntimeValue: vi.fn(async () => ({ text: "runtime" })),
+      interact: vi.fn(),
+    };
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(
+      "live-perception-session",
+      { session, fencingToken: 1, tail: Promise.resolve() },
+    );
+    await runner.inspectStructure("live-perception-session");
+    await runner.readPublicStructureValue("live-perception-session", {
+      reference: "context-structure-0123456789abcdef0123456789abcdef",
+      field: "text",
+    });
+    await runner.inspectRuntimeState("live-perception-session");
+    await runner.readPublicRuntimeValue("live-perception-session", {
+      reference: "context-runtime-0123456789abcdef0123456789abcdef",
+    });
+    expect(session.interact).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["structure", "PUBLIC_STRUCTURE_CLASSIFICATION_REFUSED", "refused-structure-secret"],
+    ["runtime", "PUBLIC_RUNTIME_CLASSIFICATION_REFUSED", "refused-runtime-secret"],
+  ] as const)(
+    "projects %s perception refusals without protected plaintext",
+    async (channel, code, protectedText) => {
+      const runner = new AdaptiveSessionKernelRunner(
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+      const refusal = Object.assign(new Error(protectedText), { code });
+      const session = {
+        inspectStructure: vi.fn(async () => {
+          throw refusal;
+        }),
+        inspectRuntimeState: vi.fn(async () => {
+          throw refusal;
+        }),
+      };
+      (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(
+        "live-private-perception",
+        { session, fencingToken: 1, tail: Promise.resolve() },
+      );
+
+      const result =
+        channel === "structure"
+          ? runner.inspectStructure("live-private-perception")
+          : runner.inspectRuntimeState("live-private-perception");
+      const caught = await result.catch((error) => error);
+      expect(caught.response).toEqual({ code, mutationOutcome: "not_applied", safeActions: [] });
+      expect(JSON.stringify(caught.response)).not.toContain(protectedText);
+    },
+  );
+
   it("projects the exact safe missing origin and replacement-session recovery", async () => {
     const sessionId = "11111111-1111-4111-8111-111111111111";
     const environmentId = "22222222-2222-4222-8222-222222222222";
