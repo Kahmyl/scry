@@ -122,18 +122,33 @@ function harness(associated = true, existingSafeResult?: Record<string, unknown>
 }
 
 describe("agent-directed Run live Praxis ownership", () => {
-  it("dispatches one exact-reference operation and preserves expected effects as mechanical assertions only", async () => {
+  it("gives a short read-only documentation activation the bounded Run-turn settlement window", async () => {
+    const documentationIntent = {
+      ...intent,
+      intentId: "focus-create-order-documentation",
+      action: {
+        kind: "activate" as const,
+        target: {
+          concept: "Create Order documentation",
+          reference: `context-control-${"c".repeat(32)}`,
+          role: "link" as const,
+          exact: true,
+        },
+      },
+      expectedEffect: { kind: "none" as const },
+      constraints: { timeoutMs: 10_000, allowNewPage: false, allowNonExact: false },
+    };
     const { service, sessions } = harness();
     await expect(
       service.dispatch({ kind: "service", subject: "scry-service" }, runId, {
         praxisSessionId: sessionId,
-        intent,
+        intent: documentationIntent,
       }),
     ).resolves.toMatchObject({
       runId,
       praxisSessionId: sessionId,
       operationId: "m2-operation",
-      intentId: "activate-submit",
+      intentId: "focus-create-order-documentation",
       functionalResult: "succeeded",
       mutationOutcome: "applied",
       successorObservation: {
@@ -145,8 +160,13 @@ describe("agent-directed Run live Praxis ownership", () => {
       expect.anything(),
       sessionId,
       expect.objectContaining({
-        intents: [expect.objectContaining({ expectedEffect: intent.expectedEffect })],
-        budgets: { maxOperations: 1, maxDurationMs: 5_000 },
+        intents: [
+          expect.objectContaining({
+            expectedEffect: documentationIntent.expectedEffect,
+            constraints: documentationIntent.constraints,
+          }),
+        ],
+        budgets: { maxOperations: 1, maxDurationMs: 60_000 },
       }),
       expect.objectContaining({
         commit: expect.any(Function),
@@ -351,7 +371,7 @@ describe("agent-directed Run live Praxis ownership", () => {
         {
           kind: "continue",
           turnId: "protected-turn",
-          budgets: { maxOperations: 1, maxDurationMs: 5_000 },
+          budgets: { maxOperations: 1, maxDurationMs: 60_000 },
           idempotencyKey: `${intent.intentId}:continue:1`,
         },
         expect.objectContaining({

@@ -44,6 +44,11 @@ type AssociatedAgentDirectedRun = {
   praxisDecisionBoundary: { type?: string; reasonCode?: string } | null;
 };
 
+// A Run dispatch contains one semantic operation, but its durable turn also owns
+// the post-action report and evidence settlement. Do not use the action's
+// timeout as that enclosing turn deadline.
+const agentDirectedRunTurnBudgets = { maxOperations: 1, maxDurationMs: 60_000 } as const;
+
 @Injectable()
 export class AgentDirectedRunService {
   private readonly artifactRoot = path.resolve(process.env.ARTIFACT_ROOT ?? "artifacts/runs");
@@ -107,7 +112,7 @@ export class AgentDirectedRunService {
         kind: "intents",
         idempotencyKey: input.intent.intentId,
         intents: [factualIntent],
-        budgets: { maxOperations: 1, maxDurationMs: input.intent.constraints.timeoutMs },
+        budgets: agentDirectedRunTurnBudgets,
       },
       runEvidence,
     );
@@ -119,7 +124,7 @@ export class AgentDirectedRunService {
         {
           kind: "continue",
           turnId: result.turnId,
-          budgets: { maxOperations: 1, maxDurationMs: input.intent.constraints.timeoutMs },
+          budgets: agentDirectedRunTurnBudgets,
           idempotencyKey: `${input.intent.intentId}:continue:${attempt + 1}`,
         },
         runEvidence,
