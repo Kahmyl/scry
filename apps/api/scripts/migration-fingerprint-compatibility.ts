@@ -225,6 +225,22 @@ export function expandBaselineStage(
   );
 }
 
+export function calculatePreTargetedRegionPerceptionFingerprint(input: {
+  baselineSource: string;
+  migrationSources: Record<OptionalBaselineMigration, string>;
+  expandFoundation(source: string): string;
+}): string {
+  return digest(
+    input.expandFoundation(
+      expandBaselineStage(
+        input.baselineSource,
+        input.migrationSources,
+        OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "targeted-region-perception.sql"),
+      ),
+    ),
+  );
+}
+
 export function supportedHistoricalFingerprints(
   values: Record<(typeof SUPPORTED_HISTORICAL_BASELINES)[number], string>,
 ): string[] {

@@ -101,7 +101,7 @@ def model_config(
             max_tokens=int(
                 os.getenv(
                     "SCRY_AGENT_LAB_DEEPSEEK_MAX_TOKENS",
-                    "2048",
+                    "8192",
                 )
             ),
             extra_body={

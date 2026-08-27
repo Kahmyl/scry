@@ -11,6 +11,7 @@ import {
   AUTHORITATIVE_D647_SHAPE_SQL,
   assertAuthoritativeD647Shape,
   assertConfiguredMigrationFingerprint,
+  calculatePreTargetedRegionPerceptionFingerprint,
   calculateHistoricalFingerprints,
   assertReleasedFingerprintReconstruction,
   expandBaselineStage,
@@ -461,11 +462,11 @@ const fingerprint = digest(baseline);
 
 assertConfiguredMigrationFingerprint(process.env.SCRY_SCHEMA_FINGERPRINT, fingerprint);
 
-const preTargetedRegionPerceptionFingerprint = digest(
-  stagedBaseline(
-    OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "targeted-region-perception.sql"),
-  ),
-);
+const preTargetedRegionPerceptionFingerprint = calculatePreTargetedRegionPerceptionFingerprint({
+  baselineSource,
+  migrationSources: optionalMigrationSources,
+  expandFoundation,
+});
 
 const preFlowNameIdentityCutoverFingerprint = digest(
   expandFoundation(

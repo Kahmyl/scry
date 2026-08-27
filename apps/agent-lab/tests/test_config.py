@@ -25,6 +25,10 @@ def test_deepseek_provider(
         "DEEPSEEK_API_KEY",
         "test-key",
     )
+    monkeypatch.delenv(
+        "SCRY_AGENT_LAB_DEEPSEEK_MAX_TOKENS",
+        raising=False,
+    )
 
     config = model_config(
         "deepseek"
@@ -40,11 +44,31 @@ def test_deepseek_provider(
         == "https://api.deepseek.com"
     )
     assert config.seed is None
+    assert config.max_tokens == 8192
     assert config.extra_body == {
         "thinking": {
             "type": "disabled",
         }
     }
+
+
+def test_deepseek_completion_budget_override(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "DEEPSEEK_API_KEY",
+        "test-key",
+    )
+    monkeypatch.setenv(
+        "SCRY_AGENT_LAB_DEEPSEEK_MAX_TOKENS",
+        "12288",
+    )
+
+    config = model_config(
+        "deepseek"
+    )
+
+    assert config.max_tokens == 12288
 
 
 def test_deepseek_requires_key(

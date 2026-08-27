@@ -65,6 +65,8 @@ Agent Lab can run the same external-agent objective through DeepSeek V4 Flash:
 
 The default DeepSeek profile uses `deepseek-v4-flash` in non-thinking mode.
 This keeps its tool-call loop directly comparable with the local model.
+Its explicit completion budget defaults to 8,192 tokens and can be narrowed or
+raised with `SCRY_AGENT_LAB_DEEPSEEK_MAX_TOKENS` for a qualified cohort.
 
 DeepSeek is a separate experimental/qualification cohort. Selecting it as the
 primary cohort is an operator decision and sends the published MCP surface and

@@ -10,6 +10,7 @@ import {
   assertAuthoritativeD647Shape,
   assertConfiguredMigrationFingerprint,
   assertReleasedFingerprintReconstruction,
+  calculatePreTargetedRegionPerceptionFingerprint,
   compatibilityBaseline,
   expandBaselineStage,
   HISTORICAL_BASELINE_STAGES,
@@ -117,17 +118,16 @@ describe("migration fingerprint compatibility", () => {
     ) as Record<(typeof OPTIONAL_BASELINE_MIGRATIONS)[number], string>;
     const calibration = await readFile(`${migrationDirectory}calibration-foundation.sql`, "utf8");
     const protectedCapsule = await readFile(`${migrationDirectory}protected-capsule.sql`, "utf8");
-    const previous = expandBaselineStage(
-      source,
+    const previous = calculatePreTargetedRegionPerceptionFingerprint({
+      baselineSource: source,
       migrationSources,
-      OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "targeted-region-perception.sql"),
-    )
-      .replace("\\ir calibration-foundation.sql", () => calibration)
-      .replace("\\ir protected-capsule.sql", () => protectedCapsule);
+      expandFoundation: (value) =>
+        value
+          .replace("\\ir calibration-foundation.sql", () => calibration)
+          .replace("\\ir protected-capsule.sql", () => protectedCapsule),
+    });
 
-    expect(createHash("sha256").update(previous).digest("hex")).toBe(
-      "f476a450a4d8aedb47e6ba1b7a30ad91790390e0199445d9ed5502ea7ef63ec1",
-    );
+    expect(previous).toBe("f476a450a4d8aedb47e6ba1b7a30ad91790390e0199445d9ed5502ea7ef63ec1");
   });
 
   it("requires one valid, distinct fingerprint for every supported historical baseline", () => {
