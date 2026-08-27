@@ -123,6 +123,13 @@ describe("execution kernel contracts", () => {
         returned: 1,
         truncated: false,
       },
+      readableValues: [],
+      readableValueCompleteness: {
+        kind: "bounded" as const,
+        observed: 0,
+        returned: 0,
+        truncated: false,
+      },
     };
     expect(
       operationOutcomeSchema.parse({

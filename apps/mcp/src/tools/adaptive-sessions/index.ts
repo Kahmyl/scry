@@ -12,6 +12,8 @@ import { registerStartPraxisSessionTool } from "./start-praxis-session.tool.js";
 import { registerObservePraxisSessionTool } from "./observe-praxis-session.tool.js";
 import { registerInspectPraxisRegionTool } from "./inspect-praxis-region.tool.js";
 import { registerReadPraxisPublicValueTool } from "./read-praxis-public-value.tool.js";
+import { registerInspectPraxisResourcesTool } from "./inspect-praxis-resources.tool.js";
+import { registerReadPraxisPublicResourceTool } from "./read-praxis-public-resource.tool.js";
 import { registerGetPraxisSessionTool } from "./get-praxis-session.tool.js";
 import { registerReconcilePraxisUnknownOperationTool } from "./reconcile-praxis-unknown-operation.tool.js";
 import { registerClosePraxisSessionTool } from "./close-praxis-session.tool.js";
@@ -31,6 +33,8 @@ export function registerPraxisSessionTools(server: McpServer, client: ScryApiCli
   registerObservePraxisSessionTool(server, client);
   registerInspectPraxisRegionTool(server, client);
   registerReadPraxisPublicValueTool(server, client);
+  registerInspectPraxisResourcesTool(server, client);
+  registerReadPraxisPublicResourceTool(server, client);
   registerGetPraxisSessionTool(server, client);
   registerReconcilePraxisUnknownOperationTool(server, client);
   registerClosePraxisSessionTool(server, client);

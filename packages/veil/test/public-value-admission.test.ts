@@ -7,6 +7,13 @@ import {
 } from "../src/public-value-admission.js";
 
 describe("Veil public value admission", () => {
+  const publicCandidate = (text: string) => ({
+    kind: "annotated" as const,
+    text,
+    redactedBoundary: false,
+    editableBoundary: false,
+  });
+
   it("admits an ordinary exact public endpoint path", () => {
     const admitted = admitVeilPublicValue({
       kind: "code",
@@ -61,6 +68,51 @@ describe("Veil public value admission", () => {
         editableBoundary: false,
       }),
     ).toBe("protected");
+  });
+
+  it("admits explicit documentation placeholders only as complete sensitive-label values", () => {
+    for (const text of [
+      "access_token=<ACCESS_TOKEN>",
+      "client_secret=<YOUR_CLIENT_SECRET>",
+      "https://docs.example.test/reference#access_token=<EXAMPLE_ACCESS_TOKEN>",
+    ]) {
+      expect(admitVeilPublicValue(publicCandidate(text))).toMatchObject({
+        classification: "public",
+      });
+    }
+  });
+
+  it.each([
+    "access_token=sk_live_realistic_sensitive_value",
+    "access_token=<sk_live_realistic_sensitive_value>",
+    "access_token=<AbCdEf1234567890>",
+    "access_token=<ABCDEF123456789012345678901234567890>",
+    "access_token=<ACCESS_TOKEN>suffix",
+    "access_token=prefix<ACCESS_TOKEN>",
+    "access_token=<<ACCESS_TOKEN>>",
+    "access_token=%3CACCESS_TOKEN%3E",
+    "access_token=<ACCESS-TOKEN>",
+  ])("keeps ambiguous or credential-like sensitive values protected: %s", (text) => {
+    expect(classifyVeilPublicValue(publicCandidate(text))).toBe("protected");
+  });
+
+  it("admits a public documentation example while refusing a whole document with a real secret", () => {
+    const publicDocument = JSON.stringify({
+      documentation: Array.from({ length: 128 }, (_, index) => ({ index, description: "public" })),
+      example: "https://docs.example.test/reference#access_token=<EXAMPLE_ACCESS_TOKEN>",
+    });
+    expect(admitVeilPublicValue(publicCandidate(publicDocument))).toMatchObject({
+      classification: "public",
+    });
+
+    const withRealSecret = publicDocument.replace(
+      "<EXAMPLE_ACCESS_TOKEN>",
+      "sk_live_realistic_sensitive_value",
+    );
+    expect(classifyVeilPublicValue(publicCandidate(withRealSecret))).toBe("protected");
+    expect(() => admitVeilPublicValue(publicCandidate(withRealSecret))).toThrow(
+      "VEIL_PUBLIC_VALUE_PROTECTED",
+    );
   });
 
   it("does not treat an empty value as public", () => {

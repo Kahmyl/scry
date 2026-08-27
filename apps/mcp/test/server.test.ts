@@ -42,12 +42,14 @@ describe("current Scry MCP surface", () => {
     const { client, server } = await connected();
     const tools = (await client.listTools()).tools;
     const names = tools.map(({ name }) => name);
-    expect(tools).toHaveLength(54);
+    expect(tools).toHaveLength(56);
     expect(names).toEqual(
       expect.arrayContaining([
         "start_praxis_session",
         "observe_praxis_session",
         "inspect_praxis_region",
+        "inspect_praxis_resources",
+        "read_praxis_public_resource",
         "get_praxis_session",
         "close_praxis_session",
         "start_run",
@@ -79,6 +81,8 @@ describe("current Scry MCP surface", () => {
     expect(inspectRegion.description).toContain("exact context-control reference");
     expect(inspectRegion.description).toContain("read_praxis_public_value");
     expect(inspectRegion.description).toContain("without returning its plaintext");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("inspect_praxis_resources");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("never infer a resource URL");
     const dispatch = tools.find(({ name }) => name === "dispatch_run_operation")!;
     expect(dispatch.description).toContain("semantic-only targets");
     expect(dispatch.description).toContain("no selector fallback");

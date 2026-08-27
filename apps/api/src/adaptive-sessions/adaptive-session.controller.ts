@@ -14,7 +14,10 @@ import {
 
 import {
   inspectPraxisRegionInputSchema,
+  inspectPraxisBrowserResourcesInputSchema,
+  readPraxisPublicResourceInputSchema,
   readPraxisPublicValueInputSchema,
+  type ReadPraxisPublicResourceInput,
   type InspectPraxisRegionInput,
   type ReadPraxisPublicValueInput,
 } from "@scry/contracts";
@@ -123,6 +126,25 @@ export class PraxisSessionController {
     input: InspectPraxisRegionInput,
   ) {
     return this.sessions.inspectRegion(principal, sessionId, input);
+  }
+
+  @Post(":sessionId/resources/inspect")
+  inspectBrowserResources(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(inspectPraxisBrowserResourcesInputSchema)) _input: object,
+  ) {
+    return this.sessions.inspectBrowserResources(principal, sessionId);
+  }
+
+  @Post(":sessionId/public-resources/read")
+  readPublicResource(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(readPraxisPublicResourceInputSchema))
+    input: ReadPraxisPublicResourceInput,
+  ) {
+    return this.sessions.readPublicResource(principal, sessionId, input);
   }
 
   @Post(":sessionId/reconcile-unknown")

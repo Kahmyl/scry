@@ -207,6 +207,24 @@ export class MissionFlowAuthoringService {
     return this.runner.inspectRegion(sessionId, input);
   }
 
+  async inspectBrowserResources(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.inspectBrowserResources(sessionId);
+  }
+
+  async readPublicResource(
+    principal: Principal,
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicResourceInput,
+  ) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.readPublicResource(sessionId, input);
+  }
+
   async reconcileUnknown(
     principal: Principal,
     sessionId: string,

@@ -36,6 +36,36 @@ const inspection = {
 };
 
 describe("Praxis region inspection API service", () => {
+  it("delegates browser-resource inspection and exact reads without creating an operation", async () => {
+    const repository = {
+      get: vi.fn(async () => ({ id: sessionId, state: "active" })),
+      beginMissionOperation: vi.fn(),
+    };
+    const inspection = { resources: [] };
+    const read = { text: "{}" };
+    const runner = {
+      inspectBrowserResources: vi.fn(async () => inspection),
+      readPublicResource: vi.fn(async () => read),
+    };
+    const service = new MissionFlowAuthoringService(
+      repository as never,
+      runner as never,
+      { assertAcceptingWork: vi.fn() } as never,
+    );
+    const resourceInput = {
+      reference: "context-resource-0123456789abcdef0123456789abcdef",
+      offset: 0,
+      maxBytes: 2048,
+    };
+
+    await expect(service.inspectBrowserResources(principal, sessionId)).resolves.toBe(inspection);
+    await expect(service.readPublicResource(principal, sessionId, resourceInput)).resolves.toBe(
+      read,
+    );
+    expect(runner.inspectBrowserResources).toHaveBeenCalledWith(sessionId);
+    expect(runner.readPublicResource).toHaveBeenCalledWith(sessionId, resourceInput);
+    expect(repository.beginMissionOperation).not.toHaveBeenCalled();
+  });
   it.each(["active", "suspended"] as const)(
     "delegates an observable %s session to the owned runtime without creating an operation",
     async (state) => {

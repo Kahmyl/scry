@@ -8,6 +8,7 @@ import {
   type ExpectedEffect,
   type InspectPraxisRegionInput,
   type InspectPraxisRegionResult,
+  type InspectPraxisBrowserResourcesResult,
   type OperationOutcome,
 } from "@scry/contracts";
 import {
@@ -16,6 +17,12 @@ import {
 } from "../browser-runtime-artifacts.js";
 import { installPraxisInitScript } from "../evidence/browser-evidence.js";
 import { inspectPraxisRegion, observeSemanticPageContext } from "../page-context.js";
+import {
+  inspectPraxisBrowserResources,
+  installPraxisBrowserResourcePerception,
+  readPraxisPublicResource,
+  type PraxisPublicResourceReadInput,
+} from "../browser-resource.js";
 import {
   closePraxisReadOnlyCdpSensors,
   enrichPraxisSemanticPageContextWithReadOnlyCdp,
@@ -66,6 +73,10 @@ export type AuthoringBrowserSession<Report = unknown> = {
     input: PraxisPublicValueReadInput,
   ): Promise<import("../public-value.js").PraxisPublicValueRead>;
   inspectRegion(input: InspectPraxisRegionInput): Promise<InspectPraxisRegionResult>;
+  inspectResources(): Promise<InspectPraxisBrowserResourcesResult>;
+  readPublicResource(
+    input: PraxisPublicResourceReadInput,
+  ): Promise<import("../browser-resource.js").PraxisPublicResourceRead>;
   interact(
     action: CurrentAction,
     context?: {
@@ -162,6 +173,7 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
     let lastDocumentToken: string | undefined;
     let interactionOrdinal = 0;
     let closed = false;
+    let closeResourcePerception = installPraxisBrowserResourcePerception(page);
     const authorityCrashed = () => lifecycle === "crashed";
     const pageOwnership = createPraxisExpectedPageOwnership(context, () => page!);
     const allowedDocumentOrigins = new Set(input.policy.allowedOrigins);
@@ -280,6 +292,20 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
         return inspectPraxisRegion(page!, input.contextControlReference);
       },
 
+      async inspectResources() {
+        if (authorityCrashed()) throw new PraxisBrowserAuthorityLostError();
+        if (lifecycle !== "active" && lifecycle !== "suspended")
+          throw new Error("AUTHORING_BROWSER_SESSION_NOT_OBSERVABLE");
+        return inspectPraxisBrowserResources(page!);
+      },
+
+      async readPublicResource(input) {
+        if (authorityCrashed()) throw new PraxisBrowserAuthorityLostError();
+        if (lifecycle !== "active" && lifecycle !== "suspended")
+          throw new Error("AUTHORING_BROWSER_SESSION_NOT_OBSERVABLE");
+        return readPraxisPublicResource(page!, input);
+      },
+
       async interact(candidate, interactionContext = {}) {
         if (authorityCrashed()) {
           throw new PraxisBrowserAuthorityLostError();
@@ -352,7 +378,9 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
                       throw newPageOriginNotAllowed(popupOrigin);
                     }
                     const previousPage = page!;
+                    closeResourcePerception();
                     page = popup;
+                    closeResourcePerception = installPraxisBrowserResourcePerception(popup);
                     popupCandidate.adopt(popup);
                     observePageAuthority(popup);
                     unregisterVeil.push(registerPraxisVeilAuthority(popup, veilRegistration));
@@ -451,6 +479,7 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
         lifecycle = "crashed";
         try {
           unregisterVeil.forEach((unregister) => unregister());
+          closeResourcePerception();
           await privacyGate.seal({ code: "AUTHORING_OPERATION_CANCELLED" }).catch(() => undefined);
           await closePraxisReadOnlyCdpSensors(context!).catch(() => undefined);
           await boundedAuthoringClose("authoring_context_cancel", () =>
@@ -471,6 +500,7 @@ export async function createAuthoringBrowserSession<Report = unknown>(input: {
         closed = true;
         lifecycle = "releasing";
         unregisterVeil.forEach((unregister) => unregister());
+        closeResourcePerception();
         await boundedAuthoringClose("authoring_veil_finalize", () => privacyGate.finalize()).catch(
           () => privacyGate.seal({ code: "AUTHORING_FINALIZATION_TIMEOUT" }),
         );

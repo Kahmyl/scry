@@ -116,6 +116,36 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     });
   });
 
+  it("inspects and reads an exact browser resource through the owned session without dispatch", async () => {
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const inspection = { resources: [] };
+    const resource = { text: "{}" };
+    const inspectResources = vi.fn(async () => inspection);
+    const readPublicResource = vi.fn(async () => resource);
+    const interact = vi.fn();
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(
+      "live-resource-session",
+      {
+        session: { inspectResources, readPublicResource, interact },
+        fencingToken: 1,
+        tail: Promise.resolve(),
+      },
+    );
+    const input = {
+      reference: "context-resource-0123456789abcdef0123456789abcdef",
+      offset: 0,
+      maxBytes: 2048,
+    };
+    await expect(runner.inspectBrowserResources("live-resource-session")).resolves.toBe(inspection);
+    await expect(runner.readPublicResource("live-resource-session", input)).resolves.toBe(resource);
+    expect(interact).not.toHaveBeenCalled();
+  });
+
   it("projects the exact safe missing origin and replacement-session recovery", async () => {
     const sessionId = "11111111-1111-4111-8111-111111111111";
     const environmentId = "22222222-2222-4222-8222-222222222222";

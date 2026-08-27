@@ -406,6 +406,33 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     });
   }
 
+  async inspectBrowserResources(sessionId: string) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.inspectResources();
+      } catch (error) {
+        throw resourceReadConflict(error);
+      }
+    });
+  }
+
+  async readPublicResource(
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicResourceInput,
+  ) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.readPublicResource(input);
+      } catch (error) {
+        throw resourceReadConflict(error);
+      }
+    });
+  }
+
   /**
    * Capture factual portable state from the already-owned live Praxis runtime.
    * This does not stage, seal, select, restore, or close a checkpoint.
@@ -1162,6 +1189,23 @@ function safeCheckpointFailure(message: string) {
   return message.startsWith("SUCCESSOR_CHECKPOINT_")
     ? message
     : "SUCCESSOR_CHECKPOINT_RESTORE_FAILED";
+}
+
+function resourceReadConflict(error: unknown): never {
+  const code =
+    error && typeof error === "object" && "code" in error && typeof error.code === "string"
+      ? error.code
+      : undefined;
+  if (code?.startsWith("PUBLIC_RESOURCE_"))
+    throw new ConflictException({
+      code,
+      mutationOutcome: "not_applied",
+      safeActions:
+        code === "PUBLIC_RESOURCE_REFERENCE_UNKNOWN" || code === "PUBLIC_RESOURCE_REFERENCE_STALE"
+          ? ["inspect_praxis_resources"]
+          : [],
+    });
+  throw error;
 }
 
 function composeSignals(...signals: Array<AbortSignal | undefined>) {

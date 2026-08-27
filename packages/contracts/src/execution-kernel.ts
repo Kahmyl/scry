@@ -616,6 +616,82 @@ export type ReadPraxisPublicValueResult = z.infer<typeof readPraxisPublicValueRe
 export type InspectPraxisRegionInput = z.infer<typeof inspectPraxisRegionInputSchema>;
 export type InspectPraxisRegionResult = z.infer<typeof inspectPraxisRegionResultSchema>;
 
+export const inspectPraxisBrowserResourcesInputSchema = z.object({}).strict();
+
+const praxisResourceAuthoritySchema = z
+  .object({
+    referenceVersion: z.literal(1),
+    pageId: z.string().trim().min(1).max(120),
+    frameId: z.string().trim().min(1).max(120),
+    documentEpoch: z.number().int().nonnegative(),
+    documentIdentity: z.string().trim().min(1).max(2_000),
+  })
+  .strict();
+
+export const inspectPraxisBrowserResourcesResultSchema = z
+  .object({
+    authority: praxisResourceAuthoritySchema,
+    resources: z
+      .array(
+        z
+          .object({
+            reference: z.string().regex(/^context-resource-[a-f0-9]{32}$/),
+            kind: z.enum(["json", "text", "xml"]),
+            bytes: z.number().int().positive().max(2_097_152),
+          })
+          .strict(),
+      )
+      .max(8),
+    completeness: z
+      .object({
+        kind: z.literal("bounded"),
+        observed: z.number().int().nonnegative(),
+        returned: z.number().int().nonnegative().max(8),
+        truncated: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const readPraxisPublicResourceInputSchema = z
+  .object({
+    reference: z.string().regex(/^context-resource-[a-f0-9]{32}$/),
+    offset: z.number().int().min(0).max(2_097_152).default(0),
+    maxBytes: z.number().int().min(1).max(4_096).default(2_048),
+  })
+  .strict();
+
+export const readPraxisPublicResourceResultSchema = z
+  .object({
+    reference: z.string().regex(/^context-resource-[a-f0-9]{32}$/),
+    classification: z.literal("public"),
+    provenance: praxisResourceAuthoritySchema,
+    resource: z.object({ kind: z.enum(["json", "text", "xml"]) }).strict(),
+    text: z.string().max(4_096),
+    offset: z.number().int().nonnegative(),
+    returnedBytes: z.number().int().nonnegative().max(4_096),
+    totalBytes: z.number().int().nonnegative().max(2_097_152),
+    truncated: z.boolean(),
+    nextOffset: z.number().int().positive().max(2_097_152).optional(),
+    admission: z
+      .object({
+        admissionRevision: z.number().int().min(1),
+        contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
+        admissionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type InspectPraxisBrowserResourcesInput = z.infer<
+  typeof inspectPraxisBrowserResourcesInputSchema
+>;
+export type InspectPraxisBrowserResourcesResult = z.infer<
+  typeof inspectPraxisBrowserResourcesResultSchema
+>;
+export type ReadPraxisPublicResourceInput = z.infer<typeof readPraxisPublicResourceInputSchema>;
+export type ReadPraxisPublicResourceResult = z.infer<typeof readPraxisPublicResourceResultSchema>;
+
 export const executionRequestSchema = z
   .object({
     sessionId: z.string().trim().min(1).max(200),
