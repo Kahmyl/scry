@@ -273,7 +273,8 @@ export class RunAttemptRepository {
                    AND completed_run.result_classification='application_pass'
               )
               AND session.state='cancelled'
-              AND session.decision_boundary='PROTECTED_OPERATION_COMPLETED'
+              AND session.decision_boundary->>'type'='objective_completed'
+              AND session.decision_boundary->>'reasonCode'='PROTECTED_OPERATION_COMPLETED'
               AND protected.state='completed'
               AND protected.dispatch_state='acknowledged'
               AND protected.mutation_outcome='applied'

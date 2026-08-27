@@ -57,6 +57,18 @@ describe("Run attempt terminal protected completion", () => {
           values[1] === "TERMINAL_PROTECTED_OPERATION",
       ),
     ).toBe(true);
+    const terminalProofQuery = query.mock.calls.find(([sql]) =>
+      sql.includes("JOIN protected_operations protected"),
+    )?.[0];
+    expect(terminalProofQuery).toContain(
+      "session.decision_boundary->>'type'='objective_completed'",
+    );
+    expect(terminalProofQuery).toContain(
+      "session.decision_boundary->>'reasonCode'='PROTECTED_OPERATION_COMPLETED'",
+    );
+    expect(terminalProofQuery).not.toContain(
+      "session.decision_boundary='PROTECTED_OPERATION_COMPLETED'",
+    );
     expect(
       query.mock.calls.some(
         ([sql]) =>

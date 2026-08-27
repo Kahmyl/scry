@@ -27,7 +27,7 @@ function harness(
   evidenceComplete: boolean,
   options: {
     praxisState?: string;
-    praxisDecisionBoundary?: { type: string; reasonCode: string } | null;
+    praxisDecisionBoundary?: { type: string; reasonCode: string; safeActions: string[] } | null;
     terminalProtectedBoundary?: boolean;
   } = {},
 ) {
@@ -49,10 +49,22 @@ function harness(
       };
     }
 
-    if (sql.includes("JOIN protected_operations protected") && sql.includes("link.sequence=("))
-      return options.terminalProtectedBoundary
+    if (sql.includes("JOIN protected_operations protected")) {
+      const boundary = options.praxisDecisionBoundary;
+      const boundaryPredicate =
+        sql.includes("session.decision_boundary->>'type'='objective_completed'") &&
+        sql.includes("session.decision_boundary->>'reasonCode'='PROTECTED_OPERATION_COMPLETED'");
+      if (!sql.includes("last_link ON true"))
+        return options.terminalProtectedBoundary
+          ? { rowCount: 1, rows: [{}] }
+          : { rowCount: 0, rows: [] };
+      return options.terminalProtectedBoundary &&
+        boundaryPredicate &&
+        boundary?.type === "objective_completed" &&
+        boundary.reasonCode === "PROTECTED_OPERATION_COMPLETED"
         ? { rowCount: 1, rows: [{ protectedOperationId }] }
         : { rowCount: 0, rows: [] };
+    }
 
     if (sql.includes('AS "operationCount"')) {
       return {
@@ -181,17 +193,14 @@ describe("agent-directed Run evidence finalization", () => {
   });
 
   it("finalizes after a completed protected transaction retires browser authority", async () => {
-    const { service, sessions, executions } = harness(true, {
+    const { service, database, sessions, executions } = harness(true, {
       praxisState: "cancelled",
       praxisDecisionBoundary: {
         type: "objective_completed",
         reasonCode: "PROTECTED_OPERATION_COMPLETED",
+        safeActions: [],
       },
       terminalProtectedBoundary: true,
-    });
-
-    vi.spyOn(service as any, "resolveTerminalProtectedCompletion").mockResolvedValue({
-      protectedOperationId,
     });
 
     await expect(
@@ -223,6 +232,50 @@ describe("agent-directed Run evidence finalization", () => {
       },
       undefined,
     );
+    const terminalQuery = database.query.mock.calls.find(([sql]) =>
+      sql.includes("JOIN protected_operations protected"),
+    )?.[0];
+    expect(terminalQuery).toContain("session.decision_boundary->>'type'='objective_completed'");
+    expect(terminalQuery).toContain(
+      "session.decision_boundary->>'reasonCode'='PROTECTED_OPERATION_COMPLETED'",
+    );
+    expect(terminalQuery).not.toContain(
+      "session.decision_boundary='PROTECTED_OPERATION_COMPLETED'",
+    );
+  });
+
+  it.each([
+    {
+      type: "objective_completed",
+      reasonCode: "SOME_OTHER_COMPLETION",
+      safeActions: [],
+    },
+    {
+      type: "authorization_required",
+      reasonCode: "PROTECTED_OPERATION_COMPLETED",
+      safeActions: [],
+    },
+  ])("refuses a terminal protected completion boundary that is not exact: %o", async (boundary) => {
+    const { service, executions } = harness(true, {
+      praxisState: "cancelled",
+      praxisDecisionBoundary: boundary,
+      terminalProtectedBoundary: true,
+    });
+
+    await expect(
+      service.finalize({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        outcome: "passed",
+        reason: "unproven terminal boundary",
+        idempotencyKey: `finalize-unproven-${boundary.type}-${boundary.reasonCode}`,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "RUN_TERMINAL_PRAXIS_BOUNDARY_UNPROVEN",
+        mutationOutcome: "not_applied",
+      },
+    });
+    expect(executions.completeAttempt).not.toHaveBeenCalled();
   });
 
   it("refuses a dead Praxis session without an exact completed protected boundary", async () => {
@@ -231,6 +284,7 @@ describe("agent-directed Run evidence finalization", () => {
       praxisDecisionBoundary: {
         type: "objective_completed",
         reasonCode: "PROTECTED_OPERATION_COMPLETED",
+        safeActions: [],
       },
       terminalProtectedBoundary: false,
     });
