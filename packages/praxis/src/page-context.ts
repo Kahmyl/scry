@@ -150,6 +150,70 @@ const SEMANTIC_REGION_SELECTOR =
   "dialog,[role=dialog],[role=region],[role=form],section,article,form,main,aside";
 
 /**
+ * Resolves one exact current context control to its semantic region. A
+ * same-document fragment is browser-native structural authority, so it takes
+ * precedence over the control's physical ancestor. Unresolvable or ambiguous
+ * local fragments fail closed rather than widening inspection elsewhere.
+ */
+async function resolveSemanticRegionFromExactControl(
+  control: ElementHandle<Element>,
+): Promise<ElementHandle<HTMLElement> | undefined> {
+  const candidate = await control
+    .evaluateHandle((element, regionSelector) => {
+      if (element instanceof HTMLAnchorElement && element.hasAttribute("href")) {
+        const destination = new URL(element.href);
+        const current = new URL(document.location.href);
+        const sameDocument =
+          destination.protocol === current.protocol &&
+          destination.host === current.host &&
+          destination.pathname === current.pathname &&
+          destination.search === current.search;
+
+        if (sameDocument && destination.hash.length > 1) {
+          let fragment: string;
+          try {
+            fragment = decodeURIComponent(destination.hash.slice(1));
+          } catch {
+            return null;
+          }
+
+          const matches = Array.from(document.querySelectorAll("[id],a[name]")).filter(
+            (candidate) =>
+              candidate.id === fragment ||
+              (candidate instanceof HTMLAnchorElement && candidate.name === fragment),
+          );
+          if (matches.length !== 1) return null;
+
+          const destinationRegion = matches[0]!;
+          return destinationRegion.matches(regionSelector)
+            ? destinationRegion
+            : destinationRegion.closest(regionSelector);
+        }
+      }
+
+      return element.closest(regionSelector);
+    }, SEMANTIC_REGION_SELECTOR)
+    .catch(() => undefined);
+  const region = candidate?.asElement() as ElementHandle<HTMLElement> | null | undefined;
+  if (!region) await candidate?.dispose().catch(() => undefined);
+  return region ?? undefined;
+}
+
+async function regionHasProtectedBoundary(region: ElementHandle<HTMLElement>) {
+  return region
+    .evaluate((element) => {
+      const protectedInputSelector =
+        'input[type=password],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]';
+      const protectedForm = element.closest("form,[role=form]");
+      return (
+        Boolean(element.closest('[data-scry-redacted="true"]')) ||
+        Boolean(protectedForm?.querySelector(protectedInputSelector))
+      );
+    })
+    .catch(() => true);
+}
+
+/**
  * Inspect ordinary public-value candidates beneath the closest exact semantic
  * region owned by one current context-control reference. This returns only
  * opaque value references and bounded metadata; exact text remains exclusively
@@ -174,35 +238,15 @@ export async function inspectPraxisRegion(
     throw new PraxisRegionInspectionError("REGION_CONTEXT_CONTROL_REFERENCE_STALE");
   }
 
-  const protectedBoundary = await entry.element
-    .evaluate((element, regionSelector) => {
-      const protectedInputSelector =
-        'input[type=password],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]';
-      const boundary = element.closest(regionSelector);
-      const boundaryIsProtectedForm =
-        Boolean(boundary) &&
-        (boundary!.tagName.toLowerCase() === "form" || boundary!.getAttribute("role") === "form") &&
-        Boolean(boundary!.querySelector(protectedInputSelector));
-      return (
-        Boolean(element.closest('[data-scry-redacted="true"]')) ||
-        element.matches(protectedInputSelector) ||
-        boundaryIsProtectedForm
-      );
-    }, SEMANTIC_REGION_SELECTOR)
-    .catch(() => true);
-  if (entry.valueProtected || protectedBoundary)
-    throw new PraxisRegionInspectionError("REGION_PROTECTED_BOUNDARY_REFUSED");
-
-  const regionCandidate = await entry.element
-    .evaluateHandle((element, selector) => element.closest(selector), SEMANTIC_REGION_SELECTOR)
-    .catch(() => undefined);
-  const region = regionCandidate?.asElement() as ElementHandle<HTMLElement> | null | undefined;
+  const region = await resolveSemanticRegionFromExactControl(entry.element);
   if (!region) {
-    await regionCandidate?.dispose().catch(() => undefined);
     throw new PraxisRegionInspectionError("REGION_SEMANTIC_BOUNDARY_NOT_FOUND");
   }
 
   try {
+    if (entry.valueProtected || (await regionHasProtectedBoundary(region)))
+      throw new PraxisRegionInspectionError("REGION_PROTECTED_BOUNDARY_REFUSED");
+
     const kind = await region.evaluate((element) => {
       const role = element.getAttribute("role");
       const tag = element.tagName.toLowerCase();

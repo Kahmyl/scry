@@ -43,6 +43,118 @@ async function releasedValues(page: import("playwright").Page, result: InspectPr
 }
 
 describe("targeted Praxis semantic-region perception", () => {
+  it("resolves an exact sidebar link through its same-document fragment destination", async () => {
+    const endpoint = "POST /api/v1/partner-api/orders";
+    const page = await pageWith(`
+      <aside><a href="#create-order">Create Order</a></aside>
+      <main>
+        <section id="create-order">
+          <h2>Create Order</h2>
+          <code>${endpoint}</code>
+          <code>Idempotency-Key</code>
+          <code>x-vitract-client-id</code>
+          <code>x-vitract-client-secret</code>
+          <pre>client clientId practitioner practitionerId</pre>
+        </section>
+      </main>
+    `);
+    const observation = await observeSemanticPageContext(page);
+    const link = observation.controls.find(
+      (control) => control.role === "link" && control.name === "Create Order",
+    );
+    expect(link).toBeTruthy();
+    await expect(
+      page.locator("aside a").evaluate((element) => element.closest("aside") !== null),
+    ).resolves.toBe(true);
+
+    const inspection = inspectPraxisRegionResultSchema.parse(
+      await inspectPraxisRegion(page, link!.reference),
+    );
+
+    expect(inspection.contextControlReference).toBe(link!.reference);
+    expect(inspection.region).toEqual({ kind: "section" });
+    expect(inspection.readableValueCompleteness).toEqual({
+      kind: "bounded",
+      observed: 5,
+      returned: 5,
+      truncated: false,
+    });
+    expect(JSON.stringify(inspection)).not.toContain(endpoint);
+    expect(JSON.stringify(inspection)).not.toContain("Idempotency-Key");
+    const texts = (await releasedValues(page, inspection)).map((value) => value.text);
+    expect(texts).toEqual(
+      expect.arrayContaining([
+        endpoint,
+        "Idempotency-Key",
+        "x-vitract-client-id",
+        "x-vitract-client-secret",
+        "client clientId practitioner practitionerId",
+      ]),
+    );
+  });
+
+  it("fails closed when an exact same-document fragment destination is missing", async () => {
+    const unrelatedEndpoint = "POST /api/v1/partner-api/orders";
+    const page = await pageWith(`
+      <aside><a href="#missing-create-order">Create Order</a></aside>
+      <main><section><h2>Create Order</h2><code>${unrelatedEndpoint}</code></section></main>
+    `);
+    const observation = await observeSemanticPageContext(page);
+    const link = observation.controls.find(
+      (control) => control.role === "link" && control.name === "Create Order",
+    );
+
+    await expect(inspectPraxisRegion(page, link!.reference)).rejects.toMatchObject({
+      code: "REGION_SEMANTIC_BOUNDARY_NOT_FOUND",
+    });
+  });
+
+  it("does not follow cross-document anchors and retains the exact source-region behavior", async () => {
+    const sourceValue = "GET /source-only";
+    const page = await pageWith(`
+      <aside><a href="data:text/html,other#target">Create Order</a><code>${sourceValue}</code></aside>
+      <main><section id="target"><code>POST /api/v1/partner-api/orders</code></section></main>
+    `);
+    const observation = await observeSemanticPageContext(page);
+    const link = observation.controls.find(
+      (control) => control.role === "link" && control.name === "Create Order",
+    );
+    const before = page.url();
+
+    const inspection = await inspectPraxisRegion(page, link!.reference);
+
+    expect(page.url()).toBe(before);
+    expect(inspection.region).toEqual({ kind: "aside" });
+    await expect(
+      readPraxisPublicValue(page, { reference: inspection.readableValues[0]!.reference }),
+    ).resolves.toMatchObject({ text: sourceValue });
+  });
+
+  it("refuses a public sidebar anchor whose exact fragment destination is protected or redacted", async () => {
+    const protectedValue = "sk_live_never_surface_targeted_destination_123456";
+    const page = await pageWith(`
+      <aside>
+        <a href="#create-order">Create Order</a>
+        <a href="#protected-order">Protected Order</a>
+      </aside>
+      <main>
+        <section id="create-order" data-scry-redacted="true"><code>${protectedValue}</code></section>
+        <form id="protected-order"><input type="password" /><code>${protectedValue}</code></form>
+      </main>
+    `);
+    const observation = await observeSemanticPageContext(page);
+    const link = observation.controls.find(
+      (control) => control.role === "link" && control.name === "Create Order",
+    );
+
+    await expect(inspectPraxisRegion(page, link!.reference)).rejects.toMatchObject({
+      code: "REGION_PROTECTED_BOUNDARY_REFUSED",
+    });
+    await expect(
+      inspectPraxisRegion(page, exactControl(observation, "Protected Order")),
+    ).rejects.toMatchObject({ code: "REGION_PROTECTED_BOUNDARY_REFUSED" });
+  });
+
   it("addresses exact public values beyond the bounded global document candidates", async () => {
     const globalValues = Array.from(
       { length: 120 },
