@@ -43,6 +43,7 @@
     "verify:assurance": "pnpm --filter @scry/assurance typecheck && pnpm --filter @scry/assurance test:truth",
     "verify:q0": "pnpm --filter @scry/assurance q0 && pnpm --filter @scry/assurance exec vitest run test/q0-system-correctness.test.ts",
     "verify:q1": "pnpm --filter @scry/assurance q1 && pnpm --filter @scry/assurance exec vitest run test/q1-invariant-engine.test.ts",
+    "verify:q2": "pnpm --filter @scry/assurance q2 && pnpm --filter @scry/assurance exec vitest run test/q2-boundary-faults.test.ts",
     "verify": "node scripts/verification-driver.mjs",
     "verify:audit": "node scripts/verification-driver.mjs --audit",
     "verify:full": "node scripts/verification-driver.mjs --full",
