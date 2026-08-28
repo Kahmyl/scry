@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { praxisObservationSchema } from "@scry/contracts";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 
 import { AdaptiveSessionKernelRunner } from "../src/adaptive-sessions/adaptive-session-kernel.runner.js";
@@ -59,7 +60,42 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       url: "https://example.test/current",
       documentEpoch: 4,
       semanticPageContext: {
-        controls: [{ reference: "context-control-0123456789abcdef0123456789abcdef" }],
+        schemaVersion: 2,
+        authority: {
+          pageId: "page-authority",
+          documentEpoch: 4,
+          url: "https://example.test/current",
+          title: "Current",
+          readiness: "stable",
+        },
+        completeness: { kind: "bounded", observed: 1, returned: 1, truncated: false },
+        controls: [
+          {
+            reference: "context-control-0123456789abcdef0123456789abcdef",
+            role: "button",
+            name: "Continue",
+            capabilities: ["observe", "activate"],
+          },
+        ],
+        browserSensor: {
+          kind: "chromium_read_only",
+          authority: {
+            frameId: "frame-1",
+            loaderId: "document-loader-1",
+            loaderChanged: false,
+            loaderTransitionsObserved: 0,
+          },
+          network: {
+            observedRequests: 1,
+            recentRequests: [
+              { requestId: "worker-script-1", type: "Script", monotonicTimestamp: 1 },
+            ],
+            observedFailures: 0,
+            recentFailures: [],
+            truncated: false,
+          },
+          layout: { clientWidth: 900, clientHeight: 600 },
+        },
       },
     }));
     (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set("live-session", {
@@ -68,7 +104,9 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       tail: Promise.resolve(),
     });
 
-    await expect(runner.observe("live-session")).resolves.toMatchObject({
+    const observation = await runner.observe("live-session");
+    expect(() => praxisObservationSchema.parse(observation)).not.toThrow();
+    expect(observation).toMatchObject({
       url: "https://example.test/current",
       documentEpoch: 4,
       semanticPageContext: {

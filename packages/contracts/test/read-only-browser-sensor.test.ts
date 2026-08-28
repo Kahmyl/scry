@@ -139,4 +139,77 @@ describe("read-only browser sensor contract", () => {
       }),
     ).toThrow();
   });
+
+  it("preserves unavailable request loader identity as absence", () => {
+    const base = {
+      operationId: "observe-current-document",
+      functionalResult: "succeeded" as const,
+      mutationOutcome: "not_applied" as const,
+      privacyResult: "verified" as const,
+      evidenceResult: [],
+      qualityFindings: [],
+      durationMs: 1,
+      semanticPageContext: {
+        schemaVersion: 2 as const,
+        authority: {
+          pageId: "page-authority",
+          documentEpoch: 1,
+          url: "https://example.test/",
+          title: "Example",
+          readiness: "stable" as const,
+        },
+        completeness: { kind: "bounded" as const, observed: 0, returned: 0, truncated: false },
+        controls: [],
+        browserSensor: {
+          kind: "chromium_read_only" as const,
+          authority: {
+            frameId: "frame-1",
+            loaderId: "document-loader-1",
+            loaderChanged: false,
+            loaderTransitionsObserved: 0,
+          },
+          network: {
+            observedRequests: 1,
+            recentRequests: [
+              {
+                requestId: "worker-request-1",
+                type: "Fetch",
+                monotonicTimestamp: 1,
+              },
+            ],
+            observedFailures: 0,
+            recentFailures: [],
+            truncated: false,
+          },
+          layout: { clientWidth: 900, clientHeight: 600 },
+        },
+      },
+    };
+
+    const parsed = operationOutcomeSchema.parse(base);
+
+    expect(parsed.semanticPageContext?.browserSensor?.network.recentRequests[0]).not.toHaveProperty(
+      "loaderId",
+    );
+    expect(() =>
+      operationOutcomeSchema.parse({
+        ...base,
+        semanticPageContext: {
+          ...base.semanticPageContext,
+          browserSensor: {
+            ...base.semanticPageContext.browserSensor,
+            network: {
+              ...base.semanticPageContext.browserSensor.network,
+              recentRequests: [
+                {
+                  ...base.semanticPageContext.browserSensor.network.recentRequests[0],
+                  loaderId: "",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ).toThrow();
+  });
 });

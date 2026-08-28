@@ -37,6 +37,84 @@ const admittedCapabilities = {
 };
 
 describe("current Scry MCP surface", () => {
+  it("returns an observation when request loader identity is unavailable", async () => {
+    vi.stubEnv("SCRY_LEGACY_MCP_FIXTURES", "");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            documentEpoch: 2,
+            url: "https://example.test/loading",
+            semanticPageContext: {
+              schemaVersion: 2,
+              authority: {
+                pageId: "page-authority",
+                documentEpoch: 2,
+                url: "https://example.test/loading",
+                title: "Loading",
+                readiness: "stable",
+              },
+              completeness: { kind: "bounded", observed: 0, returned: 0, truncated: false },
+              controls: [],
+              browserSensor: {
+                kind: "chromium_read_only",
+                authority: {
+                  frameId: "frame-1",
+                  loaderId: "document-loader-1",
+                  loaderChanged: false,
+                  loaderTransitionsObserved: 0,
+                },
+                network: {
+                  observedRequests: 1,
+                  recentRequests: [
+                    {
+                      requestId: "worker-script-1",
+                      frameId: "frame-1",
+                      type: "Script",
+                      monotonicTimestamp: 1,
+                    },
+                  ],
+                  observedFailures: 0,
+                  recentFailures: [],
+                  truncated: false,
+                },
+                layout: { clientWidth: 900, clientHeight: 600 },
+              },
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const { client, server } = await connected();
+
+    const response = await client.callTool({
+      name: "observe_praxis_session",
+      arguments: { praxisSessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+    });
+
+    expect(response.isError).not.toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      observation: {
+        documentEpoch: 2,
+        semanticPageContext: {
+          browserSensor: {
+            authority: { loaderId: "document-loader-1" },
+            network: { recentRequests: [{ requestId: "worker-script-1" }] },
+          },
+        },
+      },
+    });
+    expect(
+      (response.structuredContent as any).observation.semanticPageContext.browserSensor.network
+        .recentRequests[0],
+    ).not.toHaveProperty("loaderId");
+
+    await client.close();
+    await server.close();
+  });
+
   it("exposes the agent-first public surface without legacy admission or progression tools", async () => {
     vi.stubEnv("SCRY_LEGACY_MCP_FIXTURES", "");
     const { client, server } = await connected();

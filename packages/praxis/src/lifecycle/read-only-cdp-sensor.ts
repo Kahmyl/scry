@@ -61,7 +61,7 @@ export async function createPraxisReadOnlyCdpSensor(
       requests,
       {
         requestId: event.requestId,
-        loaderId: event.loaderId,
+        ...(event.loaderId ? { loaderId: event.loaderId } : {}),
         ...(event.frameId ? { frameId: event.frameId } : {}),
         ...(event.type ? { type: event.type } : {}),
         monotonicTimestamp: event.timestamp,

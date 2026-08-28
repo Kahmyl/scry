@@ -310,7 +310,7 @@ export const operationOutcomeSchema = z
                     z
                       .object({
                         requestId: z.string().trim().min(1).max(200),
-                        loaderId: z.string().trim().min(1).max(200),
+                        loaderId: z.string().trim().min(1).max(200).optional(),
                         frameId: z.string().trim().min(1).max(200).optional(),
                         type: z.string().trim().min(1).max(40).optional(),
                         monotonicTimestamp: z.number().nonnegative(),
