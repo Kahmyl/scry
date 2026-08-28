@@ -641,7 +641,7 @@ describe("Mission lifecycle regression", () => {
       }
       if (text.includes("SELECT request_hash"))
         return { rowCount: 1, rows: [{ requestHash, response: null }] };
-      if (text.includes("FROM missions mission") && text.includes('"activeExecutionOwnership"'))
+      if (text.includes("FROM missions mission") && text.includes('"activeExternalRunIds"'))
         return {
           rowCount: 1,
           rows: [
@@ -657,6 +657,26 @@ describe("Mission lifecycle regression", () => {
               activeExecutionOwnership: true,
               unresolvedMutationRisk: false,
               outstandingReconciliation: false,
+            },
+          ],
+        };
+      if (text.includes("WITH scoped_missions"))
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              kind: "praxis_runtime_owner",
+              projectId: "11111111-1111-4111-8111-111111111111",
+              missionId: "33333333-3333-4333-8333-333333333333",
+              environmentId: null,
+              resourceDomain: null,
+              credentialDomain: null,
+              operationId: null,
+              protectedOperationId: null,
+              recoveryId: null,
+              authority: "lifecycle",
+              blocking: true,
+              lifecycle: "live",
             },
           ],
         };

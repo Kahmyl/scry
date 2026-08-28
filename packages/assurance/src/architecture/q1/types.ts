@@ -166,6 +166,7 @@ export type Q1Action =
   | Readonly<{ type: "finalizeMission" }>
   | Readonly<{ type: "loseAgentLease"; cleanupDeadlineExceeded?: boolean }>
   | Readonly<{ type: "loseRuntimeLease" }>
+  | Readonly<{ type: "settlePraxisOwnerLoss"; state: "failed" | "recovery_required" }>
   | Readonly<{ type: "restoreCheckpoint" }>
   | Readonly<{
       type: "setProtectedProjection";

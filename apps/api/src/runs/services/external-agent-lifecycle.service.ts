@@ -528,6 +528,7 @@ export class ExternalAgentLifecycleService implements OnModuleInit, OnModuleDest
       await this.terminate({ kind: "service", subject: "scry-service" }, row.externalRunId, {
         reasonCode: "EXTERNAL_AGENT_LEASE_EXPIRED",
       });
+    await this.praxis.convergeExpiredRuntimeOwners?.();
     return expired.rows.map(({ externalRunId }) => externalRunId);
   }
 

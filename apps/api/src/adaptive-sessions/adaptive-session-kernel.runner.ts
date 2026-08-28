@@ -694,11 +694,25 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       }).catch(() => undefined);
     } finally {
       this.clearSessionRedactor(sessionId);
-      await this.sessions.releaseRuntimeLease?.({
-        sessionId,
-        ownerId: this.ownerId,
-        fencingToken: runtime.fencingToken,
-      });
+      try {
+        const released = await this.sessions.releaseRuntimeLease?.({
+          sessionId,
+          ownerId: this.ownerId,
+          fencingToken: runtime.fencingToken,
+        });
+        if (released === false)
+          throw new ConflictException({ code: "ADAPTIVE_SESSION_RUNTIME_LEASE_LOST" });
+      } catch (releaseError) {
+        if (!this.sessions.settleRuntimeOwnerLoss) throw releaseError;
+        await this.sessions.settleRuntimeOwnerLoss({
+          sessionId,
+          ownerId: this.ownerId,
+          fencingToken: runtime.fencingToken,
+          runtimePresent: false,
+          recoveryObservationAvailable: false,
+          reasonCode: "ADAPTIVE_RUNTIME_CLOSED_BEFORE_LEASE_RELEASE",
+        });
+      }
     }
   }
 

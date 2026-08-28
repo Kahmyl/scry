@@ -100,6 +100,7 @@ export const q2ProofProvenance: Readonly<Record<Q2BoundaryId, Q2ProofProvenanceR
   B6: proof(
     [
       "assurance_reference",
+      "repository_integration",
       "production_characterization",
       "independent_http_oracle",
       "existing_regression_evidence",
@@ -262,16 +263,21 @@ export const q2ProofProvenance: Readonly<Record<Q2BoundaryId, Q2ProofProvenanceR
       "real_browser_local",
       "existing_regression_evidence",
     ],
-    ["AdaptiveSessionKernelRunner.close", "Praxis browser-session lifecycle"],
+    [
+      "AdaptiveSessionKernelRunner.close",
+      "AdaptiveSessionRepository.settleRuntimeOwnerLoss",
+      "PostgreSQL runtime lease/session/operation rows",
+      "Praxis browser-session lifecycle",
+    ],
     [
       reference,
       "mocked browser close and durable lease-release rejection in the exact production ordering",
     ],
-    false,
+    true,
     true,
     false,
     "production_proven_q2",
-    "The production runner is evicted, browser close succeeds, and durable lease release rejects; Q1 then detects L04 with mutation unknown and runtime recovery_required.",
+    "The production runner is evicted and browser close succeeds; a rejected lease release now invokes fenced durable owner-loss disposition, retaining UNKNOWN while Praxis converges to recovery_required.",
   ),
   B20: proof(
     ["assurance_reference", "production_characterization", "existing_regression_evidence"],

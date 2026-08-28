@@ -23,6 +23,8 @@ import {
   missionAuthoringTurnResultSchema,
   operationOutcomeSchema,
 } from "@scry/contracts";
+import { classifyHistoricalReconciliationAuthority } from "../historical-operation-authority.js";
+import { decideRuntimeLossDisposition } from "../runtime-loss-disposition.js";
 
 import { decryptCredential } from "../../access/index.js";
 import { attachOrCreateExternalAgentSession } from "../../external-agents/index.js";
@@ -2453,6 +2455,14 @@ export class AdaptiveSessionRepository {
       if (!operation.rowCount)
         throw new ConflictException({ code: "UNKNOWN_OPERATION_NOT_FOUND_OR_RESOLVED" });
       const owner = operation.rows[0]!;
+      const historicalAuthority = classifyHistoricalReconciliationAuthority(owner);
+      if (historicalAuthority.kind !== "usable_authority")
+        throw new ConflictException({
+          code: historicalAuthority.reasonCode,
+          mutationOutcome: "unknown",
+          redispatchAllowed: false,
+          safeActions: ["get_flow_authoring"],
+        });
       const authority = {
         projectId: owner.projectId,
         environmentId: owner.environmentId,
@@ -2461,8 +2471,8 @@ export class AdaptiveSessionRepository {
         flowDraftId: owner.flowDraftId,
         sessionId: input.sessionId,
         operationId: input.operationId,
-        action: owner.action,
-        expectedEffect: owner.expectedEffect,
+        action: historicalAuthority.action,
+        expectedEffect: historicalAuthority.expectedEffect,
         idempotencyKey: owner.idempotencyKey,
         authoringIntent: owner.authoringIntent,
         preparationFacts: owner.preparationFacts,
@@ -2483,7 +2493,7 @@ export class AdaptiveSessionRepository {
           reason_code='RECONCILIATION_OBSERVER_LOST',evidence='{"runtimeObservation":"lost"}'::jsonb,
           completed_at=now(),fencing_token=fencing_token+1
         WHERE session_id=$1 AND operation_id=$2 AND state='observing'
-          AND started_at < now()-interval '60 seconds' RETURNING attempt`,
+          AND lease_expires_at<=now() RETURNING attempt`,
         [input.sessionId, input.operationId],
       );
       for (const recovered of stale.rows)
@@ -2546,12 +2556,15 @@ export class AdaptiveSessionRepository {
           mutationOutcome: "unknown",
           safeActions: ["get_flow_authoring"],
         });
-      const inserted = await q<{ id: string; attempt: number }>(
+      const inserted = await q<{ id: string; attempt: number; fencingToken: number }>(
         `INSERT INTO adaptive_operation_reconciliations(session_id,operation_id,mission_id,objective_id,
-           flow_draft_id,idempotency_key,request_digest,attempt,state,strategy,expected_effect,original_outcome)
+           flow_draft_id,idempotency_key,request_digest,attempt,state,strategy,expected_effect,original_outcome,
+           lease_expires_at)
          SELECT $1,$2,$3,$4,$5,$6,$7,COALESCE(max(attempt),0)+1,'observing',
-           CASE WHEN $8::jsonb->>'type'='none' THEN 'unavailable' ELSE 'browser_effect' END,$8::jsonb,$9::jsonb
-           FROM adaptive_operation_reconciliations WHERE session_id=$1 AND operation_id=$2 RETURNING id,attempt`,
+           CASE WHEN $8::jsonb->>'type'='none' THEN 'unavailable' ELSE 'browser_effect' END,$8::jsonb,$9::jsonb,
+           now()+interval '60 seconds'
+           FROM adaptive_operation_reconciliations WHERE session_id=$1 AND operation_id=$2
+           RETURNING id,attempt,fencing_token AS "fencingToken"`,
         [
           input.sessionId,
           input.operationId,
@@ -2573,6 +2586,7 @@ export class AdaptiveSessionRepository {
         state: "observing",
         id: inserted.rows[0]!.id,
         attempt: inserted.rows[0]!.attempt,
+        fencingToken: inserted.rows[0]!.fencingToken,
         replayed: false,
         expectedEffect: owner.expectedEffect,
         baseline: owner.baseline,
@@ -2698,7 +2712,11 @@ export class AdaptiveSessionRepository {
       WHERE operation.session_id=$1 AND operation.operation_id=$2 AND operation.mutation_outcome='unknown'`,
       [sessionId, operationId],
     );
-    return result.rows[0] ?? null;
+    const authority = result.rows[0] ?? null;
+    if (!authority) return null;
+    const historical = classifyHistoricalReconciliationAuthority(authority);
+    if (historical.kind !== "usable_authority") return null;
+    return { ...authority, action: historical.action, expectedEffect: historical.expectedEffect };
   }
 
   completeUnknownReconciliation(input: {
@@ -2714,6 +2732,8 @@ export class AdaptiveSessionRepository {
     reasonCode: string;
     evidence: Record<string, unknown>;
     runtimeOwned: boolean;
+    reconciliationId: string;
+    fencingToken: number;
   }) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
@@ -2722,7 +2742,9 @@ export class AdaptiveSessionRepository {
       const completed = await q(
         `UPDATE adaptive_operation_reconciliations SET state='completed',result=$4,
           reason_code=$5,evidence=$6::jsonb,completed_at=now(),fencing_token=fencing_token+1
-        WHERE session_id=$1 AND operation_id=$2 AND idempotency_key=$3 AND state='observing' RETURNING id`,
+        WHERE session_id=$1 AND operation_id=$2 AND idempotency_key=$3 AND state='observing'
+          AND id=$7::uuid AND fencing_token=$8::integer
+          AND lease_expires_at>now() RETURNING id`,
         [
           input.sessionId,
           input.operationId,
@@ -2730,6 +2752,8 @@ export class AdaptiveSessionRepository {
           input.result,
           input.reasonCode,
           JSON.stringify(input.evidence),
+          input.reconciliationId,
+          input.fencingToken,
         ],
       );
       if (!completed.rowCount)
@@ -3802,7 +3826,7 @@ export class AdaptiveSessionRepository {
       .query(
         `UPDATE adaptive_session_runtime_leases SET
            lease_expires_at=now()+($4::text || ' milliseconds')::interval,heartbeat_at=now()
-         WHERE session_id=$1 AND owner_id=$2 AND fencing_token=$3
+         WHERE session_id=$1 AND owner_id=$2 AND fencing_token=$3 AND lease_expires_at>now()
          RETURNING fencing_token`,
         [input.sessionId, input.ownerId, input.fencingToken, input.leaseDurationMs],
       )
@@ -3820,6 +3844,147 @@ export class AdaptiveSessionRepository {
         [input.sessionId, input.ownerId, input.fencingToken],
       )
       .then((result) => Boolean(result.rowCount));
+  }
+
+  async settleRuntimeOwnerLoss(input: {
+    sessionId: string;
+    ownerId: string;
+    fencingToken: number;
+    runtimePresent: boolean;
+    recoveryObservationAvailable: boolean;
+    reasonCode: string;
+  }) {
+    return this.database.transaction(async (client) => {
+      const q = bind(client);
+      const row = await q<{
+        state: AdaptiveSessionState;
+        leaseValid: boolean;
+        dispatchBoundary: "none" | "not_dispatched" | "dispatching" | "dispatched" | "acknowledged";
+        adaptiveMutation: "not_applied" | "applied" | "unknown" | null;
+        protectedMutation: "not_attempted" | "not_applied" | "applied" | "unknown" | null;
+      }>(
+        `SELECT session.state,
+          (lease.lease_expires_at>now()) AS "leaseValid",
+          COALESCE(operation.dispatch_boundary,'none') AS "dispatchBoundary",
+          operation.mutation_outcome AS "adaptiveMutation",
+          protected.mutation_outcome AS "protectedMutation"
+         FROM adaptive_sessions session
+         JOIN adaptive_session_runtime_leases lease ON lease.session_id=session.id
+         LEFT JOIN LATERAL (
+           SELECT candidate.operation_id,candidate.dispatch_boundary,candidate.mutation_outcome
+           FROM adaptive_operations candidate WHERE candidate.session_id=session.id
+           ORDER BY candidate.sequence DESC LIMIT 1
+         ) operation ON true
+         LEFT JOIN LATERAL (
+           SELECT candidate.mutation_outcome FROM protected_operations candidate
+           WHERE candidate.owner_kind='authoring_session'
+             AND candidate.authoring_session_id=session.id
+             AND candidate.operation_id=operation.operation_id
+           ORDER BY candidate.created_at DESC LIMIT 1
+         ) protected ON true
+         WHERE session.id=$1 AND lease.owner_id=$2 AND lease.fencing_token=$3
+         FOR UPDATE OF session,lease`,
+        [input.sessionId, input.ownerId, input.fencingToken],
+      );
+      if (!row.rowCount || !row.rows[0]!.leaseValid)
+        throw new ConflictException({ code: "ADAPTIVE_SESSION_RUNTIME_LEASE_LOST" });
+      const current = row.rows[0]!;
+      const canonical = current.protectedMutation ?? current.adaptiveMutation ?? "none";
+      const disposition = decideRuntimeLossDisposition({
+        praxisState: current.state,
+        runtimePresent: input.runtimePresent,
+        leaseValid: false,
+        dispatchBoundary: current.dispatchBoundary,
+        canonicalMutationTruth: canonical === "not_attempted" ? "none" : canonical,
+        recoveryObservationAvailable: input.recoveryObservationAvailable,
+      });
+      await q(
+        `UPDATE adaptive_session_runtime_leases SET lease_expires_at=now(),heartbeat_at=now()
+         WHERE session_id=$1 AND owner_id=$2 AND fencing_token=$3`,
+        [input.sessionId, input.ownerId, input.fencingToken],
+      );
+      if (disposition.praxisState !== current.state) {
+        await this.transitionLocked(
+          q,
+          input.sessionId,
+          current.state,
+          disposition.praxisState,
+          disposition.praxisState === "recovery_required" ? "recovery_required" : "session_failed",
+          {
+            reasonCode: input.reasonCode,
+            lifecycleReasonCode: disposition.reasonCode,
+            mutationOutcome: canonical,
+            runtimePresent: input.runtimePresent,
+            staleWriterPermitted: false,
+          },
+          `runtime-loss:${input.ownerId}:${input.fencingToken}`,
+        );
+      }
+      return { ...disposition, mutationOutcome: canonical };
+    });
+  }
+
+  async convergeExpiredRuntimeOwners() {
+    const expired = await this.database.query<{ sessionId: string }>(
+      `SELECT session.id::text AS "sessionId"
+       FROM adaptive_sessions session
+       JOIN adaptive_session_runtime_leases lease ON lease.session_id=session.id
+       WHERE session.state IN ('provisioning','active','suspended')
+         AND lease.lease_expires_at<=now()
+       ORDER BY lease.lease_expires_at,session.id`,
+    );
+    for (const { sessionId } of expired.rows) {
+      await this.database.transaction(async (client) => {
+        const q = bind(client);
+        const session = await this.requireSession(q, null, sessionId, true);
+        if (!["provisioning", "active", "suspended"].includes(session.state)) return;
+        const last = await q<{
+          dispatchBoundary: "not_dispatched" | "dispatching" | "dispatched" | "acknowledged";
+          adaptiveMutation: "not_applied" | "applied" | "unknown" | null;
+          protectedMutation: "not_attempted" | "not_applied" | "applied" | "unknown" | null;
+        }>(
+          `SELECT operation.dispatch_boundary AS "dispatchBoundary",
+                  operation.mutation_outcome AS "adaptiveMutation",
+                  protected.mutation_outcome AS "protectedMutation"
+           FROM adaptive_operations operation
+           LEFT JOIN protected_operations protected
+             ON protected.owner_kind='authoring_session'
+            AND protected.authoring_session_id=operation.session_id
+            AND protected.operation_id=operation.operation_id
+           WHERE operation.session_id=$1 ORDER BY operation.sequence DESC LIMIT 1`,
+          [sessionId],
+        );
+        const owner = last.rows[0];
+        const canonical = owner?.protectedMutation ?? owner?.adaptiveMutation ?? "none";
+        const disposition = decideRuntimeLossDisposition({
+          praxisState: session.state,
+          runtimePresent: false,
+          leaseValid: false,
+          dispatchBoundary: owner?.dispatchBoundary ?? "none",
+          canonicalMutationTruth: canonical === "not_attempted" ? "none" : canonical,
+          recoveryObservationAvailable: false,
+        });
+        const target =
+          session.state === "provisioning" && disposition.praxisState === "failed"
+            ? "recovery_required"
+            : disposition.praxisState;
+        await this.transitionLocked(
+          q,
+          sessionId,
+          session.state,
+          target,
+          target === "recovery_required" ? "recovery_required" : "session_failed",
+          {
+            reasonCode: "ADAPTIVE_RUNTIME_LEASE_EXPIRED",
+            lifecycleReasonCode: disposition.reasonCode,
+            mutationOutcome: canonical,
+            staleWriterPermitted: false,
+          },
+          `expired-runtime:${sessionId}:${session.version}`,
+        );
+      });
+    }
+    return expired.rows.map(({ sessionId }) => sessionId);
   }
 
   private async transitionLocked(

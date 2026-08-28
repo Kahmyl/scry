@@ -166,6 +166,9 @@ const flowNameIdentityCutoverPath = fileURLToPath(
 const targetedRegionPerceptionPath = fileURLToPath(
   new URL("../migrations/targeted-region-perception.sql", import.meta.url),
 );
+const systemCorrectnessM4Path = fileURLToPath(
+  new URL("../migrations/system-correctness-m4-reconciliation-lease.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -244,6 +247,7 @@ const preMissionExternalAgentLifecycle = await readFile(
 );
 const flowNameIdentityCutover = await readFile(flowNameIdentityCutoverPath, "utf8");
 const targetedRegionPerception = await readFile(targetedRegionPerceptionPath, "utf8");
+const systemCorrectnessM4 = await readFile(systemCorrectnessM4Path, "utf8");
 const flowNameIdentityCutoverUpgrade = `${flowNameIdentityCutover}\n${targetedRegionPerception}`;
 const preMissionExternalAgentLifecycleUpgrade = `${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutoverUpgrade}`;
 const operationalEvents = `${operationalEventsSource}\n${missionDiagnosticIsolation}\n${externalAgentLifecycle}\n${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutoverUpgrade}`;
@@ -297,6 +301,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "pre-mission-external-agent-lifecycle.sql": preMissionExternalAgentLifecycle,
   "flow-name-identity-cutover.sql": flowNameIdentityCutover,
   "targeted-region-perception.sql": targetedRegionPerception,
+  "system-correctness-m4-reconciliation-lease.sql": systemCorrectnessM4,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
@@ -320,13 +325,27 @@ const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
               migration !== "external-agent-lifecycle.sql" &&
               migration !== "pre-mission-external-agent-lifecycle.sql" &&
               migration !== "flow-name-identity-cutover.sql" &&
-              migration !== "targeted-region-perception.sql",
+              migration !== "targeted-region-perception.sql" &&
+              migration !== "system-correctness-m4-reconciliation-lease.sql",
           ),
     ),
   );
 };
 
 const baseline = stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS);
+const preSystemCorrectnessM4Fingerprint = createHash("sha256")
+  .update(
+    expandFoundation(
+      expandBaselineStage(
+        baselineSource,
+        optionalMigrationSources,
+        OPTIONAL_BASELINE_MIGRATIONS.filter(
+          (name) => name !== "system-correctness-m4-reconciliation-lease.sql",
+        ),
+      ),
+    ),
+  )
+  .digest("hex");
 const preAdaptiveOperationReconciliationFingerprint = createHash("sha256")
   .update(
     stagedBaseline(
@@ -659,7 +678,25 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preTargetedRegionPerceptionFingerprint) {
+    if (installedFingerprint === preSystemCorrectnessM4Fingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-system-correctness-m4'))");
+        await client.query(systemCorrectnessM4);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied system correctness M4 ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preTargetedRegionPerceptionFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");

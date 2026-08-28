@@ -155,6 +155,10 @@ const targetedRegionPerception = await readFile(
   new URL("targeted-region-perception.sql", root),
   "utf8",
 );
+const systemCorrectnessM4 = await readFile(
+  new URL("system-correctness-m4-reconciliation-lease.sql", root),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -199,6 +203,7 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "u
   ["external-agent-lifecycle.sql", externalAgentLifecycle],
   ["pre-mission-external-agent-lifecycle.sql", preMissionExternalAgentLifecycle],
   ["flow-name-identity-cutover.sql", flowNameIdentityCutover],
+  ["system-correctness-m4-reconciliation-lease.sql", systemCorrectnessM4],
   ["targeted-region-perception.sql", targetedRegionPerception],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)

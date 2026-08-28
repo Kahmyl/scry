@@ -9,6 +9,7 @@ function fixture(expectedEffect: Record<string, unknown>, registry?: Record<stri
     beginUnknownReconciliation: vi.fn(async () => ({
       state: "observing",
       id: "attempt",
+      fencingToken: 1,
       attempt: 1,
       replayed: false,
       expectedEffect,
@@ -184,6 +185,7 @@ describe("authoritative UNKNOWN reconciliation", () => {
     sessions.beginUnknownReconciliation.mockResolvedValueOnce({
       state: "observing",
       id: "attempt",
+      fencingToken: 1,
       attempt: 1,
       replayed: false,
       expectedEffect: { type: "navigation", url: "https://example.test/done", match: "exact" },
@@ -211,6 +213,7 @@ describe("authoritative UNKNOWN reconciliation", () => {
     sessions.beginUnknownReconciliation.mockResolvedValueOnce({
       state: "observing",
       id: "attempt",
+      fencingToken: 1,
       attempt: 1,
       replayed: false,
       expectedEffect: { type: "none" },

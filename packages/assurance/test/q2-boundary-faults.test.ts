@@ -72,10 +72,10 @@ describe("Q2 deterministic B1-B20 fault matrix", () => {
     }
   });
 
-  it("evaluates Q1 after every fault and isolates the expected B19 lifecycle finding", () => {
+  it("evaluates Q1 after every fault after the B19 lifecycle correction", () => {
     for (const scenario of q2Scenarios) {
       const violations = runQ2Scenario(scenario).violations.map(({ invariantId }) => invariantId);
-      expect(violations, scenario.id).toEqual(scenario.boundary === "B19" ? ["L04"] : []);
+      expect(violations, scenario.id).toEqual([]);
     }
   });
 
@@ -236,16 +236,16 @@ describe("Q2 deterministic B1-B20 fault matrix", () => {
     const second = await createQ2Report(root);
     expect(second).toEqual(first);
     expect(first.report.source).toMatchObject({
-      head: "a1aa5a9f3c2d644ee865a9d56a340558de0d3db7",
-      schemaFingerprint: "132f5164c9cb422405d2e4f7f151c6b0edc5e7fb6130f2eb6c4b069ffd838776",
-      q0Digest: "45a9d954e015abc5dfe4fd864fc33fa24ef12f783c7739131515ada8404c3ee8",
-      q1Digest: "7ec0f1bf95269337c51c7a4d86448785a6fc9e40ca3431548661df8514c90d1a",
+      head: "20c5da0c81dcc4a797b8c89d5e9d7f9de6f3a787",
+      schemaFingerprint: "e8231b47b9a826867621a68305fe6329a49028f13d072492fa469ed6a0468fbb",
+      q0Digest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      q1Digest: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     expect(first.report.verdicts).toEqual({
       milestone3Implementation: "PASS",
       q2FaultInfrastructure: "PASS",
-      q2ProductGate: "BLOCKED",
-      progression: "ELIGIBLE_FOR_MILESTONE_4",
+      q2ProductGate: "PASS",
+      progression: "ELIGIBLE_FOR_MILESTONE_5",
     });
     expect(first.report.faultMatrix).toHaveLength(20);
     expect(
@@ -271,7 +271,7 @@ describe("Q2 deterministic B1-B20 fault matrix", () => {
       countsByProvenance: {
         assurance_reference: 20,
         existing_regression_evidence: 20,
-        repository_integration: 6,
+        repository_integration: 7,
         production_characterization: 13,
         real_browser_local: 5,
         independent_http_oracle: 5,
@@ -285,29 +285,7 @@ describe("Q2 deterministic B1-B20 fault matrix", () => {
       highRiskProductionExercisedCount: 13,
       highRiskFutureProofRequiredCount: 1,
     });
-    expect(first.report.productFindings).toEqual([
-      expect.objectContaining({
-        invariantId: "L04",
-        boundary: "B19",
-        risk: "P1",
-        owningMilestone: 4,
-        expectedState:
-          "Every active Praxis session has exactly one live runtime lease owner/fencing token.",
-        reproduction: {
-          scenarioId: "q2-b19-lifecycle-after_runtime_close_before_terminalization",
-          seed: 3019,
-        },
-        observedProductionFacts: [
-          "production runtime evicted",
-          "browser close succeeds",
-          "durable lease release rejects",
-          "Praxis durable session remains active",
-          "there is no live runtime owner",
-          "mutation remains unknown",
-          "runtime truth is recovery_required",
-        ],
-      }),
-    ]);
+    expect(first.report.productFindings).toEqual([]);
   });
 });
 

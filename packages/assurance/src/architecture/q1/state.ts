@@ -196,6 +196,10 @@ export function applyReferenceAction(state: Q1Snapshot, action: Q1Action): Q1Sna
       next.praxis.liveRuntimeOwners = 0;
       next.truth.runtime = "recovery_required";
       break;
+    case "settlePraxisOwnerLoss":
+      next.praxis.state = action.state;
+      next.praxis.terminalConverged = true;
+      break;
     case "restoreCheckpoint":
       next.authority.checkpointRestored = true;
       next.authority.checkpointCreatedNewEpoch = true;

@@ -118,6 +118,7 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "pre-mission-external-agent-lifecycle.sql",
   "flow-name-identity-cutover.sql",
   "targeted-region-perception.sql",
+  "system-correctness-m4-reconciliation-lease.sql",
 ] as const;
 
 export type OptionalBaselineMigration = (typeof OPTIONAL_BASELINE_MIGRATIONS)[number];
@@ -203,6 +204,7 @@ export function compatibilityBaseline(source: string): string {
     "external-agent-lifecycle.sql",
     "pre-mission-external-agent-lifecycle.sql",
     "flow-name-identity-cutover.sql",
+    "system-correctness-m4-reconciliation-lease.sql",
   ].reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}\\r?\\n`, "g"), ""),
@@ -216,12 +218,15 @@ export function expandBaselineStage(
   included: readonly OptionalBaselineMigration[],
 ): string {
   const admitted = new Set(included);
+  const prepared = admitted.has("system-correctness-m4-reconciliation-lease.sql")
+    ? source
+    : source.replace(/\\ir\s+system-correctness-m4-reconciliation-lease\.sql(?:\r?\n|$)/g, "");
   return OPTIONAL_BASELINE_MIGRATIONS.reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}(?:\\r?\\n|$)`, "g"), () =>
         admitted.has(migration) ? migrationSources[migration] : "",
       ),
-    source,
+    prepared,
   );
 }
 
@@ -235,7 +240,11 @@ export function calculatePreTargetedRegionPerceptionFingerprint(input: {
       expandBaselineStage(
         input.baselineSource,
         input.migrationSources,
-        OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "targeted-region-perception.sql"),
+        OPTIONAL_BASELINE_MIGRATIONS.filter(
+          (name) =>
+            name !== "targeted-region-perception.sql" &&
+            name !== "system-correctness-m4-reconciliation-lease.sql",
+        ),
       ),
     ),
   );

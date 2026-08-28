@@ -156,7 +156,7 @@ export async function createQ2Report(root: string) {
         : "FAIL",
       q2FaultInfrastructure: results.length === 20 ? "PASS" : "FAIL",
       q2ProductGate: productFindings.length ? "BLOCKED" : "PASS",
-      progression: "ELIGIBLE_FOR_MILESTONE_4",
+      progression: productFindings.length ? "ELIGIBLE_FOR_MILESTONE_4" : "ELIGIBLE_FOR_MILESTONE_5",
     },
     failpointSystem: {
       failpointCount: q2Scenarios.length,
@@ -213,9 +213,12 @@ export async function createQ2Report(root: string) {
         "campaign safety exists",
         "Stage 6 is ready",
       ],
-      productGateBlockedBy: "L04/B19 production invariant failure",
-      progressionReason:
-        "Milestone 4 owns lifecycle/lease convergence correction, so Q2 infrastructure closure remains eligible to progress.",
+      productGateBlockedBy: productFindings.length
+        ? productFindings.map(({ invariantId, boundary }) => `${invariantId}/${boundary}`)
+        : null,
+      progressionReason: productFindings.length
+        ? "A product invariant finding remains assigned to its owning stabilization milestone."
+        : "Milestone 4 lifecycle/lease convergence closes the Q2 product finding without changing UNKNOWN mutation truth.",
     },
     causalEnvelope: {
       phasesCovered: [...new Set(q2Scenarios.map(({ phase }) => phase))].sort(),
@@ -321,7 +324,12 @@ export async function createQ2Report(root: string) {
       "apps/api/test/causal-runtime-observability.test.ts",
       "packages/praxis/test/transaction.test.ts",
     ],
-    restrictions: { milestone4Implemented: false, stage6Run: false, publicOrLiveAccess: false },
+    restrictions: {
+      milestone4LifecycleCorrectionApplied: true,
+      milestone5Implemented: false,
+      stage6Run: false,
+      publicOrLiveAccess: false,
+    },
     diffFingerprint: workingDiffFingerprint(root),
   } as const;
   return { report, digest: deterministicDigest(report) };
@@ -331,7 +339,7 @@ export function renderQ2Markdown(
   report: Awaited<ReturnType<typeof createQ2Report>>["report"],
   digest: string,
 ) {
-  return `# Scry system correctness Q2\n\n- Report digest: \`${digest}\`\n- Source HEAD: \`${report.source.head}\`\n- Schema fingerprint: \`${report.source.schemaFingerprint}\`\n- Q0: \`${report.source.q0Digest}\`\n- Q1: \`${report.source.q1Digest}\`\n\n## Verdicts\n\n- MILESTONE_3_IMPLEMENTATION: **${report.verdicts.milestone3Implementation}**\n- Q2_FAULT_INFRASTRUCTURE: **${report.verdicts.q2FaultInfrastructure}**\n- Q2_PRODUCT_GATE: **${report.verdicts.q2ProductGate}**\n- PROGRESSION: **${report.verdicts.progression}**\n\nQ2 infrastructure PASS means deterministic B1-B20 scenarios, fault consequence evaluation, Q1 evaluation, and reproducible ledgers exist. It does not mean every fault was injected through a complete production path, process loss is proven, recovery is corrected, campaign safety exists, or Stage 6 is ready.\n\n## Proof provenance\n\nA Q1-valid reference snapshot proves legal resulting truth; it does not by itself prove physical production fault injection.\n\n${report.faultMatrix.map((entry) => `- ${entry.boundary} \`${entry.id}\` / \`${entry.failpoint.name}\`: **${entry.productionProofStatus}**; provenance=${entry.proofProvenance.join(",")}; production=${entry.productionComponentsActuallyExecuted.join(" + ")}; test-only=${entry.mockedWrappedOrTestOnlyComponents.join(" + ")}; postgres=${yesNo(entry.durablePostgresStateInspected)}; real-browser/praxis=${yesNo(entry.realBrowserOrPraxisMechanicsExecuted)}; independent-oracle=${yesNo(entry.independentDispatchOrEffectOracleUsed)}; Q1=${yesNo(entry.resultingStateEvaluatedByQ1)}. ${entry.proofNotes}`).join("\n")}\n\n## Fault results\n\n${report.faultMatrix.map((entry) => `- ${entry.boundary}: ${entry.q1InvariantResult}; ${entry.expectedDispatchCategory}; mutation=${entry.truth.mutation}; retry=${entry.retryClass}`).join("\n")}\n\n## Product findings\n\n${report.productFindings.length ? report.productFindings.map((finding) => `- ${finding.classification} ${finding.invariantId} at ${finding.boundary} (${finding.risk}), owned by Milestone ${finding.owningMilestone}. Reproduction: \`${finding.reproduction.scenarioId}\`, seed ${finding.reproduction.seed}. Expected: ${finding.expectedState}`).join("\n") : "None."}\n\n## Causal envelope\n\nThe Q2 envelope preserves phase, component, cause, truth, retry, and safe causality in qualification evidence. Existing production error paths are not universally envelope-attached; boundary-specific integration remains Milestone 4 or later work.\n\nNo Milestone 4 implementation, Stage 6 run, public/live access, commit, or push is represented by this report.\n`;
+  return `# Scry system correctness Q2\n\n- Report digest: \`${digest}\`\n- Source HEAD: \`${report.source.head}\`\n- Schema fingerprint: \`${report.source.schemaFingerprint}\`\n- Q0: \`${report.source.q0Digest}\`\n- Q1: \`${report.source.q1Digest}\`\n\n## Verdicts\n\n- MILESTONE_3_IMPLEMENTATION: **${report.verdicts.milestone3Implementation}**\n- Q2_FAULT_INFRASTRUCTURE: **${report.verdicts.q2FaultInfrastructure}**\n- Q2_PRODUCT_GATE: **${report.verdicts.q2ProductGate}**\n- PROGRESSION: **${report.verdicts.progression}**\n\nQ2 infrastructure PASS means deterministic B1-B20 scenarios, fault consequence evaluation, Q1 evaluation, and reproducible ledgers exist. It does not mean every fault was injected through a complete production path, process loss is proven, recovery is corrected, campaign safety exists, or Stage 6 is ready.\n\n## Proof provenance\n\nA Q1-valid reference snapshot proves legal resulting truth; it does not by itself prove physical production fault injection.\n\n${report.faultMatrix.map((entry) => `- ${entry.boundary} \`${entry.id}\` / \`${entry.failpoint.name}\`: **${entry.productionProofStatus}**; provenance=${entry.proofProvenance.join(",")}; production=${entry.productionComponentsActuallyExecuted.join(" + ")}; test-only=${entry.mockedWrappedOrTestOnlyComponents.join(" + ")}; postgres=${yesNo(entry.durablePostgresStateInspected)}; real-browser/praxis=${yesNo(entry.realBrowserOrPraxisMechanicsExecuted)}; independent-oracle=${yesNo(entry.independentDispatchOrEffectOracleUsed)}; Q1=${yesNo(entry.resultingStateEvaluatedByQ1)}. ${entry.proofNotes}`).join("\n")}\n\n## Fault results\n\n${report.faultMatrix.map((entry) => `- ${entry.boundary}: ${entry.q1InvariantResult}; ${entry.expectedDispatchCategory}; mutation=${entry.truth.mutation}; retry=${entry.retryClass}`).join("\n")}\n\n## Product findings\n\n${report.productFindings.length ? report.productFindings.map((finding) => `- ${finding.classification} ${finding.invariantId} at ${finding.boundary} (${finding.risk}), owned by Milestone ${finding.owningMilestone}. Reproduction: \`${finding.reproduction.scenarioId}\`, seed ${finding.reproduction.seed}. Expected: ${finding.expectedState}`).join("\n") : "None."}\n\n## Causal envelope\n\nThe Q2 envelope preserves phase, component, cause, truth, retry, and safe causality in qualification evidence. Existing production error paths are not universally envelope-attached; boundary-specific integration remains Milestone 4 or later work.\n\nThe Milestone 4 lifecycle correction is represented only to requalify Q2. No Milestone 5, Stage 6 run, public/live access, commit, or push is represented by this report.\n`;
 }
 
 function yesNo(value: boolean) {

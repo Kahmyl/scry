@@ -298,6 +298,12 @@ export class MissionFlowAuthoringService {
         mutationOutcome: "unknown",
         safeActions: ["get_flow_authoring"],
       });
+    if (!claim.id || claim.fencingToken === undefined)
+      throw new ConflictException({
+        code: "UNKNOWN_RECONCILIATION_FENCE_LOST",
+        mutationOutcome: "unknown",
+        safeActions: ["get_flow_authoring"],
+      });
     const readOnlyObservation =
       (claim.authority.action.type === "click" || claim.authority.action.type === "press") &&
       claim.authority.action.dispatchSemantics === "read_only"
@@ -327,6 +333,8 @@ export class MissionFlowAuthoringService {
       missionId: input.missionId,
       operationId: input.operationId,
       idempotencyKey: input.idempotencyKey,
+      reconciliationId: claim.id,
+      fencingToken: claim.fencingToken,
       runtimeOwned: this.runner.hasRuntime(sessionId),
       ...observation,
     });
@@ -1137,6 +1145,10 @@ export class MissionFlowAuthoringService {
     } finally {
       await this.runner.close(sessionId);
     }
+  }
+
+  convergeExpiredRuntimeOwners() {
+    return this.sessions.convergeExpiredRuntimeOwners();
   }
 
   private requireWrite(principal: Principal) {

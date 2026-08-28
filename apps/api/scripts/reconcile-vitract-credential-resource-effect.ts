@@ -137,6 +137,7 @@ try {
       idempotencyKey: reconciliationKey,
     });
     if (claim.state !== "observing") throw new Error("RECONCILIATION_ATTEMPT_NOT_OBSERVING");
+    if (!claim.id || !claim.fencingToken) throw new Error("RECONCILIATION_FENCE_UNAVAILABLE");
     const observation = await adapter.observe(authority);
     const settled = await repository.completeUnknownReconciliation({
       sessionId,
@@ -147,6 +148,8 @@ try {
       reasonCode: observation.reasonCode,
       evidence: observation.evidence,
       runtimeOwned: false,
+      reconciliationId: claim.id,
+      fencingToken: claim.fencingToken,
     });
     process.stdout.write(
       JSON.stringify({

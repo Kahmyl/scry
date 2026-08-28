@@ -1,4 +1,5 @@
 import type { QueryResultRow } from "pg";
+import { loadConflictScope } from "../recovery/conflict-scope.repository.js";
 
 export type MissionSelectionStatus =
   "planning" | "running" | "blocked" | "awaiting_user" | "completed" | "failed" | "cancelled";
@@ -209,20 +210,18 @@ export async function loadMissionSelectionFacts(
   input: LoadMissionSelectionFactsInput,
 ): Promise<MissionSelectionFact[]> {
   const limit = Math.min(Math.max(input.limit ?? 6, 1), 20);
-  const result = await query<{
-    id: string;
-    title: string;
-    status: MissionSelectionStatus;
-    purpose: MissionSelectionPurpose;
-    latestExternalRunId: string | null;
-    latestAgentSessionStatus: string | null;
-    knownExternalRunIds: string[] | null;
-    activeExternalRunIds: string[] | null;
-    activeExecutionOwnership: boolean;
-    unresolvedMutationRisk: boolean;
-    outstandingReconciliation: boolean;
-  }>(
-    `SELECT mission.id::text,mission.title,mission.status,mission.purpose,
+  const [result, conflictScope] = await Promise.all([
+    query<{
+      id: string;
+      title: string;
+      status: MissionSelectionStatus;
+      purpose: MissionSelectionPurpose;
+      latestExternalRunId: string | null;
+      latestAgentSessionStatus: string | null;
+      knownExternalRunIds: string[] | null;
+      activeExternalRunIds: string[] | null;
+    }>(
+      `SELECT mission.id::text,mission.title,mission.status,mission.purpose,
             latest.external_run_id::text AS "latestExternalRunId",
             latest.status AS "latestAgentSessionStatus",
             COALESCE((
@@ -237,45 +236,7 @@ export async function loadMissionSelectionFacts(
                WHERE active.mission_id=mission.id AND active.status='active'
                  AND active.external_run_id IS NOT NULL
             ),ARRAY[]::text[]) AS "activeExternalRunIds",
-            (
-              EXISTS(SELECT 1 FROM agent_sessions active
-                WHERE active.mission_id=mission.id AND active.status='active')
-              OR EXISTS(SELECT 1 FROM runs active
-                WHERE active.mission_id=mission.id
-                  AND active.state NOT IN ('passed','failed','cancelled','timed_out','infrastructure_error'))
-              OR EXISTS(SELECT 1 FROM adaptive_sessions active
-                WHERE active.mission_id=mission.id
-                  AND active.state IN ('created','provisioning','active','suspended'))
-            ) AS "activeExecutionOwnership",
-            (
-              EXISTS(
-                SELECT 1 FROM adaptive_operations operation
-                JOIN adaptive_sessions session ON session.id=operation.session_id
-                WHERE session.mission_id=mission.id
-                  AND operation.mutation_outcome='unknown'
-                  AND adaptive_operation_unknown_unresolved(
-                    operation.session_id,operation.operation_id
-                  )
-              )
-              OR EXISTS(
-                SELECT 1 FROM protected_operations operation
-                WHERE operation.mission_id=mission.id
-                  AND operation.mutation_outcome='unknown'
-              )
-            ) AS "unresolvedMutationRisk",
-            (
-              EXISTS(
-                SELECT 1 FROM adaptive_operation_reconciliations reconciliation
-                WHERE reconciliation.mission_id=mission.id
-                  AND reconciliation.state='observing'
-              )
-              OR EXISTS(
-                SELECT 1 FROM protected_operations operation
-                WHERE operation.mission_id=mission.id
-                  AND (operation.state IN ('reconciling','recovery_required')
-                    OR operation.recovery_class='reconciliation_required')
-              )
-            ) AS "outstandingReconciliation"
+            mission.updated_at
        FROM missions mission
        LEFT JOIN LATERAL (
          SELECT session.external_run_id,session.status
@@ -288,17 +249,40 @@ export async function loadMissionSelectionFacts(
         AND ($3::text IS NULL OR lower(mission.title)=lower($3)
           OR lower(mission.original_instruction)=lower($4))
       ORDER BY mission.updated_at DESC,mission.id DESC LIMIT $5`,
-    [
-      input.projectId,
-      input.missionId ?? null,
-      input.title ?? null,
-      input.originalInstruction ?? null,
-      limit,
-    ],
-  );
+      [
+        input.projectId,
+        input.missionId ?? null,
+        input.title ?? null,
+        input.originalInstruction ?? null,
+        limit,
+      ],
+    ),
+    loadConflictScope(query, {
+      projectId: input.projectId,
+      ...(input.missionId ? { missionId: input.missionId } : {}),
+    }),
+  ]);
   return result.rows.map((row) => ({
     ...row,
     knownExternalRunIds: row.knownExternalRunIds ?? [],
     activeExternalRunIds: row.activeExternalRunIds ?? [],
+    activeExecutionOwnership: conflictScope.some(
+      ({ missionId, kind, blocking }) =>
+        missionId === row.id &&
+        blocking &&
+        ["external_agent_owner", "run_owner", "praxis_runtime_owner"].includes(kind),
+    ),
+    unresolvedMutationRisk: conflictScope.some(
+      ({ missionId, kind, blocking }) =>
+        missionId === row.id &&
+        blocking &&
+        ["adaptive_unknown", "protected_mutation"].includes(kind),
+    ),
+    outstandingReconciliation: conflictScope.some(
+      ({ missionId, kind, blocking }) =>
+        missionId === row.id &&
+        blocking &&
+        ["reconciliation_owner", "praxis_recovery"].includes(kind),
+    ),
   }));
 }

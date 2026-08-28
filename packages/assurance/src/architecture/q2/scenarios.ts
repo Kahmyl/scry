@@ -361,6 +361,8 @@ function actionsFor(
     actions.push({ type: "setPersistence", state: "failed" });
   if (boundary === "B18") actions.push({ type: "loseAgentLease" });
   if (runtime === "recovery_required") actions.push({ type: "loseRuntimeLease" });
+  if (boundary === "B19")
+    actions.push({ type: "settlePraxisOwnerLoss", state: "recovery_required" });
   if (boundary === "B20")
     actions.push({ type: "testOnlyCorrupt", path: "truth.telemetry", value: "failed" });
   return actions;
