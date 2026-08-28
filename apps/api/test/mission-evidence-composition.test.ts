@@ -219,6 +219,42 @@ describe("Mission evidence composition", () => {
     expect(protectedOperations.listMutationReceiptsForRuns).toHaveBeenCalledWith([runId]);
   });
 
+  it("refuses Objective evidence acceptance while the Run has not passed", async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text.includes("FROM missions m JOIN projects p"))
+        return rows([
+          {
+            id: missionId,
+            projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            status: "running",
+            revision: 11,
+          },
+        ]);
+      if (text.includes("SELECT 1 FROM agent_sessions")) return rows([{}]);
+      if (text.includes("SELECT 1 FROM mission_objectives")) return rows([{}]);
+      if (text.includes("SELECT id,state FROM runs"))
+        return rows([{ id: runId, state: "running" }]);
+      throw new Error(`UNEXPECTED_QUERY: ${text}`);
+    });
+    const service = new MissionService({
+      transaction: (work: (client: { query: QueryStub }) => unknown) => work({ query }),
+    } as never);
+
+    await expect(
+      service.acceptEvidence(principal, objectiveId, {
+        missionId,
+        agentSessionId,
+        runId,
+        artifactIds: [],
+        conclusion: "Must not accept incomplete required evidence.",
+      }),
+    ).rejects.toMatchObject({ response: { code: "RUN_NOT_ACCEPTABLE" } });
+
+    expect(
+      query.mock.calls.some(([text]) => String(text).includes("INSERT INTO accepted_evidence")),
+    ).toBe(false);
+  });
+
   it("refuses an Artifact from a non-canonical Attempt", async () => {
     const query = vi.fn(async (text: string) => {
       if (text.includes("FROM missions m JOIN projects p"))

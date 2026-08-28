@@ -487,6 +487,7 @@ export class AgentDirectedRunService {
     const result = await this.database.query<{
       operationCount: number | string;
       evidencedOperationCount: number | string;
+      unacceptableOperationEvidenceCount: number | string;
       unsafeArtifactCount: number | string;
       unsafeTimelineCount: number | string;
       openPrivacyIntervalCount: number | string;
@@ -525,6 +526,18 @@ export class AgentDirectedRunService {
                )
              )
          ) AS "evidencedOperationCount",
+         (
+           SELECT count(*)::integer
+           FROM run_operation_links link
+           WHERE link.run_id=$1
+             AND COALESCE(
+               link.safe_result->'evidence'->>'state',
+               ''
+             ) NOT IN (
+               'available',
+               'suppressed'
+             )
+         ) AS "unacceptableOperationEvidenceCount",
          (
            SELECT count(*)::integer
            FROM artifacts
@@ -568,6 +581,8 @@ export class AgentDirectedRunService {
 
     const evidencedOperationCount = Number(row?.evidencedOperationCount ?? 0);
 
+    const unacceptableOperationEvidenceCount = Number(row?.unacceptableOperationEvidenceCount ?? 0);
+
     const unsafeArtifactCount = Number(row?.unsafeArtifactCount ?? 0);
 
     const unsafeTimelineCount = Number(row?.unsafeTimelineCount ?? 0);
@@ -577,6 +592,7 @@ export class AgentDirectedRunService {
     if (
       operationCount === 0 ||
       evidencedOperationCount !== operationCount ||
+      unacceptableOperationEvidenceCount > 0 ||
       unsafeArtifactCount > 0 ||
       unsafeTimelineCount > 0 ||
       openPrivacyIntervalCount > 0
@@ -586,6 +602,7 @@ export class AgentDirectedRunService {
         mutationOutcome: "not_applied",
         operationCount,
         evidencedOperationCount,
+        unacceptableOperationEvidenceCount,
         unsafeArtifactCount,
         unsafeTimelineCount,
         openPrivacyIntervalCount,

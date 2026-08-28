@@ -178,16 +178,17 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           ...(signal ? { signal } : {}),
         });
         if (result.outcome.mutationOutcome !== "unknown") leaseGuard.assertOwned();
-        await this.sessions.recordVerifiedObservation({
+        const outcome = await this.recordVerifiedObservationOutcome({
           sessionId,
           operationId: operation.operationId,
           documentEpoch: result.documentEpoch,
           url: result.url,
+          outcome: result.outcome,
         });
         return {
-          outcome: result.outcome,
+          outcome,
           capabilityManifestDigest: capability.manifest.digest,
-          decisionBoundary: resolveRecoveryBoundary(result.outcome, {
+          decisionBoundary: resolveRecoveryBoundary(outcome, {
             environmentId: context.environmentId,
             allowedOrigins: context.policy.allowedOrigins,
             trustedScriptOrigins: context.policy.trustedScriptOrigins ?? [],
@@ -281,16 +282,17 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           ...(input.signal ? { signal: input.signal } : {}),
         });
         if (result.outcome.mutationOutcome !== "unknown") leaseGuard.assertOwned();
-        await this.sessions.recordVerifiedObservation({
+        const outcome = await this.recordVerifiedObservationOutcome({
           sessionId: input.sessionId,
           operationId: input.operation.operationId,
           documentEpoch: result.documentEpoch,
           url: result.url,
+          outcome: result.outcome,
         });
         return {
-          outcome: result.outcome,
+          outcome,
           capabilityManifestDigest: capability.manifest.digest,
-          decisionBoundary: resolveRecoveryBoundary(result.outcome, {
+          decisionBoundary: resolveRecoveryBoundary(outcome, {
             environmentId: context.environmentId,
             allowedOrigins: context.policy.allowedOrigins,
             trustedScriptOrigins: context.policy.trustedScriptOrigins ?? [],
@@ -1033,6 +1035,31 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     const redactor = this.sessionRedactors.get(sessionId);
     redactor?.clear();
     this.sessionRedactors.delete(sessionId);
+  }
+
+  private async recordVerifiedObservationOutcome(input: {
+    sessionId: string;
+    operationId: string;
+    documentEpoch: number;
+    url: string;
+    outcome: OperationOutcome;
+  }) {
+    try {
+      await this.sessions.recordVerifiedObservation(input);
+      return input.outcome;
+    } catch {
+      return {
+        ...input.outcome,
+        evidenceResult: [
+          ...input.outcome.evidenceResult.filter((entry) => entry.channel !== "report"),
+          {
+            channel: "report" as const,
+            state: "failed" as const,
+            reasonCode: "ADAPTIVE_VERIFIED_OBSERVATION_PERSISTENCE_FAILED",
+          },
+        ].sort((left, right) => left.channel.localeCompare(right.channel)),
+      };
+    }
   }
 
   private sessionRedactor(sessionId: string) {

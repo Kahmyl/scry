@@ -74,6 +74,70 @@ afterAll(async () => {
 });
 
 describe("persistent authoring browser session", () => {
+  it("keeps one session active across two navigations and a same-origin GET", async () => {
+    const sessionId = "12121212-1212-4212-8212-121212121212";
+    const policy = executionPolicySchema.parse({
+      allowedOrigins: [origin],
+      allowPrivateNetwork: true,
+    });
+    const session = await createAuthoringBrowserSession({
+      sessionId,
+      environmentId: "authoring-test-environment",
+      veilAdmissionKey: "authoring-test-only-veil-admission-key-32-bytes",
+      browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+      policy,
+      openBrowser: openTestBrowser,
+      executeInteraction: kernelInteractionExecutor({
+        sessionId,
+        environmentId: "authoring-test-environment",
+        policy,
+        executeSameOriginRequest: async (page, request, allowedOrigins, beforeDispatch) => {
+          const url = new URL(request.path, page.url());
+          if (!allowedOrigins.includes(url.origin)) throw new Error("ORIGIN_NOT_ALLOWED");
+          await beforeDispatch?.();
+          const response = await page.context().request.fetch(url.href, {
+            method: request.method,
+          });
+          const status = response.status();
+          await response.dispose();
+          if (status < request.expectedStatus.min || status > request.expectedStatus.max)
+            throw new Error("STATUS_UNEXPECTED");
+          return { status, classification: "expected" };
+        },
+      }),
+    });
+
+    try {
+      await session.page.goto(origin, { waitUntil: "domcontentloaded" });
+      await session.observeDocument();
+      const first = await session.interact({ type: "navigate", url: origin, timeoutMs: 2_000 });
+      const second = await session.interact({
+        type: "navigate",
+        url: `${origin}/`,
+        timeoutMs: 2_000,
+      });
+      const third = await session.interact({
+        type: "sameOriginRequest",
+        method: "GET",
+        path: "/",
+        authentication: "current_browser_session",
+        expectedStatus: { min: 200, max: 299 },
+        timeoutMs: 2_000,
+      });
+
+      expect(first.outcome.functionalResult).toBe("succeeded");
+      expect(second.outcome.functionalResult).toBe("succeeded");
+      expect(third.outcome).toMatchObject({
+        functionalResult: "succeeded",
+        mutationOutcome: "not_applied",
+      });
+      expect(session.state()).toBe("active");
+      expect(third.documentEpoch).toBe(3);
+    } finally {
+      await session.close();
+    }
+  }, 20_000);
+
   it("uses a stable UUID provenance identity for the actual authoring browser context", async () => {
     const sessionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const policy = executionPolicySchema.parse({

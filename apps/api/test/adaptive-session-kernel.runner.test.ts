@@ -362,6 +362,120 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     });
   });
 
+  it("preserves completed execution truth when verified-observation persistence fails", async () => {
+    const sessionId = "55555555-5555-4555-8555-555555555555";
+    const policy = {
+      allowedOrigins: ["https://example.test"],
+      trustedScriptOrigins: [],
+      allowPrivateNetwork: false,
+      allowDownloads: false as const,
+      allowPopups: false as const,
+      maxActions: 4,
+      maxDurationMs: 60_000,
+      maxNavigations: 2,
+    };
+    let documentEpoch = 1;
+    const recordVerifiedObservation = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("transient observation persistence failure"));
+    const sessions = {
+      heartbeatRuntimeLease: vi.fn(async () => undefined),
+      runtimeContextFor: vi.fn(async () => ({
+        environmentId: "environment",
+        correlationId: "correlation",
+        policy,
+      })),
+      recordDispatchBaseline: vi.fn(async () => undefined),
+      recordVerifiedObservation,
+    };
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      { createSession: vi.fn(() => ({ manifest: { digest: "a".repeat(64) } })) } as never,
+      sessions as never,
+      {} as never,
+    );
+    const interact = vi.fn(async (_action: never, context: { operationId: string }) => {
+      documentEpoch += 1;
+      return {
+        documentEpoch,
+        url: "https://example.test/",
+        outcome: {
+          operationId: context.operationId,
+          functionalResult: "succeeded" as const,
+          mutationOutcome: "not_applied" as const,
+          privacyResult: "verified" as const,
+          evidenceResult: [{ channel: "report" as const, state: "passed" as const }],
+          qualityFindings: [],
+          durationMs: 1,
+        },
+        report: { operationId: context.operationId },
+      };
+    });
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
+      session: {
+        page: { url: () => "https://example.test/" },
+        documentEpoch: () => documentEpoch,
+        interact,
+      },
+      fencingToken: 1,
+      tail: Promise.resolve(),
+    });
+    const operation = (ordinal: number) =>
+      ({
+        operationId: `operation-${ordinal}`,
+        idempotencyKey: `operation-${ordinal}-idempotency`,
+        mode: "rehearse",
+        action:
+          ordinal < 3
+            ? { type: "navigate", url: "https://example.test/", timeoutMs: 30_000 }
+            : {
+                type: "sameOriginRequest",
+                method: "GET",
+                path: "/",
+                authentication: "current_browser_session",
+                expectedStatus: { min: 200, max: 299 },
+                timeoutMs: 30_000,
+              },
+        expectedEffect: { type: "none" },
+        protectedInputReferences: [],
+      }) as never;
+    const execute = (ordinal: number) =>
+      runner.executeForRun({
+        sessionId,
+        operation: operation(ordinal),
+        outputDirectory: `/tmp/operation-${ordinal}`,
+        veilPolicySnapshot: compileDefaultVeilPolicy(policy),
+      });
+
+    await expect(execute(1)).resolves.toMatchObject({
+      outcome: { functionalResult: "succeeded", mutationOutcome: "not_applied" },
+    });
+    await expect(execute(2)).resolves.toMatchObject({
+      outcome: { functionalResult: "succeeded", mutationOutcome: "not_applied" },
+    });
+    await expect(execute(3)).resolves.toMatchObject({
+      outcome: {
+        functionalResult: "succeeded",
+        mutationOutcome: "not_applied",
+        evidenceResult: [
+          {
+            channel: "report",
+            state: "failed",
+            reasonCode: "ADAPTIVE_VERIFIED_OBSERVATION_PERSISTENCE_FAILED",
+          },
+        ],
+      },
+    });
+
+    expect(interact).toHaveBeenCalledTimes(3);
+    expect(recordVerifiedObservation).toHaveBeenCalledTimes(3);
+    expect((runner as unknown as { runtimes: Map<string, unknown> }).runtimes.has(sessionId)).toBe(
+      true,
+    );
+  });
+
   it("bounds a pending operation tail, cancels the browser, and releases its lease", async () => {
     const sessionId = "99999999-9999-4999-8999-999999999999";
     const cancelActiveOperation = vi.fn().mockResolvedValue(undefined);

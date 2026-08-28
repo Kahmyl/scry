@@ -25,6 +25,9 @@ export function kernelInteractionExecutor(input: {
   policy: ExecutionPolicy;
   secretResolver?: (reference: string) => Promise<string>;
   secretRedactor?: SecretRedactor;
+  executeSameOriginRequest?: NonNullable<
+    import("../src/types.js").ExecuteOptions["executeSameOriginRequest"]
+  >;
 }) {
   const kernel = new ExecutionKernel();
   const mutationStates = new Map<string, string>();
@@ -80,6 +83,9 @@ export function kernelInteractionExecutor(input: {
           veilAdmissionKey: "test-kernel-admission-key",
           ...(input.secretResolver ? { secretResolver: input.secretResolver } : {}),
           ...(input.secretRedactor ? { secretRedactor: input.secretRedactor } : {}),
+          ...(input.executeSameOriginRequest
+            ? { executeSameOriginRequest: input.executeSameOriginRequest }
+            : {}),
           ...(operation.signal ? { signal: operation.signal } : {}),
         },
       },
