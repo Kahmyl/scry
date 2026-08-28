@@ -9,7 +9,8 @@
   "scripts": {
     "test": "vitest run --exclude 'test/fixtures/engineering-lab-seeded-defect/**'",
     "typecheck": "tsc --noEmit",
-    "test:truth": "vitest run test/results.test.ts test/fixtures.test.ts test/browser-fixtures.test.ts test/praxis-reference-replacement.test.ts test/campaigns.test.ts test/journeys.test.ts test/agent-lab.test.ts test/agent-lab-qualification.test.ts test/agent-lab-live-journey.test.ts test/support-classification.test.ts test/runtime-observability.test.ts test/experiments.test.ts test/engineering-lab.test.ts test/observability-qualification.test.ts test/observability-qualification.cross-process.test.ts test/provider-neutral-qualification.test.ts test/experiment-cluster-synthesis.test.ts test/public-boundary.test.ts",
+    "test:truth": "vitest run test/results.test.ts test/fixtures.test.ts test/browser-fixtures.test.ts test/praxis-reference-replacement.test.ts test/campaigns.test.ts test/journeys.test.ts test/agent-lab.test.ts test/agent-lab-qualification.test.ts test/agent-lab-live-journey.test.ts test/support-classification.test.ts test/runtime-observability.test.ts test/experiments.test.ts test/engineering-lab.test.ts test/observability-qualification.test.ts test/observability-qualification.cross-process.test.ts test/provider-neutral-qualification.test.ts test/experiment-cluster-synthesis.test.ts test/public-boundary.test.ts test/q0-system-correctness.test.ts",
+    "q0": "tsx scripts/q0.ts",
     "experiment:engineering-lab:seeded": "tsx scripts/engineering-lab-seeded.ts",
     "campaign:praxis": "tsx scripts/campaigns/praxis-production-campaign.ts",
     "campaign:praxis:100": "tsx scripts/campaigns/praxis-production-campaign-100.ts",
