@@ -1774,7 +1774,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
 
     await database.query(
       `INSERT INTO environments(id,project_id,name,base_origin,policy)
-       VALUES($1,$2,'Popup recovery','https://preview.vitract.com',$3::jsonb)`,
+       VALUES($1,$2,'Fresh authority recovery','https://preview.vitract.com',$3::jsonb)`,
       [
         recoveryEnvironment,
         project,
@@ -1782,7 +1782,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
           allowedOrigins: ["https://preview.vitract.com"],
           allowPrivateNetwork: false,
           allowDownloads: false,
-          allowPopups: true,
+          allowPopups: false,
           maxActions: 10,
           maxDurationMs: 120_000,
           maxNavigations: 3,
@@ -1826,7 +1826,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
 
     const plan = currentPlanSchema.parse({
       name: "Consult Developer documentation",
-      objective: "Consult Developer documentation in a popup-enabled environment",
+      objective: "Consult Developer documentation with fresh browser authority",
       preconditions: [],
       allowedOrigins: ["https://preview.vitract.com"],
       budgets: { maxActions: 3, maxDurationMs: 30_000, maxNavigations: 2 },
@@ -1847,7 +1847,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
       ...context,
       projectId: project,
       environmentId: recoveryEnvironment,
-      name: `Popup recovery ${randomUUID()}`,
+      name: `Policy recovery ${randomUUID()}`,
       description: "Fresh browser authority after a policy refusal",
       content: {
         objective: "Consult Developer documentation",

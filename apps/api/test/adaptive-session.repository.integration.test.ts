@@ -2149,9 +2149,9 @@ integration("adaptive session repository integration", () => {
       environmentId,
       mission: {
         title: `Prepared ${randomUUID()}`,
-        originalInstruction: "Prepare only",
+        originalInstruction: `Prepare only ${idempotencyKey}`,
         provider: "codex" as const,
-        instructionSnapshot: "Prepare only",
+        instructionSnapshot: `Prepare only ${idempotencyKey}`,
         distinctReason: "Integration fixture",
       },
       objective: {
