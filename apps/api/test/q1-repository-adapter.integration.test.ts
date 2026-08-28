@@ -216,7 +216,9 @@ integration("Q1 real repository adapter", () => {
       functionalTruth: "succeeded",
       terminal: true,
     });
-    expect(evaluateInvariants(snapshot)).toHaveLength(52);
+    const invariants = evaluateInvariants(snapshot);
+    expect(invariants).toHaveLength(52);
+    expect(invariants.filter(({ status }) => status === "fail")).toEqual([]);
   });
 
   it("keeps protected truth canonical when the adaptive row is only a projection", async () => {

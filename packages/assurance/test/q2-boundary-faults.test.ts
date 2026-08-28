@@ -235,8 +235,12 @@ describe("Q2 deterministic B1-B20 fault matrix", () => {
     const first = await createQ2Report(root);
     const second = await createQ2Report(root);
     expect(second).toEqual(first);
+    const currentHead = spawnSync("git", ["rev-parse", "HEAD"], {
+      cwd: root,
+      encoding: "utf8",
+    }).stdout.trim();
     expect(first.report.source).toMatchObject({
-      head: "20c5da0c81dcc4a797b8c89d5e9d7f9de6f3a787",
+      head: currentHead,
       schemaFingerprint: "e8231b47b9a826867621a68305fe6329a49028f13d072492fa469ed6a0468fbb",
       q0Digest: expect.stringMatching(/^[a-f0-9]{64}$/),
       q1Digest: expect.stringMatching(/^[a-f0-9]{64}$/),

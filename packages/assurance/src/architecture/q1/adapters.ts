@@ -202,6 +202,7 @@ export class PostgresQ1Adapter {
             durableOperation.protectedState,
           )
         : ["completed", "failed"].includes(durableOperation.adaptiveState);
+      if (base.operation.terminal) base.run.operationMutable = false;
     }
     return freezeSnapshot(base) as Q1Snapshot;
   }
