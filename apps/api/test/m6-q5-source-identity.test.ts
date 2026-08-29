@@ -1,0 +1,158 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  assertAuthoritativeSourceIdentity,
+  assertRuntimeSourceIdentity,
+  deriveRepositorySourceIdentity,
+  sourceIdentityEnvironment,
+} from "../../../scripts/source-identity.mjs";
+
+const temporaryRepositories: string[] = [];
+const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
+
+describe("M6 Q5 authoritative source identity", () => {
+  afterEach(async () => {
+    await Promise.all(
+      temporaryRepositories.splice(0).map((directory) => rm(directory, { recursive: true })),
+    );
+  });
+
+  it("derives the actual clean commit and canonical manifest", async () => {
+    const repository = await cleanRepository();
+    const identity = deriveRepositorySourceIdentity(repository.root);
+
+    expect(identity).toEqual({
+      commitSha: repository.commitSha,
+      dirty: false,
+      manifestSha256: createHash("sha256").update(repository.commitSha).update("\0").digest("hex"),
+    });
+    expect(() => assertAuthoritativeSourceIdentity(identity, identity)).not.toThrow();
+    expect(sourceIdentityEnvironment(identity)).toEqual({
+      SCRY_GIT_COMMIT: repository.commitSha,
+      SCRY_SOURCE_DIRTY: "false",
+      SCRY_SOURCE_MANIFEST_SHA256: identity.manifestSha256,
+    });
+  });
+
+  it("never represents dirty source as clean", async () => {
+    const repository = await cleanRepository();
+    await writeFile(path.join(repository.root, "source.txt"), "dirty\n", "utf8");
+    const identity = deriveRepositorySourceIdentity(repository.root);
+
+    expect(identity.dirty).toBe(true);
+    expect(sourceIdentityEnvironment(identity).SCRY_SOURCE_DIRTY).toBe("true");
+    expect(() => assertAuthoritativeSourceIdentity(identity, identity)).toThrow(
+      "AUTHORITATIVE_SOURCE_IDENTITY_DIRTY",
+    );
+  });
+
+  it("fails closed for an expected commit from a different source", async () => {
+    const repository = await cleanRepository();
+    const identity = deriveRepositorySourceIdentity(repository.root);
+
+    expect(() =>
+      assertAuthoritativeSourceIdentity(identity, {
+        ...identity,
+        commitSha: "a".repeat(40),
+      }),
+    ).toThrow("AUTHORITATIVE_SOURCE_IDENTITY_COMMIT_MISMATCH");
+  });
+
+  it("fails closed for a stale or mismatched manifest", async () => {
+    const repository = await cleanRepository();
+    const identity = deriveRepositorySourceIdentity(repository.root);
+
+    expect(() =>
+      assertAuthoritativeSourceIdentity(identity, {
+        ...identity,
+        manifestSha256: "b".repeat(64),
+      }),
+    ).toThrow("AUTHORITATIVE_SOURCE_IDENTITY_MANIFEST_MISMATCH");
+  });
+
+  it("rejects runtime identity that diverges from the verified source", async () => {
+    const repository = await cleanRepository();
+    const identity = deriveRepositorySourceIdentity(repository.root);
+
+    expect(() =>
+      assertRuntimeSourceIdentity(
+        {
+          gitCommit: identity.commitSha,
+          dirty: true,
+          manifestSha256: identity.manifestSha256,
+        },
+        identity,
+      ),
+    ).toThrow("AUTHORITATIVE_RUNTIME_SOURCE_IDENTITY_MISMATCH");
+  });
+
+  it("keeps synthetic fixture identity out of the authoritative launcher", async () => {
+    const launcher = await readFile(
+      path.join(repositoryRoot, "apps/api/scripts/m6-q5-agent-campaign.ts"),
+      "utf8",
+    );
+    const syntheticFixture = await readFile(
+      path.join(repositoryRoot, "apps/api/test/m6-mcp-campaign.integration.test.ts"),
+      "utf8",
+    );
+    const dockerLauncher = await readFile(
+      path.join(repositoryRoot, "scripts/docker-up.mjs"),
+      "utf8",
+    );
+
+    expect(launcher).not.toContain('"e".repeat(64)');
+    expect(launcher).not.toContain('SCRY_SOURCE_DIRTY: "true"');
+    expect(launcher).not.toContain("5da3201636bac6b69c0943845bc1d05852d6f6c0");
+    expect(launcher).toContain("deriveRepositorySourceIdentity(root)");
+    expect(launcher).toContain("sourceIdentityEnvironment(sourceIdentity)");
+    expect(launcher).toContain('requiredIdentity("SCRY_GIT_COMMIT", 40)');
+    expect(launcher).toContain('requiredIdentity("SCRY_SOURCE_MANIFEST_SHA256", 64)');
+    expect(dockerLauncher).toContain("deriveRepositorySourceIdentity()");
+    expect(dockerLauncher).toContain("sourceIdentityEnvironment(sourceIdentity)");
+    expect(syntheticFixture).toContain('SCRY_SOURCE_MANIFEST_SHA256: "e".repeat(64)');
+    expect(syntheticFixture).toContain('SCRY_SOURCE_DIRTY: "true"');
+  });
+
+  it("completes source and runtime preflight before creating campaign authority", async () => {
+    const launcher = await readFile(
+      path.join(repositoryRoot, "apps/api/scripts/m6-q5-agent-campaign.ts"),
+      "utf8",
+    );
+    const sourcePreflight = launcher.indexOf("assertAuthoritativeSourceIdentity(sourceIdentity");
+    const runtimePreflight = launcher.indexOf("assertRuntimeSourceIdentity(");
+    const stableSourcePreflight = launcher.lastIndexOf("assertAuthoritativeSourceIdentity(");
+    const missionSeed = launcher.indexOf("const scope = await seedAgentScope");
+    const campaignCreation = launcher.indexOf("const campaign = await campaigns.create");
+    const paidAgent = launcher.indexOf("const agent = spawn");
+
+    expect(sourcePreflight).toBeGreaterThan(-1);
+    expect(runtimePreflight).toBeGreaterThan(sourcePreflight);
+    expect(stableSourcePreflight).toBeGreaterThan(runtimePreflight);
+    expect(missionSeed).toBeGreaterThan(stableSourcePreflight);
+    expect(campaignCreation).toBeGreaterThan(missionSeed);
+    expect(paidAgent).toBeGreaterThan(campaignCreation);
+  });
+});
+
+async function cleanRepository() {
+  const root = await mkdtemp(path.join(tmpdir(), "scry-q5-source-"));
+  temporaryRepositories.push(root);
+  git(root, ["init", "--quiet"]);
+  git(root, ["config", "user.email", "q5@example.test"]);
+  git(root, ["config", "user.name", "Q5 Source Test"]);
+  await writeFile(path.join(root, "source.txt"), "clean\n", "utf8");
+  git(root, ["add", "source.txt"]);
+  git(root, ["commit", "--quiet", "-m", "source"]);
+  return { root, commitSha: git(root, ["rev-parse", "HEAD"]).trim() };
+}
+
+function git(cwd: string, args: readonly string[]) {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.status !== 0) throw new Error(result.stderr);
+  return result.stdout;
+}

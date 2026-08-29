@@ -61,6 +61,8 @@ integration("M6 actual MCP campaign adversary", () => {
       SCRY_SERVICE_TOKEN: serviceToken,
       SCRY_RELEASE_ID: "m6-mcp-adversary",
       SCRY_SCHEMA_FINGERPRINT: schemaIdentity,
+      // Deliberately synthetic identity for this isolated integration fixture only.
+      // Authoritative Q5 derives and validates repository truth before any campaign state exists.
       SCRY_SOURCE_MANIFEST_SHA256: "e".repeat(64),
       SCRY_GIT_COMMIT: "m6-local",
       SCRY_SOURCE_DIRTY: "true",

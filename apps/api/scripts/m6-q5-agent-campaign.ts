@@ -8,19 +8,31 @@ import { encryptCredential } from "../src/access/credential.crypto.js";
 import { Database } from "../src/infrastructure/index.js";
 import { QualificationCampaignRepository } from "../src/runtime/repositories/qualification-campaign.repository.js";
 import { startQ3Fixture } from "../../../packages/assurance/src/architecture/q3/fixture.js";
+import {
+  assertAuthoritativeSourceIdentity,
+  assertRuntimeSourceIdentity,
+  deriveRepositorySourceIdentity,
+  sourceIdentityEnvironment,
+} from "../../../scripts/source-identity.mjs";
+
+const root = fileURLToPath(new URL("../../../", import.meta.url));
+const sourceIdentity = deriveRepositorySourceIdentity(root);
+assertAuthoritativeSourceIdentity(sourceIdentity, {
+  commitSha: requiredIdentity("SCRY_GIT_COMMIT", 40),
+  manifestSha256: requiredIdentity("SCRY_SOURCE_MANIFEST_SHA256", 64),
+});
 
 const databaseUrl = process.env.SCRY_M6_TEST_DATABASE_URL;
 if (!databaseUrl) throw new Error("SCRY_M6_TEST_DATABASE_URL_REQUIRED");
 process.env.DATABASE_URL = databaseUrl;
 
-const root = fileURLToPath(new URL("../../../", import.meta.url));
 const outputDirectory = path.resolve(
   process.env.SCRY_M6_Q5_OUTPUT ?? path.join(root, "artifacts/system-correctness/m6/q5-agent"),
 );
 await mkdir(outputDirectory, { recursive: true });
 
 const schemaIdentity = "15b258b1b7c1f6d446d2addaab7e25f5c0e111dba3a87210679d9aea50e03237";
-const releaseIdentity = "e".repeat(64);
+const releaseIdentity = sourceIdentity.manifestSha256;
 const agentWallTimeSeconds = Number(process.env.SCRY_M6_Q5_AGENT_WALL_TIME_SECONDS ?? 3_600);
 const agentModel =
   process.env.SCRY_M6_Q5_MODEL ?? process.env.SCRY_AGENT_LAB_DEEPSEEK_MODEL ?? "deepseek-v4-flash";
@@ -28,18 +40,57 @@ const serviceToken = `m6_local_${randomBytes(24).toString("hex")}`;
 const externalRunId = randomUUID();
 const experimentId = externalRunId;
 const fixturePassword = "m6-agent-protected-6Rt9";
-const fixture = await startQ3Fixture({
-  seed: 6501,
-  mode: "NORMAL",
-  evidenceMode: "REQUIRED_AVAILABLE",
-  username: "m6-local-user",
-  password: fixturePassword,
-});
 const database = new Database();
 const children: ChildProcess[] = [];
+let fixture: Awaited<ReturnType<typeof startQ3Fixture>> | undefined;
 
 try {
-  const scope = await seedAgentScope();
+  const common = {
+    ...process.env,
+    DATABASE_URL: databaseUrl,
+    REDIS_URL: process.env.REDIS_URL ?? "redis://127.0.0.1:56389",
+    SCRY_SERVICE_TOKEN: serviceToken,
+    SCRY_RELEASE_ID: "m6-local-qualification",
+    SCRY_SCHEMA_FINGERPRINT: schemaIdentity,
+    ...sourceIdentityEnvironment(sourceIdentity),
+    SCRY_RUNTIME_VERSION: "m6-local",
+    SCRY_BROWSER_CHANNEL: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    VEIL_ADMISSION_KEY: process.env.VEIL_ADMISSION_KEY ?? "m6-local-veil-admission-key-32-bytes",
+    ADAPTIVE_SESSION_RUNTIME_LEASE_MS: "3600000",
+    ARTIFACT_ROOT: path.join(outputDirectory, "runs"),
+  };
+
+  children.push(
+    startNode(path.join(root, "apps/api/src/main.ts"), {
+      ...common,
+      API_PORT: "4016",
+      API_HOST: "127.0.0.1",
+    }),
+    startNode(path.join(root, "apps/api/src/worker.ts"), common),
+  );
+  await waitForHttp("http://127.0.0.1:4016/api/ready", serviceToken, 60_000);
+  const capabilities = await readJson("http://127.0.0.1:4016/api/capabilities", serviceToken);
+  assertRuntimeSourceIdentity(capabilities.sourceIdentity, sourceIdentity);
+  children.push(
+    startNode(path.join(root, "apps/mcp/src/http.ts"), {
+      ...common,
+      MCP_PORT: "4116",
+      MCP_HOST: "127.0.0.1",
+      SCRY_API_BASE_URL: "http://127.0.0.1:4016/api",
+      SCRY_PUBLIC_API_BASE_URL: "http://127.0.0.1:4016/api",
+    }),
+  );
+  await waitForHttp("http://127.0.0.1:4116/health", serviceToken, 30_000);
+  assertAuthoritativeSourceIdentity(deriveRepositorySourceIdentity(root), sourceIdentity);
+
+  fixture = await startQ3Fixture({
+    seed: 6501,
+    mode: "NORMAL",
+    evidenceMode: "REQUIRED_AVAILABLE",
+    username: "m6-local-user",
+    password: fixturePassword,
+  });
+  const scope = await seedAgentScope(fixture);
   const campaigns = new QualificationCampaignRepository(database);
   const campaign = await campaigns.create(
     {
@@ -67,43 +118,6 @@ try {
       expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
     },
   );
-
-  const common = {
-    ...process.env,
-    DATABASE_URL: databaseUrl,
-    REDIS_URL: process.env.REDIS_URL ?? "redis://127.0.0.1:56389",
-    SCRY_SERVICE_TOKEN: serviceToken,
-    SCRY_RELEASE_ID: "m6-local-qualification",
-    SCRY_SCHEMA_FINGERPRINT: schemaIdentity,
-    SCRY_SOURCE_MANIFEST_SHA256: releaseIdentity,
-    SCRY_GIT_COMMIT: process.env.SCRY_GIT_COMMIT ?? "m6-local",
-    SCRY_SOURCE_DIRTY: "true",
-    SCRY_RUNTIME_VERSION: "m6-local",
-    SCRY_BROWSER_CHANNEL: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
-    VEIL_ADMISSION_KEY: process.env.VEIL_ADMISSION_KEY ?? "m6-local-veil-admission-key-32-bytes",
-    ADAPTIVE_SESSION_RUNTIME_LEASE_MS: "3600000",
-    ARTIFACT_ROOT: path.join(outputDirectory, "runs"),
-  };
-
-  children.push(
-    startNode(path.join(root, "apps/api/src/main.ts"), {
-      ...common,
-      API_PORT: "4016",
-      API_HOST: "127.0.0.1",
-    }),
-    startNode(path.join(root, "apps/api/src/worker.ts"), common),
-  );
-  await waitForHttp("http://127.0.0.1:4016/api/ready", serviceToken, 60_000);
-  children.push(
-    startNode(path.join(root, "apps/mcp/src/http.ts"), {
-      ...common,
-      MCP_PORT: "4116",
-      MCP_HOST: "127.0.0.1",
-      SCRY_API_BASE_URL: "http://127.0.0.1:4016/api",
-      SCRY_PUBLIC_API_BASE_URL: "http://127.0.0.1:4016/api",
-    }),
-  );
-  await waitForHttp("http://127.0.0.1:4116/health", serviceToken, 30_000);
 
   const agentOutput = path.join(outputDirectory, `primary-${externalRunId}`);
   await mkdir(agentOutput, { recursive: true });
@@ -204,11 +218,11 @@ try {
     throw new Error("M6_Q5_CAMPAIGN_CONSUMPTION_FAILED");
 } finally {
   for (const child of children.reverse()) child.kill("SIGTERM");
-  await fixture.close();
+  await fixture?.close();
   await database.onModuleDestroy();
 }
 
-async function seedAgentScope() {
+async function seedAgentScope(activeFixture: Awaited<ReturnType<typeof startQ3Fixture>>) {
   const workspaceId = randomUUID();
   const userId = randomUUID();
   const projectId = randomUUID();
@@ -232,9 +246,9 @@ async function seedAgentScope() {
     [
       environmentId,
       projectId,
-      fixture.origin,
+      activeFixture.origin,
       JSON.stringify({
-        allowedOrigins: [fixture.origin],
+        allowedOrigins: [activeFixture.origin],
         allowPrivateNetwork: true,
         allowDownloads: false,
         allowPopups: false,
@@ -290,14 +304,14 @@ async function seedAgentScope() {
     name: "M6 agent-directed local qualification",
     objective: "Create and verify one documented local resource",
     preconditions: [],
-    allowedOrigins: [fixture.origin],
+    allowedOrigins: [activeFixture.origin],
     budgets: { maxActions: 80, maxDurationMs: 1_800_000, maxNavigations: 20 },
     checkpoints: [],
     steps: [
       {
         id: "open-local-documentation",
         title: "Open local documentation",
-        action: { type: "navigate", url: fixture.docsUrl },
+        action: { type: "navigate", url: activeFixture.docsUrl },
         assertions: [],
         onFailure: "stop",
         evidence: [],
@@ -403,6 +417,25 @@ async function waitForHttp(url: string, token: string, timeoutMs: number) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`M6_SERVICE_READINESS_TIMEOUT:${url}`);
+}
+
+async function readJson(url: string, token: string) {
+  const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  if (!response.ok) throw new Error(`M6_SERVICE_IDENTITY_HTTP_${response.status}:${url}`);
+  return (await response.json()) as {
+    sourceIdentity: {
+      gitCommit: string;
+      dirty: boolean | null;
+      manifestSha256: string;
+    };
+  };
+}
+
+function requiredIdentity(name: "SCRY_GIT_COMMIT" | "SCRY_SOURCE_MANIFEST_SHA256", length: number) {
+  const value = process.env[name];
+  if (!value || !new RegExp(`^[a-f0-9]{${length}}$`).test(value))
+    throw new Error(`M6_Q5_${name}_REQUIRED`);
+  return value;
 }
 
 async function collect(child: ChildProcess, timeoutMs: number) {
