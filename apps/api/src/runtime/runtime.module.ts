@@ -17,9 +17,12 @@ import { NativeBrowserDriver } from "./native-browser-driver/index.js";
 import { ExternalResourceDestructiveTargetPreparationService } from "./services/external-resource-destructive-target-preparation.service.js";
 import { ExternalResourceCredentialLifecycleService } from "./services/external-resource-credential-lifecycle.service.js";
 import { UnknownMutationAdministrationService } from "./services/unknown-mutation-administration.service.js";
+import { QualificationCampaignRepository } from "./repositories/qualification-campaign.repository.js";
+import { QualificationCampaignController } from "./qualification-campaign.controller.js";
 
 @Module({
   imports: [InfrastructureModule],
+  controllers: [QualificationCampaignController],
   providers: [
     ExecutionRepository,
     ExecutionKernelRepository,
@@ -35,6 +38,7 @@ import { UnknownMutationAdministrationService } from "./services/unknown-mutatio
     RunQueueService,
     ReleaseAdmissionService,
     NativeBrowserDriver,
+    QualificationCampaignRepository,
   ],
   exports: [
     ExecutionRepository,
@@ -51,6 +55,7 @@ import { UnknownMutationAdministrationService } from "./services/unknown-mutatio
     RunQueueService,
     ReleaseAdmissionService,
     NativeBrowserDriver,
+    QualificationCampaignRepository,
   ],
 })
 export class RuntimeModule {}

@@ -167,7 +167,9 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
       target: missionAuthoringSemanticTargetSchema,
       semanticEffect: z
         .enum(["read_context_transition", "resource_mutation", "unknown"])
-        .optional(),
+        .describe(
+          "Required semantic classification. Use read_context_transition only for a proven read-only navigation or UI-context transition and pair it with live_read authority. resource_mutation and unknown remain mutation-capable; use unknown when read-only semantics are not established.",
+        ),
       activationMechanism: z.enum(["pointer", "element", "dom"]).optional(),
     })
     .strict(),
@@ -245,7 +247,9 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
       key: safePressKeySchema,
       semanticEffect: z
         .enum(["read_context_transition", "resource_mutation", "unknown"])
-        .optional(),
+        .describe(
+          "Required semantic classification. Use read_context_transition only for a proven read-only UI-context transition and pair it with live_read authority. resource_mutation and unknown remain mutation-capable; use unknown when read-only semantics are not established.",
+        ),
     })
     .strict(),
   z

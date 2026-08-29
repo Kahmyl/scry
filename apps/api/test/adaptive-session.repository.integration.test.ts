@@ -804,6 +804,7 @@ integration("adaptive session repository integration", () => {
       flowDraftId,
       action: {
         kind: "activate" as const,
+        semanticEffect: "unknown" as const,
         target: {
           concept: "submit",
           role: "button" as const,
@@ -1293,6 +1294,7 @@ integration("adaptive session repository integration", () => {
       flowDraftId,
       action: {
         kind: "activate" as const,
+        semanticEffect: "unknown" as const,
         target: { concept: "submit", role: "button" as const, name: "Submit", exact: true },
       },
       expectedEffect: { kind: "none" as const },
@@ -2432,6 +2434,7 @@ integration("adaptive session repository integration", () => {
       flowDraftId,
       action: {
         kind: "activate" as const,
+        semanticEffect: "resource_mutation" as const,
         target: {
           concept: "revoke credential",
           role: "button" as const,

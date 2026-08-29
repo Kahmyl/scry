@@ -24,6 +24,7 @@ import { Database, OperationalEvents } from "../../infrastructure/index.js";
 import {
   ExecutionRepository,
   ProtectedOperationRepository,
+  QualificationCampaignRepository,
   ReleaseAdmissionService,
 } from "../../runtime/index.js";
 import { commitExecutionReport } from "../../runtime/report-commit.js";
@@ -42,6 +43,10 @@ type AssociatedAgentDirectedRun = {
   veilPolicySnapshot: VeilPolicySnapshot;
   praxisState: string;
   praxisDecisionBoundary: { type?: string; reasonCode?: string } | null;
+};
+
+type AgentDirectedRunEvidenceContext = MissionRunEvidenceContext & {
+  dispatchRefusalCode(): string | undefined;
 };
 
 // A Run dispatch contains one semantic operation, but its durable turn also owns
@@ -68,6 +73,8 @@ export class AgentDirectedRunService {
     @Inject(ProtectedOperationRepository)
     private readonly protectedOperations: ProtectedOperationRepository,
     @Inject(ReleaseAdmissionService) private readonly admission: ReleaseAdmissionService,
+    @Inject(QualificationCampaignRepository)
+    private readonly qualificationCampaigns: QualificationCampaignRepository,
     @Optional()
     @Inject(OperationalEvents)
     private readonly operationalEvents?: OperationalEvents,
@@ -130,6 +137,12 @@ export class AgentDirectedRunService {
         runEvidence,
       );
     }
+    const dispatchRefusalCode = runEvidence.dispatchRefusalCode();
+    if (dispatchRefusalCode)
+      throw new ConflictException({
+        code: dispatchRefusalCode,
+        mutationOutcome: "not_applied",
+      });
     const operation = result.completed.find((item) => item.intentId === input.intent.intentId);
     if (!operation && result.state === "decision_required" && result.decisionBoundary) {
       throw new ConflictException({
@@ -150,6 +163,7 @@ export class AgentDirectedRunService {
     if (!persistedOperation.rowCount)
       throw new ConflictException({ code: "RUN_OPERATION_IDENTITY_UNAVAILABLE" });
     const operationId = persistedOperation.rows[0]!.operationId;
+    await this.qualificationCampaigns.settleMutation(runId, operationId, operation.mutationOutcome);
     const artifacts = await this.database.query<{
       id: string;
     }>(
@@ -329,6 +343,15 @@ export class AgentDirectedRunService {
       lifecycleDecision.successorCheckpoint,
       input.outcome === "passed" ? undefined : input.reason,
     );
+    await this.qualificationCampaigns.settleRun(
+      runId,
+      input.outcome === "passed"
+        ? "succeeded"
+        : outcomeClassification === "inconclusive_plan" ||
+            outcomeClassification === "infrastructure_failure"
+          ? "inconclusive"
+          : "failed",
+    );
 
     return finalizedAgentDirectedRunResultSchema.parse({
       runId,
@@ -359,9 +382,25 @@ export class AgentDirectedRunService {
   private runEvidenceContext(
     runId: string,
     run: AssociatedAgentDirectedRun,
-  ): MissionRunEvidenceContext {
+  ): AgentDirectedRunEvidenceContext {
+    let dispatchRefusalCode: string | undefined;
     return {
       veilPolicySnapshot: run.veilPolicySnapshot,
+
+      dispatchRefusalCode: () => dispatchRefusalCode,
+
+      beforeBusinessMutationDispatch: async (operation) => {
+        try {
+          await this.qualificationCampaigns.consumeBusinessMutation({
+            runId,
+            operationId: operation.operationId,
+            mutationIdentity: `adaptive-${run.praxisSessionId}-${operation.idempotencyKey}`,
+          });
+        } catch (error) {
+          dispatchRefusalCode = qualificationCampaignErrorCode(error);
+          throw error;
+        }
+      },
 
       outputDirectoryFor: (operation) =>
         path.join(this.artifactRoot, runId, encodeURIComponent(operation.operationId)),
@@ -735,6 +774,19 @@ export class AgentDirectedRunService {
       } | null,
     };
   }
+}
+
+function qualificationCampaignErrorCode(error: unknown) {
+  const direct =
+    typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+  const response =
+    typeof error === "object" && error !== null && "response" in error ? error.response : undefined;
+  const responseCode =
+    typeof response === "object" && response !== null && "code" in response
+      ? response.code
+      : undefined;
+  const candidate = String(direct ?? responseCode ?? (error instanceof Error ? error.message : ""));
+  return candidate.startsWith("QUALIFICATION_") ? candidate : undefined;
 }
 
 function livePraxisState(state: string) {

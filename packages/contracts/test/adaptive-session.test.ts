@@ -182,7 +182,9 @@ describe("adaptive session contracts", () => {
     ).toThrow();
     expect(() =>
       missionAuthoringIntentSchema.parse(
-        intent({ action: { kind: "activate", target, selector: "#account" } }),
+        intent({
+          action: { kind: "activate", target, semanticEffect: "unknown", selector: "#account" },
+        }),
       ),
     ).toThrow();
     expect(() => missionAuthoringIntentSchema.parse(intent({ javascript: "alert(1)" }))).toThrow();
@@ -201,6 +203,49 @@ describe("adaptive session contracts", () => {
     ).toMatchObject({
       target: { reference: "context-control-0123456789abcdef0123456789abcdef" },
     });
+  });
+
+  it("requires explicit fail-closed semantics for activate and press", () => {
+    for (const action of [
+      { kind: "activate", target },
+      { kind: "press", target, key: "Enter" },
+    ])
+      expect(() => missionAuthoringIntentSchema.parse(intent({ action }))).toThrow();
+
+    for (const action of [
+      { kind: "activate", target, semanticEffect: "read_context_transition" },
+      { kind: "press", target, key: "Enter", semanticEffect: "read_context_transition" },
+    ])
+      expect(
+        missionAuthoringIntentSchema.parse(
+          intent({ action, authorization: { kind: "live_read" } }),
+        ),
+      ).toMatchObject({ action, authorization: { kind: "live_read" } });
+  });
+
+  it("binds read-context transitions to live_read while retaining explicit mutation choices", () => {
+    for (const kind of [
+      "ordinary",
+      "authentication",
+      "reversible",
+      "live_mutation",
+      "protected_mutation",
+    ] as const)
+      expect(() =>
+        missionAuthoringIntentSchema.parse(
+          intent({
+            action: { kind: "activate", target, semanticEffect: "read_context_transition" },
+            authorization: { kind },
+          }),
+        ),
+      ).toThrow("read-context transition requires explicit live_read authority");
+
+    for (const semanticEffect of ["resource_mutation", "unknown"] as const)
+      expect(
+        missionAuthoringIntentSchema.parse(
+          intent({ action: { kind: "activate", target, semanticEffect } }),
+        ),
+      ).toMatchObject({ action: { semanticEffect }, authorization: { kind: "ordinary" } });
   });
 
   it("accepts one absolute navigation URL through url or the host urlPattern alias", () => {
@@ -444,6 +489,7 @@ describe("adaptive session contracts", () => {
       action: {
         kind: "activate",
         target: { ...target, role: "button", name: "Revoke", exact: true },
+        semanticEffect: "resource_mutation",
       },
       authorization: { kind: "live_mutation", authorizationId: ids.authorizationId },
       credentialLifecycle: {

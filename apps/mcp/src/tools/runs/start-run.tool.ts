@@ -40,6 +40,7 @@ export function registerStartRunTool(server: McpServer, client: ScryApiClient) {
         environmentId: uuid,
         flowRevisionId: uuid,
         praxisSessionId: uuid,
+        qualificationCampaignAuthorizationId: uuid.optional(),
         protectedAuthorizations: z
           .array(z.object({ operationId: z.string().min(1), authorizationId: uuid }))
           .default([]),

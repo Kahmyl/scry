@@ -77,6 +77,7 @@ export async function createQ1Report(root: string) {
   );
   const proofStatuses = [
     "proven_q1",
+    "production_proven_q5",
     "partially_proven",
     "future_proof_required",
     "known_product_gap",
@@ -129,7 +130,7 @@ export async function createQ1Report(root: string) {
     stabilizationProgression: implementationPass ? "ELIGIBLE_FOR_Q2" : "BLOCKED",
     fullSystemReadiness: "BLOCKED",
     fullSystemReadinessReason:
-      "Q1 is complete, while later qualification gates and the known Q04 product gap remain deliberately open.",
+      "Q1 is complete and Q04 is now production-proven at Q5, while later qualification gates remain deliberately open.",
     q0: {
       digest: q0ManifestDigest,
       status: q0.milestoneStatus,
@@ -142,8 +143,8 @@ export async function createQ1Report(root: string) {
       invariants: correctnessManifest.invariants.length,
       assertionExecutable: positiveResults.filter(({ status }) => status !== "not_evaluable")
         .length,
-      currentProductionProven: correctnessManifest.invariants.filter(
-        (invariant) => proofStatusFor(invariant) === "proven_q1",
+      currentProductionProven: correctnessManifest.invariants.filter((invariant) =>
+        ["proven_q1", "production_proven_q5"].includes(proofStatusFor(invariant)),
       ).length,
       positiveControls: positiveControls.length,
       invariantNegativeControls: invariantNegativeControls.length,
@@ -259,17 +260,7 @@ export async function createQ1Report(root: string) {
           "read-only translation of durable Mission/Objective/Run/Attempt/adaptive/protected facts",
       },
     ],
-    knownProductGaps: [
-      {
-        invariantId: "Q04",
-        risk: "P0",
-        boundaryIds: ["B1", "B4", "B17"],
-        proofGate: "Q5",
-        ownerMilestone: 6,
-        finding:
-          "No durable campaign quota currently prevents a second live Run or mutation after terminal failure/UNKNOWN.",
-      },
-    ],
+    knownProductGaps: [],
     futureProofBlockers: [
       {
         proofGate: "Q2",
@@ -295,11 +286,6 @@ export async function createQ1Report(root: string) {
           "process death, lease/fence ownership, convergence, stale-owner refusal, and stuck reconciliation",
       },
       {
-        proofGate: "Q5",
-        owner: "Milestone 6",
-        scope: "durable campaign quota/refusal",
-      },
-      {
         proofGate: "Q6",
         owner: "Milestone 7",
         scope: "public read-only surfaces and external perception/authority qualification",
@@ -322,7 +308,7 @@ export async function createQ1Report(root: string) {
           proofRequirements: proofRequirementsFor(invariant),
           boundaryIds: invariant.boundaryIds,
         })),
-      knownFutureProductGaps: ["Q04"],
+      knownFutureProductGaps: [],
     },
     reproductions,
     safety: {

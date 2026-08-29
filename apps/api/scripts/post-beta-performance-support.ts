@@ -192,6 +192,7 @@ export async function runScriptedPerformanceJourney(
               ? { kind: "navigate", url: operation.url }
               : {
                   kind: "activate",
+                  semanticEffect: "unknown",
                   activationMechanism: "dom",
                   target: {
                     concept: "open_controls",

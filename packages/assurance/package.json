@@ -14,6 +14,7 @@
     "q1": "tsx scripts/q1.ts",
     "q2": "NODE_ENV=test tsx scripts/q2.ts",
     "q3": "NODE_ENV=test tsx scripts/q3.ts",
+    "m6": "NODE_ENV=test tsx scripts/m6.ts",
     "m4": "NODE_ENV=test tsx scripts/m4.ts",
     "experiment:engineering-lab:seeded": "tsx scripts/engineering-lab-seeded.ts",
     "campaign:praxis": "tsx scripts/campaigns/praxis-production-campaign.ts",

@@ -1045,51 +1045,58 @@ describe("MissionFlowAuthoringService grouped turns", () => {
     expect(runner.close).toHaveBeenCalledOnce();
   });
 
-  it("returns a causal fail-closed boundary for an unknown-effect activate under live_read", async () => {
-    const repository = {
-      beginTurn: vi.fn().mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
-      validateIntentAdmission: vi.fn(),
-      handoff: vi.fn().mockResolvedValue({ handedOff: false }),
-      beginMissionOperation: vi.fn().mockResolvedValue({ replayed: false, state: "running" }),
-      markOperationFailed: vi.fn(),
-      settleTurn: vi.fn(async ({ result }) => result),
-    };
-    const denied = Object.assign(new Error("denied"), { code: "EXECUTION_MODE_POLICY_DENIED" });
-    const runner = { execute: vi.fn().mockRejectedValue(denied) };
-    const service = new MissionFlowAuthoringService(
-      repository as never,
-      runner as never,
-      { assertAcceptingWork: vi.fn() } as never,
-    );
-    const intent = {
-      ...input().intents[0],
-      intentId: "unknown-live-activate",
-      action: {
-        kind: "activate" as const,
-        target: { concept: "unclassified control", role: "button" as const },
-      },
-      authorization: { kind: "live_read" as const },
-    };
-
-    await expect(
-      service.advance(principal, randomUUID(), { ...input(), intents: [intent] } as never),
-    ).resolves.toMatchObject({
-      state: "decision_required",
-      decisionBoundary: {
-        type: "policy_refused",
-        reasonCode: "EXECUTION_MODE_POLICY_DENIED",
-        safeActions: [],
-        policyContext: {
-          governingMode: "observe",
-          requestedSemanticEffect: "unknown",
-          gesture: "activate",
-          effectApplied: false,
-          strongerAuthorityCouldPermit: false,
-          recoverable: false,
+  it.each(["activate", "press"] as const)(
+    "returns a causal fail-closed boundary for an unknown-effect %s under live_read",
+    async (kind) => {
+      const repository = {
+        beginTurn: vi
+          .fn()
+          .mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
+        validateIntentAdmission: vi.fn(),
+        handoff: vi.fn().mockResolvedValue({ handedOff: false }),
+        beginMissionOperation: vi.fn().mockResolvedValue({ replayed: false, state: "running" }),
+        markOperationFailed: vi.fn(),
+        settleTurn: vi.fn(async ({ result }) => result),
+      };
+      const denied = Object.assign(new Error("denied"), { code: "EXECUTION_MODE_POLICY_DENIED" });
+      const runner = { execute: vi.fn().mockRejectedValue(denied) };
+      const service = new MissionFlowAuthoringService(
+        repository as never,
+        runner as never,
+        { assertAcceptingWork: vi.fn() } as never,
+      );
+      const intent = {
+        ...input().intents[0],
+        intentId: `unknown-live-${kind}`,
+        action: {
+          kind,
+          target: { concept: "unclassified control", role: "button" as const },
+          semanticEffect: "unknown" as const,
+          ...(kind === "press" ? { key: "Enter" as const } : {}),
         },
-      },
-    });
-  });
+        authorization: { kind: "live_read" as const },
+      };
+
+      await expect(
+        service.advance(principal, randomUUID(), { ...input(), intents: [intent] } as never),
+      ).resolves.toMatchObject({
+        state: "decision_required",
+        decisionBoundary: {
+          type: "policy_refused",
+          reasonCode: "EXECUTION_MODE_POLICY_DENIED",
+          safeActions: [],
+          policyContext: {
+            governingMode: "observe",
+            requestedSemanticEffect: "unknown",
+            gesture: kind,
+            effectApplied: false,
+            strongerAuthorityCouldPermit: false,
+            recoverable: false,
+          },
+        },
+      });
+    },
+  );
 
   it("aggregates only protected actions into the privacy channel", async () => {
     const ordinary = {
@@ -1441,6 +1448,7 @@ describe("MissionFlowAuthoringService grouped turns", () => {
           intentId: "open-original",
           action: {
             kind: "activate" as const,
+            semanticEffect: "unknown" as const,
             target: {
               concept: "created application",
               role: "link" as const,
@@ -1472,6 +1480,7 @@ describe("MissionFlowAuthoringService grouped turns", () => {
           constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: true },
           action: {
             kind: "activate" as const,
+            semanticEffect: "unknown" as const,
             target: {
               concept: "created application",
               role: "link" as const,

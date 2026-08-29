@@ -26,8 +26,8 @@ import {
 import { classifyHistoricalReconciliationAuthority } from "../historical-operation-authority.js";
 import { decideRuntimeLossDisposition } from "../runtime-loss-disposition.js";
 
-import { decryptCredential } from "../../access/index.js";
-import { attachOrCreateExternalAgentSession } from "../../external-agents/index.js";
+import { decryptCredential } from "../../access/credential.crypto.js";
+import { attachOrCreateExternalAgentSession } from "../../external-agents/external-agent-session.repository.js";
 import { Database } from "../../infrastructure/index.js";
 import {
   decideMissionSelection,
@@ -3840,7 +3840,8 @@ export class AdaptiveSessionRepository {
     return this.database
       .query(
         `UPDATE adaptive_session_runtime_leases SET lease_expires_at=now(),heartbeat_at=now()
-         WHERE session_id=$1 AND owner_id=$2 AND fencing_token=$3 RETURNING fencing_token`,
+         WHERE session_id=$1 AND owner_id=$2 AND fencing_token=$3 AND lease_expires_at>now()
+         RETURNING fencing_token`,
         [input.sessionId, input.ownerId, input.fencingToken],
       )
       .then((result) => Boolean(result.rowCount));

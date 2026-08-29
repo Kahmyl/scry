@@ -50,6 +50,7 @@ export const createFlowRunSchema = objectiveContextSchema
     environmentId: uuidSchema,
     flowRevisionId: uuidSchema,
     executionModel: z.literal("agent_directed_v1").default("agent_directed_v1"),
+    qualificationCampaignAuthorizationId: uuidSchema.optional(),
     praxisSessionId: uuidSchema,
     protectedAuthorizations: z
       .array(

@@ -12,6 +12,7 @@ export type Q3FixtureConfig = Readonly<{
   username: string;
   password: string;
   duplicateDelivery?: boolean;
+  acknowledgementDelayMs?: number;
 }>;
 
 export type Q3Fixture = Readonly<{
@@ -107,10 +108,15 @@ async function handleApp(
   sessions: Set<string>,
 ) {
   const url = new URL(request.url ?? "/", "http://fixture.invalid");
+  if (request.method === "GET" && url.pathname === "/")
+    return html(
+      response,
+      `<main><h1>Local qualification application</h1><a href="/docs">Open application documentation</a></main>`,
+    );
   if (request.method === "GET" && url.pathname === "/docs")
     return html(
       response,
-      `<main><h1>Local resource service</h1><p>Authenticate before reading or creating resources.</p><p>Create requires label, quantity, mode, and an Idempotency-Key. Retrieve with GET /api/resources/:id or /api/resources/by-idempotency/:key. The returned resource id is canonical. Evidence may be required or optional.</p></main>`,
+      `<main><h1>Local resource service</h1><p>Authenticate before reading or creating resources.</p><p>Create requires label, quantity, mode, and an Idempotency-Key. Retrieve with GET /api/resources/:id or /api/resources/by-idempotency/:key. The returned resource id is canonical. Evidence may be required or optional.</p><a href="/app">Open local resource application</a></main>`,
     );
   if (request.method === "GET" && url.pathname === "/worker.js") {
     response.setHeader("content-type", "application/javascript");
@@ -210,7 +216,7 @@ async function handleApp(
       return setTimeout(() => {
         mutationRequest.acknowledgedSequence = ++truth.eventSequence;
         json(response, resource, existing ? 200 : 201);
-      }, 30);
+      }, config.acknowledgementDelayMs ?? 30);
     mutationRequest.acknowledgedSequence = ++truth.eventSequence;
     return json(response, resource, existing ? 200 : 201);
   }

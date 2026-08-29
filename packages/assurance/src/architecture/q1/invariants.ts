@@ -183,7 +183,7 @@ const truthChannels: Record<string, readonly string[]> = {
 };
 
 export function proofStatusFor(invariant: Invariant): Q1ProofStatus {
-  if (invariant.id === "Q04") return "known_product_gap";
+  if (invariant.id === "Q04") return "production_proven_q5";
   if (proofRequirementsFor(invariant).length > 0) return "future_proof_required";
   return "partially_proven";
 }
@@ -239,14 +239,7 @@ export function proofRequirementsFor(invariant: Invariant): readonly Q1ProofRequ
         scope: "process death, fencing, convergence, stale-owner refusal, and stuck reconciliation",
       },
     ];
-  if (invariant.id === "Q04")
-    return [
-      {
-        proofGate: "Q5",
-        ownerMilestone: 6,
-        scope: "repository-blind external-agent campaign quota and second-action refusal",
-      },
-    ];
+  if (invariant.id === "Q04") return [];
   return [];
 }
 

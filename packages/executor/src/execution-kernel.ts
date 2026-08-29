@@ -1561,8 +1561,15 @@ function praxisMutationOutcome(
 }
 
 function safeCode(error: unknown): string {
-  const code =
-    typeof error === "object" && error !== null && "code" in error ? String(error.code) : undefined;
+  const direct =
+    typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+  const response =
+    typeof error === "object" && error !== null && "response" in error ? error.response : undefined;
+  const responseCode =
+    typeof response === "object" && response !== null && "code" in response
+      ? response.code
+      : undefined;
+  const code = direct === undefined ? String(responseCode ?? "") : String(direct);
   if (code && /^[A-Z][A-Z0-9_]*$/.test(code)) return code;
   const value = error instanceof Error ? error.message : String(error);
   return /^[A-Z][A-Z0-9_]*$/.test(value) ? value : "EXECUTION_KERNEL_FAILED";

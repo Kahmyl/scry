@@ -19,6 +19,7 @@ const intent = {
       role: "button" as const,
       exact: true,
     },
+    semanticEffect: "unknown" as const,
   },
   expectedEffect: {
     kind: "target_state" as const,
@@ -108,6 +109,11 @@ function harness(associated = true, existingSafeResult?: Record<string, unknown>
   };
   const executions = {};
   const admission = { assertAcceptingWork: vi.fn() };
+  const qualificationCampaigns = {
+    consumeBusinessMutation: vi.fn(async () => ({ campaignBound: false, replayed: false })),
+    settleMutation: vi.fn(async () => undefined),
+    settleRun: vi.fn(async () => undefined),
+  };
   return {
     service: new AgentDirectedRunService(
       database as never,
@@ -116,8 +122,10 @@ function harness(associated = true, existingSafeResult?: Record<string, unknown>
       executions as never,
       { getMutationReceiptByAuthoringOperation: vi.fn(async () => undefined) } as never,
       admission as never,
+      qualificationCampaigns as never,
     ),
     sessions,
+    qualificationCampaigns,
   };
 }
 
@@ -134,9 +142,11 @@ describe("agent-directed Run live Praxis ownership", () => {
           role: "link" as const,
           exact: true,
         },
+        semanticEffect: "read_context_transition" as const,
       },
       expectedEffect: { kind: "none" as const },
       constraints: { timeoutMs: 10_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "live_read" as const },
     };
     const { service, sessions } = harness();
     await expect(
@@ -173,6 +183,21 @@ describe("agent-directed Run live Praxis ownership", () => {
         outputDirectoryFor: expect.any(Function),
       }),
     );
+  });
+
+  it("rejects omitted activation semantics before execution or campaign consumption", async () => {
+    const { semanticEffect: _, ...actionWithoutSemanticEffect } = intent.action;
+    const { service, sessions, qualificationCampaigns } = harness();
+
+    await expect(
+      service.dispatch({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        intent: { ...intent, action: actionWithoutSemanticEffect } as never,
+      }),
+    ).rejects.toThrow();
+
+    expect(sessions.advance).not.toHaveBeenCalled();
+    expect(qualificationCampaigns.consumeBusinessMutation).not.toHaveBeenCalled();
   });
 
   it("refuses a Run/session mismatch before invoking Praxis", async () => {

@@ -169,11 +169,11 @@ describe("Q1 executable truth engine", () => {
       counts: {
         invariants: 52,
         assertionExecutable: 52,
-        currentProductionProven: 0,
+        currentProductionProven: 1,
         positiveControls: 52,
         invariantNegativeControls: 52,
         mandatoryNegativeControls: 10,
-        knownProductGaps: 1,
+        knownProductGaps: 0,
       },
     });
     expect(first.report.stabilizationProgram).toHaveLength(7);
@@ -184,8 +184,8 @@ describe("Q1 executable truth engine", () => {
     );
     expect(first.report.proofLedger.find(({ invariantId }) => invariantId === "Q04")).toMatchObject(
       {
-        proofStatus: "known_product_gap",
-        proofRequirements: [{ proofGate: "Q5", ownerMilestone: 6 }],
+        proofStatus: "production_proven_q5",
+        proofRequirements: [],
       },
     );
     expect(JSON.stringify(first.report)).not.toContain(["Milestone", "8"].join(" "));

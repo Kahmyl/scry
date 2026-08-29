@@ -36,7 +36,8 @@ describe("external-agent lifecycle migration", () => {
           name !== "pre-mission-external-agent-lifecycle.sql" &&
           name !== "flow-name-identity-cutover.sql" &&
           name !== "targeted-region-perception.sql" &&
-          name !== "system-correctness-m4-reconciliation-lease.sql",
+          name !== "system-correctness-m4-reconciliation-lease.sql" &&
+          name !== "qualification-campaign-safety.sql",
       ),
     )
       .replace("\\ir calibration-foundation.sql", () => calibration)
@@ -70,7 +71,8 @@ describe("external-agent lifecycle migration", () => {
           name !== "pre-mission-external-agent-lifecycle.sql" &&
           name !== "flow-name-identity-cutover.sql" &&
           name !== "targeted-region-perception.sql" &&
-          name !== "system-correctness-m4-reconciliation-lease.sql",
+          name !== "system-correctness-m4-reconciliation-lease.sql" &&
+          name !== "qualification-campaign-safety.sql",
       ),
     )
       .replace("\\ir calibration-foundation.sql", () => calibration)

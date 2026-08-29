@@ -220,6 +220,7 @@ export function livePreparationIntents(runId: string): MissionAuthoringIntent[] 
       intentId: `vitract-live-login-${runId}`,
       action: {
         kind: "activate",
+        semanticEffect: "unknown",
         target: { concept: "sign in", role: "button", name: "Login", exact: true },
       },
       expectedEffect: {
@@ -256,6 +257,7 @@ export function livePreparationIntents(runId: string): MissionAuthoringIntent[] 
       intentId: "vitract-live-open-add-dialog",
       action: {
         kind: "activate",
+        semanticEffect: "unknown",
         target: {
           concept: "outer add credential",
           role: "button",

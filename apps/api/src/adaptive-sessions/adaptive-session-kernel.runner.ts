@@ -36,6 +36,7 @@ import {
 } from "./protected-input-capability.js";
 
 import { resolveRecoveryBoundary } from "../recovery/recovery-registry.js";
+import { QualificationCampaignRepository } from "../runtime/repositories/qualification-campaign.repository.js";
 
 export type AdaptiveKernelExecutionResult = {
   outcome: OperationOutcome;
@@ -82,6 +83,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
   private readonly operationModes = new Map<string, ExecutionMode>();
   private readonly operationTimingCollectors = new Map<string, OperationTimingCollector>();
   private readonly operationLeaseGuards = new Map<string, OperationLeaseGuard>();
+  private readonly operationMutationDispatches = new Map<string, () => Promise<void>>();
   private readonly operationCaptureReports = new Set<string>();
   private readonly operationOutputDirectories = new Map<string, string>();
   private readonly operationVeilPolicies = new Map<
@@ -104,6 +106,8 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     @Inject(ExecutionCapabilityFactory) private readonly capabilities: ExecutionCapabilityFactory,
     @Inject(AdaptiveSessionRepository) private readonly sessions: AdaptiveSessionRepository,
     @Inject(NativeBrowserDriver) private readonly nativeBrowser: NativeBrowserDriver,
+    @Inject(QualificationCampaignRepository)
+    private readonly qualificationCampaigns?: QualificationCampaignRepository,
   ) {}
 
   /** Test seam only. Production execution always provisions from durable session state. */
@@ -139,6 +143,13 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         operationId: operation.operationId,
         mode: operation.mode,
         policy: context.policy,
+        ...(isBusinessMutation(operation)
+          ? {
+              onMutationDispatch: () =>
+                this.qualificationCampaigns?.refuseCampaignBoundMutationOutsideRun(sessionId) ??
+                Promise.resolve(),
+            }
+          : {}),
         ...(protectedContext
           ? { protectedContext, leaseOwner: `${this.ownerId}:${owned.fencingToken}` }
           : {}),
@@ -160,6 +171,9 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         },
       });
       this.operationLeaseGuards.set(modeKey, leaseGuard);
+      this.operationMutationDispatches.set(modeKey, async () => {
+        await this.qualificationCampaigns?.refuseCampaignBoundMutationOutsideRun(sessionId);
+      });
       try {
         await this.sessions.recordDispatchBaseline({
           sessionId,
@@ -200,6 +214,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         };
       } finally {
         this.operationLeaseGuards.delete(modeKey);
+        this.operationMutationDispatches.delete(modeKey);
         this.operationModes.delete(modeKey);
         this.operationTimingCollectors.delete(modeKey);
         await leaseGuard.stop();
@@ -212,6 +227,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     operation: AdaptiveSessionOperationInput;
     outputDirectory: string;
     veilPolicySnapshot: import("@scry/contracts").VeilPolicySnapshot;
+    beforeBusinessMutationDispatch?(operation: AdaptiveSessionOperationInput): Promise<void>;
     signal?: AbortSignal;
   }) {
     const testBinding = this.testBindings.get(input.sessionId);
@@ -240,6 +256,11 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         policy: context.policy,
         outputDirectory: input.outputDirectory,
         veilPolicySnapshot: input.veilPolicySnapshot,
+        ...(input.beforeBusinessMutationDispatch
+          ? {
+              onMutationDispatch: () => input.beforeBusinessMutationDispatch!(input.operation),
+            }
+          : {}),
         ...(protectedContext
           ? { protectedContext, leaseOwner: `${this.ownerId}:${owned.fencingToken}` }
           : {}),
@@ -261,6 +282,11 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         },
       });
       this.operationLeaseGuards.set(modeKey, leaseGuard);
+      if (input.beforeBusinessMutationDispatch) {
+        this.operationMutationDispatches.set(modeKey, () =>
+          input.beforeBusinessMutationDispatch!(input.operation),
+        );
+      }
       this.operationCaptureReports.add(modeKey);
       this.operationOutputDirectories.set(modeKey, input.outputDirectory);
       this.operationVeilPolicies.set(modeKey, input.veilPolicySnapshot);
@@ -307,6 +333,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         this.operationOutputDirectories.delete(modeKey);
         this.operationCaptureReports.delete(modeKey);
         this.operationLeaseGuards.delete(modeKey);
+        this.operationMutationDispatches.delete(modeKey);
         this.operationModes.delete(modeKey);
         this.operationTimingCollectors.delete(modeKey);
         await leaseGuard.stop();
@@ -976,6 +1003,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           }
         : {}),
       onMutationDispatch: async () => {
+        await this.operationMutationDispatches.get(operationKey)?.();
         await leaseGuard?.heartbeat();
         await this.sessions.markOperationDispatching({
           sessionId: input.sessionId,
@@ -1389,4 +1417,14 @@ function observationPlan(policy: ExecutionPolicy) {
       },
     ],
   };
+}
+
+function isBusinessMutation(operation: AdaptiveSessionOperationInput) {
+  const action = operation.action;
+  if (action.type === "protectedTransaction")
+    return (action.mutation.dispatchSemantics ?? "mutation") === "mutation";
+  if (action.type === "sameOriginRequest") return action.method !== "GET";
+  if (action.type === "click" || action.type === "press")
+    return action.dispatchSemantics === "mutation";
+  return false;
 }

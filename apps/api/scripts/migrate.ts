@@ -169,6 +169,9 @@ const targetedRegionPerceptionPath = fileURLToPath(
 const systemCorrectnessM4Path = fileURLToPath(
   new URL("../migrations/system-correctness-m4-reconciliation-lease.sql", import.meta.url),
 );
+const qualificationCampaignSafetyPath = fileURLToPath(
+  new URL("../migrations/qualification-campaign-safety.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -248,7 +251,10 @@ const preMissionExternalAgentLifecycle = await readFile(
 const flowNameIdentityCutover = await readFile(flowNameIdentityCutoverPath, "utf8");
 const targetedRegionPerception = await readFile(targetedRegionPerceptionPath, "utf8");
 const systemCorrectnessM4 = await readFile(systemCorrectnessM4Path, "utf8");
-const flowNameIdentityCutoverUpgrade = `${flowNameIdentityCutover}\n${targetedRegionPerception}`;
+const qualificationCampaignSafety = await readFile(qualificationCampaignSafetyPath, "utf8");
+const systemCorrectnessM4Upgrade = `${systemCorrectnessM4}\n${qualificationCampaignSafety}`;
+const targetedRegionPerceptionUpgrade = `${targetedRegionPerception}\n${systemCorrectnessM4Upgrade}`;
+const flowNameIdentityCutoverUpgrade = `${flowNameIdentityCutover}\n${targetedRegionPerceptionUpgrade}`;
 const preMissionExternalAgentLifecycleUpgrade = `${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutoverUpgrade}`;
 const operationalEvents = `${operationalEventsSource}\n${missionDiagnosticIsolation}\n${externalAgentLifecycle}\n${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutoverUpgrade}`;
 const missionDiagnosticIsolationUpgrade = `${missionDiagnosticIsolation}\n${externalAgentLifecycle}\n${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutoverUpgrade}`;
@@ -302,6 +308,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "flow-name-identity-cutover.sql": flowNameIdentityCutover,
   "targeted-region-perception.sql": targetedRegionPerception,
   "system-correctness-m4-reconciliation-lease.sql": systemCorrectnessM4,
+  "qualification-campaign-safety.sql": qualificationCampaignSafety,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
@@ -333,6 +340,10 @@ const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
 };
 
 const baseline = stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS);
+// Released M5 baseline. Keep this explicit: staged historical reconstruction intentionally
+// omits later optional tails and therefore cannot identify the immediately preceding release.
+const preQualificationCampaignSafetyFingerprint =
+  "e8231b47b9a826867621a68305fe6329a49028f13d072492fa469ed6a0468fbb";
 const preSystemCorrectnessM4Fingerprint = createHash("sha256")
   .update(
     expandFoundation(
@@ -340,7 +351,9 @@ const preSystemCorrectnessM4Fingerprint = createHash("sha256")
         baselineSource,
         optionalMigrationSources,
         OPTIONAL_BASELINE_MIGRATIONS.filter(
-          (name) => name !== "system-correctness-m4-reconciliation-lease.sql",
+          (name) =>
+            name !== "system-correctness-m4-reconciliation-lease.sql" &&
+            name !== "qualification-campaign-safety.sql",
         ),
       ),
     ),
@@ -678,12 +691,32 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preSystemCorrectnessM4Fingerprint) {
+    if (installedFingerprint === preQualificationCampaignSafetyFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-qualification-campaign-safety'))",
+        );
+        await client.query(qualificationCampaignSafety);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied qualification campaign safety ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preSystemCorrectnessM4Fingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-system-correctness-m4'))");
-        await client.query(systemCorrectnessM4);
+        await client.query(systemCorrectnessM4Upgrade);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -703,7 +736,7 @@ try {
         await client.query(
           "SELECT pg_advisory_xact_lock(hashtext('scry-targeted-region-perception'))",
         );
-        await client.query(targetedRegionPerception);
+        await client.query(targetedRegionPerceptionUpgrade);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],

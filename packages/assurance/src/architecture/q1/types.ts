@@ -1,7 +1,12 @@
 import type { Invariant } from "../q0/types.js";
 
 export type Q1ProofStatus =
-  "proven_q1" | "partially_proven" | "future_proof_required" | "known_product_gap" | "unresolved";
+  | "proven_q1"
+  | "production_proven_q5"
+  | "partially_proven"
+  | "future_proof_required"
+  | "known_product_gap"
+  | "unresolved";
 
 export type Q1ProofGate =
   "Q2" | "milestone_4_foundation" | "Q3" | "Q4" | "Q5" | "Q6" | "dashboard_projection" | "Q7";

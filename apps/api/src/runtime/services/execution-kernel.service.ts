@@ -12,6 +12,7 @@ import { ExecutionRepository } from "../repositories/execution.repository.js";
 import { ExecutionKernelRepository } from "../repositories/execution-kernel.repository.js";
 import { ProtectedOperationRepository } from "../repositories/protected-operation.repository.js";
 import { ProtectedOutputPersistenceRepository } from "../repositories/protected-output-persistence.repository.js";
+import { QualificationCampaignRepository } from "../repositories/qualification-campaign.repository.js";
 import { NativeBrowserDriver } from "../native-browser-driver/index.js";
 import { ProtectedTransactionKernel } from "../protected-transactions/protected-transaction-coordinator.js";
 import { OperationalEvents } from "../../infrastructure/index.js";
@@ -41,6 +42,8 @@ export class ExecutionCapabilityFactory {
     @Optional()
     @Inject(OperationalEvents)
     private readonly operationalEvents?: OperationalEvents,
+    @Inject(QualificationCampaignRepository)
+    private readonly qualificationCampaigns?: QualificationCampaignRepository,
   ) {}
 
   createSession(input: BaseCapabilityInput): RuntimeExecutionCapabilities {
@@ -207,10 +210,19 @@ export class ExecutionCapabilityFactory {
       protectedAuthorizations?: Record<string, string>;
     },
   ): RuntimeExecutionCapabilities {
+    const originalMutationDispatch = input.options.onMutationDispatch;
     return this.createSession({
       ...input,
       options: {
         ...input.options,
+        onMutationDispatch: async () => {
+          await this.qualificationCampaigns?.consumeBusinessMutation({
+            runId: input.runId,
+            operationId: input.operationId,
+            mutationIdentity: `run-${input.runId}`,
+          });
+          await originalMutationDispatch?.();
+        },
         runId: input.runId,
         attemptId: input.attemptId,
         flowRevisionId: input.flowRevisionId,

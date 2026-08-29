@@ -121,6 +121,11 @@ function harness(
     {
       assertAcceptingWork: vi.fn(),
     } as never,
+    {
+      consumeBusinessMutation: vi.fn(async () => ({ campaignBound: false, replayed: false })),
+      settleMutation: vi.fn(async () => undefined),
+      settleRun: vi.fn(async () => undefined),
+    } as never,
   );
 
   return {

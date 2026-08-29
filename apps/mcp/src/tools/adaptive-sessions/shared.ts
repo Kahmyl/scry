@@ -111,7 +111,10 @@ export const hostAuthoringIntentSchema = z
         target: hostSemanticTargetSchema.optional(),
         semanticEffect: z
           .enum(["read_context_transition", "resource_mutation", "unknown"])
-          .optional(),
+          .optional()
+          .describe(
+            "Required when kind is activate or press. Use read_context_transition only for a proven read-only navigation or UI-context transition with live_read authority. resource_mutation and unknown remain mutation-capable; use unknown when read-only semantics are not established.",
+          ),
         publicValue: z
           .string()
           .max(20_000)
@@ -278,7 +281,18 @@ export const hostAuthoringIntentSchema = z
       .strict()
       .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((intent, context) => {
+    if (
+      (intent.action.kind === "activate" || intent.action.kind === "press") &&
+      !intent.action.semanticEffect
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["action", "semanticEffect"],
+        message: "activate and press require an explicit semanticEffect",
+      });
+  });
 
 export async function withAdaptiveSessionError<T>(
   operation: () => Promise<T>,

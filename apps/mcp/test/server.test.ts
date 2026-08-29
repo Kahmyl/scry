@@ -211,6 +211,23 @@ describe("current Scry MCP surface", () => {
     expect(dispatch.description).toContain("protectedInputReferences");
     expect(dispatch.description).toContain("Do not send value or valueSource");
     expect(dispatch.description).toContain("never expose the protected plaintext");
+    expect(dispatch.description).toContain("activate and press require an explicit");
+    expect(dispatch.description).toContain("semanticEffect:'read_context_transition'");
+    expect(dispatch.description).toContain("intent.authorization:{kind:'live_read'}");
+    expect(dispatch.description).toContain("only activate/press classification that avoids");
+    expect(dispatch.description).toContain("semanticEffect:'resource_mutation'");
+    expect(dispatch.description).toContain("semanticEffect:'unknown'");
+    expect(dispatch.description).toContain("use unknown when read-only transition semantics");
+
+    const actionSchema = (dispatch.inputSchema as any).properties.intent.properties.action;
+    const actionVariants = actionSchema.oneOf;
+    for (const kind of ["activate", "press"]) {
+      const variant = actionVariants.find(
+        (candidate: any) => candidate.properties.kind.const === kind,
+      );
+      expect(variant.required).toContain("semanticEffect");
+      expect(variant.properties.semanticEffect.description).toContain("Required semantic");
+    }
 
     const startPraxis = tools.find(({ name }) => name === "start_praxis_session")!;
     expect(startPraxis.description).toContain("start_mission or resume_mission");

@@ -16,6 +16,7 @@ function command(reference?: string, praxisSessionId = id("1")) {
       action: {
         kind: "activate",
         target: { concept: "Submit", ...(reference ? { reference } : {}), role: "button" },
+        semanticEffect: "unknown",
       },
       expectedEffect: { kind: "none" },
       constraints: { timeoutMs: 5_000, allowNewPage: false, allowNonExact: false },

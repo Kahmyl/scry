@@ -42,6 +42,7 @@ export type MissionRunEvidenceContext = {
     report: import("@scry/executor").ExecutionReport;
     outputDirectory: string;
   }): Promise<void>;
+  beforeBusinessMutationDispatch(operation: AdaptiveSessionOperationInput): Promise<void>;
 };
 
 @Injectable()
@@ -1017,6 +1018,7 @@ export class MissionFlowAuthoringService {
         operation,
         outputDirectory,
         veilPolicySnapshot: runEvidence.veilPolicySnapshot,
+        beforeBusinessMutationDispatch: runEvidence.beforeBusinessMutationDispatch,
         ...(signal ? { signal } : {}),
       });
 
@@ -1162,8 +1164,8 @@ function liveReadPolicyBoundary(
   intent: import("@scry/contracts").MissionAuthoringIntent,
 ): NonNullable<MissionAuthoringTurnResult["decisionBoundary"]> {
   const semanticEffect =
-    intent.action.kind === "activate"
-      ? (intent.action.semanticEffect ?? "unknown")
+    intent.action.kind === "activate" || intent.action.kind === "press"
+      ? intent.action.semanticEffect
       : "resource_mutation";
   const readContext = semanticEffect === "read_context_transition";
   return {

@@ -531,6 +531,7 @@ integration("protected operation repository integration", () => {
           flowDraftId,
           action: {
             kind: "activate",
+            semanticEffect: "unknown",
             target: { concept: "another mutation", role: "button", name: "Mutate", exact: true },
           },
           expectedEffect: { kind: "none" },
