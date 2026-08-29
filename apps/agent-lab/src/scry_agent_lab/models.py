@@ -33,7 +33,7 @@ class OpenAICompatibleModel:
             base_url=config.base_url,
             api_key=config.api_key,
             timeout=120.0,
-            max_retries=1,
+            max_retries=0,
         )
 
     async def complete(

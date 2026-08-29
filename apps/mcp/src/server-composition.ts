@@ -6,9 +6,9 @@ export const SCRY_MCP_INSTRUCTIONS =
 export const SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS =
   "Observed semanticPageContext is bounded factual context. containerReferences explain privacy-safe grouping but are not action targets or resource identity. Never select by list order or infer identity from opaque references; request clarification when public facts do not establish the intended control. readableValues are separate bounded factual value candidates, not action targets; use read_praxis_public_value with one exact current reference to retrieve only Veil-admitted public text. Escalate only in order: ordinary semantic perception, targeted semantic-region perception, browser-resource perception, DOMSnapshot/accessibility structural perception, then constrained runtime-state perception. For a large selected semantic region call inspect_praxis_region then read one returned context-value reference; region inspection returns no region plaintext. When required public facts remain unavailable but the current page has already loaded same-origin textual resources, call inspect_praxis_resources, select exactly one returned context-resource reference, then call read_praxis_public_resource. Next call inspect_praxis_structure and read one returned closed field with read_praxis_public_structure_value. Runtime inspection is last: inspect_praxis_runtime_state then read one exact reference with read_praxis_public_runtime_value; it never accepts code, expressions, paths, or arbitrary JavaScript. Never infer a resource URL from an opaque reference or reuse any perception reference after document replacement.";
 
-export function createScryServerComposition() {
+export function createScryServerComposition(profile = "general") {
   return new McpServer(
-    { name: "scry", version: "1.0.0" },
+    { name: profile === "general" ? "scry" : `scry-${profile}`, version: "1.0.0" },
     { instructions: `${SCRY_MCP_INSTRUCTIONS} ${SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS}` },
   );
 }

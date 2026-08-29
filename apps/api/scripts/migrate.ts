@@ -172,6 +172,9 @@ const systemCorrectnessM4Path = fileURLToPath(
 const qualificationCampaignSafetyPath = fileURLToPath(
   new URL("../migrations/qualification-campaign-safety.sql", import.meta.url),
 );
+const authoritativeQ5QualificationPath = fileURLToPath(
+  new URL("../migrations/authoritative-q5-qualification.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -252,7 +255,9 @@ const flowNameIdentityCutover = await readFile(flowNameIdentityCutoverPath, "utf
 const targetedRegionPerception = await readFile(targetedRegionPerceptionPath, "utf8");
 const systemCorrectnessM4 = await readFile(systemCorrectnessM4Path, "utf8");
 const qualificationCampaignSafety = await readFile(qualificationCampaignSafetyPath, "utf8");
-const systemCorrectnessM4Upgrade = `${systemCorrectnessM4}\n${qualificationCampaignSafety}`;
+const authoritativeQ5Qualification = await readFile(authoritativeQ5QualificationPath, "utf8");
+const authoritativeQ5Upgrade = `${qualificationCampaignSafety}\n${authoritativeQ5Qualification}`;
+const systemCorrectnessM4Upgrade = `${systemCorrectnessM4}\n${authoritativeQ5Upgrade}`;
 const targetedRegionPerceptionUpgrade = `${targetedRegionPerception}\n${systemCorrectnessM4Upgrade}`;
 const flowNameIdentityCutoverUpgrade = `${flowNameIdentityCutover}\n${targetedRegionPerceptionUpgrade}`;
 const preMissionExternalAgentLifecycleUpgrade = `${preMissionExternalAgentLifecycle}\n${flowNameIdentityCutoverUpgrade}`;
@@ -309,6 +314,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "targeted-region-perception.sql": targetedRegionPerception,
   "system-correctness-m4-reconciliation-lease.sql": systemCorrectnessM4,
   "qualification-campaign-safety.sql": qualificationCampaignSafety,
+  "authoritative-q5-qualification.sql": authoritativeQ5Qualification,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
@@ -333,7 +339,9 @@ const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
               migration !== "pre-mission-external-agent-lifecycle.sql" &&
               migration !== "flow-name-identity-cutover.sql" &&
               migration !== "targeted-region-perception.sql" &&
-              migration !== "system-correctness-m4-reconciliation-lease.sql",
+              migration !== "system-correctness-m4-reconciliation-lease.sql" &&
+              migration !== "qualification-campaign-safety.sql" &&
+              migration !== "authoritative-q5-qualification.sql",
           ),
     ),
   );
@@ -344,6 +352,19 @@ const baseline = stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS);
 // omits later optional tails and therefore cannot identify the immediately preceding release.
 const preQualificationCampaignSafetyFingerprint =
   "e8231b47b9a826867621a68305fe6329a49028f13d072492fa469ed6a0468fbb";
+const preAuthoritativeQ5Fingerprint = createHash("sha256")
+  .update(
+    expandFoundation(
+      expandBaselineStage(
+        baselineSource,
+        optionalMigrationSources,
+        OPTIONAL_BASELINE_MIGRATIONS.filter(
+          (name) => name !== "authoritative-q5-qualification.sql",
+        ),
+      ),
+    ),
+  )
+  .digest("hex");
 const preSystemCorrectnessM4Fingerprint = createHash("sha256")
   .update(
     expandFoundation(
@@ -353,7 +374,8 @@ const preSystemCorrectnessM4Fingerprint = createHash("sha256")
         OPTIONAL_BASELINE_MIGRATIONS.filter(
           (name) =>
             name !== "system-correctness-m4-reconciliation-lease.sql" &&
-            name !== "qualification-campaign-safety.sql",
+            name !== "qualification-campaign-safety.sql" &&
+            name !== "authoritative-q5-qualification.sql",
         ),
       ),
     ),
@@ -691,14 +713,34 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === preQualificationCampaignSafetyFingerprint) {
+    if (installedFingerprint === preAuthoritativeQ5Fingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-authoritative-q5-qualification'))",
+        );
+        await client.query(authoritativeQ5Qualification);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied authoritative Q5 qualification ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preQualificationCampaignSafetyFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query(
           "SELECT pg_advisory_xact_lock(hashtext('scry-qualification-campaign-safety'))",
         );
-        await client.query(qualificationCampaignSafety);
+        await client.query(authoritativeQ5Upgrade);
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],

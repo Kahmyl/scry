@@ -48,6 +48,7 @@ async function currentInputs() {
   sources["system-correctness-m4-reconciliation-lease.sql"] = "";
   sources["targeted-region-perception.sql"] = "";
   sources["qualification-campaign-safety.sql"] = "";
+  sources["authoritative-q5-qualification.sql"] = "";
 
   const calibration = await readMigration("calibration-foundation.sql");
 
@@ -227,9 +228,11 @@ describe("Mission recording selection migration", () => {
     const finalWrites =
       migrate.match(/UPDATE\s+schema_baseline[\s\S]{0,160}?schema_fingerprint=\$1/g) ?? [];
 
-    expect(operationalEventsCalls).toHaveLength(finalWrites.length - 7);
+    // The terminal M4, M6 campaign, and Q5 qualification upgrades do not
+    // replay this historical migration.
+    expect(operationalEventsCalls).toHaveLength(finalWrites.length - 8);
 
-    expect(selectionCalls).toHaveLength(finalWrites.length - 8);
+    expect(selectionCalls).toHaveLength(finalWrites.length - 9);
 
     expect(gapCalls).toHaveLength(selectionCalls.length - 1);
 

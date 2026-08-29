@@ -241,7 +241,7 @@ describe("Q2 deterministic B1-B20 fault matrix", () => {
     }).stdout.trim();
     expect(first.report.source).toMatchObject({
       head: currentHead,
-      schemaFingerprint: "15b258b1b7c1f6d446d2addaab7e25f5c0e111dba3a87210679d9aea50e03237",
+      schemaFingerprint: "d313f0eb931d79a98310c664cd3e2a677f7d10e3d2259cefbe4e5f51018e78f9",
       q0Digest: expect.stringMatching(/^[a-f0-9]{64}$/),
       q1Digest: expect.stringMatching(/^[a-f0-9]{64}$/),
     });

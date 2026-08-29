@@ -1,21 +1,8 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
-
-from dotenv import load_dotenv
 from dataclasses import dataclass
 from typing import Any
-
-
-_REPOSITORY_ROOT = (
-    Path(__file__).resolve().parents[4]
-)
-
-load_dotenv(
-    _REPOSITORY_ROOT / ".env",
-    override=False,
-)
 
 
 @dataclass(frozen=True)

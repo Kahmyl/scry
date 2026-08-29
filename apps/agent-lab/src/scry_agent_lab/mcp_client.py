@@ -193,6 +193,15 @@ class ScryMcpClient:
                 "errorClass": type(error).__name__,
             }
 
+    async def record_provider_request(self) -> None:
+        if self._http_client is None or not self.external_run_id:
+            raise RuntimeError("Q5_PROVIDER_REQUEST_ACCOUNTING_UNAVAILABLE")
+        response = await self._http_client.post(
+            self._control_url("/agent-lab/provider-request")
+        )
+        if not response.is_success:
+            raise RuntimeError("Q5_PROVIDER_REQUEST_ACCOUNTING_REFUSED")
+
     async def _heartbeat_loop(self) -> None:
         while True:
             await asyncio.sleep(30)

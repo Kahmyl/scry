@@ -160,8 +160,16 @@ const targetedRegionPerception = await readFile(
   new URL("targeted-region-perception.sql", migrations),
   "utf8",
 );
+const systemCorrectnessM4 = await readFile(
+  new URL("system-correctness-m4-reconciliation-lease.sql", migrations),
+  "utf8",
+);
 const qualificationCampaignSafety = await readFile(
   new URL("qualification-campaign-safety.sql", migrations),
+  "utf8",
+);
+const authoritativeQ5Qualification = await readFile(
+  new URL("authoritative-q5-qualification.sql", migrations),
   "utf8",
 );
 
@@ -208,8 +216,10 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", migration
   ["external-agent-lifecycle.sql", externalAgentLifecycle],
   ["pre-mission-external-agent-lifecycle.sql", preMissionExternalAgentLifecycle],
   ["flow-name-identity-cutover.sql", flowNameIdentityCutover],
+  ["system-correctness-m4-reconciliation-lease.sql", systemCorrectnessM4],
   ["targeted-region-perception.sql", targetedRegionPerception],
   ["qualification-campaign-safety.sql", qualificationCampaignSafety],
+  ["authoritative-q5-qualification.sql", authoritativeQ5Qualification],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

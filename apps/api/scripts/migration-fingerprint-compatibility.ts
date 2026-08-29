@@ -120,6 +120,7 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "targeted-region-perception.sql",
   "system-correctness-m4-reconciliation-lease.sql",
   "qualification-campaign-safety.sql",
+  "authoritative-q5-qualification.sql",
 ] as const;
 
 export type OptionalBaselineMigration = (typeof OPTIONAL_BASELINE_MIGRATIONS)[number];
@@ -207,6 +208,7 @@ export function compatibilityBaseline(source: string): string {
     "flow-name-identity-cutover.sql",
     "system-correctness-m4-reconciliation-lease.sql",
     "qualification-campaign-safety.sql",
+    "authoritative-q5-qualification.sql",
   ].reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}\\r?\\n`, "g"), ""),
@@ -246,7 +248,8 @@ export function calculatePreTargetedRegionPerceptionFingerprint(input: {
           (name) =>
             name !== "targeted-region-perception.sql" &&
             name !== "system-correctness-m4-reconciliation-lease.sql" &&
-            name !== "qualification-campaign-safety.sql",
+            name !== "qualification-campaign-safety.sql" &&
+            name !== "authoritative-q5-qualification.sql",
         ),
       ),
     ),

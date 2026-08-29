@@ -5,7 +5,10 @@ import json
 
 import pytest
 
-from scry_agent_lab.agent import run_agent
+from scry_agent_lab.agent import (
+    _mission_completion_evidence,
+    run_agent,
+)
 from scry_agent_lab.cli import parser
 from scry_agent_lab.models import (
     ModelResponse,
@@ -575,3 +578,255 @@ def test_cli_preserves_profile_defaults_and_explicit_overrides() -> None:
     assert override.profile == "capable_live_journey"
     assert (override.max_turns, override.max_tool_calls) == (90, 120)
     assert override.max_wall_time_seconds == 4000
+
+
+def test_authoritative_completion_requires_every_exact_identity() -> None:
+    spec = AgentRunSpec(
+        objective="Q5",
+        expected_attempt_id="attempt-q5",
+        expected_campaign_id="campaign-q5",
+        expected_mission_id="mission-q5",
+        expected_objective_id="objective-q5",
+        expected_agent_session_id="agent-q5",
+    )
+    payload = {
+        "structuredContent": {
+            "report": {
+                "id": "report-q5",
+                "missionId": "mission-q5",
+                "status": "published",
+            }
+        }
+    }
+    lifecycle = {
+        "campaignId": "campaign-q5",
+        "runId": "run-q5",
+        "runFinalized": True,
+        "evidenceAccepted": True,
+    }
+    arguments = {
+        "missionId": "mission-q5",
+        "agentSessionId": "agent-q5",
+    }
+    assert _mission_completion_evidence(
+        "publish_mission_report",
+        payload,
+        arguments,
+        spec,
+        lifecycle,
+    ) is not None
+    payload["structuredContent"]["report"]["missionId"] = (
+        "unrelated-mission"
+    )
+    assert _mission_completion_evidence(
+        "publish_mission_report",
+        payload,
+        arguments,
+        spec,
+        lifecycle,
+    ) is None
+
+
+class Q5JourneyMcp(FakeMcp):
+    # Frozen public surface mirrored from @scry/contracts. The MCP package's
+    # contract-digest test is the source-of-truth cross-check for this list.
+    profile_tools = [
+        "get_capabilities",
+        "get_operating_context",
+        "list_environments",
+        "list_project_credentials",
+        "start_praxis_session",
+        "observe_praxis_session",
+        "inspect_praxis_region",
+        "read_praxis_public_value",
+        "inspect_praxis_resources",
+        "read_praxis_public_resource",
+        "inspect_praxis_structure",
+        "read_praxis_public_structure_value",
+        "inspect_praxis_runtime_state",
+        "read_praxis_public_runtime_value",
+        "get_praxis_session",
+        "reconcile_unknown_operation",
+        "close_praxis_session",
+        "start_run",
+        "dispatch_run_operation",
+        "attach_run_praxis_session",
+        "finalize_run",
+        "get_run",
+        "accept_objective_evidence",
+        "get_mission",
+        "grant_mission_execution_authorization",
+        "update_mission_objective",
+        "finalize_agent_work",
+        "preview_mission_report",
+        "publish_mission_report",
+        "end_agent_session",
+    ]
+    journey = [
+        "get_operating_context",
+        "list_project_credentials",
+        "start_praxis_session",
+        "observe_praxis_session",
+        "start_run",
+        "dispatch_run_operation",
+        "finalize_run",
+        "accept_objective_evidence",
+        "finalize_agent_work",
+        "preview_mission_report",
+        "publish_mission_report",
+        "end_agent_session",
+    ]
+
+    async def snapshot(self) -> McpSnapshot:
+        return McpSnapshot(
+            server_info={"name": "scry-q5-authoritative", "version": "1"},
+            protocol_version="2025-11-25",
+            instructions="Use only the qualification-scoped public Scry contract.",
+            tools=[
+                McpTool(
+                    name=name,
+                    description=f"Q5 {name}",
+                    input_schema={"type": "object"},
+                )
+                for name in self.profile_tools
+            ],
+        )
+
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, object],
+    ) -> McpToolResult:
+        self.calls.append((name, arguments))
+        structured: dict[str, object] = {"accepted": True}
+        if name == "start_run":
+            structured = {"run": {"runId": "run-q5"}}
+        elif name == "publish_mission_report":
+            structured = {
+                "report": {
+                    "id": "report-q5",
+                    "missionId": "mission-q5",
+                    "status": "published",
+                }
+            }
+        return McpToolResult(
+            is_error=False,
+            structured_content=structured,
+            content=[{"type": "text", "text": "accepted"}],
+        )
+
+
+class Q5JourneyModel:
+    def __init__(self) -> None:
+        self.turn = 0
+
+    async def complete(self, messages, tools) -> ModelResponse:
+        if self.turn == len(Q5JourneyMcp.journey):
+            return ModelResponse(
+                content="Exact Q5 journey complete.",
+                tool_calls=[],
+                usage=None,
+            )
+        name = Q5JourneyMcp.journey[self.turn]
+        self.turn += 1
+        arguments: dict[str, object] = {}
+        if name == "start_run":
+            arguments["qualificationCampaignAuthorizationId"] = "campaign-q5"
+        elif name == "finalize_run":
+            arguments["runId"] = "run-q5"
+        elif name == "accept_objective_evidence":
+            arguments.update(
+                {
+                    "missionId": "mission-q5",
+                    "objectiveId": "objective-q5",
+                    "runId": "run-q5",
+                }
+            )
+        elif name == "publish_mission_report":
+            arguments.update(
+                {
+                    "missionId": "mission-q5",
+                    "agentSessionId": "agent-q5",
+                }
+            )
+        return ModelResponse(
+            content=None,
+            tool_calls=[
+                ModelToolCall(
+                    id=f"q5-{self.turn}",
+                    name=name,
+                    arguments=json.dumps(arguments),
+                )
+            ],
+            usage=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_deterministic_q5_agent_completes_the_exact_public_journey(tmp_path) -> None:
+    mcp = Q5JourneyMcp()
+    result = await run_agent(
+        spec=AgentRunSpec(
+            objective="Complete exact Q5 journey",
+            profile="capable_live_journey",
+            expected_attempt_id="attempt-q5",
+            expected_campaign_id="campaign-q5",
+            expected_mission_id="mission-q5",
+            expected_objective_id="objective-q5",
+            expected_agent_session_id="agent-q5",
+        ),
+        model=Q5JourneyModel(),
+        mcp=mcp,
+        transcript=Transcript(tmp_path / "q5-journey.jsonl"),
+        model_name="deterministic-q5",
+        provider_name="deterministic",
+    )
+    assert result.completed is True
+    assert result.completion_evidence == {
+        "kind": "mission_report",
+        "missionId": "mission-q5",
+        "reportId": "report-q5",
+        "reportStatus": "published",
+        "attemptId": "attempt-q5",
+        "campaignId": "campaign-q5",
+        "objectiveId": "objective-q5",
+        "runId": "run-q5",
+        "agentSessionId": "agent-q5",
+    }
+    assert [name for name, _ in mcp.calls] == Q5JourneyMcp.journey
+    assert len((await mcp.snapshot()).tools) == 30
+
+
+def test_transcript_redacts_nested_keys_and_all_seeded_canaries(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    canaries = [
+        "provider-key-canary",
+        "vitract-credential-canary",
+        "cookie-canary",
+        "session-token-canary",
+        "authorization-canary",
+        "protected-request-canary",
+        "protected-output-canary",
+    ]
+    monkeypatch.setenv(
+        "SCRY_AGENT_LAB_PROTECTED_CANARIES",
+        json.dumps(canaries),
+    )
+    target = tmp_path / "privacy.jsonl"
+    Transcript(target).write(
+        "failure",
+        {
+            "authorization": canaries[4],
+            "nested": {
+                "cookie": canaries[2],
+                "message": " ".join(canaries),
+                "protectedRequestBody": canaries[5],
+                "protectedOutputValue": canaries[6],
+            },
+        },
+    )
+    written = target.read_text()
+    assert "[REDACTED]" in written
+    assert all(canary not in written for canary in canaries)

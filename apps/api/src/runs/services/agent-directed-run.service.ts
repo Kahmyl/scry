@@ -391,11 +391,16 @@ export class AgentDirectedRunService {
 
       beforeBusinessMutationDispatch: async (operation) => {
         try {
-          await this.qualificationCampaigns.consumeBusinessMutation({
+          const consumption = await this.qualificationCampaigns.consumeBusinessMutation({
             runId,
             operationId: operation.operationId,
             mutationIdentity: `adaptive-${run.praxisSessionId}-${operation.idempotencyKey}`,
           });
+          if (consumption.replayed)
+            throw new ConflictException({
+              code: "QUALIFICATION_MUTATION_REPLAY_REDISPATCH_FORBIDDEN",
+              mutationOutcome: "not_applied",
+            });
         } catch (error) {
           dispatchRefusalCode = qualificationCampaignErrorCode(error);
           throw error;

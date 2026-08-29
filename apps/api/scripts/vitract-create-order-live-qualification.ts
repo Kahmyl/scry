@@ -426,7 +426,7 @@ async function loadReadOnlyAuthProbe(context: DurableContext, runId: string) {
   }
 }
 
-async function loadDurableContext(): Promise<DurableContext> {
+export async function loadDurableContext(): Promise<DurableContext> {
   const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL ?? "postgres://scry:scry-local@127.0.0.1:54329/scry",
   });

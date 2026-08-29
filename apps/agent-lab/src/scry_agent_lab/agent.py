@@ -140,6 +140,23 @@ def _safe_actions(payload: dict[str, Any]) -> list[str]:
     return [value for value in actions if isinstance(value, str)]
 
 
+def _find_string(value: Any, names: set[str]) -> str | None:
+    if isinstance(value, dict):
+        for name, candidate in value.items():
+            if name in names and isinstance(candidate, str):
+                return candidate
+        for candidate in value.values():
+            found = _find_string(candidate, names)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for candidate in value:
+            found = _find_string(candidate, names)
+            if found is not None:
+                return found
+    return None
+
+
 def _structured_blocker(
     payload: dict[str, Any],
 ) -> dict[str, Any] | None:
@@ -199,6 +216,9 @@ def _structured_blocker(
 def _mission_completion_evidence(
     tool_name: str,
     payload: dict[str, Any],
+    arguments: dict[str, Any],
+    spec: AgentRunSpec,
+    lifecycle: dict[str, Any],
 ) -> dict[str, Any] | None:
     if tool_name != "publish_mission_report" or payload.get("isError"):
         return None
@@ -210,10 +230,32 @@ def _mission_completion_evidence(
         return None
     report_id = report.get("id")
     mission_id = report.get("missionId")
+    if spec.expected_attempt_id is None:
+        if (
+            isinstance(report_id, str)
+            and isinstance(mission_id, str)
+            and report.get("status") == "published"
+        ):
+            return {
+                "kind": "mission_report",
+                "missionId": mission_id,
+                "reportId": report_id,
+                "reportStatus": "published",
+            }
+        return None
     if (
         not isinstance(report_id, str)
         or not isinstance(mission_id, str)
         or report.get("status") != "published"
+        or mission_id != spec.expected_mission_id
+        or arguments.get("missionId") != spec.expected_mission_id
+        or arguments.get("agentSessionId")
+        != spec.expected_agent_session_id
+        or lifecycle.get("campaignId")
+        != spec.expected_campaign_id
+        or lifecycle.get("runId") is None
+        or lifecycle.get("runFinalized") is not True
+        or lifecycle.get("evidenceAccepted") is not True
     ):
         return None
     return {
@@ -221,6 +263,11 @@ def _mission_completion_evidence(
         "missionId": mission_id,
         "reportId": report_id,
         "reportStatus": "published",
+        "attemptId": spec.expected_attempt_id,
+        "campaignId": spec.expected_campaign_id,
+        "objectiveId": spec.expected_objective_id,
+        "runId": lifecycle["runId"],
+        "agentSessionId": spec.expected_agent_session_id,
     }
 
 
@@ -291,6 +338,12 @@ async def run_agent(
     report_composition_ms = 0
     unresolved_blocker: dict[str, Any] | None = None
     completion_evidence: dict[str, Any] | None = None
+    exact_lifecycle: dict[str, Any] = {
+        "campaignId": spec.expected_campaign_id,
+        "runId": None,
+        "runFinalized": False,
+        "evidenceAccepted": False,
+    }
     capabilities_directed = any(
         term in spec.objective.lower()
         for term in ("capability", "compatibility", "release")
@@ -416,8 +469,10 @@ async def run_agent(
                 terminal_outcome="limit_exceeded",
                 termination_reason_code="MAX_WALL_TIME_EXCEEDED",
             )
+        model_started = time.perf_counter()
         try:
-            model_started = time.perf_counter()
+            if hasattr(mcp, "record_provider_request"):
+                await mcp.record_provider_request()
             response = await asyncio.wait_for(
                 model.complete(messages, tools),
                 timeout=remaining,
@@ -764,9 +819,40 @@ async def run_agent(
                 ):
                     unresolved_blocker = None
 
+                if not tool_payload.get("isError"):
+                    if (
+                        call.name == "start_run"
+                        and parsed.get(
+                            "qualificationCampaignAuthorizationId"
+                        ) == spec.expected_campaign_id
+                    ):
+                        exact_lifecycle["runId"] = _find_string(
+                            tool_payload,
+                            {"runId", "id"},
+                        )
+                    elif (
+                        call.name == "finalize_run"
+                        and parsed.get("runId")
+                        == exact_lifecycle.get("runId")
+                    ):
+                        exact_lifecycle["runFinalized"] = True
+                    elif (
+                        call.name == "accept_objective_evidence"
+                        and parsed.get("objectiveId")
+                        == spec.expected_objective_id
+                        and parsed.get("runId")
+                        == exact_lifecycle.get("runId")
+                        and parsed.get("missionId")
+                        == spec.expected_mission_id
+                    ):
+                        exact_lifecycle["evidenceAccepted"] = True
+
                 proven_completion = _mission_completion_evidence(
                     call.name,
                     tool_payload,
+                    parsed,
+                    spec,
+                    exact_lifecycle,
                 )
                 if proven_completion is not None:
                     completion_evidence = proven_completion

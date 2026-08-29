@@ -429,3 +429,4 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir system-correctness-m4-reconciliation-lease.sql
 \ir targeted-region-perception.sql
 \ir qualification-campaign-safety.sql
+\ir authoritative-q5-qualification.sql

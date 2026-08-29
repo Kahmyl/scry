@@ -16,6 +16,7 @@ export const createQualificationCampaignSchema = z
       .url()
       .transform((value) => new URL(value).origin),
     applicationIdentity: z.string().trim().min(1).max(200),
+    canonicalApplicationId: uuidSchema.optional(),
     qualificationMode: z.literal("local_test"),
     releaseIdentity: digestSchema,
     schemaIdentity: digestSchema,

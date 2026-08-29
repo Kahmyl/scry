@@ -96,6 +96,11 @@ const praxisVersions = {
   runtimeVersion: PRAXIS_RUNTIME_VERSION,
   scoringPolicyVersion: PRAXIS_SCORING_POLICY_VERSION,
 };
+const workerSourceIdentity = {
+  commit: process.env.SCRY_GIT_COMMIT ?? "unknown",
+  dirty: process.env.SCRY_SOURCE_DIRTY === "true",
+  manifestSha256: process.env.SCRY_SOURCE_MANIFEST_SHA256 ?? "unknown",
+};
 
 const observationRuntime = await waitForHealthyObservationRuntime(
   () => verifyBrowserObservationRuntime(browserChannel, () => nativeBrowser.openBrowser()),
@@ -125,9 +130,22 @@ await database.query(
   ],
 );
 
-await executions.heartbeatWorker(workerId, releaseId, schemaFingerprint, praxisVersions);
+await executions.heartbeatWorker(
+  workerId,
+  releaseId,
+  schemaFingerprint,
+  praxisVersions,
+  workerSourceIdentity,
+);
 const workerHeartbeat = setInterval(
-  () => void executions.heartbeatWorker(workerId, releaseId, schemaFingerprint, praxisVersions),
+  () =>
+    void executions.heartbeatWorker(
+      workerId,
+      releaseId,
+      schemaFingerprint,
+      praxisVersions,
+      workerSourceIdentity,
+    ),
   Math.min(staleMs, 10_000),
 );
 

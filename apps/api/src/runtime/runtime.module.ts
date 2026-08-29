@@ -18,11 +18,13 @@ import { ExternalResourceDestructiveTargetPreparationService } from "./services/
 import { ExternalResourceCredentialLifecycleService } from "./services/external-resource-credential-lifecycle.service.js";
 import { UnknownMutationAdministrationService } from "./services/unknown-mutation-administration.service.js";
 import { QualificationCampaignRepository } from "./repositories/qualification-campaign.repository.js";
-import { QualificationCampaignController } from "./qualification-campaign.controller.js";
+import { QualificationCampaignController } from "./controllers/qualification-campaign.controller.js";
+import { Q5AuthoritativeAttemptRepository } from "./repositories/q5-authoritative-attempt.repository.js";
+import { Q5AuthoritativeAttemptController } from "./controllers/q5-authoritative-attempt.controller.js";
 
 @Module({
   imports: [InfrastructureModule],
-  controllers: [QualificationCampaignController],
+  controllers: [QualificationCampaignController, Q5AuthoritativeAttemptController],
   providers: [
     ExecutionRepository,
     ExecutionKernelRepository,
@@ -39,6 +41,7 @@ import { QualificationCampaignController } from "./qualification-campaign.contro
     ReleaseAdmissionService,
     NativeBrowserDriver,
     QualificationCampaignRepository,
+    Q5AuthoritativeAttemptRepository,
   ],
   exports: [
     ExecutionRepository,
@@ -56,6 +59,7 @@ import { QualificationCampaignController } from "./qualification-campaign.contro
     ReleaseAdmissionService,
     NativeBrowserDriver,
     QualificationCampaignRepository,
+    Q5AuthoritativeAttemptRepository,
   ],
 })
 export class RuntimeModule {}

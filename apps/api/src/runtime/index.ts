@@ -26,6 +26,7 @@ export { ExecutionKernelRepository } from "./repositories/execution-kernel.repos
 export { ProtectedOperationRepository } from "./repositories/protected-operation.repository.js";
 export { ProtectedOutputPersistenceRepository } from "./repositories/protected-output-persistence.repository.js";
 export { QualificationCampaignRepository } from "./repositories/qualification-campaign.repository.js";
+export { Q5AuthoritativeAttemptRepository } from "./repositories/q5-authoritative-attempt.repository.js";
 export { ExternalResourceBindingRepository } from "./repositories/external-resource-binding.repository.js";
 export { ExternalResourcePresentationAuthorityRepository } from "./repositories/external-resource-presentation-authority.repository.js";
 export { ExternalResourceDestructiveTargetPreparationService } from "./services/external-resource-destructive-target-preparation.service.js";

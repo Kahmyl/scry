@@ -21,6 +21,7 @@ type CampaignRow = {
   purpose: "system_correctness";
   targetOrigin: string;
   applicationIdentity: string;
+  canonicalApplicationId: string | null;
   qualificationMode: "local_test";
   ownerUserId: string;
   releaseIdentity: string;
@@ -41,6 +42,7 @@ const projection = `
   campaign.mission_id AS "missionId",campaign.objective_id AS "objectiveId",
   campaign.agent_session_id AS "agentSessionId",campaign.purpose,
   campaign.target_origin AS "targetOrigin",campaign.application_identity AS "applicationIdentity",
+  campaign.canonical_application_id AS "canonicalApplicationId",
   campaign.qualification_mode AS "qualificationMode",campaign.owner_user_id AS "ownerUserId",
   campaign.release_identity AS "releaseIdentity",campaign.schema_identity AS "schemaIdentity",
   campaign.max_runs AS "maxRuns",
@@ -95,9 +97,9 @@ export class QualificationCampaignRepository {
       const created = await client.query<CampaignRow>(
         `INSERT INTO qualification_campaign_authorizations AS campaign(
            project_id,environment_id,mission_id,objective_id,agent_session_id,purpose,
-           target_origin,application_identity,qualification_mode,owner_user_id,
+           target_origin,application_identity,canonical_application_id,qualification_mode,owner_user_id,
            release_identity,schema_identity,max_runs,max_business_mutation_dispatches,expires_at
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
          RETURNING ${projection}`,
         [
           projectId,
@@ -108,6 +110,7 @@ export class QualificationCampaignRepository {
           input.purpose,
           input.targetOrigin,
           input.applicationIdentity,
+          input.canonicalApplicationId ?? null,
           input.qualificationMode,
           principal.userId,
           input.releaseIdentity,
@@ -160,10 +163,19 @@ export class QualificationCampaignRepository {
         throw new ConflictException({ code: "QUALIFICATION_CAMPAIGN_AUTHORIZATION_REQUIRED" });
       return undefined;
     }
-    const result = await client.query<CampaignRow & { environmentOrigin: string }>(
-      `SELECT ${projection},environment.base_origin AS "environmentOrigin"
+    const result = await client.query<
+      CampaignRow & {
+        environmentOrigin: string;
+        applicationStatus: string | null;
+        applicationOrigin: string | null;
+      }
+    >(
+      `SELECT ${projection},environment.base_origin AS "environmentOrigin",
+              application.status AS "applicationStatus",
+              application.base_origin AS "applicationOrigin"
          FROM qualification_campaign_authorizations campaign
          JOIN environments environment ON environment.id=campaign.environment_id
+         LEFT JOIN qualification_applications application ON application.id=campaign.canonical_application_id
         WHERE campaign.id=$1 FOR UPDATE OF campaign`,
       [input.campaignId],
     );
@@ -175,7 +187,10 @@ export class QualificationCampaignRepository {
       campaign.missionId !== input.missionId ||
       campaign.objectiveId !== input.objectiveId ||
       campaign.agentSessionId !== input.agentSessionId ||
-      new URL(campaign.environmentOrigin).origin !== campaign.targetOrigin
+      new URL(campaign.environmentOrigin).origin !== campaign.targetOrigin ||
+      (campaign.canonicalApplicationId !== null &&
+        (campaign.applicationStatus !== "active" ||
+          campaign.applicationOrigin !== campaign.targetOrigin))
     )
       throw new ConflictException({ code: "QUALIFICATION_CAMPAIGN_SCOPE_MISMATCH" });
     if (campaign.expiresAt.getTime() <= Date.now()) {
@@ -213,7 +228,17 @@ export class QualificationCampaignRepository {
            FROM runs run
            JOIN qualification_campaign_authorizations campaign
              ON campaign.id=run.qualification_campaign_authorization_id
-          WHERE run.id=$1 FOR UPDATE OF campaign`,
+           LEFT JOIN qualification_applications application
+             ON application.id=campaign.canonical_application_id
+          WHERE run.id=$1
+            AND (campaign.canonical_application_id IS NULL OR (
+              application.status='active'
+              AND application.project_id=campaign.project_id
+              AND application.environment_id=campaign.environment_id
+              AND application.identity=campaign.application_identity
+              AND application.base_origin=campaign.target_origin
+            ))
+          FOR UPDATE OF campaign`,
         [input.runId],
       );
       if (!result.rowCount) return { campaignBound: false, replayed: false } as const;
@@ -311,6 +336,7 @@ export class QualificationCampaignRepository {
 function present(row: CampaignRow): QualificationCampaign {
   return {
     ...row,
+    canonicalApplicationId: row.canonicalApplicationId ?? undefined,
     expiresAt: row.expiresAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

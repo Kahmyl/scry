@@ -91,6 +91,14 @@ def parser() -> argparse.ArgumentParser:
         "--output-directory",
         default=None,
     )
+    for option in (
+        "attempt-id",
+        "campaign-id",
+        "mission-id",
+        "objective-id",
+        "agent-session-id",
+    ):
+        run.add_argument(f"--expected-{option}", default=None)
 
     return root
 
@@ -155,6 +163,11 @@ async def run_command(args: argparse.Namespace) -> int:
         max_wall_time_seconds=args.max_wall_time_seconds,
         external_run_id=external_run_id,
         experiment_id=experiment_id,
+        expected_attempt_id=args.expected_attempt_id,
+        expected_campaign_id=args.expected_campaign_id,
+        expected_mission_id=args.expected_mission_id,
+        expected_objective_id=args.expected_objective_id,
+        expected_agent_session_id=args.expected_agent_session_id,
     )
 
     async with ScryMcpClient(
@@ -204,7 +217,30 @@ async def async_main() -> int:
         return await inspect_mcp(args.mcp_url)
 
     if args.command == "run":
-        return await run_command(args)
+        try:
+            return await run_command(args)
+        except BaseException as error:
+            output = (
+                Path(args.output_directory)
+                if args.output_directory
+                else default_run_directory()
+            )
+            output.mkdir(parents=True, exist_ok=True)
+            (output / "failure.json").write_text(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "failure": "AGENT_LAB_UNRECOVERABLE_FAILURE",
+                        "errorClass": type(error).__name__,
+                        "externalRunId": args.external_run_id,
+                        "experimentId": args.experiment_id,
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return 1
 
     raise RuntimeError("UNKNOWN_COMMAND")
 

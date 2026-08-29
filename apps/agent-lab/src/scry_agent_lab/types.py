@@ -51,6 +51,11 @@ class AgentRunSpec(BaseModel):
     mcp_url: str = "http://127.0.0.1:4100/mcp"
     external_run_id: str | None = None
     experiment_id: str | None = None
+    expected_attempt_id: str | None = None
+    expected_campaign_id: str | None = None
+    expected_mission_id: str | None = None
+    expected_objective_id: str | None = None
+    expected_agent_session_id: str | None = None
     profile: Literal["smoke", "capable_live_journey"] = "smoke"
     max_turns: int | None = Field(default=None, ge=1, le=200)
     max_tool_calls: int | None = Field(default=None, ge=1, le=250)
@@ -71,6 +76,17 @@ class AgentRunSpec(BaseModel):
             self.max_wall_time_seconds = defaults[
                 "max_wall_time_seconds"
             ]
+        exact = [
+            self.expected_attempt_id,
+            self.expected_campaign_id,
+            self.expected_mission_id,
+            self.expected_objective_id,
+            self.expected_agent_session_id,
+        ]
+        if any(exact) and not all(exact):
+            raise ValueError(
+                "AUTHORITATIVE_Q5_EXACT_IDENTITY_INCOMPLETE"
+            )
         return self
 
 

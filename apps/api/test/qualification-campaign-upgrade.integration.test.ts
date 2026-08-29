@@ -10,7 +10,7 @@ import { Database } from "../src/infrastructure/index.js";
 const databaseUrl = process.env.SCRY_M6_UPGRADE_TEST_DATABASE_URL;
 const integration = databaseUrl ? describe : describe.skip;
 const preM6Fingerprint = "e8231b47b9a826867621a68305fe6329a49028f13d072492fa469ed6a0468fbb";
-const m6Fingerprint = "15b258b1b7c1f6d446d2addaab7e25f5c0e111dba3a87210679d9aea50e03237";
+const m6Fingerprint = "d313f0eb931d79a98310c664cd3e2a677f7d10e3d2259cefbe4e5f51018e78f9";
 
 integration("Milestone 6 qualification authorization schema upgrade", () => {
   const root = fileURLToPath(new URL("../../../", import.meta.url));

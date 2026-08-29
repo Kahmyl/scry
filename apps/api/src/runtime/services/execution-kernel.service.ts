@@ -1,4 +1,4 @@
-import { Inject, Injectable, Optional } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, Optional } from "@nestjs/common";
 import type { ExecutionCapabilityName, ExecutionMode, ExecutionRequest } from "@scry/contracts";
 import {
   createExecutionCapabilityManifest,
@@ -216,11 +216,16 @@ export class ExecutionCapabilityFactory {
       options: {
         ...input.options,
         onMutationDispatch: async () => {
-          await this.qualificationCampaigns?.consumeBusinessMutation({
+          const consumption = await this.qualificationCampaigns?.consumeBusinessMutation({
             runId: input.runId,
             operationId: input.operationId,
             mutationIdentity: `run-${input.runId}`,
           });
+          if (consumption?.replayed)
+            throw new ConflictException({
+              code: "QUALIFICATION_MUTATION_REPLAY_REDISPATCH_FORBIDDEN",
+              mutationOutcome: "not_applied",
+            });
           await originalMutationDispatch?.();
         },
         runId: input.runId,

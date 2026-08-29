@@ -4,12 +4,27 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { stableJson } from "../q0/validator.js";
+import { validateQ5EvidenceManifest } from "./q5-evidence.js";
 
 const q0Digest = "7bf1cd5316faae2d572aa1edb89f5a8a094b076c98be846a8860f2efce0f2230";
 const q1Digest = "d01fc4984fc4c4aae7ead2be25eb4b0493fc51e8359b2fd2037aec2e47334668";
 const q2Digest = "044a4d3506750c60b7f3f802e0a0f57bf1d3e9383dc25786a24c9d98c8da4357";
 const q3Digest = "424293abdc31046dac4879a3e7c29bea8bc32e3a600b68317f350f79cdc51112";
 const q3OracleDigest = "94d9d95852f91f99f0e610b6ce66dac7fef0f35230d7fbc831acfc68bf2ddf7f";
+export const Q5_DETERMINISTIC_GROUPS = [
+  "01_static_source_gate",
+  "02_database_upgrade_pre_state",
+  "03_runtime_identity",
+  "04_scoped_principal_adversary",
+  "05_mcp_contract",
+  "06_deterministic_fake_agent_journey",
+  "07_mutation_adversary",
+  "08_praxis_regression",
+  "09_evidence_report_adversary",
+  "10_privacy",
+  "11_supervisor_residue",
+  "12_paid_call_fuse",
+] as const;
 
 export async function createM6Report(root: string) {
   const output = path.join(root, "artifacts/system-correctness/m6");
@@ -19,32 +34,28 @@ export async function createM6Report(root: string) {
     processDeathMechanism: string;
     processes: Array<Record<string, unknown> & { phase: string; pid: number }>;
   };
-  const q5 = JSON.parse(
-    await readFile(path.join(output, "q5-agent/q5-agent-result.json"), "utf8"),
-  ) as any;
-  const transcriptPath = path.join(
-    output,
-    "q5-agent",
-    `primary-${q5.agent.externalRunId}`,
-    "transcript.jsonl",
-  );
-  const transcript = (await readFile(transcriptPath, "utf8"))
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as any);
-  const snapshot = transcript.find(({ event }) => event === "mcp_snapshot")?.data;
-  const toolMetadataDigest = createHash("sha256")
+  const sourceHead = git(root, ["rev-parse", "HEAD"]);
+  const sourceManifest = createHash("sha256").update(sourceHead).update("\0").digest("hex");
+  const schemaFingerprint = execFileSync(
+    "node",
+    [path.join(root, "scripts/schema-fingerprint.mjs")],
+    { cwd: root, encoding: "utf8" },
+  ).trim();
+  const migrationSha256 = createHash("sha256")
     .update(
-      stableJson({
-        protocolVersion: snapshot?.protocolVersion,
-        serverInfo: snapshot?.serverInfo,
-        tools: snapshot?.tools,
-      }),
+      await readFile(path.join(root, "apps/api/migrations/authoritative-q5-qualification.sql")),
     )
     .digest("hex");
-  const toolCalls = transcript
-    .filter(({ event }) => event === "tool_call")
-    .map(({ data }) => ({ turn: data.turn, tool: data.tool }));
+  const q5Manifest = await readJsonOptional(path.join(output, "q5-authoritative-evidence.json"));
+  const q5Validation = validateQ5EvidenceManifest(q5Manifest, {
+    sourceCommit: sourceHead,
+    sourceManifestSha256: sourceManifest,
+    schemaFingerprint,
+    migrationSha256,
+  });
+  const q5DurableBinding = await verifyDurableQ5Evidence(q5Validation.manifest, q5Manifest);
+  const boundary = (await readJsonOptional(path.join(output, "q5-deterministic-boundary.json"))) as
+    Q5DeterministicBoundary | undefined;
   const requiredProcessPhases = [
     "before_consumption",
     "after_consumption",
@@ -78,14 +89,7 @@ export async function createM6Report(root: string) {
           (durable.mutationsConsumed ?? 0) <= 1
         );
       });
-  const q5Pass =
-    q5.oracle.resources.length === 1 &&
-    q5.oracle.mutationRequests.length === 1 &&
-    q5.campaign.runCount === 1 &&
-    q5.campaign.runsConsumed === 1 &&
-    q5.campaign.mutationsConsumed === 1 &&
-    q5.campaign.disposition === "succeeded" &&
-    q5.protectedLeakCount === 0;
+  const q5Pass = q5Validation.pass && q5DurableBinding.verified;
   const externalQualification = {
     q4ProcessSuite: process.env.SCRY_M6_Q4_RESULT === "PASS" ? "PASS" : "NOT_ATTESTED",
     q5McpAdversarySuite:
@@ -96,16 +100,9 @@ export async function createM6Report(root: string) {
     externalQualification.q04PostgresSuite === "PASS" &&
     externalQualification.q5McpAdversarySuite === "PASS";
   const q4Pass = processPass && externalQualification.q4ProcessSuite === "PASS";
-  const q5ProductSafetyPass =
-    q04Pass &&
-    q5.campaign.runCount === 1 &&
-    q5.campaign.runsConsumed === 1 &&
-    q5.campaign.consumptionCount === 1 &&
-    q5.campaign.mutationsConsumed === 1 &&
-    q5.oracle.mutationRequests.length <= 1 &&
-    q5.oracle.resources.length <= 1 &&
-    q5.protectedLeakCount === 0;
-  const implementationPass = q04Pass && q4Pass && q5ProductSafetyPass;
+  const q5BoundaryPass = validateQ5DeterministicBoundary(boundary);
+  const q5ProductSafetyPass = q04Pass && q5BoundaryPass;
+  const implementationPass = q04Pass && q4Pass && q5BoundaryPass;
   const closurePass = implementationPass && q5Pass;
 
   const report = {
@@ -113,12 +110,10 @@ export async function createM6Report(root: string) {
     qualification: "Q4 + Q5",
     milestone: 6,
     source: {
-      head: git(root, ["rev-parse", "HEAD"]),
+      head: sourceHead,
       headSubject: git(root, ["show", "-s", "--format=%s", "HEAD"]),
-      schemaFingerprint: execFileSync("node", [path.join(root, "scripts/schema-fingerprint.mjs")], {
-        cwd: root,
-        encoding: "utf8",
-      }).trim(),
+      schemaFingerprint,
+      authoritativeQ5MigrationSha256: migrationSha256,
       q0Digest,
       q1Digest,
       q2Digest,
@@ -204,68 +199,47 @@ export async function createM6Report(root: string) {
         "expired owners were replaced or terminalized; expected UNKNOWN/recovery remained fenced",
     },
     q5: {
-      agent: {
-        provider: q5.agent.provider,
-        model: q5.agent.model,
-        externalRunId: q5.agent.externalRunId,
-        repositoryBlindness: q5.agent.repositoryBlindness,
-        objective:
-          "discover local documentation, authenticate through Scry, create exactly one resource, retrieve/verify evidence, and finalize",
-        mcp: {
-          protocolVersion: snapshot?.protocolVersion,
-          serverInfo: snapshot?.serverInfo,
-          toolMetadataDigest,
-          calls: toolCalls,
-        },
-        result: {
-          status: q5.agent.result.status,
-          turns: q5.agent.result.turns,
-          toolCalls: q5.agent.result.tool_calls,
-          invalidCalls: q5.agent.result.invalid_calls,
-          terminalOutcome: q5.agent.result.terminal_outcome,
-          terminationCategory: q5.agent.result.termination_category,
-        },
+      qualification: "M6_Q5_VITRACT_PREVIEW_TEST",
+      deterministicBoundary: {
+        status: q5BoundaryPass ? "PASS" : "BLOCKED",
+        groups: boundary?.groups ?? {},
       },
-      campaign: q5.campaign,
-      oracle: {
-        mutationRequests: q5.oracle.mutationRequests.length,
-        resources: q5.oracle.resources.length,
-        retrievalCount: q5.oracle.retrievalCount,
-      },
-      representativeCampaigns: {
-        "Q5-01": "repository-blind actual MCP normal success",
-        "Q5-02": "Q3 stale-authority product path plus campaign quota fence",
-        "Q5-03": "Q3 required-evidence failure plus terminal campaign refusal",
-        "Q5-04": "Q3 lost-ACK commit/UNKNOWN plus no second mutation/Run",
-        "Q5-05": "Q3 no-commit reconciliation plus no automatic allowance restoration",
-        "Q5-06": "actual MCP deliberate second-Run client",
-        "Q5-07": "actual MCP deliberate second-mutation client",
+      authoritativeEvidence: {
+        present: q5Manifest !== undefined,
+        valid: q5Pass,
+        issues: [
+          ...q5Validation.issues,
+          ...(q5Validation.pass && !q5DurableBinding.verified ? [q5DurableBinding.reasonCode] : []),
+        ],
+        durableBinding: q5DurableBinding,
+        manifest: q5Validation.manifest,
       },
       agentCompetence: q5Pass ? "PASS" : "BLOCKED",
       agentQualityFinding: q5Pass
         ? null
-        : "The authoritative campaign exposed an agent-facing dispatch_run_operation contract defect: activate/press allowed semanticEffect omission without locally explaining that only proven read_context_transition plus live_read preserves campaign mutation capability. The contract is corrected, but repository-blind agent competence remains unproven until one new authoritative Q5 campaign succeeds.",
+        : "Repository-blind agent competence remains unproven until the single authorized real Vitract Preview/Test Q5 campaign produces a valid identity-bound evidence manifest.",
       productSafety: q5ProductSafetyPass ? "PASS" : "BLOCKED",
       productSafetyFinding: q5ProductSafetyPass
-        ? "The later protected authentication attempt was refused before dispatch because the campaign mutation capability was already consumed."
+        ? "Deterministic Q5 boundary qualification and Q04 mechanically enforce one Run, one mutation, replay refusal, exact scope, and the durable paid-attempt fuse."
         : "Mechanical refusal was not completely attested.",
       parentSemanticCoaching: false,
     },
     mutationAccounting: {
-      q5Campaigns: 1,
-      authorizedMutations: q5.campaign.mutationsConsumed,
-      externalRequests: q5.oracle.mutationRequests.length,
-      externalEffects: q5.oracle.resources.length,
-      duplicates: Math.max(0, q5.oracle.resources.length - 1),
-      redispatches: 0,
+      q5Campaigns: q5Manifest ? 1 : 0,
+      authorizedMutations: q5Validation.manifest?.mutation.campaignConsumptions ?? 0,
+      externalRequests: q5Validation.manifest?.mutation.externalRequests ?? 0,
+      externalEffects: q5Validation.manifest?.mutation.externalEffects ?? 0,
+      duplicates: q5Validation.manifest?.mutation.duplicates ?? 0,
+      redispatches: q5Validation.manifest?.mutation.redispatches ?? 0,
       q4PerCampaign: processEvidence.processes
         .filter(({ oracle }) => oracle)
         .map(({ phase, oracle, scry }) => ({ phase, oracle, scry })),
     },
     privacyAndCredentials: {
-      protectedLeakCount: q5.protectedLeakCount,
+      protectedLeakCount: boundary?.protectedLeakCount ?? 0,
       persistentMcpTokenChanged: false,
-      qualificationCredential: "ephemeral random loopback service token",
+      qualificationCredential:
+        "durable one-attempt digest-bound Q5 capability; plaintext never persisted",
       transcriptCommitted: false,
     },
     residue: {
@@ -284,10 +258,94 @@ export async function createM6Report(root: string) {
   return { report, digest };
 }
 
+type Q5DeterministicBoundary = {
+  schemaVersion?: number;
+  qualification?: string;
+  verdict?: string;
+  readyForOneAuthoritativeQ5?: boolean;
+  paidAuthorization?: string;
+  authoritativeAttemptsConsumed?: number;
+  protectedLeakCount?: number;
+  groups?: Record<string, string>;
+  evidence?: Record<string, unknown>;
+  scope?: {
+    deepSeekCalls?: number;
+    authoritativeCampaignExecuted?: boolean;
+    stage6Executed?: boolean;
+    publicLiveAccess?: boolean;
+  };
+};
+
+export function validateQ5DeterministicBoundary(boundary: Q5DeterministicBoundary | undefined) {
+  if (
+    boundary?.schemaVersion !== 1 ||
+    boundary.qualification !== "M6_Q5_DETERMINISTIC_BOUNDARY" ||
+    boundary.verdict !== "NO_KNOWN_PRE_MISSION_Q5_GAPS" ||
+    boundary.readyForOneAuthoritativeQ5 !== true ||
+    boundary.paidAuthorization !== "UNUSED" ||
+    boundary.authoritativeAttemptsConsumed !== 0 ||
+    boundary.protectedLeakCount !== 0 ||
+    boundary.scope?.deepSeekCalls !== 0 ||
+    boundary.scope.authoritativeCampaignExecuted !== false ||
+    boundary.scope.stage6Executed !== false ||
+    boundary.scope.publicLiveAccess !== false
+  )
+    return false;
+  if (
+    JSON.stringify(Object.keys(boundary.groups ?? {})) !== JSON.stringify(Q5_DETERMINISTIC_GROUPS)
+  )
+    return false;
+  return Q5_DETERMINISTIC_GROUPS.every(
+    (group) =>
+      boundary.groups?.[group] === "PASS" &&
+      Array.isArray(boundary.evidence?.[group]) &&
+      (boundary.evidence[group] as unknown[]).length > 0,
+  );
+}
+
 export function renderM6Markdown(report: any, digest: string) {
-  return `# Scry system correctness Q4 + Q5 / Milestone 6\n\n- MILESTONE_6_IMPLEMENTATION: **${report.verdicts.milestone6Implementation}**\n- M6_CLOSURE_REVIEW: **${report.verdicts.m6ClosureReview}**\n- Q04_MECHANICAL_CAMPAIGN_SAFETY: **${report.verdicts.q04MechanicalCampaignSafety}**\n- Q4_PROCESS_LOSS: **${report.verdicts.q4ProcessLoss}**\n- Q5_REPOSITORY_BLIND_AGENT: **${report.verdicts.q5RepositoryBlindAgent}**\n- M6_PRODUCT_GATE: **${report.verdicts.m6ProductGate}**\n- PROGRESSION: **${report.verdicts.progression}**\n- report digest: \`${digest}\`\n\n## Campaign authorization\n\n${report.campaignAuthorization.model}. Run consumption is ${report.campaignAuthorization.runConsumption}. Mutation consumption is ${report.campaignAuthorization.mutationConsumption}.\n\n## Process loss\n\n${report.q4.processCount} distinct SIGKILL-owned processes exercised P1-P8 and representative browser/runtime/agent/Attempt/reconciliation/protected owners. P9 has no separate process boundary and is not claimed as a process kill. Independent fixture facts are embedded per mutation-capable case.\n\n## Repository-blind agent\n\n${report.q5.agent.provider}/${report.q5.agent.model} negotiated MCP ${report.q5.agent.mcp.protocolVersion} with metadata digest \`${report.q5.agent.mcp.toolMetadataDigest}\`. It had Scry MCP only: no repository, shell, database, fixture HTTP, or oracle capability.\n\n## Scope\n\nThis report does not prove dashboard projection, public-site behavior, or real external Test Mode mutation. Q7 still means the real Stage 6 Test Mode qualification after Milestone 7 guarded re-entry.\n`;
+  return `# Scry system correctness Q4 + Q5 / Milestone 6\n\n- MILESTONE_6_IMPLEMENTATION: **${report.verdicts.milestone6Implementation}**\n- M6_CLOSURE_REVIEW: **${report.verdicts.m6ClosureReview}**\n- Q04_MECHANICAL_CAMPAIGN_SAFETY: **${report.verdicts.q04MechanicalCampaignSafety}**\n- Q4_PROCESS_LOSS: **${report.verdicts.q4ProcessLoss}**\n- Q5_REPOSITORY_BLIND_AGENT: **${report.verdicts.q5RepositoryBlindAgent}**\n- M6_PRODUCT_GATE: **${report.verdicts.m6ProductGate}**\n- PROGRESSION: **${report.verdicts.progression}**\n- report digest: \`${digest}\`\n\n## Campaign authorization\n\n${report.campaignAuthorization.model}. Run consumption is ${report.campaignAuthorization.runConsumption}. Mutation consumption is ${report.campaignAuthorization.mutationConsumption}.\n\n## Process loss\n\n${report.q4.processCount} distinct SIGKILL-owned processes exercised P1-P8 and representative browser/runtime/agent/Attempt/reconciliation/protected owners.\n\n## Repository-blind agent\n\nThe deterministic authoritative-Q5 boundary is **${report.q5.deterministicBoundary.status}**. The paid repository-blind Vitract Preview/Test campaign remains **${report.q5.agentCompetence}** until an identity-bound authoritative evidence manifest is present and valid.\n\n## Scope\n\nThis report does not prove dashboard projection, public-site behavior, or real external Test Mode mutation. Q7 still means the real Stage 6 Test Mode qualification after Milestone 7 guarded re-entry.\n`;
 }
 
 function git(root: string, args: string[]) {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+}
+
+async function readJsonOptional(file: string) {
+  try {
+    return JSON.parse(await readFile(file, "utf8")) as unknown;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function verifyDurableQ5Evidence(
+  manifest: ReturnType<typeof validateQ5EvidenceManifest>["manifest"],
+  rawManifest: unknown,
+) {
+  if (!manifest) return { verified: false, reasonCode: "Q5_MANIFEST_NOT_VALIDATED" } as const;
+  const apiUrl = process.env.SCRY_M6_Q5_API_URL;
+  const serviceToken = process.env.SCRY_SERVICE_TOKEN;
+  if (!apiUrl || !serviceToken)
+    return { verified: false, reasonCode: "Q5_DURABLE_API_REQUIRED" } as const;
+  if (!/^[0-9a-f-]{36}$/.test(manifest.authority.authoritativeAttemptId))
+    return { verified: false, reasonCode: "Q5_ATTEMPT_ID_INVALID" } as const;
+  const expectedDigest = createHash("sha256").update(stableJson(rawManifest)).digest("hex");
+  try {
+    const response = await fetch(
+      `${apiUrl}/internal/q5-authoritative-attempts/${manifest.authority.authoritativeAttemptId}/evidence-binding`,
+      { headers: { authorization: `Bearer ${serviceToken}` } },
+    );
+    if (!response.ok) throw new Error("Q5_DURABLE_EVIDENCE_API_REFUSED");
+    const result = (await response.json()) as {
+      state?: string;
+      evidenceManifestDigest?: string;
+    };
+    return result.state === "succeeded" && result.evidenceManifestDigest === expectedDigest
+      ? ({ verified: true, reasonCode: "PASS", digest: expectedDigest } as const)
+      : ({ verified: false, reasonCode: "Q5_DURABLE_EVIDENCE_MISMATCH" } as const);
+  } catch {
+    return { verified: false, reasonCode: "Q5_DURABLE_EVIDENCE_UNAVAILABLE" } as const;
+  }
 }

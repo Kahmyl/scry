@@ -5,12 +5,21 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 
 import { ScryApiClient, type ExternalAgentIdentity } from "./api-client.js";
 import { createScryMcpServer } from "./server.js";
+import {
+  createQ5McpServer,
+  inspectQ5McpContract,
+  Q5_MCP_PROFILE,
+} from "./qualification/q5-server.js";
+import { Q5ScopedApiClient, type Q5Scope } from "./qualification/q5-scoped-api-client.js";
 import { observeMcpRequestRejected } from "./operational-events.js";
 
 const host = process.env.MCP_HOST ?? "0.0.0.0";
 const port = Number(process.env.MCP_PORT ?? 4100);
 const apiBaseUrl = process.env.SCRY_API_BASE_URL ?? "http://127.0.0.1:4000/api";
 const publicApiBaseUrl = process.env.SCRY_PUBLIC_API_BASE_URL ?? apiBaseUrl;
+const mcpProfile = process.env.SCRY_MCP_PROFILE ?? "general";
+const q5Contract =
+  mcpProfile === Q5_MCP_PROFILE ? await inspectQ5McpContract(controlClient()) : undefined;
 const allowedOrigins = new Set(
   (process.env.MCP_ALLOWED_ORIGINS ?? "")
     .split(",")
@@ -31,7 +40,9 @@ const httpServer = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
   if (
-    ["/agent-lab/heartbeat", "/agent-lab/terminate"].includes(url.pathname) &&
+    ["/agent-lab/heartbeat", "/agent-lab/terminate", "/agent-lab/provider-request"].includes(
+      url.pathname,
+    ) &&
     request.method === "POST"
   ) {
     const token = bearerToken(request.headers.authorization);
@@ -45,14 +56,23 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
     try {
-      const api = new ScryApiClient(apiBaseUrl, token, publicApiBaseUrl, identity);
+      const qualifiedApi = await apiForCredential(token, identity);
+      const api = controlClient(identity);
       const result =
-        url.pathname === "/agent-lab/heartbeat"
-          ? await api.post(`/external-agent-runs/${identity.externalRunId}/heartbeat`)
-          : await api.post(
-              `/external-agent-runs/${identity.externalRunId}/terminate`,
-              await readJsonBody(request),
-            );
+        url.pathname === "/agent-lab/provider-request"
+          ? qualifiedApi instanceof Q5ScopedApiClient
+            ? await api.post(
+                `/internal/q5-authoritative-attempts/${qualifiedApi.scope.attemptId}/provider-requests`,
+              )
+            : (() => {
+                throw new Error("Q5_PROVIDER_REQUEST_ACCOUNTING_REQUIRES_Q5_PROFILE");
+              })()
+          : url.pathname === "/agent-lab/heartbeat"
+            ? await api.post(`/external-agent-runs/${identity.externalRunId}/heartbeat`)
+            : await api.post(
+                `/external-agent-runs/${identity.externalRunId}/terminate`,
+                await readJsonBody(request),
+              );
       json(response, 200, result);
     } catch {
       json(response, 503, { settled: false, reasonCode: "AGENT_LIFECYCLE_CONTROL_UNAVAILABLE" });
@@ -62,12 +82,16 @@ const httpServer = createServer(async (request, response) => {
 
   if (url.pathname === "/health" && request.method === "GET") {
     try {
-      const api = new ScryApiClient(apiBaseUrl, process.env.SCRY_SERVICE_TOKEN, publicApiBaseUrl);
+      const api = controlClient();
       const readiness = await api.get<{ ready: boolean; releaseId: string }>("/ready");
+      const capabilities = await api.get<Record<string, unknown>>("/capabilities");
       json(response, readiness.ready ? 200 : 503, {
         status: readiness.ready ? "ok" : "not_ready",
         transport: "streamable-http",
         api: readiness,
+        profile: mcpProfile,
+        ...(q5Contract ? { q5Contract } : {}),
+        sourceIdentity: capabilities.sourceIdentity,
       });
     } catch {
       await observeRejection(request, 503, "MCP_API_READINESS_UNAVAILABLE");
@@ -134,10 +158,17 @@ const httpServer = createServer(async (request, response) => {
 
   if (session === undefined) {
     const identity = externalAgentIdentity(request);
-    const api = new ScryApiClient(apiBaseUrl, token, publicApiBaseUrl, identity);
+    let api: ScryApiClient;
+    try {
+      api = await apiForCredential(token, identity);
+    } catch {
+      await observeRejection(request, 403, "Q5_SCOPED_CREDENTIAL_INVALID");
+      json(response, 403, mcpError(-32001, "The Q5 scoped credential is invalid."));
+      return;
+    }
     if (identity.externalRunId) {
       try {
-        await api.post(`/external-agent-runs/${identity.externalRunId}/start`, {
+        await controlClient(identity).post(`/external-agent-runs/${identity.externalRunId}/start`, {
           provider: identity.provider,
           ...(identity.model ? { model: identity.model } : {}),
           ...(identity.experimentId ? { experimentId: identity.experimentId } : {}),
@@ -149,7 +180,8 @@ const httpServer = createServer(async (request, response) => {
         return;
       }
     }
-    const server = createScryMcpServer(api);
+    const server =
+      mcpProfile === Q5_MCP_PROFILE ? createQ5McpServer(api) : createScryMcpServer(api);
 
     let initializedSession: McpHttpSession | undefined;
 
@@ -219,6 +251,35 @@ function bearerToken(value: string | undefined) {
   if (!value) return undefined;
   const [scheme, token, extra] = value.trim().split(/\s+/);
   return scheme?.toLowerCase() === "bearer" && token && !extra ? token : undefined;
+}
+
+function controlClient(identity: ExternalAgentIdentity = { provider: "q5-supervisor" }) {
+  const token = process.env.SCRY_SERVICE_TOKEN;
+  if (!token) throw new Error("SCRY_SERVICE_TOKEN_REQUIRED");
+  return new ScryApiClient(apiBaseUrl, token, publicApiBaseUrl, identity);
+}
+
+async function apiForCredential(token: string, identity: ExternalAgentIdentity) {
+  if (mcpProfile !== Q5_MCP_PROFILE)
+    return new ScryApiClient(apiBaseUrl, token, publicApiBaseUrl, identity);
+  if (!identity.externalRunId) throw new Error("Q5_EXTERNAL_RUN_ID_REQUIRED");
+  const serviceToken = process.env.SCRY_SERVICE_TOKEN;
+  if (!serviceToken) throw new Error("SCRY_SERVICE_TOKEN_REQUIRED");
+  const control = controlClient(identity);
+  const scope = await control.post<Q5Scope>("/internal/q5-authoritative-attempts/scope", {
+    credential: token,
+    externalRunId: identity.externalRunId,
+  });
+  if (scope.externalRunId !== identity.externalRunId)
+    throw new Error("Q5_EXTERNAL_RUN_SCOPE_MISMATCH");
+  return new Q5ScopedApiClient(
+    apiBaseUrl,
+    serviceToken,
+    publicApiBaseUrl,
+    identity,
+    scope,
+    control,
+  );
 }
 
 function observeRejection(

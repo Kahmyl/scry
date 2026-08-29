@@ -12,6 +12,7 @@ export * from "./authoring-runtime-command.js";
 export * from "./campaign.js";
 export * from "./mission-live-campaign.js";
 export * from "./qualification-campaign.js";
+export * from "./q5-qualification.js";
 export * from "./performance.js";
 export * from "./adaptive-session.js";
 export * from "./execution-kernel.js";

@@ -4,9 +4,9 @@ import {
   type CreateQualificationCampaignInput,
 } from "@scry/contracts";
 
-import { CurrentPrincipal, type Principal } from "../auth/index.js";
-import { ZodValidationPipe } from "../common/validation.pipe.js";
-import { QualificationCampaignRepository } from "./repositories/qualification-campaign.repository.js";
+import { CurrentPrincipal, type Principal } from "../../auth/index.js";
+import { ZodValidationPipe } from "../../common/validation.pipe.js";
+import { QualificationCampaignRepository } from "../repositories/qualification-campaign.repository.js";
 
 @Controller("api")
 export class QualificationCampaignController {

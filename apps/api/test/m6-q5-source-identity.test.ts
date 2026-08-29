@@ -93,7 +93,7 @@ describe("M6 Q5 authoritative source identity", () => {
 
   it("keeps synthetic fixture identity out of the authoritative launcher", async () => {
     const launcher = await readFile(
-      path.join(repositoryRoot, "apps/api/scripts/m6-q5-agent-campaign.ts"),
+      path.join(repositoryRoot, "apps/api/scripts/m6-q5-authoritative.ts"),
       "utf8",
     );
     const syntheticFixture = await readFile(
@@ -109,33 +109,44 @@ describe("M6 Q5 authoritative source identity", () => {
     expect(launcher).not.toContain('SCRY_SOURCE_DIRTY: "true"');
     expect(launcher).not.toContain("5da3201636bac6b69c0943845bc1d05852d6f6c0");
     expect(launcher).toContain("deriveRepositorySourceIdentity(root)");
-    expect(launcher).toContain("sourceIdentityEnvironment(sourceIdentity)");
-    expect(launcher).toContain('requiredIdentity("SCRY_GIT_COMMIT", 40)');
-    expect(launcher).toContain('requiredIdentity("SCRY_SOURCE_MANIFEST_SHA256", 64)');
+    expect(launcher).toContain("assertAuthoritativeSourceIdentity(initialSource");
+    expect(launcher).toContain("assertRuntimeSourceIdentity(api.sourceIdentity, initialSource)");
     expect(dockerLauncher).toContain("deriveRepositorySourceIdentity()");
     expect(dockerLauncher).toContain("sourceIdentityEnvironment(sourceIdentity)");
     expect(syntheticFixture).toContain('SCRY_SOURCE_MANIFEST_SHA256: "e".repeat(64)');
     expect(syntheticFixture).toContain('SCRY_SOURCE_DIRTY: "true"');
   });
 
-  it("completes source and runtime preflight before creating campaign authority", async () => {
+  it("completes every source and runtime gate before transactionally preparing authority", async () => {
     const launcher = await readFile(
-      path.join(repositoryRoot, "apps/api/scripts/m6-q5-agent-campaign.ts"),
+      path.join(repositoryRoot, "apps/api/scripts/m6-q5-authoritative.ts"),
       "utf8",
     );
-    const sourcePreflight = launcher.indexOf("assertAuthoritativeSourceIdentity(sourceIdentity");
-    const runtimePreflight = launcher.indexOf("assertRuntimeSourceIdentity(");
-    const stableSourcePreflight = launcher.lastIndexOf("assertAuthoritativeSourceIdentity(");
-    const missionSeed = launcher.indexOf("const scope = await seedAgentScope");
-    const campaignCreation = launcher.indexOf("const campaign = await campaigns.create");
-    const paidAgent = launcher.indexOf("const agent = spawn");
+    const paidBoundary = launcher.indexOf("await crossPaidQ5Boundary({");
+    const gateBinding = launcher.indexOf("gates,", paidBoundary);
+    const authorityPreparation = launcher.indexOf(
+      "prepared = await provisionExactQualificationScope()",
+    );
+    const transactionalPreparation = launcher.indexOf(
+      "const attempt = await attempts.prepareUsing",
+    );
+    const finalRuntimeRefingerprint = launcher.indexOf(
+      "await assertCampaignSourceStable()",
+      transactionalPreparation,
+    );
+    const attemptConsumption = launcher.indexOf(
+      "await attempts.consumeUsing(",
+      transactionalPreparation,
+    );
+    const paidAgent = launcher.indexOf("return Q5OwnedProcess.start({");
 
-    expect(sourcePreflight).toBeGreaterThan(-1);
-    expect(runtimePreflight).toBeGreaterThan(sourcePreflight);
-    expect(stableSourcePreflight).toBeGreaterThan(runtimePreflight);
-    expect(missionSeed).toBeGreaterThan(stableSourcePreflight);
-    expect(campaignCreation).toBeGreaterThan(missionSeed);
-    expect(paidAgent).toBeGreaterThan(campaignCreation);
+    expect(paidBoundary).toBeGreaterThan(-1);
+    expect(gateBinding).toBeGreaterThan(paidBoundary);
+    expect(authorityPreparation).toBeGreaterThan(gateBinding);
+    expect(paidAgent).toBeGreaterThan(authorityPreparation);
+    expect(transactionalPreparation).toBeGreaterThan(-1);
+    expect(finalRuntimeRefingerprint).toBeGreaterThan(transactionalPreparation);
+    expect(attemptConsumption).toBeGreaterThan(finalRuntimeRefingerprint);
   });
 });
 
