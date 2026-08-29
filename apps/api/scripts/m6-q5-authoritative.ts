@@ -13,6 +13,12 @@ import {
 import { decryptCredential } from "../src/access/credential.crypto.js";
 import { Database } from "../src/infrastructure/index.js";
 import { Q5AuthoritativeAttemptRepository } from "../src/runtime/repositories/q5-authoritative-attempt.repository.js";
+import { Q5ScopeBootstrapRepository } from "../src/runtime/repositories/q5-scope-bootstrap.repository.js";
+import {
+  LIVE_Q5_CREDENTIAL_ISSUANCE_REQUIRED,
+  bootstrapQ5CanonicalScope,
+  type Q5PreparedScope,
+} from "../src/runtime/q5-scope-bootstrap.js";
 import {
   VITRACT_CREATE_QUALIFICATION,
   loadDurableContext,
@@ -41,7 +47,7 @@ const output = path.resolve(
 const expectedSchema = required("SCRY_SCHEMA_FINGERPRINT", /^[a-f0-9]{64}$/);
 const expectedMigration = createHash("sha256")
   .update(
-    await readFile(new URL("../migrations/authoritative-q5-qualification.sql", import.meta.url)),
+    await readFile(new URL("../migrations/q5-canonical-scope-bootstrap.sql", import.meta.url)),
   )
   .digest("hex");
 const databaseUrl = required("SCRY_M6_TEST_DATABASE_URL", /^postgres(?:ql)?:\/\//);
@@ -59,103 +65,148 @@ assertHighLevelQ5Objective(externalObjective);
 await mkdir(output, { recursive: true });
 
 try {
-  const gates = await gatesForCurrentRuntime();
-  if (mode === "preflight") {
-    const results = await runPrepaidFreeQ5Gates(gates);
+  const bootstrap = await prepareCanonicalQ5Scope();
+  if (bootstrap.status === "credential_issuance_required") {
     await writeSafe("preflight.json", {
-      verdict: "NO_KNOWN_PRE_MISSION_Q5_GAPS",
+      verdict: "Q5_REPOSITORY_BLIND_AGENT_BLOCKED",
+      blocker: LIVE_Q5_CREDENTIAL_ISSUANCE_REQUIRED,
+      projectId: bootstrap.projectId,
+      environmentId: bootstrap.environmentId,
       paidAuthorization: "UNUSED",
       attemptsConsumed: 0,
-      phases: results,
     });
-    process.stdout.write("NO_KNOWN_PRE_MISSION_Q5_GAPS\nREADY_FOR_ONE_AUTHORITATIVE_Q5\n");
+    process.stdout.write(`${LIVE_Q5_CREDENTIAL_ISSUANCE_REQUIRED}\n`);
+    process.exitCode = 2;
   } else {
-    if (process.env.SCRY_M6_Q5_PAID_AUTHORIZATION !== "explicit-single-attempt")
-      throw new Error("Q5_EXPLICIT_SINGLE_PAID_ATTEMPT_AUTHORIZATION_REQUIRED");
-    const providerKey = required("DEEPSEEK_API_KEY", /\S/);
-    let prepared: Awaited<ReturnType<typeof provisionExactQualificationScope>> | undefined;
-    try {
-      const crossed = await crossPaidQ5Boundary({
-        gates,
-        consumeAttempt: async () => {
-          prepared = await provisionExactQualificationScope();
-          return { attemptId: prepared.attemptId, state: "consumed" as const };
-        },
-        constructProviderAfterConsumption: async () => {
-          if (!prepared) throw new Error("Q5_ATTEMPT_SCOPE_NOT_PREPARED");
-          const environment = minimalAgentEnvironment({
-            parent: process.env,
-            mcpCredential: prepared.credential,
-            providerKey,
-            protectedCanaries: prepared.canaries,
-          });
-          return Q5OwnedProcess.start({
-            executable: path.join(root, "apps/agent-lab/.venv/bin/scry-agent-lab"),
-            arguments: [
-              "run",
-              "--provider",
-              "deepseek",
-              "--model",
-              model,
-              "--profile",
-              "capable_live_journey",
-              "--external-run-id",
-              prepared.externalRunId,
-              "--experiment-id",
-              prepared.externalRunId,
-              "--mcp-url",
-              required("SCRY_M6_Q5_MCP_URL", /^http:\/\/127\.0\.0\.1:/),
-              "--output-directory",
-              output,
-              "--expected-attempt-id",
-              prepared.attemptId,
-              "--expected-campaign-id",
-              prepared.campaignId,
-              "--expected-mission-id",
-              prepared.missionId,
-              "--expected-objective-id",
-              prepared.objectiveId,
-              "--expected-agent-session-id",
-              prepared.agentSessionId,
-              "--objective",
-              externalObjective,
-            ],
-            environment,
-            repositoryRoot: root,
-            outputDirectory: output,
-            timeoutMs: Number(process.env.SCRY_M6_Q5_AGENT_TIMEOUT_MS ?? 3_600_000),
-          });
-        },
+    const preparedScope = bootstrap.scope;
+    const protectedContext = await loadDurableContext({
+      projectId: preparedScope.projectId,
+      environmentId: preparedScope.environmentId,
+      credentialReferenceIds: [
+        preparedScope.clientIdReferenceId,
+        preparedScope.clientSecretReferenceId,
+      ],
+    });
+    const gates = await gatesForCurrentRuntime(preparedScope, protectedContext);
+    if (mode === "preflight") {
+      const results = await runPrepaidFreeQ5Gates(gates);
+      await writeSafe("preflight.json", {
+        verdict: "NO_KNOWN_PRE_MISSION_Q5_GAPS",
+        paidAuthorization: "UNUSED",
+        attemptsConsumed: 0,
+        phases: results,
       });
-      if (!prepared) throw new Error("Q5_ATTEMPT_SCOPE_NOT_PREPARED");
-      const result = await crossed.provider.wait();
-      if (result.exitCode !== 0) throw new Error("Q5_AUTHORITATIVE_AGENT_FAILED");
-      await assertCampaignSourceStable();
-      const privacy = await recursivePrivacyScan(output, prepared.canaries);
-      if (privacy.protectedLeakCount) throw new Error("Q5_PROTECTED_ARTIFACT_LEAK");
-      const evidence = await verifyAuthoritativeResult(prepared, privacy);
-      evidence.authority.authoritativeAttemptState = "succeeded";
-      const evidenceDigest = createHash("sha256").update(stableJson(evidence)).digest("hex");
-      await attempts.settle(prepared.attemptId, "succeeded", evidenceDigest);
-      await writeSafe("../q5-authoritative-evidence.json", evidence);
-      await writeSafe("execution-boundary.json", {
-        attemptId: prepared.attemptId,
-        campaignId: prepared.campaignId,
-        exitCode: result.exitCode,
-        cwdOutsideRepository: true,
-        privacy,
-      });
-      process.stdout.write("Q5_AUTHORITATIVE_PARENT_VERIFICATION_PASS\n");
-    } catch (error) {
-      if (prepared) await closeFailedScope(prepared, error);
-      throw error;
+      process.stdout.write("NO_KNOWN_PRE_MISSION_Q5_GAPS\nREADY_FOR_ONE_AUTHORITATIVE_Q5\n");
+    } else {
+      if (process.env.SCRY_M6_Q5_PAID_AUTHORIZATION !== "explicit-single-attempt")
+        throw new Error("Q5_EXPLICIT_SINGLE_PAID_ATTEMPT_AUTHORIZATION_REQUIRED");
+      const providerKey = required("DEEPSEEK_API_KEY", /\S/);
+      let prepared: Awaited<ReturnType<typeof provisionExactQualificationScope>> | undefined;
+      try {
+        const crossed = await crossPaidQ5Boundary({
+          gates,
+          consumeAttempt: async () => {
+            prepared = await provisionExactQualificationScope(preparedScope, protectedContext);
+            return { attemptId: prepared.attemptId, state: "consumed" as const };
+          },
+          constructProviderAfterConsumption: async () => {
+            if (!prepared) throw new Error("Q5_ATTEMPT_SCOPE_NOT_PREPARED");
+            const environment = minimalAgentEnvironment({
+              parent: process.env,
+              mcpCredential: prepared.credential,
+              providerKey,
+              protectedCanaries: prepared.canaries,
+            });
+            return Q5OwnedProcess.start({
+              executable: path.join(root, "apps/agent-lab/.venv/bin/scry-agent-lab"),
+              arguments: [
+                "run",
+                "--provider",
+                "deepseek",
+                "--model",
+                model,
+                "--profile",
+                "capable_live_journey",
+                "--external-run-id",
+                prepared.externalRunId,
+                "--experiment-id",
+                prepared.externalRunId,
+                "--mcp-url",
+                required("SCRY_M6_Q5_MCP_URL", /^http:\/\/127\.0\.0\.1:/),
+                "--output-directory",
+                output,
+                "--expected-attempt-id",
+                prepared.attemptId,
+                "--expected-campaign-id",
+                prepared.campaignId,
+                "--expected-mission-id",
+                prepared.missionId,
+                "--expected-objective-id",
+                prepared.objectiveId,
+                "--expected-agent-session-id",
+                prepared.agentSessionId,
+                "--objective",
+                externalObjective,
+              ],
+              environment,
+              repositoryRoot: root,
+              outputDirectory: output,
+              timeoutMs: Number(process.env.SCRY_M6_Q5_AGENT_TIMEOUT_MS ?? 3_600_000),
+            });
+          },
+        });
+        if (!prepared) throw new Error("Q5_ATTEMPT_SCOPE_NOT_PREPARED");
+        const result = await crossed.provider.wait();
+        if (result.exitCode !== 0) throw new Error("Q5_AUTHORITATIVE_AGENT_FAILED");
+        await assertCampaignSourceStable();
+        const privacy = await recursivePrivacyScan(output, prepared.canaries);
+        if (privacy.protectedLeakCount) throw new Error("Q5_PROTECTED_ARTIFACT_LEAK");
+        const evidence = await verifyAuthoritativeResult(prepared, privacy);
+        evidence.authority.authoritativeAttemptState = "succeeded";
+        const evidenceDigest = createHash("sha256").update(stableJson(evidence)).digest("hex");
+        await attempts.settle(prepared.attemptId, "succeeded", evidenceDigest);
+        await writeSafe("../q5-authoritative-evidence.json", evidence);
+        await writeSafe("execution-boundary.json", {
+          attemptId: prepared.attemptId,
+          campaignId: prepared.campaignId,
+          exitCode: result.exitCode,
+          cwdOutsideRepository: true,
+          privacy,
+        });
+        process.stdout.write("Q5_AUTHORITATIVE_PARENT_VERIFICATION_PASS\n");
+      } catch (error) {
+        if (prepared) await closeFailedScope(prepared, error);
+        throw error;
+      }
     }
   }
 } finally {
   await database.onModuleDestroy();
 }
 
-async function gatesForCurrentRuntime(): Promise<Record<Q5PrepaidFreePhase, Q5Gate>> {
+async function prepareCanonicalQ5Scope() {
+  const ownerUserId = required("SCRY_M6_Q5_OWNER_USER_ID", /^[0-9a-f-]{36}$/);
+  const owner = await database.query<{ workspaceId: string }>(
+    `SELECT membership.workspace_id::text AS "workspaceId"
+       FROM workspace_memberships membership
+      WHERE membership.user_id=$1 AND membership.role IN ('owner','admin')
+      ORDER BY membership.created_at LIMIT 2`,
+    [ownerUserId],
+  );
+  if (owner.rowCount !== 1) throw new Error("Q5_CANONICAL_WORKSPACE_OWNER_AMBIGUOUS");
+  const store = new Q5ScopeBootstrapRepository(database, owner.rows[0]!.workspaceId);
+  return bootstrapQ5CanonicalScope(store, {
+    sourceCommit: source.commitSha,
+    sourceManifest: source.manifestSha256,
+    schemaFingerprint: expectedSchema,
+    migrationIdentity: expectedMigration,
+  });
+}
+
+async function gatesForCurrentRuntime(
+  preparedScope: Q5PreparedScope,
+  preparedContext: Awaited<ReturnType<typeof loadDurableContext>>,
+): Promise<Record<Q5PrepaidFreePhase, Q5Gate>> {
   let initialSource = source;
   let protectedContext: Awaited<ReturnType<typeof loadDurableContext>> | undefined;
   const apiUrl = required("SCRY_M6_Q5_API_URL", /^http:\/\/127\.0\.0\.1:/);
@@ -167,6 +218,57 @@ async function gatesForCurrentRuntime(): Promise<Record<Q5PrepaidFreePhase, Q5Ga
     return (await response.json()) as any;
   };
   return {
+    real_shaped_canonical_bootstrap: async () => ({
+      pass: true,
+      projectId: preparedScope.projectId,
+      environmentId: preparedScope.environmentId,
+      generatedIdentityCompatible: true,
+      fixtureIdentityRequired: false,
+      paidAttemptCreated: false,
+    }),
+    prepared_scope_validity: async () => {
+      const current = await database.query<any>(
+        `SELECT scope.state,scope.binding_digest AS "bindingDigest",
+                client_id.security_status AS "clientIdStatus",
+                client_secret.security_status AS "clientSecretStatus",
+                issuance.state AS "issuanceState",issuance.persistence_state AS "persistenceState",
+                issuance.mutation_outcome AS "mutationOutcome"
+           FROM q5_prepared_scopes scope
+           JOIN project_credentials client_id ON client_id.id=scope.client_id_reference_id
+           JOIN project_credentials client_secret ON client_secret.id=scope.client_secret_reference_id
+           JOIN protected_operations issuance ON issuance.id=scope.issuance_operation_id
+          WHERE scope.id=$1 AND scope.project_id=$2 AND scope.environment_id=$3
+            AND scope.source_commit=$4 AND scope.source_manifest=$5
+            AND scope.schema_fingerprint=$6 AND scope.migration_identity=$7
+            AND client_id.deleted_at IS NULL AND client_secret.deleted_at IS NULL`,
+        [
+          preparedScope.id,
+          preparedScope.projectId,
+          preparedScope.environmentId,
+          source.commitSha,
+          source.manifestSha256,
+          expectedSchema,
+          expectedMigration,
+        ],
+      );
+      const row = current.rows[0];
+      if (
+        current.rowCount !== 1 ||
+        row.state !== "prepared" ||
+        row.bindingDigest !== preparedScope.bindingDigest ||
+        row.clientIdStatus !== "active" ||
+        row.clientSecretStatus !== "active" ||
+        row.issuanceState !== "completed" ||
+        row.persistenceState !== "committed" ||
+        row.mutationOutcome !== "applied"
+      )
+        throw new Error("Q5_PREPARED_SCOPE_INVALIDATED");
+      return {
+        pass: true,
+        preparedScopeId: preparedScope.id,
+        bindingDigest: preparedScope.bindingDigest,
+      };
+    },
     immutable_source: async () => {
       initialSource = deriveRepositorySourceIdentity(root);
       assertAuthoritativeSourceIdentity(initialSource, {
@@ -195,7 +297,7 @@ async function gatesForCurrentRuntime(): Promise<Record<Q5PrepaidFreePhase, Q5Ga
           LEFT JOIN attempts run_attempt ON run_attempt.run_id=run.id
           LEFT JOIN agent_sessions agent ON agent.mission_id=mission.id
          WHERE mission.project_id=$1 AND mission.title LIKE 'M6 Q5 authoritative:%'`,
-        [VITRACT_CREATE_QUALIFICATION.projectId],
+        [preparedScope.projectId],
       );
       if (Object.values(state.rows[0] ?? {}).some((value) => Number(value) > 0))
         throw new Error("Q5_CONFLICTING_LIVE_STATE");
@@ -221,7 +323,7 @@ async function gatesForCurrentRuntime(): Promise<Record<Q5PrepaidFreePhase, Q5Ga
                  OR operation.lease_owner IS NOT NULL)
                AND mission.title LIKE 'M6 Q5 authoritative:%')
           )::int count`,
-        [VITRACT_CREATE_QUALIFICATION.projectId, VITRACT_CREATE_QUALIFICATION.environmentId],
+        [preparedScope.projectId, preparedScope.environmentId],
       );
       if (unresolved.rows[0]?.count) throw new Error("Q5_UNSAFE_LIVE_RESIDUE");
       const priorAttempt = await database.query<{ count: number }>(
@@ -232,7 +334,7 @@ async function gatesForCurrentRuntime(): Promise<Record<Q5PrepaidFreePhase, Q5Ga
       return { pass: true, historicalTerminalRowsAllowed: true };
     },
     canonical_application_environment_protected_auth: async () => {
-      protectedContext = await loadDurableContext();
+      protectedContext = preparedContext;
       if (
         protectedContext.credentialReferenceIds.length !== 2 ||
         !protectedContext.allowedOrigins.includes(VITRACT_CREATE_QUALIFICATION.providerOrigin)
@@ -240,8 +342,8 @@ async function gatesForCurrentRuntime(): Promise<Record<Q5PrepaidFreePhase, Q5Ga
         throw new Error("Q5_CANONICAL_PROTECTED_BINDING_INVALID");
       return {
         pass: true,
-        projectId: VITRACT_CREATE_QUALIFICATION.projectId,
-        environmentId: VITRACT_CREATE_QUALIFICATION.environmentId,
+        projectId: preparedScope.projectId,
+        environmentId: preparedScope.environmentId,
         applicationIdentity: "vitract-preview-test",
         credentialCount: 2,
       };
@@ -314,7 +416,7 @@ async function gatesForCurrentRuntime(): Promise<Record<Q5PrepaidFreePhase, Q5Ga
            FROM project_credentials
           WHERE project_id=$1 AND id=ANY($2::uuid[])
             AND deleted_at IS NULL AND security_status='active'`,
-        [VITRACT_CREATE_QUALIFICATION.projectId, protectedContext.credentialReferenceIds],
+        [preparedScope.projectId, protectedContext.credentialReferenceIds],
       );
       if (
         encrypted.rowCount !== protectedContext.credentialReferenceIds.length ||
@@ -347,8 +449,10 @@ async function gatesForCurrentRuntime(): Promise<Record<Q5PrepaidFreePhase, Q5Ga
   };
 }
 
-async function provisionExactQualificationScope() {
-  const context = await loadDurableContext();
+async function provisionExactQualificationScope(
+  preparedScope: Q5PreparedScope,
+  context: Awaited<ReturnType<typeof loadDurableContext>>,
+) {
   const credential = `scry_q5_${randomBytes(32).toString("hex")}`;
   const credentialDigest = createHash("sha256").update(credential).digest("hex");
   const ids = Object.fromEntries(
@@ -366,9 +470,9 @@ async function provisionExactQualificationScope() {
   const prepared = await database.transaction(async (client) => {
     const applicationId = await attempts.createCanonicalApplicationUsing(client, {
       identity: "vitract-preview-test",
-      projectId: VITRACT_CREATE_QUALIFICATION.projectId,
-      environmentId: VITRACT_CREATE_QUALIFICATION.environmentId,
-      baseOrigin: VITRACT_CREATE_QUALIFICATION.providerOrigin,
+      projectId: preparedScope.projectId,
+      environmentId: preparedScope.environmentId,
+      baseOrigin: preparedScope.targetOrigin,
       allowedOrigins: context.allowedOrigins,
       credentialReferenceIds: context.credentialReferenceIds,
     });
@@ -379,7 +483,7 @@ async function provisionExactQualificationScope() {
          JOIN workspace_memberships membership ON membership.workspace_id=project.workspace_id
          JOIN app_users owner_user ON owner_user.id=membership.user_id
         WHERE project.id=$1 AND owner_user.id=$2 AND membership.role IN ('owner','admin')`,
-      [VITRACT_CREATE_QUALIFICATION.projectId, ownerUserId],
+      [preparedScope.projectId, ownerUserId],
     );
     if (!workspace.rowCount) throw new Error("Q5_PROJECT_NOT_FOUND");
     await client.query(
@@ -387,7 +491,7 @@ async function provisionExactQualificationScope() {
        VALUES($1,$2,$3,$4,'running')`,
       [
         ids.missionId,
-        VITRACT_CREATE_QUALIFICATION.projectId,
+        preparedScope.projectId,
         `M6 Q5 authoritative:${ids.externalRunId}`,
         externalObjective,
       ],
@@ -419,7 +523,7 @@ async function provisionExactQualificationScope() {
       [
         ids.agentSessionId,
         ids.missionId,
-        VITRACT_CREATE_QUALIFICATION.projectId,
+        preparedScope.projectId,
         workspace.rows[0]!.workspaceId,
         model,
         ids.externalRunId,
@@ -438,7 +542,7 @@ async function provisionExactQualificationScope() {
         {
           id: "discover-vitract-public-contract",
           title: "Discover the assigned application's public contract",
-          action: { type: "navigate", url: VITRACT_CREATE_QUALIFICATION.providerOrigin },
+          action: { type: "navigate", url: preparedScope.targetOrigin },
           assertions: [],
           onFailure: "stop",
           evidence: ["screenshot", "dom", "network"],
@@ -454,7 +558,7 @@ async function provisionExactQualificationScope() {
        ) VALUES($1,$2,'M6 authoritative Vitract Q5',$3,'mission_local','primary',$4,$5,$6,$4,$5)`,
       [
         ids.flowId,
-        VITRACT_CREATE_QUALIFICATION.projectId,
+        preparedScope.projectId,
         ids.flowRevisionId,
         ids.missionId,
         ids.objectiveId,
@@ -486,10 +590,10 @@ async function provisionExactQualificationScope() {
        ) VALUES($1,$2,$3,$4,$5,$6,'M6 authoritative Vitract Q5','{}',$7::jsonb,$8)`,
       [
         ids.flowDraftId,
-        VITRACT_CREATE_QUALIFICATION.projectId,
+        preparedScope.projectId,
         ids.missionId,
         ids.objectiveId,
-        VITRACT_CREATE_QUALIFICATION.environmentId,
+        preparedScope.environmentId,
         ids.flowId,
         JSON.stringify(plan),
         ids.agentSessionId,
@@ -503,12 +607,12 @@ async function provisionExactQualificationScope() {
        ) VALUES($1,$2,$3,$4,$5,$6,'system_correctness',$7,'vitract-preview-test',$8,'local_test',$9,$10,$11,1,1,now()+interval '2 hours')`,
       [
         ids.campaignId,
-        VITRACT_CREATE_QUALIFICATION.projectId,
-        VITRACT_CREATE_QUALIFICATION.environmentId,
+        preparedScope.projectId,
+        preparedScope.environmentId,
         ids.missionId,
         ids.objectiveId,
         ids.agentSessionId,
-        VITRACT_CREATE_QUALIFICATION.providerOrigin,
+        preparedScope.targetOrigin,
         applicationId,
         ownerUserId,
         source.manifestSha256,
@@ -517,17 +621,18 @@ async function provisionExactQualificationScope() {
     );
     const attempt = await attempts.prepareUsing(client, {
       campaignId: ids.campaignId!,
+      preparedScopeId: preparedScope.id,
       canonicalApplicationId: applicationId,
       applicationIdentity: "vitract-preview-test",
-      projectId: VITRACT_CREATE_QUALIFICATION.projectId,
-      environmentId: VITRACT_CREATE_QUALIFICATION.environmentId,
+      projectId: preparedScope.projectId,
+      environmentId: preparedScope.environmentId,
       missionId: ids.missionId!,
       objectiveId: ids.objectiveId!,
       agentSessionId: ids.agentSessionId!,
       externalRunId: ids.externalRunId!,
       flowDraftId: ids.flowDraftId!,
       flowRevisionId: ids.flowRevisionId!,
-      targetOrigin: VITRACT_CREATE_QUALIFICATION.providerOrigin,
+      targetOrigin: preparedScope.targetOrigin,
       sourceCommit: source.commitSha,
       sourceManifest: source.manifestSha256,
       schemaFingerprint: expectedSchema,
@@ -556,6 +661,9 @@ async function provisionExactQualificationScope() {
     campaignId: ids.campaignId!,
     externalRunId: ids.externalRunId!,
     ...prepared,
+    preparedScopeId: preparedScope.id,
+    projectId: preparedScope.projectId,
+    environmentId: preparedScope.environmentId,
     credential,
     credentialDigest,
     canaries: [
@@ -794,11 +902,7 @@ async function verifyAuthoritativeResult(
        JOIN protected_operations operation ON operation.id=binding.source_protected_operation_id
          AND operation.run_id=consumption.run_id AND operation.operation_id=consumption.operation_id
       WHERE consumption.campaign_authorization_id=$1 AND binding.lifecycle_state='active'`,
-    [
-      scope.campaignId,
-      VITRACT_CREATE_QUALIFICATION.projectId,
-      VITRACT_CREATE_QUALIFICATION.environmentId,
-    ],
+    [scope.campaignId, scope.projectId, scope.environmentId],
   );
   if (
     mutation.rowCount !== 1 ||
@@ -825,7 +929,7 @@ async function verifyAuthoritativeResult(
                 authentication_tag AS "authenticationTag"
            FROM project_credentials WHERE id=$1 AND project_id=$2
              AND security_status='active' AND deleted_at IS NULL`,
-          [credentialId, VITRACT_CREATE_QUALIFICATION.projectId],
+          [credentialId, scope.projectId],
         );
         return {
           operationId,
@@ -889,8 +993,8 @@ async function verifyAuthoritativeResult(
       authoritativeAttemptState: "consumed",
       campaignId: scope.campaignId,
       campaignDisposition: truth.campaignDisposition,
-      projectId: VITRACT_CREATE_QUALIFICATION.projectId,
-      environmentId: VITRACT_CREATE_QUALIFICATION.environmentId,
+      projectId: scope.projectId,
+      environmentId: scope.environmentId,
       canonicalApplicationId: scope.applicationId,
       applicationIdentity: "vitract-preview-test",
       origin: VITRACT_CREATE_QUALIFICATION.providerOrigin,

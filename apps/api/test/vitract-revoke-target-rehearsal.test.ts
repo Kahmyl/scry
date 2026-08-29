@@ -22,6 +22,13 @@ import {
 
 const refs = ["045970aa-9210-47e7-bafa-18ce4da5089c", "6547b053-f2b8-420c-91c0-bb4e1c7ae2a6"];
 const preparedId = "11111111-1111-4111-8111-111111111111";
+const authority = {
+  projectId: "22222222-2222-4222-8222-222222222222",
+  environmentId: "33333333-3333-4333-8333-333333333333",
+  clientIdReference: "44444444-4444-4444-8444-444444444444",
+  clientSecretReference: "55555555-5555-4555-8555-555555555555",
+  originProtectedOperationId: "66666666-6666-4666-8666-666666666666",
+};
 const productionPolicy = {
   allowedOrigins: ["https://preview.vitract.com", "https://preview-api.vitract.com"],
   trustedScriptOrigins: ["https://maps.googleapis.com", "https://js.stripe.com"],
@@ -34,6 +41,7 @@ const productionPolicy = {
 };
 function dependencies(overrides: Partial<Parameters<typeof runPreparation>[0]> = {}) {
   return {
+    authority,
     loadEnvironmentPolicy: vi.fn(async () => productionPolicy),
     create: vi.fn(
       async ({
@@ -50,8 +58,8 @@ function dependencies(overrides: Partial<Parameters<typeof runPreparation>[0]> =
     resolvePreparedSession: vi.fn(async (id: string) => ({
       id,
       state: "active",
-      projectId: "6b3b5011-0f41-430c-a8a2-d4abfd9ff3f1",
-      environmentId: "9a581bb0-2276-4888-9ddb-07b2485cddc3",
+      projectId: authority.projectId,
+      environmentId: authority.environmentId,
       missionId: "8c0a9e3a-56a7-4286-a331-1e73c0129533",
       objectiveId: "e5c0f365-d373-4375-9005-38a16bce770c",
       flowDraftId: "e5d6971e-320e-4c61-83dc-b3c7c2839ce7",
@@ -800,11 +808,12 @@ describe("Vitract revoke-target rehearsal preparation", () => {
       new URL("../scripts/vitract-revoke-target-rehearsal.ts", import.meta.url),
       "utf8",
     );
-    expect(source).toContain('projectId: "6b3b5011-0f41-430c-a8a2-d4abfd9ff3f1"');
-    expect(source).toContain('environmentId: "9a581bb0-2276-4888-9ddb-07b2485cddc3"');
+    expect(source).not.toContain('projectId: "6b3b5011-0f41-430c-a8a2-d4abfd9ff3f1"');
+    expect(source).not.toContain('environmentId: "9a581bb0-2276-4888-9ddb-07b2485cddc3"');
+    expect(source).toContain("FROM q5_prepared_scopes scope");
     expect(source).toMatch(/WHERE project\.id=\$1 AND environment\.id=\$2/);
     expect(source).toMatch(
-      /runtime\.projectId !== EXPECTED\.projectId\s*\|\|\s*runtime\.environmentId !== EXPECTED\.environmentId/,
+      /runtime\.projectId !== authority\.projectId\s*\|\|\s*runtime\.environmentId !== authority\.environmentId/,
     );
   });
 });

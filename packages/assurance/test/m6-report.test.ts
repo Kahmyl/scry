@@ -74,6 +74,7 @@ describe("Milestone 6 report", () => {
       (value: any) => (value.scope.deepSeekCalls = 1),
       (value: any) => (value.groups["13_invented_group"] = "PASS"),
       (value: any) => (value.evidence["06_deterministic_fake_agent_journey"] = []),
+      (value: any) => (value.evidence["00_real_shaped_bootstrap"] = []),
     ]) {
       const candidate = structuredClone(boundary);
       mutate(candidate);

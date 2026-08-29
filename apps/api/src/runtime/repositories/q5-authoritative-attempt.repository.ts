@@ -5,6 +5,7 @@ import { Database } from "../../infrastructure/index.js";
 
 export type Q5AttemptScope = Readonly<{
   attemptId: string;
+  preparedScopeId: string;
   state: string;
   campaignId: string;
   canonicalApplicationId: string;
@@ -33,7 +34,7 @@ export type Q5AttemptScope = Readonly<{
 export type PrepareQ5AuthoritativeAttemptInput = Omit<
   Q5AttemptScope,
   "attemptId" | "state" | "allowedOrigins" | "credentialReferenceIds" | "runId" | "praxisSessionId"
-> & { credentialDigest: string };
+> & { credentialDigest: string; preparedScopeId: string };
 
 @Injectable()
 export class Q5AuthoritativeAttemptRepository {
@@ -121,6 +122,7 @@ export class Q5AuthoritativeAttemptRepository {
     if (existing) {
       const exact =
         existing.state === "prepared" &&
+        existing.preparedScopeId === input.preparedScopeId &&
         existing.campaignId === input.campaignId &&
         existing.canonicalApplicationId === input.canonicalApplicationId &&
         existing.externalRunId === input.externalRunId &&
@@ -137,23 +139,32 @@ export class Q5AuthoritativeAttemptRepository {
     }
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO q5_authoritative_attempts(
-           qualification_key,campaign_authorization_id,canonical_application_id,external_run_id,
+           qualification_key,campaign_authorization_id,prepared_scope_id,canonical_application_id,external_run_id,
            flow_draft_id,flow_revision_id,credential_digest,source_commit,source_manifest,
            source_dirty,schema_fingerprint,migration_digest,provider,model
          )
-         SELECT 'm6-q5-authoritative',$1,$2,$3,$4,$5,$6,$7,$8,false,$9,$10,$11,$12
+         SELECT 'm6-q5-authoritative',$1,$2,$3,$4,$5,$6,$7,$8,$9,false,$10,$11,$12,$13
           FROM qualification_campaign_authorizations campaign
-          JOIN qualification_applications application ON application.id=$2
+          JOIN q5_prepared_scopes prepared ON prepared.id=$2 AND prepared.state='prepared'
+          JOIN qualification_applications application ON application.id=$3
          WHERE campaign.id=$1 AND campaign.canonical_application_id=application.id
-           AND campaign.project_id=$13 AND campaign.environment_id=$14
-           AND campaign.mission_id=$15 AND campaign.objective_id=$16
-           AND campaign.agent_session_id=$17 AND campaign.target_origin=$18
-           AND campaign.application_identity=$19 AND campaign.disposition='authorized'
+           AND prepared.project_id=campaign.project_id AND prepared.environment_id=campaign.environment_id
+           AND prepared.application_identity=application.identity
+           AND prepared.target_origin=campaign.target_origin
+           AND prepared.source_commit=$8 AND prepared.source_manifest=$9
+           AND prepared.schema_fingerprint=$10 AND prepared.migration_identity=$11
+           AND prepared.client_id_reference_id::text=ANY(ARRAY(SELECT jsonb_array_elements_text(application.credential_reference_ids)))
+           AND prepared.client_secret_reference_id::text=ANY(ARRAY(SELECT jsonb_array_elements_text(application.credential_reference_ids)))
+           AND campaign.project_id=$14 AND campaign.environment_id=$15
+           AND campaign.mission_id=$16 AND campaign.objective_id=$17
+           AND campaign.agent_session_id=$18 AND campaign.target_origin=$19
+           AND campaign.application_identity=$20 AND campaign.disposition='authorized'
            AND campaign.runs_consumed=0 AND campaign.business_mutation_dispatches_consumed=0
            AND application.status='active'
          RETURNING id::text`,
       [
         input.campaignId,
+        input.preparedScopeId,
         input.canonicalApplicationId,
         input.externalRunId,
         input.flowDraftId,
@@ -206,11 +217,54 @@ export class Q5AuthoritativeAttemptRepository {
     const result = await client.query<{ id: string }>(
       `UPDATE q5_authoritative_attempts attempt
           SET state='consumed',consumed_at=now(),updated_at=now()
-         FROM qualification_campaign_authorizations campaign
+         FROM qualification_campaign_authorizations campaign,
+              q5_prepared_scopes prepared,
+              q5_canonical_scope_designations designation,
+              qualification_applications application,
+              project_credentials client_id,
+              project_credentials client_secret,
+              protected_operations issuance,
+              mission_authorizations issuance_authority,
+              environments environment
         WHERE attempt.id=$1 AND attempt.credential_digest=$2 AND attempt.state='prepared'
           AND campaign.id=attempt.campaign_authorization_id
           AND campaign.disposition='authorized' AND campaign.expires_at>now()
           AND campaign.runs_consumed=0 AND campaign.business_mutation_dispatches_consumed=0
+          AND prepared.id=attempt.prepared_scope_id AND prepared.state='prepared'
+          AND prepared.source_commit=attempt.source_commit
+          AND prepared.source_manifest=attempt.source_manifest
+          AND prepared.schema_fingerprint=attempt.schema_fingerprint
+          AND prepared.migration_identity=attempt.migration_digest
+          AND designation.qualification_key=prepared.qualification_key
+          AND designation.project_id=prepared.project_id
+          AND designation.environment_id=prepared.environment_id
+          AND designation.application_identity=prepared.application_identity
+          AND application.id=attempt.canonical_application_id AND application.status='active'
+          AND application.identity=prepared.application_identity
+          AND application.project_id=prepared.project_id
+          AND application.environment_id=prepared.environment_id
+          AND client_id.id=prepared.client_id_reference_id
+          AND client_secret.id=prepared.client_secret_reference_id
+          AND client_id.project_id=prepared.project_id
+          AND client_secret.project_id=prepared.project_id
+          AND client_id.security_status='active' AND client_id.deleted_at IS NULL
+          AND client_secret.security_status='active' AND client_secret.deleted_at IS NULL
+          AND client_id.origin_protected_operation_id=prepared.issuance_operation_id
+          AND client_secret.origin_protected_operation_id=prepared.issuance_operation_id
+          AND issuance.id=prepared.issuance_operation_id
+          AND issuance.project_id=prepared.project_id
+          AND issuance.environment_id=prepared.environment_id
+          AND issuance.state='completed' AND issuance.persistence_state='committed'
+          AND issuance.mutation_outcome='applied'
+          AND issuance.persisted_references->'credentialClientId'->>'credentialId'=client_id.id::text
+          AND issuance.persisted_references->'credentialClientSecret'->>'credentialId'=client_secret.id::text
+          AND issuance_authority.id=issuance.authorization_id
+          AND issuance_authority.kind='protected_mutation'
+          AND issuance_authority.status='approved' AND issuance_authority.revoked_at IS NULL
+          AND (issuance_authority.expires_at IS NULL OR issuance_authority.expires_at>now())
+          AND environment.id=prepared.environment_id AND environment.project_id=prepared.project_id
+          AND environment.secret_refs ? client_id.id::text
+          AND environment.secret_refs ? client_secret.id::text
         RETURNING attempt.id::text`,
       [attemptId, credentialDigest],
     );
@@ -301,6 +355,7 @@ export class Q5AuthoritativeAttemptRepository {
   private async scopeQuery(client: PoolClient, predicate: string, values: unknown[]) {
     const result = await client.query<Q5AttemptScope>(
       `SELECT attempt.id::text AS "attemptId",attempt.state,
+              attempt.prepared_scope_id::text AS "preparedScopeId",
               campaign.id::text AS "campaignId",application.id::text AS "canonicalApplicationId",
               application.identity AS "applicationIdentity",campaign.project_id::text AS "projectId",
               campaign.environment_id::text AS "environmentId",campaign.mission_id::text AS "missionId",

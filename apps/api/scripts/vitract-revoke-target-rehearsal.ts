@@ -14,15 +14,10 @@ import { AdaptiveSessionRepository } from "../src/adaptive-sessions/repositories
 import { Database } from "../src/infrastructure/database.js";
 
 const EXPECTED = {
-  clientIdReference: "e2eb0fbc-7fdc-46f9-a016-c53558e5e637",
-  clientSecretReference: "98e1d42d-578a-4ba4-a70b-442f7d983cdb",
   loginEmailReference: "045970aa-9210-47e7-bafa-18ce4da5089c",
   loginPasswordReference: "6547b053-f2b8-420c-91c0-bb4e1c7ae2a6",
-  projectId: "6b3b5011-0f41-430c-a8a2-d4abfd9ff3f1",
-  environmentId: "9a581bb0-2276-4888-9ddb-07b2485cddc3",
   authoringSessionId: "ec2f4d10-e7a3-4a36-8d25-d00cf692ba05",
   flowDraftId: "e5d6971e-320e-4c61-83dc-b3c7c2839ce7",
-  originProtectedOperationId: "64d30899-8278-4a42-89b9-c34dce6b000f",
   historicalOperationId: "m2-3aeb032a39eb3889f812c10550e2885d07864c12",
   missionId: "8c0a9e3a-56a7-4286-a331-1e73c0129533",
   objectiveId: "e5c0f365-d373-4375-9005-38a16bce770c",
@@ -33,6 +28,14 @@ const EXPECTED = {
   credentialUrl:
     "https://preview.vitract.com/partner/developer/applications/vtr_app_sandbox_c76f2735-de94-f111-9b33-00224854e25a/credentials",
 } as const;
+
+export type RehearsalAuthority = {
+  projectId: string;
+  environmentId: string;
+  clientIdReference: string;
+  clientSecretReference: string;
+  originProtectedOperationId: string;
+};
 
 export const STAGES = [
   "ENVIRONMENT_POLICY_RESOLUTION",
@@ -531,14 +534,15 @@ export type PreparedSession = {
 export function validatePreparedSession(
   value: PreparedSession,
   expectedId: string,
+  authority: RehearsalAuthority,
 ): PreparedSession {
   const expectedReferences = [EXPECTED.loginEmailReference, EXPECTED.loginPasswordReference];
   const references = new Set(value.protectedAllowlist);
   if (
     value.id !== expectedId ||
     value.state !== "active" ||
-    value.projectId !== EXPECTED.projectId ||
-    value.environmentId !== EXPECTED.environmentId ||
+    value.projectId !== authority.projectId ||
+    value.environmentId !== authority.environmentId ||
     value.missionId !== EXPECTED.missionId ||
     value.objectiveId !== EXPECTED.objectiveId ||
     value.flowDraftId !== EXPECTED.flowDraftId ||
@@ -553,6 +557,7 @@ export function validatePreparedSession(
   return value;
 }
 export type PreparationDependencies = {
+  authority: RehearsalAuthority;
   loadEnvironmentPolicy(): Promise<ExecutionPolicy>;
   create?(input: {
     initialProtectedReferenceIds: string[];
@@ -629,7 +634,11 @@ export async function runPreparation(deps: PreparationDependencies, options: Reh
         )
       )
         throw { response: { code: "REHEARSAL_PREPARED_SESSION_ID_INVALID" } };
-      return validatePreparedSession(await deps.resolvePreparedSession(sessionId!), sessionId!);
+      return validatePreparedSession(
+        await deps.resolvePreparedSession(sessionId!),
+        sessionId!,
+        deps.authority,
+      );
     });
     runtimePolicy = await execute("RUNTIME_POLICY_RESOLUTION", async () => {
       const policy = await deps.loadRuntimePolicy(sessionId!);
@@ -734,16 +743,32 @@ export async function main(argv = process.argv.slice(2)) {
     throw { code: "REHEARSAL_PREPARED_SESSION_NOT_ALLOWED_DURING_PREPARATION" };
   const database = new Database();
   const sessions = new AdaptiveSessionRepository(database);
+  const preparedAuthority = await database.query<RehearsalAuthority>(
+    `SELECT scope.project_id::text AS "projectId",scope.environment_id::text AS "environmentId",
+            scope.client_id_reference_id::text AS "clientIdReference",
+            scope.client_secret_reference_id::text AS "clientSecretReference",
+            scope.issuance_operation_id::text AS "originProtectedOperationId"
+       FROM q5_prepared_scopes scope
+       JOIN q5_canonical_scope_designations designation
+         ON designation.qualification_key=scope.qualification_key
+        AND designation.project_id=scope.project_id
+        AND designation.environment_id=scope.environment_id
+      WHERE scope.qualification_key='m6-q5-authoritative' AND scope.state='prepared'`,
+  );
+  if (preparedAuthority.rowCount !== 1)
+    throw { response: { code: "REHEARSAL_PREPARED_Q5_SCOPE_UNAVAILABLE" } };
+  const authority = preparedAuthority.rows[0]!;
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   let page: Page | undefined;
   const common = {
+    authority,
     loadEnvironmentPolicy: async () => {
       const result = await database.query<{ policy: unknown; baseOrigin: string }>(
         `SELECT environment.policy,environment.base_origin AS "baseOrigin"
            FROM environments environment
            JOIN projects project ON project.id=environment.project_id
           WHERE project.id=$1 AND environment.id=$2`,
-        [EXPECTED.projectId, EXPECTED.environmentId],
+        [authority.projectId, authority.environmentId],
       );
       if (result.rowCount !== 1)
         throw { response: { code: "REHEARSAL_ENVIRONMENT_POLICY_UNAVAILABLE" } };
@@ -755,8 +780,8 @@ export async function main(argv = process.argv.slice(2)) {
     loadRuntimePolicy: async (sessionId) => {
       const runtime = await sessions.runtimeContextFor(sessionId);
       if (
-        runtime.projectId !== EXPECTED.projectId ||
-        runtime.environmentId !== EXPECTED.environmentId
+        runtime.projectId !== authority.projectId ||
+        runtime.environmentId !== authority.environmentId
       )
         throw { response: { code: "REHEARSAL_RUNTIME_POLICY_OWNER_MISMATCH" } };
       return runtime.policy;
@@ -794,10 +819,10 @@ export async function main(argv = process.argv.slice(2)) {
             AND credential.security_status='active' AND credential.deleted_at IS NULL
             AND environment.secret_refs ? credential.id::text`,
         [
-          [EXPECTED.clientIdReference, EXPECTED.clientSecretReference],
-          EXPECTED.projectId,
-          EXPECTED.originProtectedOperationId,
-          EXPECTED.environmentId,
+          [authority.clientIdReference, authority.clientSecretReference],
+          authority.projectId,
+          authority.originProtectedOperationId,
+          authority.environmentId,
         ],
       );
       if (pair.rowCount !== 2 || new Set(pair.rows.map((row) => row.id)).size !== 2)
@@ -991,8 +1016,8 @@ export async function main(argv = process.argv.slice(2)) {
           ...common,
           create: (input) =>
             sessions.create(null, {
-              projectId: EXPECTED.projectId,
-              environmentId: EXPECTED.environmentId,
+              projectId: authority.projectId,
+              environmentId: authority.environmentId,
               missionId: EXPECTED.missionId,
               objectiveId: EXPECTED.objectiveId,
               flowDraftId: EXPECTED.flowDraftId,

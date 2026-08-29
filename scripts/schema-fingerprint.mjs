@@ -167,6 +167,10 @@ const authoritativeQ5Qualification = await readFile(
   new URL("authoritative-q5-qualification.sql", root),
   "utf8",
 );
+const q5CanonicalScopeBootstrap = await readFile(
+  new URL("q5-canonical-scope-bootstrap.sql", root),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -215,6 +219,7 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "u
   ["targeted-region-perception.sql", targetedRegionPerception],
   ["qualification-campaign-safety.sql", qualificationCampaignSafety],
   ["authoritative-q5-qualification.sql", authoritativeQ5Qualification],
+  ["q5-canonical-scope-bootstrap.sql", q5CanonicalScopeBootstrap],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

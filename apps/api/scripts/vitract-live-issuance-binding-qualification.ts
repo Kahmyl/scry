@@ -32,9 +32,17 @@ import {
 import type { AuthoritativeExternalResourceObservation } from "@scry/praxis";
 import { navigateAndWaitNative } from "@scry/praxis";
 
+let resolvedCanonicalScope: { projectId: string; environmentId: string } | undefined;
+
 export const LIVE_QUALIFICATION = {
-  projectId: "6b3b5011-0f41-430c-a8a2-d4abfd9ff3f1",
-  environmentId: "9a581bb0-2276-4888-9ddb-07b2485cddc3",
+  get projectId() {
+    if (!resolvedCanonicalScope) throw new Error("Q5_CANONICAL_SCOPE_NOT_PREPARED");
+    return resolvedCanonicalScope.projectId;
+  },
+  get environmentId() {
+    if (!resolvedCanonicalScope) throw new Error("Q5_CANONICAL_SCOPE_NOT_PREPARED");
+    return resolvedCanonicalScope.environmentId;
+  },
   missionId: "8c0a9e3a-56a7-4286-a331-1e73c0129533",
   objectiveId: "e5c0f365-d373-4375-9005-38a16bce770c",
   flowDraftId: "e5d6971e-320e-4c61-83dc-b3c7c2839ce7",
@@ -351,6 +359,7 @@ export async function main() {
   const database = new Database();
   let stage = "PREFLIGHT";
   try {
+    resolvedCanonicalScope = await resolveCanonicalQualificationScope(database);
     const preflight = await loadLivePreflight(database, authorizationId);
     if (process.argv.includes("--continue-existing")) {
       stage = "TARGET_PREPARATION";
@@ -418,6 +427,16 @@ export async function main() {
   } finally {
     await database.onModuleDestroy();
   }
+}
+
+async function resolveCanonicalQualificationScope(database: Database) {
+  const result = await database.query<{ projectId: string; environmentId: string }>(
+    `SELECT project_id::text AS "projectId",environment_id::text AS "environmentId"
+       FROM q5_canonical_scope_designations
+      WHERE qualification_key='m6-q5-authoritative'`,
+  );
+  if (result.rowCount !== 1) throw new Error("Q5_CANONICAL_SCOPE_NOT_PREPARED");
+  return result.rows[0]!;
 }
 
 async function latestIssuedCredentialReference(database: Database) {

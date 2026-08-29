@@ -12,6 +12,7 @@ const q2Digest = "044a4d3506750c60b7f3f802e0a0f57bf1d3e9383dc25786a24c9d98c8da43
 const q3Digest = "424293abdc31046dac4879a3e7c29bea8bc32e3a600b68317f350f79cdc51112";
 const q3OracleDigest = "94d9d95852f91f99f0e610b6ce66dac7fef0f35230d7fbc831acfc68bf2ddf7f";
 export const Q5_DETERMINISTIC_GROUPS = [
+  "00_real_shaped_bootstrap",
   "01_static_source_gate",
   "02_database_upgrade_pre_state",
   "03_runtime_identity",
@@ -42,9 +43,7 @@ export async function createM6Report(root: string) {
     { cwd: root, encoding: "utf8" },
   ).trim();
   const migrationSha256 = createHash("sha256")
-    .update(
-      await readFile(path.join(root, "apps/api/migrations/authoritative-q5-qualification.sql")),
-    )
+    .update(await readFile(path.join(root, "apps/api/migrations/q5-canonical-scope-bootstrap.sql")))
     .digest("hex");
   const q5Manifest = await readJsonOptional(path.join(output, "q5-authoritative-evidence.json"));
   const q5Validation = validateQ5EvidenceManifest(q5Manifest, {
@@ -112,8 +111,9 @@ export async function createM6Report(root: string) {
     source: {
       head: sourceHead,
       headSubject: git(root, ["show", "-s", "--format=%s", "HEAD"]),
+      manifestSha256: sourceManifest,
       schemaFingerprint,
-      authoritativeQ5MigrationSha256: migrationSha256,
+      q5CanonicalScopeBootstrapMigrationSha256: migrationSha256,
       q0Digest,
       q1Digest,
       q2Digest,
@@ -143,7 +143,7 @@ export async function createM6Report(root: string) {
       mutationConsumption:
         "row-locked and journaled at the final pre-dispatch capability boundary; idempotent only for the exact operation/mutation identity",
       scope:
-        "exact Project, environment, Mission, Objective, agent, and canonical environment origin",
+        "one immutable prepared scope containing generated Project/environment/issuance identities, then exact Mission, Objective, agent, and canonical environment origin",
       expiry: "checked under the same PostgreSQL row lock as consumption",
       terminalDisposition:
         "success, failure, inconclusive/UNKNOWN, expiry, and revocation never restore consumed allowance",
@@ -200,6 +200,16 @@ export async function createM6Report(root: string) {
     },
     q5: {
       qualification: "M6_Q5_VITRACT_PREVIEW_TEST",
+      preparedBoundary: {
+        required: true,
+        qualificationPolicyVersion: "q5-bootstrap-v1",
+        sourceCommit: sourceHead,
+        sourceManifestSha256: sourceManifest,
+        schemaFingerprint,
+        migrationSha256,
+        semantics:
+          "supported bootstrap -> eligible protected pair -> immutable prepared scope -> free validation -> paid attempt fuse",
+      },
       deterministicBoundary: {
         status: q5BoundaryPass ? "PASS" : "BLOCKED",
         groups: boundary?.groups ?? {},
@@ -220,7 +230,7 @@ export async function createM6Report(root: string) {
         : "Repository-blind agent competence remains unproven until the single authorized real Vitract Preview/Test Q5 campaign produces a valid identity-bound evidence manifest.",
       productSafety: q5ProductSafetyPass ? "PASS" : "BLOCKED",
       productSafetyFinding: q5ProductSafetyPass
-        ? "Deterministic Q5 boundary qualification and Q04 mechanically enforce one Run, one mutation, replay refusal, exact scope, and the durable paid-attempt fuse."
+        ? "Real-shaped canonical bootstrap, deterministic Q5 boundary qualification, and Q04 mechanically enforce one prepared scope, one Run, one mutation, replay refusal, exact scope, and the durable paid-attempt fuse."
         : "Mechanical refusal was not completely attested.",
       parentSemanticCoaching: false,
     },

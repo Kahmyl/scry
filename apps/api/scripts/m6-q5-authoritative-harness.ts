@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 
 export const Q5_PREPAID_FREE_PHASES = [
+  "real_shaped_canonical_bootstrap",
+  "prepared_scope_validity",
   "immutable_source",
   "database_migration",
   "canonical_persisted_state",

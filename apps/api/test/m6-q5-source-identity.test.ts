@@ -108,6 +108,9 @@ describe("M6 Q5 authoritative source identity", () => {
     expect(launcher).not.toContain('"e".repeat(64)');
     expect(launcher).not.toContain('SCRY_SOURCE_DIRTY: "true"');
     expect(launcher).not.toContain("5da3201636bac6b69c0943845bc1d05852d6f6c0");
+    expect(launcher).not.toContain("6b3b5011-0f41-430c-a8a2-d4abfd9ff3f1");
+    expect(launcher).not.toContain("9a581bb0-2276-4888-9ddb-07b2485cddc3");
+    expect(launcher).not.toContain("64d30899-8278-4a42-89b9-c34dce6b000f");
     expect(launcher).toContain("deriveRepositorySourceIdentity(root)");
     expect(launcher).toContain("assertAuthoritativeSourceIdentity(initialSource");
     expect(launcher).toContain("assertRuntimeSourceIdentity(api.sourceIdentity, initialSource)");
@@ -125,8 +128,12 @@ describe("M6 Q5 authoritative source identity", () => {
     const paidBoundary = launcher.indexOf("await crossPaidQ5Boundary({");
     const gateBinding = launcher.indexOf("gates,", paidBoundary);
     const authorityPreparation = launcher.indexOf(
-      "prepared = await provisionExactQualificationScope()",
+      "prepared = await provisionExactQualificationScope(preparedScope, protectedContext)",
     );
+    const canonicalBootstrap = launcher.indexOf(
+      "const bootstrap = await prepareCanonicalQ5Scope()",
+    );
+    const gates = launcher.indexOf("const gates = await gatesForCurrentRuntime");
     const transactionalPreparation = launcher.indexOf(
       "const attempt = await attempts.prepareUsing",
     );
@@ -141,6 +148,9 @@ describe("M6 Q5 authoritative source identity", () => {
     const paidAgent = launcher.indexOf("return Q5OwnedProcess.start({");
 
     expect(paidBoundary).toBeGreaterThan(-1);
+    expect(canonicalBootstrap).toBeGreaterThan(-1);
+    expect(gates).toBeGreaterThan(canonicalBootstrap);
+    expect(paidBoundary).toBeGreaterThan(gates);
     expect(gateBinding).toBeGreaterThan(paidBoundary);
     expect(authorityPreparation).toBeGreaterThan(gateBinding);
     expect(paidAgent).toBeGreaterThan(authorityPreparation);

@@ -13,7 +13,7 @@ import {
 
 const databaseUrl = process.env.SCRY_M6_Q5_UPGRADE_TEST_DATABASE_URL;
 const integration = databaseUrl ? describe : describe.skip;
-const previous = "15b258b1b7c1f6d446d2addaab7e25f5c0e111dba3a87210679d9aea50e03237";
+const previous = "d313f0eb931d79a98310c664cd3e2a677f7d10e3d2259cefbe4e5f51018e78f9";
 
 integration("authoritative Q5 immediate-predecessor upgrade", () => {
   const root = fileURLToPath(new URL("../../../", import.meta.url));
@@ -33,9 +33,10 @@ integration("authoritative Q5 immediate-predecessor upgrade", () => {
       ]);
     }
     expect(await fingerprint()).toBe(previous);
-    expect(await relation("q5_authoritative_attempts")).toBe(false);
+    expect(await relation("q5_authoritative_attempts")).toBe(true);
+    expect(await relation("q5_prepared_scopes")).toBe(false);
     const migration = await readFile(
-      new URL("../migrations/authoritative-q5-qualification.sql", import.meta.url),
+      new URL("../migrations/q5-canonical-scope-bootstrap.sql", import.meta.url),
       "utf8",
     );
     await expect(
@@ -45,7 +46,7 @@ integration("authoritative Q5 immediate-predecessor upgrade", () => {
       }),
     ).rejects.toBeDefined();
     expect(await fingerprint()).toBe(previous);
-    expect(await relation("q5_authoritative_attempts")).toBe(false);
+    expect(await relation("q5_prepared_scopes")).toBe(false);
     execFileSync("pnpm", ["--filter", "@scry/api", "db:migrate"], {
       cwd: root,
       env: { ...process.env, DATABASE_URL: databaseUrl! },
@@ -57,6 +58,7 @@ integration("authoritative Q5 immediate-predecessor upgrade", () => {
     }).trim();
     expect(await fingerprint()).toBe(expected);
     expect(await relation("q5_authoritative_attempts")).toBe(true);
+    expect(await relation("q5_prepared_scopes")).toBe(true);
     expect(
       await database.query(`SELECT count(*)::int count FROM q5_authoritative_attempts`),
     ).toMatchObject({ rows: [{ count: 0 }] });
@@ -91,7 +93,7 @@ integration("authoritative Q5 immediate-predecessor upgrade", () => {
     const expanded = expandBaselineStage(
       baseline,
       sources,
-      OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "authoritative-q5-qualification.sql"),
+      OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "q5-canonical-scope-bootstrap.sql"),
     );
     const calibration = await readFile(
       new URL("calibration-foundation.sql", migrationRoot),
