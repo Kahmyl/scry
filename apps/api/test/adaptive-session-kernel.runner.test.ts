@@ -6,6 +6,45 @@ import { AdaptiveSessionKernelRunner } from "../src/adaptive-sessions/adaptive-s
 import { SecretRedactor } from "@scry/policy";
 
 describe("AdaptiveSessionKernelRunner timing propagation", () => {
+  it("removes an aborted exclusive waiter without releasing a live predecessor", async () => {
+    let releasePredecessor!: () => void;
+    const predecessor = new Promise<void>((resolve) => {
+      releasePredecessor = resolve;
+    });
+    const runtime = { tail: predecessor };
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const exclusive = (
+      runner as unknown as {
+        exclusive<T>(
+          owned: typeof runtime,
+          operation: () => Promise<T>,
+          signal?: AbortSignal,
+        ): Promise<T>;
+      }
+    ).exclusive.bind(runner);
+    const controller = new AbortController();
+    const cancelledOperation = vi.fn(async () => undefined);
+    const cancelled = exclusive(runtime, cancelledOperation, controller.signal);
+
+    controller.abort(new Error("cancelled while queued"));
+    await expect(cancelled).rejects.toThrow("cancelled while queued");
+    expect(cancelledOperation).not.toHaveBeenCalled();
+
+    const successorOperation = vi.fn(async () => "completed");
+    const successor = exclusive(runtime, successorOperation);
+    await Promise.resolve();
+    expect(successorOperation).not.toHaveBeenCalled();
+
+    releasePredecessor();
+    await expect(successor).resolves.toBe("completed");
+    expect(successorOperation).toHaveBeenCalledOnce();
+  });
+
   it("renews live runtime ownership during idle human authorization delay", async () => {
     vi.useFakeTimers();
     const heartbeatRuntimeLease = vi.fn(async (_claim: unknown) => undefined);

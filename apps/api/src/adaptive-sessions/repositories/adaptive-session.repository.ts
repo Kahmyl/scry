@@ -1441,6 +1441,7 @@ export class AdaptiveSessionRepository {
         outcome: OperationOutcome | null;
         decisionBoundary: AgentDecisionBoundary | null;
         dispatchBoundary: string;
+        preparedOperation: boolean;
       }>(
         `SELECT operation.state,operation.flow_draft_id AS "flowDraftId",
                 operation.mission_id AS "missionId",operation.objective_id AS "objectiveId",
@@ -1448,7 +1449,14 @@ export class AdaptiveSessionRepository {
                 operation.authoring_intent->'authorization'->>'authorizationId' AS "authorizationId",
                 operation.authoring_intent AS intent,operation.semantic_intent AS action,
                 operation.safe_outcome AS outcome,operation.decision_boundary AS "decisionBoundary",
-                operation.dispatch_boundary AS "dispatchBoundary"
+                operation.dispatch_boundary AS "dispatchBoundary",
+                EXISTS(
+                  SELECT 1 FROM protected_operations prepared
+                   WHERE prepared.owner_kind='authoring_session'
+                     AND prepared.authoring_session_id=operation.session_id
+                     AND prepared.operation_id=operation.operation_id
+                     AND prepared.observed_operation_contract_id IS NOT NULL
+                ) AS "preparedOperation"
            FROM adaptive_operations operation
            JOIN adaptive_sessions session ON session.id=operation.session_id
           WHERE operation.session_id=$1 AND operation.operation_id=$2
@@ -1651,8 +1659,8 @@ export class AdaptiveSessionRepository {
                 AND credential.deleted_at IS NULL
                 AND credential.security_status='active'
               WHERE session.id=$1
-                AND environment.secret_refs ? credential.id::text`,
-            [input.sessionId, generatedCredentialIds, durable.id],
+                AND ($4::boolean OR environment.secret_refs ? credential.id::text)`,
+            [input.sessionId, generatedCredentialIds, durable.id, Boolean(owner.preparedOperation)],
           );
           if (
             admissible.rows.length !== generatedCredentialIds.length ||
@@ -1673,9 +1681,140 @@ export class AdaptiveSessionRepository {
         outcome,
         decisionBoundary,
         adaptiveState,
-        generatedCredentialIds,
+        owner.preparedOperation ? [] : generatedCredentialIds,
       );
       return { status: "settled" as const, state: durable.state, outcome, decisionBoundary };
+    });
+  }
+
+  async recordPreparedExecutionStage(input: {
+    sessionId: string;
+    operationId: string;
+    stage: string;
+    durationMs?: number;
+    reasonCode?: string;
+  }) {
+    await this.database.transaction(async (client) => {
+      const q = bind(client);
+      const operation = await q<{
+        id: string;
+        state: import("@scry/contracts").ProtectedOperationState;
+        phase: string;
+        fencingToken: number;
+      }>(
+        `SELECT id::text,state,phase,fencing_token AS "fencingToken"
+           FROM protected_operations
+          WHERE owner_kind='authoring_session' AND authoring_session_id=$1
+            AND praxis_session_id=$1 AND operation_id=$2
+          FOR UPDATE`,
+        [input.sessionId, input.operationId],
+      );
+      if (!operation.rowCount)
+        throw new ConflictException({ code: "PREPARED_EXECUTION_OPERATION_MISSING" });
+      const current = operation.rows[0]!;
+      await q(
+        `INSERT INTO protected_operation_transitions(
+           protected_operation_id,sequence,from_state,to_state,phase,fencing_token,
+           reason_code,safe_diagnostics
+         ) SELECT $1,COALESCE(max(sequence),0)+1,$2,$2,$3,$4,$5,
+                  jsonb_build_object('supervisorStage',$6::text,'durationMs',$7::bigint)
+             FROM protected_operation_transitions WHERE protected_operation_id=$1`,
+        [
+          current.id,
+          current.state,
+          current.phase,
+          current.fencingToken,
+          input.reasonCode ?? null,
+          input.stage,
+          Math.max(0, Math.round(input.durationMs ?? 0)),
+        ],
+      );
+    });
+  }
+
+  async settlePreparedExecutionDeadline(input: {
+    sessionId: string;
+    operationId: string;
+    reasonCode: string;
+  }) {
+    return this.database.transaction(async (client) => {
+      const q = bind(client);
+      const current = await q<{
+        id: string;
+        state: import("@scry/contracts").ProtectedOperationState;
+        dispatchState: "not_started" | "authorized" | "started" | "acknowledged";
+        mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
+        fencingToken: number;
+      }>(
+        `SELECT id::text,state,dispatch_state AS "dispatchState",
+                mutation_outcome AS "mutationOutcome",fencing_token AS "fencingToken"
+           FROM protected_operations
+          WHERE owner_kind='authoring_session' AND authoring_session_id=$1
+            AND praxis_session_id=$1 AND operation_id=$2
+          FOR UPDATE`,
+        [input.sessionId, input.operationId],
+      );
+      if (!current.rowCount)
+        throw new ConflictException({ code: "PREPARED_EXECUTION_OPERATION_MISSING" });
+      const operation = current.rows[0]!;
+      const activeStates = [
+        "planned",
+        "preparing",
+        "ready_to_dispatch",
+        "dispatching",
+        "dispatched",
+        "acquiring",
+        "persisting",
+        "persisted",
+        "reconciling",
+      ];
+      if (!activeStates.includes(operation.state)) return operation;
+      const beforeDispatch = ["not_started", "authorized"].includes(operation.dispatchState);
+      const nextState = beforeDispatch ? "failed_not_applied" : "recovery_required";
+      const nextMutation = beforeDispatch
+        ? "not_applied"
+        : ["applied", "not_applied"].includes(operation.mutationOutcome)
+          ? operation.mutationOutcome
+          : "unknown";
+      await q(
+        `UPDATE protected_operations SET state=$3,phase=$4,mutation_outcome=$5,
+           failure_code=$6,recovery_class=$7,lease_expires_at=now(),
+           completed_at=CASE WHEN $3='failed_not_applied' THEN now() ELSE completed_at END,
+           version=version+1,updated_at=now()
+         WHERE id=$1 AND state=$2`,
+        [
+          operation.id,
+          operation.state,
+          nextState,
+          beforeDispatch
+            ? "supervisor_deadline_before_dispatch"
+            : "supervisor_deadline_after_possible_dispatch",
+          nextMutation,
+          input.reasonCode,
+          beforeDispatch ? "do_not_retry" : "reconciliation_required",
+        ],
+      );
+      await q(
+        `INSERT INTO protected_operation_transitions(
+           protected_operation_id,sequence,from_state,to_state,phase,fencing_token,
+           reason_code,safe_diagnostics
+         ) SELECT $1,COALESCE(max(sequence),0)+1,$2,$3,$4,$5,$6,
+                  jsonb_build_object('supervisorStage','deadline_settled',
+                    'dispatchState',$7::text)
+             FROM protected_operation_transitions WHERE protected_operation_id=$1`,
+        [
+          operation.id,
+          operation.state,
+          nextState,
+          beforeDispatch
+            ? "supervisor_deadline_before_dispatch"
+            : "supervisor_deadline_after_possible_dispatch",
+          operation.fencingToken,
+          input.reasonCode,
+          operation.dispatchState,
+        ],
+      );
+      return { ...operation, state: nextState, mutationOutcome: nextMutation };
     });
   }
 
@@ -2084,6 +2223,7 @@ export class AdaptiveSessionRepository {
       outcome: OperationOutcome | null;
       decisionBoundary?: AgentDecisionBoundary | null;
       dispatchBoundary?: string;
+      preparedOperation?: boolean;
     },
     outcome: OperationOutcome,
     decisionBoundary: AgentDecisionBoundary,

@@ -633,14 +633,74 @@ integration("prepared protected operation repository", () => {
        WHERE id=$1 AND state='reserved'`,
       [unknownReservation.protectedOperationId, unknownAuthorizationId, "c".repeat(64)],
     );
-    await sessions.settleRuntimeOwnerLoss({
-      sessionId,
-      ownerId,
-      fencingToken: 1,
-      runtimePresent: false,
-      recoveryObservationAvailable: false,
-      reasonCode: "TEST_PROCESS_LOSS",
+    await expect(
+      sessions.settlePreparedExecutionDeadline({
+        sessionId,
+        operationId: unknownReservation.publicOperationId,
+        reasonCode: "PREPARED_EXECUTION_DEADLINE_EXCEEDED",
+      }),
+    ).resolves.toMatchObject({
+      state: "recovery_required",
+      mutationOutcome: "unknown",
     });
+    const matrix: Array<{
+      state: "reserved" | "preparing" | "ready_to_dispatch" | "dispatched";
+      protectedOperationId: string;
+    }> = [];
+    for (const state of ["reserved", "preparing", "ready_to_dispatch", "dispatched"] as const) {
+      const candidate = await prepared.reserve({
+        projectId,
+        environmentId,
+        missionId,
+        objectiveId,
+        agentSessionId,
+        praxisSessionId: sessionId,
+        publicOperationId: `prepared-matrix-${state}-${randomUUID()}`,
+        observedOperationContractId: contract!.id,
+        observedOperationContractDigest: contractDigest,
+        documentEpoch: 0,
+        ...commitments,
+        values,
+        expectedOutputs,
+        expiresAt,
+      });
+      matrix.push({ state, protectedOperationId: candidate.protectedOperationId });
+      if (state !== "reserved") {
+        const authorityId = randomUUID();
+        await database.query(
+          `INSERT INTO mission_authorizations(id,mission_id,objective_id,environment_id,kind,reason,
+             status,granted_by_agent_session_id,expires_at,operation_id,praxis_session_id,
+             protected_operation_id,protected_operation_contract_digest)
+           VALUES($1,$2,$3,$4,'protected_mutation','Matrix integration','approved',$5,$6,$7,$8,$9,$10)`,
+          [
+            authorityId,
+            missionId,
+            objectiveId,
+            environmentId,
+            agentSessionId,
+            expiresAt,
+            candidate.publicOperationId,
+            sessionId,
+            candidate.protectedOperationId,
+            contractDigest,
+          ],
+        );
+        await database.query(
+          `UPDATE protected_operations SET authorization_id=$2,state=$3,phase=$3,
+             program_digest=$4,dispatch_semantics='mutation',
+             dispatch_state=CASE WHEN $3='dispatched' THEN 'started' ELSE 'authorized' END,
+             mutation_outcome=CASE WHEN $3='dispatched' THEN 'unknown' ELSE 'not_attempted' END
+           WHERE id=$1 AND state='reserved'`,
+          [candidate.protectedOperationId, authorityId, state, "b".repeat(64)],
+        );
+      }
+    }
+    await database.query(
+      `UPDATE adaptive_session_runtime_leases SET lease_expires_at=now()-interval '1 second'
+        WHERE session_id=$1`,
+      [sessionId],
+    );
+    expect(await sessions.convergeExpiredRuntimeOwners()).toContain(sessionId);
     const converged = await database.query<{ state: string; mutationOutcome: string }>(
       `SELECT state,mutation_outcome AS "mutationOutcome" FROM protected_operations WHERE id=$1`,
       [lossReservation.protectedOperationId],
@@ -664,6 +724,53 @@ integration("prepared protected operation repository", () => {
       mutationOutcome: "unknown",
       recoveryClass: "reconciliation_required",
     });
+    const matrixTruth = await database.query<{
+      originalState: string;
+      state: string;
+      mutationOutcome: string;
+      recoveryClass: string;
+    }>(
+      `SELECT input."originalState",operation.state,
+              operation.mutation_outcome AS "mutationOutcome",
+              operation.recovery_class AS "recoveryClass"
+         FROM jsonb_to_recordset($1::jsonb) AS input("originalState" text,"id" uuid)
+         JOIN protected_operations operation ON operation.id=input.id
+        ORDER BY input."originalState"`,
+      [
+        JSON.stringify(
+          matrix.map((candidate) => ({
+            originalState: candidate.state,
+            id: candidate.protectedOperationId,
+          })),
+        ),
+      ],
+    );
+    expect(matrixTruth.rows).toEqual([
+      {
+        originalState: "dispatched",
+        state: "recovery_required",
+        mutationOutcome: "unknown",
+        recoveryClass: "reconciliation_required",
+      },
+      {
+        originalState: "preparing",
+        state: "failed_not_applied",
+        mutationOutcome: "not_applied",
+        recoveryClass: "do_not_retry",
+      },
+      {
+        originalState: "ready_to_dispatch",
+        state: "failed_not_applied",
+        mutationOutcome: "not_applied",
+        recoveryClass: "do_not_retry",
+      },
+      {
+        originalState: "reserved",
+        state: "failed_not_applied",
+        mutationOutcome: "not_applied",
+        recoveryClass: "do_not_retry",
+      },
+    ]);
   });
 });
 

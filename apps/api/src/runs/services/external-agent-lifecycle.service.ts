@@ -28,6 +28,21 @@ type OwnedSession = {
 @Injectable()
 export class ExternalAgentLifecycleService implements OnModuleInit, OnModuleDestroy {
   private sweep?: NodeJS.Timeout;
+  private praxisSweep?: NodeJS.Timeout;
+  private praxisSweepWork: Promise<unknown> | undefined;
+  private readonly praxisSweepStatus = {
+    startedAt: null as string | null,
+    lastInvocationAt: null as string | null,
+    lastSuccessfulInvocationAt: null as string | null,
+    lastDurationMs: null as number | null,
+    candidateCount: 0,
+    settledCount: 0,
+    recoveryRequiredCount: 0,
+    invocationCount: 0,
+    errorCount: 0,
+    lastErrorCode: null as string | null,
+    running: false,
+  };
 
   constructor(
     @Inject(Database) private readonly database: Database,
@@ -37,15 +52,26 @@ export class ExternalAgentLifecycleService implements OnModuleInit, OnModuleDest
   ) {}
 
   onModuleInit() {
+    const intervalMs = configuredInteger("SCRY_EXTERNAL_AGENT_SWEEP_MS", 30_000, 1_000, 300_000);
+    this.praxisSweepStatus.startedAt = new Date().toISOString();
+    this.praxisSweepStatus.running = true;
     this.sweep = setInterval(
-      () => void this.recoverExpiredLeases().catch(() => undefined),
-      configuredInteger("SCRY_EXTERNAL_AGENT_SWEEP_MS", 30_000, 1_000, 300_000),
+      () =>
+        void this.recoverExpiredLeases().catch((error) =>
+          this.recordSweepError("external_agent", error),
+        ),
+      intervalMs,
     );
     this.sweep.unref();
+    this.praxisSweep = setInterval(() => void this.schedulePraxisRuntimeConvergence(), intervalMs);
+    this.praxisSweep.unref();
   }
 
-  onModuleDestroy() {
+  async onModuleDestroy() {
     if (this.sweep) clearInterval(this.sweep);
+    if (this.praxisSweep) clearInterval(this.praxisSweep);
+    this.praxisSweepStatus.running = false;
+    await this.praxisSweepWork?.catch(() => undefined);
   }
 
   async start(principal: Principal, externalRunId: string, input: StartExternalAgentRunInput) {
@@ -522,14 +548,72 @@ export class ExternalAgentLifecycleService implements OnModuleInit, OnModuleDest
        FROM agent_sessions
        WHERE status='active' AND external_run_id IS NOT NULL
          AND lease_expires_at IS NOT NULL AND lease_expires_at<now()
-       ORDER BY external_run_id`,
+       ORDER BY "externalRunId"`,
     );
     for (const row of expired.rows)
       await this.terminate({ kind: "service", subject: "scry-service" }, row.externalRunId, {
         reasonCode: "EXTERNAL_AGENT_LEASE_EXPIRED",
       });
-    await this.praxis.convergeExpiredRuntimeOwners?.();
     return expired.rows.map(({ externalRunId }) => externalRunId);
+  }
+
+  runtimeConvergenceStatus() {
+    return { ...this.praxisSweepStatus };
+  }
+
+  async recoverExpiredRuntimeOwners() {
+    const startedAt = performance.now();
+    this.praxisSweepStatus.lastInvocationAt = new Date().toISOString();
+    this.praxisSweepStatus.invocationCount += 1;
+    try {
+      const sessionIds = (await this.praxis.convergeExpiredRuntimeOwners?.()) ?? [];
+      let recoveryRequiredCount = 0;
+      if (sessionIds.length) {
+        const states = await this.database.query<{ recoveryRequiredCount: string }>(
+          `SELECT count(*) FILTER (WHERE state='recovery_required')::text AS "recoveryRequiredCount"
+             FROM adaptive_sessions WHERE id=ANY($1::uuid[])`,
+          [sessionIds],
+        );
+        recoveryRequiredCount = Number(states.rows[0]?.recoveryRequiredCount ?? 0);
+      }
+      this.praxisSweepStatus.candidateCount = sessionIds.length;
+      this.praxisSweepStatus.settledCount = sessionIds.length;
+      this.praxisSweepStatus.recoveryRequiredCount = recoveryRequiredCount;
+      this.praxisSweepStatus.lastSuccessfulInvocationAt = new Date().toISOString();
+      this.praxisSweepStatus.lastErrorCode = null;
+      return sessionIds;
+    } catch (error) {
+      this.praxisSweepStatus.errorCount += 1;
+      this.praxisSweepStatus.lastErrorCode = safeErrorCode(error);
+      await this.recordSweepError("praxis_runtime", error);
+      throw error;
+    } finally {
+      this.praxisSweepStatus.lastDurationMs = Math.max(0, performance.now() - startedAt);
+    }
+  }
+
+  private schedulePraxisRuntimeConvergence() {
+    if (this.praxisSweepWork) return this.praxisSweepWork;
+    const work = this.recoverExpiredRuntimeOwners();
+    this.praxisSweepWork = work;
+    void work
+      .finally(() => {
+        if (this.praxisSweepWork === work) this.praxisSweepWork = undefined;
+      })
+      .catch(() => undefined);
+    return work;
+  }
+
+  private async recordSweepError(stage: "external_agent" | "praxis_runtime", error: unknown) {
+    await this.events
+      .emit("runtime", {
+        name: "praxis.action_failed",
+        classification: "infrastructure",
+        reasonCode: safeErrorCode(error),
+        outcome: "failed",
+        details: { stage: `${stage}_lease_convergence` },
+      })
+      .catch(() => undefined);
   }
 
   private async ownedSessions(principal: Principal, externalRunId: string) {
@@ -603,4 +687,16 @@ function configuredInteger(name: string, fallback: number, minimum: number, maxi
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum)
     throw new Error(`${name}_INVALID`);
   return value;
+}
+
+function safeErrorCode(error: unknown) {
+  const candidate =
+    error && typeof error === "object" && "code" in error
+      ? (error as { code?: unknown }).code
+      : error instanceof Error
+        ? error.message
+        : undefined;
+  return typeof candidate === "string" && /^[A-Z][A-Z0-9_]{0,119}$/.test(candidate)
+    ? candidate
+    : "RUNTIME_CONVERGENCE_FAILED";
 }

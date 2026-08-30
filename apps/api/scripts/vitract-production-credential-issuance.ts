@@ -51,20 +51,22 @@ export async function main() {
         credentialName: input.credentialName,
         expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
       });
-      process.stdout.write(`${JSON.stringify({
-        status: "authorization_required",
-        projectId: scope.projectId,
-        environmentId: scope.environmentId,
-        missionId: lifecycle.missionId,
-        objectiveId: lifecycle.objectiveId,
-        agentSessionId: lifecycle.agentSessionId,
-        flowDraftId: lifecycle.flowDraftId,
-        praxisSessionId: lifecycle.authoringSessionId,
-        protectedOperationId: reserved.protectedOperationId,
-        publicOperationId: reserved.publicOperationId,
-        contractDigest: reserved.contractDigest,
-        expiresAt: reserved.expiresAt,
-      })}\n`);
+      process.stdout.write(
+        `${JSON.stringify({
+          status: "authorization_required",
+          projectId: scope.projectId,
+          environmentId: scope.environmentId,
+          missionId: lifecycle.missionId,
+          objectiveId: lifecycle.objectiveId,
+          agentSessionId: lifecycle.agentSessionId,
+          flowDraftId: lifecycle.flowDraftId,
+          praxisSessionId: lifecycle.authoringSessionId,
+          protectedOperationId: reserved.protectedOperationId,
+          publicOperationId: reserved.publicOperationId,
+          contractDigest: reserved.contractDigest,
+          expiresAt: reserved.expiresAt,
+        })}\n`,
+      );
       if (process.argv.includes("--prepare-only")) {
         await preparation.closePrepared(
           principal,
@@ -76,8 +78,11 @@ export async function main() {
         return;
       }
       await waitForExactAuthorization(database, reserved.protectedOperationId, reserved.expiresAt);
-      await preparation.executeAuthorized(principal, lifecycle, reserved.immutableResume);
-      const settled = await waitForSettlement(database, reserved.protectedOperationId);
+      const settled = await preparation.executeAuthorized(
+        principal,
+        lifecycle,
+        reserved.immutableResume,
+      );
       process.stdout.write(`${JSON.stringify(settled)}\n`);
     } catch (error) {
       await preparation
@@ -136,7 +141,11 @@ async function canonicalOperatorScope(database: Database) {
   return result.rows[0]!;
 }
 
-async function waitForExactAuthorization(database: Database, operationId: string, expiresAt: string) {
+async function waitForExactAuthorization(
+  database: Database,
+  operationId: string,
+  expiresAt: string,
+) {
   while (Date.now() < new Date(expiresAt).getTime()) {
     const result = await database.query<{ state: string }>(
       `SELECT operation.state FROM protected_operations operation
@@ -152,22 +161,6 @@ async function waitForExactAuthorization(database: Database, operationId: string
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
   throw new Error("VITRACT_ISSUANCE_AUTHORIZATION_EXPIRED");
-}
-
-async function waitForSettlement(database: Database, operationId: string) {
-  for (let poll = 0; poll < 240; poll += 1) {
-    const result = await database.query<any>(
-      `SELECT state,persistence_state AS "persistenceState",mutation_outcome AS "mutationOutcome",
-              persisted_references AS "persistedReferences"
-         FROM protected_operations WHERE id=$1`,
-      [operationId],
-    );
-    const row = result.rows[0];
-    if (["completed", "failed_not_applied", "recovery_required", "compromised", "revoked", "abandoned"].includes(row?.state))
-      return { ...row, protectedOperationId: operationId, plaintextExposed: false };
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error("VITRACT_ISSUANCE_SETTLEMENT_TIMEOUT");
 }
 
 function required(name: string) {
@@ -186,7 +179,10 @@ function requiredUuid(name: string) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   void main().catch((error: unknown) => {
     const response =
-      error && typeof error === "object" && "response" in error && error.response &&
+      error &&
+      typeof error === "object" &&
+      "response" in error &&
+      error.response &&
       typeof error.response === "object"
         ? error.response
         : undefined;

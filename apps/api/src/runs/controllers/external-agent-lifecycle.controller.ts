@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Inject, Param, Post } from "@nestjs/common";
+import { Body, Controller, ForbiddenException, Get, Inject, Param, Post } from "@nestjs/common";
 import {
   adoptLegacyExternalAgentSessionSchema,
   startExternalAgentRunSchema,
@@ -18,6 +18,13 @@ export class ExternalAgentLifecycleController {
     @Inject(ExternalAgentLifecycleService)
     private readonly lifecycle: ExternalAgentLifecycleService,
   ) {}
+
+  @Get("runtime-convergence/status")
+  runtimeConvergenceStatus(@CurrentPrincipal() principal: Principal) {
+    if (principal.kind !== "service")
+      throw new ForbiddenException("Runtime convergence status requires service authentication");
+    return this.lifecycle.runtimeConvergenceStatus();
+  }
 
   @Post(":externalRunId/start")
   start(

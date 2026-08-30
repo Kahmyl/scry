@@ -53,10 +53,18 @@ export type MissionRunEvidenceContext = {
   beforeBusinessMutationDispatch(operation: AdaptiveSessionOperationInput): Promise<void>;
 };
 
+type PreparedExecutionProjection = Awaited<
+  ReturnType<AdaptiveSessionRepository["projectProtectedOperationForAuthoring"]>
+>;
+
 @Injectable()
 export class MissionFlowAuthoringService {
   private readonly inFlightTurns = new Map<string, Promise<MissionAuthoringTurnResult>>();
   private readonly inFlightProtectedOperations = new Map<string, Promise<void>>();
+  private readonly inFlightPreparedExecutions = new Map<
+    string,
+    Promise<PreparedExecutionProjection>
+  >();
 
   constructor(
     @Inject(AdaptiveSessionRepository) private readonly sessions: AdaptiveSessionRepository,
@@ -285,9 +293,11 @@ export class MissionFlowAuthoringService {
       throw new ConflictException({ code: "PREPARED_OPERATION_DOCUMENT_REPLACED" });
     if (new URL(current.url).origin !== new URL(material.origin).origin)
       throw new ConflictException({ code: "PREPARED_OPERATION_ORIGIN_REPLACED" });
+    const executionTimeoutMs = preparedExecutionTimeoutMs();
     const compiled = compilePreparedProtectedOperation({
       material,
       entryUrl: current.url,
+      timeoutMs: Math.min(executionTimeoutMs, 60_000),
     });
     const protectedReservation = missionAuthoringProtectedOperationReservation(
       compiled.transaction,
@@ -317,14 +327,137 @@ export class MissionFlowAuthoringService {
       preparedProtectedOperationId: material.protectedOperationId,
     });
     await this.preparedOperations.consumeGeneratedBindings(material.protectedOperationId);
-    if (!claim.replayed) this.launchProtectedExecution(sessionId, operation);
+    const executionKey = `${sessionId}:${operation.operationId}`;
+    const inFlightExecution = this.inFlightPreparedExecutions.get(executionKey);
+    const projection = claim.replayed
+      ? inFlightExecution
+        ? await inFlightExecution
+        : await this.sessions.projectProtectedOperationForAuthoring({
+            sessionId,
+            operationId: operation.operationId,
+          })
+      : await this.supervisePreparedExecution(sessionId, operation, executionTimeoutMs);
+    if (projection.status === "pending")
+      throw new ConflictException({
+        code: "PREPARED_EXECUTION_AUTHORITATIVE_SETTLEMENT_MISSING",
+        state: projection.state,
+      });
     return {
       protectedOperationId: material.protectedOperationId,
       publicOperationId: material.publicOperationId,
-      state: claim.replayed ? claim.state : "dispatching",
+      state: projection.state,
       replayed: claim.replayed,
       sourceMutationRepeatable: false,
     };
+  }
+
+  private async supervisePreparedExecution(
+    sessionId: string,
+    operation: AdaptiveSessionOperationInput,
+    timeoutMs: number,
+  ) {
+    const key = `${sessionId}:${operation.operationId}`;
+    const existing = this.inFlightPreparedExecutions.get(key);
+    if (existing) return existing;
+    const work = this.runPreparedExecutionSupervisor(sessionId, operation, timeoutMs);
+    this.inFlightPreparedExecutions.set(key, work);
+    try {
+      return await work;
+    } finally {
+      if (this.inFlightPreparedExecutions.get(key) === work)
+        this.inFlightPreparedExecutions.delete(key);
+    }
+  }
+
+  private async runPreparedExecutionSupervisor(
+    sessionId: string,
+    operation: AdaptiveSessionOperationInput,
+    timeoutMs: number,
+  ) {
+    const startedAt = performance.now();
+    const controller = new AbortController();
+    let deadlineExpired = false;
+    let cancellationWork: Promise<unknown> | undefined;
+    await this.sessions.recordPreparedExecutionStage({
+      sessionId,
+      operationId: operation.operationId,
+      stage: "supervisor_launched",
+    });
+    const timeout = setTimeout(() => {
+      deadlineExpired = true;
+      const error = Object.assign(new Error("PREPARED_EXECUTION_DEADLINE_EXCEEDED"), {
+        code: "PREPARED_EXECUTION_DEADLINE_EXCEEDED",
+      });
+      controller.abort(error);
+      cancellationWork = this.runner.cancelActiveOperation(sessionId).catch(() => undefined);
+    }, timeoutMs);
+    timeout.unref();
+    try {
+      await this.sessions.recordPreparedExecutionStage({
+        sessionId,
+        operationId: operation.operationId,
+        stage: "protected_admission_requested",
+      });
+      await this.executeWithOnePreDispatchRetry(sessionId, operation, controller.signal);
+      await this.sessions.recordPreparedExecutionStage({
+        sessionId,
+        operationId: operation.operationId,
+        stage: "protected_admission_acknowledged",
+        durationMs: performance.now() - startedAt,
+      });
+      let projection = await this.sessions.projectProtectedOperationForAuthoring({
+        sessionId,
+        operationId: operation.operationId,
+      });
+      if (projection.status === "pending") {
+        cancellationWork = this.runner.cancelActiveOperation(sessionId).catch(() => undefined);
+        await cancellationWork;
+        await this.sessions.settlePreparedExecutionDeadline({
+          sessionId,
+          operationId: operation.operationId,
+          reasonCode: "PREPARED_EXECUTION_RETURNED_WITHOUT_SETTLEMENT",
+        });
+        projection = await this.sessions.projectProtectedOperationForAuthoring({
+          sessionId,
+          operationId: operation.operationId,
+          missingFailureCode: "PREPARED_EXECUTION_RETURNED_WITHOUT_SETTLEMENT",
+        });
+      }
+      await this.sessions.recordPreparedExecutionStage({
+        sessionId,
+        operationId: operation.operationId,
+        stage: projection.status === "settled" ? "terminal_observed" : "execution_returned_pending",
+        durationMs: performance.now() - startedAt,
+      });
+      return projection;
+    } catch (error) {
+      const code = deadlineExpired
+        ? "PREPARED_EXECUTION_DEADLINE_EXCEEDED"
+        : errorCode(error, "ADAPTIVE_SESSION_EXECUTION_FAILED");
+      if (deadlineExpired) {
+        await this.sessions.settlePreparedExecutionDeadline({
+          sessionId,
+          operationId: operation.operationId,
+          reasonCode: code,
+        });
+      }
+      const projection = await this.sessions.projectProtectedOperationForAuthoring({
+        sessionId,
+        operationId: operation.operationId,
+        missingFailureCode: code,
+      });
+      await this.sessions.recordPreparedExecutionStage({
+        sessionId,
+        operationId: operation.operationId,
+        stage: projection.status === "settled" ? "terminal_observed" : "execution_failed_pending",
+        durationMs: performance.now() - startedAt,
+        reasonCode: code,
+      });
+      return projection;
+    } finally {
+      clearTimeout(timeout);
+      if (cancellationWork) await cancellationWork;
+    }
   }
 
   async claimMissionOperationContinuation(
@@ -1393,6 +1526,11 @@ function errorCode(error: unknown, fallback: string) {
     }
   }
   return error instanceof Error && valid(error.message) ? error.message : fallback;
+}
+
+function preparedExecutionTimeoutMs() {
+  const value = Number(process.env.SCRY_PREPARED_EXECUTION_TIMEOUT_MS ?? 120_000);
+  return Number.isFinite(value) ? Math.max(1_000, Math.min(600_000, Math.floor(value))) : 120_000;
 }
 
 function authoringProvisioningFailure(

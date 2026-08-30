@@ -439,6 +439,81 @@ describe("external-agent lifecycle ownership", () => {
     );
   });
 
+  it("schedules Praxis convergence independently, without overlap, and exposes safe status", async () => {
+    vi.useFakeTimers();
+    process.env.SCRY_EXTERNAL_AGENT_SWEEP_MS = "1000";
+    try {
+      let release!: (value: string[]) => void;
+      const pending = new Promise<string[]>((resolve) => {
+        release = resolve;
+      });
+      const database = {
+        query: vi.fn().mockResolvedValue({ rowCount: 0, rows: [] }),
+      };
+      const praxis = { convergeExpiredRuntimeOwners: vi.fn(() => pending) };
+      const events = { emit: vi.fn().mockResolvedValue(undefined) };
+      const service = new ExternalAgentLifecycleService(
+        database as never,
+        praxis as never,
+        events as never,
+      );
+
+      service.onModuleInit();
+      await vi.advanceTimersByTimeAsync(3_050);
+      expect(praxis.convergeExpiredRuntimeOwners).toHaveBeenCalledOnce();
+      release([]);
+      await vi.runAllTicks();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(praxis.convergeExpiredRuntimeOwners).toHaveBeenCalledTimes(2);
+      expect(service.runtimeConvergenceStatus()).toMatchObject({
+        running: true,
+        invocationCount: 2,
+        candidateCount: 0,
+        settledCount: 0,
+        errorCount: 0,
+      });
+      await service.onModuleDestroy();
+      expect(service.runtimeConvergenceStatus().running).toBe(false);
+    } finally {
+      delete process.env.SCRY_EXTERNAL_AGENT_SWEEP_MS;
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps Praxis convergence alive and records a safe error after a failed cycle", async () => {
+    const database = { query: vi.fn().mockResolvedValue({ rowCount: 0, rows: [] }) };
+    const praxis = {
+      convergeExpiredRuntimeOwners: vi
+        .fn()
+        .mockRejectedValueOnce(Object.assign(new Error("safe"), { code: "TEST_SWEEP_FAILED" }))
+        .mockResolvedValueOnce([]),
+    };
+    const events = { emit: vi.fn().mockResolvedValue(undefined) };
+    const service = new ExternalAgentLifecycleService(
+      database as never,
+      praxis as never,
+      events as never,
+    );
+
+    await expect(service.recoverExpiredRuntimeOwners()).rejects.toMatchObject({
+      code: "TEST_SWEEP_FAILED",
+    });
+    await expect(service.recoverExpiredRuntimeOwners()).resolves.toEqual([]);
+    expect(service.runtimeConvergenceStatus()).toMatchObject({
+      invocationCount: 2,
+      errorCount: 1,
+      lastErrorCode: null,
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      "runtime",
+      expect.objectContaining({
+        name: "praxis.action_failed",
+        reasonCode: "TEST_SWEEP_FAILED",
+        details: { stage: "praxis_runtime_lease_convergence" },
+      }),
+    );
+  });
+
   it("replays a terminal correlated session without emitting a false transition", async () => {
     const database = {
       query: vi.fn(async () => ({

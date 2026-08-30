@@ -133,100 +133,109 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     const testBinding = this.testBindings.get(sessionId);
     if (testBinding) return testBinding(this.kernel, { sessionId, operation });
 
-    const owned = await this.runtime(sessionId, operation);
-    return this.exclusive(owned, async () => {
-      const leaseGuard = await this.startOperationLeaseGuard(sessionId, owned);
-      const context = await this.sessions.runtimeContextFor(sessionId);
-      const protectedContext =
-        operation.action.type === "protectedTransaction"
-          ? await this.sessions.protectedExecutionContext(sessionId, operation.operationId)
-          : undefined;
-      let resolveMs = 0;
-      let verifyMs = 0;
-      const capability = this.createCapabilities({
-        sessionId,
-        environmentId: context.environmentId,
-        correlationId: context.correlationId,
-        operationId: operation.operationId,
-        mode: operation.mode,
-        policy: context.policy,
-        ...(isBusinessMutation(operation)
-          ? {
-              onMutationDispatch: () =>
-                this.qualificationCampaigns?.refuseCampaignBoundMutationOutsideRun(sessionId) ??
-                Promise.resolve(),
-            }
-          : {}),
-        ...(protectedContext
-          ? { protectedContext, leaseOwner: `${this.ownerId}:${owned.fencingToken}` }
-          : {}),
-        onPraxisResult: (result) => {
-          resolveMs += result.timing.groundingMs ?? 0;
-        },
-        onExpectedEffectVerification: (result) => {
-          verifyMs += result.durationMs;
-        },
-      });
-      const modeKey = `${sessionId}:${operation.operationId}`;
-      this.operationModes.set(modeKey, operation.mode);
-      this.operationTimingCollectors.set(modeKey, {
-        onPraxisResult: (result) => {
-          resolveMs += result.timing.groundingMs ?? 0;
-        },
-        onExpectedEffectVerification: (result) => {
-          verifyMs += result.durationMs;
-        },
-      });
-      this.operationLeaseGuards.set(modeKey, leaseGuard);
-      this.operationMutationDispatches.set(modeKey, async () => {
-        await this.qualificationCampaigns?.refuseCampaignBoundMutationOutsideRun(sessionId);
-      });
-      try {
-        await this.sessions.recordDispatchBaseline({
+    throwIfAborted(signal);
+    const owned = await awaitWithAbort(this.runtime(sessionId, operation), signal);
+    return this.exclusive(
+      owned,
+      async () => {
+        throwIfAborted(signal);
+        const leaseGuard = await this.startOperationLeaseGuard(sessionId, owned);
+        throwIfAborted(signal);
+        const context = await this.sessions.runtimeContextFor(sessionId);
+        throwIfAborted(signal);
+        const protectedContext =
+          operation.action.type === "protectedTransaction"
+            ? await this.sessions.protectedExecutionContext(sessionId, operation.operationId)
+            : undefined;
+        throwIfAborted(signal);
+        let resolveMs = 0;
+        let verifyMs = 0;
+        const capability = this.createCapabilities({
           sessionId,
-          operationId: operation.operationId,
-          expectedEffect: operation.expectedEffect,
-          documentEpoch: owned.session.documentEpoch(),
-          url: owned.session.page.url(),
-          effectState: await observeEffectState(owned.session.page, operation.expectedEffect),
-        });
-        const executeStartedAt = performance.now();
-        const result = await owned.session.interact(operation.action, {
-          operationId: operation.operationId,
+          environmentId: context.environmentId,
           correlationId: context.correlationId,
-          mutationIdentity: `adaptive-${sessionId}-${operation.idempotencyKey}`,
-          expectedEffect: operation.expectedEffect,
-          ...(signal ? { signal } : {}),
-        });
-        if (result.outcome.mutationOutcome !== "unknown") leaseGuard.assertOwned();
-        const outcome = await this.recordVerifiedObservationOutcome({
-          sessionId,
           operationId: operation.operationId,
-          documentEpoch: result.documentEpoch,
-          url: result.url,
-          outcome: result.outcome,
+          mode: operation.mode,
+          policy: context.policy,
+          ...(isBusinessMutation(operation)
+            ? {
+                onMutationDispatch: () =>
+                  this.qualificationCampaigns?.refuseCampaignBoundMutationOutsideRun(sessionId) ??
+                  Promise.resolve(),
+              }
+            : {}),
+          ...(protectedContext
+            ? { protectedContext, leaseOwner: `${this.ownerId}:${owned.fencingToken}` }
+            : {}),
+          onPraxisResult: (result) => {
+            resolveMs += result.timing.groundingMs ?? 0;
+          },
+          onExpectedEffectVerification: (result) => {
+            verifyMs += result.durationMs;
+          },
         });
-        return {
-          outcome,
-          capabilityManifestDigest: capability.manifest.digest,
-          decisionBoundary: resolveRecoveryBoundary(outcome, {
-            environmentId: context.environmentId,
-            allowedOrigins: context.policy.allowedOrigins,
-            trustedScriptOrigins: context.policy.trustedScriptOrigins ?? [],
-            allowPopups: context.policy.allowPopups ?? false,
-          }),
-          timings: { resolveMs, executeMs: performance.now() - executeStartedAt, verifyMs },
-          safeState: { url: result.url, documentEpoch: result.documentEpoch },
-          ...(result.report ? { report: result.report } : {}),
-        };
-      } finally {
-        this.operationLeaseGuards.delete(modeKey);
-        this.operationMutationDispatches.delete(modeKey);
-        this.operationModes.delete(modeKey);
-        this.operationTimingCollectors.delete(modeKey);
-        await leaseGuard.stop();
-      }
-    });
+        const modeKey = `${sessionId}:${operation.operationId}`;
+        this.operationModes.set(modeKey, operation.mode);
+        this.operationTimingCollectors.set(modeKey, {
+          onPraxisResult: (result) => {
+            resolveMs += result.timing.groundingMs ?? 0;
+          },
+          onExpectedEffectVerification: (result) => {
+            verifyMs += result.durationMs;
+          },
+        });
+        this.operationLeaseGuards.set(modeKey, leaseGuard);
+        this.operationMutationDispatches.set(modeKey, async () => {
+          await this.qualificationCampaigns?.refuseCampaignBoundMutationOutsideRun(sessionId);
+        });
+        try {
+          await this.sessions.recordDispatchBaseline({
+            sessionId,
+            operationId: operation.operationId,
+            expectedEffect: operation.expectedEffect,
+            documentEpoch: owned.session.documentEpoch(),
+            url: owned.session.page.url(),
+            effectState: await observeEffectState(owned.session.page, operation.expectedEffect),
+          });
+          const executeStartedAt = performance.now();
+          const result = await owned.session.interact(operation.action, {
+            operationId: operation.operationId,
+            correlationId: context.correlationId,
+            mutationIdentity: `adaptive-${sessionId}-${operation.idempotencyKey}`,
+            expectedEffect: operation.expectedEffect,
+            ...(signal ? { signal } : {}),
+          });
+          if (result.outcome.mutationOutcome !== "unknown") leaseGuard.assertOwned();
+          const outcome = await this.recordVerifiedObservationOutcome({
+            sessionId,
+            operationId: operation.operationId,
+            documentEpoch: result.documentEpoch,
+            url: result.url,
+            outcome: result.outcome,
+          });
+          return {
+            outcome,
+            capabilityManifestDigest: capability.manifest.digest,
+            decisionBoundary: resolveRecoveryBoundary(outcome, {
+              environmentId: context.environmentId,
+              allowedOrigins: context.policy.allowedOrigins,
+              trustedScriptOrigins: context.policy.trustedScriptOrigins ?? [],
+              allowPopups: context.policy.allowPopups ?? false,
+            }),
+            timings: { resolveMs, executeMs: performance.now() - executeStartedAt, verifyMs },
+            safeState: { url: result.url, documentEpoch: result.documentEpoch },
+            ...(result.report ? { report: result.report } : {}),
+          };
+        } finally {
+          this.operationLeaseGuards.delete(modeKey);
+          this.operationMutationDispatches.delete(modeKey);
+          this.operationModes.delete(modeKey);
+          this.operationTimingCollectors.delete(modeKey);
+          await leaseGuard.stop();
+        }
+      },
+      signal,
+    );
   }
 
   async executeForRun(input: {
@@ -1225,13 +1234,22 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     });
   }
 
-  private async exclusive<T>(runtime: OwnedRuntime, operation: () => Promise<T>) {
+  private async exclusive<T>(
+    runtime: OwnedRuntime,
+    operation: () => Promise<T>,
+    signal?: AbortSignal,
+  ) {
     const predecessor = runtime.tail;
     let release!: () => void;
     runtime.tail = new Promise<void>((resolve) => {
       release = resolve;
     });
-    await predecessor;
+    try {
+      await awaitWithAbort(predecessor, signal);
+    } catch (error) {
+      void predecessor.finally(release);
+      throw error;
+    }
     try {
       return await operation();
     } finally {
@@ -1512,4 +1530,40 @@ function isBusinessMutation(operation: AdaptiveSessionOperationInput) {
   if (action.type === "click" || action.type === "press")
     return action.dispatchSemantics === "mutation";
   return false;
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : Object.assign(new Error("ADAPTIVE_SESSION_EXECUTION_CANCELLED"), {
+        code: "ADAPTIVE_SESSION_EXECUTION_CANCELLED",
+      });
+}
+
+function awaitWithAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  throwIfAborted(signal);
+  return new Promise<T>((resolve, reject) => {
+    const aborted = () => {
+      cleanup();
+      try {
+        throwIfAborted(signal);
+      } catch (error) {
+        reject(error);
+      }
+    };
+    const cleanup = () => signal.removeEventListener("abort", aborted);
+    signal.addEventListener("abort", aborted, { once: true });
+    work.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 }

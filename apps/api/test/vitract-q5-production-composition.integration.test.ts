@@ -10,6 +10,7 @@ import { AdaptiveSessionRepository } from "../src/adaptive-sessions/repositories
 import { PreparedProtectedOperationRepository } from "../src/adaptive-sessions/repositories/prepared-protected-operation.repository.js";
 import { Database } from "../src/infrastructure/index.js";
 import { OrchestrationService } from "../src/orchestration/index.js";
+import { ExternalAgentLifecycleService } from "../src/runs/services/external-agent-lifecycle.service.js";
 import { ProtectedOperationRepository } from "../src/runtime/repositories/protected-operation.repository.js";
 import { ProtectedOutputPersistenceRepository } from "../src/runtime/repositories/protected-output-persistence.repository.js";
 import { Q5ScopeBootstrapRepository } from "../src/runtime/repositories/q5-scope-bootstrap.repository.js";
@@ -31,10 +32,10 @@ integration("exact production Vitract/Q5 composition", () => {
       workspaceId,
       `vitract-c2-${workspaceId}`,
     ]);
-    await database.query(
-      `INSERT INTO app_users(id,supabase_user_id,email) VALUES($1,$1,$2)`,
-      [userId, `vitract-c2-${userId}@example.test`],
-    );
+    await database.query(`INSERT INTO app_users(id,supabase_user_id,email) VALUES($1,$1,$2)`, [
+      userId,
+      `vitract-c2-${userId}@example.test`,
+    ]);
     await database.query(
       `INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'owner')`,
       [workspaceId, userId],
@@ -71,14 +72,35 @@ integration("exact production Vitract/Q5 composition", () => {
     const protectedOperations = new ProtectedOperationRepository(database);
     const outputs = new ProtectedOutputPersistenceRepository(database);
     const ownerId = randomUUID();
+    let heartbeatTimer: NodeJS.Timeout | undefined;
+    let heartbeatCount = 0;
     const runner: any = {
       initialize: async (sessionId: string) => {
-        await sessions.claimRuntimeLease({ sessionId, ownerId, leaseDurationMs: 120_000 });
+        const lease = await sessions.claimRuntimeLease({
+          sessionId,
+          ownerId,
+          leaseDurationMs: 900,
+        });
+        heartbeatTimer = setInterval(() => {
+          void sessions
+            .heartbeatRuntimeLease({
+              sessionId,
+              ownerId,
+              fencingToken: lease.fencingToken,
+              leaseDurationMs: 900,
+            })
+            .then(() => {
+              heartbeatCount += 1;
+            });
+        }, 250);
       },
-      close: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn(async () => {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+      }),
       observe: vi.fn(async (sessionId: string) => observation(sessionId)),
       observeOperationContracts: vi.fn().mockResolvedValue([]),
       execute: vi.fn(async (sessionId: string, operation: { operationId: string }) => {
+        await new Promise((resolve) => setTimeout(resolve, 100));
         await executeDeterministicIssuance({
           database,
           protectedOperations,
@@ -142,8 +164,23 @@ integration("exact production Vitract/Q5 composition", () => {
       },
     );
     expect(authorization.status).toBe("approved");
-    await composition.executeAuthorized(principal, lifecycle, reserved.immutableResume);
-    await waitForCompleted(database, reserved.protectedOperationId);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(heartbeatCount).toBeGreaterThanOrEqual(3);
+    const planned = await database.query<{ state: string; leaseLive: boolean }>(
+      `SELECT operation.state,lease.lease_expires_at>now() AS "leaseLive"
+         FROM protected_operations operation
+         JOIN adaptive_session_runtime_leases lease ON lease.session_id=operation.praxis_session_id
+        WHERE operation.id=$1`,
+      [reserved.protectedOperationId],
+    );
+    expect(planned.rows[0]).toEqual({ state: "planned", leaseLive: true });
+    const settled = await composition.executeAuthorized(
+      principal,
+      lifecycle,
+      reserved.immutableResume,
+    );
+    expect(settled).toMatchObject({ state: "completed", replayed: false });
+    expect(runner.execute).toHaveBeenCalledOnce();
     const preparedScope = await bootstrapQ5CanonicalScope(
       new Q5ScopeBootstrapRepository(database, workspaceId),
       facts,
@@ -179,6 +216,70 @@ integration("exact production Vitract/Q5 composition", () => {
     expect(new Set(pair.rows[0].secretRefs)).toEqual(new Set([email.id, password.id]));
     expect(pair.rows[0].secretRefs).not.toContain(pair.rows[0].clientIdValueId);
     expect(pair.rows[0].secretRefs).not.toContain(pair.rows[0].clientSecretReferenceId);
+    expect(
+      (
+        await database.query<{ references: string[] }>(
+          `SELECT protected_reference_allowlist AS references FROM adaptive_sessions WHERE id=$1`,
+          [lifecycle.authoringSessionId],
+        )
+      ).rows[0]?.references,
+    ).not.toContain(pair.rows[0].clientSecretReferenceId);
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+
+    const convergenceReservation = await composition.reserveObserved(principal, {
+      lifecycle,
+      credentialName: "Scry deterministic convergence",
+      expiresAt: new Date(Date.now() + 120_000).toISOString(),
+    });
+    await new OrchestrationService(database).grantAuthorization(principal, lifecycle.missionId, {
+      missionId: lifecycle.missionId,
+      objectiveId: lifecycle.objectiveId,
+      environmentId: lifecycle.environmentId,
+      agentSessionId: lifecycle.agentSessionId,
+      kind: "protected_mutation",
+      reason: "Deterministic automatic convergence",
+      confirmedUserAuthorized: true,
+      expiresAt: convergenceReservation.expiresAt,
+      operationId: convergenceReservation.publicOperationId,
+      praxisSessionId: lifecycle.authoringSessionId,
+      preparedOperation: {
+        protectedOperationId: convergenceReservation.protectedOperationId,
+        publicOperationId: convergenceReservation.publicOperationId,
+        contractDigest: convergenceReservation.contractDigest,
+      },
+    });
+    await database.query(
+      `UPDATE adaptive_session_runtime_leases SET lease_expires_at=now()-interval '1 second'
+        WHERE session_id=$1`,
+      [lifecycle.authoringSessionId],
+    );
+    process.env.SCRY_EXTERNAL_AGENT_SWEEP_MS = "1000";
+    const convergence = new ExternalAgentLifecycleService(database, authoring, {
+      emit: vi.fn().mockResolvedValue(undefined),
+    } as never);
+    convergence.onModuleInit();
+    await new Promise((resolve) => setTimeout(resolve, 1_300));
+    await convergence.onModuleDestroy();
+    delete process.env.SCRY_EXTERNAL_AGENT_SWEEP_MS;
+    expect(convergence.runtimeConvergenceStatus()).toMatchObject({
+      running: false,
+      invocationCount: 1,
+      candidateCount: 1,
+      settledCount: 1,
+      errorCount: 0,
+    });
+    const automaticallyConverged = await database.query<{
+      state: string;
+      mutationOutcome: string;
+    }>(
+      `SELECT state,mutation_outcome AS "mutationOutcome"
+         FROM protected_operations WHERE id=$1`,
+      [convergenceReservation.protectedOperationId],
+    );
+    expect(automaticallyConverged.rows[0]).toEqual({
+      state: "failed_not_applied",
+      mutationOutcome: "not_applied",
+    });
   }, 30_000);
 });
 
@@ -264,20 +365,40 @@ async function executeDeterministicIssuance(input: {
       version: state.version,
     },
     [
-      { reference: "credentialRecordId", classification: "public", storageName: "Vitract credential record", value: `record-${randomUUID()}`, scope: "project" },
-      { reference: "clientId", classification: "public", storageName: "Vitract client ID", value: `client-${randomUUID()}`, scope: "project" },
-      { reference: "clientSecret", classification: "protected", storageName: "Vitract client secret", value: `secret-${randomUUID()}`, scope: "project" },
+      {
+        reference: "credentialRecordId",
+        classification: "public",
+        storageName: "Vitract credential record",
+        value: `record-${randomUUID()}`,
+        scope: "project",
+      },
+      {
+        reference: "clientId",
+        classification: "public",
+        storageName: "Vitract client ID",
+        value: `client-${randomUUID()}`,
+        scope: "project",
+      },
+      {
+        reference: "clientSecret",
+        classification: "protected",
+        storageName: "Vitract client secret",
+        value: `secret-${randomUUID()}`,
+        scope: "project",
+      },
     ],
-    [{
-      status: "active",
-      provider: "vitract",
-      resourceKind: "credential_record",
-      resourceScope: "vtr_app_deterministic",
-      identityContractVersion: 1,
-      requiredForDestructiveLifecycle: true,
-      identityReference: "credentialRecordId",
-      identitySource: "response",
-    }],
+    [
+      {
+        status: "active",
+        provider: "vitract",
+        resourceKind: "credential_record",
+        resourceScope: "vtr_app_deterministic",
+        identityContractVersion: 1,
+        requiredForDestructiveLifecycle: true,
+        identityReference: "credentialRecordId",
+        identitySource: "response",
+      },
+    ],
   );
   const reconciling = await input.protectedOperations.transition({
     id: row.id,
@@ -300,32 +421,39 @@ async function executeDeterministicIssuance(input: {
 }
 
 function observation(sessionId: string): any {
-  const url = "https://preview.vitract.com/partner/developer/applications/vtr_app_deterministic/credentials";
+  const url =
+    "https://preview.vitract.com/partner/developer/applications/vtr_app_deterministic/credentials";
   return {
     sessionId,
     documentEpoch: 0,
     url,
     semanticPageContext: {
       schemaVersion: 2,
-      authority: { pageId: "vitract-c2", documentEpoch: 0, url, title: "Credentials", readiness: "stable" },
+      authority: {
+        pageId: "vitract-c2",
+        documentEpoch: 0,
+        url,
+        title: "Credentials",
+        readiness: "stable",
+      },
       completeness: { kind: "bounded", observed: 2, returned: 2, truncated: false },
       controls: [
-        { reference: `context-control-${"1".repeat(32)}`, role: "button", name: "Add credential", group: "form", capabilities: ["activate"] },
-        { reference: `context-control-${"2".repeat(32)}`, role: "textbox", name: "Name", group: "form", capabilities: ["enter_text"] },
+        {
+          reference: `context-control-${"1".repeat(32)}`,
+          role: "button",
+          name: "Add credential",
+          group: "form",
+          capabilities: ["activate"],
+        },
+        {
+          reference: `context-control-${"2".repeat(32)}`,
+          role: "textbox",
+          name: "Name",
+          group: "form",
+          capabilities: ["enter_text"],
+        },
       ],
       readableValues: [],
     },
   };
-}
-
-async function waitForCompleted(database: Database, id: string) {
-  for (let poll = 0; poll < 100; poll += 1) {
-    const result = await database.query<{ state: string }>(
-      `SELECT state FROM protected_operations WHERE id=$1`,
-      [id],
-    );
-    if (result.rows[0]?.state === "completed") return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error("DETERMINISTIC_ISSUANCE_DID_NOT_SETTLE");
 }
