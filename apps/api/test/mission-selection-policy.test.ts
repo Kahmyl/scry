@@ -176,6 +176,37 @@ describe("canonical Mission-selection policy", () => {
     });
   });
 
+  it("honors explicit distinct-work authority over settled history without an external run ID", () => {
+    expect(
+      decideMissionSelection({
+        intendedPurpose: "primary",
+        distinctAuthorityConfirmed: true,
+        candidates: [fact({ status: "completed", latestAgentSessionStatus: "completed" })],
+      }),
+    ).toMatchObject({
+      decision: "fresh_primary_permitted",
+      freshPrimaryMissionPermitted: true,
+      userAuthorityRequired: false,
+      candidates: [{ classification: "settled_history" }],
+    });
+  });
+
+  it("does not let distinct-work authority override active ownership or mutation reconciliation", () => {
+    const inputs = [
+      fact({ status: "running", activeExecutionOwnership: true }),
+      fact({ unresolvedMutationRisk: true }),
+    ];
+
+    for (const candidate of inputs)
+      expect(
+        decideMissionSelection({
+          intendedPurpose: "primary",
+          distinctAuthorityConfirmed: true,
+          candidates: [candidate],
+        }).freshPrimaryMissionPermitted,
+      ).toBe(false);
+  });
+
   it("refuses reuse of a settled external-run identity", () => {
     expect(
       decideMissionSelection({

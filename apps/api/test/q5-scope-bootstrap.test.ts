@@ -109,6 +109,15 @@ describe("Q5 canonical scope bootstrap", () => {
     ["revoked", { revoked: true }],
     ["expired", { expiresAt: "2020-01-01T00:00:00.000Z" }],
     ["wrong scope", { projectId: randomUUID() }],
+    ["wrong environment", { environmentId: randomUUID() }],
+    ["wrong application", { applicationIdentity: "wrong-application" }],
+    ["inactive", { active: false }],
+    ["wrong issuance state", { issuanceState: "failed_not_applied" }],
+    ["unpersisted", { persistenceState: "pending" }],
+    ["public identity misclassified", { clientIdentityClass: "protected_reference" }],
+    ["secret misclassified", { clientSecretClass: "generated_safe" }],
+    ["privacy unsealed", { privacySealed: false }],
+    ["consumer binding unsupported", { exactConsumerBindingSupported: false }],
     [
       "fabricated provenance",
       {
@@ -231,8 +240,10 @@ function eligiblePair(projectId: string, environmentId: string): Q5CredentialPai
     environmentId,
     applicationIdentity: Q5_CANONICAL_SCOPE.applicationIdentity,
     issuanceOperationId: randomUUID(),
-    clientIdReferenceId: randomUUID(),
+    clientIdPublicValueId: randomUUID(),
     clientSecretReferenceId: randomUUID(),
+    clientIdentityClass: "generated_safe",
+    clientSecretClass: "protected_reference",
     credentialType: Q5_CANONICAL_SCOPE.credentialType,
     protectedPolicy: Q5_CANONICAL_SCOPE.protectedPolicy,
     provenance: "supported_protected_issuance",
@@ -242,6 +253,8 @@ function eligiblePair(projectId: string, environmentId: string): Q5CredentialPai
     active: true,
     revoked: false,
     expiresAt: null,
+    privacySealed: true,
+    exactConsumerBindingSupported: true,
   };
 }
 

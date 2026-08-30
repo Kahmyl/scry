@@ -428,11 +428,40 @@ export async function loadDurableContext(authority: {
   projectId: string;
   environmentId: string;
   credentialReferenceIds?: [string, string];
-}): Promise<DurableContext> {
+  clientIdPublicValueId?: string;
+  clientSecretReferenceId?: string;
+}): Promise<any> {
   const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL ?? "postgres://scry:scry-local@127.0.0.1:54329/scry",
   });
   try {
+    if (authority.clientIdPublicValueId || authority.clientSecretReferenceId) {
+      if (!authority.clientIdPublicValueId || !authority.clientSecretReferenceId)
+        throw new Error("Q5_TYPED_CREDENTIAL_PAIR_INCOMPLETE");
+      const typed = await pool.query<any>(
+        `SELECT environment.policy->'allowedOrigins' AS "allowedOrigins",environment.policy
+           FROM environments environment
+           JOIN generated_public_values client_id ON client_id.id=$3
+             AND client_id.project_id=environment.project_id
+             AND client_id.reference='clientId'
+           JOIN project_credentials client_secret ON client_secret.id=$4
+             AND client_secret.project_id=environment.project_id
+             AND client_secret.security_status='active' AND client_secret.deleted_at IS NULL
+          WHERE environment.project_id=$1 AND environment.id=$2`,
+        [
+          authority.projectId,
+          authority.environmentId,
+          authority.clientIdPublicValueId,
+          authority.clientSecretReferenceId,
+        ],
+      );
+      if (typed.rowCount !== 1) throw new Error("Q5_TYPED_CREDENTIAL_PAIR_UNAVAILABLE");
+      return {
+        ...typed.rows[0],
+        clientIdPublicValueId: authority.clientIdPublicValueId,
+        clientSecretReferenceId: authority.clientSecretReferenceId,
+      };
+    }
     const credentialPairs = authority.credentialReferenceIds
       ? undefined
       : await pool.query<CredentialPairCandidate>(

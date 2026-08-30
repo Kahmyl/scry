@@ -235,6 +235,14 @@ export class MissionFlowAuthoringService {
     return this.preparedOperations.reserve(input);
   }
 
+  async abandonPreparedReservations(principal: Principal, sessionId: string) {
+    this.requireWrite(principal);
+    await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    return this.preparedOperations.abandonReservedForSession(sessionId);
+  }
+
   async resumePreparedOperation(
     principal: Principal,
     sessionId: string,

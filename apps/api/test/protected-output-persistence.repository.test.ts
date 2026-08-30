@@ -36,7 +36,7 @@ function outputs() {
   ];
 }
 
-function harness(failPattern?: RegExp) {
+function harness(failPattern?: RegExp, preparedManifest = false) {
   const committed: string[] = [];
   const client = {
     query: vi.fn(async (sql: string, _values?: unknown[]) => {
@@ -48,8 +48,11 @@ function harness(failPattern?: RegExp) {
             {
               state: "persisting",
               safeOutputManifest: [
-                { reference: "clientSecret", classification: "protected" },
-                { reference: "clientId", classification: "public" },
+                {
+                  [preparedManifest ? "key" : "reference"]: "clientSecret",
+                  classification: "protected",
+                },
+                { [preparedManifest ? "key" : "reference"]: "clientId", classification: "public" },
               ],
             },
           ],
@@ -151,6 +154,12 @@ describe("atomic protected output persistence", () => {
     expect(
       client.query.mock.calls.some(([sql]) => String(sql).includes("pg_advisory_xact_lock")),
     ).toBe(true);
+  });
+
+  it("accepts the canonical key descriptors emitted by prepared reservations", async () => {
+    const { repository, committed } = harness(undefined, true);
+    await expect(repository.persistOutputsAtomically(context, outputs())).resolves.toBeDefined();
+    expect(committed).toEqual(["credential", "public"]);
   });
 
   it("binds a response-provided project public identity in the same transaction", async () => {

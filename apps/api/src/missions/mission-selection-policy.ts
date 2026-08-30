@@ -137,6 +137,20 @@ export function decideMissionSelection(input: MissionSelectionInput): MissionSel
       "list_missions",
     ]);
 
+  if (
+    input.distinctAuthorityConfirmed &&
+    candidates.length > 0 &&
+    candidates.every(({ classification }) => classification === "settled_history")
+  )
+    return {
+      decision: "fresh_primary_permitted",
+      freshPrimaryMissionPermitted: true,
+      continuationAvailable: false,
+      userAuthorityRequired: false,
+      safeActions: ["start_mission"],
+      candidates,
+    };
+
   if (candidates.length > 0 && !input.currentExternalRunId)
     return blocked(candidates, "MISSION_SELECTION_REQUIRED", ["list_missions"]);
   return {

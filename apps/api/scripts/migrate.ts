@@ -181,6 +181,12 @@ const q5CanonicalScopeBootstrapPath = fileURLToPath(
 const preparedProtectedOperationJourneysPath = fileURLToPath(
   new URL("../migrations/prepared-protected-operation-journeys.sql", import.meta.url),
 );
+const vitractQ5CompositionPath = fileURLToPath(
+  new URL("../migrations/vitract-q5-composition.sql", import.meta.url),
+);
+const preparedProtectedOperationReservationSettlementPath = fileURLToPath(
+  new URL("../migrations/prepared-protected-operation-reservation-settlement.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -267,7 +273,12 @@ const preparedProtectedOperationJourneys = await readFile(
   preparedProtectedOperationJourneysPath,
   "utf8",
 );
-const authoritativeQ5Upgrade = `${qualificationCampaignSafety}\n${authoritativeQ5Qualification}\n${q5CanonicalScopeBootstrap}\n${preparedProtectedOperationJourneys}`;
+const vitractQ5Composition = await readFile(vitractQ5CompositionPath, "utf8");
+const preparedProtectedOperationReservationSettlement = await readFile(
+  preparedProtectedOperationReservationSettlementPath,
+  "utf8",
+);
+const authoritativeQ5Upgrade = `${qualificationCampaignSafety}\n${authoritativeQ5Qualification}\n${q5CanonicalScopeBootstrap}\n${preparedProtectedOperationJourneys}\n${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}`;
 const systemCorrectnessM4Upgrade = `${systemCorrectnessM4}\n${authoritativeQ5Upgrade}`;
 const targetedRegionPerceptionUpgrade = `${targetedRegionPerception}\n${systemCorrectnessM4Upgrade}`;
 const flowNameIdentityCutoverUpgrade = `${flowNameIdentityCutover}\n${targetedRegionPerceptionUpgrade}`;
@@ -328,6 +339,9 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "authoritative-q5-qualification.sql": authoritativeQ5Qualification,
   "q5-canonical-scope-bootstrap.sql": q5CanonicalScopeBootstrap,
   "prepared-protected-operation-journeys.sql": preparedProtectedOperationJourneys,
+  "vitract-q5-composition.sql": vitractQ5Composition,
+  "prepared-protected-operation-reservation-settlement.sql":
+    preparedProtectedOperationReservationSettlement,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
@@ -356,13 +370,43 @@ const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
               migration !== "qualification-campaign-safety.sql" &&
               migration !== "authoritative-q5-qualification.sql" &&
               migration !== "q5-canonical-scope-bootstrap.sql" &&
-              migration !== "prepared-protected-operation-journeys.sql",
+              migration !== "prepared-protected-operation-journeys.sql" &&
+              migration !== "vitract-q5-composition.sql" &&
+              migration !== "prepared-protected-operation-reservation-settlement.sql",
           ),
     ),
   );
 };
 
 const baseline = stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS);
+const prePreparedProtectedOperationReservationSettlementFingerprint = createHash("sha256")
+  .update(
+    expandFoundation(
+      expandBaselineStage(
+        baselineSource,
+        optionalMigrationSources,
+        OPTIONAL_BASELINE_MIGRATIONS.filter(
+          (name) => name !== "prepared-protected-operation-reservation-settlement.sql",
+        ),
+      ),
+    ),
+  )
+  .digest("hex");
+const preVitractQ5CompositionFingerprint = createHash("sha256")
+  .update(
+    expandFoundation(
+      expandBaselineStage(
+        baselineSource,
+        optionalMigrationSources,
+        OPTIONAL_BASELINE_MIGRATIONS.filter(
+          (name) =>
+            name !== "vitract-q5-composition.sql" &&
+            name !== "prepared-protected-operation-reservation-settlement.sql",
+        ),
+      ),
+    ),
+  )
+  .digest("hex");
 const prePreparedProtectedOperationJourneysFingerprint = createHash("sha256")
   .update(
     expandFoundation(
@@ -370,7 +414,10 @@ const prePreparedProtectedOperationJourneysFingerprint = createHash("sha256")
         baselineSource,
         optionalMigrationSources,
         OPTIONAL_BASELINE_MIGRATIONS.filter(
-          (name) => name !== "prepared-protected-operation-journeys.sql",
+          (name) =>
+            name !== "prepared-protected-operation-journeys.sql" &&
+            name !== "vitract-q5-composition.sql" &&
+            name !== "prepared-protected-operation-reservation-settlement.sql",
         ),
       ),
     ),
@@ -389,7 +436,10 @@ const preAuthoritativeQ5Fingerprint = createHash("sha256")
         OPTIONAL_BASELINE_MIGRATIONS.filter(
           (name) =>
             name !== "authoritative-q5-qualification.sql" &&
-            name !== "q5-canonical-scope-bootstrap.sql",
+            name !== "q5-canonical-scope-bootstrap.sql" &&
+            name !== "prepared-protected-operation-journeys.sql" &&
+            name !== "vitract-q5-composition.sql" &&
+            name !== "prepared-protected-operation-reservation-settlement.sql",
         ),
       ),
     ),
@@ -401,7 +451,13 @@ const preQ5CanonicalScopeBootstrapFingerprint = createHash("sha256")
       expandBaselineStage(
         baselineSource,
         optionalMigrationSources,
-        OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "q5-canonical-scope-bootstrap.sql"),
+        OPTIONAL_BASELINE_MIGRATIONS.filter(
+          (name) =>
+            name !== "q5-canonical-scope-bootstrap.sql" &&
+            name !== "prepared-protected-operation-journeys.sql" &&
+            name !== "vitract-q5-composition.sql" &&
+            name !== "prepared-protected-operation-reservation-settlement.sql",
+        ),
       ),
     ),
   )
@@ -417,7 +473,10 @@ const preSystemCorrectnessM4Fingerprint = createHash("sha256")
             name !== "system-correctness-m4-reconciliation-lease.sql" &&
             name !== "qualification-campaign-safety.sql" &&
             name !== "authoritative-q5-qualification.sql" &&
-            name !== "q5-canonical-scope-bootstrap.sql",
+            name !== "q5-canonical-scope-bootstrap.sql" &&
+            name !== "prepared-protected-operation-journeys.sql" &&
+            name !== "vitract-q5-composition.sql" &&
+            name !== "prepared-protected-operation-reservation-settlement.sql",
         ),
       ),
     ),
@@ -755,14 +814,56 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === prePreparedProtectedOperationJourneysFingerprint) {
+    if (installedFingerprint === prePreparedProtectedOperationReservationSettlementFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-prepared-protected-operation-reservation-settlement'))",
+        );
+        await client.query(preparedProtectedOperationReservationSettlement);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied prepared operation reservation settlement ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === preVitractQ5CompositionFingerprint) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-vitract-q5-composition'))");
+        await client.query(
+          `${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}`,
+        );
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied Vitract Q5 composition ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (installedFingerprint === prePreparedProtectedOperationJourneysFingerprint) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query(
           "SELECT pg_advisory_xact_lock(hashtext('scry-prepared-protected-operation-journeys'))",
         );
-        await client.query(preparedProtectedOperationJourneys);
+        await client.query(
+          `${preparedProtectedOperationJourneys}\n${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}`,
+        );
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -782,7 +883,9 @@ try {
         await client.query(
           "SELECT pg_advisory_xact_lock(hashtext('scry-q5-canonical-scope-bootstrap'))",
         );
-        await client.query(`${q5CanonicalScopeBootstrap}\n${preparedProtectedOperationJourneys}`);
+        await client.query(
+          `${q5CanonicalScopeBootstrap}\n${preparedProtectedOperationJourneys}\n${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}`,
+        );
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -803,7 +906,7 @@ try {
           "SELECT pg_advisory_xact_lock(hashtext('scry-authoritative-q5-qualification'))",
         );
         await client.query(
-          `${authoritativeQ5Qualification}\n${q5CanonicalScopeBootstrap}\n${preparedProtectedOperationJourneys}`,
+          `${authoritativeQ5Qualification}\n${q5CanonicalScopeBootstrap}\n${preparedProtectedOperationJourneys}\n${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}`,
         );
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,

@@ -1972,7 +1972,7 @@ export class AdaptiveSessionRepository {
                 ),
             ) ||
             contract.rows[0]!.outputCommitment !==
-              stableDigest(
+              canonicalPreparedOperationDigest(
                 [...input.protectedReservation.safeOutputManifest]
                   .map((output) => ({
                     key: output.reference,
@@ -2039,7 +2039,7 @@ export class AdaptiveSessionRepository {
             `INSERT INTO operation_value_bindings(
                consumer_praxis_session_id,consumer_operation_id,source_kind,source_reference_id,
                producer_protected_operation_id,canonical_field_key,target_reference,
-               presentation_class,public_value,source_commitment,owner_fencing_epoch,expires_at,max_uses
+               presentation_class,public_value,source_commitment,owner_fencing_epoch,expires_at,max_uses)
              SELECT $1,$2,binding.source_kind,binding.source_reference_id,
                binding.producer_protected_operation_id,binding.canonical_field_key,
                binding.target_reference,binding.presentation_class,NULL,binding.source_commitment,
@@ -4605,6 +4605,21 @@ function policyDigest(policy: ExecutionPolicy) {
 
 function stableDigest(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function canonicalPreparedOperationDigest(value: unknown) {
+  return createHash("sha256").update(stablePreparedOperationJson(value)).digest("hex");
+}
+
+function stablePreparedOperationJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stablePreparedOperationJson).join(",")}]`;
+  if (value && typeof value === "object")
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stablePreparedOperationJson(item)}`)
+      .join(",")}}`;
+  return JSON.stringify(value);
 }
 
 function adaptiveSessionReplayMatches(

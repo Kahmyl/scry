@@ -96,7 +96,8 @@ integration("authoritative Q5 immediate-predecessor upgrade", () => {
       OPTIONAL_BASELINE_MIGRATIONS.filter(
         (name) =>
           name !== "q5-canonical-scope-bootstrap.sql" &&
-          name !== "prepared-protected-operation-journeys.sql",
+          name !== "prepared-protected-operation-journeys.sql" &&
+          name !== "vitract-q5-composition.sql",
       ),
     );
     const calibration = await readFile(

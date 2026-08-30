@@ -28,6 +28,8 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
       "praxisSession",
       "authorization",
       "issuanceOperation",
+      "observedContract",
+      "credentialRecordValue",
       "pairReference",
       "preparedScope",
     ].map((name) => [name, randomUUID()]),
@@ -64,7 +66,8 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
       environmentId: id.environment!,
       baseOrigin: origin,
       allowedOrigins: [origin],
-      credentialReferenceIds: [id.credential!, id.credential2!],
+      clientIdPublicValueId: id.credential!,
+      clientSecretReferenceId: id.credential2!,
     });
   });
 
@@ -80,7 +83,7 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
         projectId: id.project,
         environmentId: id.environment,
         issuanceOperationId: id.issuanceOperation,
-        clientIdReferenceId: id.credential,
+        clientIdPublicValueId: id.credential,
         clientSecretReferenceId: id.credential2,
         provenance: "supported_protected_issuance",
         atomic: true,
@@ -96,7 +99,8 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
         environmentId: id.environment!,
         baseOrigin: origin,
         allowedOrigins: [origin],
-        credentialReferenceIds: [id.credential!],
+        clientIdPublicValueId: id.credential!,
+        clientSecretReferenceId: id.credential2!,
       }),
     ).rejects.toMatchObject({
       response: { code: "Q5_CANONICAL_APPLICATION_ENVIRONMENT_MISMATCH" },
@@ -126,7 +130,7 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
     await expect(
       database.transaction(async (client) => {
         await client.query(`UPDATE project_credentials SET security_status='revoked' WHERE id=$1`, [
-          id.credential,
+          id.credential2,
         ]);
         await attempts.consumeUsing(client, prepared.attempt.attemptId, digest);
       }),
@@ -140,7 +144,8 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
     expect(await attempts.scopeForCredential(digest, externalRunId)).toMatchObject({
       campaignId: campaign.id,
       canonicalApplicationId: applicationId,
-      credentialReferenceIds: [id.credential, id.credential2],
+      clientIdPublicValueId: id.credential,
+      clientSecretReferenceId: id.credential2,
     });
     await attempts.settle(prepared.attempt.attemptId, "failed");
     await expect(
@@ -236,9 +241,8 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
     );
     await database.query(
       `INSERT INTO project_credentials(id,project_id,name,ciphertext,initialization_vector,authentication_tag)
-       VALUES($1,$3,'Vitract client id','cipher','123456789012','1234567890123456'),
-             ($2,$3,'Vitract client secret','cipher','123456789012','1234567890123456')`,
-      [id.credential, id.credential2, id.project],
+       VALUES($1,$2,'Vitract client secret','cipher','123456789012','1234567890123456')`,
+      [id.credential2, id.project],
     );
     await database.query(
       `INSERT INTO q5_canonical_scope_designations(
@@ -247,10 +251,6 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
        ) VALUES('m6-q5-authoritative',$1,$2,'vitract-preview-test','preview_test',$3,
          'atomic_protected_pair_v1','q5-bootstrap-v1')`,
       [id.project, id.environment, origin],
-    );
-    await database.query(
-      `UPDATE environments SET secret_refs=jsonb_build_array($2::text,$3::text) WHERE id=$1`,
-      [id.environment, id.credential, id.credential2],
     );
     await database.query(
       `INSERT INTO missions(id,project_id,title,original_instruction,status) VALUES($1,$2,'Q5 exact','one Vitract order','running')`,
@@ -312,14 +312,30 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
       [id.authorization, id.mission, id.objective, id.environment, id.agent, id.praxisSession],
     );
     await database.query(
+      `INSERT INTO observed_operation_contracts(
+         id,praxis_session_id,document_epoch,origin,source_kind,observation_id,operation_key,facts,digest
+       ) VALUES($1,$2,1,'https://preview.vitract.com','runtime_observation','q5-test',
+         'issuePartnerCredential',$3::jsonb,$4)`,
+      [
+        id.observedContract,
+        id.praxisSession,
+        JSON.stringify({
+          operation: { classification: "mutation" },
+          resourceEffect: { provider: "vitract", resourceKind: "credential_record" },
+        }),
+        "1".repeat(64),
+      ],
+    );
+    await database.query(
       `INSERT INTO protected_operations(
          id,operation_id,mutation_identity,owner_kind,authoring_session_id,project_id,
          environment_id,mission_id,objective_id,agent_session_id,flow_draft_id,authorization_id,
          program_digest,state,phase,dispatch_state,mutation_outcome,acquisition_state,
-         persistence_state,safe_output_manifest,persisted_references,completed_at
+         persistence_state,safe_output_manifest,persisted_references,completed_at,
+         observed_operation_contract_id,observed_operation_contract_digest
        ) VALUES($1,'q5-supported-issuance','q5-supported-issuance','authoring_session',$2,$3,
          $4,$5,$6,$7,$8,$9,$10,'completed','completed','acknowledged','applied','complete',
-         'committed',$11::jsonb,$12::jsonb,now())`,
+         'committed',$11::jsonb,$12::jsonb,now(),$13,$14)`,
       [
         id.issuanceOperation,
         id.praxisSession,
@@ -332,23 +348,52 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
         id.authorization,
         "f".repeat(64),
         JSON.stringify([
-          { reference: "credentialClientId" },
-          { reference: "credentialClientSecret" },
+          { key: "credentialRecordId", classification: "public" },
+          { key: "clientId", classification: "public" },
+          { key: "clientSecret", classification: "protected" },
         ]),
         JSON.stringify({
-          credentialClientId: { credentialId: id.credential },
-          credentialClientSecret: { credentialId: id.credential2 },
+          credentialRecordId: { valueId: id.credentialRecordValue },
+          clientId: { valueId: id.credential },
+          clientSecret: { credentialId: id.credential2 },
         }),
+        id.observedContract,
+        "1".repeat(64),
       ],
     );
     await database.query(
-      `UPDATE project_credentials SET origin_protected_operation_id=$1 WHERE id=ANY($2::uuid[])`,
-      [id.issuanceOperation, [id.credential, id.credential2]],
+      `UPDATE project_credentials SET origin_protected_operation_id=$1 WHERE id=$2`,
+      [id.issuanceOperation, id.credential2],
+    );
+    await database.query(
+      `INSERT INTO generated_public_values(
+         id,project_id,source_protected_operation_id,operation_id,name,reference,scope,
+         mission_id,objective_id,value
+       ) VALUES($1,$2,$3,'q5-supported-issuance','Vitract credential record','credentialRecordId',
+           'project',$4,$5,'record-safe'),
+          ($6,$2,$3,'q5-supported-issuance','Vitract client ID','clientId','project',$4,$5,'client-safe')`,
+      [
+        id.credentialRecordValue,
+        id.project,
+        id.issuanceOperation,
+        id.mission,
+        id.objective,
+        id.credential,
+      ],
+    );
+    await database.query(
+      `INSERT INTO external_resource_bindings(
+         source_protected_operation_id,generated_public_value_id,project_id,environment_id,
+         provider,resource_kind,resource_scope,canonical_external_identity,
+         identity_contract_version,identity_source,lifecycle_state,required_for_destructive_lifecycle
+       ) VALUES($1,$2,$3,$4,'vitract','credential_record','vtr_app_generated','record-safe',1,
+         'response','active',true)`,
+      [id.issuanceOperation, id.credentialRecordValue, id.project, id.environment],
     );
     await database.query(
       `INSERT INTO q5_prepared_scopes(
          id,qualification_key,project_id,environment_id,application_identity,environment_class,
-         target_origin,allowed_origins,credential_pair_reference_id,client_id_reference_id,
+         target_origin,allowed_origins,credential_pair_reference_id,client_id_public_value_id,
          client_secret_reference_id,issuance_operation_id,credential_type,protected_policy,
          credential_provenance,source_commit,source_manifest,schema_fingerprint,migration_identity,
          q5_mcp_profile,q5_mcp_contract_digest,qualification_policy_version,binding_digest

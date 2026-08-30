@@ -132,7 +132,11 @@ export class ProtectedOutputPersistenceRepository {
       return await this.database.transaction(async (client) => {
         const operation = await client.query<{
           state: string;
-          safeOutputManifest: Array<{ reference: string; classification: "protected" | "public" }>;
+          safeOutputManifest: Array<{
+            reference?: string;
+            key?: string;
+            classification: "protected" | "public";
+          }>;
         }>(
           `SELECT state,safe_output_manifest AS "safeOutputManifest" FROM protected_operations WHERE id=$1 AND project_id=$2 AND environment_id=$3
              AND mission_id=$4 AND objective_id=$5 AND agent_session_id=$6 AND owner_kind=$7
@@ -162,7 +166,10 @@ export class ProtectedOutputPersistenceRepository {
         );
         if (
           manifest.length !== admitted.size ||
-          manifest.some((output) => admitted.get(output.reference) !== output.classification)
+          manifest.some(
+            (output) =>
+              admitted.get(output.key ?? output.reference ?? "") !== output.classification,
+          )
         )
           throw new ConflictException("PROTECTED_OUTPUT_SET_INCOMPLETE");
 

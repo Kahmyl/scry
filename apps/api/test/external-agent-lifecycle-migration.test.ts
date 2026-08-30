@@ -40,7 +40,9 @@ describe("external-agent lifecycle migration", () => {
           name !== "qualification-campaign-safety.sql" &&
           name !== "authoritative-q5-qualification.sql" &&
           name !== "q5-canonical-scope-bootstrap.sql" &&
-          name !== "prepared-protected-operation-journeys.sql",
+          name !== "prepared-protected-operation-journeys.sql" &&
+          name !== "vitract-q5-composition.sql" &&
+          name !== "prepared-protected-operation-reservation-settlement.sql",
       ),
     )
       .replace("\\ir calibration-foundation.sql", () => calibration)
@@ -78,7 +80,9 @@ describe("external-agent lifecycle migration", () => {
           name !== "qualification-campaign-safety.sql" &&
           name !== "authoritative-q5-qualification.sql" &&
           name !== "q5-canonical-scope-bootstrap.sql" &&
-          name !== "prepared-protected-operation-journeys.sql",
+          name !== "prepared-protected-operation-journeys.sql" &&
+          name !== "vitract-q5-composition.sql" &&
+          name !== "prepared-protected-operation-reservation-settlement.sql",
       ),
     )
       .replace("\\ir calibration-foundation.sql", () => calibration)

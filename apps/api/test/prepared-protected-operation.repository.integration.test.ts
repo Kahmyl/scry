@@ -508,6 +508,49 @@ integration("prepared protected operation repository", () => {
       ],
     });
 
+    const abandonedReservation = await prepared.reserve({
+      projectId,
+      environmentId,
+      missionId,
+      objectiveId,
+      agentSessionId,
+      praxisSessionId: sessionId,
+      publicOperationId: `prepared-abandoned-${randomUUID()}`,
+      observedOperationContractId: contract!.id,
+      observedOperationContractDigest: contractDigest,
+      documentEpoch: 0,
+      ...commitments,
+      values,
+      expectedOutputs,
+      expiresAt,
+    });
+    await expect(prepared.abandonReservedForSession(sessionId)).resolves.toEqual({
+      abandoned: [abandonedReservation.protectedOperationId],
+    });
+    const abandonedTruth = await database.query(
+      `SELECT operation.state,operation.mutation_outcome AS "mutationOutcome",
+              operation.dispatch_state AS "dispatchState",operation.authorization_id AS "authorizationId",
+              binding.state AS "bindingState",transition.from_state AS "fromState",
+              transition.to_state AS "toState"
+         FROM protected_operations operation
+         JOIN operation_value_bindings binding
+           ON binding.consumer_protected_operation_id=operation.id
+         JOIN protected_operation_transitions transition
+           ON transition.protected_operation_id=operation.id AND transition.to_state='abandoned'
+        WHERE operation.id=$1`,
+      [abandonedReservation.protectedOperationId],
+    );
+    expect(abandonedTruth.rows[0]).toEqual({
+      state: "abandoned",
+      mutationOutcome: "not_applied",
+      dispatchState: "not_started",
+      authorizationId: null,
+      bindingState: "revoked",
+      fromState: "reserved",
+      toState: "abandoned",
+    });
+    await expect(prepared.abandonReservedForSession(sessionId)).resolves.toEqual({ abandoned: [] });
+
     const lossReservation = await prepared.reserve({
       projectId,
       environmentId,

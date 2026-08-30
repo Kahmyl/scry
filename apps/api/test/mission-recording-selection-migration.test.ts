@@ -26,6 +26,9 @@ const externalAgentLifecycleMigration = "external-agent-lifecycle.sql";
 const preMissionExternalAgentLifecycleMigration = "pre-mission-external-agent-lifecycle.sql";
 const flowNameIdentityCutoverMigration = "flow-name-identity-cutover.sql";
 const preparedProtectedOperationJourneysMigration = "prepared-protected-operation-journeys.sql";
+const vitractQ5CompositionMigration = "vitract-q5-composition.sql";
+const preparedReservationSettlementMigration =
+  "prepared-protected-operation-reservation-settlement.sql";
 const preOperationalEventsFingerprint =
   "8abcde60d523d2e8390a686a591c4435efee6331baf15a2468743a1c8cb65a4f";
 
@@ -52,6 +55,8 @@ async function currentInputs() {
   sources["authoritative-q5-qualification.sql"] = "";
   sources["q5-canonical-scope-bootstrap.sql"] = "";
   sources[preparedProtectedOperationJourneysMigration] = "";
+  sources[vitractQ5CompositionMigration] = "";
+  sources[preparedReservationSettlementMigration] = "";
 
   const calibration = await readMigration("calibration-foundation.sql");
 
@@ -231,11 +236,12 @@ describe("Mission recording selection migration", () => {
     const finalWrites =
       migrate.match(/UPDATE\s+schema_baseline[\s\S]{0,160}?schema_fingerprint=\$1/g) ?? [];
 
-    // The terminal M4, M6 campaign, Q5 qualification/canonical scope, and
-    // prepared protected-journey upgrades do not replay this historical migration.
-    expect(operationalEventsCalls).toHaveLength(finalWrites.length - 10);
+    // The terminal M4, M6 campaign, Q5 qualification/canonical scope, prepared
+    // protected-journey, Vitract composition, and reservation-settlement upgrades
+    // do not replay this historical migration.
+    expect(operationalEventsCalls).toHaveLength(finalWrites.length - 12);
 
-    expect(selectionCalls).toHaveLength(finalWrites.length - 11);
+    expect(selectionCalls).toHaveLength(finalWrites.length - 13);
 
     expect(gapCalls).toHaveLength(selectionCalls.length - 1);
 

@@ -245,6 +245,41 @@ export class PreparedProtectedOperationRepository {
     });
   }
 
+  async abandonReservedForSession(praxisSessionId: string) {
+    return this.database.transaction(async (client) => {
+      const abandoned = await client.query<{ id: string; fencingToken: number }>(
+        `UPDATE protected_operations
+            SET state='abandoned',phase='abandoned_before_authorization',version=version+1,
+                program_digest=encode(digest(concat_ws('|','abandoned-preauthorization-v1',
+                  target_commitment,input_commitment,output_commitment),'sha256'),'hex'),
+                mutation_outcome='not_applied',failure_code='PREPARED_OPERATION_ABANDONED',
+                recovery_class='do_not_retry',completed_at=now(),updated_at=now(),
+                safe_diagnostics=jsonb_build_object('dispatchAttempted',false)
+          WHERE praxis_session_id=$1 AND state='reserved' AND authorization_id IS NULL
+            AND dispatch_state='not_started'
+        RETURNING id,runtime_fencing_epoch AS "fencingToken"`,
+        [praxisSessionId],
+      );
+      for (const operation of abandoned.rows) {
+        await client.query(
+          `UPDATE operation_value_bindings
+              SET state='revoked',revoked_at=now()
+            WHERE consumer_protected_operation_id=$1 AND state='active'`,
+          [operation.id],
+        );
+        await client.query(
+          `INSERT INTO protected_operation_transitions(
+             protected_operation_id,sequence,from_state,to_state,phase,fencing_token,safe_diagnostics
+           ) SELECT $1,COALESCE(max(sequence),0)+1,'reserved','abandoned',
+                    'abandoned_before_authorization',$2,jsonb_build_object('dispatchAttempted',false)
+               FROM protected_operation_transitions WHERE protected_operation_id=$1`,
+          [operation.id, operation.fencingToken],
+        );
+      }
+      return { abandoned: abandoned.rows.map((operation) => operation.id) };
+    });
+  }
+
   async assertResumable(raw: ResumePreparedProtectedOperationInput) {
     const input = resumePreparedProtectedOperationSchema.parse(raw);
     const result = await this.database.query<{

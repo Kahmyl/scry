@@ -12,6 +12,7 @@ import { MissionProtectedQualificationRunner } from "./mission-protected-qualifi
 import { VitractCredentialResourceEffectProvider } from "./vitract-credential-resource-effect.provider.js";
 import { PreparedProtectedOperationRepository } from "./repositories/prepared-protected-operation.repository.js";
 import { VitractObservedOperationContractProvider } from "./vitract-observed-operation-contract.provider.js";
+import { VitractCredentialIssuancePreparationService } from "./services/vitract-credential-issuance-preparation.js";
 
 @Module({
   imports: [InfrastructureModule, RuntimeModule],
@@ -26,6 +27,7 @@ import { VitractObservedOperationContractProvider } from "./vitract-observed-ope
     MissionProtectedQualificationRunner,
     PreparedProtectedOperationRepository,
     VitractObservedOperationContractProvider,
+    VitractCredentialIssuancePreparationService,
   ],
   exports: [
     AdaptiveSessionRepository,
@@ -36,6 +38,7 @@ import { VitractObservedOperationContractProvider } from "./vitract-observed-ope
     MissionProtectedQualificationRunner,
     PreparedProtectedOperationRepository,
     VitractObservedOperationContractProvider,
+    VitractCredentialIssuancePreparationService,
   ],
 })
 export class AdaptiveSessionsModule {}

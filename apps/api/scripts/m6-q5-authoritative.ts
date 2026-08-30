@@ -46,9 +46,7 @@ const output = path.resolve(
 );
 const expectedSchema = required("SCRY_SCHEMA_FINGERPRINT", /^[a-f0-9]{64}$/);
 const expectedMigration = createHash("sha256")
-  .update(
-    await readFile(new URL("../migrations/q5-canonical-scope-bootstrap.sql", import.meta.url)),
-  )
+  .update(await readFile(new URL("../migrations/vitract-q5-composition.sql", import.meta.url)))
   .digest("hex");
 const databaseUrl = required("SCRY_M6_TEST_DATABASE_URL", /^postgres(?:ql)?:\/\//);
 process.env.DATABASE_URL = databaseUrl;
@@ -82,10 +80,8 @@ try {
     const protectedContext = await loadDurableContext({
       projectId: preparedScope.projectId,
       environmentId: preparedScope.environmentId,
-      credentialReferenceIds: [
-        preparedScope.clientIdReferenceId,
-        preparedScope.clientSecretReferenceId,
-      ],
+      clientIdPublicValueId: preparedScope.clientIdPublicValueId,
+      clientSecretReferenceId: preparedScope.clientSecretReferenceId,
     });
     const gates = await gatesForCurrentRuntime(preparedScope, protectedContext);
     if (mode === "preflight") {
@@ -229,18 +225,18 @@ async function gatesForCurrentRuntime(
     prepared_scope_validity: async () => {
       const current = await database.query<any>(
         `SELECT scope.state,scope.binding_digest AS "bindingDigest",
-                client_id.security_status AS "clientIdStatus",
+                'active'::text AS "clientIdStatus",
                 client_secret.security_status AS "clientSecretStatus",
                 issuance.state AS "issuanceState",issuance.persistence_state AS "persistenceState",
                 issuance.mutation_outcome AS "mutationOutcome"
            FROM q5_prepared_scopes scope
-           JOIN project_credentials client_id ON client_id.id=scope.client_id_reference_id
+           JOIN generated_public_values client_id ON client_id.id=scope.client_id_public_value_id
            JOIN project_credentials client_secret ON client_secret.id=scope.client_secret_reference_id
            JOIN protected_operations issuance ON issuance.id=scope.issuance_operation_id
           WHERE scope.id=$1 AND scope.project_id=$2 AND scope.environment_id=$3
             AND scope.source_commit=$4 AND scope.source_manifest=$5
             AND scope.schema_fingerprint=$6 AND scope.migration_identity=$7
-            AND client_id.deleted_at IS NULL AND client_secret.deleted_at IS NULL`,
+            AND client_secret.deleted_at IS NULL`,
         [
           preparedScope.id,
           preparedScope.projectId,
@@ -336,7 +332,8 @@ async function gatesForCurrentRuntime(
     canonical_application_environment_protected_auth: async () => {
       protectedContext = preparedContext;
       if (
-        protectedContext.credentialReferenceIds.length !== 2 ||
+        !protectedContext.clientIdPublicValueId ||
+        !protectedContext.clientSecretReferenceId ||
         !protectedContext.allowedOrigins.includes(VITRACT_CREATE_QUALIFICATION.providerOrigin)
       )
         throw new Error("Q5_CANONICAL_PROTECTED_BINDING_INVALID");
@@ -345,7 +342,7 @@ async function gatesForCurrentRuntime(
         projectId: preparedScope.projectId,
         environmentId: preparedScope.environmentId,
         applicationIdentity: "vitract-preview-test",
-        credentialCount: 2,
+        typedCredentialPair: true,
       };
     },
     deterministic_runtime_composition: async () => {
@@ -416,10 +413,10 @@ async function gatesForCurrentRuntime(
            FROM project_credentials
           WHERE project_id=$1 AND id=ANY($2::uuid[])
             AND deleted_at IS NULL AND security_status='active'`,
-        [preparedScope.projectId, protectedContext.credentialReferenceIds],
+        [preparedScope.projectId, [protectedContext.clientSecretReferenceId]],
       );
       if (
-        encrypted.rowCount !== protectedContext.credentialReferenceIds.length ||
+        encrypted.rowCount !== 1 ||
         encrypted.rows.some((row) => decryptCredential(row).length === 0)
       )
         throw new Error("Q5_PROTECTED_CREDENTIAL_REHEARSAL_FAILED");
@@ -474,7 +471,8 @@ async function provisionExactQualificationScope(
       environmentId: preparedScope.environmentId,
       baseOrigin: preparedScope.targetOrigin,
       allowedOrigins: context.allowedOrigins,
-      credentialReferenceIds: context.credentialReferenceIds,
+      clientIdPublicValueId: context.clientIdPublicValueId,
+      clientSecretReferenceId: context.clientSecretReferenceId,
     });
     const ownerUserId = required("SCRY_M6_Q5_OWNER_USER_ID", /^[0-9a-f-]{36}$/);
     const workspace = await client.query<{ workspaceId: string }>(
@@ -669,7 +667,8 @@ async function provisionExactQualificationScope(
     canaries: [
       credential,
       required("DEEPSEEK_API_KEY", /\S/),
-      ...context.credentialReferenceIds.map((id) => `protected-reference-canary:${id}`),
+      `generated-safe-reference-canary:${context.clientIdPublicValueId}`,
+      `protected-reference-canary:${context.clientSecretReferenceId}`,
       "cookie-canary-q5",
       "session-token-canary-q5",
       "authorization-canary-q5",

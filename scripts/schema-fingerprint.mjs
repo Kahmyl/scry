@@ -175,6 +175,11 @@ const preparedProtectedOperationJourneys = await readFile(
   new URL("prepared-protected-operation-journeys.sql", root),
   "utf8",
 );
+const vitractQ5Composition = await readFile(new URL("vitract-q5-composition.sql", root), "utf8");
+const preparedProtectedOperationReservationSettlement = await readFile(
+  new URL("prepared-protected-operation-reservation-settlement.sql", root),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -225,6 +230,11 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "u
   ["authoritative-q5-qualification.sql", authoritativeQ5Qualification],
   ["q5-canonical-scope-bootstrap.sql", q5CanonicalScopeBootstrap],
   ["prepared-protected-operation-journeys.sql", preparedProtectedOperationJourneys],
+  ["vitract-q5-composition.sql", vitractQ5Composition],
+  [
+    "prepared-protected-operation-reservation-settlement.sql",
+    preparedProtectedOperationReservationSettlement,
+  ],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);
