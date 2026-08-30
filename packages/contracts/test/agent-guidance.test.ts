@@ -55,6 +55,12 @@ describe("agent-facing guidance contracts", () => {
         kind: "protected_mutation",
         operationId: "operation-1",
         praxisSessionId: id("5"),
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        preparedOperation: {
+          protectedOperationId: id("6"),
+          publicOperationId: "operation-1",
+          contractDigest: "a".repeat(64),
+        },
       }).success,
     ).toBe(true);
   });

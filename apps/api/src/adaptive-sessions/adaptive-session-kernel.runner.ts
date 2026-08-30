@@ -17,6 +17,7 @@ import type { AuthoringBrowserSession } from "@scry/praxis";
 import { runProtectedStage } from "@scry/praxis";
 import {
   observeSemanticPageContext,
+  observeOperationContracts,
   observeSemanticPageContextReferenceState,
   resolveTargetLocator,
 } from "@scry/praxis";
@@ -56,6 +57,12 @@ type OwnedRuntime = {
   session: AuthoringBrowserSession<ExecutionReport>;
   fencingToken: number;
   tail: Promise<void>;
+  heartbeat?: RuntimeOwnerHeartbeat;
+};
+
+type RuntimeOwnerHeartbeat = {
+  assertOwned(): void;
+  stop(): Promise<void>;
 };
 
 type OperationTimingCollector = {
@@ -369,6 +376,14 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     const runtime = this.runtimes.get(sessionId);
     if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
     return this.exclusive(runtime, () => runtime.session.observeDocument());
+  }
+
+  async observeOperationContracts(sessionId: string) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, () =>
+      observeOperationContracts(runtime.session.page, sessionId),
+    );
   }
 
   async readPublicValue(
@@ -695,6 +710,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     if (!runtime) return;
     this.runtimes.delete(sessionId);
     try {
+      await runtime.heartbeat?.stop();
       try {
         await runProtectedStage({
           stage: "adaptive_runtime_tail_shutdown",
@@ -773,6 +789,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       ownerId: this.ownerId,
       leaseDurationMs: this.leaseDurationMs,
     });
+    const heartbeat = this.startRuntimeOwnerHeartbeat(sessionId, lease.fencingToken);
     const operationId = `adaptive-runtime-${lease.fencingToken}`;
     const capability = this.createCapabilities({
       sessionId,
@@ -906,10 +923,17 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           lease.fencingToken,
           "verified",
         );
-      const owned = { session: browser, fencingToken: lease.fencingToken, tail: Promise.resolve() };
+      heartbeat.assertOwned();
+      const owned = {
+        session: browser,
+        fencingToken: lease.fencingToken,
+        tail: Promise.resolve(),
+        heartbeat,
+      };
       this.runtimes.set(sessionId, owned);
       return owned;
     } catch (error) {
+      await heartbeat.stop();
       if (successorCheckpoint!)
         await this.sessions
           .completeSuccessorCheckpoint(
@@ -1273,6 +1297,67 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           dispatchPosition: "post_dispatch",
           work: () => renewalTail,
         }).catch(() => undefined);
+      },
+    };
+  }
+
+  private startRuntimeOwnerHeartbeat(
+    sessionId: string,
+    fencingToken: number,
+  ): RuntimeOwnerHeartbeat {
+    const intervalMs = Math.max(250, Math.floor(this.leaseDurationMs / 3));
+    let stopped = false;
+    let failure: unknown;
+    let tail = Promise.resolve();
+    const renew = () => {
+      tail = tail
+        .then(async () => {
+          if (stopped || failure) return;
+          await runProtectedStage({
+            stage: "adaptive_runtime_owner_heartbeat",
+            timeoutMs: intervalMs,
+            timeoutCode: "ADAPTIVE_RUNTIME_OWNER_HEARTBEAT_TIMEOUT",
+            dispatchPosition: "post_dispatch",
+            work: () =>
+              this.sessions.heartbeatRuntimeLease({
+                sessionId,
+                ownerId: this.ownerId,
+                fencingToken,
+                leaseDurationMs: this.leaseDurationMs,
+              }),
+          });
+        })
+        .catch(async (error) => {
+          if (failure || stopped) return;
+          failure = error;
+          const runtime = this.runtimes.get(sessionId);
+          if (runtime?.fencingToken === fencingToken) {
+            this.runtimes.delete(sessionId);
+            await runtime.session.cancelActiveOperation().catch(() => undefined);
+            await runtime.session.close().catch(() => undefined);
+          }
+          await this.sessions
+            .settleRuntimeOwnerLoss?.({
+              sessionId,
+              ownerId: this.ownerId,
+              fencingToken,
+              runtimePresent: false,
+              recoveryObservationAvailable: false,
+              reasonCode: "ADAPTIVE_RUNTIME_OWNER_HEARTBEAT_LOST",
+            })
+            .catch(() => undefined);
+        });
+    };
+    renew();
+    const timer = setInterval(renew, intervalMs);
+    return {
+      assertOwned() {
+        if (failure) throw failure;
+      },
+      async stop() {
+        stopped = true;
+        clearInterval(timer);
+        await tail;
       },
     };
   }

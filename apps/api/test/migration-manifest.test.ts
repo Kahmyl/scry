@@ -91,6 +91,7 @@ describe("schema migration manifest", () => {
       expect(source).toContain("flow-name-identity-cutover.sql");
       expect(source).toContain("targeted-region-perception.sql");
       expect(source).toContain("qualification-campaign-safety.sql");
+      expect(source).toContain("prepared-protected-operation-journeys.sql");
     }
   });
 

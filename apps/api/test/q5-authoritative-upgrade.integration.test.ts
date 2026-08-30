@@ -93,7 +93,11 @@ integration("authoritative Q5 immediate-predecessor upgrade", () => {
     const expanded = expandBaselineStage(
       baseline,
       sources,
-      OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "q5-canonical-scope-bootstrap.sql"),
+      OPTIONAL_BASELINE_MIGRATIONS.filter(
+        (name) =>
+          name !== "q5-canonical-scope-bootstrap.sql" &&
+          name !== "prepared-protected-operation-journeys.sql",
+      ),
     );
     const calibration = await readFile(
       new URL("calibration-foundation.sql", migrationRoot),

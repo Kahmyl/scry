@@ -60,7 +60,7 @@ export function createQ5McpServer(client: ScryApiClient) {
   registerGetRunTool(server, client);
   registerAcceptObjectiveEvidenceTool(server, client);
   registerGetMissionTool(server, client);
-  registerGrantMissionExecutionAuthorizationTool(server, client);
+  registerGrantMissionExecutionAuthorizationTool(server, client, true);
   registerUpdateMissionObjectiveTool(server, client);
   registerFinalizeAgentWorkTool(server, client);
   registerPreviewMissionReportTool(server, client);

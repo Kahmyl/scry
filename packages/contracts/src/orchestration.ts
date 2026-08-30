@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { uuidSchema } from "./api.js";
 import { missionContextSchema } from "./mission.js";
+import { preparedOperationAuthorizationBindingSchema } from "./prepared-protected-operation.js";
 
 export const orchestrationStateSchema = z.enum([
   "unscheduled",
@@ -62,7 +63,8 @@ const grantMissionAuthorizationBase = missionContextSchema.extend({
   confirmedUserAuthorized: z.literal(true),
 });
 
-export const grantMissionAuthorizationSchema = z.discriminatedUnion("kind", [
+/** Frozen authoritative-Q5 wire contract. Production protected authorization uses the prepared form below. */
+export const legacyGrantMissionAuthorizationSchema = z.discriminatedUnion("kind", [
   grantMissionAuthorizationBase
     .extend({
       kind: authorizationKindSchema.exclude(["protected_mutation"]),
@@ -78,6 +80,42 @@ export const grantMissionAuthorizationSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
 ]);
+
+export const grantMissionAuthorizationSchema = z
+  .discriminatedUnion("kind", [
+    grantMissionAuthorizationBase
+      .extend({
+        kind: authorizationKindSchema.exclude(["protected_mutation"]),
+        operationId: z.string().trim().min(1).max(200).optional(),
+        praxisSessionId: uuidSchema.optional(),
+      })
+      .strict(),
+    grantMissionAuthorizationBase
+      .extend({
+        kind: z.literal("protected_mutation"),
+        operationId: z.string().trim().min(1).max(200),
+        praxisSessionId: uuidSchema,
+        preparedOperation: preparedOperationAuthorizationBindingSchema,
+      })
+      .strict(),
+  ])
+  .superRefine((input, context) => {
+    if (
+      input.kind === "protected_mutation" &&
+      input.preparedOperation.publicOperationId !== input.operationId
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["preparedOperation", "publicOperationId"],
+        message: "prepared operation public ID must match the authorization operation ID",
+      });
+    if (input.kind === "protected_mutation" && !input.expiresAt)
+      context.addIssue({
+        code: "custom",
+        path: ["expiresAt"],
+        message: "prepared protected operation authorization requires an expiry",
+      });
+  });
 export type GrantMissionAuthorizationInput = z.infer<typeof grantMissionAuthorizationSchema>;
 export const createExecutionPlanSchema = missionContextSchema
   .extend({

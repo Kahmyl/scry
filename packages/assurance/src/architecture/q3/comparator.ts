@@ -31,3 +31,30 @@ export function compareIndependentTruth(input: {
   if (input.scry.redispatchCount > 0) reasons.push("SCRY_UNKNOWN_REDISPATCH_OBSERVED");
   return { verdict: reasons.length ? "FAIL" : "PASS", reasons };
 }
+
+export function compareProtectedJourneyContinuity(input: {
+  createdIdentityDigest: string;
+  retrievedIdentityDigest: string;
+  sourceMutationRepeatable: boolean;
+  continuation: "read_only_retrieve" | "reconcile";
+  consumerMethod: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  mutationOutcome: "applied" | "unknown";
+  dispatchCount: number;
+  protectedPlaintextObserved: boolean;
+}) {
+  const reasons: string[] = [];
+  if (!/^[a-f0-9]{64}$/.test(input.createdIdentityDigest))
+    reasons.push("CREATED_IDENTITY_DIGEST_INVALID");
+  if (!/^[a-f0-9]{64}$/.test(input.retrievedIdentityDigest))
+    reasons.push("RETRIEVED_IDENTITY_DIGEST_INVALID");
+  if (input.createdIdentityDigest !== input.retrievedIdentityDigest)
+    reasons.push("CREATED_RETRIEVED_IDENTITY_MISMATCH");
+  if (input.sourceMutationRepeatable) reasons.push("SOURCE_MUTATION_REPEATABLE");
+  if (input.dispatchCount !== 1) reasons.push("PROTECTED_DISPATCH_COUNT_MISMATCH");
+  if (input.protectedPlaintextObserved) reasons.push("PROTECTED_PLAINTEXT_OBSERVED");
+  if (input.mutationOutcome === "unknown" && input.continuation !== "reconcile")
+    reasons.push("UNKNOWN_CONTINUATION_NOT_RECONCILIATION");
+  if (input.continuation === "read_only_retrieve" && input.consumerMethod !== "GET")
+    reasons.push("RETRIEVAL_CONSUMER_NOT_READ_ONLY");
+  return { verdict: reasons.length ? ("FAIL" as const) : ("PASS" as const), reasons };
+}

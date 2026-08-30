@@ -120,7 +120,7 @@ describe("current Scry MCP surface", () => {
     const { client, server } = await connected();
     const tools = (await client.listTools()).tools;
     const names = tools.map(({ name }) => name);
-    expect(tools).toHaveLength(60);
+    expect(tools).toHaveLength(67);
     expect(names).toEqual(
       expect.arrayContaining([
         "start_praxis_session",
@@ -134,6 +134,13 @@ describe("current Scry MCP surface", () => {
         "read_praxis_public_runtime_value",
         "get_praxis_session",
         "close_praxis_session",
+        "reserve_prepared_protected_operation",
+        "get_praxis_runtime_ownership",
+        "resume_prepared_protected_operation",
+        "claim_mission_operation_continuation",
+        "list_mission_operation_checkpoints",
+        "dispatch_prepared_protected_operation",
+        "observe_operation_contracts",
         "start_run",
         "dispatch_run_operation",
         "attach_run_praxis_session",

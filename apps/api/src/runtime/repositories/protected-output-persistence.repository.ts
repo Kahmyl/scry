@@ -175,7 +175,6 @@ export class ProtectedOutputPersistenceRepository {
             scope: "run" | "project";
           }
         > = {};
-        const credentialIds: string[] = [];
         for (const item of encrypted) {
           const id = randomUUID();
           if (item.output.classification === "protected") {
@@ -233,7 +232,6 @@ export class ProtectedOutputPersistenceRepository {
                 context.protectedOperationId,
               ],
             );
-            credentialIds.push(id);
             references[item.output.reference] = {
               classification: "protected",
               credentialId: id,
@@ -318,14 +316,6 @@ export class ProtectedOutputPersistenceRepository {
               binding.identitySource,
               binding.requiredForDestructiveLifecycle,
             ],
-          );
-        }
-        if (credentialIds.length) {
-          await client.query(
-            `UPDATE environments SET secret_refs=(
-               SELECT jsonb_agg(DISTINCT value) FROM jsonb_array_elements_text(secret_refs || $2::jsonb) value
-             ) WHERE id=$1 AND project_id=$3`,
-            [context.environmentId, JSON.stringify(credentialIds), context.projectId],
           );
         }
         const transitioned = await client.query<{

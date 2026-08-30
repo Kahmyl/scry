@@ -1,6 +1,11 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
-import type { InspectPraxisRegionResult, OperationOutcome } from "@scry/contracts";
+import {
+  observedOperationContractSchema,
+  observedOperationFactsSchema,
+  type InspectPraxisRegionResult,
+  type OperationOutcome,
+} from "@scry/contracts";
 import type { ElementHandle, Locator, Page } from "playwright";
 
 import { observationIdentity, PraxisDocumentEpoch, PraxisDocumentIdentity } from "./observation.js";
@@ -11,6 +16,21 @@ import {
 } from "./public-value.js";
 
 type SemanticPageContext = NonNullable<OperationOutcome["semanticPageContext"]>;
+const publicOperationDeclarationSchema = observedOperationFactsSchema
+  .omit({
+    resourceEffect: true,
+  })
+  .extend({
+    operation: observedOperationFactsSchema.shape.operation.omit({
+      activationControlReference: true,
+    }),
+    inputs: observedOperationFactsSchema.shape.inputs.element
+      .omit({
+        controlReference: true,
+      })
+      .array()
+      .max(100),
+  });
 
 const MAX_CONTEXT_CONTROLS = 48;
 const MAX_CONTEXT_CANDIDATES = 5_000;
@@ -1021,4 +1041,80 @@ function cleanContextText(value: string | null | undefined, maximum: number) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, maximum);
+}
+
+export async function observeOperationContracts(page: Page, praxisSessionId: string) {
+  const context = await observeSemanticPageContext(page);
+  const declarations = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('script[type="application/scry-operation-contract+json"]'))
+      .slice(0, 24)
+      .flatMap((node) => {
+        const source = node.textContent ?? "";
+        if (!source || source.length > 50_000) return [];
+        try {
+          return [JSON.parse(source)];
+        } catch {
+          return [];
+        }
+      }),
+  );
+  return declarations.flatMap((candidate, index) => {
+    const declaration = publicOperationDeclarationSchema.safeParse(candidate);
+    if (!declaration.success) return [];
+    const activation = uniqueControl(context, [declaration.data.operation.label], ["activate"]);
+    if (!activation) return [];
+    const inputs = declaration.data.inputs.map((field) => {
+      // Aliases are display-only. Only the declared safe label may correlate a canonical
+      // field key with one unique current-document control.
+      const control = uniqueControl(context, [field.label], ["enter_text"]);
+      return control ? { ...field, controlReference: control.reference } : field;
+    });
+    if (inputs.some((field) => field.required && !("controlReference" in field))) return [];
+    const facts = {
+      ...declaration.data,
+      operation: {
+        ...declaration.data.operation,
+        activationControlReference: activation.reference,
+      },
+      inputs,
+    };
+    const provenance = {
+      praxisSessionId,
+      documentEpoch: context.authority.documentEpoch,
+      origin: new URL(context.authority.url).origin,
+      sourceKind: "public_document" as const,
+      observationId: `${context.authority.pageId}:operation-contract:${index}`,
+    };
+    const digest = createHash("sha256")
+      .update(stableJson({ ...provenance, facts }))
+      .digest("hex");
+    const contract = observedOperationContractSchema.safeParse({
+      id: randomUUID(),
+      digest,
+      ...provenance,
+      ...facts,
+    });
+    return contract.success ? [contract.data] : [];
+  });
+}
+
+function uniqueControl(context: SemanticPageContext, names: string[], capabilities: string[]) {
+  const admitted = new Set(names.map((name) => name.normalize("NFKC").trim().toLowerCase()));
+  const matches = context.controls.filter(
+    (control) =>
+      admitted.has(control.name.normalize("NFKC").trim().toLowerCase()) &&
+      capabilities.every((capability) => control.capabilities.includes(capability as never)),
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object")
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(",")}}`;
+  return JSON.stringify(value);
 }

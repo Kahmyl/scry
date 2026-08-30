@@ -21,6 +21,13 @@ import { registerReadPraxisPublicRuntimeValueTool } from "./read-praxis-public-r
 import { registerGetPraxisSessionTool } from "./get-praxis-session.tool.js";
 import { registerReconcilePraxisUnknownOperationTool } from "./reconcile-praxis-unknown-operation.tool.js";
 import { registerClosePraxisSessionTool } from "./close-praxis-session.tool.js";
+import { registerClaimMissionOperationContinuationTool } from "./claim-mission-operation-continuation.tool.js";
+import { registerDispatchPreparedProtectedOperationTool } from "./dispatch-prepared-protected-operation.tool.js";
+import { registerGetPraxisRuntimeOwnershipTool } from "./get-praxis-runtime-ownership.tool.js";
+import { registerListMissionOperationCheckpointsTool } from "./list-mission-operation-checkpoints.tool.js";
+import { registerObserveOperationContractsTool } from "./observe-operation-contracts.tool.js";
+import { registerReservePreparedProtectedOperationTool } from "./reserve-prepared-protected-operation.tool.js";
+import { registerResumePreparedProtectedOperationTool } from "./resume-prepared-protected-operation.tool.js";
 
 export function registerAdaptiveSessionTools(server: McpServer, client: ScryApiClient) {
   registerPrepareFlowAuthoringTool(server, client);
@@ -45,5 +52,12 @@ export function registerPraxisSessionTools(server: McpServer, client: ScryApiCli
   registerReadPraxisPublicRuntimeValueTool(server, client);
   registerGetPraxisSessionTool(server, client);
   registerReconcilePraxisUnknownOperationTool(server, client);
+  registerGetPraxisRuntimeOwnershipTool(server, client);
+  registerObserveOperationContractsTool(server, client);
+  registerReservePreparedProtectedOperationTool(server, client);
+  registerResumePreparedProtectedOperationTool(server, client);
+  registerDispatchPreparedProtectedOperationTool(server, client);
+  registerListMissionOperationCheckpointsTool(server, client);
+  registerClaimMissionOperationContinuationTool(server, client);
   registerClosePraxisSessionTool(server, client);
 }

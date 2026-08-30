@@ -295,17 +295,45 @@ export class OrchestrationService {
       if (!valid.rowCount) throw new ConflictException({ code: "AUTHORIZATION_SCOPE_MISMATCH" });
       if (input.kind === "protected_mutation") {
         const protectedSession = await c.query(
-          `SELECT 1 FROM adaptive_sessions
-           WHERE id=$1 AND project_id=(SELECT project_id FROM missions WHERE id=$2)
-             AND mission_id=$2 AND active_objective_id=$3 AND environment_id=$4
-             AND protection='protected' AND state IN ('active','provisioning')`,
-          [input.praxisSessionId, missionId, input.objectiveId, input.environmentId],
+          `SELECT operation.id
+           FROM protected_operations operation
+           JOIN adaptive_sessions session ON session.id=operation.praxis_session_id
+           JOIN adaptive_session_runtime_leases lease ON lease.session_id=session.id
+             AND lease.owner_id=operation.runtime_owner_id
+             AND lease.fencing_token=operation.runtime_fencing_epoch
+             AND lease.lease_expires_at>now()
+           WHERE operation.id=$1 AND operation.operation_id=$2
+             AND operation.observed_operation_contract_digest=$3
+             AND operation.praxis_session_id=$4
+             AND operation.project_id=(SELECT project_id FROM missions WHERE id=$5)
+             AND operation.mission_id=$5 AND operation.objective_id=$6
+             AND operation.environment_id=$7 AND operation.agent_session_id=$8
+             AND operation.state='reserved' AND operation.authorization_id IS NULL
+             AND operation.reservation_expires_at=$9::timestamptz
+             AND operation.reservation_expires_at>now()
+             AND session.protection='protected' AND session.state='active'
+           FOR UPDATE OF operation,session,lease`,
+          [
+            input.preparedOperation.protectedOperationId,
+            input.operationId,
+            input.preparedOperation.contractDigest,
+            input.praxisSessionId,
+            missionId,
+            input.objectiveId,
+            input.environmentId,
+            input.agentSessionId,
+            input.expiresAt,
+          ],
         );
         if (!protectedSession.rowCount)
-          throw new ConflictException({ code: "AUTHORIZATION_PRAXIS_SESSION_SCOPE_MISMATCH" });
+          throw new ConflictException({ code: "AUTHORIZATION_PREPARED_OPERATION_SCOPE_MISMATCH" });
       }
       const result = await c.query<{ id: string }>(
-        `INSERT INTO mission_authorizations(mission_id,objective_id,environment_id,kind,operation_id,praxis_session_id,reason,granted_by_agent_session_id,granted_by_user_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+        `INSERT INTO mission_authorizations(
+           mission_id,objective_id,environment_id,kind,operation_id,praxis_session_id,reason,
+           granted_by_agent_session_id,granted_by_user_id,expires_at,protected_operation_id,
+           protected_operation_contract_digest
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
         [
           missionId,
           input.objectiveId,
@@ -317,8 +345,29 @@ export class OrchestrationService {
           input.agentSessionId,
           p.userId,
           input.expiresAt ?? null,
+          input.kind === "protected_mutation" ? input.preparedOperation.protectedOperationId : null,
+          input.kind === "protected_mutation" ? input.preparedOperation.contractDigest : null,
         ],
       );
+      if (input.kind === "protected_mutation") {
+        const planned = await c.query(
+          `UPDATE protected_operations SET authorization_id=$2,state='planned',phase='authorized',
+             version=version+1,updated_at=now()
+           WHERE id=$1 AND state='reserved' AND authorization_id IS NULL
+             AND reservation_expires_at>now() RETURNING runtime_fencing_epoch`,
+          [input.preparedOperation.protectedOperationId, result.rows[0]!.id],
+        );
+        if (!planned.rowCount)
+          throw new ConflictException({ code: "AUTHORIZATION_PREPARED_OPERATION_RACE_LOST" });
+        await c.query(
+          `INSERT INTO protected_operation_transitions(
+             protected_operation_id,sequence,from_state,to_state,phase,fencing_token,safe_diagnostics
+           )
+           SELECT $1,COALESCE(max(sequence),0)+1,'reserved','planned','authorized',$2,'{}'::jsonb
+           FROM protected_operation_transitions WHERE protected_operation_id=$1`,
+          [input.preparedOperation.protectedOperationId, planned.rows[0]!.runtime_fencing_epoch],
+        );
+      }
       await this.activity(
         c,
         missionId,
@@ -330,6 +379,14 @@ export class OrchestrationService {
           kind: input.kind,
           operationId: input.operationId ?? null,
           environmentId: input.environmentId,
+          ...(input.kind === "protected_mutation"
+            ? {
+                protectedOperationId: input.preparedOperation.protectedOperationId,
+                contractDigest: input.preparedOperation.contractDigest,
+                praxisSessionId: input.praxisSessionId,
+                expiresAt: input.expiresAt,
+              }
+            : {}),
         },
       );
       return { id: result.rows[0]!.id, status: "approved", kind: input.kind };

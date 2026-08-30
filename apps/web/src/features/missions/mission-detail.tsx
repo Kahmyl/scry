@@ -147,16 +147,30 @@ export function MissionDetailPage({
             scope only; it does not approve target correctness or workflow progression.
           </p>
           <dl>
+            <dt>Mission</dt>
+            <dd>{authorizationRequest.authorization.missionId}</dd>
             <dt>Objective</dt>
-            <dd>{authorizationRequest.objectiveId}</dd>
+            <dd>{authorizationRequest.authorization.objectiveId}</dd>
             <dt>Environment</dt>
-            <dd>{authorizationRequest.environmentId}</dd>
+            <dd>{authorizationRequest.authorization.environmentId}</dd>
             <dt>Praxis session</dt>
-            <dd>{authorizationRequest.praxisSessionId}</dd>
+            <dd>{authorizationRequest.authorization.praxisSessionId}</dd>
             <dt>Operation</dt>
-            <dd>{authorizationRequest.operationId}</dd>
+            <dd>{authorizationRequest.authorization.operationId}</dd>
+            <dt>Operation label</dt>
+            <dd>{authorizationRequest.display.operationLabel}</dd>
+            <dt>Method / target class</dt>
+            <dd>
+              {authorizationRequest.display.method} · {authorizationRequest.display.targetClass}
+            </dd>
+            <dt>Protected operation</dt>
+            <dd>{authorizationRequest.authorization.preparedOperation.protectedOperationId}</dd>
+            <dt>Operation contract</dt>
+            <dd>{authorizationRequest.authorization.preparedOperation.contractDigest}</dd>
+            <dt>Expires</dt>
+            <dd>{authorizationRequest.authorization.expiresAt}</dd>
             <dt>Reason</dt>
-            <dd>{authorizationRequest.reason}</dd>
+            <dd>{authorizationRequest.authorization.reason}</dd>
           </dl>
           <button
             className="primary-button"
@@ -164,7 +178,7 @@ export function MissionDetailPage({
               setError("");
               void post<{ id: string; status: string }>(
                 `/missions/${missionId}/authorizations`,
-                authorizationRequest,
+                authorizationRequest.authorization,
               )
                 .then(setAuthorizationResult)
                 .catch((cause) => setError(message(cause)));
@@ -386,6 +400,12 @@ function protectedAuthorizationRequest(missionId: string) {
   const agentSessionId = params.get("agentSessionId");
   const praxisSessionId = params.get("praxisSessionId");
   const operationId = params.get("operationId");
+  const protectedOperationId = params.get("protectedOperationId");
+  const contractDigest = params.get("contractDigest");
+  const expiresAt = params.get("expiresAt");
+  const operationLabel = params.get("operationLabel");
+  const method = params.get("method");
+  const targetClass = params.get("targetClass");
   const reason = params.get("reason");
   if (
     !objectiveId ||
@@ -393,19 +413,30 @@ function protectedAuthorizationRequest(missionId: string) {
     !agentSessionId ||
     !praxisSessionId ||
     !operationId ||
+    !protectedOperationId ||
+    !contractDigest ||
+    !expiresAt ||
+    !operationLabel ||
+    !method ||
+    !targetClass ||
     !reason
   )
     return undefined;
   return {
-    missionId,
-    objectiveId,
-    environmentId,
-    agentSessionId,
-    praxisSessionId,
-    operationId,
-    reason,
-    kind: "protected_mutation" as const,
-    confirmedUserAuthorized: true as const,
+    authorization: {
+      missionId,
+      objectiveId,
+      environmentId,
+      agentSessionId,
+      praxisSessionId,
+      operationId,
+      preparedOperation: { protectedOperationId, publicOperationId: operationId, contractDigest },
+      expiresAt,
+      reason,
+      kind: "protected_mutation" as const,
+      confirmedUserAuthorized: true as const,
+    },
+    display: { operationLabel, method, targetClass },
   };
 }
 

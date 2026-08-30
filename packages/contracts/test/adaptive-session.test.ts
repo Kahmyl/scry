@@ -36,6 +36,7 @@ describe("protected live Praxis session binding", () => {
     operationId: "issue-secret",
     reason: "Owner approved this exact protected operation",
     confirmedUserAuthorized: true as const,
+    expiresAt: "2099-01-01T00:00:00.000Z",
   };
 
   it("defaults sessions to ordinary and permits an explicit protected session", () => {
@@ -62,8 +63,24 @@ describe("protected live Praxis session binding", () => {
       grantMissionAuthorizationSchema.safeParse({
         ...authorization,
         praxisSessionId: ids.flowDraftId,
+        preparedOperation: {
+          protectedOperationId: ids.authorizationId,
+          publicOperationId: authorization.operationId,
+          contractDigest: "0".repeat(64),
+        },
       }).success,
     ).toBe(true);
+    expect(
+      grantMissionAuthorizationSchema.safeParse({
+        ...authorization,
+        praxisSessionId: ids.flowDraftId,
+        preparedOperation: {
+          protectedOperationId: ids.authorizationId,
+          publicOperationId: "different-operation",
+          contractDigest: "0".repeat(64),
+        },
+      }).success,
+    ).toBe(false);
   });
 });
 

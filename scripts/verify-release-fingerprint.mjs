@@ -176,6 +176,10 @@ const q5CanonicalScopeBootstrap = await readFile(
   new URL("q5-canonical-scope-bootstrap.sql", migrations),
   "utf8",
 );
+const preparedProtectedOperationJourneys = await readFile(
+  new URL("prepared-protected-operation-journeys.sql", migrations),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", migrations), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -225,6 +229,7 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", migration
   ["qualification-campaign-safety.sql", qualificationCampaignSafety],
   ["authoritative-q5-qualification.sql", authoritativeQ5Qualification],
   ["q5-canonical-scope-bootstrap.sql", q5CanonicalScopeBootstrap],
+  ["prepared-protected-operation-journeys.sql", preparedProtectedOperationJourneys],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

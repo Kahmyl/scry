@@ -10,6 +10,8 @@ import { AdaptiveOperationReconciliationRegistry } from "./adaptive-operation-re
 import { OperationBoundProtectedInputRepository } from "./repositories/operation-bound-protected-input.repository.js";
 import { MissionProtectedQualificationRunner } from "./mission-protected-qualification.runner.js";
 import { VitractCredentialResourceEffectProvider } from "./vitract-credential-resource-effect.provider.js";
+import { PreparedProtectedOperationRepository } from "./repositories/prepared-protected-operation.repository.js";
+import { VitractObservedOperationContractProvider } from "./vitract-observed-operation-contract.provider.js";
 
 @Module({
   imports: [InfrastructureModule, RuntimeModule],
@@ -22,6 +24,8 @@ import { VitractCredentialResourceEffectProvider } from "./vitract-credential-re
     MissionFlowAuthoringService,
     OperationBoundProtectedInputRepository,
     MissionProtectedQualificationRunner,
+    PreparedProtectedOperationRepository,
+    VitractObservedOperationContractProvider,
   ],
   exports: [
     AdaptiveSessionRepository,
@@ -30,6 +34,8 @@ import { VitractCredentialResourceEffectProvider } from "./vitract-credential-re
     MissionFlowAuthoringService,
     OperationBoundProtectedInputRepository,
     MissionProtectedQualificationRunner,
+    PreparedProtectedOperationRepository,
+    VitractObservedOperationContractProvider,
   ],
 })
 export class AdaptiveSessionsModule {}

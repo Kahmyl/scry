@@ -139,7 +139,7 @@ describe("atomic protected output persistence", () => {
     const persisted = await repository.persistOutputsAtomically(context, acquired);
     const references = persisted.references;
     expect(database.transaction).toHaveBeenCalledOnce();
-    expect(committed).toEqual(["credential", "public", "allowlist"]);
+    expect(committed).toEqual(["credential", "public"]);
     expect(references.clientSecret).toMatchObject({
       classification: "protected",
       scope: "project",
@@ -167,7 +167,7 @@ describe("atomic protected output persistence", () => {
         requiredForDestructiveLifecycle: true,
       },
     ]);
-    expect(committed).toEqual(["credential", "public", "binding", "allowlist"]);
+    expect(committed).toEqual(["credential", "public", "binding"]);
     const binding = client.query.mock.calls.find(([sql]) =>
       String(sql).includes("INSERT INTO external_resource_bindings"),
     );
@@ -186,7 +186,7 @@ describe("atomic protected output persistence", () => {
         requiredForDestructiveLifecycle: true,
       },
     ]);
-    expect(committed).toEqual(["credential", "public", "binding", "allowlist"]);
+    expect(committed).toEqual(["credential", "public", "binding"]);
   });
 
   it("rejects arbitrary or protected outputs as binding identity", async () => {
@@ -230,7 +230,6 @@ describe("atomic protected output persistence", () => {
   for (const [label, pattern] of [
     ["credential insertion", /INSERT INTO project_credentials/],
     ["public-value insertion", /INSERT INTO generated_public_values/],
-    ["environment allowlisting", /UPDATE environments SET secret_refs/],
   ] as const) {
     it(`rolls back the complete set on ${label} failure`, async () => {
       const { repository, committed } = harness(pattern);

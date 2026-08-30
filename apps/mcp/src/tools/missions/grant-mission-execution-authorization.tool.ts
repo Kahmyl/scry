@@ -10,6 +10,7 @@ import {
   missionResumePointerSchema,
   executionBindingSchema,
   grantMissionAuthorizationSchema,
+  legacyGrantMissionAuthorizationSchema,
   protectedRecoveryCommandSchema,
   veilPreferenceUpdateSchema,
 } from "@scry/contracts";
@@ -28,14 +29,22 @@ import {
 export function registerGrantMissionExecutionAuthorizationTool(
   server: McpServer,
   client: ScryApiClient,
+  frozenQ5 = false,
 ) {
   server.registerTool(
     "grant_mission_execution_authorization",
     {
       title: "Grant Mission execution authorization",
-      description:
-        "Persist explicit owner/admin authorization for one scoped Live or protected operation. Set authorization.kind=protected_mutation with authorization.operationId for the exact intent/operation and authorization.praxisSessionId for the exact live protected Praxis session, alongside the current Mission, Objective, agent-session, and environment IDs in that canonical authorization object. Use the returned authorization ID only for that bound operation; authorization is never inferred or portable across a new session/document.",
-      inputSchema: z.object({ authorization: grantMissionAuthorizationSchema }).strict(),
+      description: frozenQ5
+        ? "Persist explicit owner/admin authorization for one scoped Live or protected operation. Set authorization.kind=protected_mutation with authorization.operationId for the exact intent/operation and authorization.praxisSessionId for the exact live protected Praxis session, alongside the current Mission, Objective, agent-session, and environment IDs in that canonical authorization object. Use the returned authorization ID only for that bound operation; authorization is never inferred or portable across a new session/document."
+        : "Persist explicit owner/admin authorization for one scoped Live operation or an already reserved protected operation. protected_mutation requires the exact operationId, live praxisSessionId, expiry, and preparedOperation {protectedOperationId,publicOperationId,contractDigest}. The grant atomically binds that immutable reservation; changed inputs, target, contract, owner epoch, document, or expiry require a new reservation.",
+      inputSchema: z
+        .object({
+          authorization: frozenQ5
+            ? legacyGrantMissionAuthorizationSchema
+            : grantMissionAuthorizationSchema,
+        })
+        .strict(),
       annotations: writes,
     },
     async ({ authorization: { missionId, ...body } }) =>

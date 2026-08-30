@@ -316,6 +316,7 @@ export function missionAuthoringProtectedOperationReservation(
       storageName:
         output.classification === "protected" ? output.storage.credentialName : output.storage.name,
     })),
+    ...(transaction.mutation.request ? { requestContract: transaction.mutation.request } : {}),
   };
 }
 

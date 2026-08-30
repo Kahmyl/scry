@@ -16,6 +16,11 @@ import type {
   ReconcileAdaptiveOperationInput,
   CurrentAction,
   PrepareFlowAuthoringInput,
+  ReservePreparedProtectedOperationInput,
+  ResumePreparedProtectedOperationInput,
+  ClaimMissionOperationContinuationInput,
+  DispatchPreparedProtectedOperationInput,
+  PraxisObservation,
 } from "@scry/contracts";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -25,6 +30,9 @@ import { AdaptiveSessionKernelRunner } from "./adaptive-session-kernel.runner.js
 import { AdaptiveSessionRepository } from "./repositories/adaptive-session.repository.js";
 import { OperationBoundProtectedInputRepository } from "./repositories/operation-bound-protected-input.repository.js";
 import { AdaptiveOperationReconciliationRegistry } from "./adaptive-operation-reconciliation.registry.js";
+import { PreparedProtectedOperationRepository } from "./repositories/prepared-protected-operation.repository.js";
+import { compilePreparedProtectedOperation } from "./prepared-protected-operation.compiler.js";
+import { VitractObservedOperationContractProvider } from "./vitract-observed-operation-contract.provider.js";
 import {
   deriveMissionAuthoringOperation,
   missionAuthoringOperationIdentity,
@@ -60,6 +68,12 @@ export class MissionFlowAuthoringService {
     @Optional()
     @Inject(AdaptiveOperationReconciliationRegistry)
     private readonly reconciliationRegistry?: AdaptiveOperationReconciliationRegistry,
+    @Optional()
+    @Inject(PreparedProtectedOperationRepository)
+    private readonly preparedOperations?: PreparedProtectedOperationRepository,
+    @Optional()
+    @Inject(VitractObservedOperationContractProvider)
+    private readonly vitractOperationContracts?: VitractObservedOperationContractProvider,
   ) {}
 
   async start(principal: Principal, input: StartAdaptiveSessionInput) {
@@ -178,6 +192,164 @@ export class MissionFlowAuthoringService {
     if (session.state !== "active" && session.state !== "suspended")
       throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
     return this.runner.observe(sessionId);
+  }
+
+  async observeOperationContracts(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    const current = await this.runner.observe(sessionId);
+    return { contracts: await this.currentOperationContracts(sessionId, current) };
+  }
+
+  async runtimeOwnership(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    return { sessionState: session.state, runtime: session.runtime };
+  }
+
+  async reservePreparedOperation(
+    principal: Principal,
+    sessionId: string,
+    input: ReservePreparedProtectedOperationInput,
+  ) {
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+    await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    if (input.praxisSessionId !== sessionId)
+      throw new ConflictException({ code: "PREPARED_OPERATION_PRAXIS_SESSION_MISMATCH" });
+    const current = await this.runner.observe(sessionId);
+    const contracts = await this.currentOperationContracts(sessionId, current);
+    if (
+      !contracts.some(
+        (contract) =>
+          contract.id === input.observedOperationContractId &&
+          contract.digest === input.observedOperationContractDigest &&
+          contract.documentEpoch === input.documentEpoch,
+      )
+    )
+      throw new ConflictException({ code: "PREPARED_OPERATION_OBSERVATION_STALE" });
+    return this.preparedOperations.reserve(input);
+  }
+
+  async resumePreparedOperation(
+    principal: Principal,
+    sessionId: string,
+    input: ResumePreparedProtectedOperationInput,
+  ) {
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+    await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    if (input.praxisSessionId !== sessionId)
+      throw new ConflictException({ code: "PREPARED_OPERATION_PRAXIS_SESSION_MISMATCH" });
+    const current = await this.runner.observe(sessionId);
+    const prepared = await this.preparedOperations.assertResumable(input);
+    if (current.documentEpoch !== prepared.documentEpoch)
+      throw new ConflictException({ code: "PREPARED_OPERATION_DOCUMENT_REPLACED" });
+    return {
+      ...prepared,
+      documentEpoch: current.documentEpoch,
+      resumeAllowed: true as const,
+      immutableReservation: true as const,
+    };
+  }
+
+  async dispatchPreparedOperation(
+    principal: Principal,
+    sessionId: string,
+    input: DispatchPreparedProtectedOperationInput,
+  ) {
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+    await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    if (input.praxisSessionId !== sessionId)
+      throw new ConflictException({ code: "PREPARED_OPERATION_PRAXIS_SESSION_MISMATCH" });
+    const current = await this.runner.observe(sessionId);
+    const material = await this.preparedOperations.executionMaterial(input);
+    if (current.documentEpoch !== material.documentEpoch)
+      throw new ConflictException({ code: "PREPARED_OPERATION_DOCUMENT_REPLACED" });
+    if (new URL(current.url).origin !== new URL(material.origin).origin)
+      throw new ConflictException({ code: "PREPARED_OPERATION_ORIGIN_REPLACED" });
+    const compiled = compilePreparedProtectedOperation({
+      material,
+      entryUrl: current.url,
+    });
+    const protectedReservation = missionAuthoringProtectedOperationReservation(
+      compiled.transaction,
+      [material.origin],
+    );
+    const operation: AdaptiveSessionOperationInput = {
+      operationId: material.publicOperationId,
+      idempotencyKey: `prepared:${material.protectedOperationId}`,
+      action: compiled.transaction,
+      expectedEffect: { type: "none" },
+      mode: "transact",
+      protectedInputReferences: Object.values(compiled.transaction.inputs).flatMap((value) =>
+        value.classification === "known_secret" ? [value.credentialRef] : [],
+      ),
+    };
+    const claim = await this.sessions.beginMissionOperation({
+      workspaceId: workspaceId(principal),
+      sessionId,
+      intent: compiled.intent,
+      operationId: operation.operationId,
+      idempotencyKey: operation.idempotencyKey,
+      action: operation.action,
+      expectedEffect: operation.expectedEffect,
+      mode: operation.mode,
+      protectedReservation,
+      earlyProtectedOperationId: material.protectedOperationId,
+      preparedProtectedOperationId: material.protectedOperationId,
+    });
+    await this.preparedOperations.consumeGeneratedBindings(material.protectedOperationId);
+    if (!claim.replayed) this.launchProtectedExecution(sessionId, operation);
+    return {
+      protectedOperationId: material.protectedOperationId,
+      publicOperationId: material.publicOperationId,
+      state: claim.replayed ? claim.state : "dispatching",
+      replayed: claim.replayed,
+      sourceMutationRepeatable: false,
+    };
+  }
+
+  async claimMissionOperationContinuation(
+    principal: Principal,
+    sessionId: string,
+    input: ClaimMissionOperationContinuationInput,
+  ) {
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+    await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    return this.preparedOperations.claimContinuation(sessionId, input);
+  }
+
+  async listMissionOperationCheckpoints(principal: Principal, sessionId: string) {
+    await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    return this.preparedOperations.listCheckpoints(sessionId);
+  }
+
+  private async currentOperationContracts(sessionId: string, current: PraxisObservation) {
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    const projected = [
+      ...(await this.runner.observeOperationContracts(sessionId)),
+      ...(this.vitractOperationContracts?.project(sessionId, current) ?? []),
+    ];
+    const unique = [
+      ...new Map(projected.map((contract) => [contract.digest, contract] as const)).values(),
+    ];
+    return this.preparedOperations.recordObservedContracts(unique);
   }
 
   async readPublicValue(

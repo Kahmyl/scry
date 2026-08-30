@@ -6,6 +6,40 @@ import { AdaptiveSessionKernelRunner } from "../src/adaptive-sessions/adaptive-s
 import { SecretRedactor } from "@scry/policy";
 
 describe("AdaptiveSessionKernelRunner timing propagation", () => {
+  it("renews live runtime ownership during idle human authorization delay", async () => {
+    vi.useFakeTimers();
+    const heartbeatRuntimeLease = vi.fn(async (_claim: unknown) => undefined);
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      {} as never,
+      { heartbeatRuntimeLease } as never,
+      {} as never,
+    );
+    (runner as unknown as { leaseDurationMs: number }).leaseDurationMs = 900;
+    const heartbeat = (
+      runner as unknown as {
+        startRuntimeOwnerHeartbeat(
+          sessionId: string,
+          fencingToken: number,
+        ): {
+          assertOwned(): void;
+          stop(): Promise<void>;
+        };
+      }
+    ).startRuntimeOwnerHeartbeat("idle-protected-session", 7);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(heartbeatRuntimeLease.mock.calls.length).toBeGreaterThanOrEqual(3);
+    for (const [claim] of heartbeatRuntimeLease.mock.calls)
+      expect(claim).toMatchObject({
+        sessionId: "idle-protected-session",
+        fencingToken: 7,
+        leaseDurationMs: 900,
+      });
+    expect(() => heartbeat.assertOwned()).not.toThrow();
+    await heartbeat.stop();
+    vi.useRealTimers();
+  });
+
   it("binds protected input resolution to the exact session, operation, reference, and target", async () => {
     const resolveProtectedInput = vi.fn(async () => "protected-test-value");
     const createSession = vi.fn((input) => input);

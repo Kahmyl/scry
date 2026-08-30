@@ -765,8 +765,20 @@ export class AdaptiveSessionRepository {
            WHERE session_id=$1 AND safe_response IS NOT NULL ORDER BY updated_at DESC LIMIT 1`,
         [sessionId],
       );
+      const runtime = await q<{ state: "owned" | "unowned" | "expired" }>(
+        `SELECT CASE
+           WHEN lease.session_id IS NULL THEN 'unowned'
+           WHEN lease.lease_expires_at>now() THEN 'owned'
+           ELSE 'expired'
+         END AS state
+         FROM adaptive_sessions session
+         LEFT JOIN adaptive_session_runtime_leases lease ON lease.session_id=session.id
+         WHERE session.id=$1`,
+        [sessionId],
+      );
       return {
         ...session,
+        runtime: runtime.rows[0] ?? { state: "unowned" },
         operations: operations.rows,
         events: events.rows,
         linkedFlows: linkedFlows.rows,
@@ -1374,6 +1386,20 @@ export class AdaptiveSessionRepository {
         AND mission_authorization.praxis_session_id=session.id
         AND mission_authorization.status='approved'
         AND (mission_authorization.expires_at IS NULL OR mission_authorization.expires_at>now())
+       JOIN protected_operations protected_operation
+         ON protected_operation.authoring_session_id=session.id
+        AND protected_operation.operation_id=operation.operation_id
+        AND protected_operation.authorization_id=mission_authorization.id
+        AND (
+          protected_operation.praxis_session_id IS NULL
+          OR (
+            mission_authorization.protected_operation_id=protected_operation.id
+            AND mission_authorization.protected_operation_contract_digest=
+              protected_operation.observed_operation_contract_digest
+            AND protected_operation.praxis_session_id=session.id
+            AND protected_operation.reservation_expires_at>now()
+          )
+        )
        WHERE operation.session_id=$1 AND operation.operation_id=$2
          AND session.protection='protected'
          AND operation.semantic_intent->>'type'='protectedTransaction'`,
@@ -1823,8 +1849,14 @@ export class AdaptiveSessionRepository {
         classification: "public" | "protected";
         storageName: string;
       }>;
+      requestContract?: {
+        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+        pathTemplate: string;
+        transports: Array<"document" | "fetch" | "xhr">;
+      };
     };
     earlyProtectedOperationId?: string;
+    preparedProtectedOperationId?: string;
   }) {
     return this.database.transaction(async (client) => {
       const q = bind(client);
@@ -1887,13 +1919,80 @@ export class AdaptiveSessionRepository {
         const providerIdempotencyCommitment =
           syntheticCommitments.rows.find((row) => row.semantic === "provider_idempotency_key")
             ?.commitment ?? null;
+        const prepared = Boolean(input.preparedProtectedOperationId);
+        if (prepared) {
+          const contract = await q<{
+            outputCommitment: string;
+            facts: {
+              operation: {
+                method: string;
+                pathTemplate: string;
+                transports: string[];
+                classification: "read_only" | "mutation";
+              };
+              response: {
+                safeOutputKeys: string[];
+                safeOutputs: Array<{ key: string; classification: "public" | "protected" }>;
+              };
+            };
+          }>(
+            `SELECT contract.facts,operation.output_commitment AS "outputCommitment"
+             FROM protected_operations operation
+             JOIN observed_operation_contracts contract
+               ON contract.id=operation.observed_operation_contract_id
+              AND contract.digest=operation.observed_operation_contract_digest
+             WHERE operation.id=$1 AND operation.state='planned'
+               AND operation.authorization_id=$2 FOR SHARE OF operation,contract`,
+            [input.preparedProtectedOperationId, input.intent.authorization.authorizationId],
+          );
+          const actual = contract.rows[0]?.facts;
+          const request = input.protectedReservation.requestContract;
+          const expectedOutputs = input.protectedReservation.safeOutputManifest.map(
+            (output) => output.reference,
+          );
+          if (
+            !actual ||
+            !request ||
+            actual.operation.method !== request.method ||
+            actual.operation.pathTemplate !== request.pathTemplate ||
+            actual.operation.classification !==
+              (input.protectedReservation.dispatchSemantics === "read_only"
+                ? "read_only"
+                : "mutation") ||
+            request.transports.some(
+              (transport) => !actual.operation.transports.includes(transport),
+            ) ||
+            expectedOutputs.some((output) => !actual.response.safeOutputKeys.includes(output)) ||
+            input.protectedReservation.safeOutputManifest.some(
+              (output) =>
+                !actual.response.safeOutputs.some(
+                  (declared) =>
+                    declared.key === output.reference &&
+                    declared.classification === output.classification,
+                ),
+            ) ||
+            contract.rows[0]!.outputCommitment !==
+              stableDigest(
+                [...input.protectedReservation.safeOutputManifest]
+                  .map((output) => ({
+                    key: output.reference,
+                    classification: output.classification,
+                  }))
+                  .sort((left, right) => left.key.localeCompare(right.key)),
+              )
+          )
+            throw new ConflictException({
+              code: "PREPARED_OPERATION_EXECUTION_CONTRACT_MISMATCH",
+            });
+        }
         const reserved = input.earlyProtectedOperationId
           ? await q<{ id: string }>(
               `UPDATE protected_operations SET program_digest=$2,dispatch_semantics=$3,
              state='planned',phase='planned',safe_output_manifest=$4::jsonb,
              synthetic_input_set_commitment=$5,payload_commitment=$6,
              provider_idempotency_commitment=$7,version=version+1,updated_at=now()
-           WHERE id=$1 AND state='reserved' AND program_digest IS NULL RETURNING id`,
+           WHERE id=$1 AND state=CASE WHEN $8::boolean THEN 'planned' ELSE 'reserved' END
+             AND program_digest IS NULL RETURNING id`,
               [
                 input.earlyProtectedOperationId,
                 input.protectedReservation.programDigest,
@@ -1905,6 +2004,7 @@ export class AdaptiveSessionRepository {
                   syntheticInputSetCommitment,
                 }),
                 providerIdempotencyCommitment,
+                prepared,
               ],
             )
           : await q<{ id: string }>(
@@ -1934,14 +2034,33 @@ export class AdaptiveSessionRepository {
           throw new ConflictException({
             code: "MISSION_AUTHORING_PROTECTED_RESERVATION_BIND_FAILED",
           });
-        await q(
-          `INSERT INTO protected_operation_transitions(
-             protected_operation_id,sequence,from_state,to_state,phase,fencing_token,safe_diagnostics
-           ) SELECT $1,COALESCE(max(sequence),0)+1,
-                    CASE WHEN $2::boolean THEN 'reserved' ELSE NULL END,'planned','planned',0,'{}'::jsonb
-             FROM protected_operation_transitions WHERE protected_operation_id=$1`,
-          [reserved.rows[0]!.id, Boolean(input.earlyProtectedOperationId)],
-        );
+        if (prepared) {
+          await q(
+            `INSERT INTO operation_value_bindings(
+               consumer_praxis_session_id,consumer_operation_id,source_kind,source_reference_id,
+               producer_protected_operation_id,canonical_field_key,target_reference,
+               presentation_class,public_value,source_commitment,owner_fencing_epoch,expires_at,max_uses
+             SELECT $1,$2,binding.source_kind,binding.source_reference_id,
+               binding.producer_protected_operation_id,binding.canonical_field_key,
+               binding.target_reference,binding.presentation_class,NULL,binding.source_commitment,
+               binding.owner_fencing_epoch,binding.expires_at,binding.max_uses
+             FROM operation_value_bindings binding
+             WHERE binding.consumer_protected_operation_id=$3
+               AND binding.source_kind IN ('protected_reference','synthetic_protected')
+               AND binding.state='active' AND binding.expires_at>now()
+             ON CONFLICT DO NOTHING`,
+            [input.sessionId, input.operationId, input.preparedProtectedOperationId],
+          );
+        }
+        if (!prepared)
+          await q(
+            `INSERT INTO protected_operation_transitions(
+               protected_operation_id,sequence,from_state,to_state,phase,fencing_token,safe_diagnostics
+             ) SELECT $1,COALESCE(max(sequence),0)+1,
+                      CASE WHEN $2::boolean THEN 'reserved' ELSE NULL END,'planned','planned',0,'{}'::jsonb
+               FROM protected_operation_transitions WHERE protected_operation_id=$1`,
+            [reserved.rows[0]!.id, Boolean(input.earlyProtectedOperationId)],
+          );
       }
       await this.appendEvent(q, input.sessionId, "operation_started", {
         operationId: input.operationId,
@@ -3464,6 +3583,51 @@ export class AdaptiveSessionRepository {
   }
 
   async resolveProtectedInput(sessionId: string, operationId: string, reference: string) {
+    const capability = await this.database.query<{
+      ciphertext: string;
+      initializationVector: string;
+      authenticationTag: string;
+    }>(
+      `WITH consumed AS (
+         UPDATE operation_value_bindings binding SET
+           use_count=use_count+1,
+           state=CASE WHEN use_count+1>=max_uses THEN 'consumed' ELSE state END,
+           consumed_at=CASE WHEN use_count+1>=max_uses THEN now() ELSE consumed_at END
+         FROM adaptive_session_runtime_leases lease
+         WHERE binding.consumer_praxis_session_id=$1
+           AND binding.consumer_operation_id=$2 AND binding.source_reference_id=$3
+           AND binding.source_kind IN ('protected_reference','synthetic_protected')
+           AND binding.state='active'
+           AND binding.expires_at>now() AND binding.use_count<binding.max_uses
+           AND lease.session_id=binding.consumer_praxis_session_id
+           AND lease.fencing_token=binding.owner_fencing_epoch
+           AND lease.lease_expires_at>now()
+         RETURNING binding.source_reference_id,binding.source_kind
+       )
+       SELECT COALESCE(credential.ciphertext,synthetic.ciphertext) AS ciphertext,
+              COALESCE(credential.initialization_vector,synthetic.initialization_vector)
+                AS "initializationVector",
+              COALESCE(credential.authentication_tag,synthetic.authentication_tag)
+                AS "authenticationTag"
+       FROM consumed
+       LEFT JOIN project_credentials credential
+         ON consumed.source_kind='protected_reference'
+        AND credential.id=consumed.source_reference_id
+        AND credential.deleted_at IS NULL AND credential.security_status='active'
+       LEFT JOIN operation_bound_protected_inputs synthetic
+         ON consumed.source_kind='synthetic_protected'
+        AND synthetic.id=consumed.source_reference_id AND synthetic.lifecycle='active'
+       WHERE credential.id IS NOT NULL OR synthetic.id IS NOT NULL`,
+      [sessionId, operationId, reference],
+    );
+    if (capability.rowCount) {
+      const encrypted = capability.rows[0]!;
+      return decryptCredential({
+        ciphertext: Buffer.from(encrypted.ciphertext, "base64"),
+        initializationVector: Buffer.from(encrypted.initializationVector, "base64"),
+        authenticationTag: Buffer.from(encrypted.authenticationTag, "base64"),
+      });
+    }
     try {
       return await this.resolveCredential(sessionId, reference);
     } catch (error) {
@@ -3790,6 +3954,66 @@ export class AdaptiveSessionRepository {
     return this.database.transaction(async (client) => {
       const q = bind(client);
       await this.requireSession(q, null, input.sessionId, true);
+      const prior = await q<{
+        ownerId: string;
+        fencingToken: number;
+        expired: boolean;
+      }>(
+        `SELECT owner_id AS "ownerId",fencing_token AS "fencingToken",
+                lease_expires_at<=now() AS expired
+         FROM adaptive_session_runtime_leases WHERE session_id=$1 FOR UPDATE`,
+        [input.sessionId],
+      );
+      const stale = prior.rows[0];
+      if (stale?.expired && stale.ownerId !== input.ownerId) {
+        const converged = await q<{ id: string }>(
+          `UPDATE protected_operations SET
+             state=CASE WHEN dispatch_state IN ('not_started','authorized')
+               THEN 'failed_not_applied' ELSE 'recovery_required' END,
+             phase=CASE WHEN dispatch_state IN ('not_started','authorized')
+               THEN 'replacement_owner_refused_before_dispatch'
+               ELSE 'replacement_owner_requires_reconciliation' END,
+             mutation_outcome=CASE WHEN dispatch_state IN ('not_started','authorized')
+               THEN 'not_applied' WHEN mutation_outcome IN ('applied','not_applied')
+               THEN mutation_outcome ELSE 'unknown' END,
+             failure_code='ADAPTIVE_RUNTIME_REPLACEMENT_OWNER',
+             recovery_class=CASE WHEN dispatch_state IN ('not_started','authorized')
+               THEN 'do_not_retry' ELSE 'reconciliation_required' END,
+             completed_at=CASE WHEN dispatch_state IN ('not_started','authorized')
+               THEN now() ELSE NULL END,
+             lease_expires_at=now(),version=version+1,updated_at=now()
+           WHERE owner_kind='authoring_session' AND authoring_session_id=$1
+             AND runtime_owner_id=$2 AND runtime_fencing_epoch=$3
+             AND state IN ('reserved','planned','preparing','ready_to_dispatch','dispatching',
+               'dispatched','acquiring','persisting','persisted','reconciling')
+           RETURNING id`,
+          [input.sessionId, stale.ownerId, stale.fencingToken],
+        );
+        if (converged.rowCount) {
+          await q(
+            `UPDATE operation_value_bindings SET state='invalidated'
+             WHERE consumer_protected_operation_id=ANY($1::uuid[]) AND state='active'`,
+            [converged.rows.map((row) => row.id)],
+          );
+          await q(
+            `INSERT INTO protected_operation_transitions(
+               protected_operation_id,sequence,from_state,to_state,phase,fencing_token,
+               reason_code,safe_diagnostics
+             )
+             SELECT operation.id,COALESCE((SELECT max(sequence)
+               FROM protected_operation_transitions
+               WHERE protected_operation_id=operation.id),0)+1,NULL,operation.state,
+               operation.phase,operation.runtime_fencing_epoch,
+               'ADAPTIVE_RUNTIME_REPLACEMENT_OWNER','{"runtimeOwnership":"replaced"}'::jsonb
+             FROM protected_operations operation
+             WHERE operation.id=ANY($1::uuid[])
+               AND NOT EXISTS(SELECT 1 FROM protected_operation_transitions transition
+                 WHERE transition.protected_operation_id=operation.id
+                   AND transition.reason_code='ADAPTIVE_RUNTIME_REPLACEMENT_OWNER')`,
+            [converged.rows.map((row) => row.id)],
+          );
+        }
+      }
       await q(
         `INSERT INTO adaptive_session_runtime_leases(
            session_id,owner_id,fencing_token,lease_expires_at
@@ -3904,6 +4128,53 @@ export class AdaptiveSessionRepository {
          WHERE session_id=$1 AND owner_id=$2 AND fencing_token=$3`,
         [input.sessionId, input.ownerId, input.fencingToken],
       );
+      await q(
+        `WITH converged AS (
+           UPDATE protected_operations SET
+             state=CASE
+               WHEN dispatch_state IN ('not_started','authorized') THEN 'failed_not_applied'
+               ELSE 'recovery_required'
+             END,
+             phase=CASE
+               WHEN dispatch_state IN ('not_started','authorized') THEN 'runtime_owner_lost_before_dispatch'
+               ELSE 'runtime_owner_lost_after_possible_dispatch'
+             END,
+             mutation_outcome=CASE
+               WHEN dispatch_state IN ('not_started','authorized') THEN 'not_applied'
+               WHEN mutation_outcome IN ('applied','not_applied') THEN mutation_outcome
+               ELSE 'unknown'
+             END,
+             failure_code=$4,recovery_class=CASE
+               WHEN dispatch_state IN ('not_started','authorized') THEN 'do_not_retry'
+               ELSE 'reconciliation_required'
+             END,
+             completed_at=CASE WHEN dispatch_state IN ('not_started','authorized') THEN now() ELSE NULL END,
+             lease_expires_at=now(),version=version+1,updated_at=now()
+           WHERE owner_kind='authoring_session' AND authoring_session_id=$1
+             AND runtime_owner_id=$2 AND runtime_fencing_epoch=$3
+             AND state IN ('reserved','planned','preparing','ready_to_dispatch','dispatching',
+               'dispatched','acquiring','persisting','persisted','reconciling')
+           RETURNING id
+         )
+         UPDATE operation_value_bindings binding SET state='invalidated'
+         FROM converged WHERE binding.consumer_protected_operation_id=converged.id
+           AND binding.state='active'`,
+        [input.sessionId, input.ownerId, input.fencingToken, input.reasonCode],
+      );
+      await q(
+        `INSERT INTO protected_operation_transitions(
+           protected_operation_id,sequence,from_state,to_state,phase,fencing_token,reason_code,safe_diagnostics
+         )
+         SELECT operation.id,COALESCE((SELECT max(sequence) FROM protected_operation_transitions
+           WHERE protected_operation_id=operation.id),0)+1,NULL,operation.state,operation.phase,
+           operation.runtime_fencing_epoch,$4,'{"runtimeOwnership":"lost"}'::jsonb
+         FROM protected_operations operation
+         WHERE operation.authoring_session_id=$1 AND operation.runtime_owner_id=$2
+           AND operation.runtime_fencing_epoch=$3 AND operation.failure_code=$4
+           AND NOT EXISTS(SELECT 1 FROM protected_operation_transitions transition
+             WHERE transition.protected_operation_id=operation.id AND transition.reason_code=$4)`,
+        [input.sessionId, input.ownerId, input.fencingToken, input.reasonCode],
+      );
       if (disposition.praxisState !== current.state) {
         await this.transitionLocked(
           q,
@@ -3969,6 +4240,56 @@ export class AdaptiveSessionRepository {
           session.state === "provisioning" && disposition.praxisState === "failed"
             ? "recovery_required"
             : disposition.praxisState;
+        await q(
+          `WITH converged AS (
+             UPDATE protected_operations SET
+               state=CASE
+                 WHEN dispatch_state IN ('not_started','authorized') THEN 'failed_not_applied'
+                 ELSE 'recovery_required'
+               END,
+               phase=CASE
+                 WHEN dispatch_state IN ('not_started','authorized') THEN 'runtime_lease_expired_before_dispatch'
+                 ELSE 'runtime_lease_expired_after_possible_dispatch'
+               END,
+               mutation_outcome=CASE
+                 WHEN dispatch_state IN ('not_started','authorized') THEN 'not_applied'
+                 WHEN mutation_outcome IN ('applied','not_applied') THEN mutation_outcome
+                 ELSE 'unknown'
+               END,
+               failure_code='ADAPTIVE_RUNTIME_LEASE_EXPIRED',
+               recovery_class=CASE
+                 WHEN dispatch_state IN ('not_started','authorized') THEN 'do_not_retry'
+                 ELSE 'reconciliation_required'
+               END,
+               completed_at=CASE WHEN dispatch_state IN ('not_started','authorized') THEN now() ELSE NULL END,
+               lease_expires_at=now(),version=version+1,updated_at=now()
+             WHERE owner_kind='authoring_session' AND authoring_session_id=$1
+               AND praxis_session_id=$1
+               AND state IN ('reserved','planned','preparing','ready_to_dispatch','dispatching',
+                 'dispatched','acquiring','persisting','persisted','reconciling')
+             RETURNING id
+           )
+           UPDATE operation_value_bindings binding SET state='invalidated'
+           FROM converged WHERE binding.consumer_protected_operation_id=converged.id
+             AND binding.state='active'`,
+          [sessionId],
+        );
+        await q(
+          `INSERT INTO protected_operation_transitions(
+             protected_operation_id,sequence,from_state,to_state,phase,fencing_token,reason_code,safe_diagnostics
+           )
+           SELECT operation.id,COALESCE((SELECT max(sequence) FROM protected_operation_transitions
+             WHERE protected_operation_id=operation.id),0)+1,NULL,operation.state,operation.phase,
+             COALESCE(operation.runtime_fencing_epoch,0),'ADAPTIVE_RUNTIME_LEASE_EXPIRED',
+             '{"runtimeOwnership":"expired"}'::jsonb
+           FROM protected_operations operation
+           WHERE operation.authoring_session_id=$1
+             AND operation.failure_code='ADAPTIVE_RUNTIME_LEASE_EXPIRED'
+             AND NOT EXISTS(SELECT 1 FROM protected_operation_transitions transition
+               WHERE transition.protected_operation_id=operation.id
+                 AND transition.reason_code='ADAPTIVE_RUNTIME_LEASE_EXPIRED')`,
+          [sessionId],
+        );
         await this.transitionLocked(
           q,
           sessionId,
@@ -4204,7 +4525,19 @@ export class AdaptiveSessionRepository {
              WHERE session.id=$4 AND session.project_id=environment.project_id
                AND session.environment_id=environment.id
           ))
-          AND environment.secret_refs ? credential.id::text`,
+          AND (
+            environment.secret_refs ? credential.id::text
+            OR ($4::uuid IS NOT NULL AND EXISTS (
+              SELECT 1 FROM adaptive_sessions consumer
+              JOIN protected_operations producer
+                ON producer.id=credential.origin_protected_operation_id
+               AND producer.project_id=consumer.project_id
+               AND producer.environment_id=consumer.environment_id
+               AND producer.mission_id=consumer.mission_id
+               AND producer.state IN ('persisted','completed')
+              WHERE consumer.id=$4
+            ))
+          )`,
       [projectId ?? null, environmentId, references, sessionId ?? null],
     );
     const activeIds = new Set(active.rows.map(({ id }) => id));

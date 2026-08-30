@@ -4,12 +4,20 @@ import {
   recoverTrustedOriginsSchema,
   prepareFlowAuthoringSchema,
   reconcileAdaptiveOperationSchema,
+  reservePreparedProtectedOperationSchema,
+  resumePreparedProtectedOperationSchema,
+  claimMissionOperationContinuationSchema,
+  dispatchPreparedProtectedOperationSchema,
   startAdaptiveSessionSchema,
   type CloseAdaptiveSessionInput,
   type StartAdaptiveSessionInput,
   type RecoverTrustedOriginsInput,
   type PrepareFlowAuthoringInput,
   type ReconcileAdaptiveOperationInput,
+  type ReservePreparedProtectedOperationInput,
+  type ResumePreparedProtectedOperationInput,
+  type ClaimMissionOperationContinuationInput,
+  type DispatchPreparedProtectedOperationInput,
 } from "@scry/contracts";
 
 import {
@@ -76,6 +84,36 @@ export class AdaptiveSessionController {
   ) {
     return this.sessions.reconcileUnknown(principal, sessionId, input);
   }
+
+  @Post(":sessionId/protected-operations/reserve")
+  reservePreparedOperation(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(reservePreparedProtectedOperationSchema))
+    input: ReservePreparedProtectedOperationInput,
+  ) {
+    return this.sessions.reservePreparedOperation(principal, sessionId, input);
+  }
+
+  @Post(":sessionId/protected-operations/resume")
+  resumePreparedOperation(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(resumePreparedProtectedOperationSchema))
+    input: ResumePreparedProtectedOperationInput,
+  ) {
+    return this.sessions.resumePreparedOperation(principal, sessionId, input);
+  }
+
+  @Post(":sessionId/protected-operations/dispatch")
+  dispatchPreparedOperation(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(dispatchPreparedProtectedOperationSchema))
+    input: DispatchPreparedProtectedOperationInput,
+  ) {
+    return this.sessions.dispatchPreparedOperation(principal, sessionId, input);
+  }
   @Post(":sessionId/close")
   close(
     @CurrentPrincipal() principal: Principal,
@@ -112,6 +150,22 @@ export class PraxisSessionController {
   @Get(":sessionId/observation")
   observe(@CurrentPrincipal() principal: Principal, @Param("sessionId") sessionId: string) {
     return this.sessions.observe(principal, sessionId);
+  }
+
+  @Get(":sessionId/operation-contracts")
+  observeOperationContracts(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+  ) {
+    return this.sessions.observeOperationContracts(principal, sessionId);
+  }
+
+  @Get(":sessionId/runtime-ownership")
+  runtimeOwnership(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+  ) {
+    return this.sessions.runtimeOwnership(principal, sessionId);
   }
 
   @Post(":sessionId/public-values/read")
@@ -199,6 +253,54 @@ export class PraxisSessionController {
     input: ReconcileAdaptiveOperationInput,
   ) {
     return this.sessions.reconcileUnknown(principal, sessionId, input);
+  }
+
+  @Post(":sessionId/protected-operations/reserve")
+  reservePreparedOperation(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(reservePreparedProtectedOperationSchema))
+    input: ReservePreparedProtectedOperationInput,
+  ) {
+    return this.sessions.reservePreparedOperation(principal, sessionId, input);
+  }
+
+  @Post(":sessionId/protected-operations/resume")
+  resumePreparedOperation(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(resumePreparedProtectedOperationSchema))
+    input: ResumePreparedProtectedOperationInput,
+  ) {
+    return this.sessions.resumePreparedOperation(principal, sessionId, input);
+  }
+
+  @Post(":sessionId/protected-operations/dispatch")
+  dispatchPreparedOperation(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(dispatchPreparedProtectedOperationSchema))
+    input: DispatchPreparedProtectedOperationInput,
+  ) {
+    return this.sessions.dispatchPreparedOperation(principal, sessionId, input);
+  }
+
+  @Post(":sessionId/operation-checkpoints/claim")
+  claimMissionOperationContinuation(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(claimMissionOperationContinuationSchema))
+    input: ClaimMissionOperationContinuationInput,
+  ) {
+    return this.sessions.claimMissionOperationContinuation(principal, sessionId, input);
+  }
+
+  @Get(":sessionId/operation-checkpoints")
+  listMissionOperationCheckpoints(
+    @CurrentPrincipal() principal: Principal,
+    @Param("sessionId") sessionId: string,
+  ) {
+    return this.sessions.listMissionOperationCheckpoints(principal, sessionId);
   }
 
   @Post(":sessionId/close")

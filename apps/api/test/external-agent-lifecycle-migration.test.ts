@@ -38,7 +38,9 @@ describe("external-agent lifecycle migration", () => {
           name !== "targeted-region-perception.sql" &&
           name !== "system-correctness-m4-reconciliation-lease.sql" &&
           name !== "qualification-campaign-safety.sql" &&
-          name !== "authoritative-q5-qualification.sql",
+          name !== "authoritative-q5-qualification.sql" &&
+          name !== "q5-canonical-scope-bootstrap.sql" &&
+          name !== "prepared-protected-operation-journeys.sql",
       ),
     )
       .replace("\\ir calibration-foundation.sql", () => calibration)
@@ -74,7 +76,9 @@ describe("external-agent lifecycle migration", () => {
           name !== "targeted-region-perception.sql" &&
           name !== "system-correctness-m4-reconciliation-lease.sql" &&
           name !== "qualification-campaign-safety.sql" &&
-          name !== "authoritative-q5-qualification.sql",
+          name !== "authoritative-q5-qualification.sql" &&
+          name !== "q5-canonical-scope-bootstrap.sql" &&
+          name !== "prepared-protected-operation-journeys.sql",
       ),
     )
       .replace("\\ir calibration-foundation.sql", () => calibration)
