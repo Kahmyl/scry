@@ -11,6 +11,7 @@ import {
   type VeilPolicySnapshot,
   type AttachRunPraxisSessionInput,
   type DispatchRunOperationInput,
+  type DispatchRunPreparedOperationInput,
   type FinalizeAgentDirectedRunInput,
 } from "@scry/contracts";
 
@@ -79,6 +80,83 @@ export class AgentDirectedRunService {
     @Inject(OperationalEvents)
     private readonly operationalEvents?: OperationalEvents,
   ) {}
+
+  async dispatchPrepared(
+    principal: Principal,
+    runId: string,
+    input: DispatchRunPreparedOperationInput,
+  ) {
+    await this.admission.assertAcceptingWork();
+    this.scry.requireWriteAccess(principal);
+    const run = await this.requireAssociatedRun(principal, runId, input.praxisSessionId, true);
+    const authority = await this.database.query(
+      `SELECT capability.id FROM prepared_execution_capabilities capability
+       JOIN protected_operations operation ON operation.id=capability.protected_operation_id
+       WHERE capability.id=$1 AND operation.id=$2 AND operation.operation_id=$3
+         AND operation.praxis_session_id=$4 AND capability.project_id=$5 AND capability.mission_id=$6
+         AND capability.objective_id=$7 AND capability.agent_session_id=$8`,
+      [
+        input.preparedExecutionCapabilityId,
+        input.protectedOperationId,
+        input.publicOperationId,
+        input.praxisSessionId,
+        run.projectId,
+        run.missionId,
+        run.objectiveId,
+        run.agentSessionId,
+      ],
+    );
+    if (!authority.rowCount)
+      throw new ConflictException({ code: "RUN_PREPARED_CAPABILITY_SCOPE_MISMATCH" });
+    await this.heartbeatAttempt(run);
+    try {
+      return await this.sessions.dispatchPreparedOperation(
+        principal,
+        input.praxisSessionId,
+        {
+          protectedOperationId: input.protectedOperationId,
+          preparedExecutionCapabilityId: input.preparedExecutionCapabilityId,
+          publicOperationId: input.publicOperationId,
+        },
+        this.runEvidenceContext(runId, run),
+      );
+    } finally {
+      await this.refreshCanonicalEvidence(runId);
+      const receipt = await this.protectedOperations.getMutationReceiptByAuthoringOperation(
+        input.praxisSessionId,
+        input.publicOperationId,
+      );
+      if (receipt && receipt.mutationOutcome !== "not_attempted")
+        await this.qualificationCampaigns.settleMutation(
+          runId,
+          input.publicOperationId,
+          receipt.mutationOutcome,
+        );
+    }
+  }
+
+  private refreshCanonicalEvidence(runId: string) {
+    // This is a projection of committed truth, not a new authority or replay.
+    return this.database.query(
+      `UPDATE run_operation_links link SET safe_result=jsonb_build_object(
+         'runId',link.run_id,'praxisSessionId',link.praxis_session_id,'operationId',link.operation_id,
+         'intentId',link.operation_id,'artifactRefs','[]'::jsonb,'replayed',false,
+         'functionalResult',COALESCE(adaptive.functional_result,'inconclusive'),
+         'mutationOutcome',CASE WHEN protected.mutation_outcome='not_attempted' THEN 'not_applied' ELSE protected.mutation_outcome END,
+         'privacyApplicable',true,'privacyResult',COALESCE(adaptive.privacy_result,'unverified'),
+         'evidence',jsonb_build_object('state',CASE WHEN protected.state='completed'
+           AND protected.persistence_state='committed' AND protected.failure_code IS NULL
+           AND adaptive.state='completed' AND adaptive.functional_result='succeeded'
+           AND adaptive.privacy_result='sealed' AND adaptive.evidence_result='[]'::jsonb
+           AND adaptive.mutation_outcome=protected.mutation_outcome THEN 'suppressed' ELSE 'failed' END,
+           'count',0,'reasonCodes','[]'::jsonb))
+       FROM prepared_execution_capabilities capability
+       JOIN protected_operations protected ON protected.id=capability.protected_operation_id
+       JOIN adaptive_operations adaptive ON adaptive.session_id=protected.praxis_session_id AND adaptive.operation_id=protected.operation_id
+       WHERE link.run_id=$1 AND link.prepared_execution_capability_id=capability.id`,
+      [runId],
+    );
+  }
 
   async dispatch(principal: Principal, runId: string, input: DispatchRunOperationInput) {
     await this.admission.assertAcceptingWork();
@@ -244,19 +322,50 @@ export class AgentDirectedRunService {
       throw new ConflictException({ code: "RUN_NOT_AGENT_DIRECTED" });
     const binding = await this.database.transaction(async (client) => {
       await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [runId]);
+      const currentRun = await client.query<{ state: string; agentSessionId: string }>(
+        `SELECT state,agent_session_id AS "agentSessionId" FROM runs WHERE id=$1 FOR UPDATE`,
+        [runId],
+      );
+      if (currentRun.rows[0]?.state !== "running")
+        throw new ConflictException({ code: "RUN_NOT_RUNNING" });
+      const replay = await client.query<{ praxisSessionId: string; epoch: number }>(
+        `SELECT praxis_session_id AS "praxisSessionId",epoch FROM run_praxis_sessions WHERE run_id=$1 AND idempotency_key=$2`,
+        [runId, input.idempotencyKey],
+      );
+      if (replay.rowCount) {
+        if (replay.rows[0]!.praxisSessionId !== input.praxisSessionId)
+          throw new ConflictException({ code: "RUN_PRAXIS_ATTACHMENT_IDEMPOTENCY_CONFLICT" });
+        return {
+          runId,
+          praxisSessionId: replay.rows[0]!.praxisSessionId,
+          epoch: replay.rows[0]!.epoch,
+          replayed: true,
+        };
+      }
       const session = await client.query(
         `SELECT 1 FROM adaptive_sessions WHERE id=$1 AND project_id=$2 AND mission_id=$3
-           AND objective_id=$4 AND environment_id=$5
+           AND objective_id=$4 AND environment_id=$5 AND agent_session_id=$6
            AND state IN ('created','provisioning','active','suspended') FOR UPDATE`,
-        [input.praxisSessionId, run.projectId, run.missionId, run.objectiveId, run.environmentId],
+        [
+          input.praxisSessionId,
+          run.projectId,
+          run.missionId,
+          run.objectiveId,
+          run.environmentId,
+          currentRun.rows[0]!.agentSessionId,
+        ],
       );
       if (!session.rowCount)
         throw new ConflictException({ code: "RUN_PRAXIS_SESSION_SCOPE_MISMATCH" });
-      const replay = await client.query(
-        `SELECT epoch FROM run_praxis_sessions WHERE run_id=$1 AND idempotency_key=$2`,
-        [runId, input.idempotencyKey],
+      const liveOwner = await client.query(
+        `SELECT session.id FROM run_praxis_sessions binding
+         JOIN adaptive_sessions session ON session.id=binding.praxis_session_id
+         WHERE binding.run_id=$1 AND binding.detached_at IS NULL
+           AND session.state NOT IN ('completed','cancelled','failed','expired') FOR UPDATE OF session`,
+        [runId],
       );
-      if (replay.rowCount) return { runId, praxisSessionId: input.praxisSessionId, replayed: true };
+      if (liveOwner.rowCount)
+        throw new ConflictException({ code: "RUN_PRAXIS_PREVIOUS_OWNER_NOT_TERMINAL" });
       await client.query(
         `UPDATE run_praxis_sessions SET detached_at=now() WHERE run_id=$1 AND detached_at IS NULL`,
         [runId],
@@ -282,6 +391,18 @@ export class AgentDirectedRunService {
     this.scry.requireWriteAccess(principal);
 
     const run = await this.requireAssociatedRun(principal, runId, input.praxisSessionId, false);
+    await this.refreshCanonicalEvidence(runId);
+    if (input.outcome === "passed") await this.assertPassEvidenceComplete(runId, run.attemptId);
+
+    // Close a mechanically completed protected owner before final
+    // evidence settlement. The canonical completion and privacy checks above
+    // prove the boundary; a dead browser must not be asked for another snapshot.
+    if (
+      input.outcome === "passed" &&
+      livePraxisState(run.praxisState) &&
+      (await this.resolveTerminalProtectedCompletion(runId, input.praxisSessionId, false))
+    )
+      await this.sessions.close(principal, input.praxisSessionId, `thin-finalize-${runId}`);
 
     const outcomeClassification = finalizeOutcomeClassification(input);
     const terminalProtectedCompletion =
@@ -311,8 +432,6 @@ export class AgentDirectedRunService {
     }
 
     if (lifecycleDecision.successorCheckpoint.kind === "required") {
-      await this.assertPassEvidenceComplete(runId, run.attemptId);
-
       if (livePraxisState(run.praxisState)) {
         try {
           const checkpoint = await this.sessions.captureRunSuccessorCheckpoint(
@@ -389,12 +508,49 @@ export class AgentDirectedRunService {
 
       dispatchRefusalCode: () => dispatchRefusalCode,
 
+      preparedOperationAdmitted: async (operation, preparedExecutionCapabilityId) => {
+        await this.database.transaction(async (client) => {
+          await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [runId]);
+          await client.query(
+            `INSERT INTO run_operation_links(run_id,praxis_session_id,operation_id,sequence,safe_result,prepared_execution_capability_id)
+             SELECT $1,$2,$3,COALESCE(max(sequence),0)+1,'{}'::jsonb,$4 FROM run_operation_links WHERE run_id=$1
+             ON CONFLICT(run_id,operation_id) DO NOTHING`,
+            [runId, run.praxisSessionId, operation.operationId, preparedExecutionCapabilityId],
+          );
+          const linked = await client.query(
+            `SELECT 1 FROM run_operation_links WHERE run_id=$1 AND praxis_session_id=$2 AND operation_id=$3 AND prepared_execution_capability_id=$4`,
+            [runId, run.praxisSessionId, operation.operationId, preparedExecutionCapabilityId],
+          );
+          if (!linked.rowCount)
+            throw new ConflictException({ code: "RUN_PREPARED_CAPABILITY_BINDING_CONFLICT" });
+        });
+      },
+
       beforeBusinessMutationDispatch: async (operation) => {
         try {
+          let mutationIdentity: string;
+          if (operation.action.type === "protectedTransaction") {
+            const authority = await this.database.query<{
+              mutationIdentity: string;
+              effectSemantics: string[];
+            }>(
+              `SELECT capability.mutation_identity AS "mutationIdentity",capability.effect_semantics AS "effectSemantics"
+               FROM run_operation_links link JOIN prepared_execution_capabilities capability ON capability.id=link.prepared_execution_capability_id
+               WHERE link.run_id=$1 AND link.praxis_session_id=$2 AND link.operation_id=$3 AND capability.state='finalized'`,
+              [runId, run.praxisSessionId, operation.operationId],
+            );
+            if (!authority.rowCount)
+              throw new ConflictException({ code: "RUN_PREPARED_CAPABILITY_REQUIRED" });
+            // Authentication/issuance/read-only acquisition is not a business Create budget.
+            if (!authority.rows[0]!.effectSemantics.includes("business_effect")) return;
+            mutationIdentity = authority.rows[0]!.mutationIdentity;
+          } else {
+            mutationIdentity = `adaptive-${run.praxisSessionId}-${operation.idempotencyKey}`;
+          }
           const consumption = await this.qualificationCampaigns.consumeBusinessMutation({
             runId,
             operationId: operation.operationId,
-            mutationIdentity: `adaptive-${run.praxisSessionId}-${operation.idempotencyKey}`,
+            mutationIdentity,
           });
           if (consumption.replayed)
             throw new ConflictException({
@@ -486,6 +642,7 @@ export class AgentDirectedRunService {
   private async resolveTerminalProtectedCompletion(
     runId: string,
     praxisSessionId: string,
+    requireClosed = true,
   ): Promise<{ protectedOperationId: string } | null> {
     const result = await this.database.query<{ protectedOperationId: string }>(
       `SELECT protected.id AS "protectedOperationId"
@@ -493,29 +650,27 @@ export class AgentDirectedRunService {
          JOIN adaptive_sessions session
            ON session.id=binding.praxis_session_id
          JOIN LATERAL (
-           SELECT link.operation_id
+           SELECT link.operation_id,link.prepared_execution_capability_id
              FROM run_operation_links link
             WHERE link.run_id=binding.run_id
               AND link.praxis_session_id=binding.praxis_session_id
             ORDER BY link.sequence DESC,link.created_at DESC
             LIMIT 1
          ) last_link ON true
-         JOIN protected_operations protected
-           ON protected.operation_id=last_link.operation_id
+         JOIN prepared_execution_capabilities capability
+           ON capability.id=last_link.prepared_execution_capability_id
+         JOIN canonical_completed_executions protected
+           ON protected.id=capability.protected_operation_id
+          AND protected.operation_id=last_link.operation_id
+          AND protected.praxis_session_id=binding.praxis_session_id
         WHERE binding.run_id=$1
           AND binding.praxis_session_id=$2
           AND binding.detached_at IS NULL
-          AND session.state='cancelled'
-          AND session.decision_boundary->>'type'='objective_completed'
-          AND session.decision_boundary->>'reasonCode'='PROTECTED_OPERATION_COMPLETED'
-          AND protected.state='completed'
-          AND protected.dispatch_state='acknowledged'
-          AND protected.mutation_outcome='applied'
-          AND protected.acquisition_state='complete'
-          AND protected.persistence_state='committed'
-          AND protected.failure_code IS NULL
+          AND (NOT $3::boolean OR session.state='completed' OR (session.state='cancelled'
+            AND session.decision_boundary->>'type'='objective_completed'
+            AND session.decision_boundary->>'reasonCode'='PROTECTED_OPERATION_COMPLETED'))
         LIMIT 1`,
-      [runId, praxisSessionId],
+      [runId, praxisSessionId, requireClosed],
     );
 
     const row = result.rows[0];
@@ -558,15 +713,10 @@ export class AgentDirectedRunService {
                )
                OR EXISTS(
                  SELECT 1
-                 FROM protected_operations protected
+                 FROM canonical_completed_executions protected
                  WHERE protected.authoring_session_id=link.praxis_session_id
                    AND protected.operation_id=link.operation_id
-                   AND protected.state='completed'
-                   AND protected.dispatch_state='acknowledged'
-                   AND protected.mutation_outcome='applied'
-                   AND protected.acquisition_state='complete'
-                   AND protected.persistence_state='committed'
-                   AND protected.failure_code IS NULL
+                   AND protected.prepared_execution_capability_id=link.prepared_execution_capability_id
                )
              )
          ) AS "evidencedOperationCount",
@@ -607,6 +757,15 @@ export class AgentDirectedRunService {
                    'trace_segment'
                  )
                  AND reason_code IS NOT NULL
+                 AND NOT EXISTS (
+                   SELECT 1 FROM artifacts omission
+                   WHERE omission.id=artifact_timeline_entries.artifact_id
+                     AND omission.attempt_id=$2 AND omission.kind='video'
+                     AND omission.availability='destroyed'
+                     AND omission.reason_code='VEIL_VIDEO_DOCUMENT_CONTEXT_LOST'
+                     AND omission.metadata->>'bytesDestroyed'='true'
+                     AND omission.metadata->>'recoverableCaptureLoss'='true'
+                 )
                )
              )
          ) AS "unsafeTimelineCount",
@@ -656,16 +815,17 @@ export class AgentDirectedRunService {
 
   private async assertTerminalProtectedBoundary(runId: string, run: AssociatedAgentDirectedRun) {
     if (
-      run.praxisState !== "cancelled" ||
-      run.praxisDecisionBoundary?.type !== "objective_completed" ||
-      run.praxisDecisionBoundary.reasonCode !== "PROTECTED_OPERATION_COMPLETED"
+      run.praxisState !== "completed" &&
+      (run.praxisState !== "cancelled" ||
+        run.praxisDecisionBoundary?.type !== "objective_completed" ||
+        run.praxisDecisionBoundary.reasonCode !== "PROTECTED_OPERATION_COMPLETED")
     )
       throw terminalPraxisBoundaryUnproven();
 
     const result = await this.database.query(
       `SELECT 1
        FROM run_operation_links link
-       JOIN protected_operations protected
+       JOIN canonical_completed_executions protected
          ON protected.authoring_session_id=link.praxis_session_id
         AND protected.operation_id=link.operation_id
        WHERE link.run_id=$1
@@ -675,12 +835,7 @@ export class AgentDirectedRunService {
            FROM run_operation_links candidate
            WHERE candidate.run_id=link.run_id
          )
-         AND protected.state='completed'
-         AND protected.dispatch_state='acknowledged'
-         AND protected.mutation_outcome='applied'
-         AND protected.acquisition_state='complete'
-         AND protected.persistence_state='committed'
-         AND protected.failure_code IS NULL`,
+         AND protected.prepared_execution_capability_id=link.prepared_execution_capability_id`,
       [runId, run.praxisSessionId],
     );
 

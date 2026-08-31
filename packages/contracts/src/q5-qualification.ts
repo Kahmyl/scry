@@ -1,13 +1,17 @@
-export const Q5_MCP_PROFILE = "q5-authoritative-v1" as const;
+export const Q5_MCP_PROFILE = "q5-thin-kernel-v3" as const;
 export const Q5_MCP_PROTOCOL_VERSION = "2025-11-25" as const;
 export const Q5_MCP_CONTRACT_DIGEST =
-  "de505dd1eada790997d343574944aaa0c7763ad24fe8c0dca3f455f3630592d2" as const;
+  "7264b57f48ca7656342502aea2f266d32dd400663858796c39f9dc98ac52164d" as const;
 
 export const Q5_MCP_TOOL_NAMES = [
   "get_capabilities",
   "get_operating_context",
   "list_environments",
-  "list_project_credentials",
+  "observe_operation_contracts",
+  "list_mission_values",
+  "reserve_prepared_protected_operation",
+  "dispatch_prepared_protected_operation",
+  "list_mission_continuations",
   "start_praxis_session",
   "observe_praxis_session",
   "inspect_praxis_region",
@@ -28,9 +32,9 @@ export const Q5_MCP_TOOL_NAMES = [
   "get_run",
   "accept_objective_evidence",
   "get_mission",
-  "grant_mission_execution_authorization",
   "update_mission_objective",
   "finalize_agent_work",
+  "set_mission_recording_selection",
   "preview_mission_report",
   "publish_mission_report",
   "end_agent_session",

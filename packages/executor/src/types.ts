@@ -90,6 +90,11 @@ export type BrowserStorageState = Awaited<ReturnType<BrowserContext["storageStat
 export type ExecuteOptions = {
   plan: CurrentPlan;
   policy: ExecutionPolicy;
+  /** Canonical mutation identity allocated by the operation authority. */
+  mutationIdentity?: string;
+  /** Canonical program authority for protected execution; never reconstructed by a canonical worker. */
+  canonicalProgramDigest?: string;
+  preparedExecutionCapabilityId?: string;
   outputDirectory: string;
   /** Internal ownership of external expected-effect verification. */
   expectedEffectVerificationOwner?: "kernel" | "praxis";
@@ -98,6 +103,9 @@ export type ExecuteOptions = {
    * This is not authored progression authority.
    */
   recordingOperationId?: string;
+  settleProtectedAuthentication?: () => Promise<void>;
+  /** Await kernel-owned effect observation before qualifying and resuming capture. */
+  settleExpectedEffectBeforeCapture?: () => Promise<void>;
   /**
    * Runtime-only hint that this single-operation execution is expected to
    * cross an ordinary navigation/document boundary.

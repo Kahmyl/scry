@@ -365,6 +365,15 @@ export const createMissionSchema = z
   .object({
     title: nameSchema,
     originalInstruction: z.string().trim().min(1).max(20_000),
+    maxBusinessMutationDispatches: z
+      .number()
+      .int()
+      .min(0)
+      .max(1000)
+      .optional()
+      .describe(
+        "Immutable Mission business-effect dispatch budget, default 1. Set the numeric limit for requested work at creation; owner rotation and new operation IDs do not reset it.",
+      ),
     provider: agentProviderSchema,
     model: externalAgentModelSchema.optional(),
     externalRunId: externalAgentRunIdSchema.optional(),

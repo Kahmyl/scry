@@ -18,8 +18,16 @@ export function registerReservePreparedProtectedOperationTool(
     {
       title: "Reserve prepared protected operation",
       description:
-        "Reserve one immutable protected operation against an observed operation-contract digest, exact current Praxis session/document, canonical fields, typed values, targets, and outputs. This performs no external side effect.",
-      inputSchema: reservePreparedProtectedOperationSchema.shape,
+        "Reserve one immutable protected operation against an observed operation-contract digest, exact current Praxis session/document, canonical fields, typed values, targets, and outputs. For an exact continuation, pass continuationReference and omit its identity field from values; Scry derives it atomically. The kernel assigns a bounded expiry; dispatch the returned handle while its runtime authority is current. This performs no external side effect and requires no second owner approval.",
+      inputSchema: {
+        praxisSessionId: z.string().uuid(),
+        ...reservePreparedProtectedOperationSchema.omit({
+          targetCommitment: true,
+          inputCommitment: true,
+          outputCommitment: true,
+          expiresAt: true,
+        }).shape,
+      },
       outputSchema: z
         .object({
           message: z.string(),
@@ -28,19 +36,21 @@ export function registerReservePreparedProtectedOperationTool(
         .strict(),
       annotations: writes,
     },
-    async (input) =>
-      withAdaptiveSessionError(
+    async (input) => {
+      const { praxisSessionId, ...body } = input;
+      return withAdaptiveSessionError(
         async () =>
           toolResult(
             {
               preparedOperation: await client.post(
-                `/praxis-sessions/${input.praxisSessionId}/protected-operations/reserve`,
-                reservePreparedProtectedOperationSchema.parse(input),
+                `/praxis-sessions/${praxisSessionId}/protected-operations/reserve`,
+                reservePreparedProtectedOperationSchema.parse(body),
               ),
             },
-            "Prepared protected operation reserved without dispatch; exact authorization is required.",
+            "Operation prepared without dispatch; execute the returned handle when ready.",
           ),
         "Prepared protected operation reservation was refused.",
-      ),
+      );
+    },
   );
 }

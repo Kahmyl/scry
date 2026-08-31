@@ -52,6 +52,19 @@ type Query = <T extends QueryResultRow = QueryResultRow>(
 const reportableObjectivePredicate = (alias: string) =>
   `(${alias}.status IN ('passed','failed') OR (${alias}.status IN ('blocked','skipped') AND ${alias}.conclusion IS NOT NULL))`;
 
+// A later observation satisfies a request for fresh facts; it does not rewrite
+// the failed action or reconcile an uncertain external mutation.
+const unresolvedEffectObservationPredicate = (alias: string) =>
+  `(${alias}.decision_boundary->>'type'='effect_observation_required'
+    AND NOT EXISTS(
+      SELECT 1 FROM adaptive_observations effect_observation
+      JOIN adaptive_observations later_observation
+        ON later_observation.session_id=effect_observation.session_id
+       AND later_observation.id>effect_observation.id
+      WHERE effect_observation.session_id=${alias}.session_id
+        AND effect_observation.operation_id=${alias}.operation_id
+    ))`;
+
 @Injectable()
 export class MissionService {
   constructor(
@@ -150,8 +163,15 @@ export class MissionService {
       }
       const missionId = randomUUID();
       await query(
-        `INSERT INTO missions(id,project_id,title,original_instruction,purpose,status) VALUES($1,$2,$3,$4,$5,'planning')`,
-        [missionId, projectId, input.title, input.originalInstruction, purpose],
+        `INSERT INTO missions(id,project_id,title,original_instruction,purpose,status,max_business_mutation_dispatches) VALUES($1,$2,$3,$4,$5,'planning',$6)`,
+        [
+          missionId,
+          projectId,
+          input.title,
+          input.originalInstruction,
+          purpose,
+          input.maxBusinessMutationDispatches ?? 1,
+        ],
       );
       const { agentSessionId, attachedPreMission } = await attachOrCreateExternalAgentSession(
         query,
@@ -1174,7 +1194,8 @@ export class MissionService {
     return this.database.transaction(async (client) => {
       const q = bindQuery(client);
 
-      const mission = await this.requireContext(q, principal, missionId, input.agentSessionId);
+      const mission = await this.requireMission(q, principal, missionId, true);
+      await this.requireAgentContext(q, missionId, input.agentSessionId, true);
 
       if (input.missionId !== missionId)
         throw new ConflictException({
@@ -1558,7 +1579,7 @@ export class MissionService {
        WHERE o.mission_id=$1 AND ($2::uuid IS NULL OR o.objective_id=$2) AND p.id IS NULL
          AND (o.state='running'
            OR (o.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(o.session_id,o.operation_id))
-           OR o.decision_boundary->>'type'='effect_observation_required')
+           OR ${unresolvedEffectObservationPredicate("o")})
        ORDER BY o.started_at,o.session_id,o.sequence${lockRows ? " FOR UPDATE OF o" : ""}`,
       scope,
     );
@@ -1909,20 +1930,7 @@ export class MissionService {
       const completionReadiness = await this.loadCompletionReadiness(q, missionId, undefined, true);
       this.requireCompletionReadiness(completionReadiness);
 
-      const agentSession = await q(
-        `SELECT 1
-         FROM agent_sessions
-         WHERE id=$1
-           AND mission_id=$2
-           AND status='active'
-         FOR UPDATE`,
-        [input.agentSessionId, missionId],
-      );
-
-      if (!agentSession.rowCount)
-        throw new ConflictException({
-          code: "AGENT_SESSION_CONTEXT_INVALID",
-        });
+      await this.requireAgentContext(q, missionId, input.agentSessionId, true);
 
       const snapshot = await this.buildReportSnapshot(
         q,
@@ -2391,6 +2399,22 @@ export class MissionService {
       if (cycle.rowCount) throw new ConflictException({ code: "OBJECTIVE_DEPENDENCY_CYCLE" });
     }
   }
+  // Ending execution authority does not prevent its owner from settling the report.
+  // Only these reporting methods opt in; ordinary Mission work remains active-only.
+  private async requireAgentContext(
+    q: Query,
+    missionId: string,
+    sessionId: string,
+    reporting = false,
+  ) {
+    const session = await q(
+      `SELECT 1 FROM agent_sessions WHERE id=$1 AND mission_id=$2
+       AND (status='active' OR ($3::boolean AND status='completed' AND ended_at IS NOT NULL))
+       FOR SHARE`,
+      [sessionId, missionId, reporting],
+    );
+    if (!session.rowCount) throw new ConflictException({ code: "AGENT_SESSION_CONTEXT_INVALID" });
+  }
   private async requireContext(
     q: Query,
     principal: Principal,
@@ -2399,11 +2423,7 @@ export class MissionService {
     objectiveId?: string,
   ) {
     const m = await this.requireMission(q, principal, missionId, true);
-    const session = await q(
-      `SELECT 1 FROM agent_sessions WHERE id=$1 AND mission_id=$2 AND status='active'`,
-      [sessionId, missionId],
-    );
-    if (!session.rowCount) throw new ConflictException({ code: "AGENT_SESSION_CONTEXT_INVALID" });
+    await this.requireAgentContext(q, missionId, sessionId);
     if (objectiveId) {
       const objective = await q(`SELECT 1 FROM mission_objectives WHERE id=$1 AND mission_id=$2`, [
         objectiveId,
@@ -2548,15 +2568,7 @@ export class MissionService {
          EXISTS(
            SELECT 1 FROM adaptive_operations operation
             WHERE operation.mission_id=$1 AND operation.objective_id::text=$2
-              AND operation.decision_boundary->>'type'='effect_observation_required'
-              AND NOT EXISTS(
-                SELECT 1 FROM adaptive_observations effect_observation
-                JOIN adaptive_observations later_observation
-                  ON later_observation.session_id=effect_observation.session_id
-                 AND later_observation.id>effect_observation.id
-                WHERE effect_observation.session_id=operation.session_id
-                  AND effect_observation.operation_id=operation.operation_id
-              )
+              AND ${unresolvedEffectObservationPredicate("operation")}
          ) AS "unresolvedEffectObservation",
          EXISTS(
            SELECT 1 FROM adaptive_sessions session

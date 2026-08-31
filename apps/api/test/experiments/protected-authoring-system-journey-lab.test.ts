@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { protectedTransactionDigest } from "@scry/executor";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 import {
@@ -504,6 +505,10 @@ async function acquireCredentials(
     const safePage = await safeContext.newPage();
     await safePage.goto(entryUrl);
     const kernel = new ProtectedTransactionKernel({
+      // Unit-store fixture: supply the immutable admitted program commitment.
+      // Real preparation/scope/dispatch admission is covered by repository integration.
+      canonicalProgramDigest: protectedTransactionDigest(transaction, [origin]),
+      mutationIdentity: transaction.operationId,
       safeSession: {
         browser,
         context: safeContext,

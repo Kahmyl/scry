@@ -24,6 +24,7 @@ const ids = {
   protectedReferenceId: "00000000-0000-4000-8000-000000000006",
   authorizationId: "00000000-0000-4000-8000-000000000007",
   turnId: "00000000-0000-4000-8000-000000000008",
+  agentSessionId: "00000000-0000-4000-8000-000000000009",
 };
 
 describe("protected live Praxis session binding", () => {
@@ -65,6 +66,7 @@ describe("protected live Praxis session binding", () => {
         praxisSessionId: ids.flowDraftId,
         preparedOperation: {
           protectedOperationId: ids.authorizationId,
+          preparedExecutionCapabilityId: ids.objectiveId,
           publicOperationId: authorization.operationId,
           contractDigest: "0".repeat(64),
         },
@@ -76,6 +78,7 @@ describe("protected live Praxis session binding", () => {
         praxisSessionId: ids.flowDraftId,
         preparedOperation: {
           protectedOperationId: ids.authorizationId,
+          preparedExecutionCapabilityId: ids.objectiveId,
           publicOperationId: "different-operation",
           contractDigest: "0".repeat(64),
         },
@@ -612,6 +615,18 @@ describe("adaptive session contracts", () => {
       id: base.id,
       replayed: false,
     });
+    for (const state of ["owned", "unowned", "expired"] as const) {
+      expect(
+        praxisSessionStartResultSchema.parse({ ...base, replayed: true, runtime: { state } }),
+      ).toMatchObject({ replayed: true, runtime: { state } });
+    }
+    expect(() =>
+      praxisSessionStartResultSchema.parse({
+        ...base,
+        replayed: false,
+        runtime: { state: "owned", ownerId: ids.agentSessionId },
+      }),
+    ).toThrow();
     expect(
       praxisSessionCloseResultSchema.parse({
         id: base.id,

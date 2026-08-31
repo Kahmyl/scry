@@ -32,6 +32,28 @@ export class RunObservationService {
   async observe(principal: Principal, runId: string): Promise<RunObservation> {
     const run = normalizeObservedRun(await this.repository.getRun(principal, runId));
     const mutationReceipts = await this.protectedOperations.listMutationReceiptsForRun(runId);
+    const canonicalOperations = await this.database.query(
+      `SELECT link.operation_id AS "operationId",link.praxis_session_id AS "praxisSessionId",
+              capability.mission_id AS "missionId",capability.objective_id AS "objectiveId",
+              capability.id AS "preparedExecutionCapabilityId",operation.id AS "protectedOperationId",
+              capability.operation_contract_revision_id AS "operationContractRevisionId",
+              capability.runtime_interaction_capability_id AS "runtimeInteractionCapabilityId",
+              capability.mutation_identity AS "mutationIdentity",operation.state,
+              operation.mutation_outcome AS "mutationOutcome",
+              ARRAY(SELECT checkpoint.id FROM mission_operation_checkpoints checkpoint
+                WHERE checkpoint.source_protected_operation_id=operation.id) AS "checkpointIds",
+              ARRAY(SELECT checkpoint.id FROM mission_operation_checkpoints checkpoint
+                WHERE checkpoint.claimed_by_protected_operation_id=operation.id) AS "continuationCheckpointIds",
+              ARRAY(SELECT asset.id FROM typed_value_assets asset
+                WHERE asset.producer_protected_operation_id=operation.id) AS "valueAssetIds",
+              ARRAY(SELECT authority.id FROM value_use_grants authority
+                WHERE authority.consumer_prepared_execution_capability_id=capability.id) AS "valueUseGrantIds"
+         FROM run_operation_links link
+         JOIN prepared_execution_capabilities capability ON capability.id=link.prepared_execution_capability_id
+         JOIN protected_operations operation ON operation.id=capability.protected_operation_id
+        WHERE link.run_id=$1 ORDER BY link.sequence`,
+      [runId],
+    );
     const attempts = (
       await this.database.query(
         `SELECT id, attempt_number AS "attemptNumber", state, started_at AS "startedAt",
@@ -237,6 +259,7 @@ export class RunObservationService {
     );
 
     return runObservationSchema.parse({
+      canonicalOperations: canonicalOperations.rows,
       run,
       attempts,
       currentAttempt,

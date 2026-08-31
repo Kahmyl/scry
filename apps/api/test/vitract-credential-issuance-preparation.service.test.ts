@@ -27,61 +27,92 @@ describe("production Vitract credential issuance preparation", () => {
         .fn()
         .mockResolvedValueOnce({
           rowCount: 1,
-          rows: [{
-            environmentAuthorized: true,
-            baseOrigin: "https://preview-api.vitract.com",
-            policy: {
-              allowedOrigins: ["https://preview.vitract.com", "https://preview-api.vitract.com"],
-              trustedScriptOrigins: [
-                "https://static.cloudflareinsights.com",
-                "https://js.stripe.com",
-                "https://maps.googleapis.com",
-              ],
+          rows: [
+            {
+              environmentAuthorized: true,
+              baseOrigin: "https://preview-api.vitract.com",
+              policy: {
+                allowedOrigins: ["https://preview.vitract.com", "https://preview-api.vitract.com"],
+                trustedScriptOrigins: [
+                  "https://static.cloudflareinsights.com",
+                  "https://js.stripe.com",
+                  "https://maps.googleapis.com",
+                ],
+              },
             },
-          }],
+          ],
         })
         .mockResolvedValueOnce({ rowCount: 1, rows: [{ projectId }] }),
     };
     const contract = {
-      id: id(),
-      digest: "a".repeat(64),
-      praxisSessionId: lifecycle.authoringSessionId,
-      documentEpoch: 4,
-      origin: "https://preview.vitract.com",
-      sourceKind: "runtime_observation" as const,
-      observationId: "vitract-issued-contract",
-      operation: {
-        key: "issuePartnerCredential",
-        label: "Add credential",
-        method: "POST" as const,
-        pathTemplate: "/api/v1/partners/applications/{applicationId}/credentials",
-        transports: ["fetch" as const],
-        classification: "mutation" as const,
-        activationControlReference: `context-control-${"1".repeat(32)}`,
-      },
-      inputs: [
-        {
-          key: "credentialName",
-          label: "Name",
-          aliases: [],
-          required: true,
-          classification: "public" as const,
-          acceptedPresentations: ["plain_text" as const],
-          controlReference: `context-control-${"2".repeat(32)}`,
+      revision: {
+        id: id(),
+        revision: 1,
+        digest: "a".repeat(64),
+        retentionState: "active" as const,
+        staleness: "current" as const,
+        createdAt: new Date().toISOString(),
+        provenance: {
+          sourceKind: "runtime_observation" as const,
+          observationId: "vitract-issued-contract",
+          origin: "https://preview.vitract.com",
+          observedAt: new Date().toISOString(),
         },
-      ],
-      auth: { presentationClasses: [] },
-      response: {
-        statusClasses: [2],
-        confirmedNotAppliedStatuses: [400],
-        safeOutputKeys: ["credentialRecordId", "clientId", "clientSecret"],
-        safeOutputs: [
-          { key: "credentialRecordId", label: "id", classification: "public" as const },
-          { key: "clientId", label: "Client ID", classification: "public" as const },
-          { key: "clientSecret", label: "Client secret", classification: "protected" as const },
-        ],
-        continuation: "none" as const,
+        facts: {
+          application: { key: "vitract-preview-test", provider: "vitract" },
+          adapter: { key: "vitract", version: 1 },
+          operation: {
+            key: "issuePartnerCredential",
+            label: "Add credential",
+            method: "POST" as const,
+            pathTemplate: "/api/v1/partners/applications/{applicationId}/credentials",
+            transports: ["fetch" as const],
+            semantics: {
+              dispatch: "mutation" as const,
+              effects: ["protected_acquisition" as const],
+            },
+          },
+          inputs: [
+            {
+              key: "credentialName",
+              label: "Name",
+              aliases: [],
+              required: true,
+              classification: "public" as const,
+              acceptedPresentations: ["plain_text" as const],
+            },
+          ],
+          auth: { presentationClasses: [] },
+          response: {
+            statusClasses: [2],
+            mutationPolicy: { confirmedNotAppliedStatuses: [400] },
+            outputs: [
+              { key: "credentialRecordId", label: "id", classification: "public" as const },
+              { key: "clientId", label: "Client ID", classification: "public" as const },
+              { key: "clientSecret", label: "Client secret", classification: "protected" as const },
+            ],
+            continuation: "none" as const,
+          },
+        },
       },
+      interaction: {
+        id: id(),
+        operationContractRevisionId: "unused",
+        operationContractRevisionDigest: "a".repeat(64),
+        praxisSessionId: lifecycle.authoringSessionId,
+        runtimeOwnerId: id(),
+        fencingEpoch: 1,
+        documentEpoch: 4,
+        origin: "https://preview.vitract.com",
+        activationControlReference: `context-control-${"1".repeat(32)}`,
+        inputControlReferences: {
+          credentialName: `context-control-${"2".repeat(32)}`,
+        },
+        issuedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        state: "active" as const,
+      },
+      executableInteractionAvailable: true,
     };
     const authoring = {
       prepare: vi.fn().mockResolvedValue(lifecycle),
@@ -92,7 +123,6 @@ describe("production Vitract credential issuance preparation", () => {
       reservePreparedOperation: vi.fn().mockResolvedValue({
         protectedOperationId: id(),
         state: "reserved",
-        authorizationRequired: true,
       }),
     };
     const service = new VitractCredentialIssuancePreparationService(
@@ -157,8 +187,9 @@ describe("production Vitract credential issuance preparation", () => {
         projectId,
         environmentId,
         missionId: lifecycle.missionId,
-        praxisSessionId: lifecycle.authoringSessionId,
-        observedOperationContractDigest: contract.digest,
+        operationContractRevisionId: contract.revision.id,
+        operationContractRevisionDigest: contract.revision.digest,
+        runtimeInteractionCapabilityId: contract.interaction.id,
         values: [
           expect.objectContaining({
             canonicalFieldKey: "credentialName",
@@ -182,21 +213,24 @@ describe("production Vitract credential issuance preparation", () => {
       authoring as never,
     );
     await expect(
-      service.createLifecycle({ kind: "service", subject: "scry-service" }, {
-        projectId: id(),
-        environmentId: id(),
-        loginEmailReferenceId: id(),
-        loginPasswordReferenceId: id(),
-        applicationResourceScope: "vtr_app_generated",
-      credentialName: "Scry final Q5",
-      idempotencyKey: `vitract-q5-${id()}`,
-      distinctMissionReason: "This test requires generated distinct setup work.",
-      distinctMissionAuthority: {
-        confirmedUserAuthorized: true,
-        selection: "start_distinct_mission",
-        source: "current_request_explicit",
-      },
-      }),
+      service.createLifecycle(
+        { kind: "service", subject: "scry-service" },
+        {
+          projectId: id(),
+          environmentId: id(),
+          loginEmailReferenceId: id(),
+          loginPasswordReferenceId: id(),
+          applicationResourceScope: "vtr_app_generated",
+          credentialName: "Scry final Q5",
+          idempotencyKey: `vitract-q5-${id()}`,
+          distinctMissionReason: "This test requires generated distinct setup work.",
+          distinctMissionAuthority: {
+            confirmedUserAuthorized: true,
+            selection: "start_distinct_mission",
+            source: "current_request_explicit",
+          },
+        },
+      ),
     ).rejects.toMatchObject({ response: { code: "VITRACT_ISSUANCE_CANONICAL_SCOPE_INVALID" } });
     expect(authoring.prepare).not.toHaveBeenCalled();
   });
@@ -244,12 +278,11 @@ describe("production Vitract credential issuance preparation", () => {
       },
     );
     expect(authoring.advance.mock.calls[0]![2].intents).toEqual([
-      expect.objectContaining({ action: { kind: "navigate", url: "https://preview.vitract.com/login" } }),
+      expect.objectContaining({
+        action: { kind: "navigate", url: "https://preview.vitract.com/login" },
+      }),
     ]);
-    expect(authoring.observe).toHaveBeenCalledWith(
-      expect.anything(),
-      authoringSessionId,
-    );
+    expect(authoring.observe).toHaveBeenCalledWith(expect.anything(), authoringSessionId);
     const intents = authoring.advance.mock.calls[1]![2].intents;
     expect(intents.map((intent: { action: { kind: string } }) => intent.action.kind)).toEqual([
       "fill",

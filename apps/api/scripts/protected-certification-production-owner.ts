@@ -178,9 +178,11 @@ export async function runKernelOwnerCertification(input: {
         intent: missionIntent as never,
         protectedTransaction,
       });
-      missionReservation = missionAuthoringProtectedOperationReservation(protectedTransaction, [
-        "https://fixture.test",
-      ]);
+      missionReservation = missionAuthoringProtectedOperationReservation(
+        protectedTransaction,
+        ["https://fixture.test"],
+        randomUUID(),
+      );
       // The certification operation id is fixed so the durable row and kernel transaction share identity.
       await fixture.sessions.beginMissionOperation({
         workspaceId: fixture.workspaceId,
@@ -261,6 +263,7 @@ export async function runKernelOwnerCertification(input: {
     if (input.cellId === "D1" || input.cellId === "H2")
       controller.abort("CERTIFICATION_PRE_DISPATCH_FAULT");
     const kernel = new ProtectedTransactionKernel({
+      mutationIdentity: missionReservation?.mutationIdentity ?? operationId,
       safeSession: {
         browser: safeBrowser,
         context: safeContext,
@@ -518,7 +521,11 @@ export async function runPublicMissionReplayCertification(cellId: string): Promi
     intent: intent as never,
     protectedTransaction,
   });
-  const reservation = missionAuthoringProtectedOperationReservation(protectedTransaction, [origin]);
+  const reservation = missionAuthoringProtectedOperationReservation(
+    protectedTransaction,
+    [origin],
+    randomUUID(),
+  );
   const counters = {
     modelInvocations: 0,
     browserLaunches: 0,

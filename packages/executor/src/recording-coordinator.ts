@@ -487,6 +487,46 @@ export class RecordingCoordinator {
         return;
       }
       const failureCode = segmentFailureCode(error);
+      // A document transition can invalidate the visual checkpoint. Never retain
+      // those unverified frames. Record a durable destruction fact so reporting
+      // can represent an omitted interval rather than an impossible missing file.
+      if (failureCode === "VEIL_VIDEO_DOCUMENT_CONTEXT_LOST") {
+        await rm(segment.filePath, { force: true }); // failure must not certify destruction
+        const artifact: Artifact = {
+          id: randomUUID(),
+          kind: "video",
+          availability: "destroyed",
+          privacyClassification: "uncertain",
+          failureProvenance: "browser",
+          reasonCode: failureCode,
+          contentType: "video/webm",
+          relativePath: segment.relativePath,
+          observation: {
+            bytesDestroyed: true,
+            recoverableCaptureLoss: true,
+            reasonCode: failureCode,
+          },
+        };
+        const entry: RecordingTimelineEntry = {
+          type: "video_segment",
+          id: segment.id,
+          sequence: segment.sequence,
+          pageId: segment.pageId,
+          startedAt: segment.startedAt,
+          endedAt,
+          reason: segment.reason,
+          status: "quarantined",
+          privacyStatus: "quarantined",
+          artifactId: artifact.id,
+          failureCode,
+        };
+        artifact.observation = { ...artifact.observation, timelineEntry: entry };
+        this.recordedArtifacts.push(artifact);
+        this.timelineEntries.push(entry);
+        await this.emit("recording.segment_stopped", { reason, entry });
+        await this.sealUnsafe(failureCode);
+        return;
+      }
       this.timelineEntries.push({
         type: "video_segment",
         id: segment.id,

@@ -63,7 +63,7 @@ const grantMissionAuthorizationBase = missionContextSchema.extend({
   confirmedUserAuthorized: z.literal(true),
 });
 
-/** Frozen authoritative-Q5 wire contract. Production protected authorization uses the prepared form below. */
+/** Historical wire compatibility only. Canonical prepared execution does not use approval rows. */
 export const legacyGrantMissionAuthorizationSchema = z.discriminatedUnion("kind", [
   grantMissionAuthorizationBase
     .extend({

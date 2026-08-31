@@ -434,3 +434,4 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir prepared-protected-operation-journeys.sql
 \ir vitract-q5-composition.sql
 \ir prepared-protected-operation-reservation-settlement.sql
+\ir canonical-execution-authority.sql

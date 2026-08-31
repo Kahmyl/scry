@@ -1,8 +1,8 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 
 import {
-  observedOperationContractSchema,
-  observedOperationFactsSchema,
+  operationContractFactsSchema,
+  proposedOperationContractSchema,
   type InspectPraxisRegionResult,
   type OperationOutcome,
 } from "@scry/contracts";
@@ -16,21 +16,7 @@ import {
 } from "./public-value.js";
 
 type SemanticPageContext = NonNullable<OperationOutcome["semanticPageContext"]>;
-const publicOperationDeclarationSchema = observedOperationFactsSchema
-  .omit({
-    resourceEffect: true,
-  })
-  .extend({
-    operation: observedOperationFactsSchema.shape.operation.omit({
-      activationControlReference: true,
-    }),
-    inputs: observedOperationFactsSchema.shape.inputs.element
-      .omit({
-        controlReference: true,
-      })
-      .array()
-      .max(100),
-  });
+const publicOperationDeclarationSchema = operationContractFactsSchema;
 
 const MAX_CONTEXT_CONTROLS = 48;
 const MAX_CONTEXT_CANDIDATES = 5_000;
@@ -320,7 +306,12 @@ async function semanticIdentityForLocator(locator: Locator) {
             input.autocomplete.toLowerCase(),
           ) ||
           input.inputMode === "numeric"));
-    const label = "labels" in input && input.labels ? input.labels[0]?.textContent : undefined;
+    const labelElement = "labels" in input && input.labels ? input.labels[0] : undefined;
+    const labelCopy = labelElement?.cloneNode(true) as Element | undefined;
+    labelCopy
+      ?.querySelectorAll('input,textarea,select,[contenteditable],[data-scry-redacted="true"]')
+      .forEach((child) => child.remove());
+    const label = labelCopy?.textContent?.replace(/\s+/g, " ").trim();
     const role =
       element.getAttribute("role") ||
       (tag === "a"
@@ -365,9 +356,8 @@ async function semanticIdentityForLocator(locator: Locator) {
       : undefined;
     const groupSensitive = Boolean(
       boundary?.closest('[data-scry-redacted="true"]') ||
-      boundary?.querySelector(
-        '[data-scry-redacted="true"],input[type=password],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]',
-      ),
+      boundary?.querySelector('[data-scry-redacted="true"]') ||
+      heading?.closest('[data-scry-redacted="true"]'),
     );
     const group = groupSensitive
       ? ""
@@ -485,19 +475,26 @@ async function contextContainersCurrent(
 }
 
 async function locateCurrentControl(page: Page, expected: ElementHandle<Element>) {
-  const candidates = page.locator(CONTEXT_CONTROL_SELECTOR);
-  const count = Math.min(await candidates.count(), MAX_CONTEXT_CANDIDATES);
-  for (let index = 0; index < count; index += 1) {
-    const locator = candidates.nth(index);
-    const current = await locator.elementHandle();
-    if (!current) continue;
-    const same = await expected
-      .evaluate((observed, candidate) => observed === candidate, current)
-      .catch(() => false);
-    await current.dispose();
-    if (same) return locator;
-  }
-  return undefined;
+  // Locate by object identity in one browser turn. A CDP round trip per preceding
+  // control makes dense documents exceed the execution deadline before any action.
+  const index = await expected
+    .evaluate(
+      (observed, { selector, limit }) => {
+        if (!observed.isConnected) return -1;
+        return Array.from(document.querySelectorAll(selector)).slice(0, limit).indexOf(observed);
+      },
+      { selector: CONTEXT_CONTROL_SELECTOR, limit: MAX_CONTEXT_CANDIDATES },
+    )
+    .catch(() => -1);
+  if (index < 0) return undefined;
+  const locator = page.locator(CONTEXT_CONTROL_SELECTOR).nth(index);
+  const current = await locator.elementHandle();
+  if (!current) return undefined;
+  const same = await expected
+    .evaluate((observed, candidate) => observed === candidate, current)
+    .catch(() => false);
+  await current.dispose();
+  return same ? locator : undefined;
 }
 
 /**
@@ -540,7 +537,34 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       };
       state.__scryGroundingIds ??= new WeakMap();
       state.__scryGroundingSequence ??= 0;
-      for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+      // A bounded observation follows factual browser attention, not DOM insertion order.
+      // Sidebar links must not starve the section the agent explicitly navigated to.
+      let fragment: Element | null = null;
+      try {
+        fragment = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+      } catch {}
+      const region = fragment?.closest("section,article,[role=region]") ?? fragment;
+      const orderedIndices = candidates
+        .map((element, index) => {
+          const rect = element.getBoundingClientRect();
+          const inViewport =
+            rect.width > 0 &&
+            rect.height > 0 &&
+            rect.bottom > 0 &&
+            rect.right > 0 &&
+            rect.top < innerHeight &&
+            rect.left < innerWidth;
+          const score = region?.contains(element)
+            ? 3
+            : element === document.activeElement
+              ? 2
+              : inViewport
+                ? 1
+                : 0;
+          return { index, score };
+        })
+        .sort((a, b) => b.score - a.score || a.index - b.index);
+      for (const { index: candidateIndex } of orderedIndices) {
         const element = candidates[candidateIndex]!;
         if (projected.length >= limit) break;
         const html = element as HTMLElement;
@@ -571,7 +595,12 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
           runtimeId = `control-${state.__scryGroundingSequence}`;
           state.__scryGroundingIds.set(element, runtimeId);
         }
-        const label = "labels" in input && input.labels ? input.labels[0]?.textContent : undefined;
+        const labelElement = "labels" in input && input.labels ? input.labels[0] : undefined;
+        const labelCopy = labelElement?.cloneNode(true) as Element | undefined;
+        labelCopy
+          ?.querySelectorAll('input,textarea,select,[contenteditable],[data-scry-redacted="true"]')
+          .forEach((child) => child.remove());
+        const label = labelCopy?.textContent?.replace(/\s+/g, " ").trim();
         const role =
           element.getAttribute("role")?.slice(0, 100) ||
           (tag === "a"
@@ -619,9 +648,8 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
           : undefined;
         const groupSensitive = Boolean(
           boundary?.closest('[data-scry-redacted="true"]') ||
-          boundary?.querySelector(
-            '[data-scry-redacted="true"],input[type=password],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]',
-          ),
+          boundary?.querySelector('[data-scry-redacted="true"]') ||
+          heading?.closest('[data-scry-redacted="true"]'),
         );
         const group = groupSensitive
           ? ""
@@ -1063,36 +1091,32 @@ export async function observeOperationContracts(page: Page, praxisSessionId: str
     if (!declaration.success) return [];
     const activation = uniqueControl(context, [declaration.data.operation.label], ["activate"]);
     if (!activation) return [];
-    const inputs = declaration.data.inputs.map((field) => {
+    const inputControlReferences: Record<string, string> = {};
+    for (const field of declaration.data.inputs) {
       // Aliases are display-only. Only the declared safe label may correlate a canonical
       // field key with one unique current-document control.
       const control = uniqueControl(context, [field.label], ["enter_text"]);
-      return control ? { ...field, controlReference: control.reference } : field;
-    });
-    if (inputs.some((field) => field.required && !("controlReference" in field))) return [];
-    const facts = {
-      ...declaration.data,
-      operation: {
-        ...declaration.data.operation,
-        activationControlReference: activation.reference,
-      },
-      inputs,
-    };
+      if (control) inputControlReferences[field.key] = control.reference;
+      else if (field.required) return [];
+    }
     const provenance = {
-      praxisSessionId,
-      documentEpoch: context.authority.documentEpoch,
-      origin: new URL(context.authority.url).origin,
       sourceKind: "public_document" as const,
       observationId: `${context.authority.pageId}:operation-contract:${index}`,
+      origin: new URL(context.authority.url).origin,
+      observedAt: new Date().toISOString(),
+      sourcePraxisSessionId: praxisSessionId,
+      sourceDocumentEpoch: context.authority.documentEpoch,
     };
-    const digest = createHash("sha256")
-      .update(stableJson({ ...provenance, facts }))
-      .digest("hex");
-    const contract = observedOperationContractSchema.safeParse({
-      id: randomUUID(),
-      digest,
-      ...provenance,
-      ...facts,
+    const contract = proposedOperationContractSchema.safeParse({
+      facts: declaration.data,
+      provenance,
+      interaction: {
+        praxisSessionId,
+        documentEpoch: context.authority.documentEpoch,
+        origin: provenance.origin,
+        activationControlReference: activation.reference,
+        inputControlReferences,
+      },
     });
     return contract.success ? [contract.data] : [];
   });
@@ -1106,15 +1130,4 @@ function uniqueControl(context: SemanticPageContext, names: string[], capabiliti
       capabilities.every((capability) => control.capabilities.includes(capability as never)),
   );
   return matches.length === 1 ? matches[0] : undefined;
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object")
-    return `{${Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
-      .join(",")}}`;
-  return JSON.stringify(value);
 }

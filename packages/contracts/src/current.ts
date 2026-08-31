@@ -882,10 +882,17 @@ export const currentPlanSchema = z
     allowedOrigins: z.array(z.string().url()).min(1).max(5),
     budgets: budgetsSchema,
     checkpoints: z.array(checkpointSchema).max(20).default([]),
-    steps: z.array(currentStepSchema).min(1).max(500),
+    executionMode: z.literal("agent_directed").optional(),
+    steps: z.array(currentStepSchema).max(500),
   })
   .strict()
   .superRefine((plan, context) => {
+    if (plan.steps.length === 0 && plan.executionMode !== "agent_directed")
+      context.addIssue({
+        code: "custom",
+        path: ["steps"],
+        message: "executable plans require at least one step",
+      });
     validateCapabilityRequirements(plan, [], context);
     if (plan.steps.length > plan.budgets.maxActions) {
       context.addIssue({

@@ -254,6 +254,22 @@ describe("bounded semantic page context", () => {
     expect(bounded.controls).toHaveLength(0);
   });
 
+  it("keeps an independently public form label visible beside a protected control", async () => {
+    await page.setContent(`
+      <form aria-label="Account sign in">
+        <label>Password <input type="password" /></label>
+        <button>Continue</button>
+      </form>
+    `);
+    const context = await observeSemanticPageContext(page);
+    expect(context.controls.find((control) => control.name === "Continue")?.group).toBe(
+      "Account sign in",
+    );
+    expect(context.controls.find((control) => control.valueProtected)?.group).toBe(
+      "Account sign in",
+    );
+  });
+
   it.each([
     [
       "email and password",
@@ -500,13 +516,15 @@ describe("bounded semantic page context", () => {
           <label>Client ID <input /></label>
           <button>Create item</button>
           <script type="application/scry-operation-contract+json">${JSON.stringify({
+            application: { key: "example", provider: "example" },
+            adapter: { key: "public_document", version: 1 },
             operation: {
               key: "createItem",
               label: "Create item",
               method: "POST",
               pathTemplate: "/items",
               transports: ["fetch"],
-              classification: "mutation",
+              semantics: { dispatch: "mutation", effects: ["business_effect"] },
             },
             inputs: [
               {
@@ -521,10 +539,17 @@ describe("bounded semantic page context", () => {
             auth: { presentationClasses: [] },
             response: {
               statusClasses: [2],
-              confirmedNotAppliedStatuses: [400, 401, 403, 422],
-              safeOutputKeys: ["itemId"],
-              safeOutputs: [{ key: "itemId", label: "id", classification: "public" }],
-              publicIdentityOutputPath: "$.itemId",
+              mutationPolicy: { confirmedNotAppliedStatuses: [400, 401, 403, 422] },
+              outputs: [
+                {
+                  key: "itemId",
+                  label: "id",
+                  classification: "public",
+                  extractor: { kind: "json_path", path: "$.itemId" },
+                  identityRole: "continuation_identity",
+                  generatedValueEligible: true,
+                },
+              ],
               continuation: "read_only_retrieve",
             },
           })}</script>`,
@@ -536,17 +561,16 @@ describe("bounded semantic page context", () => {
       "00000000-0000-4000-8000-000000000001",
     );
     expect(contract).toMatchObject({
-      operation: {
-        key: "createItem",
-        activationControlReference: expect.stringMatching(/^context-control-[a-f0-9]{32}$/),
+      facts: {
+        operation: { key: "createItem" },
+        inputs: [{ key: "clientId", aliases: ["Customer"] }],
       },
-      inputs: [
-        {
-          key: "clientId",
-          aliases: ["Customer"],
-          controlReference: expect.stringMatching(/^context-control-[a-f0-9]{32}$/),
+      interaction: {
+        activationControlReference: expect.stringMatching(/^context-control-[a-f0-9]{32}$/),
+        inputControlReferences: {
+          clientId: expect.stringMatching(/^context-control-[a-f0-9]{32}$/),
         },
-      ],
+      },
     });
     expect(JSON.stringify(contract)).not.toContain("must-not-leak");
     await page.unroute("https://operation.example.test/");
@@ -557,13 +581,15 @@ describe("bounded semantic page context", () => {
       <label>Password <input type="password" /></label>
       <button>Sign in</button>
       <script type="application/scry-operation-contract+json">${JSON.stringify({
+        application: { key: "example", provider: "example" },
+        adapter: { key: "public_document", version: 1 },
         operation: {
           key: "authenticate",
           label: "Sign in",
           method: "POST",
           pathTemplate: "/sessions",
           transports: ["fetch"],
-          classification: "mutation",
+          semantics: { dispatch: "mutation", effects: ["authentication"] },
         },
         inputs: [
           {
@@ -579,9 +605,8 @@ describe("bounded semantic page context", () => {
         auth: { presentationClasses: ["protected_text"] },
         response: {
           statusClasses: [2],
-          confirmedNotAppliedStatuses: [400, 401, 403],
-          safeOutputKeys: ["authenticated"],
-          safeOutputs: [{ key: "authenticated", label: "authenticated", classification: "public" }],
+          mutationPolicy: { confirmedNotAppliedStatuses: [400, 401, 403] },
+          outputs: [{ key: "authenticated", label: "authenticated", classification: "public" }],
           continuation: "none",
         },
       })}</script>
@@ -596,13 +621,15 @@ describe("bounded semantic page context", () => {
       <label>Customer <input /></label>
       <button>Create item</button>
       <script type="application/scry-operation-contract+json">${JSON.stringify({
+        application: { key: "example", provider: "example" },
+        adapter: { key: "public_document", version: 1 },
         operation: {
           key: "createItem",
           label: "Create item",
           method: "POST",
           pathTemplate: "/items",
           transports: ["fetch"],
-          classification: "mutation",
+          semantics: { dispatch: "mutation", effects: ["business_effect"] },
         },
         inputs: [
           {
@@ -617,9 +644,8 @@ describe("bounded semantic page context", () => {
         auth: { presentationClasses: [] },
         response: {
           statusClasses: [2],
-          confirmedNotAppliedStatuses: [400],
-          safeOutputKeys: ["itemId"],
-          safeOutputs: [{ key: "itemId", label: "id", classification: "public" }],
+          mutationPolicy: { confirmedNotAppliedStatuses: [400] },
+          outputs: [{ key: "itemId", label: "id", classification: "public" }],
           continuation: "none",
         },
       })}</script>

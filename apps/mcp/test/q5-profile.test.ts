@@ -31,12 +31,23 @@ const scope: Q5Scope = {
   flowRevisionId: "10000000-0000-4000-8000-000000000011",
   targetOrigin: "https://preview-api.vitract.com",
   allowedOrigins: ["https://preview-api.vitract.com"],
-  credentialReferenceIds: ["10000000-0000-4000-8000-000000000012"],
+  clientIdValueAssetId: "10000000-0000-4000-8000-000000000012",
+  clientSecretValueAssetId: "10000000-0000-4000-8000-000000000015",
   runId: "10000000-0000-4000-8000-000000000013",
   praxisSessionId: "10000000-0000-4000-8000-000000000014",
+  praxisSessionIds: ["10000000-0000-4000-8000-000000000014"],
 };
 
 describe("authoritative Q5 MCP profile", () => {
+  it("refuses an out-of-scope recording Run before transport", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    await expect(
+      scoped().post(`/missions/${scope.missionId}/recording-selection`, {
+        orderedRunIds: [scope.runId, "20000000-0000-4000-8000-000000000004"],
+      }),
+    ).rejects.toThrow("Q5_MCP_SCOPE_MISMATCH");
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("freezes the exact profile and excludes broad administration", async () => {
     const server = createQ5McpServer(new ScryApiClient("http://scry.invalid/api"));
     const client = new Client({ name: "q5-contract", version: "1" });
@@ -45,7 +56,12 @@ describe("authoritative Q5 MCP profile", () => {
     await client.connect(clientTransport);
     const tools = (await client.listTools()).tools;
     expect(tools.map(({ name }) => name)).toEqual([...Q5_MCP_TOOL_NAMES]);
-    expect(tools).toHaveLength(30);
+    expect(tools).toHaveLength(34);
+    expect(tools.map(({ name }) => name)).not.toContain("grant_mission_execution_authorization");
+    expect(tools.map(({ name }) => name)).not.toContain("select_mission_value");
+    expect(tools.map(({ name }) => name)).not.toContain("claim_mission_operation_continuation");
+    expect(tools.map(({ name }) => name)).not.toContain("resume_prepared_protected_operation");
+    expect(tools.map(({ name }) => name)).not.toContain("list_project_credentials");
     expect(tools.map(({ name }) => name).join(" ")).not.toMatch(
       /create_project|create_mission|list_missions|create_credential|calibrat|shell|database|direct_http|cdp/i,
     );
@@ -118,7 +134,7 @@ describe("authoritative Q5 MCP profile", () => {
             missions: {
               candidates: { items: [{ id: scope.missionId }, { id: "other" }], truncated: true },
             },
-            credentials: { items: [{ id: scope.credentialReferenceIds[0] }, { id: "other" }] },
+            credentials: { items: [{ id: "legacy-backing-reference" }, { id: "other" }] },
             environments: { items: [{ id: scope.environmentId }, { id: "other" }] },
           }),
           { status: 200 },
@@ -131,7 +147,7 @@ describe("authoritative Q5 MCP profile", () => {
     });
     expect(result.selection.projectCandidates.items).toEqual([{ id: scope.projectId }]);
     expect(result.missions.candidates.items).toEqual([{ id: scope.missionId }]);
-    expect(result.credentials.items).toEqual([{ id: scope.credentialReferenceIds[0] }]);
+    expect(result.credentials.items).toEqual([]);
     expect(result.environments.items).toEqual([{ id: scope.environmentId }]);
   });
 
@@ -151,6 +167,81 @@ describe("authoritative Q5 MCP profile", () => {
     const result: any = await scoped().get(`/projects/${scope.projectId}/environments`);
     expect(result.items).toEqual([{ id: scope.environmentId }]);
     expect(result.environments).toEqual([{ id: scope.environmentId }]);
+  });
+
+  it("keeps historical owners readable but rejects their executable use after rotation", async () => {
+    const next = "10000000-0000-4000-8000-000000000016";
+    const control = new ScryApiClient("http://scry.invalid/api", "control");
+    const bind = vi.spyOn(control, "post").mockResolvedValue({ bound: true });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (_url: string, init?: RequestInit) =>
+          new Response(JSON.stringify(init?.method === "POST" ? { id: next } : { contracts: [] }), {
+            status: 200,
+          }),
+      ),
+    );
+    const client = new Q5ScopedApiClient(
+      "http://scry.invalid/api",
+      "service",
+      "http://scry.invalid/api",
+      { provider: "shadow", externalRunId: scope.externalRunId },
+      structuredClone(scope),
+      control,
+    );
+    await client.post("/praxis-sessions", { missionId: scope.missionId });
+    expect(bind).toHaveBeenCalledWith(
+      `/internal/q5-authoritative-attempts/${scope.attemptId}/runtime-bindings`,
+      { praxisSessionId: next },
+    );
+    await expect(
+      client.get(`/praxis-sessions/${scope.praxisSessionId}/operation-contracts`),
+    ).resolves.toEqual({ contracts: [] });
+    await expect(
+      client.get(`/praxis-sessions/${scope.praxisSessionId}/observation`),
+    ).rejects.toThrow("Q5_MCP_SCOPE_MISMATCH");
+    await expect(
+      client.post(`/praxis-sessions/${scope.praxisSessionId}/protected-operations/reserve`, {}),
+    ).rejects.toThrow("Q5_MCP_SCOPE_MISMATCH");
+    expect(client.scope.praxisSessionIds).toEqual([scope.praxisSessionId, next]);
+  });
+
+  it("discovers only the prepared pair and this Mission's outputs, never legacy credential permission", async () => {
+    const local = "10000000-0000-4000-8000-000000000017";
+    const items = [
+      { valueAssetId: scope.clientIdValueAssetId, producerMissionId: "prior-issuance" },
+      { valueAssetId: local, producerMissionId: scope.missionId },
+      { valueAssetId: "other", producerMissionId: "other" },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ items }), { status: 200 })),
+    );
+    const client = scoped();
+    expect(await client.get(`/praxis-sessions/${scope.praxisSessionId}/value-assets`)).toEqual({
+      items: items.slice(0, 2),
+    });
+    // Selection is absent from the protocol; discovery never authorizes use.
+    await expect(
+      client.post(`/praxis-sessions/${scope.praxisSessionId}/value-selections`, {
+        valueAssetId: local,
+      }),
+    ).rejects.toThrow("Q5_MCP_ROUTE_FORBIDDEN");
+    const fresh = scoped();
+    await expect(
+      fresh.post(`/praxis-sessions/${scope.praxisSessionId}/protected-operations/reserve`, {
+        values: [{ source: { kind: "generated_safe", valueAssetId: local } }],
+      }),
+    ).resolves.toBeDefined(); // The server, not a client cache, checks provenance.
+    await expect(
+      client.post(`/praxis-sessions/${scope.praxisSessionId}/protected-operations/reserve`, {
+        values: [{ source: { protectedReferenceId: "backing" } }],
+      }),
+    ).rejects.toThrow("Q5_MCP_SCOPE_MISMATCH");
+    await expect(
+      client.post(`/praxis-sessions/${scope.praxisSessionId}/protected-operations/dispatch`, {}),
+    ).rejects.toThrow("Q5_RUN_EVIDENCE_REQUIRED");
   });
 });
 

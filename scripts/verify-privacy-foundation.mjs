@@ -21,11 +21,28 @@ const forbidden = [
 const externalVersionedApiContracts = new Set([
   "apps/api/src/auth.service.ts",
   "apps/api/src/adaptive-sessions/vitract-credential-resource-effect.provider.ts",
+  "apps/api/src/adaptive-sessions/vitract-observed-operation-contract.provider.ts",
+]);
+
+// These exact fields describe external wire compatibility or an immutable
+// mechanical revision. They do not select a legacy feature implementation.
+const mechanicalMetadata = new Map([
+  ["apps/mcp/src/qualification/q5-server.ts", [/protocolVersion:\s*"2025-11-25"/g]],
+  [
+    "packages/assurance/src/architecture/m6/q5-evidence.ts",
+    [/protocolVersion: string;/g, /manifest\.mcp\?\.protocolVersion/g],
+  ],
+  [
+    "packages/contracts/src/prepared-protected-operation.ts",
+    [/policyVersion: z\.number\(\)\.int\(\)\.positive\(\)/g],
+  ],
 ]);
 
 const violations = [];
 for (const relativePath of foundationFiles) {
-  const source = readFileSync(resolve(root, relativePath), "utf8");
+  let source = readFileSync(resolve(root, relativePath), "utf8");
+  for (const field of mechanicalMetadata.get(relativePath) ?? [])
+    source = source.replace(field, "mechanicalCompatibilityField");
   for (const rule of forbidden) {
     if (rule.reason === "versioned public API" && externalVersionedApiContracts.has(relativePath))
       continue;

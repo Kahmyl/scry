@@ -266,8 +266,10 @@ export class RunAttemptRepository {
              JOIN run_operation_links link
                ON link.run_id=binding.run_id
               AND link.praxis_session_id=binding.praxis_session_id
-             JOIN protected_operations protected
+             JOIN canonical_completed_executions protected
                ON protected.operation_id=link.operation_id
+              AND protected.praxis_session_id=link.praxis_session_id
+              AND protected.prepared_execution_capability_id=link.prepared_execution_capability_id
             WHERE binding.run_id=$1
               AND binding.praxis_session_id=$2
               AND protected.id=$3
@@ -279,23 +281,10 @@ export class RunAttemptRepository {
                    AND completed_run.outcome_classification='passed'
                    AND completed_run.result_classification='application_pass'
               )
-              AND EXISTS (
-                SELECT 1
-                  FROM runs completed_run
-                 WHERE completed_run.id=$1
-                   AND completed_run.state='passed'
-                   AND completed_run.outcome_classification='passed'
-                   AND completed_run.result_classification='application_pass'
-              )
-              AND session.state='cancelled'
-              AND session.decision_boundary->>'type'='objective_completed'
-              AND session.decision_boundary->>'reasonCode'='PROTECTED_OPERATION_COMPLETED'
-              AND protected.state='completed'
-              AND protected.dispatch_state='acknowledged'
-              AND protected.mutation_outcome='applied'
-              AND protected.acquisition_state='complete'
-              AND protected.persistence_state='committed'
-              AND protected.failure_code IS NULL
+              AND binding.detached_at IS NULL
+              AND (session.state='completed' OR (session.state='cancelled'
+                AND session.decision_boundary->>'type'='objective_completed'
+                AND session.decision_boundary->>'reasonCode'='PROTECTED_OPERATION_COMPLETED'))
             ORDER BY link.created_at DESC
             LIMIT 1`,
           [runId, successorCheckpoint.praxisSessionId, successorCheckpoint.protectedOperationId],

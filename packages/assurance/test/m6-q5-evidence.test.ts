@@ -97,9 +97,9 @@ function valid(): Q5EvidenceManifest {
     })) as Q5EvidenceManifest["evidence"],
     provider: { name: "deepseek", model: "deepseek-chat", requestCount: 3, automaticRetries: 0 },
     mcp: {
-      profile: "q5-authoritative-v1",
+      profile: "q5-thin-kernel-v3",
       protocolVersion: "2025-11-25",
-      toolCount: 30,
+      toolCount: 34,
       contractDigest: Q5_MCP_CONTRACT_DIGEST,
     },
     privacy: { audit: "PASS", protectedLeakCount: 0 },

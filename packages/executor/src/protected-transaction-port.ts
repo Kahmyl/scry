@@ -19,6 +19,10 @@ import type { VeilRuntimeCoordinator } from "@scry/veil";
 import type { Page } from "playwright";
 
 export type ProtectedTransactionDependencies = {
+  mutationIdentity: string;
+  /** Finalized program authority supplied by PreparedExecutionCapability. */
+  canonicalProgramDigest?: string;
+  preparedExecutionCapabilityId?: string;
   safeSession: SafeBrowserSession;
   gate: VeilRuntimeCoordinator;
   redactor: SecretRedactor;
@@ -88,6 +92,7 @@ export type ProtectedTransactionDependencies = {
     | undefined
   >;
   resolveKnownSecret(reference: string): Promise<string>;
+  verifyPresentedSecret?(reference: string, actual: string, exact: boolean): boolean;
   verifyAssertions(page: Page, assertions: Assertion[]): Promise<void>;
   prepareCapsule(session: ProtectedBrowserSession): Promise<void>;
   onPreparationVerified?(

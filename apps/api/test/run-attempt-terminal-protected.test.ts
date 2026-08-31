@@ -17,7 +17,7 @@ function harness(terminalProof: boolean) {
         rowCount: 1,
         rows: [{ structural: false, executionModel: "agent_directed_v1" }],
       };
-    if (sql.includes("JOIN protected_operations protected"))
+    if (sql.includes("JOIN canonical_completed_executions protected"))
       return terminalProof ? { rowCount: 1, rows: [{}] } : { rowCount: 0, rows: [] };
     return { rowCount: 1, rows: [{}] };
   });
@@ -58,7 +58,7 @@ describe("Run attempt terminal protected completion", () => {
       ),
     ).toBe(true);
     const terminalProofQuery = query.mock.calls.find(([sql]) =>
-      sql.includes("JOIN protected_operations protected"),
+      sql.includes("JOIN canonical_completed_executions protected"),
     )?.[0];
     expect(terminalProofQuery).toContain(
       "session.decision_boundary->>'type'='objective_completed'",
@@ -69,6 +69,11 @@ describe("Run attempt terminal protected completion", () => {
     expect(terminalProofQuery).not.toContain(
       "session.decision_boundary='PROTECTED_OPERATION_COMPLETED'",
     );
+    expect(terminalProofQuery).toContain("session.state='completed'");
+    expect(terminalProofQuery).toContain(
+      "protected.prepared_execution_capability_id=link.prepared_execution_capability_id",
+    );
+    expect(terminalProofQuery).toContain("protected.praxis_session_id=link.praxis_session_id");
     expect(
       query.mock.calls.some(
         ([sql]) =>

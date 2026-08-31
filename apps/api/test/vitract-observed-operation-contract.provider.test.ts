@@ -2,6 +2,7 @@ import type { PraxisObservation } from "@scry/contracts";
 import { describe, expect, it } from "vitest";
 
 import { VitractObservedOperationContractProvider } from "../src/adaptive-sessions/vitract-observed-operation-contract.provider.js";
+import { OperationContractProviderRegistry } from "../src/adaptive-sessions/operation-contract.registry.js";
 
 describe("registered Vitract observed operation contracts", () => {
   const provider = new VitractObservedOperationContractProvider();
@@ -21,24 +22,34 @@ describe("registered Vitract observed operation contracts", () => {
         control("orderId", "enter_text", "Retrieve Order examples", "9"),
       ]),
     );
-    expect(contracts.map((contract) => contract.operation.key)).toEqual([
+    expect(contracts.map((contract) => contract.facts.operation.key)).toEqual([
       "createOrder",
       "retrieveOrder",
     ]);
     expect(contracts[0]).toMatchObject({
-      sourceKind: "runtime_observation",
-      operation: { method: "POST", classification: "mutation" },
-      response: {
-        publicIdentityOutputPath: "$.data.id",
-        continuation: "read_only_retrieve",
+      facts: {
+        operation: { method: "POST", semantics: { dispatch: "mutation" } },
+        response: {
+          outputs: [
+            expect.objectContaining({
+              key: "orderId",
+              extractor: { kind: "json_path", path: "$.data.id" },
+              identityRole: "resource_identity",
+            }),
+          ],
+          continuation: "read_only_retrieve",
+        },
+        retrieval: { canonicalTargetFieldKey: "orderId" },
       },
-      retrieval: { canonicalTargetFieldKey: "orderId" },
+      provenance: { sourceKind: "runtime_observation" },
     });
     expect(contracts[1]).toMatchObject({
-      operation: { method: "GET", classification: "read_only" },
-      inputs: expect.arrayContaining([
-        expect.objectContaining({ key: "orderId", aliases: ["Order ID"] }),
-      ]),
+      facts: {
+        operation: { method: "GET", semantics: { dispatch: "read_only" } },
+        inputs: expect.arrayContaining([
+          expect.objectContaining({ key: "orderId", aliases: ["Order ID"] }),
+        ]),
+      },
     });
     expect(JSON.stringify(contracts)).not.toMatch(/credential.?value|secret.?value|plaintext/i);
   });
@@ -52,20 +63,26 @@ describe("registered Vitract observed operation contracts", () => {
       ]),
     );
     expect(contract).toMatchObject({
-      operation: {
-        key: "issuePartnerCredential",
-        method: "POST",
-        pathTemplate: "/api/v1/partners/applications/{applicationId}/credentials",
-      },
-      response: {
-        safeOutputKeys: ["credentialRecordId", "clientId", "clientSecret"],
-      },
-      resourceEffect: {
-        provider: "vitract",
-        resourceKind: "credential_record",
-        resourceScope: "app-1",
-        identityOutputKey: "credentialRecordId",
-        correlationFieldKey: "credentialName",
+      facts: {
+        operation: {
+          key: "issuePartnerCredential",
+          method: "POST",
+          pathTemplate: "/api/v1/partners/applications/{applicationId}/credentials",
+        },
+        response: {
+          outputs: expect.arrayContaining([
+            expect.objectContaining({ key: "credentialRecordId" }),
+            expect.objectContaining({ key: "clientId" }),
+            expect.objectContaining({ key: "clientSecret" }),
+          ]),
+        },
+        resourceEffect: {
+          provider: "vitract",
+          resourceKind: "credential_record",
+          resourceScope: "app-1",
+          identityOutputKey: "credentialRecordId",
+          correlationFieldKey: "credentialName",
+        },
       },
     });
   });
@@ -87,6 +104,27 @@ describe("registered Vitract observed operation contracts", () => {
         ]),
       ),
     ).toEqual([]);
+  });
+
+  it("rejects conflicting semantic revisions from sibling providers", () => {
+    const evidence = observation(
+      "https://preview.vitract.com/partner/developer/applications/app-1/credentials",
+      [
+        control("Add credential", "activate", "form", "a", "form"),
+        control("Name", "enter_text", "form", "b", "form"),
+      ],
+    );
+    const [canonical] = provider.project("00000000-0000-4000-8000-000000000001", evidence);
+    const conflicting = structuredClone(canonical!);
+    conflicting.facts.operation.label = "Conflicting operation meaning";
+    const registry = new OperationContractProviderRegistry([
+      {
+        project: () => [conflicting],
+      },
+    ]);
+    expect(() =>
+      registry.project("00000000-0000-4000-8000-000000000001", evidence, [canonical!]),
+    ).toThrow("Conflict Exception");
   });
 });
 

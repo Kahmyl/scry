@@ -10,7 +10,6 @@ import {
   Q5_REQUIRED_EVIDENCE_KINDS,
 } from "@scry/contracts";
 
-import { decryptCredential } from "../src/access/credential.crypto.js";
 import { Database } from "../src/infrastructure/index.js";
 import { Q5AuthoritativeAttemptRepository } from "../src/runtime/repositories/q5-authoritative-attempt.repository.js";
 import { Q5ScopeBootstrapRepository } from "../src/runtime/repositories/q5-scope-bootstrap.repository.js";
@@ -46,7 +45,9 @@ const output = path.resolve(
 );
 const expectedSchema = required("SCRY_SCHEMA_FINGERPRINT", /^[a-f0-9]{64}$/);
 const expectedMigration = createHash("sha256")
-  .update(await readFile(new URL("../migrations/vitract-q5-composition.sql", import.meta.url)))
+  .update(
+    await readFile(new URL("../migrations/canonical-execution-authority.sql", import.meta.url)),
+  )
   .digest("hex");
 const databaseUrl = required("SCRY_M6_TEST_DATABASE_URL", /^postgres(?:ql)?:\/\//);
 process.env.DATABASE_URL = databaseUrl;
@@ -82,6 +83,8 @@ try {
       environmentId: preparedScope.environmentId,
       clientIdPublicValueId: preparedScope.clientIdPublicValueId,
       clientSecretReferenceId: preparedScope.clientSecretReferenceId,
+      clientIdValueAssetId: preparedScope.clientIdValueAssetId,
+      clientSecretValueAssetId: preparedScope.clientSecretValueAssetId,
     });
     const gates = await gatesForCurrentRuntime(preparedScope, protectedContext);
     if (mode === "preflight") {
@@ -382,7 +385,7 @@ async function gatesForCurrentRuntime(
     },
     mcp_q5_profile_contract: async () => {
       const health = (await fetchIdentity(mcpUrl)) as any;
-      if (health.profile !== "q5-authoritative-v1") throw new Error("Q5_MCP_PROFILE_MISMATCH");
+      if (health.profile !== Q5_MCP_PROFILE) throw new Error("Q5_MCP_PROFILE_MISMATCH");
       if (
         health.q5Contract?.protocolVersion !== Q5_MCP_PROTOCOL_VERSION ||
         health.q5Contract?.digest !== Q5_MCP_CONTRACT_DIGEST ||
@@ -410,19 +413,26 @@ async function gatesForCurrentRuntime(
       }>(
         `SELECT ciphertext,initialization_vector AS "initializationVector",
                 authentication_tag AS "authenticationTag"
-           FROM project_credentials
-          WHERE project_id=$1 AND id=ANY($2::uuid[])
-            AND deleted_at IS NULL AND security_status='active'`,
-        [preparedScope.projectId, [protectedContext.clientSecretReferenceId]],
+           FROM project_credentials credential
+           JOIN typed_value_assets asset ON asset.project_credential_id=credential.id
+          WHERE credential.project_id=$1 AND asset.id=$2 AND asset.state='active'
+            AND credential.deleted_at IS NULL AND credential.security_status='active'`,
+        [preparedScope.projectId, preparedScope.clientSecretValueAssetId],
       );
       if (
         encrypted.rowCount !== 1 ||
-        encrypted.rows.some((row) => decryptCredential(row).length === 0)
+        encrypted.rows.some(
+          (row) =>
+            !row.ciphertext.length ||
+            !row.initializationVector.length ||
+            !row.authenticationTag.length,
+        )
       )
         throw new Error("Q5_PROTECTED_CREDENTIAL_REHEARSAL_FAILED");
       return {
         pass: true,
-        mechanism: "canonical encrypted credential decryptability and active-policy rehearsal",
+        mechanism:
+          "canonical encrypted envelope and active provenance; plaintext requires an operation grant",
         plaintext: false,
       };
     },
@@ -473,6 +483,8 @@ async function provisionExactQualificationScope(
       allowedOrigins: context.allowedOrigins,
       clientIdPublicValueId: context.clientIdPublicValueId,
       clientSecretReferenceId: context.clientSecretReferenceId,
+      clientIdValueAssetId: preparedScope.clientIdValueAssetId,
+      clientSecretValueAssetId: preparedScope.clientSecretValueAssetId,
     });
     const ownerUserId = required("SCRY_M6_Q5_OWNER_USER_ID", /^[0-9a-f-]{36}$/);
     const workspace = await client.query<{ workspaceId: string }>(
@@ -832,7 +844,9 @@ async function verifyAuthoritativeResult(
        JOIN qualification_campaign_authorizations campaign ON campaign.id=attempt.campaign_authorization_id
        JOIN runs run ON run.id=attempt.run_id AND run.qualification_campaign_authorization_id=campaign.id
        JOIN LATERAL (SELECT * FROM attempts WHERE run_id=run.id ORDER BY attempt_number DESC LIMIT 1) run_attempt ON true
-       JOIN adaptive_sessions session ON session.id=attempt.praxis_session_id
+       JOIN adaptive_sessions session ON session.id=COALESCE((
+         SELECT owner.praxis_session_id FROM q5_attempt_praxis_sessions owner
+          WHERE owner.attempt_id=attempt.id ORDER BY owner.epoch DESC LIMIT 1),attempt.praxis_session_id)
        JOIN agent_sessions agent ON agent.id=campaign.agent_session_id
        JOIN missions mission ON mission.id=campaign.mission_id
        JOIN mission_objectives objective ON objective.id=campaign.objective_id
@@ -862,26 +876,28 @@ async function verifyAuthoritativeResult(
   const residue = await database.query<{ count: number }>(
     `SELECT (
        (SELECT count(*) FROM protected_operations
-         WHERE run_id=$1 AND (state NOT IN ('completed','failed_not_applied','abandoned','revoked')
+         WHERE (run_id=$1 OR prepared_execution_capability_id IN (
+           SELECT prepared_execution_capability_id FROM run_operation_links WHERE run_id=$1))
+           AND (state NOT IN ('completed','failed_not_applied','abandoned','revoked')
            OR lease_owner IS NOT NULL OR mutation_outcome='unknown'))
        +
        (SELECT count(*) FROM adaptive_operation_reconciliations
-         WHERE session_id=$2 AND state='observing')
+         WHERE session_id IN (SELECT praxis_session_id FROM run_praxis_sessions WHERE run_id=$1) AND state='observing')
      )::int AS count`,
-    [truth.runId, truth.praxisSessionId],
+    [truth.runId],
   );
   if (residue.rows[0]?.count) throw new Error("Q5_UNSAFE_DURABLE_RESIDUE");
   const authentication = await database.query<{ operationId: string }>(
     `SELECT operation.id::text AS "operationId"
-       FROM adaptive_operations operation
-       JOIN adaptive_sessions session ON session.id=operation.session_id
-      WHERE session.id=$1 AND operation.state='completed'
-        AND operation.authoring_intent->'authorization'->>'kind'='authentication'
-        AND jsonb_array_length(
-          COALESCE(operation.authoring_intent->'protectedInputReferences','[]'::jsonb)
-        )>0
-        AND operation.mutation_outcome<>'unknown'`,
-    [truth.praxisSessionId],
+       FROM run_operation_links link
+       JOIN prepared_execution_capabilities capability ON capability.id=link.prepared_execution_capability_id
+       JOIN protected_operations operation ON operation.id=capability.protected_operation_id
+      WHERE link.run_id=$1 AND operation.state='completed' AND operation.mutation_outcome<>'unknown'
+        AND 'authentication'=ANY(capability.effect_semantics)
+        AND EXISTS (SELECT 1 FROM value_use_grants authority JOIN typed_value_assets asset ON asset.id=authority.value_asset_id
+          WHERE authority.consumer_prepared_execution_capability_id=capability.id
+            AND authority.state='consumed' AND asset.classification='protected')`,
+    [truth.runId],
   );
   if (!authentication.rowCount) throw new Error("Q5_PROTECTED_AUTHENTICATION_UNPROVEN");
   const mutation = await database.query<any>(
@@ -899,7 +915,9 @@ async function verifyAuthoritativeResult(
        FROM qualification_campaign_mutation_consumptions consumption
        JOIN external_resource_bindings binding ON binding.project_id=$2 AND binding.environment_id=$3
        JOIN protected_operations operation ON operation.id=binding.source_protected_operation_id
-         AND operation.run_id=consumption.run_id AND operation.operation_id=consumption.operation_id
+         AND operation.operation_id=consumption.operation_id
+       JOIN run_operation_links link ON link.run_id=consumption.run_id
+         AND link.prepared_execution_capability_id=operation.prepared_execution_capability_id
       WHERE consumption.campaign_authorization_id=$1 AND binding.lifecycle_state='active'`,
     [scope.campaignId, scope.projectId, scope.environmentId],
   );
@@ -912,32 +930,19 @@ async function verifyAuthoritativeResult(
   const createdIdentity = mutation.rows[0]!.createdIdentity as string;
   const retrievalRefs = await database.query<any>(
     `SELECT operation.id::text AS "operationId",
-            reference.value->>'credentialId' AS "credentialId"
-       FROM protected_operations operation
-       CROSS JOIN LATERAL jsonb_each(operation.persisted_references) reference
-      WHERE operation.run_id=$1 AND operation.id<>$2
+            value.value
+       FROM run_operation_links link
+       JOIN protected_operations operation ON operation.prepared_execution_capability_id=link.prepared_execution_capability_id
+       JOIN typed_value_assets asset ON asset.producer_protected_operation_id=operation.id
+         AND asset.identity_role='continuation_identity' AND asset.classification='public' AND asset.state='active'
+       JOIN generated_public_values value ON value.id=asset.generated_public_value_id
+      WHERE link.run_id=$1 AND operation.id<>$2
+        AND operation.authority_model='canonical'
         AND operation.dispatch_semantics='read_only' AND operation.state='completed'
-        AND operation.persistence_state='committed' AND reference.value ? 'credentialId'`,
+        AND operation.persistence_state='committed'`,
     [truth.runId, mutation.rows[0]!.protectedOperationId],
   );
-  const retrieved = await Promise.all(
-    retrievalRefs.rows.map(
-      async ({ credentialId, operationId }: { credentialId: string; operationId: string }) => {
-        const value = await database.query<any>(
-          `SELECT ciphertext,initialization_vector AS "initializationVector",
-                authentication_tag AS "authenticationTag"
-           FROM project_credentials WHERE id=$1 AND project_id=$2
-             AND security_status='active' AND deleted_at IS NULL`,
-          [credentialId, scope.projectId],
-        );
-        return {
-          operationId,
-          value: value.rowCount === 1 ? decryptCredential(value.rows[0]!) : undefined,
-        };
-      },
-    ),
-  );
-  const retrievalMatches = retrieved.filter(({ value }) => value === createdIdentity);
+  const retrievalMatches = retrievalRefs.rows.filter(({ value }) => value === createdIdentity);
   if (retrievalMatches.length !== 1) throw new Error("Q5_CREATE_RETRIEVE_ASSOCIATION_INVALID");
   const digest = createHash("sha256")
     .update(`scry-q5-external-identity\0${createdIdentity}`)
@@ -953,14 +958,18 @@ async function verifyAuthoritativeResult(
     .filter((tool): tool is string => typeof tool === "string");
   const requiredJourneyTools = [
     "get_operating_context",
-    "list_project_credentials",
+    "list_mission_values",
+    "observe_operation_contracts",
+    "reserve_prepared_protected_operation",
+    "dispatch_prepared_protected_operation",
+    "list_mission_continuations",
     "start_praxis_session",
     "observe_praxis_session",
     "start_run",
     "dispatch_run_operation",
     "finalize_run",
     "accept_objective_evidence",
-    "finalize_agent_work",
+    "set_mission_recording_selection",
     "preview_mission_report",
     "publish_mission_report",
     "end_agent_session",

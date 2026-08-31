@@ -430,29 +430,38 @@ export async function loadDurableContext(authority: {
   credentialReferenceIds?: [string, string];
   clientIdPublicValueId?: string;
   clientSecretReferenceId?: string;
+  clientIdValueAssetId?: string;
+  clientSecretValueAssetId?: string;
 }): Promise<any> {
   const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL ?? "postgres://scry:scry-local@127.0.0.1:54329/scry",
   });
   try {
-    if (authority.clientIdPublicValueId || authority.clientSecretReferenceId) {
-      if (!authority.clientIdPublicValueId || !authority.clientSecretReferenceId)
+    if (authority.clientIdValueAssetId || authority.clientSecretValueAssetId) {
+      if (!authority.clientIdValueAssetId || !authority.clientSecretValueAssetId)
         throw new Error("Q5_TYPED_CREDENTIAL_PAIR_INCOMPLETE");
       const typed = await pool.query<any>(
         `SELECT environment.policy->'allowedOrigins' AS "allowedOrigins",environment.policy
            FROM environments environment
-           JOIN generated_public_values client_id ON client_id.id=$3
-             AND client_id.project_id=environment.project_id
+           JOIN typed_value_assets client_id_asset ON client_id_asset.id=$3
+             AND client_id_asset.project_id=environment.project_id
+             AND client_id_asset.environment_id=environment.id
+             AND client_id_asset.canonical_output_key='clientId'
+           JOIN generated_public_values client_id ON client_id.id=client_id_asset.generated_public_value_id
              AND client_id.reference='clientId'
-           JOIN project_credentials client_secret ON client_secret.id=$4
-             AND client_secret.project_id=environment.project_id
+           JOIN typed_value_assets client_secret_asset ON client_secret_asset.id=$4
+             AND client_secret_asset.project_id=environment.project_id
+             AND client_secret_asset.environment_id=environment.id
+             AND client_secret_asset.canonical_output_key='clientSecret'
+             AND client_secret_asset.producer_protected_operation_id=client_id_asset.producer_protected_operation_id
+           JOIN project_credentials client_secret ON client_secret.id=client_secret_asset.project_credential_id
              AND client_secret.security_status='active' AND client_secret.deleted_at IS NULL
           WHERE environment.project_id=$1 AND environment.id=$2`,
         [
           authority.projectId,
           authority.environmentId,
-          authority.clientIdPublicValueId,
-          authority.clientSecretReferenceId,
+          authority.clientIdValueAssetId,
+          authority.clientSecretValueAssetId,
         ],
       );
       if (typed.rowCount !== 1) throw new Error("Q5_TYPED_CREDENTIAL_PAIR_UNAVAILABLE");
@@ -460,6 +469,8 @@ export async function loadDurableContext(authority: {
         ...typed.rows[0],
         clientIdPublicValueId: authority.clientIdPublicValueId,
         clientSecretReferenceId: authority.clientSecretReferenceId,
+        clientIdValueAssetId: authority.clientIdValueAssetId,
+        clientSecretValueAssetId: authority.clientSecretValueAssetId,
       };
     }
     const credentialPairs = authority.credentialReferenceIds

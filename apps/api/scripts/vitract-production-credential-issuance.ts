@@ -35,8 +35,7 @@ export async function main() {
       applicationResourceScope: required("SCRY_VITRACT_APPLICATION_RESOURCE_SCOPE"),
       credentialName: required("SCRY_VITRACT_CREDENTIAL_NAME"),
       idempotencyKey: required("SCRY_VITRACT_ISSUANCE_IDEMPOTENCY_KEY"),
-      distinctMissionReason:
-        "The operator requested a new separately authorized credential-issuance setup operation.",
+      distinctMissionReason: "The operator requested a new credential-issuance setup operation.",
       distinctMissionAuthority: {
         confirmedUserAuthorized: true as const,
         selection: "start_distinct_mission" as const,
@@ -53,7 +52,7 @@ export async function main() {
       });
       process.stdout.write(
         `${JSON.stringify({
-          status: "authorization_required",
+          status: "execution_ready",
           projectId: scope.projectId,
           environmentId: scope.environmentId,
           missionId: lifecycle.missionId,
@@ -67,7 +66,7 @@ export async function main() {
           expiresAt: reserved.expiresAt,
         })}\n`,
       );
-      if (process.argv.includes("--prepare-only")) {
+      if (!process.argv.includes("--execute-live") || process.argv.includes("--prepare-only")) {
         await preparation.closePrepared(
           principal,
           lifecycle,
@@ -77,8 +76,7 @@ export async function main() {
         process.stdout.write("PRODUCTION_LIVE_ISSUANCE_PREPARATION_READY: YES\n");
         return;
       }
-      await waitForExactAuthorization(database, reserved.protectedOperationId, reserved.expiresAt);
-      const settled = await preparation.executeAuthorized(
+      const settled = await preparation.executePrepared(
         principal,
         lifecycle,
         reserved.immutableResume,
@@ -139,28 +137,6 @@ async function canonicalOperatorScope(database: Database) {
   );
   if (result.rowCount !== 1) throw new Error("VITRACT_ISSUANCE_OPERATOR_SCOPE_AMBIGUOUS");
   return result.rows[0]!;
-}
-
-async function waitForExactAuthorization(
-  database: Database,
-  operationId: string,
-  expiresAt: string,
-) {
-  while (Date.now() < new Date(expiresAt).getTime()) {
-    const result = await database.query<{ state: string }>(
-      `SELECT operation.state FROM protected_operations operation
-       JOIN mission_authorizations authority ON authority.id=operation.authorization_id
-        AND authority.protected_operation_id=operation.id
-        AND authority.protected_operation_contract_digest=operation.observed_operation_contract_digest
-        AND authority.status='approved' AND authority.revoked_at IS NULL
-        AND (authority.expires_at IS NULL OR authority.expires_at>now())
-       WHERE operation.id=$1 AND operation.state IN ('planned','preparing','ready_to_dispatch')`,
-      [operationId],
-    );
-    if (result.rowCount === 1) return;
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-  }
-  throw new Error("VITRACT_ISSUANCE_AUTHORIZATION_EXPIRED");
 }
 
 function required(name: string) {

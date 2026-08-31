@@ -36,17 +36,42 @@ function outputs() {
   ];
 }
 
-function harness(failPattern?: RegExp, preparedManifest = false) {
+function harness(failPattern?: RegExp, preparedManifest = false, canonical = false) {
   const committed: string[] = [];
   const client = {
     query: vi.fn(async (sql: string, _values?: unknown[]) => {
       if (failPattern?.test(sql)) throw new Error("INJECTED_DATABASE_FAILURE");
-      if (sql.includes("SELECT state,safe_output_manifest"))
+      if (sql.includes('operation.authority_model AS "authorityModel"'))
         return {
           rowCount: 1,
           rows: [
             {
               state: "persisting",
+              authorityModel: canonical ? "canonical" : "legacy",
+              operationContractRevisionId: canonical
+                ? "88888888-8888-4888-8888-888888888888"
+                : null,
+              applicationKey: canonical ? "example" : null,
+              contractFacts: canonical
+                ? {
+                    response: {
+                      outputs: [
+                        {
+                          key: "clientSecret",
+                          classification: "protected",
+                          extractor: { kind: "json_path", path: "$.clientSecret" },
+                        },
+                        {
+                          key: "clientId",
+                          classification: "public",
+                          extractor: { kind: "json_path", path: "$.clientId" },
+                          identityRole: "continuation_identity",
+                        },
+                      ],
+                    },
+                    resourceEffect: null,
+                  }
+                : null,
               safeOutputManifest: [
                 {
                   [preparedManifest ? "key" : "reference"]: "clientSecret",
@@ -77,6 +102,7 @@ function harness(failPattern?: RegExp, preparedManifest = false) {
       if (sql.includes("INSERT INTO run_captured_secrets")) committed.push("run-secret");
       if (sql.includes("INSERT INTO generated_public_values")) committed.push("public");
       if (sql.includes("INSERT INTO external_resource_bindings")) committed.push("binding");
+      if (sql.includes("INSERT INTO typed_value_assets")) committed.push("asset");
       if (sql.includes("UPDATE environments SET secret_refs")) committed.push("allowlist");
       return { rowCount: 1, rows: [] };
     }),
@@ -160,6 +186,14 @@ describe("atomic protected output persistence", () => {
     const { repository, committed } = harness(undefined, true);
     await expect(repository.persistOutputsAtomically(context, outputs())).resolves.toBeDefined();
     expect(committed).toEqual(["credential", "public"]);
+  });
+
+  it("persists canonical typed assets and output provenance before settlement", async () => {
+    const { repository, committed } = harness(undefined, true, true);
+    const persisted = await repository.persistOutputsAtomically(context, outputs());
+    expect(committed).toEqual(["credential", "asset", "public", "asset"]);
+    expect(persisted.references.clientSecret?.valueAssetId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(persisted.references.clientId?.valueAssetId).toMatch(/^[a-f0-9-]{36}$/);
   });
 
   it("binds a response-provided project public identity in the same transaction", async () => {

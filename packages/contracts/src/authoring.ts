@@ -3,7 +3,11 @@ import { z } from "zod";
 import { flowRevisionContentSchema } from "./api.js";
 import { currentPlanSchema } from "./current.js";
 import { objectiveContextSchema } from "./mission.js";
-import { semanticRoleSchema, semanticScopeKindSchema } from "./grounding.js";
+import {
+  semanticRoleSchema,
+  semanticScopeKindSchema,
+  responseJsonPathSchema,
+} from "./grounding.js";
 
 const uuid = z.string().uuid();
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -341,6 +345,7 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
               target: missionAuthoringSemanticTargetSchema.describe(
                 "Post-mutation value target. For one_time acquisition the output does not exist before dispatch: provide concept plus observable role/name/label and omit reference. Never reuse the mutation target reference. Classify safe public identity as public and only secrets or otherwise protected values as protected.",
               ),
+              responseJsonPath: responseJsonPathSchema.optional(),
               storageName: z.string().trim().min(1).max(200),
             })
             .strict(),
@@ -530,10 +535,12 @@ export const missionAuthoringIntentSchema = z
             "live_read",
             "live_mutation",
             "protected_mutation",
+            "prepared_execution",
           ])
           .describe(
             "live_mutation excludes any mutation that may create, reveal, copy, rotate, or return a protected value. Such operations require protected_mutation and action.kind=acquire_protected_outputs.",
           ),
+        preparedExecutionCapabilityId: uuid.optional(),
         authorizationId: uuid
           .optional()
           .describe(
@@ -552,6 +559,16 @@ export const missionAuthoringIntentSchema = z
   })
   .strict()
   .superRefine((intent, context) => {
+    if (
+      (intent.authorization.kind === "prepared_execution") !==
+      Boolean(intent.authorization.preparedExecutionCapabilityId)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["authorization"],
+        message: "prepared execution requires its exact mechanical capability",
+      });
+
     if (
       intent.authorization.authorizationId &&
       !["live_read", "live_mutation", "protected_mutation"].includes(intent.authorization.kind)
@@ -619,6 +636,7 @@ export const missionAuthoringIntentSchema = z
       });
     if (
       intent.action.kind === "acquire_protected_outputs" &&
+      intent.authorization.kind !== "prepared_execution" &&
       (intent.authorization.kind !== "protected_mutation" || !intent.authorization.authorizationId)
     )
       context.addIssue({
@@ -673,7 +691,7 @@ export const missionAuthoringIntentSchema = z
     if (
       intent.action.kind === "fill" &&
       intent.action.protectedReferenceId &&
-      !["authentication", "live_mutation"].includes(intent.authorization.kind)
+      !["authentication", "live_mutation", "prepared_execution"].includes(intent.authorization.kind)
     )
       context.addIssue({
         code: "custom",

@@ -16,7 +16,6 @@ import { registerStartReadyObjectivesTool } from "./start-ready-objectives.tool.
 import { registerPauseMissionOrchestrationTool } from "./pause-mission-orchestration.tool.js";
 import { registerResumeMissionOrchestrationTool } from "./resume-mission-orchestration.tool.js";
 import { registerCancelMissionOrchestrationTool } from "./cancel-mission-orchestration.tool.js";
-import { registerGrantMissionExecutionAuthorizationTool } from "./grant-mission-execution-authorization.tool.js";
 import { registerRelateMissionActivityTool } from "./relate-mission-activity.tool.js";
 import { registerCreateMissionObjectiveTool } from "./create-mission-objective.tool.js";
 import { registerUpdateMissionObjectiveTool } from "./update-mission-objective.tool.js";
@@ -45,7 +44,6 @@ export function registerMissionsTools(server: McpServer, client: ScryApiClient) 
     registerResumeMissionOrchestrationTool(server, client);
     registerCancelMissionOrchestrationTool(server, client);
   }
-  registerGrantMissionExecutionAuthorizationTool(server, client);
   registerRelateMissionActivityTool(server, client);
   registerRelateMissionsTool(server, client);
   registerCreateMissionObjectiveTool(server, client);

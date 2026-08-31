@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { observedOperationContractsResultSchema } from "@scry/contracts";
+import { operationContractDiscoveryResultSchema } from "@scry/contracts";
 import { z } from "zod";
 
 import type { ScryApiClient } from "../../api-client.js";
@@ -12,10 +12,10 @@ export function registerObserveOperationContractsTool(server: McpServer, client:
     {
       title: "Observe operation contracts",
       description:
-        "Project bounded redacted request/response operation facts from the current public document. Canonical operation and field keys are authority; labels and aliases are display-only.",
+        "Read durable redacted operation-contract revisions, canonical inputs/outputs and transport mappings, with separate current interaction availability. Closed owners remain readable without executable refs. Canonical keys are semantic authority; labels and aliases are display-only. Known semantics alone never authorize browser execution.",
       inputSchema: { praxisSessionId: z.string().uuid() },
       outputSchema: z
-        .object({ message: z.string(), observation: observedOperationContractsResultSchema })
+        .object({ message: z.string(), observation: operationContractDiscoveryResultSchema })
         .strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     },
@@ -28,7 +28,7 @@ export function registerObserveOperationContractsTool(server: McpServer, client:
                 `/praxis-sessions/${praxisSessionId}/operation-contracts`,
               ),
             },
-            "Current redacted operation contracts observed with factual provenance.",
+            "Durable redacted operation-contract revisions with separate live interaction availability.",
           ),
         "Operation-contract observation was refused.",
       ),

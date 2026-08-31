@@ -92,7 +92,25 @@ describe("schema migration manifest", () => {
       expect(source).toContain("targeted-region-perception.sql");
       expect(source).toContain("qualification-campaign-safety.sql");
       expect(source).toContain("prepared-protected-operation-journeys.sql");
+      expect(source).toContain("canonical-execution-authority.sql");
     }
+  });
+
+  it("cuts new dispatch to canonical semantic, interaction, execution, and value authorities", async () => {
+    const migration = await readFile(
+      new URL("migrations/canonical-execution-authority.sql", root),
+      "utf8",
+    );
+
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS operation_contract_revisions");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS runtime_interaction_capabilities");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS prepared_execution_capabilities");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS value_use_grants");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS typed_value_assets");
+    expect(migration).not.toContain("CREATE TABLE IF NOT EXISTS canonical_output_provenance");
+    expect(migration).not.toContain("CREATE TABLE IF NOT EXISTS mission_value_selections");
+    expect(migration).toContain("NEW.authority_model<>'canonical'");
+    expect(migration).not.toContain("regexp_replace");
   });
 
   it("keeps terminal immutability while admitting only canonical durable protected projection", async () => {

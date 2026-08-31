@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { missionOperationCheckpointsResultSchema } from "@scry/contracts";
+import { missionContinuationsResultSchema } from "@scry/contracts";
 import { z } from "zod";
 
 import type { ScryApiClient } from "../../api-client.js";
@@ -11,14 +11,14 @@ export function registerListMissionOperationCheckpointsTool(
   client: ScryApiClient,
 ) {
   server.registerTool(
-    "list_mission_operation_checkpoints",
+    "list_mission_continuations",
     {
-      title: "List mutation checkpoints",
+      title: "List Mission continuations",
       description:
-        "Read safe Chronicle business-mutation receipts and their permitted read-only or reconciliation continuations. Source mutations are permanently non-repeatable.",
+        "Read the exact resource identity and eligible next operations from completed Mission work. Choose the next operation and pass its continuationReference during reservation; Scry derives the internal binding atomically.",
       inputSchema: { praxisSessionId: z.string().uuid() },
       outputSchema: z
-        .object({ message: z.string(), result: missionOperationCheckpointsResultSchema })
+        .object({ message: z.string(), result: missionContinuationsResultSchema })
         .strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
@@ -27,11 +27,11 @@ export function registerListMissionOperationCheckpointsTool(
         async () =>
           toolResult(
             {
-              result: await client.get(`/praxis-sessions/${praxisSessionId}/operation-checkpoints`),
+              result: await client.get(`/praxis-sessions/${praxisSessionId}/continuations`),
             },
-            "Safe Chronicle mutation checkpoints loaded.",
+            "Mission continuations loaded.",
           ),
-        "Mutation checkpoint read was refused.",
+        "Continuation read was refused.",
       ),
   );
 }

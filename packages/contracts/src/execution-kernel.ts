@@ -483,6 +483,7 @@ export const operationOutcomeSchema = z
             classification: z.enum(["public", "protected"]),
             credentialId: z.string().uuid().optional(),
             valueId: z.string().uuid().optional(),
+            valueAssetId: z.string().uuid().optional(),
             scope: z.literal("project"),
           })
           .strict()

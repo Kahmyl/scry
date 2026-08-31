@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { protectedTransactionDigest } from "@scry/executor";
 import { createServer } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
@@ -77,6 +78,10 @@ describe("disposable protected-transaction architecture campaigns", () => {
       const operation = transaction(shape);
       expect(() => currentPlanSchema.parse(planFor(operation))).not.toThrow();
       const result = await new ProtectedTransactionKernel({
+        // Unit-store fixture: supply the immutable admitted program commitment.
+        // Real preparation/scope/dispatch admission is covered by repository integration.
+        canonicalProgramDigest: protectedTransactionDigest(operation, [origin]),
+        mutationIdentity: operation.operationId,
         safeSession: {
           browser,
           context,

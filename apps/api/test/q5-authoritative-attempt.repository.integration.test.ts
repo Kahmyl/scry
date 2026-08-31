@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Q5_MCP_CONTRACT_DIGEST } from "@scry/contracts";
 
 import { Database } from "../src/infrastructure/index.js";
 import { QualificationCampaignRepository } from "../src/runtime/repositories/qualification-campaign.repository.js";
@@ -32,6 +33,14 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
       "credentialRecordValue",
       "pairReference",
       "preparedScope",
+      "clientIdAsset",
+      "clientSecretAsset",
+      "recordAsset",
+      "contractRevision",
+      "runtimeCapability",
+      "runtimeOwner",
+      "policySnapshot",
+      "preparedCapability",
     ].map((name) => [name, randomUUID()]),
   ) as Record<string, string>;
   const origin = "https://preview-api.vitract.com";
@@ -68,6 +77,8 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
       allowedOrigins: [origin],
       clientIdPublicValueId: id.credential!,
       clientSecretReferenceId: id.credential2!,
+      clientIdValueAssetId: id.clientIdAsset!,
+      clientSecretValueAssetId: id.clientSecretAsset!,
     });
   });
 
@@ -101,6 +112,8 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
         allowedOrigins: [origin],
         clientIdPublicValueId: id.credential!,
         clientSecretReferenceId: id.credential2!,
+        clientIdValueAssetId: id.clientIdAsset!,
+        clientSecretValueAssetId: id.clientSecretAsset!,
       }),
     ).rejects.toMatchObject({
       response: { code: "Q5_CANONICAL_APPLICATION_ENVIRONMENT_MISMATCH" },
@@ -124,6 +137,42 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
     const externalRunId = randomUUID();
     const prepared = await attempts.prepare(input(campaign.id, externalRunId, digest));
     expect(prepared.replayed).toBe(false);
+    await attempts.bindRuntime(prepared.attempt.attemptId, { praxisSessionId: id.praxisSession! });
+    const replacement = randomUUID();
+    await database.query(
+      `INSERT INTO adaptive_sessions(
+      id,project_id,environment_id,correlation_id,state,objective,allowed_origins,mission_id,objective_id,
+      flow_draft_id,idempotency_key,active_objective_id,active_flow_draft_id,authoring_turn_budgets,agent_session_id,protection,protected_reference_allowlist
+    ) SELECT $2,project_id,environment_id,$3,'active',objective,allowed_origins,mission_id,objective_id,
+      flow_draft_id,$4,active_objective_id,active_flow_draft_id,authoring_turn_budgets,agent_session_id,protection,'[]'::jsonb
+      FROM adaptive_sessions WHERE id=$1`,
+      [id.praxisSession, replacement, randomUUID(), `q5-rotated-${replacement}`],
+    );
+    await expect(
+      attempts.bindRuntime(prepared.attempt.attemptId, { praxisSessionId: replacement }),
+    ).rejects.toMatchObject({
+      response: { code: "Q5_RUNTIME_SCOPE_MISMATCH" },
+    });
+    await database.query(`UPDATE adaptive_sessions SET state='completed' WHERE id=$1`, [
+      id.praxisSession,
+    ]);
+    await attempts.bindRuntime(prepared.attempt.attemptId, { praxisSessionId: replacement });
+    await attempts.bindRuntime(prepared.attempt.attemptId, { praxisSessionId: replacement });
+    const anchor = await database.query(
+      `SELECT state,praxis_session_id FROM q5_authoritative_attempts WHERE id=$1`,
+      [prepared.attempt.attemptId],
+    );
+    expect(anchor.rows[0]).toEqual({ state: "prepared", praxis_session_id: id.praxisSession });
+    const history = await database.query(
+      `SELECT epoch FROM q5_attempt_praxis_sessions WHERE attempt_id=$1 ORDER BY epoch`,
+      [prepared.attempt.attemptId],
+    );
+    expect(history.rows).toEqual([{ epoch: 1 }, { epoch: 2 }]);
+    await expect(
+      database.query(`DELETE FROM q5_attempt_praxis_sessions WHERE attempt_id=$1`, [
+        prepared.attempt.attemptId,
+      ]),
+    ).rejects.toThrow("Q5_RUNTIME_HISTORY_IMMUTABLE");
     await expect(attempts.scopeForCredential(digest, externalRunId)).rejects.toMatchObject({
       response: { code: "Q5_AUTHORITATIVE_ATTEMPT_TERMINAL" },
     });
@@ -146,6 +195,8 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
       canonicalApplicationId: applicationId,
       clientIdPublicValueId: id.credential,
       clientSecretReferenceId: id.credential2,
+      praxisSessionId: replacement,
+      praxisSessionIds: expect.arrayContaining([id.praxisSession, replacement]),
     });
     await attempts.settle(prepared.attempt.attemptId, "failed");
     await expect(
@@ -213,211 +264,376 @@ integration("M6 Q5 canonical application and authoritative attempt fuse", () => 
   }
 
   async function seed() {
-    await database.query(`INSERT INTO workspaces(id,name,slug) VALUES($1,'Q5 fuse',$2)`, [
-      id.workspace,
-      `q5-${id.workspace}`,
-    ]);
-    await database.query(`INSERT INTO projects(id,workspace_id,name) VALUES($1,$2,'Q5 fuse')`, [
-      id.project,
-      id.workspace,
-    ]);
-    await database.query(
-      `INSERT INTO environments(id,project_id,name,base_origin,policy,secret_refs)
-       VALUES($1,$2,'Q5 Vitract',$3,$4::jsonb,'{}')`,
-      [
-        id.environment,
+    await database.transaction(async (client) => {
+      await client.query(`INSERT INTO workspaces(id,name,slug) VALUES($1,'Q5 fuse',$2)`, [
+        id.workspace,
+        `q5-${id.workspace}`,
+      ]);
+      await client.query(`INSERT INTO projects(id,workspace_id,name) VALUES($1,$2,'Q5 fuse')`, [
         id.project,
-        origin,
-        JSON.stringify({
-          allowedOrigins: [origin],
-          allowPrivateNetwork: true,
-          allowDownloads: false,
-          allowPopups: false,
-          maxActions: 80,
-          maxDurationMs: 3600000,
-          maxNavigations: 20,
-        }),
-      ],
-    );
-    await database.query(
-      `INSERT INTO project_credentials(id,project_id,name,ciphertext,initialization_vector,authentication_tag)
+        id.workspace,
+      ]);
+      await client.query(
+        `INSERT INTO environments(id,project_id,name,base_origin,policy,secret_refs)
+       VALUES($1,$2,'Q5 Vitract',$3,$4::jsonb,'{}')`,
+        [
+          id.environment,
+          id.project,
+          origin,
+          JSON.stringify({
+            allowedOrigins: [origin],
+            allowPrivateNetwork: true,
+            allowDownloads: false,
+            allowPopups: false,
+            maxActions: 80,
+            maxDurationMs: 3600000,
+            maxNavigations: 20,
+          }),
+        ],
+      );
+      await client.query(
+        `INSERT INTO project_credentials(id,project_id,name,ciphertext,initialization_vector,authentication_tag)
        VALUES($1,$2,'Vitract client secret','cipher','123456789012','1234567890123456')`,
-      [id.credential2, id.project],
-    );
-    await database.query(
-      `INSERT INTO q5_canonical_scope_designations(
+        [id.credential2, id.project],
+      );
+      await client.query(
+        `INSERT INTO q5_canonical_scope_designations(
          qualification_key,project_id,environment_id,application_identity,environment_class,
          target_origin,protected_policy,qualification_policy_version
        ) VALUES('m6-q5-authoritative',$1,$2,'vitract-preview-test','preview_test',$3,
          'atomic_protected_pair_v1','q5-bootstrap-v1')`,
-      [id.project, id.environment, origin],
-    );
-    await database.query(
-      `INSERT INTO missions(id,project_id,title,original_instruction,status) VALUES($1,$2,'Q5 exact','one Vitract order','running')`,
-      [id.mission, id.project],
-    );
-    await database.query(
-      `INSERT INTO mission_objectives(id,mission_id,title,completion_criteria,objective_order,status) VALUES($1,$2,'Q5 objective',$3,0,'pending')`,
-      [
-        id.objective,
-        id.mission,
-        JSON.stringify([{ description: "exact retrieval", required: true }]),
-      ],
-    );
-    await database.query(
-      `INSERT INTO agent_sessions(id,mission_id,project_id,workspace_id,provider,model,external_run_id,instruction_snapshot,idempotency_key) VALUES($1,$2,$3,$4,'deepseek','deepseek-chat',$5,'Q5 exact',$6)`,
-      [id.agent, id.mission, id.project, id.workspace, randomUUID(), `q5-${id.agent}`],
-    );
-    await database.transaction(async (client) => {
-      await client.query("SET CONSTRAINTS ALL DEFERRED");
-      await client.query(
-        `INSERT INTO flows(id,project_id,name,latest_revision_id,visibility,purpose,origin_mission_id,origin_objective_id,created_by_agent_session_id,owner_mission_id,owner_objective_id) VALUES($1,$2,'Q5 flow',$3,'mission_local','primary',$4,$5,$6,$4,$5)`,
-        [id.flow, id.project, id.revision, id.mission, id.objective, id.agent],
+        [id.project, id.environment, origin],
       );
       await client.query(
-        `INSERT INTO flow_revisions(id,flow_id,revision,content,plan,validation,created_by_agent_session_id,reason) VALUES($1,$2,1,'{}','{}','{}',$3,'Q5')`,
-        [id.revision, id.flow, id.agent],
+        `INSERT INTO missions(id,project_id,title,original_instruction,status) VALUES($1,$2,'Q5 exact','one Vitract order','running')`,
+        [id.mission, id.project],
       );
-    });
-    await database.query(
-      `INSERT INTO flow_drafts(id,project_id,mission_id,objective_id,environment_id,flow_id,name,content,plan,created_by_agent_session_id) VALUES($1,$2,$3,$4,$5,$6,'Q5 draft','{}','{}',$7)`,
-      [id.draft, id.project, id.mission, id.objective, id.environment, id.flow, id.agent],
-    );
-    await database.query(
-      `INSERT INTO adaptive_sessions(
+      await client.query(
+        `INSERT INTO mission_objectives(id,mission_id,title,completion_criteria,objective_order,status) VALUES($1,$2,'Q5 objective',$3,0,'pending')`,
+        [
+          id.objective,
+          id.mission,
+          JSON.stringify([{ description: "exact retrieval", required: true }]),
+        ],
+      );
+      await client.query(
+        `INSERT INTO agent_sessions(id,mission_id,project_id,workspace_id,provider,model,external_run_id,instruction_snapshot,idempotency_key) VALUES($1,$2,$3,$4,'deepseek','deepseek-chat',$5,'Q5 exact',$6)`,
+        [id.agent, id.mission, id.project, id.workspace, randomUUID(), `q5-${id.agent}`],
+      );
+      await (async () => {
+        await client.query("SET CONSTRAINTS ALL DEFERRED");
+        await client.query(
+          `INSERT INTO flows(id,project_id,name,latest_revision_id,visibility,purpose,origin_mission_id,origin_objective_id,created_by_agent_session_id,owner_mission_id,owner_objective_id) VALUES($1,$2,'Q5 flow',$3,'mission_local','primary',$4,$5,$6,$4,$5)`,
+          [id.flow, id.project, id.revision, id.mission, id.objective, id.agent],
+        );
+        await client.query(
+          `INSERT INTO flow_revisions(id,flow_id,revision,content,plan,validation,created_by_agent_session_id,reason) VALUES($1,$2,1,'{}','{}','{}',$3,'Q5')`,
+          [id.revision, id.flow, id.agent],
+        );
+      })();
+      await client.query(
+        `INSERT INTO flow_drafts(id,project_id,mission_id,objective_id,environment_id,flow_id,name,content,plan,created_by_agent_session_id) VALUES($1,$2,$3,$4,$5,$6,'Q5 draft','{}','{}',$7)`,
+        [id.draft, id.project, id.mission, id.objective, id.environment, id.flow, id.agent],
+      );
+      await client.query(
+        `INSERT INTO adaptive_sessions(
          id,project_id,environment_id,correlation_id,state,objective,allowed_origins,
          mission_id,objective_id,flow_draft_id,idempotency_key,active_objective_id,
          active_flow_draft_id,authoring_turn_budgets,protected_reference_allowlist,agent_session_id,
          protection
        ) VALUES($1,$2,$3,$4,'active','Q5 issuance',$5::jsonb,$6,$7,$8,$9,$7,$8,'{}',$10::jsonb,$11,'protected')`,
-      [
-        id.praxisSession,
-        id.project,
-        id.environment,
-        randomUUID(),
-        JSON.stringify([origin]),
-        id.mission,
-        id.objective,
-        id.draft,
-        `q5-praxis-${id.praxisSession}`,
-        JSON.stringify([id.credential, id.credential2]),
-        id.agent,
-      ],
-    );
-    await database.query(
-      `INSERT INTO mission_authorizations(
-         id,mission_id,objective_id,environment_id,kind,reason,granted_by_agent_session_id,
-         operation_id,praxis_session_id
-       ) VALUES($1,$2,$3,$4,'protected_mutation','Q5 supported issuance',$5,'q5-issuance',$6)`,
-      [id.authorization, id.mission, id.objective, id.environment, id.agent, id.praxisSession],
-    );
-    await database.query(
-      `INSERT INTO observed_operation_contracts(
+        [
+          id.praxisSession,
+          id.project,
+          id.environment,
+          randomUUID(),
+          JSON.stringify([origin]),
+          id.mission,
+          id.objective,
+          id.draft,
+          `q5-praxis-${id.praxisSession}`,
+          JSON.stringify([id.credential, id.credential2]),
+          id.agent,
+        ],
+      );
+      const contractFacts = {
+        application: { key: "vitract_preview", provider: "vitract" },
+        adapter: { key: "vitract_registered", version: 1 },
+        operation: {
+          key: "issuePartnerCredential",
+          label: "Add credential",
+          method: "POST",
+          pathTemplate: "/api/v1/partners/applications/{applicationId}/credentials",
+          transports: ["fetch"],
+          semantics: {
+            dispatch: "mutation",
+            effects: ["business_effect", "protected_acquisition"],
+          },
+        },
+        inputs: [],
+        auth: { presentationClasses: [] },
+        response: {
+          statusClasses: [2],
+          mutationPolicy: { confirmedNotAppliedStatuses: [400, 409] },
+          outputs: [
+            {
+              key: "credentialRecordId",
+              label: "id",
+              classification: "public",
+              identityRole: "resource_identity",
+              generatedValueEligible: true,
+            },
+            {
+              key: "clientId",
+              label: "Client ID",
+              classification: "public",
+              generatedValueEligible: true,
+            },
+            {
+              key: "clientSecret",
+              label: "Client secret",
+              classification: "protected",
+              generatedValueEligible: true,
+            },
+          ],
+          continuation: "none",
+        },
+        resourceEffect: {
+          operation: "create",
+          provider: "vitract",
+          resourceKind: "credential_record",
+          resourceScope: "vtr_app_generated",
+          identityContractVersion: 1,
+          identityOutputKey: "credentialRecordId",
+          correlationFieldKey: "credentialName",
+        },
+      };
+      await client.query(
+        `INSERT INTO adaptive_session_runtime_leases(session_id,owner_id,fencing_token,lease_expires_at)
+       VALUES($1,$2,1,now()+interval '10 minutes')`,
+        [id.praxisSession, id.runtimeOwner],
+      );
+      await client.query(
+        `INSERT INTO operation_contract_revisions(
+         id,project_id,application_key,provider_key,adapter_key,adapter_version,operation_key,
+         revision,facts,provenance,semantic_digest
+       ) VALUES($1,$2,'vitract_preview','vitract','vitract_registered',1,
+         'issuePartnerCredential',1,$3::jsonb,$4::jsonb,$5)`,
+        [
+          id.contractRevision,
+          id.project,
+          JSON.stringify(contractFacts),
+          JSON.stringify({
+            sourceKind: "runtime_observation",
+            observationId: "q5-test",
+            origin,
+            observedAt: new Date().toISOString(),
+          }),
+          "2".repeat(64),
+        ],
+      );
+      await client.query(
+        `INSERT INTO runtime_interaction_capabilities(
+         id,operation_contract_revision_id,operation_contract_revision_digest,praxis_session_id,
+         runtime_owner_id,fencing_epoch,document_epoch,origin,activation_control_reference,
+         input_control_references,expires_at
+       ) VALUES($1,$2,$3,$4,$5,1,1,$6,$7,'{}'::jsonb,now()+interval '10 minutes')`,
+        [
+          id.runtimeCapability,
+          id.contractRevision,
+          "2".repeat(64),
+          id.praxisSession,
+          id.runtimeOwner,
+          origin,
+          `context-control-${"1".repeat(32)}`,
+        ],
+      );
+      await client.query(
+        `INSERT INTO execution_policy_snapshots(
+         id,project_id,environment_id,application_key,policy_version,allowed_origins,
+         trusted_script_origins,policy,digest
+       ) VALUES($1,$2,$3,'vitract_preview',1,$4::jsonb,'[]'::jsonb,$5::jsonb,$6)`,
+        [
+          id.policySnapshot,
+          id.project,
+          id.environment,
+          JSON.stringify([origin]),
+          JSON.stringify({ allowedOrigins: [origin] }),
+          "3".repeat(64),
+        ],
+      );
+      await client.query(
+        `INSERT INTO observed_operation_contracts(
          id,praxis_session_id,document_epoch,origin,source_kind,observation_id,operation_key,facts,digest
        ) VALUES($1,$2,1,'https://preview.vitract.com','runtime_observation','q5-test',
          'issuePartnerCredential',$3::jsonb,$4)`,
-      [
-        id.observedContract,
-        id.praxisSession,
-        JSON.stringify({
-          operation: { classification: "mutation" },
-          resourceEffect: { provider: "vitract", resourceKind: "credential_record" },
-        }),
-        "1".repeat(64),
-      ],
-    );
-    await database.query(
-      `INSERT INTO protected_operations(
+        [
+          id.observedContract,
+          id.praxisSession,
+          JSON.stringify({
+            operation: { classification: "mutation" },
+            resourceEffect: { provider: "vitract", resourceKind: "credential_record" },
+          }),
+          "1".repeat(64),
+        ],
+      );
+      await client.query(
+        `INSERT INTO protected_operations(
          id,operation_id,mutation_identity,owner_kind,authoring_session_id,project_id,
          environment_id,mission_id,objective_id,agent_session_id,flow_draft_id,authorization_id,
          program_digest,state,phase,dispatch_state,mutation_outcome,acquisition_state,
          persistence_state,safe_output_manifest,persisted_references,completed_at,
-         observed_operation_contract_id,observed_operation_contract_digest
-       ) VALUES($1,'q5-supported-issuance','q5-supported-issuance','authoring_session',$2,$3,
+         observed_operation_contract_id,observed_operation_contract_digest,authority_model,
+         praxis_session_id,runtime_owner_id,runtime_fencing_epoch,document_epoch
+       ) VALUES($1,'q5-supported-issuance',$16,'authoring_session',$2,$3,
          $4,$5,$6,$7,$8,$9,$10,'completed','completed','acknowledged','applied','complete',
-         'committed',$11::jsonb,$12::jsonb,now(),$13,$14)`,
-      [
-        id.issuanceOperation,
-        id.praxisSession,
-        id.project,
-        id.environment,
-        id.mission,
-        id.objective,
-        id.agent,
-        id.draft,
-        id.authorization,
-        "f".repeat(64),
-        JSON.stringify([
-          { key: "credentialRecordId", classification: "public" },
-          { key: "clientId", classification: "public" },
-          { key: "clientSecret", classification: "protected" },
-        ]),
-        JSON.stringify({
-          credentialRecordId: { valueId: id.credentialRecordValue },
-          clientId: { valueId: id.credential },
-          clientSecret: { credentialId: id.credential2 },
-        }),
-        id.observedContract,
-        "1".repeat(64),
-      ],
-    );
-    await database.query(
-      `UPDATE project_credentials SET origin_protected_operation_id=$1 WHERE id=$2`,
-      [id.issuanceOperation, id.credential2],
-    );
-    await database.query(
-      `INSERT INTO generated_public_values(
+         'committed',$11::jsonb,$12::jsonb,now(),$13,$14,'canonical',$2,$15,1,1)`,
+        [
+          id.issuanceOperation,
+          id.praxisSession,
+          id.project,
+          id.environment,
+          id.mission,
+          id.objective,
+          id.agent,
+          id.draft,
+          null,
+          "f".repeat(64),
+          JSON.stringify([
+            { key: "credentialRecordId", classification: "public" },
+            { key: "clientId", classification: "public" },
+            { key: "clientSecret", classification: "protected" },
+          ]),
+          JSON.stringify({
+            credentialRecordId: { valueId: id.credentialRecordValue },
+            clientId: { valueId: id.credential },
+            clientSecret: { credentialId: id.credential2 },
+          }),
+          id.observedContract,
+          "1".repeat(64),
+          id.runtimeOwner,
+          id.preparedCapability,
+        ],
+      );
+      await client.query(
+        `INSERT INTO prepared_execution_capabilities(
+         id,protected_operation_id,mutation_identity,operation_contract_revision_id,
+         operation_contract_revision_digest,runtime_interaction_capability_id,
+         execution_policy_snapshot_id,execution_policy_snapshot_digest,project_id,environment_id,
+         mission_id,objective_id,agent_session_id,application_key,dispatch_semantics,effect_semantics,
+         target_commitment,input_commitment,output_commitment,resource_effect,program_manifest,
+         program_digest,state,expires_at,finalized_at
+       ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'vitract_preview','mutation',
+         ARRAY['business_effect','protected_acquisition'],$14,$15,$16,$17::jsonb,$18::jsonb,$19,
+         'finalized',now()+interval '10 minutes',now())`,
+        [
+          id.preparedCapability,
+          id.issuanceOperation,
+          id.preparedCapability,
+          id.contractRevision,
+          "2".repeat(64),
+          id.runtimeCapability,
+          id.policySnapshot,
+          "3".repeat(64),
+          id.project,
+          id.environment,
+          id.mission,
+          id.objective,
+          id.agent,
+          "4".repeat(64),
+          "5".repeat(64),
+          "6".repeat(64),
+          JSON.stringify(contractFacts.resourceEffect),
+          JSON.stringify({ version: 1, programDigest: "f".repeat(64) }),
+          "f".repeat(64),
+        ],
+      );
+      await client.query(
+        `UPDATE protected_operations SET prepared_execution_capability_id=$2 WHERE id=$1`,
+        [id.issuanceOperation, id.preparedCapability],
+      );
+      await client.query(
+        `UPDATE project_credentials SET origin_protected_operation_id=$1 WHERE id=$2`,
+        [id.issuanceOperation, id.credential2],
+      );
+      await client.query(
+        `INSERT INTO generated_public_values(
          id,project_id,source_protected_operation_id,operation_id,name,reference,scope,
          mission_id,objective_id,value
        ) VALUES($1,$2,$3,'q5-supported-issuance','Vitract credential record','credentialRecordId',
            'project',$4,$5,'record-safe'),
           ($6,$2,$3,'q5-supported-issuance','Vitract client ID','clientId','project',$4,$5,'client-safe')`,
-      [
-        id.credentialRecordValue,
-        id.project,
-        id.issuanceOperation,
-        id.mission,
-        id.objective,
-        id.credential,
-      ],
-    );
-    await database.query(
-      `INSERT INTO external_resource_bindings(
+        [
+          id.credentialRecordValue,
+          id.project,
+          id.issuanceOperation,
+          id.mission,
+          id.objective,
+          id.credential,
+        ],
+      );
+      await client.query(
+        `INSERT INTO typed_value_assets(
+         id,project_id,environment_id,application_key,classification,
+         producer_protected_operation_id,operation_contract_revision_id,canonical_output_key,
+         generated_public_value_id,project_credential_id
+       ) VALUES($1,$2,$3,'vitract_preview','public',$4,$5,'clientId',$6,NULL),
+         ($7,$2,$3,'vitract_preview','protected',$4,$5,'clientSecret',NULL,$8),
+         ($9,$2,$3,'vitract_preview','public',$4,$5,'credentialRecordId',$10,NULL)`,
+        [
+          id.clientIdAsset,
+          id.project,
+          id.environment,
+          id.issuanceOperation,
+          id.contractRevision,
+          id.credential,
+          id.clientSecretAsset,
+          id.credential2,
+          id.recordAsset,
+          id.credentialRecordValue,
+        ],
+      );
+      await client.query(
+        `INSERT INTO external_resource_bindings(
          source_protected_operation_id,generated_public_value_id,project_id,environment_id,
          provider,resource_kind,resource_scope,canonical_external_identity,
          identity_contract_version,identity_source,lifecycle_state,required_for_destructive_lifecycle
        ) VALUES($1,$2,$3,$4,'vitract','credential_record','vtr_app_generated','record-safe',1,
          'response','active',true)`,
-      [id.issuanceOperation, id.credentialRecordValue, id.project, id.environment],
-    );
-    await database.query(
-      `INSERT INTO q5_prepared_scopes(
+        [id.issuanceOperation, id.credentialRecordValue, id.project, id.environment],
+      );
+      await client.query(
+        `INSERT INTO q5_prepared_scopes(
          id,qualification_key,project_id,environment_id,application_identity,environment_class,
          target_origin,allowed_origins,credential_pair_reference_id,client_id_public_value_id,
          client_secret_reference_id,issuance_operation_id,credential_type,protected_policy,
+         client_id_value_asset_id,client_secret_value_asset_id,
          credential_provenance,source_commit,source_manifest,schema_fingerprint,migration_identity,
          q5_mcp_profile,q5_mcp_contract_digest,qualification_policy_version,binding_digest
        ) VALUES($1,'m6-q5-authoritative',$2,$3,'vitract-preview-test','preview_test',$4,$5::jsonb,
-         $6,$7,$8,$9,'vitract_partner_api_client_pair','atomic_protected_pair_v1',
-         'supported_protected_issuance',$10,$11,$12,$13,'q5-authoritative-v1',$14,
+         $6,$7,$8,$9,'vitract_partner_api_client_pair','atomic_protected_pair_v1',$16,$17,
+         'supported_protected_issuance',$10,$11,$12,$13,'q5-thin-kernel-v3',$14,
          'q5-bootstrap-v1',$15)`,
-      [
-        id.preparedScope,
-        id.project,
-        id.environment,
-        origin,
-        JSON.stringify([origin]),
-        id.pairReference,
-        id.credential,
-        id.credential2,
-        id.issuanceOperation,
-        source.commit,
-        source.manifest,
-        source.schema,
-        source.migration,
-        "e".repeat(64),
-        "f".repeat(64),
-      ],
-    );
+        [
+          id.preparedScope,
+          id.project,
+          id.environment,
+          origin,
+          JSON.stringify([origin]),
+          id.pairReference,
+          id.credential,
+          id.credential2,
+          id.issuanceOperation,
+          source.commit,
+          source.manifest,
+          source.schema,
+          source.migration,
+          Q5_MCP_CONTRACT_DIGEST,
+          "f".repeat(64),
+          id.clientIdAsset,
+          id.clientSecretAsset,
+        ],
+      );
+    });
   }
 });

@@ -130,7 +130,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   const steps = initializeSteps(options);
   const diagnostics: DiagnosticRecord[] = [];
   const networkRecords: Array<Record<string, unknown>> = [];
-  const pendingNetworkBodies = new Set<Promise<void>>();
   const networkActivity = { active: new Map<string, { url: string; resourceType: string }>() };
   const policyViolations: PolicyViolationRecord[] = [];
   const redactor = options.secretRedactor ?? new SecretRedactor();
@@ -292,7 +291,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       networkRecords,
       redactor,
       networkActivity,
-      pendingNetworkBodies,
       () =>
         veilChannelCollectors.get("network")!.isCaptureSuppressed() ||
         privacyGate?.getDecision("network") === "suppress" ||
@@ -491,6 +489,13 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
             await options.protectedTransactionExecutor({
               transaction: step.action,
               dependencies: {
+                mutationIdentity: options.mutationIdentity!,
+                ...(options.canonicalProgramDigest
+                  ? { canonicalProgramDigest: options.canonicalProgramDigest }
+                  : {}),
+                ...(options.preparedExecutionCapabilityId
+                  ? { preparedExecutionCapabilityId: options.preparedExecutionCapabilityId }
+                  : {}),
                 safeSession: { browser, context, page, provenance: safeProvenance },
                 gate: privacyGate,
                 redactor,
@@ -690,6 +695,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
 
           if (documentTransitionOpen) {
             try {
+              await options.settleExpectedEffectBeforeCapture?.();
               const transitionTimeoutMs =
                 "timeoutMs" in step.action && typeof step.action.timeoutMs === "number"
                   ? Math.min(10_000, step.action.timeoutMs)
@@ -877,7 +883,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           result,
           networkRecords,
           redactor,
-          pendingNetworkBodies,
           observation,
           privacyGate,
           veilChannelCollectors,

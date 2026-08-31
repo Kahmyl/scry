@@ -20,6 +20,33 @@ const ids = {
   bindingId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 };
 
+it("projects canonical typed assets in persisted Run receipts without dropping authority references", () => {
+  const references = {
+    clientId: {
+      classification: "public",
+      valueId: ids.valueId,
+      valueAssetId: ids.bindingId,
+      scope: "project",
+    },
+    clientSecret: {
+      classification: "protected",
+      credentialId: ids.valueId,
+      valueAssetId: ids.receiptId,
+      scope: "project",
+    },
+  };
+  const receipt = projectMutationReceipt(
+    source({
+      state: "completed",
+      persistenceState: "committed",
+      persistedReferences: references as never,
+    }),
+  );
+  expect(receipt.persistence.references).toEqual(
+    Object.entries(references).map(([reference, value]) => ({ reference, ...value })),
+  );
+});
+
 function transition(
   sequence: number,
   fromState: ProtectedOperationState | null,
@@ -111,6 +138,21 @@ const ownedResponse = [
 ];
 
 describe("defensible mutation receipt projection", () => {
+  it.each(["mutation", "read_only"] as const)(
+    "never offers replay of a canonical %s capability",
+    (dispatchSemantics) => {
+      expect(
+        projectMutationReceipt(
+          source({
+            authorityModel: "canonical",
+            dispatchSemantics,
+            state: "completed",
+            mutationOutcome: "not_applied",
+          }),
+        ).redispatchAllowed,
+      ).toBe(false);
+    },
+  );
   it.each([
     {
       name: "pre-send failure",

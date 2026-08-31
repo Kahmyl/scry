@@ -692,7 +692,7 @@ async function settleResponseLifecycle(
 }
 
 function responseOutputs(
-  response: unknown,
+  response: unknown[],
   outputs: ProtectedTransaction["extraction"]["outputs"],
 ) {
   const acquired: Array<{
@@ -801,14 +801,39 @@ function semanticIdentities(acquisition: AcquisitionIntent) {
   return identities;
 }
 
-function rankedResponseValues(response: unknown, acquisition: AcquisitionIntent) {
+function rankedResponseValues(response: unknown[], acquisition: AcquisitionIntent) {
   return rankedResponseAnalysis(response, acquisition).values;
 }
 
 function rankedResponseAnalysis(
-  response: unknown,
+  response: unknown[],
   acquisition: AcquisitionIntent,
 ): RankedResponseAnalysis {
+  if (acquisition.responseJsonPath) {
+    // Transport paths are exact declarations, independent of canonical keys and display labels.
+    // Each response root is evaluated separately; never fall back to semantic guessing.
+    const path = [
+      ...acquisition.responseJsonPath.matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)|\[([0-9]+)\]/g),
+    ].map((match) => match[1] ?? match[2]!);
+    const roots = response;
+    const values = [
+      ...new Set(
+        roots.flatMap((root) => {
+          let value: unknown = root;
+          for (const segment of path) {
+            if (!value || typeof value !== "object" || !Object.hasOwn(value, segment)) return [];
+            value = (value as Record<string, unknown>)[segment];
+          }
+          return typeof value === "string" && value.length > 0 ? [value] : [];
+        }),
+      ),
+    ];
+    return {
+      values,
+      matchCount: values.length === 0 ? "zero" : values.length === 1 ? "one" : "many",
+      pathClass: values.length === 1 ? classifyPath(path) : "unavailable",
+    };
+  }
   const identities = semanticIdentities(acquisition);
   const context = semanticContext(acquisition);
 

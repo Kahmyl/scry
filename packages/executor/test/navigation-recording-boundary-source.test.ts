@@ -32,8 +32,9 @@ describe("navigation recording boundary source contract", () => {
     const kernel = await readFile(new URL("../src/execution-kernel.ts", import.meta.url), "utf8");
 
     expect(kernel).toContain("recordingOperationId: request.operationId");
-    expect(kernel).toContain(
-      'input.action.type === "navigate" || expectedEffect.type === "navigation"',
+    expect(kernel).toMatch(
+      /input\.action\.type === "navigate"\s*\|\|[\s\S]*?expectedEffect\.type === "navigation"/,
     );
+    expect(kernel).toContain("settleExpectedEffectBeforeCapture");
   });
 });

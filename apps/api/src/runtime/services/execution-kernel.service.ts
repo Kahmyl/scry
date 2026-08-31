@@ -71,14 +71,6 @@ export class ExecutionCapabilityFactory {
           operationId: input.operationId,
         });
       });
-    const calibration = input.beforeMutationTransition
-      ? calibrationProtectedCapabilities(
-          input.operationId,
-          input.beforeMutationTransition,
-          atomicSecretCapture,
-          publicValueCapture,
-        )
-      : {};
     const compatibilityOptions: RuntimeExecutionCapabilities["options"] = {
       ...options,
       openBrowser:
@@ -114,7 +106,6 @@ export class ExecutionCapabilityFactory {
       ...(options.protectedTransactionStore
         ? { protectedTransactionStore: options.protectedTransactionStore }
         : {}),
-      ...calibration,
       checkpointStore: options.checkpointStore ?? this.checkpointStore(input.sessionId),
       recordContextProvenance:
         options.recordContextProvenance ??
@@ -328,7 +319,10 @@ export class ExecutionCapabilityFactory {
       objectiveId: string;
       agentSessionId: string;
       flowDraftId: string;
-      authorizationId: string;
+      authorizationId?: string;
+      mutationIdentity: string;
+      preparedExecutionCapabilityId: string;
+      canonicalProgramDigest: string;
       leaseOwner: string;
     },
   ) {
@@ -347,7 +341,10 @@ export class ExecutionCapabilityFactory {
           agentSessionId: input.agentSessionId,
           correlationId: input.correlationId,
           flowDraftId: input.flowDraftId,
-          authorizationId: input.authorizationId,
+          ...(input.authorizationId ? { authorizationId: input.authorizationId } : {}),
+          mutationIdentity: input.mutationIdentity,
+          preparedExecutionCapabilityId: input.preparedExecutionCapabilityId,
+          canonicalProgramDigest: input.canonicalProgramDigest,
         }),
       },
     });
@@ -367,6 +364,9 @@ export class ExecutionCapabilityFactory {
     flowDraftId?: string;
     flowRevisionId?: string;
     authorizationId?: string;
+    mutationIdentity?: string;
+    preparedExecutionCapabilityId?: string;
+    canonicalProgramDigest?: string;
     protectedAuthorizations?: Record<string, string>;
   }): Pick<
     ExecuteOptions,
@@ -376,6 +376,8 @@ export class ExecutionCapabilityFactory {
     | "stageProtectedResponseOutputs"
     | "recoverStagedProtectedResponseOutputs"
     | "markCredentialCompromised"
+    | "canonicalProgramDigest"
+    | "preparedExecutionCapabilityId"
   > {
     let current: import("@scry/contracts").ProtectedOperationClaim | undefined;
     let phaseStartedAt = performance.now();
@@ -385,6 +387,12 @@ export class ExecutionCapabilityFactory {
     const outputs = this.protectedOutputs;
     const leaseDurationMs = 30_000;
     return {
+      ...(context.canonicalProgramDigest
+        ? { canonicalProgramDigest: context.canonicalProgramDigest }
+        : {}),
+      ...(context.preparedExecutionCapabilityId
+        ? { preparedExecutionCapabilityId: context.preparedExecutionCapabilityId }
+        : {}),
       protectedTransactionExecutor: async ({ transaction, dependencies }) => {
         current = undefined;
         const execution = await new ProtectedTransactionKernel(dependencies).execute(transaction);
@@ -400,33 +408,11 @@ export class ExecutionCapabilityFactory {
       protectedTransactionStore: {
         claim: async (claim) => {
           const runAuthorizationId = context.protectedAuthorizations?.[claim.operationId];
-          if (context.ownerKind === "run") {
-            if (!runAuthorizationId) throw new Error("PROTECTED_OPERATION_AUTHORIZATION_REQUIRED");
-            try {
-              await operations.create({
-                ownerKind: "run",
-                ownerId: context.ownerId,
-                flowRevisionId: context.flowRevisionId!,
-                authorizationId: runAuthorizationId,
-                operationId: claim.operationId,
-                mutationIdentity: claim.mutationIdentity,
-                dispatchSemantics: claim.dispatchSemantics ?? "mutation",
-                projectId: context.projectId,
-                environmentId: context.environmentId,
-                missionId: context.missionId,
-                objectiveId: context.objectiveId,
-                agentSessionId: context.agentSessionId,
-                programDigest: claim.programDigest,
-                safeOutputManifest: claim.safeOutputManifest,
-              });
-            } catch (error) {
-              if (
-                !(error instanceof Error) ||
-                !error.message.includes("PROTECTED_OPERATION_ALREADY_EXISTS")
-              )
-                throw error;
-            }
-          }
+          if (
+            !context.preparedExecutionCapabilityId ||
+            claim.preparedExecutionCapabilityId !== context.preparedExecutionCapabilityId
+          )
+            throw new Error("PREPARED_EXECUTION_CAPABILITY_REQUIRED");
           current = await operations.claim({
             ownerKind: context.ownerKind,
             ownerId: context.ownerId,
@@ -443,6 +429,9 @@ export class ExecutionCapabilityFactory {
               agentSessionId: context.agentSessionId,
               programDigest: claim.programDigest,
               safeOutputManifest: claim.safeOutputManifest,
+              ...(claim.preparedExecutionCapabilityId
+                ? { preparedExecutionCapabilityId: claim.preparedExecutionCapabilityId }
+                : {}),
               ...(context.ownerKind === "authoring_session"
                 ? { flowDraftId: context.flowDraftId!, authorizationId: context.authorizationId! }
                 : {
@@ -608,92 +597,6 @@ function projectProtectedDiagnostics(facts: Record<string, unknown>) {
     "protectedAcquisitionEvidence",
   ]);
   return Object.fromEntries(Object.entries(facts).filter(([key]) => allowed.has(key)));
-}
-
-function calibrationProtectedCapabilities(
-  operationId: string,
-  beforeTransition: (input: { expected: string; next: string }) => Promise<boolean>,
-  persistSecret: NonNullable<ExecuteOptions["atomicSecretCapture"]>,
-  persistPublic: NonNullable<ExecuteOptions["publicValueCapture"]>,
-): Pick<
-  ExecuteOptions,
-  "protectedTransactionExecutor" | "protectedTransactionStore" | "atomicOutputCapture"
-> {
-  let state: import("@scry/contracts").ProtectedOperationState = "planned";
-  let version = 1;
-  let mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown" = "not_attempted";
-  const transition = async (
-    expected: import("@scry/contracts").ProtectedOperationState,
-    next: import("@scry/contracts").ProtectedOperationState,
-  ) => {
-    if (state !== expected || !(await beforeTransition({ expected, next })))
-      throw new Error("PROTECTED_OPERATION_TRANSITION_FENCED");
-    state = next;
-    version += 1;
-    return { id: operationId, state, version, fencingToken: 1, mutationOutcome };
-  };
-  return {
-    protectedTransactionExecutor: ({ transaction, dependencies }) =>
-      new ProtectedTransactionKernel(dependencies).execute(transaction),
-    protectedTransactionStore: {
-      claim: async () => ({ id: operationId, state, version, fencingToken: 1, mutationOutcome }),
-      transition: async ({ expected, next }) => transition(expected, next),
-      record: async () => undefined,
-      settleMutationOutcome: async ({ outcome }) => {
-        if (
-          (mutationOutcome === "applied" || mutationOutcome === "not_applied") &&
-          mutationOutcome !== outcome
-        ) {
-          throw new Error("PROTECTED_MUTATION_OUTCOME_SETTLEMENT_CONTRADICTION");
-        }
-        mutationOutcome = outcome;
-        version += 1;
-        return { id: operationId, state, version, fencingToken: 1, mutationOutcome };
-      },
-    },
-    atomicOutputCapture: async ({ outputs }) => {
-      const references: Record<
-        string,
-        {
-          classification: "public" | "protected";
-          credentialId?: string;
-          valueId?: string;
-          scope: "run" | "project";
-        }
-      > = {};
-      try {
-        for (const output of outputs) {
-          references[output.reference] =
-            output.classification === "protected"
-              ? {
-                  classification: "protected",
-                  ...(await persistSecret({
-                    operationId,
-                    reference: output.reference,
-                    name: output.name,
-                    value: output.value,
-                    scope: output.scope,
-                  })),
-                  scope: output.scope,
-                }
-              : {
-                  classification: "public",
-                  ...(await persistPublic({
-                    operationId,
-                    reference: output.reference,
-                    name: output.name,
-                    value: output.value,
-                    scope: output.scope,
-                  })),
-                  scope: output.scope,
-                };
-        }
-        return { claim: await transition("persisting", "persisted"), references };
-      } finally {
-        for (const output of outputs) output.value = "";
-      }
-    },
-  };
 }
 
 function deriveCapabilityStates(

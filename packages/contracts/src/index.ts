@@ -29,6 +29,7 @@ export {
 } from "./plan.js";
 export * from "./policy.js";
 export * from "./protected-operation.js";
+export * from "./operation-contract.js";
 export * from "./prepared-protected-operation.js";
 export * from "./praxis/index.js";
 export * from "./run.js";

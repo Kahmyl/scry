@@ -1,47 +1,55 @@
-import { createHash, randomUUID } from "node:crypto";
-
 import { Injectable } from "@nestjs/common";
 import {
-  observedOperationContractSchema,
-  type ObservedOperationContract,
+  proposedOperationContractSchema,
+  type OperationContractFacts,
   type PraxisObservation,
+  type ProposedOperationContract,
 } from "@scry/contracts";
 
 type Control = PraxisObservation["semanticPageContext"]["controls"][number];
-type OperationFacts = Omit<
-  ObservedOperationContract,
-  "id" | "digest" | "praxisSessionId" | "documentEpoch" | "origin" | "sourceKind" | "observationId"
->;
+type Projected = {
+  facts: OperationContractFacts;
+  activationControlReference: string;
+  inputControlReferences: Record<string, string>;
+};
 
 @Injectable()
 export class VitractObservedOperationContractProvider {
-  project(praxisSessionId: string, observation: PraxisObservation): ObservedOperationContract[] {
+  readonly adapterKey = "vitract_registered";
+  readonly adapterVersion = 1;
+
+  project(praxisSessionId: string, observation: PraxisObservation): ProposedOperationContract[] {
     const url = new URL(observation.url);
-    const facts =
+    const projected =
       url.origin === "https://preview.vitract.com"
         ? this.credentialIssuance(url, observation.semanticPageContext.controls)
         : url.origin === "https://preview-api.vitract.com" &&
             url.pathname === "/api/docs/partner-api"
           ? this.partnerApi(observation.semanticPageContext.controls)
           : [];
-    return facts.map((contract, index) => {
-      const provenance = {
-        praxisSessionId,
-        documentEpoch: observation.documentEpoch,
-        origin: url.origin,
-        sourceKind: "runtime_observation" as const,
-        observationId: `vitract-registered-operation-contract:${index}:${contract.operation.key}`,
-      };
-      return observedOperationContractSchema.parse({
-        id: randomUUID(),
-        digest: digest({ ...provenance, facts: contract }),
-        ...provenance,
-        ...contract,
-      });
-    });
+    return projected.map((candidate, index) =>
+      proposedOperationContractSchema.parse({
+        facts: candidate.facts,
+        provenance: {
+          sourceKind: "runtime_observation",
+          observationId: `vitract-registered-operation-contract:${index}:${candidate.facts.operation.key}`,
+          origin: url.origin,
+          observedAt: new Date().toISOString(),
+          sourcePraxisSessionId: praxisSessionId,
+          sourceDocumentEpoch: observation.documentEpoch,
+        },
+        interaction: {
+          praxisSessionId,
+          documentEpoch: observation.documentEpoch,
+          origin: url.origin,
+          activationControlReference: candidate.activationControlReference,
+          inputControlReferences: candidate.inputControlReferences,
+        },
+      }),
+    );
   }
 
-  private credentialIssuance(url: URL, controls: Control[]): OperationFacts[] {
+  private credentialIssuance(url: URL, controls: Control[]): Projected[] {
     const match = /^\/partner\/developer\/applications\/([^/]+)\/credentials$/.exec(url.pathname);
     if (!match) return [];
     const activation = exactControl(controls, "Add credential", "activate", "form");
@@ -49,95 +57,156 @@ export class VitractObservedOperationContractProvider {
     if (!activation || !name) return [];
     return [
       {
-        operation: {
-          key: "issuePartnerCredential",
-          label: "Add credential",
-          method: "POST" as const,
-          pathTemplate: "/api/v1/partners/applications/{applicationId}/credentials",
-          transports: ["xhr" as const, "fetch" as const],
-          classification: "mutation" as const,
-          activationControlReference: activation.reference,
-        },
-        inputs: [
-          {
-            key: "credentialName",
-            label: "Name",
-            aliases: ["Credential name"],
-            required: true,
-            classification: "public" as const,
-            acceptedPresentations: ["plain_text" as const],
-            controlReference: name.reference,
+        facts: {
+          application: { key: "vitract_preview", provider: "vitract" },
+          adapter: { key: this.adapterKey, version: this.adapterVersion },
+          operation: {
+            key: "issuePartnerCredential",
+            label: "Add credential",
+            method: "POST",
+            pathTemplate: "/api/v1/partners/applications/{applicationId}/credentials",
+            transports: ["xhr", "fetch"],
+            semantics: {
+              dispatch: "mutation",
+              effects: ["business_effect", "protected_acquisition"],
+            },
           },
-        ],
-        auth: { presentationClasses: [] },
-        response: {
-          statusClasses: [2],
-          confirmedNotAppliedStatuses: [400, 401, 403, 404, 409, 429],
-          safeOutputKeys: ["credentialRecordId", "clientId", "clientSecret"],
-          safeOutputs: [
-            { key: "credentialRecordId", label: "id", classification: "public", path: "$.id" },
-            { key: "clientId", label: "Client ID", classification: "public", path: "$.clientId" },
+          inputs: [
             {
-              key: "clientSecret",
-              label: "Client secret",
-              classification: "protected",
-              path: "$.clientSecret",
+              key: "credentialName",
+              label: "Name",
+              aliases: ["Credential name"],
+              required: true,
+              classification: "public",
+              acceptedPresentations: ["plain_text"],
             },
           ],
-          publicIdentityOutputPath: "$.id",
-          continuation: "none" as const,
+          auth: { presentationClasses: [] },
+          response: {
+            statusClasses: [2],
+            mutationPolicy: {
+              confirmedNotAppliedStatuses: [400, 401, 403, 404, 409, 429],
+            },
+            outputs: [
+              output("credentialRecordId", "id", "public", "$.id", "resource_identity", true),
+              output("clientId", "Client ID", "public", "$.clientId", undefined, true),
+              output(
+                "clientSecret",
+                "Client secret",
+                "protected",
+                "$.clientSecret",
+                undefined,
+                true,
+              ),
+            ],
+            continuation: "none",
+          },
+          resourceEffect: {
+            operation: "create",
+            provider: "vitract",
+            resourceKind: "credential_record",
+            resourceScope: decodeURIComponent(match[1]!),
+            identityContractVersion: 1,
+            identityOutputKey: "credentialRecordId",
+            correlationFieldKey: "credentialName",
+          },
         },
-        resourceEffect: {
-          operation: "create" as const,
-          provider: "vitract",
-          resourceKind: "credential_record",
-          resourceScope: decodeURIComponent(match[1]!),
-          identityContractVersion: 1,
-          identityOutputKey: "credentialRecordId",
-          correlationFieldKey: "credentialName",
-        },
+        activationControlReference: activation.reference,
+        inputControlReferences: { credentialName: name.reference },
       },
     ];
   }
 
-  private partnerApi(controls: Control[]): OperationFacts[] {
-    const contracts: OperationFacts[] = [];
+  private partnerApi(controls: Control[]): Projected[] {
+    const projected: Projected[] = [];
     const create = exactControl(controls, "Run POST", "activate", "Create Order");
     const createClientId = exactControl(controls, "Client ID", "enter_text", "Create Order");
     const createSecret = exactControl(controls, "Client secret", "enter_text", "Create Order");
     const idempotency = exactControl(controls, "Idempotency-Key", "enter_text", "Create Order");
     const jsonBody = exactControl(controls, "JSON body", "enter_text", "Create Order");
+    const acknowledgement = controls.filter(
+      (control) =>
+        control.role === "checkbox" &&
+        control.name ===
+          "I understand this sends a real request that may create or change Partner data." &&
+        control.group === "Create Order examples",
+    );
+    if (acknowledgement.length > 1) return [];
     if (create && createClientId && createSecret && idempotency && jsonBody)
-      contracts.push({
-        operation: {
-          key: "createOrder",
-          label: "Create Order",
-          method: "POST",
-          pathTemplate: "/api/v1/partner-api/orders",
-          transports: ["fetch"],
-          classification: "mutation",
-          activationControlReference: create.reference,
-        },
-        inputs: [
-          input("clientId", "Client ID", "generated_safe", createClientId.reference),
-          input("clientSecret", "Client secret", "protected", createSecret.reference),
-          input("idempotencyKey", "Idempotency-Key", "protected", idempotency.reference),
-          input("orderPayload", "JSON body", "protected", jsonBody.reference, "json_protected"),
-        ],
-        auth: { presentationClasses: ["protected_text", "json_protected"] },
-        response: {
-          statusClasses: [2],
-          confirmedNotAppliedStatuses: [400, 401, 403, 404, 409, 429],
-          safeOutputKeys: ["orderId"],
-          safeOutputs: [
-            { key: "orderId", label: "id", classification: "public", path: "$.data.id" },
+      projected.push({
+        facts: {
+          application: { key: "vitract_preview", provider: "vitract" },
+          adapter: { key: this.adapterKey, version: this.adapterVersion },
+          operation: {
+            key: "createOrder",
+            label: "Create Order",
+            method: "POST",
+            pathTemplate: "/api/v1/partner-api/orders",
+            transports: ["fetch"],
+            semantics: { dispatch: "mutation", effects: ["authentication", "business_effect"] },
+          },
+          inputs: [
+            ...(acknowledgement[0]
+              ? [
+                  {
+                    key: "requestAcknowledgement",
+                    label: acknowledgement[0].name,
+                    aliases: [],
+                    required: true,
+                    classification: "public" as const,
+                    acceptedPresentations: ["plain_text" as const],
+                    checkbox: { requiredState: true },
+                  },
+                ]
+              : []),
+            input("clientId", "Client ID", "generated_safe"),
+            input("clientSecret", "Client secret", "protected"),
+            {
+              ...input("idempotencyKey", "Idempotency-Key", "protected"),
+              syntheticInput: {
+                generatorContract: "opaque_operation_token",
+                generatorVersion: 1,
+                purpose: "test_order_qualification",
+              },
+            },
+            {
+              ...input("orderPayload", "JSON body", "protected", "json_protected"),
+              syntheticInput: {
+                generatorContract: "nested_client_order_json",
+                generatorVersion: 1,
+                purpose: "test_order_qualification",
+              },
+            },
           ],
-          publicIdentityOutputPath: "$.data.id",
-          continuation: "read_only_retrieve",
+          auth: { presentationClasses: ["protected_text", "json_protected"] },
+          response: {
+            statusClasses: [2],
+            mutationPolicy: {
+              confirmedNotAppliedStatuses: [400, 401, 403, 404, 409, 429],
+            },
+            outputs: [output("orderId", "id", "public", "$.data.id", "resource_identity", true)],
+            continuation: "read_only_retrieve",
+          },
+          resourceEffect: {
+            operation: "create",
+            provider: "vitract",
+            resourceKind: "order",
+            resourceScope: "partner_api",
+            identityContractVersion: 1,
+            identityOutputKey: "orderId",
+          },
+          retrieval: {
+            canonicalTargetFieldKey: "orderId",
+            pathTemplate: "/api/v1/partner-api/orders/{orderId}",
+          },
         },
-        retrieval: {
-          canonicalTargetFieldKey: "orderId",
-          pathTemplate: "/api/v1/partner-api/orders/{orderId}",
+        activationControlReference: create.reference,
+        inputControlReferences: {
+          ...(acknowledgement[0] ? { requestAcknowledgement: acknowledgement[0].reference } : {}),
+          clientId: createClientId.reference,
+          clientSecret: createSecret.reference,
+          idempotencyKey: idempotency.reference,
+          orderPayload: jsonBody.reference,
         },
       });
     const retrieve = exactControl(controls, "Run", "activate", "Retrieve Order examples");
@@ -155,40 +224,44 @@ export class VitractObservedOperationContractProvider {
     );
     const orderId = exactControl(controls, "orderId", "enter_text", "Retrieve Order examples");
     if (retrieve && retrieveClientId && retrieveSecret && orderId)
-      contracts.push({
-        operation: {
-          key: "retrieveOrder",
-          label: "Retrieve Order",
-          method: "GET",
-          pathTemplate: "/api/v1/partner-api/orders/{orderId}",
-          transports: ["fetch", "xhr"],
-          classification: "read_only",
-          activationControlReference: retrieve.reference,
-        },
-        inputs: [
-          input("clientId", "Client ID", "generated_safe", retrieveClientId.reference),
-          input("clientSecret", "Client secret", "protected", retrieveSecret.reference),
-          input("orderId", "orderId", "generated_safe", orderId.reference, "plain_text", [
-            "Order ID",
-          ]),
-        ],
-        auth: { presentationClasses: ["protected_text"] },
-        response: {
-          statusClasses: [2],
-          confirmedNotAppliedStatuses: [],
-          safeOutputKeys: ["orderId"],
-          safeOutputs: [
-            { key: "orderId", label: "id", classification: "public", path: "$.data.id" },
+      projected.push({
+        facts: {
+          application: { key: "vitract_preview", provider: "vitract" },
+          adapter: { key: this.adapterKey, version: this.adapterVersion },
+          operation: {
+            key: "retrieveOrder",
+            label: "Retrieve Order",
+            method: "GET",
+            pathTemplate: "/api/v1/partner-api/orders/{orderId}",
+            transports: ["fetch", "xhr"],
+            semantics: { dispatch: "read_only", effects: ["authentication", "read"] },
+          },
+          inputs: [
+            input("clientId", "Client ID", "generated_safe"),
+            input("clientSecret", "Client secret", "protected"),
+            input("orderId", "orderId", "generated_safe", "plain_text", ["Order ID"]),
           ],
-          publicIdentityOutputPath: "$.data.id",
-          continuation: "none",
+          auth: { presentationClasses: ["protected_text"] },
+          response: {
+            statusClasses: [2],
+            outputs: [
+              output("orderId", "id", "public", "$.data.id", "continuation_identity", true),
+            ],
+            continuation: "none",
+          },
+          retrieval: {
+            canonicalTargetFieldKey: "orderId",
+            pathTemplate: "/api/v1/partner-api/orders/{orderId}",
+          },
         },
-        retrieval: {
-          canonicalTargetFieldKey: "orderId",
-          pathTemplate: "/api/v1/partner-api/orders/{orderId}",
+        activationControlReference: retrieve.reference,
+        inputControlReferences: {
+          clientId: retrieveClientId.reference,
+          clientSecret: retrieveSecret.reference,
+          orderId: orderId.reference,
         },
       });
-    return contracts;
+    return projected;
   }
 }
 
@@ -198,6 +271,7 @@ function exactControl(controls: Control[], name: string, capability: string, sco
       control.name === name &&
       control.capabilities.includes(capability as never) &&
       (control.group === scope ||
+        (scope === "Create Order" && control.group === "Create Order examples") ||
         control.boundary?.name === scope ||
         control.boundary?.kind === scope),
   );
@@ -208,7 +282,6 @@ function input(
   key: string,
   label: string,
   classification: "protected" | "generated_safe",
-  controlReference: string,
   presentation: "plain_text" | "protected_text" | "json_protected" = classification === "protected"
     ? "protected_text"
     : "plain_text",
@@ -221,21 +294,23 @@ function input(
     required: true,
     classification,
     acceptedPresentations: [presentation],
-    controlReference,
   };
 }
 
-function digest(value: unknown) {
-  return createHash("sha256").update(stableJson(value)).digest("hex");
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object")
-    return `{${Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
-      .join(",")}}`;
-  return JSON.stringify(value);
+function output(
+  key: string,
+  label: string,
+  classification: "public" | "protected",
+  path: string,
+  identityRole?: "resource_identity" | "continuation_identity",
+  generatedValueEligible = false,
+) {
+  return {
+    key,
+    label,
+    classification,
+    extractor: { kind: "json_path" as const, path },
+    ...(identityRole ? { identityRole } : {}),
+    generatedValueEligible,
+  };
 }

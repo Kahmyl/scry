@@ -593,7 +593,7 @@ integration("adaptive session repository integration", () => {
     ).rejects.toMatchObject({ response: { code: "TRUST_RECOVERY_CONDITION_UNAVAILABLE" } });
   });
 
-  it("loads an authorized protected execution context from PostgreSQL", async () => {
+  it("rejects a legacy protected context even when its old authorization fields match", async () => {
     const created = await createActive({
       ...startInput("protected-context-start"),
       protection: "protected" as const,
@@ -678,15 +678,8 @@ integration("adaptive session repository integration", () => {
 
     await expect(
       repository.protectedExecutionContext(created.id, "protected-context-operation"),
-    ).resolves.toEqual({
-      projectId,
-      environmentId,
-      missionId,
-      objectiveId,
-      agentSessionId,
-      flowDraftId,
-      authorizationId,
-      dispatchDisposition: "execute",
+    ).rejects.toMatchObject({
+      response: { code: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID" },
     });
 
     await database.query(`UPDATE mission_authorizations SET praxis_session_id=NULL WHERE id=$1`, [
@@ -1344,7 +1337,7 @@ integration("adaptive session repository integration", () => {
     });
   });
 
-  it("atomically projects revoked credential pairs and denies cached-session reuse", async () => {
+  it("projects historical credential revocation and denies cached-session reuse", async () => {
     const credentialIds = [randomUUID(), randomUUID()];
     const authorizationId = randomUUID();
     await database.query(
@@ -1385,9 +1378,16 @@ integration("adaptive session repository integration", () => {
     const operationId = "credential-revocation";
     const intent = credentialRevocationIntent(operationId, credentialIds, authorizationId);
     const action = credentialRevocationAction();
+    const referenceUse = protectedFillIntent("credential-use-before-revocation", credentialIds[0]!);
+    await expect(
+      repository.validateIntentAdmission({ sessionId: created.id, intent: referenceUse }),
+    ).resolves.toBeUndefined();
     await expect(
       repository.validateIntentAdmission({ sessionId: created.id, intent }),
-    ).resolves.toBeUndefined();
+    ).rejects.toMatchObject({ response: { code: "PREPARED_EXECUTION_REQUIRED" } });
+    // Seed an already-admitted historical operation below the live admission
+    // boundary. Factual revocation must still settle; its old approval cannot
+    // authorize a new dispatch through the current Mission service.
     await repository.beginMissionOperation({
       workspaceId,
       sessionId: created.id,
@@ -1414,6 +1414,9 @@ integration("adaptive session repository integration", () => {
 
     const statuses = await credentialStatuses(credentialIds);
     expect(statuses).toEqual(credentialIds.map((id) => ({ id, status: "revoked" })));
+    await expect(
+      repository.validateIntentAdmission({ sessionId: created.id, intent: referenceUse }),
+    ).rejects.toMatchObject({ response: { code: "PROTECTED_REFERENCE_INACTIVE" } });
     await expect(
       repository.validateIntentAdmission({ sessionId: created.id, intent }),
     ).rejects.toMatchObject({ response: { code: "PROTECTED_REFERENCE_INACTIVE" } });

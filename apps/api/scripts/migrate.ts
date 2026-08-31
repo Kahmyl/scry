@@ -187,6 +187,9 @@ const vitractQ5CompositionPath = fileURLToPath(
 const preparedProtectedOperationReservationSettlementPath = fileURLToPath(
   new URL("../migrations/prepared-protected-operation-reservation-settlement.sql", import.meta.url),
 );
+const canonicalExecutionAuthorityPath = fileURLToPath(
+  new URL("../migrations/canonical-execution-authority.sql", import.meta.url),
+);
 
 const calibrationFoundation = await readFile(calibrationFoundationPath, "utf8");
 
@@ -278,7 +281,8 @@ const preparedProtectedOperationReservationSettlement = await readFile(
   preparedProtectedOperationReservationSettlementPath,
   "utf8",
 );
-const authoritativeQ5Upgrade = `${qualificationCampaignSafety}\n${authoritativeQ5Qualification}\n${q5CanonicalScopeBootstrap}\n${preparedProtectedOperationJourneys}\n${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}`;
+const canonicalExecutionAuthority = await readFile(canonicalExecutionAuthorityPath, "utf8");
+const authoritativeQ5Upgrade = `${qualificationCampaignSafety}\n${authoritativeQ5Qualification}\n${q5CanonicalScopeBootstrap}\n${preparedProtectedOperationJourneys}\n${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}\n${canonicalExecutionAuthority}`;
 const systemCorrectnessM4Upgrade = `${systemCorrectnessM4}\n${authoritativeQ5Upgrade}`;
 const targetedRegionPerceptionUpgrade = `${targetedRegionPerception}\n${systemCorrectnessM4Upgrade}`;
 const flowNameIdentityCutoverUpgrade = `${flowNameIdentityCutover}\n${targetedRegionPerceptionUpgrade}`;
@@ -342,6 +346,7 @@ const optionalMigrationSources: Record<OptionalBaselineMigration, string> = {
   "vitract-q5-composition.sql": vitractQ5Composition,
   "prepared-protected-operation-reservation-settlement.sql":
     preparedProtectedOperationReservationSettlement,
+  "canonical-execution-authority.sql": canonicalExecutionAuthority,
 };
 
 const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
@@ -372,13 +377,25 @@ const stagedBaseline = (included: readonly OptionalBaselineMigration[]) => {
               migration !== "q5-canonical-scope-bootstrap.sql" &&
               migration !== "prepared-protected-operation-journeys.sql" &&
               migration !== "vitract-q5-composition.sql" &&
-              migration !== "prepared-protected-operation-reservation-settlement.sql",
+              migration !== "prepared-protected-operation-reservation-settlement.sql" &&
+              migration !== "canonical-execution-authority.sql",
           ),
     ),
   );
 };
 
 const baseline = stagedBaseline(OPTIONAL_BASELINE_MIGRATIONS);
+const preCanonicalExecutionAuthorityFingerprint = createHash("sha256")
+  .update(
+    expandFoundation(
+      expandBaselineStage(
+        baselineSource,
+        optionalMigrationSources,
+        OPTIONAL_BASELINE_MIGRATIONS.filter((name) => name !== "canonical-execution-authority.sql"),
+      ),
+    ),
+  )
+  .digest("hex");
 const prePreparedProtectedOperationReservationSettlementFingerprint = createHash("sha256")
   .update(
     expandFoundation(
@@ -814,14 +831,43 @@ try {
       releasedHistoricalFingerprints,
     );
 
-    if (installedFingerprint === prePreparedProtectedOperationReservationSettlementFingerprint) {
+    // Exact unreleased dirty schema observed in local qualification databases.
+    // The canonical migration contains an explicit, evidence-preserving forward reduction.
+    if (
+      installedFingerprint === "36dada5bbaafa72cb1f6afbf6387426a0167661162fd5976e0512fcf53b8a4d3" ||
+      installedFingerprint === preCanonicalExecutionAuthorityFingerprint
+    ) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('scry-canonical-execution-authority'))",
+        );
+        await client.query(canonicalExecutionAuthority);
+        await client.query(
+          `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
+          [fingerprint],
+        );
+        await client.query("COMMIT");
+        process.stdout.write(`Applied canonical execution authority ${fingerprint}\n`);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else if (
+      installedFingerprint === prePreparedProtectedOperationReservationSettlementFingerprint
+    ) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query(
           "SELECT pg_advisory_xact_lock(hashtext('scry-prepared-protected-operation-reservation-settlement'))",
         );
-        await client.query(preparedProtectedOperationReservationSettlement);
+        await client.query(
+          `${preparedProtectedOperationReservationSettlement}\n${canonicalExecutionAuthority}`,
+        );
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
           [fingerprint],
@@ -840,7 +886,7 @@ try {
         await client.query("BEGIN");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('scry-vitract-q5-composition'))");
         await client.query(
-          `${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}`,
+          `${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}\n${canonicalExecutionAuthority}`,
         );
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
@@ -862,7 +908,7 @@ try {
           "SELECT pg_advisory_xact_lock(hashtext('scry-prepared-protected-operation-journeys'))",
         );
         await client.query(
-          `${preparedProtectedOperationJourneys}\n${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}`,
+          `${preparedProtectedOperationJourneys}\n${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}\n${canonicalExecutionAuthority}`,
         );
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
@@ -884,7 +930,7 @@ try {
           "SELECT pg_advisory_xact_lock(hashtext('scry-q5-canonical-scope-bootstrap'))",
         );
         await client.query(
-          `${q5CanonicalScopeBootstrap}\n${preparedProtectedOperationJourneys}\n${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}`,
+          `${q5CanonicalScopeBootstrap}\n${preparedProtectedOperationJourneys}\n${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}\n${canonicalExecutionAuthority}`,
         );
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,
@@ -906,7 +952,7 @@ try {
           "SELECT pg_advisory_xact_lock(hashtext('scry-authoritative-q5-qualification'))",
         );
         await client.query(
-          `${authoritativeQ5Qualification}\n${q5CanonicalScopeBootstrap}\n${preparedProtectedOperationJourneys}\n${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}`,
+          `${authoritativeQ5Qualification}\n${q5CanonicalScopeBootstrap}\n${preparedProtectedOperationJourneys}\n${vitractQ5Composition}\n${preparedProtectedOperationReservationSettlement}\n${canonicalExecutionAuthority}`,
         );
         await client.query(
           `UPDATE schema_baseline SET schema_fingerprint=$1,applied_at=now() WHERE singleton=true`,

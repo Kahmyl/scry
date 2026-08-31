@@ -1,3 +1,4 @@
+import { retireUnusedPreparedOperations } from "./retire-unused-prepared-operations.js";
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient, QueryResultRow } from "pg";
@@ -185,14 +186,15 @@ export class AdaptiveSessionRepository {
       const flowDraftId = randomUUID();
       const authoringSessionId = randomUUID();
       await q(
-        `INSERT INTO missions(id,project_id,title,original_instruction,status,current_objective_id,revision)
-        VALUES($1,$2,$3,$4,'planning',$5,1)`,
+        `INSERT INTO missions(id,project_id,title,original_instruction,status,current_objective_id,revision,max_business_mutation_dispatches)
+        VALUES($1,$2,$3,$4,'planning',$5,1,$6)`,
         [
           missionId,
           input.projectId,
           input.mission.title,
           input.mission.originalInstruction,
           objectiveId,
+          input.mission.maxBusinessMutationDispatches ?? 1,
         ],
       );
       const { agentSessionId } = await attachOrCreateExternalAgentSession(q, {
@@ -1168,24 +1170,32 @@ export class AdaptiveSessionRepository {
         throw new ConflictException({ code: "MISSION_AUTHORING_NEW_PAGE_ORIGIN_NOT_ALLOWED" });
       }
     }
-    if (input.intent.authorization.authorizationId) {
-      const authorized = await this.database.query(
-        `SELECT 1 FROM mission_authorizations WHERE id=$1 AND mission_id=$2 AND objective_id=$3
-           AND environment_id=$4 AND kind=$5
-           AND ($5<>'protected_mutation' OR (operation_id=$6 AND praxis_session_id=$7))
-           AND status='approved' AND (expires_at IS NULL OR expires_at>now())`,
+    if (input.intent.authorization.kind === "prepared_execution") {
+      const capability = await this.database.query(
+        `SELECT 1 FROM prepared_execution_capabilities capability
+           JOIN protected_operations operation ON operation.id=capability.protected_operation_id
+           JOIN runtime_interaction_capabilities interaction ON interaction.id=capability.runtime_interaction_capability_id
+           JOIN adaptive_session_runtime_leases lease ON lease.session_id=interaction.praxis_session_id
+            AND lease.owner_id=interaction.runtime_owner_id AND lease.fencing_token=interaction.fencing_epoch
+            AND lease.lease_expires_at>now()
+          WHERE capability.id=$1 AND operation.authoring_session_id=$2
+            AND operation.operation_id=$3 AND operation.authority_model='canonical'
+            AND capability.mission_id=$4 AND capability.objective_id=$5 AND capability.environment_id=$6
+            AND capability.state IN ('reserved','finalized') AND capability.expires_at>now()
+            AND interaction.state='active' AND interaction.expires_at>now()`,
         [
-          input.intent.authorization.authorizationId,
+          input.intent.authorization.preparedExecutionCapabilityId,
+          input.sessionId,
+          input.intent.intentId,
           current.missionId,
           input.intent.objectiveId,
           current.environmentId,
-          input.intent.authorization.kind,
-          input.intent.intentId,
-          input.sessionId,
         ],
       );
-      if (!authorized.rowCount)
-        throw new ConflictException({ code: "MISSION_AUTHORING_AUTHORIZATION_INVALID" });
+      if (capability.rowCount !== 1)
+        throw new ConflictException({ code: "PREPARED_EXECUTION_CAPABILITY_INVALID" });
+    } else if (["live_mutation", "protected_mutation"].includes(input.intent.authorization.kind)) {
+      throw new ConflictException({ code: "PREPARED_EXECUTION_REQUIRED" });
     }
   }
 
@@ -1263,47 +1273,6 @@ export class AdaptiveSessionRepository {
     });
   }
 
-  async reserveMissionProtectedOperation(input: {
-    sessionId: string;
-    operationId: string;
-    intent: MissionAuthoringIntent;
-  }) {
-    return this.database.transaction(async (client) => {
-      const q = bind(client);
-      const session = await this.requireSession(q, null, input.sessionId, true);
-      const runtime = await this.runtimeContext(q, input.sessionId);
-      const result = await q<{ id: string }>(
-        `INSERT INTO protected_operations(
-           operation_id,mutation_identity,owner_kind,authoring_session_id,project_id,
-           environment_id,mission_id,objective_id,agent_session_id,flow_draft_id,
-           authorization_id,program_digest,state,phase,safe_output_manifest
-         ) VALUES($1,$1,'authoring_session',$2,$3,$4,$5,$6,$7,$8,$9,NULL,'reserved','reserved','[]'::jsonb)
-         ON CONFLICT DO NOTHING RETURNING id`,
-        [
-          input.operationId,
-          input.sessionId,
-          runtime.projectId,
-          runtime.environmentId,
-          session.missionId,
-          input.intent.objectiveId,
-          runtime.agentSessionId,
-          input.intent.flowDraftId,
-          input.intent.authorization.authorizationId,
-        ],
-      );
-      if (!result.rowCount)
-        throw new ConflictException({
-          code: "MISSION_AUTHORING_PROTECTED_OPERATION_ALREADY_RESERVED",
-        });
-      await q(
-        `INSERT INTO protected_operation_transitions(protected_operation_id,sequence,from_state,to_state,phase,fencing_token,safe_diagnostics)
-         VALUES($1,1,NULL,'reserved','reserved',0,'{}'::jsonb)`,
-        [result.rows[0]!.id],
-      );
-      return { protectedOperationId: result.rows[0]!.id };
-    });
-  }
-
   async replayMissionOperation(input: { sessionId: string; operationId: string }) {
     const result = await this.database.query<{
       idempotencyKey: string;
@@ -1330,34 +1299,6 @@ export class AdaptiveSessionRepository {
     } satisfies AdaptiveSessionOperationInput;
   }
 
-  async closeReservedMissionProtectedOperation(input: {
-    protectedOperationId: string;
-    reasonCode: string;
-  }) {
-    await this.database.transaction(async (client) => {
-      const result = await client.query<{ version: string }>(
-        `UPDATE protected_operations SET state='failed_not_applied',phase='compilation_failed',
-           mutation_outcome='not_applied',failure_code=$2,recovery_class='do_not_retry',
-           completed_at=now(),updated_at=now(),version=version+1
-         WHERE id=$1 AND state='reserved' RETURNING version`,
-        [input.protectedOperationId, input.reasonCode],
-      );
-      if (!result.rowCount) return;
-      await client.query(
-        `UPDATE operation_bound_protected_inputs SET ciphertext=NULL,initialization_vector=NULL,
-           authentication_tag=NULL,lifecycle='destroyed',destroyed_at=now()
-         WHERE protected_operation_id=$1 AND lifecycle='active'`,
-        [input.protectedOperationId],
-      );
-      await client.query(
-        `INSERT INTO protected_operation_transitions(protected_operation_id,sequence,from_state,to_state,phase,fencing_token,reason_code,safe_diagnostics)
-         SELECT $1,COALESCE(max(sequence),0)+1,'reserved','failed_not_applied','compilation_failed',0,$2,'{}'::jsonb
-         FROM protected_operation_transitions WHERE protected_operation_id=$1`,
-        [input.protectedOperationId, input.reasonCode],
-      );
-    });
-  }
-
   async protectedExecutionContext(sessionId: string, operationId: string) {
     const result = await this.database.query<{
       projectId: string;
@@ -1366,43 +1307,49 @@ export class AdaptiveSessionRepository {
       objectiveId: string;
       agentSessionId: string;
       flowDraftId: string;
-      authorizationId: string;
+      mutationIdentity: string;
+      preparedExecutionCapabilityId: string;
+      canonicalProgramDigest: string;
       dispatchDisposition: "execute" | "qualification_only";
     }>(
       `SELECT session.project_id AS "projectId",session.environment_id AS "environmentId",
               operation.mission_id AS "missionId",operation.objective_id AS "objectiveId",
               session.agent_session_id AS "agentSessionId",operation.flow_draft_id AS "flowDraftId",
-              operation.authoring_intent->'authorization'->>'authorizationId' AS "authorizationId",
+              protected_operation.mutation_identity AS "mutationIdentity",
+              prepared_capability.id AS "preparedExecutionCapabilityId",
+              prepared_capability.program_digest AS "canonicalProgramDigest",
               session.trusted_dispatch_disposition AS "dispatchDisposition"
        FROM adaptive_operations operation
        JOIN adaptive_sessions session ON session.id=operation.session_id
-       JOIN mission_authorizations mission_authorization
-         ON mission_authorization.id=(operation.authoring_intent->'authorization'->>'authorizationId')::uuid
-        AND mission_authorization.mission_id=operation.mission_id
-        AND mission_authorization.objective_id=operation.objective_id
-        AND mission_authorization.environment_id=session.environment_id
-        AND mission_authorization.kind='protected_mutation'
-        AND mission_authorization.operation_id=operation.authoring_intent->>'intentId'
-        AND mission_authorization.praxis_session_id=session.id
-        AND mission_authorization.status='approved'
-        AND (mission_authorization.expires_at IS NULL OR mission_authorization.expires_at>now())
        JOIN protected_operations protected_operation
          ON protected_operation.authoring_session_id=session.id
         AND protected_operation.operation_id=operation.operation_id
-        AND protected_operation.authorization_id=mission_authorization.id
-        AND (
-          protected_operation.praxis_session_id IS NULL
-          OR (
-            mission_authorization.protected_operation_id=protected_operation.id
-            AND mission_authorization.protected_operation_contract_digest=
-              protected_operation.observed_operation_contract_digest
-            AND protected_operation.praxis_session_id=session.id
-            AND protected_operation.reservation_expires_at>now()
-          )
-        )
+       JOIN prepared_execution_capabilities prepared_capability
+         ON prepared_capability.id=protected_operation.prepared_execution_capability_id
+        AND prepared_capability.protected_operation_id=protected_operation.id
+        AND prepared_capability.id=NULLIF(operation.authoring_intent->'authorization'->>'preparedExecutionCapabilityId','')::uuid
+        AND prepared_capability.mission_id=operation.mission_id
+        AND prepared_capability.objective_id=operation.objective_id
+        AND prepared_capability.project_id=session.project_id
+        AND prepared_capability.environment_id=session.environment_id
+        AND prepared_capability.agent_session_id=session.agent_session_id
+       JOIN runtime_interaction_capabilities interaction
+         ON interaction.id=prepared_capability.runtime_interaction_capability_id
+        AND interaction.praxis_session_id=session.id AND interaction.state='active'
+        AND interaction.expires_at>now()
+       JOIN adaptive_session_runtime_leases lease
+         ON lease.session_id=session.id AND lease.owner_id=interaction.runtime_owner_id
+        AND lease.fencing_token=interaction.fencing_epoch AND lease.lease_expires_at>now()
        WHERE operation.session_id=$1 AND operation.operation_id=$2
          AND session.protection='protected'
-         AND operation.semantic_intent->>'type'='protectedTransaction'`,
+         AND operation.semantic_intent->>'type'='protectedTransaction'
+         AND protected_operation.authority_model='canonical'
+         AND prepared_capability.state='finalized'
+         AND prepared_capability.expires_at>now()
+         AND prepared_capability.program_digest=protected_operation.program_digest
+         AND prepared_capability.mutation_identity::text=protected_operation.mutation_identity
+         AND protected_operation.praxis_session_id=session.id
+         AND protected_operation.reservation_expires_at>now()`,
       [sessionId, operationId],
     );
     if (!result.rowCount)
@@ -1435,7 +1382,7 @@ export class AdaptiveSessionRepository {
         missionId: string;
         objectiveId: string;
         environmentId: string;
-        authorizationId: string | null;
+        preparedExecutionCapabilityId: string | null;
         intent: MissionAuthoringIntent;
         action: AdaptiveSessionOperationInput["action"];
         outcome: OperationOutcome | null;
@@ -1446,7 +1393,7 @@ export class AdaptiveSessionRepository {
         `SELECT operation.state,operation.flow_draft_id AS "flowDraftId",
                 operation.mission_id AS "missionId",operation.objective_id AS "objectiveId",
                 session.environment_id AS "environmentId",
-                operation.authoring_intent->'authorization'->>'authorizationId' AS "authorizationId",
+                operation.authoring_intent->'authorization'->>'preparedExecutionCapabilityId' AS "preparedExecutionCapabilityId",
                 operation.authoring_intent AS intent,operation.semantic_intent AS action,
                 operation.safe_outcome AS outcome,operation.decision_boundary AS "decisionBoundary",
                 operation.dispatch_boundary AS "dispatchBoundary",
@@ -1455,7 +1402,8 @@ export class AdaptiveSessionRepository {
                    WHERE prepared.owner_kind='authoring_session'
                      AND prepared.authoring_session_id=operation.session_id
                      AND prepared.operation_id=operation.operation_id
-                     AND prepared.observed_operation_contract_id IS NOT NULL
+                     AND prepared.authority_model='canonical'
+                     AND prepared.prepared_execution_capability_id IS NOT NULL
                 ) AS "preparedOperation"
            FROM adaptive_operations operation
            JOIN adaptive_sessions session ON session.id=operation.session_id
@@ -1495,7 +1443,7 @@ export class AdaptiveSessionRepository {
           WHERE protected.owner_kind='authoring_session' AND protected.authoring_session_id=$1
             AND protected.operation_id=$2 AND protected.mission_id=$3 AND protected.objective_id=$4
             AND protected.flow_draft_id=$5 AND protected.environment_id=$6
-            AND protected.authorization_id=$7::uuid
+            AND protected.prepared_execution_capability_id=$7::uuid
           FOR UPDATE`,
         [
           input.sessionId,
@@ -1504,7 +1452,7 @@ export class AdaptiveSessionRepository {
           owner.objectiveId,
           owner.flowDraftId,
           owner.environmentId,
-          owner.authorizationId,
+          owner.preparedExecutionCapabilityId,
         ],
       );
       if (!protectedResult.rowCount) {
@@ -1573,10 +1521,12 @@ export class AdaptiveSessionRepository {
       let outcome: OperationOutcome;
       let decisionBoundary: AgentDecisionBoundary;
       if (durable.state === "completed") {
+        if (!["applied", "not_applied"].includes(durable.mutationOutcome))
+          throw new ConflictException({ code: "PROTECTED_COMPLETION_MUTATION_TRUTH_INVALID" });
         outcome = operationOutcomeSchema.parse({
           operationId: input.operationId,
           functionalResult: "succeeded",
-          mutationOutcome: "applied",
+          mutationOutcome: durable.mutationOutcome,
           privacyResult: "sealed",
           evidenceResult: [],
           qualityFindings: [],
@@ -1831,16 +1781,13 @@ export class AdaptiveSessionRepository {
           AND protected.operation_id=adaptive.operation_id
          JOIN adaptive_sessions session ON session.id=adaptive.session_id
          JOIN projects project ON project.id=session.project_id
-         LEFT JOIN mission_authorizations authority
-           ON authority.id=protected.authorization_id
+         LEFT JOIN prepared_execution_capabilities authority
+           ON authority.id=protected.prepared_execution_capability_id
+          AND authority.protected_operation_id=protected.id
           AND authority.mission_id=adaptive.mission_id
           AND authority.objective_id=adaptive.objective_id
           AND authority.environment_id=session.environment_id
-          AND authority.kind='protected_mutation'
-          AND authority.operation_id=adaptive.authoring_intent->>'intentId'
-          AND authority.praxis_session_id=adaptive.session_id
-          AND authority.status='approved'
-          AND (authority.expires_at IS NULL OR authority.expires_at>now())
+          AND authority.state='finalized' AND authority.expires_at>now()
         WHERE adaptive.session_id=$1 AND ($2::uuid IS NULL OR project.workspace_id=$2)
           AND adaptive.state='running'
           AND protected.state IN ('planned','preparing','ready_to_dispatch')
@@ -1981,6 +1928,7 @@ export class AdaptiveSessionRepository {
     mode: AdaptiveSessionOperationInput["mode"];
     protectedReservation?: {
       mutationIdentity: string;
+      preparedExecutionCapabilityId?: string;
       dispatchSemantics?: "mutation" | "read_only";
       programDigest: string;
       safeOutputManifest: Array<{
@@ -1997,6 +1945,13 @@ export class AdaptiveSessionRepository {
     earlyProtectedOperationId?: string;
     preparedProtectedOperationId?: string;
   }) {
+    if (
+      input.protectedReservation &&
+      (!input.preparedProtectedOperationId ||
+        input.earlyProtectedOperationId !== input.preparedProtectedOperationId ||
+        !input.protectedReservation.preparedExecutionCapabilityId)
+    )
+      throw new ConflictException({ code: "PREPARED_EXECUTION_CAPABILITY_REQUIRED" });
     return this.database.transaction(async (client) => {
       const q = bind(client);
       const session = await this.requireSession(q, input.workspaceId, input.sessionId, true);
@@ -2012,6 +1967,25 @@ export class AdaptiveSessionRepository {
       if (existing.rowCount) return { ...existing.rows[0]!, replayed: true };
       const runtime = await this.runtimeContext(q, input.sessionId);
       const sequence = await this.nextOperationSequence(q, input.sessionId);
+      let operationPolicyDigest = policyDigest(runtime.policy);
+      if (input.protectedReservation?.preparedExecutionCapabilityId) {
+        const preparedPolicy = await q<{ digest: string }>(
+          `SELECT policy.digest
+             FROM prepared_execution_capabilities capability
+             JOIN execution_policy_snapshots policy
+               ON policy.id=capability.execution_policy_snapshot_id
+              AND policy.digest=capability.execution_policy_snapshot_digest
+            WHERE capability.id=$1 AND capability.protected_operation_id=$2
+              AND capability.state='finalized'`,
+          [
+            input.protectedReservation.preparedExecutionCapabilityId,
+            input.preparedProtectedOperationId,
+          ],
+        );
+        if (!preparedPolicy.rowCount)
+          throw new ConflictException({ code: "PREPARED_EXECUTION_POLICY_AUTHORITY_INVALID" });
+        operationPolicyDigest = preparedPolicy.rows[0]!.digest;
+      }
       await q(
         `INSERT INTO adaptive_operations(
            session_id,operation_id,sequence,mode,state,semantic_intent,expected_effect,policy_digest,
@@ -2024,7 +1998,7 @@ export class AdaptiveSessionRepository {
           input.mode,
           JSON.stringify(input.action),
           JSON.stringify(input.expectedEffect),
-          policyDigest(runtime.policy),
+          operationPolicyDigest,
           input.idempotencyKey,
           session.missionId,
           input.intent.objectiveId,
@@ -2040,8 +2014,7 @@ export class AdaptiveSessionRepository {
       if (input.protectedReservation) {
         if (
           input.action.type !== "protectedTransaction" ||
-          input.intent.authorization.kind !== "protected_mutation" ||
-          input.protectedReservation.mutationIdentity !== input.operationId
+          input.intent.authorization.kind !== "prepared_execution"
         ) {
           throw new ConflictException({ code: "MISSION_AUTHORING_PROTECTED_RESERVATION_INVALID" });
         }
@@ -2062,27 +2035,38 @@ export class AdaptiveSessionRepository {
         if (prepared) {
           const contract = await q<{
             outputCommitment: string;
+            mutationIdentity: string;
+            programDigest: string;
             facts: {
               operation: {
                 method: string;
                 pathTemplate: string;
                 transports: string[];
-                classification: "read_only" | "mutation";
+                semantics: { dispatch: "read_only" | "mutation" };
               };
               response: {
-                safeOutputKeys: string[];
-                safeOutputs: Array<{ key: string; classification: "public" | "protected" }>;
+                outputs: Array<{ key: string; classification: "public" | "protected" }>;
               };
             };
           }>(
-            `SELECT contract.facts,operation.output_commitment AS "outputCommitment"
+            `SELECT revision.facts,capability.output_commitment AS "outputCommitment",
+                    capability.mutation_identity AS "mutationIdentity",
+                    capability.program_digest AS "programDigest"
              FROM protected_operations operation
-             JOIN observed_operation_contracts contract
-               ON contract.id=operation.observed_operation_contract_id
-              AND contract.digest=operation.observed_operation_contract_digest
+             JOIN prepared_execution_capabilities capability
+               ON capability.id=$3 AND capability.id=operation.prepared_execution_capability_id
+              AND capability.protected_operation_id=operation.id AND capability.state='finalized'
+             JOIN operation_contract_revisions revision
+               ON revision.id=capability.operation_contract_revision_id
+              AND revision.semantic_digest=capability.operation_contract_revision_digest
              WHERE operation.id=$1 AND operation.state='planned'
-               AND operation.authorization_id=$2 FOR SHARE OF operation,contract`,
-            [input.preparedProtectedOperationId, input.intent.authorization.authorizationId],
+               AND capability.id=$2 AND operation.authority_model='canonical'
+             FOR SHARE OF operation,capability,revision`,
+            [
+              input.preparedProtectedOperationId,
+              input.intent.authorization.preparedExecutionCapabilityId,
+              input.protectedReservation.preparedExecutionCapabilityId,
+            ],
           );
           const actual = contract.rows[0]?.facts;
           const request = input.protectedReservation.requestContract;
@@ -2094,17 +2078,19 @@ export class AdaptiveSessionRepository {
             !request ||
             actual.operation.method !== request.method ||
             actual.operation.pathTemplate !== request.pathTemplate ||
-            actual.operation.classification !==
+            actual.operation.semantics.dispatch !==
               (input.protectedReservation.dispatchSemantics === "read_only"
                 ? "read_only"
                 : "mutation") ||
             request.transports.some(
               (transport) => !actual.operation.transports.includes(transport),
             ) ||
-            expectedOutputs.some((output) => !actual.response.safeOutputKeys.includes(output)) ||
+            expectedOutputs.some(
+              (output) => !actual.response.outputs.some((declared) => declared.key === output),
+            ) ||
             input.protectedReservation.safeOutputManifest.some(
               (output) =>
-                !actual.response.safeOutputs.some(
+                !actual.response.outputs.some(
                   (declared) =>
                     declared.key === output.reference &&
                     declared.classification === output.classification,
@@ -2118,7 +2104,9 @@ export class AdaptiveSessionRepository {
                     classification: output.classification,
                   }))
                   .sort((left, right) => left.key.localeCompare(right.key)),
-              )
+              ) ||
+            contract.rows[0]!.mutationIdentity !== input.protectedReservation.mutationIdentity ||
+            contract.rows[0]!.programDigest !== input.protectedReservation.programDigest
           )
             throw new ConflictException({
               code: "PREPARED_OPERATION_EXECUTION_CONTRACT_MISMATCH",
@@ -2131,7 +2119,10 @@ export class AdaptiveSessionRepository {
              synthetic_input_set_commitment=$5,payload_commitment=$6,
              provider_idempotency_commitment=$7,version=version+1,updated_at=now()
            WHERE id=$1 AND state=CASE WHEN $8::boolean THEN 'planned' ELSE 'reserved' END
-             AND program_digest IS NULL RETURNING id`,
+             AND program_digest IS NULL
+             AND mutation_identity=$9
+             AND ($8::boolean=false OR prepared_execution_capability_id=$10)
+           RETURNING id`,
               [
                 input.earlyProtectedOperationId,
                 input.protectedReservation.programDigest,
@@ -2144,6 +2135,8 @@ export class AdaptiveSessionRepository {
                 }),
                 providerIdempotencyCommitment,
                 prepared,
+                input.protectedReservation.mutationIdentity,
+                input.protectedReservation.preparedExecutionCapabilityId ?? null,
               ],
             )
           : await q<{ id: string }>(
@@ -2178,14 +2171,20 @@ export class AdaptiveSessionRepository {
             `INSERT INTO operation_value_bindings(
                consumer_praxis_session_id,consumer_operation_id,source_kind,source_reference_id,
                producer_protected_operation_id,canonical_field_key,target_reference,
-               presentation_class,public_value,source_commitment,owner_fencing_epoch,expires_at,max_uses)
-             SELECT $1,$2,binding.source_kind,binding.source_reference_id,
+               presentation_class,public_value,source_commitment,owner_fencing_epoch,expires_at,max_uses,
+               value_use_grant_id)
+             SELECT $1,$2,binding.source_kind,
+               CASE WHEN binding.source_kind='generated_protected'
+                 THEN asset.project_credential_id ELSE binding.source_reference_id END,
                binding.producer_protected_operation_id,binding.canonical_field_key,
                binding.target_reference,binding.presentation_class,NULL,binding.source_commitment,
-               binding.owner_fencing_epoch,binding.expires_at,binding.max_uses
+               binding.owner_fencing_epoch,binding.expires_at,binding.max_uses,binding.value_use_grant_id
              FROM operation_value_bindings binding
+             LEFT JOIN typed_value_assets asset
+               ON binding.source_kind='generated_protected' AND asset.id=binding.source_reference_id
              WHERE binding.consumer_protected_operation_id=$3
-               AND binding.source_kind IN ('protected_reference','synthetic_protected')
+               AND binding.source_kind IN ('protected_reference','synthetic_protected','generated_protected')
+               AND (binding.source_kind<>'generated_protected' OR asset.project_credential_id IS NOT NULL)
                AND binding.state='active' AND binding.expires_at>now()
              ON CONFLICT DO NOTHING`,
             [input.sessionId, input.operationId, input.preparedProtectedOperationId],
@@ -2237,7 +2236,7 @@ export class AdaptiveSessionRepository {
       `UPDATE adaptive_operations SET state=$3,
          capability_manifest_digest=COALESCE(capability_manifest_digest,$4),
          dispatch_boundary=CASE
-           WHEN $5='applied' THEN 'acknowledged'
+           WHEN $3='completed' OR $5='applied' THEN 'acknowledged'
            WHEN $5='unknown' AND dispatch_boundary='not_dispatched' THEN 'dispatching'
            ELSE dispatch_boundary
          END,
@@ -2248,7 +2247,7 @@ export class AdaptiveSessionRepository {
          AND (state IS DISTINCT FROM $3
            OR capability_manifest_digest IS DISTINCT FROM COALESCE(capability_manifest_digest,$4)
            OR dispatch_boundary IS DISTINCT FROM CASE
-             WHEN $5='applied' THEN 'acknowledged'
+             WHEN $3='completed' OR $5='applied' THEN 'acknowledged'
              WHEN $5='unknown' AND dispatch_boundary='not_dispatched' THEN 'dispatching'
              ELSE dispatch_boundary
            END
@@ -3678,6 +3677,25 @@ export class AdaptiveSessionRepository {
       throw new ConflictException({ code: "SUCCESSOR_CHECKPOINT_STATE_CONFLICT" });
   }
 
+  async invalidateInteractionCapabilitiesForDocument(input: {
+    sessionId: string;
+    ownerId: string;
+    fencingToken: number;
+    documentEpoch: number;
+    origin: string;
+  }) {
+    await this.database.query(
+      `UPDATE runtime_interaction_capabilities interaction SET state='stale',revoked_at=now()
+         FROM adaptive_session_runtime_leases lease
+        WHERE interaction.praxis_session_id=$1 AND interaction.state='active'
+          AND lease.session_id=$1 AND lease.owner_id=$2 AND lease.fencing_token=$3
+          AND lease.lease_expires_at>now()
+          AND (interaction.runtime_owner_id<>$2 OR interaction.fencing_epoch<>$3
+            OR interaction.document_epoch<>$4 OR interaction.origin<>$5)`,
+      [input.sessionId, input.ownerId, input.fencingToken, input.documentEpoch, input.origin],
+    );
+  }
+
   async recordVerifiedObservation(input: {
     sessionId: string;
     operationId: string;
@@ -3710,6 +3728,7 @@ export class AdaptiveSessionRepository {
        WHERE session.id=$1
          AND credential.security_status='active'
          AND credential.deleted_at IS NULL
+         AND credential.origin_protected_operation_id IS NULL
          AND environment.secret_refs ? ($2::uuid)::text`,
       [sessionId, reference],
     );
@@ -3742,21 +3761,71 @@ export class AdaptiveSessionRepository {
            AND lease.session_id=binding.consumer_praxis_session_id
            AND lease.fencing_token=binding.owner_fencing_epoch
            AND lease.lease_expires_at>now()
+           AND EXISTS (SELECT 1 FROM adaptive_sessions session JOIN missions mission ON mission.id=session.mission_id
+             WHERE session.id=binding.consumer_praxis_session_id AND session.state='active'
+               AND mission.status NOT IN ('cancelled','completed','failed'))
          RETURNING binding.source_reference_id,binding.source_kind
+       ), eligible_grant AS (
+         SELECT binding.id
+           FROM operation_value_bindings binding
+           JOIN adaptive_operations adaptive
+             ON adaptive.session_id=binding.consumer_praxis_session_id
+            AND adaptive.operation_id=binding.consumer_operation_id
+           JOIN protected_operations operation
+             ON operation.authoring_session_id=adaptive.session_id
+            AND operation.operation_id=adaptive.operation_id
+            AND operation.authority_model='canonical'
+           JOIN prepared_execution_capabilities capability
+             ON capability.id=operation.prepared_execution_capability_id
+            AND capability.protected_operation_id=operation.id
+            AND capability.state='finalized' AND capability.expires_at>now()
+           JOIN missions mission ON mission.id=capability.mission_id AND mission.status NOT IN ('cancelled','completed','failed')
+           JOIN operation_contract_revisions revision ON revision.id=capability.operation_contract_revision_id
+            AND revision.retention_state='active' AND revision.staleness='current'
+           JOIN value_use_grants grant_authority
+             ON grant_authority.id=binding.value_use_grant_id
+            AND grant_authority.consumer_prepared_execution_capability_id=capability.id
+            AND grant_authority.consumer_protected_operation_id=operation.id
+            AND grant_authority.canonical_field_key=binding.canonical_field_key
+            AND grant_authority.presentation_class=binding.presentation_class
+           JOIN typed_value_assets asset ON asset.id=grant_authority.value_asset_id
+            AND asset.project_credential_id=binding.source_reference_id AND asset.state='active'
+            AND asset.producer_protected_operation_id=grant_authority.producer_protected_operation_id
+           JOIN runtime_interaction_capabilities interaction
+             ON interaction.id=capability.runtime_interaction_capability_id
+            AND interaction.state='active' AND interaction.expires_at>now()
+           JOIN adaptive_session_runtime_leases runtime_lease
+             ON runtime_lease.session_id=interaction.praxis_session_id
+            AND runtime_lease.owner_id=interaction.runtime_owner_id
+            AND runtime_lease.fencing_token=interaction.fencing_epoch
+            AND runtime_lease.lease_expires_at>now()
+          WHERE binding.consumer_praxis_session_id=$1
+            AND binding.consumer_operation_id=$2 AND binding.source_reference_id=$3
+            AND binding.source_kind='generated_protected' AND binding.state='active'
+            AND binding.use_count=0 AND grant_authority.max_uses=1 AND grant_authority.state='consumed'
+            AND grant_authority.use_count=1 AND grant_authority.revoked_at IS NULL
+            AND grant_authority.expires_at>now() AND binding.expires_at>now()
+       ), granted AS (
+         UPDATE operation_value_bindings binding SET use_count=1,state='consumed',consumed_at=now()
+          FROM eligible_grant
+         WHERE binding.id=eligible_grant.id AND binding.state='active' AND binding.use_count=0
+         RETURNING binding.source_reference_id,'generated_protected'::text AS source_kind
+       ), admitted AS (
+         SELECT * FROM consumed UNION ALL SELECT * FROM granted
        )
        SELECT COALESCE(credential.ciphertext,synthetic.ciphertext) AS ciphertext,
               COALESCE(credential.initialization_vector,synthetic.initialization_vector)
                 AS "initializationVector",
               COALESCE(credential.authentication_tag,synthetic.authentication_tag)
                 AS "authenticationTag"
-       FROM consumed
+       FROM admitted
        LEFT JOIN project_credentials credential
-         ON consumed.source_kind='protected_reference'
-        AND credential.id=consumed.source_reference_id
+         ON admitted.source_kind IN ('protected_reference','generated_protected')
+        AND credential.id=admitted.source_reference_id
         AND credential.deleted_at IS NULL AND credential.security_status='active'
        LEFT JOIN operation_bound_protected_inputs synthetic
-         ON consumed.source_kind='synthetic_protected'
-        AND synthetic.id=consumed.source_reference_id AND synthetic.lifecycle='active'
+         ON admitted.source_kind='synthetic_protected'
+        AND synthetic.id=admitted.source_reference_id AND synthetic.lifecycle='active'
        WHERE credential.id IS NOT NULL OR synthetic.id IS NOT NULL`,
       [sessionId, operationId, reference],
     );
@@ -3768,6 +3837,13 @@ export class AdaptiveSessionRepository {
         authenticationTag: Buffer.from(encrypted.authenticationTag, "base64"),
       });
     }
+    const canonicalOperation = await this.database.query(
+      `SELECT 1 FROM protected_operations
+        WHERE authoring_session_id=$1 AND operation_id=$2 AND authority_model='canonical'`,
+      [sessionId, operationId],
+    );
+    if (canonicalOperation.rowCount)
+      throw new ConflictException({ code: "VALUE_USE_GRANT_INVALID" });
     try {
       return await this.resolveCredential(sessionId, reference);
     } catch (error) {
@@ -4106,6 +4182,12 @@ export class AdaptiveSessionRepository {
       );
       const stale = prior.rows[0];
       if (stale?.expired && stale.ownerId !== input.ownerId) {
+        await q(
+          `UPDATE runtime_interaction_capabilities SET state='stale',revoked_at=now()
+            WHERE praxis_session_id=$1 AND runtime_owner_id=$2 AND fencing_epoch=$3
+              AND state='active'`,
+          [input.sessionId, stale.ownerId, stale.fencingToken],
+        );
         const converged = await q<{ id: string }>(
           `UPDATE protected_operations SET
              state=CASE WHEN dispatch_state IN ('not_started','authorized')
@@ -4180,35 +4262,48 @@ export class AdaptiveSessionRepository {
     });
   }
 
-  heartbeatRuntimeLease(input: {
+  async heartbeatRuntimeLease(input: {
     sessionId: string;
     ownerId: string;
     fencingToken: number;
     leaseDurationMs: number;
   }) {
-    return this.database
-      .query(
+    return this.database.transaction(async (client) => {
+      const result = await client.query<{ leaseExpiresAt: string }>(
         `UPDATE adaptive_session_runtime_leases SET
            lease_expires_at=now()+($4::text || ' milliseconds')::interval,heartbeat_at=now()
          WHERE session_id=$1 AND owner_id=$2 AND fencing_token=$3 AND lease_expires_at>now()
-         RETURNING fencing_token`,
+         RETURNING lease_expires_at AS "leaseExpiresAt"`,
         [input.sessionId, input.ownerId, input.fencingToken, input.leaseDurationMs],
-      )
-      .then((result) => {
-        if (!result.rowCount)
-          throw new ConflictException({ code: "ADAPTIVE_SESSION_RUNTIME_LEASE_LOST" });
-      });
+      );
+      if (!result.rowCount)
+        throw new ConflictException({ code: "ADAPTIVE_SESSION_RUNTIME_LEASE_LOST" });
+      await client.query(
+        `UPDATE runtime_interaction_capabilities SET expires_at=$4
+          WHERE praxis_session_id=$1 AND runtime_owner_id=$2 AND fencing_epoch=$3
+            AND state='active' AND expires_at<=$4`,
+        [input.sessionId, input.ownerId, input.fencingToken, result.rows[0]!.leaseExpiresAt],
+      );
+    });
   }
 
   releaseRuntimeLease(input: { sessionId: string; ownerId: string; fencingToken: number }) {
-    return this.database
-      .query(
+    return this.database.transaction(async (client) => {
+      const result = await client.query(
         `UPDATE adaptive_session_runtime_leases SET lease_expires_at=now(),heartbeat_at=now()
          WHERE session_id=$1 AND owner_id=$2 AND fencing_token=$3 AND lease_expires_at>now()
          RETURNING fencing_token`,
         [input.sessionId, input.ownerId, input.fencingToken],
-      )
-      .then((result) => Boolean(result.rowCount));
+      );
+      if (result.rowCount)
+        await client.query(
+          `UPDATE runtime_interaction_capabilities SET state='revoked',revoked_at=now()
+            WHERE praxis_session_id=$1 AND runtime_owner_id=$2 AND fencing_epoch=$3
+              AND state='active'`,
+          [input.sessionId, input.ownerId, input.fencingToken],
+        );
+      return Boolean(result.rowCount);
+    });
   }
 
   async settleRuntimeOwnerLoss(input: {
@@ -4461,6 +4556,8 @@ export class AdaptiveSessionRepository {
     if (!transitions[current].includes(target)) {
       throw new ConflictException({ code: "ADAPTIVE_SESSION_TRANSITION_INVALID", current, target });
     }
+    if (["completed", "failed", "cancelled", "expired"].includes(target))
+      await retireUnusedPreparedOperations({ query: q }, sessionId);
     await q(
       `UPDATE adaptive_sessions SET state=$2,version=version+1,updated_at=now(),
          qualified_flow_draft_version=CASE

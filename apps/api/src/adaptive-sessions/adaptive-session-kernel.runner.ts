@@ -143,6 +143,16 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         throwIfAborted(signal);
         const context = await this.sessions.runtimeContextFor(sessionId);
         throwIfAborted(signal);
+        if (operation.action.type === "protectedTransaction") {
+          const observation = await owned.session.observeDocument();
+          await this.sessions.invalidateInteractionCapabilitiesForDocument({
+            sessionId,
+            ownerId: this.ownerId,
+            fencingToken: owned.fencingToken,
+            documentEpoch: observation.documentEpoch,
+            origin: new URL(observation.url).origin,
+          });
+        }
         const protectedContext =
           operation.action.type === "protectedTransaction"
             ? await this.sessions.protectedExecutionContext(sessionId, operation.operationId)
@@ -201,7 +211,9 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           const result = await owned.session.interact(operation.action, {
             operationId: operation.operationId,
             correlationId: context.correlationId,
-            mutationIdentity: `adaptive-${sessionId}-${operation.idempotencyKey}`,
+            ...(operation.action.type === "protectedTransaction"
+              ? {}
+              : { mutationIdentity: `adaptive-${sessionId}-${operation.idempotencyKey}` }),
             expectedEffect: operation.expectedEffect,
             ...(signal ? { signal } : {}),
           });
@@ -254,6 +266,16 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     return this.exclusive(owned, async () => {
       const leaseGuard = await this.startOperationLeaseGuard(input.sessionId, owned);
       const context = await this.sessions.runtimeContextFor(input.sessionId);
+      if (input.operation.action.type === "protectedTransaction") {
+        const observation = await owned.session.observeDocument();
+        await this.sessions.invalidateInteractionCapabilitiesForDocument({
+          sessionId: input.sessionId,
+          ownerId: this.ownerId,
+          fencingToken: owned.fencingToken,
+          documentEpoch: observation.documentEpoch,
+          origin: new URL(observation.url).origin,
+        });
+      }
       const protectedContext =
         input.operation.action.type === "protectedTransaction"
           ? await this.sessions.protectedExecutionContext(
@@ -319,7 +341,11 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         const result = await owned.session.interact(input.operation.action, {
           operationId: input.operation.operationId,
           correlationId: context.correlationId,
-          mutationIdentity: `adaptive-${input.sessionId}-${input.operation.idempotencyKey}`,
+          ...(input.operation.action.type === "protectedTransaction"
+            ? {}
+            : {
+                mutationIdentity: `adaptive-${input.sessionId}-${input.operation.idempotencyKey}`,
+              }),
           expectedEffect: input.operation.expectedEffect,
           ...(input.signal ? { signal: input.signal } : {}),
         });
@@ -384,7 +410,17 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
   async observe(sessionId: string) {
     const runtime = this.runtimes.get(sessionId);
     if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
-    return this.exclusive(runtime, () => runtime.session.observeDocument());
+    return this.exclusive(runtime, async () => {
+      const observation = await runtime.session.observeDocument();
+      await this.sessions.invalidateInteractionCapabilitiesForDocument({
+        sessionId,
+        ownerId: this.ownerId,
+        fencingToken: runtime.fencingToken,
+        documentEpoch: observation.documentEpoch,
+        origin: new URL(observation.url).origin,
+      });
+      return observation;
+    });
   }
 
   async observeOperationContracts(sessionId: string) {
@@ -994,7 +1030,10 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       objectiveId: string;
       agentSessionId: string;
       flowDraftId: string;
-      authorizationId: string;
+      authorizationId?: string;
+      mutationIdentity: string;
+      preparedExecutionCapabilityId: string;
+      canonicalProgramDigest: string;
     };
     leaseOwner?: string;
     privacyGate: import("@scry/veil").VeilRuntimeCoordinator;
@@ -1009,6 +1048,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       input.action.type === "protectedTransaction"
         ? await this.sessions.protectedExecutionContext(input.sessionId, input.operationId)
         : undefined;
+    const canonicalMutationIdentity = protectedContext?.mutationIdentity ?? input.mutationIdentity;
     const protectedInputBindings = exactProtectedInputBindings(
       input.sessionId,
       input.operationId,
@@ -1061,7 +1101,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
             correlationId,
             mode: input.mode,
             policy: input.policy,
-            ...(input.mutationIdentity ? { mutationIdentity: input.mutationIdentity } : {}),
+            ...(canonicalMutationIdentity ? { mutationIdentity: canonicalMutationIdentity } : {}),
             ...(input.objectiveDelta ? { semanticContext: input.objectiveDelta } : {}),
           },
           capabilities: capability,
@@ -1086,7 +1126,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
             correlationId,
             mode: input.mode,
             policy: input.policy,
-            ...(input.mutationIdentity ? { mutationIdentity: input.mutationIdentity } : {}),
+            ...(canonicalMutationIdentity ? { mutationIdentity: canonicalMutationIdentity } : {}),
             ...(input.objectiveDelta ? { semanticContext: input.objectiveDelta } : {}),
           },
           capabilities: capability,
@@ -1165,8 +1205,11 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       objectiveId: string;
       agentSessionId: string;
       flowDraftId: string;
-      authorizationId: string;
+      authorizationId?: string;
       dispatchDisposition: "execute" | "qualification_only";
+      mutationIdentity: string;
+      preparedExecutionCapabilityId: string;
+      canonicalProgramDigest: string;
     };
     protectedInputBindings?: ProtectedInputDeliveryBinding[];
     leaseOwner?: string;

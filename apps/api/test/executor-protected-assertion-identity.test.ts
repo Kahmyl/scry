@@ -13,7 +13,7 @@ import {
 } from "@scry/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { executePlan } from "@scry/executor";
+import { executePlan, protectedTransactionDigest } from "@scry/executor";
 import {
   ProtectedTransactionKernel,
   type MutationLedgerState,
@@ -95,7 +95,10 @@ describe("executor protected assertion persistence identity", () => {
       browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
       veilAdmissionKey: "protected-assertion-test-admission-key-32-bytes",
       protectedTransactionExecutor: ({ transaction, dependencies }) =>
-        new ProtectedTransactionKernel(dependencies).execute(transaction),
+        new ProtectedTransactionKernel({
+          ...dependencies,
+          canonicalProgramDigest: protectedTransactionDigest(transaction, [origin]),
+        }).execute(transaction),
       protectedTransactionStore: {
         claim: async () => ({
           id: "protected-operation",

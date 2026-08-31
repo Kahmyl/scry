@@ -86,9 +86,17 @@ describe("external-agent owner-loss mutation fidelity", () => {
         reasonCode: "MAX_TOOL_CALLS_EXCEEDED",
       }),
     ).resolves.toMatchObject({ state: "cancelled", reconciliationRequired: false });
-    expect(statements.join("\n")).not.toMatch(
-      /UPDATE\s+(adaptive_operations|protected_operations)/,
+    const sql = statements.join("\n");
+    expect(sql).not.toMatch(/UPDATE\s+adaptive_operations/);
+    const retirement = statements.filter((statement) =>
+      /UPDATE\s+protected_operations/.test(statement),
     );
+    expect(retirement).toHaveLength(1);
+    expect(retirement[0]).toContain("state IN ('reserved','planned') AND program_digest IS NULL");
+    expect(retirement[0]).toContain(
+      "dispatch_state='not_started' AND mutation_outcome='not_attempted'",
+    );
+    expect(retirement[0]).toContain("FROM unused WHERE operation.id=unused.id");
   });
 });
 

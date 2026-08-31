@@ -2,6 +2,8 @@ import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common";
 import {
   attachRunPraxisSessionSchema,
   dispatchRunOperationSchema,
+  dispatchRunPreparedOperationSchema,
+  type DispatchRunPreparedOperationInput,
   finalizeAgentDirectedRunSchema,
   type AttachRunPraxisSessionInput,
   type DispatchRunOperationInput,
@@ -45,6 +47,16 @@ export class RunsController {
     @Body(new ZodValidationPipe(attachRunPraxisSessionSchema)) input: AttachRunPraxisSessionInput,
   ) {
     return this.agentRuns.attach(principal, runId, input);
+  }
+
+  @Post(":runId/prepared-operations")
+  dispatchPreparedOperation(
+    @Param("runId") runId: string,
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodValidationPipe(dispatchRunPreparedOperationSchema))
+    input: DispatchRunPreparedOperationInput,
+  ) {
+    return this.agentRuns.dispatchPrepared(principal, runId, input);
   }
 
   @Post(":runId/finalize")

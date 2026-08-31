@@ -16,7 +16,7 @@ import { armExpectedEffect, verifyExpectedEffect } from "@scry/praxis";
 import type { Page } from "playwright";
 import type { SafeBrowserSession } from "@scry/praxis";
 
-import { executeAction } from "./action-runtime.js";
+import { executeAction, InfrastructureDependencyError } from "./action-runtime.js";
 import { InteractionLifecycleTracker } from "./interaction-lifecycle.js";
 import { executePlan } from "./executor.js";
 import { classifyOutcome } from "./execution-outcome.js";
@@ -193,6 +193,7 @@ export class ExecutionKernel {
         ...input.capabilities.options,
         plan: request.plan,
         policy: request.policy,
+        ...(request.mutationIdentity ? { mutationIdentity: request.mutationIdentity } : {}),
         onPraxisResult: async (result) => {
           praxisResults.push(result);
           await originalPraxisResult?.(result);
@@ -366,6 +367,10 @@ export class ExecutionKernel {
     ordinal: number;
     privacyGate?: import("@scry/veil").VeilRuntimeCoordinator;
   }): Promise<OperationOutcome> {
+    if (input.action.type === "protectedTransaction" && !input.request.mutationIdentity)
+      throw new InfrastructureDependencyError(
+        "Canonical mutation identity is required for protected execution",
+      );
     const syntheticRequest = executionRequestSchema.parse({
       ...input.request,
       plan: singleActionPlan(input.action, input.request.policy, input.request.semanticContext),
@@ -534,6 +539,10 @@ export class ExecutionKernel {
     ordinal: number;
     privacyGate?: import("@scry/veil").VeilRuntimeCoordinator;
   }): Promise<{ report: ExecutionReport; outcome: OperationOutcome }> {
+    if (input.action.type === "protectedTransaction" && !input.request.mutationIdentity)
+      throw new InfrastructureDependencyError(
+        "Canonical mutation identity is required for protected execution",
+      );
     const syntheticRequest = executionRequestSchema.parse({
       ...input.request,
       plan: singleActionPlan(input.action, input.request.policy, input.request.semanticContext, {
@@ -574,16 +583,34 @@ export class ExecutionKernel {
         expectedEffect,
         "timeoutMs" in input.action ? input.action.timeoutMs : undefined,
       );
+      let effectVerification: Promise<void> | undefined;
+      const verifyOriginalPageEffect = () =>
+        (effectVerification ??= verifyExpectedEffect(
+          input.page,
+          expectedEffect,
+          beforeUrl,
+          ("timeoutMs" in input.action ? input.action.timeoutMs : undefined) ?? 10_000,
+          armedEffect,
+        ));
       let report = await this.dispatchPlan({
         ...input.capabilities.options,
         plan: request.plan,
         policy: request.policy,
+        ...(request.mutationIdentity ? { mutationIdentity: request.mutationIdentity } : {}),
         ...(input.safeSession ? { existingSafeSession: input.safeSession } : {}),
         ...(input.existingProtectedSession ? { existingProtectedSession: true } : {}),
         expectedEffectVerificationOwner: "kernel",
         recordingOperationId: request.operationId,
+        settleProtectedAuthentication: verifyOriginalPageEffect,
+        settleExpectedEffectBeforeCapture: async () => {
+          // Preserve an unmet semantic expectation for the factual outcome below.
+          // Capture still requires independent document and visual qualification.
+          await verifyOriginalPageEffect().catch(() => undefined);
+        },
         expectedDocumentTransition:
-          input.action.type === "navigate" || expectedEffect.type === "navigation",
+          input.action.type === "navigate" ||
+          input.action.type === "protectedAuthentication" ||
+          expectedEffect.type === "navigation",
         onPraxisResult: async (result) => {
           praxisResults.push(result);
           await originalPraxisResult?.(result);
@@ -622,14 +649,10 @@ export class ExecutionKernel {
             ("timeoutMs" in input.action ? input.action.timeoutMs : undefined) ?? 10_000;
           if (expectedEffect.type === "new_page") {
             verifyAdoptedPopup(effectPage, beforeUrl, expectedEffect.origin);
+          } else if (effectPage === input.page) {
+            await verifyOriginalPageEffect();
           } else {
-            await verifyExpectedEffect(
-              effectPage,
-              expectedEffect,
-              beforeUrl,
-              timeoutMs,
-              effectPage === input.page ? armedEffect : undefined,
-            );
+            await verifyExpectedEffect(effectPage, expectedEffect, beforeUrl, timeoutMs, undefined);
           }
           await input.capabilities.options.onExpectedEffectVerification?.({
             status: "succeeded",
@@ -1309,13 +1332,25 @@ function failureOutcome(
   });
 }
 
+/** Only positively destroyed, never-admitted video from a lost document can be omitted. */
+export function isSafelyOmittedCapture(artifact: ExecutionReport["artifacts"][number]) {
+  return (
+    artifact.kind === "video" &&
+    artifact.availability === "destroyed" &&
+    artifact.reasonCode === "VEIL_VIDEO_DOCUMENT_CONTEXT_LOST" &&
+    artifact.observation?.bytesDestroyed === true &&
+    artifact.observation?.recoverableCaptureLoss === true
+  );
+}
+
 export function privacyOutcomeFromReport(
   report: ExecutionReport,
 ): OperationOutcome["privacyResult"] {
   if (
     report.artifacts.some(
       (artifact) =>
-        artifact.availability === "quarantined" || artifact.privacyClassification === "uncertain",
+        !isSafelyOmittedCapture(artifact) &&
+        (artifact.availability === "quarantined" || artifact.privacyClassification === "uncertain"),
     ) ||
     report.artifactTimeline.some(
       (entry) =>
@@ -1392,7 +1427,13 @@ export function evidenceOutcomeFromReport(
     } else if (entry.type === "video_segment") {
       record({
         channel: "video",
-        state: entry.status === "available" ? "available" : entry.status,
+        state: report.artifacts.some(
+          (artifact) => artifact.id === entry.artifactId && isSafelyOmittedCapture(artifact),
+        )
+          ? "suppressed"
+          : entry.status === "available"
+            ? "available"
+            : entry.status,
         ...(entry.failureCode ? { reasonCode: entry.failureCode } : {}),
       });
     } else if (entry.type === "protected_gap") {

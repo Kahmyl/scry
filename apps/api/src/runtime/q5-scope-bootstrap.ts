@@ -35,6 +35,8 @@ export const Q5_IDENTITY_CLASSES = Object.freeze({
     "credentialPairReferenceId",
     "clientIdPublicValueId",
     "clientSecretReferenceId",
+    "clientIdValueAssetId",
+    "clientSecretValueAssetId",
     "preparedScopeId",
   ],
   attempt: [
@@ -70,8 +72,10 @@ export type Q5CredentialPair = Readonly<{
   issuanceOperationId: string;
   clientIdPublicValueId: string;
   clientSecretReferenceId: string;
+  clientIdValueAssetId: string;
+  clientSecretValueAssetId: string;
   clientIdentityClass: "generated_safe";
-  clientSecretClass: "protected_reference";
+  clientSecretClass: "generated_protected";
   credentialType: string;
   protectedPolicy: string;
   provenance: "supported_protected_issuance";
@@ -105,6 +109,8 @@ export type Q5PreparedScope = Q5PreparedScopeFacts &
     credentialPairReferenceId: string;
     clientIdPublicValueId: string;
     clientSecretReferenceId: string;
+    clientIdValueAssetId: string;
+    clientSecretValueAssetId: string;
     issuanceOperationId: string;
     credentialType: typeof Q5_CANONICAL_SCOPE.credentialType;
     protectedPolicy: typeof Q5_CANONICAL_SCOPE.protectedPolicy;
@@ -175,6 +181,8 @@ export async function bootstrapQ5CanonicalScope(
       credentialPairReferenceId: pair.pairReferenceId,
       clientIdPublicValueId: pair.clientIdPublicValueId,
       clientSecretReferenceId: pair.clientSecretReferenceId,
+      clientIdValueAssetId: pair.clientIdValueAssetId,
+      clientSecretValueAssetId: pair.clientSecretValueAssetId,
       issuanceOperationId: pair.issuanceOperationId,
       credentialType: Q5_CANONICAL_SCOPE.credentialType,
       protectedPolicy: Q5_CANONICAL_SCOPE.protectedPolicy,
@@ -220,7 +228,9 @@ export function assertPreparedScopeValid(
     currentPair.pairReferenceId !== scope.credentialPairReferenceId ||
     currentPair.issuanceOperationId !== scope.issuanceOperationId ||
     currentPair.clientIdPublicValueId !== scope.clientIdPublicValueId ||
-    currentPair.clientSecretReferenceId !== scope.clientSecretReferenceId
+    currentPair.clientSecretReferenceId !== scope.clientSecretReferenceId ||
+    currentPair.clientIdValueAssetId !== scope.clientIdValueAssetId ||
+    currentPair.clientSecretValueAssetId !== scope.clientSecretValueAssetId
   )
     throw new Error("Q5_PREPARED_SCOPE_CREDENTIAL_CHANGED");
   const digest = preparedScopeDigest({
@@ -278,10 +288,11 @@ function eligiblePair(
     pair.active &&
     !pair.revoked &&
     pair.clientIdentityClass === "generated_safe" &&
-    pair.clientSecretClass === "protected_reference" &&
+    pair.clientSecretClass === "generated_protected" &&
     pair.privacySealed &&
     pair.exactConsumerBindingSupported &&
     pair.clientIdPublicValueId !== pair.clientSecretReferenceId &&
+    pair.clientIdValueAssetId !== pair.clientSecretValueAssetId &&
     (!pair.expiresAt || new Date(pair.expiresAt).getTime() > now.getTime())
   );
 }
@@ -308,6 +319,8 @@ function preparedScopeDigest(input: {
         credentialPairReferenceId: input.pair.pairReferenceId,
         clientIdPublicValueId: input.pair.clientIdPublicValueId,
         clientSecretReferenceId: input.pair.clientSecretReferenceId,
+        clientIdValueAssetId: input.pair.clientIdValueAssetId,
+        clientSecretValueAssetId: input.pair.clientSecretValueAssetId,
         issuanceOperationId: input.pair.issuanceOperationId,
         credentialType: input.pair.credentialType,
         credentialProvenance: input.pair.provenance,

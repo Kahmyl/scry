@@ -57,6 +57,7 @@ async function currentInputs() {
   sources[preparedProtectedOperationJourneysMigration] = "";
   sources[vitractQ5CompositionMigration] = "";
   sources[preparedReservationSettlementMigration] = "";
+  sources["canonical-execution-authority.sql"] = "";
 
   const calibration = await readMigration("calibration-foundation.sql");
 
@@ -237,11 +238,11 @@ describe("Mission recording selection migration", () => {
       migrate.match(/UPDATE\s+schema_baseline[\s\S]{0,160}?schema_fingerprint=\$1/g) ?? [];
 
     // The terminal M4, M6 campaign, Q5 qualification/canonical scope, prepared
-    // protected-journey, Vitract composition, and reservation-settlement upgrades
+    // protected-journey, Vitract composition, reservation-settlement, and canonical execution upgrades
     // do not replay this historical migration.
-    expect(operationalEventsCalls).toHaveLength(finalWrites.length - 12);
+    expect(operationalEventsCalls).toHaveLength(finalWrites.length - 13);
 
-    expect(selectionCalls).toHaveLength(finalWrites.length - 13);
+    expect(selectionCalls).toHaveLength(finalWrites.length - 14);
 
     expect(gapCalls).toHaveLength(selectionCalls.length - 1);
 

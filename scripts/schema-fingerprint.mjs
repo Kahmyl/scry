@@ -180,6 +180,10 @@ const preparedProtectedOperationReservationSettlement = await readFile(
   new URL("prepared-protected-operation-reservation-settlement.sql", root),
   "utf8",
 );
+const canonicalExecutionAuthority = await readFile(
+  new URL("canonical-execution-authority.sql", root),
+  "utf8",
+);
 
 const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "utf8"), [
   ["authoring-execution-cutover.sql", authoring],
@@ -235,6 +239,7 @@ const baseline = expandIncludes(await readFile(new URL("baseline.sql", root), "u
     "prepared-protected-operation-reservation-settlement.sql",
     preparedProtectedOperationReservationSettlement,
   ],
+  ["canonical-execution-authority.sql", canonicalExecutionAuthority],
 ])
   .replace("\\ir calibration-foundation.sql", () => calibration)
   .replace("\\ir protected-capsule.sql", () => capsule);

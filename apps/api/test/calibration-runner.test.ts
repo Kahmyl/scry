@@ -382,7 +382,13 @@ function calibrationExecutor() {
         await page.locator("body").waitFor({ state: "visible", ...timeout });
       },
       protectedTransactionExecutor: ({ transaction, dependencies }) =>
-        new ProtectedTransactionKernel(dependencies).execute(transaction),
+        new ProtectedTransactionKernel({
+          ...dependencies,
+          canonicalProgramDigest: protectedTransactionDigest(
+            transaction,
+            input.plan.allowedOrigins,
+          ),
+        }).execute(transaction),
       protectedTransactionStore: {
         claim: async ({ operationId }) => ({
           id: operationId,

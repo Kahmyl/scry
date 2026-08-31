@@ -1,5 +1,6 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type { PoolClient } from "pg";
+import { Q5_MCP_PROFILE, Q5_MCP_CONTRACT_DIGEST } from "@scry/contracts";
 
 import { Database } from "../../infrastructure/index.js";
 
@@ -22,8 +23,11 @@ export type Q5AttemptScope = Readonly<{
   allowedOrigins: string[];
   clientIdPublicValueId: string;
   clientSecretReferenceId: string;
+  clientIdValueAssetId: string;
+  clientSecretValueAssetId: string;
   runId: string | null;
   praxisSessionId: string | null;
+  praxisSessionIds: string[];
   sourceCommit: string;
   sourceManifest: string;
   schemaFingerprint: string;
@@ -39,8 +43,11 @@ export type PrepareQ5AuthoritativeAttemptInput = Omit<
   | "allowedOrigins"
   | "clientIdPublicValueId"
   | "clientSecretReferenceId"
+  | "clientIdValueAssetId"
+  | "clientSecretValueAssetId"
   | "runId"
   | "praxisSessionId"
+  | "praxisSessionIds"
 > & { credentialDigest: string; preparedScopeId: string };
 
 @Injectable()
@@ -55,6 +62,8 @@ export class Q5AuthoritativeAttemptRepository {
     allowedOrigins: string[];
     clientIdPublicValueId: string;
     clientSecretReferenceId: string;
+    clientIdValueAssetId: string;
+    clientSecretValueAssetId: string;
   }) {
     return this.database.transaction((client) =>
       this.createCanonicalApplicationUsing(client, input),
@@ -71,6 +80,8 @@ export class Q5AuthoritativeAttemptRepository {
       allowedOrigins: string[];
       clientIdPublicValueId: string;
       clientSecretReferenceId: string;
+      clientIdValueAssetId: string;
+      clientSecretValueAssetId: string;
     },
   ) {
     if (input.identity !== "vitract-preview-test")
@@ -80,24 +91,33 @@ export class Q5AuthoritativeAttemptRepository {
          identity,project_id,environment_id,base_origin,allowed_origins,credential_reference_ids,
          typed_value_references
        )
-       SELECT $1,$2,$3,$4,$5::jsonb,jsonb_build_array($7::text),$6::jsonb
+       SELECT $1,$2,$3,$4,$5::jsonb,'[]'::jsonb,$6::jsonb
        WHERE EXISTS (
          SELECT 1 FROM environments
           WHERE id=$3 AND project_id=$2 AND base_origin=$4
             AND policy->'allowedOrigins' @> to_jsonb(ARRAY[$4]::text[])
        )
          AND (
-           SELECT count(*)=1 FROM generated_public_values value
-            WHERE value.id=$8::uuid AND value.project_id=$2 AND value.reference='clientId'
+           SELECT count(*)=1 FROM typed_value_assets asset
+             JOIN generated_public_values value ON value.id=asset.generated_public_value_id
+            WHERE asset.id=$8::uuid AND asset.project_id=$2 AND asset.classification='public'
+              AND asset.environment_id=$3 AND asset.state='active'
+              AND asset.canonical_output_key='clientId' AND value.reference='clientId'
          ) AND EXISTS (
-           SELECT 1 FROM project_credentials credential
-             JOIN generated_public_values value ON value.id=$8::uuid
-               AND value.source_protected_operation_id=credential.origin_protected_operation_id
-             JOIN protected_operations issuance ON issuance.id=value.source_protected_operation_id
-            WHERE credential.id=$7::uuid AND credential.project_id=$2
+           SELECT 1 FROM typed_value_assets secret_asset
+             JOIN project_credentials credential ON credential.id=secret_asset.project_credential_id
+             JOIN typed_value_assets client_asset ON client_asset.id=$8::uuid
+             JOIN protected_operations issuance
+               ON issuance.id=client_asset.producer_protected_operation_id
+              AND issuance.id=secret_asset.producer_protected_operation_id
+            WHERE secret_asset.id=$7::uuid AND secret_asset.project_id=$2
+              AND secret_asset.environment_id=$3 AND secret_asset.state='active'
+              AND secret_asset.classification='protected'
+              AND secret_asset.canonical_output_key='clientSecret'
               AND credential.deleted_at IS NULL AND credential.security_status='active'
               AND issuance.project_id=$2 AND issuance.environment_id=$3
               AND issuance.state='completed' AND issuance.persistence_state='committed'
+              AND issuance.authority_model='canonical'
               AND issuance.mutation_outcome='applied'
          )
        ON CONFLICT DO NOTHING
@@ -109,11 +129,14 @@ export class Q5AuthoritativeAttemptRepository {
         input.baseOrigin,
         JSON.stringify(input.allowedOrigins),
         JSON.stringify({
-          clientId: { kind: "generated_safe", valueId: input.clientIdPublicValueId },
-          clientSecret: { kind: "protected_reference", referenceId: input.clientSecretReferenceId },
+          clientId: { kind: "generated_safe", valueAssetId: input.clientIdValueAssetId },
+          clientSecret: {
+            kind: "generated_protected",
+            valueAssetId: input.clientSecretValueAssetId,
+          },
         }),
-        input.clientSecretReferenceId,
-        input.clientIdPublicValueId,
+        input.clientSecretValueAssetId,
+        input.clientIdValueAssetId,
       ],
     );
     if (result.rowCount) return result.rows[0]!.id;
@@ -121,7 +144,7 @@ export class Q5AuthoritativeAttemptRepository {
       `SELECT id::text FROM qualification_applications
         WHERE identity=$1 AND project_id=$2 AND environment_id=$3 AND base_origin=$4
           AND allowed_origins=$5::jsonb
-          AND typed_value_references=$6::jsonb AND credential_reference_ids=jsonb_build_array($7::text)
+          AND typed_value_references=$6::jsonb AND credential_reference_ids='[]'::jsonb
           AND status='active'`,
       [
         input.identity,
@@ -130,10 +153,12 @@ export class Q5AuthoritativeAttemptRepository {
         input.baseOrigin,
         JSON.stringify(input.allowedOrigins),
         JSON.stringify({
-          clientId: { kind: "generated_safe", valueId: input.clientIdPublicValueId },
-          clientSecret: { kind: "protected_reference", referenceId: input.clientSecretReferenceId },
+          clientId: { kind: "generated_safe", valueAssetId: input.clientIdValueAssetId },
+          clientSecret: {
+            kind: "generated_protected",
+            valueAssetId: input.clientSecretValueAssetId,
+          },
         }),
-        input.clientSecretReferenceId,
       ],
     );
     if (existing.rowCount) return existing.rows[0]!.id;
@@ -183,8 +208,9 @@ export class Q5AuthoritativeAttemptRepository {
            AND prepared.target_origin=campaign.target_origin
            AND prepared.source_commit=$8 AND prepared.source_manifest=$9
            AND prepared.schema_fingerprint=$10 AND prepared.migration_identity=$11
-           AND prepared.client_id_public_value_id::text=application.typed_value_references->'clientId'->>'valueId'
-           AND prepared.client_secret_reference_id::text=ANY(ARRAY(SELECT jsonb_array_elements_text(application.credential_reference_ids)))
+           AND prepared.q5_mcp_profile=$21 AND prepared.q5_mcp_contract_digest=$22
+           AND prepared.client_id_value_asset_id::text=application.typed_value_references->'clientId'->>'valueAssetId'
+           AND prepared.client_secret_value_asset_id::text=application.typed_value_references->'clientSecret'->>'valueAssetId'
            AND campaign.project_id=$14 AND campaign.environment_id=$15
            AND campaign.mission_id=$16 AND campaign.objective_id=$17
            AND campaign.agent_session_id=$18 AND campaign.target_origin=$19
@@ -213,6 +239,8 @@ export class Q5AuthoritativeAttemptRepository {
         input.agentSessionId,
         input.targetOrigin,
         input.applicationIdentity,
+        Q5_MCP_PROFILE,
+        Q5_MCP_CONTRACT_DIGEST,
       ],
     );
     if (!inserted.rowCount)
@@ -253,8 +281,10 @@ export class Q5AuthoritativeAttemptRepository {
               qualification_applications application,
               generated_public_values client_id,
               project_credentials client_secret,
+              typed_value_assets client_id_asset,
+              typed_value_assets client_secret_asset,
               protected_operations issuance,
-              mission_authorizations issuance_authority,
+
               environments environment
         WHERE attempt.id=$1 AND attempt.credential_digest=$2 AND attempt.state='prepared'
           AND campaign.id=attempt.campaign_authorization_id
@@ -265,6 +295,7 @@ export class Q5AuthoritativeAttemptRepository {
           AND prepared.source_manifest=attempt.source_manifest
           AND prepared.schema_fingerprint=attempt.schema_fingerprint
           AND prepared.migration_identity=attempt.migration_digest
+          AND prepared.q5_mcp_profile=$3 AND prepared.q5_mcp_contract_digest=$4
           AND designation.qualification_key=prepared.qualification_key
           AND designation.project_id=prepared.project_id
           AND designation.environment_id=prepared.environment_id
@@ -273,8 +304,15 @@ export class Q5AuthoritativeAttemptRepository {
           AND application.identity=prepared.application_identity
           AND application.project_id=prepared.project_id
           AND application.environment_id=prepared.environment_id
-          AND application.typed_value_references->'clientId'->>'valueId'=prepared.client_id_public_value_id::text
-          AND application.typed_value_references->'clientSecret'->>'referenceId'=prepared.client_secret_reference_id::text
+          AND application.typed_value_references->'clientId'->>'valueAssetId'=prepared.client_id_value_asset_id::text
+          AND application.typed_value_references->'clientSecret'->>'valueAssetId'=prepared.client_secret_value_asset_id::text
+          AND client_id_asset.id=prepared.client_id_value_asset_id
+          AND client_secret_asset.id=prepared.client_secret_value_asset_id
+          AND client_id_asset.generated_public_value_id=client_id.id
+          AND client_secret_asset.project_credential_id=client_secret.id
+          AND client_id_asset.state='active' AND client_secret_asset.state='active'
+          AND client_id_asset.producer_protected_operation_id=prepared.issuance_operation_id
+          AND client_secret_asset.producer_protected_operation_id=prepared.issuance_operation_id
           AND client_id.id=prepared.client_id_public_value_id
           AND client_secret.id=prepared.client_secret_reference_id
           AND client_id.project_id=prepared.project_id
@@ -287,16 +325,13 @@ export class Q5AuthoritativeAttemptRepository {
           AND issuance.project_id=prepared.project_id
           AND issuance.environment_id=prepared.environment_id
           AND issuance.state='completed' AND issuance.persistence_state='committed'
+          AND issuance.authority_model='canonical'
           AND issuance.mutation_outcome='applied'
           AND issuance.persisted_references->'clientId'->>'valueId'=client_id.id::text
           AND issuance.persisted_references->'clientSecret'->>'credentialId'=client_secret.id::text
-          AND issuance_authority.id=issuance.authorization_id
-          AND issuance_authority.kind='protected_mutation'
-          AND issuance_authority.status='approved' AND issuance_authority.revoked_at IS NULL
-          AND (issuance_authority.expires_at IS NULL OR issuance_authority.expires_at>now())
           AND environment.id=prepared.environment_id AND environment.project_id=prepared.project_id
         RETURNING attempt.id::text`,
-      [attemptId, credentialDigest],
+      [attemptId, credentialDigest, Q5_MCP_PROFILE, Q5_MCP_CONTRACT_DIGEST],
     );
     if (!result.rowCount)
       throw new ConflictException({ code: "Q5_AUTHORITATIVE_ATTEMPT_CONSUMED" });
@@ -353,6 +388,9 @@ export class Q5AuthoritativeAttemptRepository {
     if (Boolean(input.runId) === Boolean(input.praxisSessionId))
       throw new ConflictException({ code: "Q5_RUNTIME_BINDING_EXACTLY_ONE_REQUIRED" });
     return this.database.transaction(async (client) => {
+      await client.query(`SELECT id FROM q5_authoritative_attempts WHERE id=$1 FOR UPDATE`, [
+        attemptId,
+      ]);
       const result = input.runId
         ? await client.query(
             `UPDATE q5_authoritative_attempts attempt SET run_id=$2,updated_at=now()
@@ -367,17 +405,31 @@ export class Q5AuthoritativeAttemptRepository {
             [attemptId, input.runId],
           )
         : await client.query(
-            `UPDATE q5_authoritative_attempts attempt SET praxis_session_id=$2,updated_at=now()
+            `UPDATE q5_authoritative_attempts attempt SET praxis_session_id=COALESCE(attempt.praxis_session_id,$2),updated_at=now()
               FROM adaptive_sessions session,qualification_campaign_authorizations campaign
              WHERE attempt.id=$1 AND attempt.state IN ('prepared','consumed')
-               AND (attempt.praxis_session_id IS NULL OR attempt.praxis_session_id=$2)
                AND session.id=$2 AND campaign.id=attempt.campaign_authorization_id
                AND session.project_id=campaign.project_id AND session.environment_id=campaign.environment_id
                AND session.mission_id=campaign.mission_id AND session.active_objective_id=campaign.objective_id
-               AND session.agent_session_id=campaign.agent_session_id RETURNING attempt.id`,
+               AND session.agent_session_id=campaign.agent_session_id
+               AND session.state IN ('created','provisioning','active','suspended')
+               AND NOT EXISTS (
+                 SELECT 1 FROM adaptive_sessions prior
+                 WHERE prior.id<>session.id AND prior.state IN ('created','provisioning','active','suspended')
+                   AND (prior.id=attempt.praxis_session_id OR prior.id IN (
+                     SELECT history.praxis_session_id FROM q5_attempt_praxis_sessions history WHERE history.attempt_id=attempt.id
+                   ))
+               ) RETURNING attempt.id`,
             [attemptId, input.praxisSessionId],
           );
       if (!result.rowCount) throw new ConflictException({ code: "Q5_RUNTIME_SCOPE_MISMATCH" });
+      if (input.praxisSessionId)
+        await client.query(
+          `INSERT INTO q5_attempt_praxis_sessions(attempt_id,praxis_session_id,epoch)
+         SELECT $1,$2,COALESCE(max(epoch),0)+1 FROM q5_attempt_praxis_sessions WHERE attempt_id=$1
+         ON CONFLICT(attempt_id,praxis_session_id) DO NOTHING`,
+          [attemptId, input.praxisSessionId],
+        );
       return { bound: true };
     });
   }
@@ -393,9 +445,17 @@ export class Q5AuthoritativeAttemptRepository {
               attempt.external_run_id::text AS "externalRunId",attempt.flow_draft_id::text AS "flowDraftId",
               attempt.flow_revision_id::text AS "flowRevisionId",campaign.target_origin AS "targetOrigin",
               ARRAY(SELECT jsonb_array_elements_text(application.allowed_origins)) AS "allowedOrigins",
-              application.typed_value_references->'clientId'->>'valueId' AS "clientIdPublicValueId",
-              application.typed_value_references->'clientSecret'->>'referenceId' AS "clientSecretReferenceId",
-              attempt.run_id::text AS "runId",attempt.praxis_session_id::text AS "praxisSessionId",
+              prepared.client_id_public_value_id::text AS "clientIdPublicValueId",
+              prepared.client_secret_reference_id::text AS "clientSecretReferenceId",
+              application.typed_value_references->'clientId'->>'valueAssetId' AS "clientIdValueAssetId",
+              application.typed_value_references->'clientSecret'->>'valueAssetId' AS "clientSecretValueAssetId",
+              attempt.run_id::text AS "runId",
+              COALESCE((SELECT history.praxis_session_id FROM q5_attempt_praxis_sessions history
+                WHERE history.attempt_id=attempt.id ORDER BY epoch DESC LIMIT 1),attempt.praxis_session_id)::text AS "praxisSessionId",
+              ARRAY(SELECT DISTINCT id::text FROM (
+                SELECT history.praxis_session_id AS id FROM q5_attempt_praxis_sessions history WHERE history.attempt_id=attempt.id
+                UNION SELECT attempt.praxis_session_id WHERE attempt.praxis_session_id IS NOT NULL
+              ) owners) AS "praxisSessionIds",
               attempt.source_commit AS "sourceCommit",attempt.source_manifest AS "sourceManifest",
               attempt.schema_fingerprint AS "schemaFingerprint",attempt.migration_digest AS "migrationDigest",
               attempt.provider,attempt.model
@@ -404,6 +464,7 @@ export class Q5AuthoritativeAttemptRepository {
            ON campaign.id=attempt.campaign_authorization_id
          JOIN qualification_applications application
            ON application.id=attempt.canonical_application_id
+         JOIN q5_prepared_scopes prepared ON prepared.id=attempt.prepared_scope_id
          JOIN environments environment ON environment.id=campaign.environment_id
         WHERE ${predicate}`,
       values,

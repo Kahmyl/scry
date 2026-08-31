@@ -20,6 +20,8 @@ const VITRACT_TRUSTED_SCRIPT_ORIGINS = [
 ] as const;
 
 export type PrepareVitractCredentialIssuanceInput = Readonly<{
+  instruction?: string;
+  maxBusinessMutationDispatches?: number;
   projectId: string;
   environmentId: string;
   loginEmailReferenceId: string;
@@ -64,15 +66,19 @@ export class VitractCredentialIssuancePreparationService {
 
   async createLifecycle(principal: Principal, input: PrepareVitractCredentialIssuanceInput) {
     const canonical = await this.assertCanonicalScopeAndLoginReferences(input);
+    const instruction =
+      input.instruction ??
+      "Prepare exactly one Vitract Preview/Test credential issuance and stop before mutation dispatch.";
     const prepared = await this.authoring.prepare(principal, {
       kind: "create",
       projectId: input.projectId,
       environmentId: input.environmentId,
       mission: {
         title: `Vitract credential issuance:${input.idempotencyKey}`,
-        originalInstruction: "Prepare exactly one separately-authorized Vitract Preview/Test credential issuance.",
+        originalInstruction: instruction,
+        maxBusinessMutationDispatches: input.maxBusinessMutationDispatches ?? 1,
         provider: "operator",
-        instructionSnapshot: "Prepare only. Await exact protected-operation authorization before dispatch.",
+        instructionSnapshot: instruction,
         distinctReason: input.distinctMissionReason,
         distinctAuthority: input.distinctMissionAuthority,
       },
@@ -81,7 +87,10 @@ export class VitractCredentialIssuancePreparationService {
         description: "Generated-scope setup operation; no Q5 provider attempt.",
         dependencies: [],
         completionCriteria: [
-          { description: "one typed credential pair is persisted with exact producer provenance", required: true },
+          {
+            description: instruction,
+            required: true,
+          },
         ],
         order: 0,
       },
@@ -90,14 +99,15 @@ export class VitractCredentialIssuancePreparationService {
         description: "Operator-authorized canonical credential setup",
         purpose: "primary",
         content: {
-          objective: "Prepare and issue exactly one Vitract Preview/Test credential pair",
-          preconditions: ["canonical generated scope", "exact operator authorization"],
+          objective: instruction,
+          preconditions: ["canonical generated scope", "current Mission instruction"],
           expectedOutcomes: ["generated-safe client identity", "protected client secret"],
           prohibitedSideEffects: ["second issuance", "Q5 attempt consumption"],
         },
         plan: {
+          executionMode: "agent_directed",
           name: "Vitract credential issuance",
-          objective: "Prepare one separately-authorized credential issuance",
+          objective: instruction,
           preconditions: ["canonical Q5 scope", "same live Praxis owner"],
           allowedOrigins: ["https://preview.vitract.com", "https://preview-api.vitract.com"],
           budgets: { maxActions: 20, maxDurationMs: 900_000, maxNavigations: 8 },
@@ -106,7 +116,7 @@ export class VitractCredentialIssuancePreparationService {
         },
       },
       authoring: {
-        objective: `Prepare credential issuance for ${input.applicationResourceScope}`,
+        objective: instruction,
         allowedOrigins: ["https://preview.vitract.com", "https://preview-api.vitract.com"],
         turnBudgets: { maxOperations: 20, maxDurationMs: 900_000 },
         initialProtectedReferenceIds: canonical.environmentAuthorized
@@ -123,7 +133,8 @@ export class VitractCredentialIssuancePreparationService {
     ];
     if (
       !canonical.environmentAuthorized ||
-      trustedScriptOrigins.length !== policyStringArray(canonical.policy, "trustedScriptOrigins").length
+      trustedScriptOrigins.length !==
+        policyStringArray(canonical.policy, "trustedScriptOrigins").length
     ) {
       await new ProjectConfigurationRepository(this.database).updateEnvironment(
         principal,
@@ -154,12 +165,9 @@ export class VitractCredentialIssuancePreparationService {
       objectiveId: prepared.objectiveId,
       agentSessionId: prepared.agentSessionId,
       flowDraftId: prepared.flowDraftId,
-      objective: `Prepare credential issuance for ${input.applicationResourceScope}`,
+      objective: instruction,
       allowedOrigins: ["https://preview.vitract.com", "https://preview-api.vitract.com"],
-      initialProtectedReferenceIds: [
-        input.loginEmailReferenceId,
-        input.loginPasswordReferenceId,
-      ],
+      initialProtectedReferenceIds: [input.loginEmailReferenceId, input.loginPasswordReferenceId],
       turnBudgets: { maxOperations: 20, maxDurationMs: 900_000 },
       correlationId: randomUUID(),
       idempotencyKey: `${input.idempotencyKey}-protected-owner`,
@@ -174,27 +182,33 @@ export class VitractCredentialIssuancePreparationService {
       input.lifecycle.authoringSessionId,
     );
     const matching = observed.contracts.filter(
-      (contract) => contract.operation.key === "issuePartnerCredential",
+      (contract) => contract.revision.facts.operation.key === "issuePartnerCredential",
     );
     if (matching.length !== 1)
       throw new ConflictException({ code: "VITRACT_ISSUANCE_CONTRACT_NOT_UNIQUE" });
     const contract = matching[0]!;
-    const field = contract.inputs.find((candidate) => candidate.key === "credentialName");
-    if (!field?.controlReference)
+    const field = contract.revision.facts.inputs.find(
+      (candidate) => candidate.key === "credentialName",
+    );
+    const targetReference = contract.interaction?.inputControlReferences.credentialName;
+    if (!field || !targetReference || !contract.interaction)
       throw new ConflictException({ code: "VITRACT_ISSUANCE_NAME_CONTROL_UNAVAILABLE" });
-    const publicOperationId = input.publicOperationId ?? `vitract-credential-issuance-${randomUUID()}`;
+    const publicOperationId =
+      input.publicOperationId ?? `vitract-credential-issuance-${randomUUID()}`;
     const values: ReservePreparedProtectedOperationInput["values"] = [
       {
         canonicalFieldKey: "credentialName",
-        targetReference: field.controlReference,
+        targetReference,
         presentationClass: "plain_text",
         source: { kind: "literal_public", value: input.credentialName },
       },
     ];
-    const expectedOutputs = contract.response.safeOutputs.map(({ key, classification }) => ({
-      key,
-      classification,
-    }));
+    const expectedOutputs = contract.revision.facts.response.outputs.map(
+      ({ key, classification }) => ({
+        key,
+        classification,
+      }),
+    );
     if (
       stable(expectedOutputs) !==
       stable([
@@ -210,27 +224,10 @@ export class VitractCredentialIssuancePreparationService {
       missionId: input.lifecycle.missionId,
       objectiveId: input.lifecycle.objectiveId,
       agentSessionId: input.lifecycle.agentSessionId,
-      praxisSessionId: input.lifecycle.authoringSessionId,
       publicOperationId,
-      observedOperationContractId: contract.id,
-      observedOperationContractDigest: contract.digest,
-      documentEpoch: contract.documentEpoch,
-      targetCommitment: digest(
-        values.map((value) => ({
-          key: value.canonicalFieldKey,
-          targetReference: value.targetReference,
-        })),
-      ),
-      inputCommitment: digest(
-        values.map((value) => ({
-          key: value.canonicalFieldKey,
-          presentationClass: value.presentationClass,
-          sourceCommitment: digest(value.source),
-        })),
-      ),
-      outputCommitment: digest(
-        [...expectedOutputs].sort((left, right) => left.key.localeCompare(right.key)),
-      ),
+      operationContractRevisionId: contract.revision.id,
+      operationContractRevisionDigest: contract.revision.digest,
+      runtimeInteractionCapabilityId: contract.interaction.id,
       values,
       expectedOutputs,
       expiresAt: input.expiresAt,
@@ -244,12 +241,8 @@ export class VitractCredentialIssuancePreparationService {
       ...reserved,
       immutableResume: {
         protectedOperationId: reserved.protectedOperationId,
+        preparedExecutionCapabilityId: reserved.preparedExecutionCapabilityId,
         publicOperationId,
-        praxisSessionId: input.lifecycle.authoringSessionId,
-        observedOperationContractDigest: contract.digest,
-        targetCommitment: immutable.targetCommitment,
-        inputCommitment: immutable.inputCommitment,
-        outputCommitment: immutable.outputCommitment,
       },
     };
   }
@@ -269,7 +262,11 @@ export class VitractCredentialIssuancePreparationService {
         ...common,
         intentId: `${input.idempotencyKey}-open-login`,
         action: { kind: "navigate", url: "https://preview.vitract.com/login" },
-        expectedEffect: { kind: "navigation", url: "https://preview.vitract.com/login", match: "exact" },
+        expectedEffect: {
+          kind: "navigation",
+          url: "https://preview.vitract.com/login",
+          match: "exact",
+        },
         authorization: { kind: "ordinary" },
         protectedInputReferences: [],
       },
@@ -278,7 +275,12 @@ export class VitractCredentialIssuancePreparationService {
         intentId: `${input.idempotencyKey}-email`,
         action: {
           kind: "fill",
-          target: { concept: "login email", role: "textbox", placeholder: "Enter your email", exact: true },
+          target: {
+            concept: "login email",
+            role: "textbox",
+            placeholder: "Enter your email",
+            exact: true,
+          },
           protectedReferenceId: input.loginEmailReferenceId,
         },
         expectedEffect: { kind: "none" },
@@ -290,7 +292,12 @@ export class VitractCredentialIssuancePreparationService {
         intentId: `${input.idempotencyKey}-password`,
         action: {
           kind: "fill",
-          target: { concept: "login password", role: "textbox", placeholder: "Enter your password", exact: true },
+          target: {
+            concept: "login password",
+            role: "textbox",
+            placeholder: "Enter your password",
+            exact: true,
+          },
           protectedReferenceId: input.loginPasswordReferenceId,
         },
         expectedEffect: { kind: "none" },
@@ -300,8 +307,16 @@ export class VitractCredentialIssuancePreparationService {
       {
         ...common,
         intentId: `${input.idempotencyKey}-login`,
-        action: { kind: "activate", semanticEffect: "unknown", target: { concept: "sign in", role: "button", name: "Login", exact: true } },
-        expectedEffect: { kind: "navigation", url: "https://preview.vitract.com/partner", match: "exact" },
+        action: {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: { concept: "sign in", role: "button", name: "Login", exact: true },
+        },
+        expectedEffect: {
+          kind: "navigation",
+          url: "https://preview.vitract.com/partner",
+          match: "exact",
+        },
         authorization: { kind: "ordinary" },
         protectedInputReferences: [],
       },
@@ -309,7 +324,16 @@ export class VitractCredentialIssuancePreparationService {
         ...common,
         intentId: `${input.idempotencyKey}-credentials`,
         action: { kind: "navigate", url: credentialUrl },
-        expectedEffect: { kind: "target_visibility", target: { concept: "add credential", role: "button", name: "Add credential", exact: true }, visible: true },
+        expectedEffect: {
+          kind: "target_visibility",
+          target: {
+            concept: "add credential",
+            role: "button",
+            name: "Add credential",
+            exact: true,
+          },
+          visible: true,
+        },
         authorization: { kind: "live_read" },
         protectedInputReferences: [],
       },
@@ -319,7 +343,12 @@ export class VitractCredentialIssuancePreparationService {
         action: {
           kind: "activate",
           semanticEffect: "unknown",
-          target: { concept: "add credential", role: "button", name: "Add credential", exact: true },
+          target: {
+            concept: "add credential",
+            role: "button",
+            name: "Add credential",
+            exact: true,
+          },
         },
         expectedEffect: {
           kind: "target_visibility",
@@ -367,8 +396,7 @@ export class VitractCredentialIssuancePreparationService {
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    if (!loginObservation)
-      throw new ConflictException({ code: "VITRACT_LOGIN_SURFACE_NOT_READY" });
+    if (!loginObservation) throw new ConflictException({ code: "VITRACT_LOGIN_SURFACE_NOT_READY" });
 
     const controls: any[] = loginObservation.semanticPageContext.controls;
     const emailControl = controls.find(
@@ -417,16 +445,11 @@ export class VitractCredentialIssuancePreparationService {
     return turn;
   }
 
-  async executeAuthorized(
+  async executePrepared(
     principal: Principal,
     lifecycle: PreparedFlowAuthoring,
     immutableReservation: ResumePreparedProtectedOperationInput,
   ) {
-    await this.authoring.resumePreparedOperation(
-      principal,
-      lifecycle.authoringSessionId,
-      immutableReservation,
-    );
     return this.authoring.dispatchPreparedOperation(
       principal,
       lifecycle.authoringSessionId,
@@ -439,10 +462,7 @@ export class VitractCredentialIssuancePreparationService {
     lifecycle: PreparedFlowAuthoring,
     idempotencyKey: string,
   ) {
-    await this.authoring.abandonPreparedReservations(
-      principal,
-      lifecycle.authoringSessionId,
-    );
+    await this.authoring.abandonPreparedReservations(principal, lifecycle.authoringSessionId);
     return this.authoring.close(principal, lifecycle.authoringSessionId, idempotencyKey);
   }
 
@@ -464,7 +484,9 @@ export class VitractCredentialIssuancePreparationService {
     return result.rows[0]!.projectId;
   }
 
-  private async assertCanonicalScopeAndLoginReferences(input: PrepareVitractCredentialIssuanceInput) {
+  private async assertCanonicalScopeAndLoginReferences(
+    input: PrepareVitractCredentialIssuanceInput,
+  ) {
     if (input.loginEmailReferenceId === input.loginPasswordReferenceId)
       throw new ConflictException({ code: "VITRACT_LOGIN_PAIR_INVALID" });
     const result = await this.database.query<{
@@ -483,7 +505,11 @@ export class VitractCredentialIssuancePreparationService {
           AND (SELECT count(*) FROM project_credentials credential
                 WHERE credential.project_id=$1 AND credential.id=ANY($3::uuid[])
                   AND credential.security_status='active' AND credential.deleted_at IS NULL)=2`,
-      [input.projectId, input.environmentId, [input.loginEmailReferenceId, input.loginPasswordReferenceId]],
+      [
+        input.projectId,
+        input.environmentId,
+        [input.loginEmailReferenceId, input.loginPasswordReferenceId],
+      ],
     );
     if (result.rowCount !== 1)
       throw new ConflictException({ code: "VITRACT_ISSUANCE_CANONICAL_SCOPE_INVALID" });

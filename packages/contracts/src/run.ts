@@ -318,6 +318,29 @@ export const currentRunPraxisSessionSchema = z
 
 export const runObservationSchema = z
   .object({
+    canonicalOperations: z
+      .array(
+        z
+          .object({
+            operationId: z.string(),
+            praxisSessionId: z.string().uuid(),
+            missionId: z.string().uuid(),
+            objectiveId: z.string().uuid(),
+            preparedExecutionCapabilityId: z.string().uuid(),
+            protectedOperationId: z.string().uuid(),
+            operationContractRevisionId: z.string().uuid(),
+            runtimeInteractionCapabilityId: z.string().uuid(),
+            mutationIdentity: z.string().uuid(),
+            state: z.string(),
+            mutationOutcome: z.enum(["not_attempted", "not_applied", "applied", "unknown"]),
+            checkpointIds: z.array(z.string().uuid()),
+            continuationCheckpointIds: z.array(z.string().uuid()),
+            valueAssetIds: z.array(z.string().uuid()),
+            valueUseGrantIds: z.array(z.string().uuid()),
+          })
+          .strict(),
+      )
+      .default([]),
     run: z
       .object({
         id: z.string().uuid(),

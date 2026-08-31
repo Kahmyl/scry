@@ -18,7 +18,7 @@ type Owner =
       ownerKind: "authoring_session";
       ownerId: string;
       flowDraftId: string;
-      authorizationId: string;
+      authorizationId?: string;
     }
   | { ownerKind: "run"; ownerId: string; flowRevisionId: string; authorizationId?: string };
 
@@ -76,6 +76,8 @@ type OperationRow = {
   flowDraftId: string | null;
   flowRevisionId: string | null;
   authorizationId: string | null;
+  authorityModel: "legacy" | "canonical";
+  preparedExecutionCapabilityId: string | null;
 };
 
 type ProtectedOperationBinding = {
@@ -91,9 +93,11 @@ type ProtectedOperationBinding = {
   flowDraftId?: string;
   flowRevisionId?: string;
   authorizationId?: string;
+  preparedExecutionCapabilityId?: string;
 };
 
 type ReceiptOperationRow = {
+  authorityModel: "legacy" | "canonical";
   receiptId: string;
   operationId: string;
   ownerKind: ProtectedOperationOwnerKind;
@@ -180,6 +184,7 @@ export class ProtectedOperationRepository {
     await this.appendTransition(input.id, "reserved", "planned", "planned", 0);
   }
 
+  /** Historical/import fixtures only. Legacy rows cannot acquire new dispatch authority. */
   async create(input: CreateProtectedOperationInput) {
     const result = await this.database.query<OperationRow>(
       `INSERT INTO protected_operations(
@@ -234,15 +239,40 @@ export class ProtectedOperationRepository {
            environment_id AS "environmentId",mission_id AS "missionId",objective_id AS "objectiveId",
            agent_session_id AS "agentSessionId",flow_draft_id AS "flowDraftId",
            flow_revision_id AS "flowRevisionId",authorization_id AS "authorizationId"
+           ,authority_model AS "authorityModel",
+           prepared_execution_capability_id AS "preparedExecutionCapabilityId"
          FROM protected_operations WHERE owner_kind=$1 AND operation_id=$3
            AND (($1='authoring_session' AND authoring_session_id=$2) OR ($1='run' AND run_id=$2)) FOR UPDATE`,
         [input.ownerKind, input.ownerId, input.operationId],
       );
       if (!result.rowCount) throw new NotFoundException("PROTECTED_OPERATION_NOT_FOUND");
       const current = result.rows[0]!;
+      if (current.authorityModel !== "canonical" && current.dispatchState === "not_started")
+        throw new ConflictException("LEGACY_PROTECTED_OPERATION_DISPATCH_FORBIDDEN");
       if (!bindingMatches(current, input.binding))
         throw new ConflictException("PROTECTED_OPERATION_BINDING_MISMATCH");
-      if (input.ownerKind === "run") {
+      if (current.authorityModel === "canonical") {
+        if (
+          !input.binding.preparedExecutionCapabilityId ||
+          input.binding.preparedExecutionCapabilityId !== current.preparedExecutionCapabilityId
+        )
+          throw new ConflictException("PREPARED_EXECUTION_CAPABILITY_REQUIRED");
+        const authority = await client.query(
+          `SELECT 1 FROM prepared_execution_capabilities
+           WHERE id=$1 AND protected_operation_id=$2 AND state='finalized'
+             AND program_digest=$3 AND mutation_identity=$4
+             AND expires_at>now()`,
+          [
+            input.binding.preparedExecutionCapabilityId,
+            current.id,
+            input.binding.programDigest,
+            input.binding.mutationIdentity,
+          ],
+        );
+        if (!authority.rowCount)
+          throw new ConflictException("PREPARED_EXECUTION_CAPABILITY_INVALID");
+      }
+      if (input.ownerKind === "run" && current.authorityModel !== "canonical") {
         const authorization = await client.query(
           `SELECT 1 FROM mission_authorizations
            WHERE id=$1 AND mission_id=$2 AND objective_id=$3 AND environment_id=$4
@@ -659,6 +689,7 @@ const receiptOperationSelect = `SELECT operation.id AS "receiptId",operation.ope
   CASE WHEN operation.owner_kind='authoring_session' THEN operation.authoring_session_id
        ELSE live_session.praxis_session_id END AS "praxisSessionId",
   operation.dispatch_semantics AS "dispatchSemantics",operation.program_digest AS "programDigest",
+  operation.authority_model AS "authorityModel",
   operation.synthetic_input_set_commitment AS "syntheticInputSetCommitment",
   operation.payload_commitment AS "payloadCommitment",
   operation.provider_idempotency_commitment AS "providerIdempotencyCommitment",

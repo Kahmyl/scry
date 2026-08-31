@@ -387,6 +387,10 @@ export const adaptiveSessionSchema = z
     environmentId: uuid,
     correlationId: uuid,
     state: adaptiveSessionStateSchema,
+    runtime: z
+      .object({ state: z.enum(["owned", "unowned", "expired"]) })
+      .strict()
+      .optional(),
     version: z.number().int().positive(),
     objective: z.string(),
     allowedOrigins: z.array(z.string().url()),

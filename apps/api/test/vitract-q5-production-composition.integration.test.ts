@@ -6,15 +6,19 @@ import { ProjectConfigurationRepository } from "../src/access/repositories/proje
 import { MissionFlowAuthoringService } from "../src/adaptive-sessions/mission-flow-authoring.service.js";
 import { VitractCredentialIssuancePreparationService } from "../src/adaptive-sessions/services/vitract-credential-issuance-preparation.js";
 import { VitractObservedOperationContractProvider } from "../src/adaptive-sessions/vitract-observed-operation-contract.provider.js";
+import {
+  OperationContractProviderRegistry,
+  OperationContractRegistry,
+} from "../src/adaptive-sessions/operation-contract.registry.js";
 import { AdaptiveSessionRepository } from "../src/adaptive-sessions/repositories/adaptive-session.repository.js";
 import { PreparedProtectedOperationRepository } from "../src/adaptive-sessions/repositories/prepared-protected-operation.repository.js";
 import { Database } from "../src/infrastructure/index.js";
-import { OrchestrationService } from "../src/orchestration/index.js";
 import { ExternalAgentLifecycleService } from "../src/runs/services/external-agent-lifecycle.service.js";
 import { ProtectedOperationRepository } from "../src/runtime/repositories/protected-operation.repository.js";
 import { ProtectedOutputPersistenceRepository } from "../src/runtime/repositories/protected-output-persistence.repository.js";
 import { Q5ScopeBootstrapRepository } from "../src/runtime/repositories/q5-scope-bootstrap.repository.js";
 import { bootstrapQ5CanonicalScope } from "../src/runtime/q5-scope-bootstrap.js";
+import { verifyCanonicalValueGrantBoundary } from "./helpers/canonical-value-grant-boundary.js";
 
 const databaseUrl = process.env.SCRY_VITRACT_COMPOSITION_TEST_DATABASE_URL;
 const integration = databaseUrl ? describe : describe.skip;
@@ -74,6 +78,9 @@ integration("exact production Vitract/Q5 composition", () => {
     const ownerId = randomUUID();
     let heartbeatTimer: NodeJS.Timeout | undefined;
     let heartbeatCount = 0;
+    let executionContext: Awaited<
+      ReturnType<AdaptiveSessionRepository["protectedExecutionContext"]>
+    >;
     const runner: any = {
       initialize: async (sessionId: string) => {
         const lease = await sessions.claimRuntimeLease({
@@ -97,10 +104,24 @@ integration("exact production Vitract/Q5 composition", () => {
       close: vi.fn(async () => {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
       }),
-      observe: vi.fn(async (sessionId: string) => observation(sessionId)),
+      observe: vi.fn(async (sessionId: string) => {
+        const evidence = observation(sessionId);
+        await sessions.invalidateInteractionCapabilitiesForDocument({
+          sessionId,
+          ownerId,
+          fencingToken: 1,
+          documentEpoch: evidence.documentEpoch,
+          origin: new URL(evidence.url).origin,
+        });
+        return evidence;
+      }),
       observeOperationContracts: vi.fn().mockResolvedValue([]),
       execute: vi.fn(async (sessionId: string, operation: { operationId: string }) => {
         await new Promise((resolve) => setTimeout(resolve, 100));
+        executionContext = await sessions.protectedExecutionContext(
+          sessionId,
+          operation.operationId,
+        );
         await executeDeterministicIssuance({
           database,
           protectedOperations,
@@ -118,7 +139,8 @@ integration("exact production Vitract/Q5 composition", () => {
       undefined,
       undefined,
       prepared,
-      new VitractObservedOperationContractProvider(),
+      new OperationContractProviderRegistry([new VitractObservedOperationContractProvider()]),
+      new OperationContractRegistry(database),
     );
     const composition = new VitractCredentialIssuancePreparationService(database, authoring);
     const lifecycle = await composition.createLifecycle(principal, {
@@ -142,28 +164,14 @@ integration("exact production Vitract/Q5 composition", () => {
       credentialName: "Scry deterministic Q5",
       expiresAt: new Date(Date.now() + 120_000).toISOString(),
     });
-    const authorization = await new OrchestrationService(database).grantAuthorization(
-      principal,
-      lifecycle.missionId,
-      {
-        missionId: lifecycle.missionId,
-        objectiveId: lifecycle.objectiveId,
-        environmentId: lifecycle.environmentId,
-        agentSessionId: lifecycle.agentSessionId,
-        kind: "protected_mutation",
-        reason: "Deterministic production composition",
-        confirmedUserAuthorized: true,
-        expiresAt: reserved.expiresAt,
-        operationId: reserved.publicOperationId,
-        praxisSessionId: lifecycle.authoringSessionId,
-        preparedOperation: {
-          protectedOperationId: reserved.protectedOperationId,
-          publicOperationId: reserved.publicOperationId,
-          contractDigest: reserved.contractDigest,
-        },
-      },
-    );
-    expect(authorization.status).toBe("approved");
+    expect(
+      (
+        await database.query(
+          "SELECT count(*)::int AS count FROM mission_authorizations WHERE mission_id=$1",
+          [lifecycle.missionId],
+        )
+      ).rows[0]!.count,
+    ).toBe(0);
     await new Promise((resolve) => setTimeout(resolve, 1_000));
     expect(heartbeatCount).toBeGreaterThanOrEqual(3);
     const planned = await database.query<{ state: string; leaseLive: boolean }>(
@@ -174,13 +182,18 @@ integration("exact production Vitract/Q5 composition", () => {
       [reserved.protectedOperationId],
     );
     expect(planned.rows[0]).toEqual({ state: "planned", leaseLive: true });
-    const settled = await composition.executeAuthorized(
+    const settled = await composition.executePrepared(
       principal,
       lifecycle,
       reserved.immutableResume,
     );
     expect(settled).toMatchObject({ state: "completed", replayed: false });
     expect(runner.execute).toHaveBeenCalledOnce();
+    expect(executionContext!).toMatchObject({
+      preparedExecutionCapabilityId: reserved.preparedExecutionCapabilityId,
+      mutationIdentity: reserved.mutationIdentity,
+      canonicalProgramDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
     const preparedScope = await bootstrapQ5CanonicalScope(
       new Q5ScopeBootstrapRepository(database, workspaceId),
       facts,
@@ -224,29 +237,24 @@ integration("exact production Vitract/Q5 composition", () => {
         )
       ).rows[0]?.references,
     ).not.toContain(pair.rows[0].clientSecretReferenceId);
+    await verifyCanonicalValueGrantBoundary({
+      database,
+      principal,
+      sessionId: lifecycle.authoringSessionId,
+      projectId: empty.projectId,
+      environmentId: lifecycle.environmentId,
+      missionId: lifecycle.missionId,
+      objectiveId: lifecycle.objectiveId,
+      agentSessionId: lifecycle.agentSessionId,
+      valueAssetId: preparedScope.scope.clientSecretValueAssetId,
+      credentialId: preparedScope.scope.clientSecretReferenceId,
+    });
     if (heartbeatTimer) clearInterval(heartbeatTimer);
 
     const convergenceReservation = await composition.reserveObserved(principal, {
       lifecycle,
       credentialName: "Scry deterministic convergence",
       expiresAt: new Date(Date.now() + 120_000).toISOString(),
-    });
-    await new OrchestrationService(database).grantAuthorization(principal, lifecycle.missionId, {
-      missionId: lifecycle.missionId,
-      objectiveId: lifecycle.objectiveId,
-      environmentId: lifecycle.environmentId,
-      agentSessionId: lifecycle.agentSessionId,
-      kind: "protected_mutation",
-      reason: "Deterministic automatic convergence",
-      confirmedUserAuthorized: true,
-      expiresAt: convergenceReservation.expiresAt,
-      operationId: convergenceReservation.publicOperationId,
-      praxisSessionId: lifecycle.authoringSessionId,
-      preparedOperation: {
-        protectedOperationId: convergenceReservation.protectedOperationId,
-        publicOperationId: convergenceReservation.publicOperationId,
-        contractDigest: convergenceReservation.contractDigest,
-      },
     });
     await database.query(
       `UPDATE adaptive_session_runtime_leases SET lease_expires_at=now()-interval '1 second'
@@ -297,6 +305,7 @@ async function executeDeterministicIssuance(input: {
               agent_session_id::text AS "agentSessionId",flow_draft_id::text AS "flowDraftId",
               authorization_id::text AS "authorizationId",program_digest AS "programDigest",
               mutation_identity AS "mutationIdentity",dispatch_semantics AS "dispatchSemantics",
+              prepared_execution_capability_id::text AS "preparedExecutionCapabilityId",
               safe_output_manifest AS "safeOutputManifest"
          FROM protected_operations WHERE authoring_session_id=$1 AND operation_id=$2`,
       [input.sessionId, input.operationId],
@@ -321,6 +330,7 @@ async function executeDeterministicIssuance(input: {
       dispatchSemantics: row.dispatchSemantics,
       programDigest: row.programDigest,
       safeOutputManifest: row.safeOutputManifest,
+      preparedExecutionCapabilityId: row.preparedExecutionCapabilityId,
     },
   });
   for (const [next, phase] of [

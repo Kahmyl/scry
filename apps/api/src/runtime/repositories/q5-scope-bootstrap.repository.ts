@@ -86,6 +86,15 @@ export class Q5ScopeBootstrapRepository implements Q5ScopeBootstrapStore {
       maxActions: 80,
       maxDurationMs: 1_800_000,
       maxNavigations: 20,
+      protectedSyntheticInputs: {
+        enabled: true,
+        generators: ["opaque_operation_token", "nested_client_order_json"].map((contract) => ({
+          contract,
+          version: 1,
+          purposes: ["test_order_qualification"],
+          resourceScopes: [{ resourceKind: "order", operation: "create" }],
+        })),
+      },
     };
     const created = await this.query<{ id: string }>(
       `INSERT INTO environments(project_id,name,base_origin,policy,secret_refs)
@@ -128,30 +137,53 @@ export class Q5ScopeBootstrapRepository implements Q5ScopeBootstrapStore {
       `WITH issued AS (
          SELECT operation.id AS issuance_id,operation.project_id,operation.environment_id,
                 operation.persisted_references,operation.safe_output_manifest,
-                operation.persisted_references->'clientId'->>'valueId' AS client_id,
-                operation.persisted_references->'clientSecret'->>'credentialId' AS client_secret
+                client_id_asset.generated_public_value_id AS client_id,
+                client_id_asset.id AS client_id_asset,
+                client_secret_asset.project_credential_id AS client_secret,
+                client_secret_asset.id AS client_secret_asset,
+                record_asset.generated_public_value_id AS credential_record_id
            FROM protected_operations operation
-           JOIN observed_operation_contracts contract ON contract.id=operation.observed_operation_contract_id
-           JOIN mission_authorizations mission_authority
-             ON mission_authority.id=operation.authorization_id
+           JOIN prepared_execution_capabilities capability
+             ON capability.id=operation.prepared_execution_capability_id
+            AND capability.protected_operation_id=operation.id AND capability.state='finalized'
+           JOIN operation_contract_revisions contract
+             ON contract.id=capability.operation_contract_revision_id
+            AND contract.semantic_digest=capability.operation_contract_revision_digest
+           JOIN typed_value_assets client_id_asset
+             ON client_id_asset.producer_protected_operation_id=operation.id
+            AND client_id_asset.canonical_output_key='clientId'
+            AND client_id_asset.classification='public' AND client_id_asset.state='active'
+            AND client_id_asset.project_id=operation.project_id AND client_id_asset.environment_id=operation.environment_id
+            AND client_id_asset.operation_contract_revision_id=contract.id
+           JOIN typed_value_assets client_secret_asset
+             ON client_secret_asset.producer_protected_operation_id=operation.id
+            AND client_secret_asset.canonical_output_key='clientSecret'
+            AND client_secret_asset.classification='protected' AND client_secret_asset.state='active'
+            AND client_secret_asset.project_id=operation.project_id AND client_secret_asset.environment_id=operation.environment_id
+            AND client_secret_asset.operation_contract_revision_id=contract.id
+           JOIN typed_value_assets record_asset
+             ON record_asset.producer_protected_operation_id=operation.id
+            AND record_asset.canonical_output_key='credentialRecordId'
+            AND record_asset.classification='public' AND record_asset.state='active'
+            AND record_asset.project_id=operation.project_id AND record_asset.environment_id=operation.environment_id
+            AND record_asset.operation_contract_revision_id=contract.id
           WHERE operation.project_id=$1 AND operation.environment_id=$2
             AND operation.state='completed' AND operation.persistence_state='committed'
             AND operation.mutation_outcome='applied'
             AND operation.dispatch_state='acknowledged'
+            AND operation.authority_model='canonical'
             AND contract.operation_key='issuePartnerCredential'
-            AND contract.facts->'operation'->>'classification'='mutation'
+            AND contract.facts->'operation'->'semantics'->>'dispatch'='mutation'
             AND contract.facts->'resourceEffect'->>'provider'='vitract'
             AND contract.facts->'resourceEffect'->>'resourceKind'='credential_record'
-            AND mission_authority.kind='protected_mutation'
-            AND mission_authority.status='approved'
-            AND mission_authority.revoked_at IS NULL
-            AND (mission_authority.expires_at IS NULL OR mission_authority.expires_at>now())
        )
        SELECT encode(digest(issuance_id::text||':'||client_id||':'||client_secret,'sha256'),'hex') AS digest,
               issued.project_id::text AS "projectId",
               issued.environment_id::text AS "environmentId",
-              issuance_id::text AS "issuanceOperationId",client_id AS "clientIdPublicValueId",
-              client_secret AS "clientSecretReferenceId",
+              issuance_id::text AS "issuanceOperationId",client_id::text AS "clientIdPublicValueId",
+              client_secret::text AS "clientSecretReferenceId",
+              client_id_asset::text AS "clientIdValueAssetId",
+              client_secret_asset::text AS "clientSecretValueAssetId",
               (safe_output_manifest @> '[{"key":"clientId","classification":"public"}]'::jsonb
                 OR safe_output_manifest @> '[{"reference":"clientId","classification":"public"}]'::jsonb)
                 AND (safe_output_manifest @> '[{"key":"clientSecret","classification":"protected"}]'::jsonb
@@ -161,11 +193,11 @@ export class Q5ScopeBootstrapRepository implements Q5ScopeBootstrapStore {
                 AS atomic
          FROM issued
          JOIN generated_public_values client_id_value
-          ON client_id_value.id::text=issued.client_id
+          ON client_id_value.id=issued.client_id
           AND client_id_value.project_id=issued.project_id
           AND client_id_value.reference='clientId'
          JOIN project_credentials client_secret_credential
-           ON client_secret_credential.id::text=issued.client_secret
+           ON client_secret_credential.id=issued.client_secret
           AND client_secret_credential.project_id=issued.project_id
           AND client_secret_credential.security_status='active' AND client_secret_credential.deleted_at IS NULL
          JOIN external_resource_bindings resource_binding
@@ -175,8 +207,7 @@ export class Q5ScopeBootstrapRepository implements Q5ScopeBootstrapStore {
           AND resource_binding.provider='vitract'
           AND resource_binding.resource_kind='credential_record'
           AND resource_binding.lifecycle_state='active'
-          AND resource_binding.generated_public_value_id::text=
-                issued.persisted_references->'credentialRecordId'->>'valueId'
+          AND resource_binding.generated_public_value_id=issued.credential_record_id
         WHERE client_id IS NOT NULL AND client_secret IS NOT NULL`,
       [projectId, environmentId],
     );
@@ -190,8 +221,10 @@ export class Q5ScopeBootstrapRepository implements Q5ScopeBootstrapStore {
         issuanceOperationId: row.issuanceOperationId,
         clientIdPublicValueId: row.clientIdPublicValueId,
         clientSecretReferenceId: row.clientSecretReferenceId,
+        clientIdValueAssetId: row.clientIdValueAssetId,
+        clientSecretValueAssetId: row.clientSecretValueAssetId,
         clientIdentityClass: "generated_safe",
-        clientSecretClass: "protected_reference",
+        clientSecretClass: "generated_protected",
         credentialType: Q5_CANONICAL_SCOPE.credentialType,
         protectedPolicy: Q5_CANONICAL_SCOPE.protectedPolicy,
         provenance: "supported_protected_issuance",
@@ -214,9 +247,10 @@ export class Q5ScopeBootstrapRepository implements Q5ScopeBootstrapStore {
          qualification_key,project_id,environment_id,application_identity,environment_class,
          target_origin,allowed_origins,credential_pair_reference_id,client_id_public_value_id,
          client_secret_reference_id,issuance_operation_id,credential_type,protected_policy,
+         client_id_value_asset_id,client_secret_value_asset_id,
          credential_provenance,source_commit,source_manifest,schema_fingerprint,migration_identity,
          q5_mcp_profile,q5_mcp_contract_digest,qualification_policy_version,binding_digest
-       ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+       ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13,$23,$24,$14,$15,$16,$17,$18,$19,$20,$21,$22)
        ON CONFLICT(qualification_key) DO NOTHING RETURNING id::text`,
       [
         Q5_CANONICAL_SCOPE.qualificationKey,
@@ -241,9 +275,19 @@ export class Q5ScopeBootstrapRepository implements Q5ScopeBootstrapStore {
         input.q5McpContractDigest,
         input.qualificationPolicyVersion,
         input.bindingDigest,
+        input.clientIdValueAssetId,
+        input.clientSecretValueAssetId,
       ],
     );
-    if (!result.rowCount) throw new Error("Q5_PREPARED_SCOPE_ALREADY_EXISTS");
+    if (!result.rowCount) {
+      const existing = await this.query<{ id: string }>(
+        `SELECT id::text FROM q5_prepared_scopes
+         WHERE qualification_key=$1 AND binding_digest=$2 AND state='prepared'`,
+        [Q5_CANONICAL_SCOPE.qualificationKey, input.bindingDigest],
+      );
+      if (!existing.rowCount) throw new Error("Q5_PREPARED_SCOPE_ALREADY_EXISTS");
+      return { ...input, id: existing.rows[0]!.id, state: "prepared" };
+    }
     return { ...input, id: result.rows[0]!.id, state: "prepared" };
   }
 

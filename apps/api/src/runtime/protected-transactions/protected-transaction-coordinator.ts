@@ -21,11 +21,7 @@ import {
 } from "@scry/praxis";
 import type { ProtectedBrowserSession, SafeBrowserSession } from "@scry/praxis";
 import { executeProtectedReveal, verifyProtectedRevealTarget } from "@scry/praxis";
-import {
-  protectedTransactionDigest,
-  transactionInputDigest,
-  transactionInputSchemaDigest,
-} from "@scry/executor";
+import { transactionInputDigest, transactionInputSchemaDigest } from "@scry/executor";
 import type { VeilRuntimeCoordinator } from "@scry/veil";
 import type { ExecuteOptions } from "@scry/executor";
 export { PlaywrightProtectedCapsuleFactory } from "@scry/praxis";
@@ -54,6 +50,7 @@ import { classifyPassivePreparationRequest } from "./protected-preparation-effec
 import { beginProtectedResponseEnvelope } from "@scry/praxis";
 import type { ProtectedResponseEvidence } from "@scry/praxis";
 import { runProtectedStage } from "@scry/praxis";
+import { createProtectedInputVerification } from "./protected-input-verification.js";
 
 /** @deprecated Historical rows only. New operations use ProtectedOperationState. */
 export type MutationLedgerState = ProtectedOperationState;
@@ -64,12 +61,22 @@ export class ProtectedTransactionKernel {
 
   async execute(transaction: ProtectedTransaction): Promise<ProtectedTransactionExecution> {
     const d = this.dependencies;
-    const identity = digests(transaction, d.allowedOrigins);
+    if (!d.canonicalProgramDigest)
+      throw new PhaseError(
+        "PREPARED_EXECUTION_PROGRAM_AUTHORITY_MISSING",
+        "preparation",
+        "do_not_retry",
+      );
+    const identity = inputDigests(transaction);
     let claim = await d.store.claim({
       operationId: transaction.operationId,
       mutationKind: transaction.mutation.kind,
       dispatchSemantics: transaction.mutation.dispatchSemantics ?? "mutation",
-      mutationIdentity: transaction.operationId,
+      mutationIdentity: d.mutationIdentity,
+      ...(d.preparedExecutionCapabilityId
+        ? { preparedExecutionCapabilityId: d.preparedExecutionCapabilityId }
+        : {}),
+      programDigest: d.canonicalProgramDigest,
       safeOutputManifest: transaction.extraction.outputs.map((output) => ({
         reference: output.reference,
         classification: output.classification,
@@ -150,15 +157,23 @@ export class ProtectedTransactionKernel {
     };
     const facts = initialFacts();
     const lifecycleSignal = composeAbortSignals(d.signal, leaseController.signal);
+    const inputVerification = createProtectedInputVerification();
     const lifecycleDependencies: ProtectedTransactionDependencies = {
       ...d,
       signal: lifecycleSignal,
+      resolveKnownSecret: async (reference) => {
+        const value = await d.resolveKnownSecret(reference);
+        inputVerification.remember(reference, value);
+        return value;
+      },
+      verifyPresentedSecret: inputVerification.matches,
     };
     let capsule: ProtectedBrowserSession | undefined;
     let responseEnvelope: Awaited<ReturnType<typeof beginProtectedResponseEnvelope>> | undefined;
     let capsulePrivacyFailed = false;
     let safeSession = d.safeSession;
     const stopHeartbeat = async () => {
+      inputVerification.dispose();
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       await runProtectedStage({
         stage: "protected_heartbeat_shutdown",
@@ -442,7 +457,7 @@ export class ProtectedTransactionKernel {
           fencingToken: claim.fencingToken,
           phase: "acquisition_ready",
           facts: {
-            acquisitionContractDigest: protectedTransactionDigest(transaction, d.allowedOrigins),
+            acquisitionContractDigest: d.canonicalProgramDigest,
           },
         });
 
@@ -1739,9 +1754,8 @@ function result(
     ...(continuedAtStepId ? { continuedAtStepId } : {}),
   };
 }
-function digests(transaction: ProtectedTransaction, allowedOrigins: string[]) {
+function inputDigests(transaction: ProtectedTransaction) {
   return {
-    programDigest: protectedTransactionDigest(transaction, allowedOrigins),
     inputSchemaDigest: transactionInputSchemaDigest(transaction),
     inputDigest: transactionInputDigest(transaction),
   };

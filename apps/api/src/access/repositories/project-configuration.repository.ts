@@ -177,7 +177,7 @@ export class ProjectConfigurationRepository {
         }>(
           `SELECT credential.id AS "referenceId",credential.name,
                   credential.security_status AS "securityStatus",
-                  (credential.security_status='active') AS "eligibleForAuthorization",
+                  (credential.security_status='active' AND credential.origin_protected_operation_id IS NULL) AS "eligibleForAuthorization",
                   ARRAY(SELECT environment.id::text FROM environments environment
                     WHERE environment.project_id=credential.project_id
                       AND environment.secret_refs ? credential.id::text
@@ -605,7 +605,7 @@ export class ProjectConfigurationRepository {
       `SELECT credential.id,credential.id AS "referenceId",
               credential.project_id AS "projectId",credential.name,
               credential.security_status AS "securityStatus",
-              (credential.security_status='active') AS "eligibleForAuthorization",
+              (credential.security_status='active' AND credential.origin_protected_operation_id IS NULL) AS "eligibleForAuthorization",
               ARRAY(SELECT environment.id::text FROM environments environment
                 WHERE environment.project_id=credential.project_id
                   AND environment.secret_refs ? credential.id::text
@@ -732,6 +732,7 @@ export class ProjectConfigurationRepository {
              authentication_tag=$5,updated_at=now()
          FROM projects project
          WHERE credential.id=$1 AND credential.deleted_at IS NULL
+           AND credential.origin_protected_operation_id IS NULL
            AND project.id=credential.project_id
            AND ($6::uuid IS NULL OR project.workspace_id=$6)
          RETURNING credential.*
@@ -1023,7 +1024,8 @@ export class ProjectConfigurationRepository {
       );
     const result = await query(
       `SELECT id::text FROM project_credentials WHERE project_id = $1
-         AND deleted_at IS NULL AND security_status='active' AND id = ANY($2::uuid[])`,
+         AND deleted_at IS NULL AND security_status='active'
+         AND origin_protected_operation_id IS NULL AND id = ANY($2::uuid[])`,
       [projectId, references],
     );
     const active = new Set(result.rows.map((row) => String(row.id)));

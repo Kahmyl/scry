@@ -18,26 +18,43 @@ export function registerDispatchPreparedProtectedOperationTool(
     {
       title: "Dispatch prepared protected operation",
       description:
-        "Dispatch the exact previously reserved and authorized operation on its same live fenced Praxis owner. This accepts only immutable reservation commitments and never replacement targets or inputs.",
-      inputSchema: dispatchPreparedProtectedOperationSchema.shape,
+        "Dispatch the exact previously reserved operation on its same live fenced Praxis owner. Dispatch validates the exact mechanical capability internally. This accepts only immutable reservation commitments and never replacement targets or inputs.",
+      inputSchema: {
+        praxisSessionId: z.string().uuid(),
+        runId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe(
+            "Existing durable Run attached to this owner; include it to bind canonical execution and evidence across owner rotation.",
+          ),
+        ...dispatchPreparedProtectedOperationSchema.shape,
+      },
       outputSchema: z
         .object({ message: z.string(), dispatch: preparedProtectedOperationDispatchResultSchema })
         .strict(),
       annotations: writes,
     },
-    async (input) =>
-      withAdaptiveSessionError(
+    async (input) => {
+      const { praxisSessionId, runId, ...body } = input;
+      return withAdaptiveSessionError(
         async () =>
           toolResult(
             {
               dispatch: await client.post(
-                `/praxis-sessions/${input.praxisSessionId}/protected-operations/dispatch`,
-                dispatchPreparedProtectedOperationSchema.parse(input),
+                runId
+                  ? `/runs/${runId}/prepared-operations`
+                  : `/praxis-sessions/${praxisSessionId}/protected-operations/dispatch`,
+                {
+                  ...dispatchPreparedProtectedOperationSchema.parse(body),
+                  ...(runId ? { praxisSessionId } : {}),
+                },
               ),
             },
             "The exact prepared protected operation was admitted for one fenced dispatch.",
           ),
         "Prepared protected operation dispatch was refused.",
-      ),
+      );
+    },
   );
 }

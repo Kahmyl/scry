@@ -86,7 +86,6 @@ export async function captureRequestedEvidence(
   result: StepExecutionResult,
   networkRecords: Array<Record<string, unknown>>,
   redactor: SecretRedactor,
-  pendingNetworkBodies: Set<Promise<void>>,
   observation?: Record<string, unknown>,
   privacyGate?: VeilRuntimeCoordinator,
   collectors: ReadonlyMap<string, VeilChannelCollector> = new Map(),
@@ -222,7 +221,6 @@ export async function captureRequestedEvidence(
       setEvidenceStatus(result, "network", "degraded", "Evidence suppressed by Privacy Gate");
     } else {
       try {
-        await Promise.allSettled([...pendingNetworkBodies]);
         const file = path.join(root, "network", `${stepId}.json`);
         await writeJson(file, { requests: safeNetworkEvidence(networkRecords) });
         const artifact = await availableArtifact(

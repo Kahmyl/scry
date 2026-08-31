@@ -125,6 +125,7 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "prepared-protected-operation-journeys.sql",
   "vitract-q5-composition.sql",
   "prepared-protected-operation-reservation-settlement.sql",
+  "canonical-execution-authority.sql",
 ] as const;
 
 export type OptionalBaselineMigration = (typeof OPTIONAL_BASELINE_MIGRATIONS)[number];
@@ -217,6 +218,7 @@ export function compatibilityBaseline(source: string): string {
     "prepared-protected-operation-journeys.sql",
     "vitract-q5-composition.sql",
     "prepared-protected-operation-reservation-settlement.sql",
+    "canonical-execution-authority.sql",
   ].reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}\\r?\\n`, "g"), ""),
@@ -261,7 +263,8 @@ export function calculatePreTargetedRegionPerceptionFingerprint(input: {
             name !== "q5-canonical-scope-bootstrap.sql" &&
             name !== "prepared-protected-operation-journeys.sql" &&
             name !== "vitract-q5-composition.sql" &&
-            name !== "prepared-protected-operation-reservation-settlement.sql",
+            name !== "prepared-protected-operation-reservation-settlement.sql" &&
+            name !== "canonical-execution-authority.sql",
         ),
       ),
     ),

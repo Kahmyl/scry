@@ -305,7 +305,8 @@ export class ExecutionRepository {
               credential.authentication_tag AS "authenticationTag", credential.deleted_at AS "deletedAt",
               credential.security_status AS "securityStatus"
        FROM project_credentials credential
-       WHERE credential.project_id = $1 AND credential.id = $2`,
+       WHERE credential.project_id = $1 AND credential.id = $2
+         AND credential.origin_protected_operation_id IS NULL`,
         [authorization.rows[0]!.projectId, credentialId],
       );
       if (!credential.rowCount || credential.rows[0]!.deletedAt) return { status: "deleted" };

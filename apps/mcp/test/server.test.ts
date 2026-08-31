@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ScryApiClient } from "../src/api-client.js";
 import { createScryMcpServer } from "../src/server.js";
-import { SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS } from "../src/server-composition.js";
+import {
+  SCRY_MCP_INSTRUCTIONS,
+  SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS,
+} from "../src/server-composition.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -120,7 +123,7 @@ describe("current Scry MCP surface", () => {
     const { client, server } = await connected();
     const tools = (await client.listTools()).tools;
     const names = tools.map(({ name }) => name);
-    expect(tools).toHaveLength(67);
+    expect(tools).toHaveLength(65);
     expect(names).toEqual(
       expect.arrayContaining([
         "start_praxis_session",
@@ -136,9 +139,7 @@ describe("current Scry MCP surface", () => {
         "close_praxis_session",
         "reserve_prepared_protected_operation",
         "get_praxis_runtime_ownership",
-        "resume_prepared_protected_operation",
-        "claim_mission_operation_continuation",
-        "list_mission_operation_checkpoints",
+        "list_mission_continuations",
         "dispatch_prepared_protected_operation",
         "observe_operation_contracts",
         "start_run",
@@ -197,34 +198,38 @@ describe("current Scry MCP surface", () => {
       /nodeId|backendNodeId|objectId|html|expression|javascript|cookie|storage|secret/i,
     );
     const guidance = SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS;
+    expect(SCRY_MCP_INSTRUCTIONS).toContain("Intelligence chooses actions");
+    expect(SCRY_MCP_INSTRUCTIONS).toContain("continuationReference");
     const escalationPositions = [
-      guidance.indexOf("ordinary semantic perception"),
-      guidance.indexOf("targeted semantic-region perception"),
-      guidance.indexOf("browser-resource perception"),
-      guidance.indexOf("DOMSnapshot/accessibility structural perception"),
-      guidance.indexOf("constrained runtime-state perception"),
-    ];
+      "ordinary semantic perception",
+      "targeted semantic-region perception",
+      "browser-resource perception",
+      "DOMSnapshot/accessibility structural perception",
+      "constrained runtime-state perception",
+    ].map((phrase) => guidance.indexOf(phrase));
     expect(
       escalationPositions.every(
         (value, index) => value >= 0 && (index === 0 || value > escalationPositions[index - 1]!),
       ),
     ).toBe(true);
     const dispatch = tools.find(({ name }) => name === "dispatch_run_operation")!;
-    expect(dispatch.description).toContain("semantic-only targets");
-    expect(dispatch.description).toContain("no selector fallback");
-    expect(dispatch.description).toContain("successorObservation");
-    expect(dispatch.description).toContain("next semantic decision");
-    expect(dispatch.description).toContain("protectedReferenceId");
-    expect(dispatch.description).toContain("protectedInputReferences");
-    expect(dispatch.description).toContain("Do not send value or valueSource");
-    expect(dispatch.description).toContain("never expose the protected plaintext");
-    expect(dispatch.description).toContain("activate and press require an explicit");
-    expect(dispatch.description).toContain("semanticEffect:'read_context_transition'");
-    expect(dispatch.description).toContain("intent.authorization:{kind:'live_read'}");
-    expect(dispatch.description).toContain("only activate/press classification that avoids");
-    expect(dispatch.description).toContain("semanticEffect:'resource_mutation'");
-    expect(dispatch.description).toContain("semanticEffect:'unknown'");
-    expect(dispatch.description).toContain("use unknown when read-only transition semantics");
+    for (const phrase of [
+      "exact context-control",
+      "same current page/document",
+      "successorObservation",
+      "protectedReferenceId",
+      "protectedInputReferences",
+      "never expose plaintext",
+      "semanticEffect:'read_context_transition'",
+      "intent.authorization:{kind:'live_read'}",
+      "reserve_prepared_protected_operation",
+      "dispatch_prepared_protected_operation",
+      "No second owner approval",
+    ])
+      expect(dispatch.description).toContain(phrase);
+    expect(dispatch.description).not.toMatch(
+      /grant protected_mutation|authorizationId|grant_mission_execution_authorization/,
+    );
 
     const actionSchema = (dispatch.inputSchema as any).properties.intent.properties.action;
     const actionVariants = actionSchema.oneOf;
@@ -349,9 +354,7 @@ describe("current Scry MCP surface", () => {
     const relateMissions = tools.find(({ name }) => name === "relate_missions")!;
     expect(relateMissions.description).toContain("cannot move UNKNOWN mutation truth");
 
-    const grant = tools.find(({ name }) => name === "grant_mission_execution_authorization")!;
-    expect(grant.description).toContain("operationId");
-    expect(grant.description).toContain("praxisSessionId");
+    expect(tools.some(({ name }) => name === "grant_mission_execution_authorization")).toBe(false);
 
     expect(tools.find(({ name }) => name === "get_run")?.annotations).toMatchObject({
       readOnlyHint: true,
@@ -660,17 +663,13 @@ describe("current Scry MCP surface", () => {
     );
     const { client, server } = await connected();
     const tools = (await client.listTools()).tools;
-    const authorizationInput = tools.find(
-      ({ name }) => name === "grant_mission_execution_authorization",
-    )?.inputSchema as any;
-    const authorizationSchema = authorizationInput.properties?.authorization ?? {};
-    const authorizationVariants = authorizationSchema.anyOf ?? authorizationSchema.oneOf ?? [];
-    const protectedAuthorization = authorizationVariants.find(
-      (variant: any) => variant.properties?.kind?.const === "protected_mutation",
-    );
-    expect(protectedAuthorization?.required).toEqual(
-      expect.arrayContaining(["operationId", "praxisSessionId"]),
-    );
+    for (const removed of [
+      "grant_mission_execution_authorization",
+      "select_mission_value",
+      "resume_prepared_protected_operation",
+      "claim_mission_operation_continuation",
+    ])
+      expect(tools.some(({ name }) => name === removed)).toBe(false);
     expect(tools.map(({ name }) => name)).toEqual([
       "get_capabilities",
       "list_projects",
@@ -697,7 +696,6 @@ describe("current Scry MCP surface", () => {
       "pause_mission_orchestration",
       "resume_mission_orchestration",
       "cancel_mission_orchestration",
-      "grant_mission_execution_authorization",
       "relate_mission_activity",
       "relate_missions",
       "create_mission_objective",

@@ -414,6 +414,8 @@ describe("protected transaction capsule", () => {
     };
     try {
       const result = await new ProtectedTransactionKernel({
+        mutationIdentity: randomUUID(),
+        canonicalProgramDigest: "f".repeat(64),
         safeSession: {
           browser,
           context,
@@ -567,6 +569,8 @@ describe("protected transaction capsule", () => {
         compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] }),
       );
       const result = await new ProtectedTransactionKernel({
+        mutationIdentity: randomUUID(),
+        canonicalProgramDigest: "f".repeat(64),
         safeSession: { browser, context, page, provenance },
         gate: new VeilRuntimeCoordinator([collector]),
         redactor: new SecretRedactor(),
@@ -665,6 +669,8 @@ describe("protected transaction capsule", () => {
         { type: "visible", target: intent("Name", "textbox"), timeoutMs: 100 },
       ];
       const result = await new ProtectedTransactionKernel({
+        mutationIdentity: randomUUID(),
+        canonicalProgramDigest: "f".repeat(64),
         safeSession: {
           browser,
           context,
@@ -766,6 +772,8 @@ describe("protected transaction capsule", () => {
         compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] }),
       );
       const result = await new ProtectedTransactionKernel({
+        mutationIdentity: randomUUID(),
+        canonicalProgramDigest: "f".repeat(64),
         safeSession: {
           browser,
           context,
@@ -953,7 +961,14 @@ describe("protected transaction capsule", () => {
             effect: "replayable_setup",
           },
         ];
-        operation.preparation.assertions = [];
+        operation.preparation.assertions = [
+          {
+            type: "fieldValueMatchesInput",
+            input: "clientSecret",
+            target: intent("Client secret", "textbox"),
+            timeoutMs: 500,
+          },
+        ];
         operation.mutation = {
           action: {
             type: "click",
@@ -986,7 +1001,10 @@ describe("protected transaction capsule", () => {
           compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] }),
         );
         const startedAt = Date.now();
+        const deliveredReferences = new Set<string>();
         const result = await new ProtectedTransactionKernel({
+          mutationIdentity: randomUUID(),
+          canonicalProgramDigest: "f".repeat(64),
           safeSession: {
             browser,
             context,
@@ -1006,12 +1024,15 @@ describe("protected transaction capsule", () => {
               browserContextId: session.provenance.contextId,
             });
           },
-          resolveKnownSecret: async (reference) =>
-            reference === "client-id-ref"
+          resolveKnownSecret: async (reference) => {
+            if (deliveredReferences.has(reference)) throw new Error("ONE_USE_DELIVERY_CONSUMED");
+            deliveredReferences.add(reference);
+            return reference === "client-id-ref"
               ? expected.clientId
               : reference === "client-secret-ref"
                 ? expected.clientSecret
-                : expected.orderId,
+                : expected.orderId;
+          },
           persistSecret: async () => {
             throw new Error("must not persist a protected output");
           },
@@ -1153,6 +1174,8 @@ describe("protected transaction capsule", () => {
       const started = Date.now();
 
       const result = await new ProtectedTransactionKernel({
+        mutationIdentity: randomUUID(),
+        canonicalProgramDigest: "f".repeat(64),
         safeSession: {
           browser,
           context,
@@ -1216,6 +1239,8 @@ describe("protected transaction capsule", () => {
       const page = await context.newPage();
       const memory = memoryStore("dispatching");
       const result = await new ProtectedTransactionKernel({
+        mutationIdentity: randomUUID(),
+        canonicalProgramDigest: "f".repeat(64),
         safeSession: {
           browser,
           context,
@@ -1260,6 +1285,8 @@ describe("protected transaction capsule", () => {
       const memory = memoryStore("recovery_required");
       const compromised = vi.fn();
       const result = await new ProtectedTransactionKernel({
+        mutationIdentity: randomUUID(),
+        canonicalProgramDigest: "f".repeat(64),
         safeSession: {
           browser,
           context,
@@ -1325,6 +1352,8 @@ describe("protected transaction capsule", () => {
         },
       });
       const result = await new ProtectedTransactionKernel({
+        mutationIdentity: randomUUID(),
+        canonicalProgramDigest: "f".repeat(64),
         safeSession: {
           browser,
           context,
@@ -1603,6 +1632,8 @@ describe("protected transaction capsule", () => {
           compileVeilPolicy({ profile: "balanced", allowedOrigins: [origin] }),
         );
         const result = await new ProtectedTransactionKernel({
+          mutationIdentity: randomUUID(),
+          canonicalProgramDigest: "f".repeat(64),
           safeSession: {
             browser,
             context,

@@ -58,6 +58,7 @@ describe("agent-facing guidance contracts", () => {
         expiresAt: "2099-01-01T00:00:00.000Z",
         preparedOperation: {
           protectedOperationId: id("6"),
+          preparedExecutionCapabilityId: id("7"),
           publicOperationId: "operation-1",
           contractDigest: "a".repeat(64),
         },

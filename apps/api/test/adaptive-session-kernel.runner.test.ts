@@ -126,7 +126,7 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     const runner = new AdaptiveSessionKernelRunner(
       {} as never,
       {} as never,
-      {} as never,
+      { invalidateInteractionCapabilitiesForDocument: vi.fn() } as never,
       {} as never,
     );
     const observeDocument = vi.fn(async () => ({

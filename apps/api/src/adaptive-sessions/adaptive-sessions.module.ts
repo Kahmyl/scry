@@ -1,4 +1,9 @@
 import { Module } from "@nestjs/common";
+import {
+  APPLICATION_SYNTHETIC_INPUT_GENERATORS,
+  SyntheticInputGeneratorRegistry,
+} from "./synthetic-input-generator.registry.js";
+import { vitractSyntheticInputGenerators } from "./vitract-synthetic-input.provider.js";
 
 import { InfrastructureModule } from "../infrastructure/index.js";
 import { RuntimeModule } from "../runtime/index.js";
@@ -13,11 +18,18 @@ import { VitractCredentialResourceEffectProvider } from "./vitract-credential-re
 import { PreparedProtectedOperationRepository } from "./repositories/prepared-protected-operation.repository.js";
 import { VitractObservedOperationContractProvider } from "./vitract-observed-operation-contract.provider.js";
 import { VitractCredentialIssuancePreparationService } from "./services/vitract-credential-issuance-preparation.js";
+import {
+  OPERATION_CONTRACT_ADAPTERS,
+  OperationContractProviderRegistry,
+  OperationContractRegistry,
+} from "./operation-contract.registry.js";
 
 @Module({
   imports: [InfrastructureModule, RuntimeModule],
   controllers: [PraxisSessionController],
   providers: [
+    { provide: APPLICATION_SYNTHETIC_INPUT_GENERATORS, useValue: vitractSyntheticInputGenerators },
+    SyntheticInputGeneratorRegistry,
     AdaptiveSessionRepository,
     AdaptiveSessionKernelRunner,
     AdaptiveOperationReconciliationRegistry,
@@ -27,6 +39,13 @@ import { VitractCredentialIssuancePreparationService } from "./services/vitract-
     MissionProtectedQualificationRunner,
     PreparedProtectedOperationRepository,
     VitractObservedOperationContractProvider,
+    {
+      provide: OPERATION_CONTRACT_ADAPTERS,
+      inject: [VitractObservedOperationContractProvider],
+      useFactory: (vitract: VitractObservedOperationContractProvider) => [vitract],
+    },
+    OperationContractProviderRegistry,
+    OperationContractRegistry,
     VitractCredentialIssuancePreparationService,
   ],
   exports: [
@@ -38,6 +57,8 @@ import { VitractCredentialIssuancePreparationService } from "./services/vitract-
     MissionProtectedQualificationRunner,
     PreparedProtectedOperationRepository,
     VitractObservedOperationContractProvider,
+    OperationContractProviderRegistry,
+    OperationContractRegistry,
     VitractCredentialIssuancePreparationService,
   ],
 })

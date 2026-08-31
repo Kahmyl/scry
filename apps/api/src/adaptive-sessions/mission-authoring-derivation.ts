@@ -241,7 +241,7 @@ function deriveEffect(
 }
 
 function deriveMode(kind: MissionAuthoringIntent["authorization"]["kind"]): ExecutionMode {
-  return ["live_mutation", "protected_mutation"].includes(kind)
+  return ["live_mutation", "protected_mutation", "prepared_execution"].includes(kind)
     ? "transact"
     : kind === "live_read"
       ? "observe"

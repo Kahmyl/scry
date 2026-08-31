@@ -23,8 +23,9 @@ describe("Vitract live issuance production authority", () => {
     expect(source).toContain("preparation.createLifecycle");
     expect(source).toContain("preparation.prepareObservedSurface");
     expect(source).toContain("preparation.reserveObserved");
-    expect(source).toContain("waitForExactAuthorization");
-    expect(source).toContain("preparation.executeAuthorized");
+    expect(source).not.toContain("waitForExactAuthorization");
+    expect(source).toContain('!process.argv.includes("--execute-live")');
+    expect(source).toContain("preparation.executePrepared");
     expect(source).toContain("`${input.idempotencyKey}-failure-close`");
     expect(source).not.toMatch(
       /754d45de-3aea-4665-a852-a55665c1f034|0d2fe496-156c-43db-85cd-85fa8aac5add|aa41b84e-af43-4619-b811-700cbe4a5df2|vtr_app_sandbox_/,

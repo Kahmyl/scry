@@ -100,6 +100,7 @@ export const mutationReceiptSchema = z
               classification: z.enum(["public", "protected"]),
               credentialId: z.string().uuid().optional(),
               valueId: z.string().uuid().optional(),
+              valueAssetId: z.string().uuid().optional(),
               scope: z.enum(["run", "project"]),
             })
             .strict(),
@@ -183,6 +184,7 @@ export type MutationReceiptProjectionSource = {
   runId?: string;
   praxisSessionId?: string;
   dispatchSemantics: "mutation" | "read_only";
+  authorityModel?: "legacy" | "canonical";
   programDigest: string | null;
   syntheticInputSetCommitment: string | null;
   payloadCommitment: string | null;
@@ -197,6 +199,7 @@ export type MutationReceiptProjectionSource = {
       classification: "public" | "protected";
       credentialId?: string;
       valueId?: string;
+      valueAssetId?: string;
       scope: "run" | "project";
     }
   >;
@@ -351,7 +354,10 @@ export function projectMutationReceipt(source: MutationReceiptProjectionSource):
       state: reconciliationState,
       observations,
     },
-    redispatchAllowed: source.mutationOutcome === "not_applied",
+    // A canonical capability is single-use even when its operation is read-only.
+    // Historical receipts retain their historical projection, never new authority.
+    redispatchAllowed:
+      source.authorityModel !== "canonical" && source.mutationOutcome === "not_applied",
     reasonCodes: [...new Set(reasonCodes)],
     transitions: transitions.map(
       ({ sequence, fromState, toState, phase, reasonCode, occurredAt }) => ({
@@ -433,6 +439,7 @@ export type ProtectedOperationClaim = {
       classification: "public" | "protected";
       credentialId?: string;
       valueId?: string;
+      valueAssetId?: string;
       scope: "run" | "project";
     }
   >;
@@ -447,6 +454,7 @@ export type ProtectedTransactionStore = {
     inputSchemaDigest: string;
     inputDigest: string;
     mutationIdentity: string;
+    preparedExecutionCapabilityId?: string;
     safeOutputManifest: Array<{
       reference: string;
       classification: "public" | "protected";

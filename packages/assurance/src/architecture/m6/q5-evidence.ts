@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   Q5_MCP_CONTRACT_DIGEST,
+  Q5_MCP_PROFILE,
   Q5_MCP_PROTOCOL_VERSION,
   Q5_MCP_TOOL_NAMES,
   Q5_REQUIRED_EVIDENCE_KINDS,
@@ -92,7 +93,7 @@ export type Q5EvidenceManifest = Readonly<{
     automaticRetries: 0;
   };
   mcp: {
-    profile: "q5-authoritative-v1";
+    profile: typeof Q5_MCP_PROFILE;
     protocolVersion: string;
     toolCount: number;
     contractDigest: string;
@@ -204,7 +205,7 @@ export function validateQ5EvidenceManifest(
   same(manifest.provider?.automaticRetries, 0, "Q5_PROVIDER_RETRY_ENABLED");
   if (!Number.isInteger(manifest.provider?.requestCount) || manifest.provider.requestCount < 1)
     issues.push("Q5_PROVIDER_REQUEST_ACCOUNTING_INVALID");
-  same(manifest.mcp?.profile, "q5-authoritative-v1", "Q5_MCP_PROFILE_MISMATCH");
+  same(manifest.mcp?.profile, Q5_MCP_PROFILE, "Q5_MCP_PROFILE_MISMATCH");
   same(manifest.mcp?.protocolVersion, Q5_MCP_PROTOCOL_VERSION, "Q5_MCP_PROTOCOL_MISMATCH");
   same(manifest.mcp?.toolCount, Q5_MCP_TOOL_NAMES.length, "Q5_MCP_TOOL_COUNT_MISMATCH");
   same(manifest.mcp?.contractDigest, Q5_MCP_CONTRACT_DIGEST, "Q5_MCP_DIGEST_MISMATCH");

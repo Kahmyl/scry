@@ -211,11 +211,11 @@ export async function verifyProtectedTransactionAssertions(
         if (input.classification !== "public" || typeof input.value !== "boolean")
           throw new PhaseError("TRANSACTION_INPUT_TYPE_MISMATCH", phase, "do_not_retry");
       }
-      const expected =
-        input.classification === "known_secret"
-          ? await dependencies.resolveKnownSecret(input.credentialRef)
-          : input.value;
-      if (input.classification === "known_secret") dependencies.redactor.add(String(expected));
+      // Verification consumes invocation-local comparison evidence, not another
+      // plaintext delivery from the once-only generated-value grant.
+      if (input.classification === "known_secret" && !dependencies.verifyPresentedSecret)
+        throw new PhaseError("PROTECTED_INPUT_VERIFICATION_UNAVAILABLE", phase, "do_not_retry");
+      const expected = input.classification === "public" ? input.value : undefined;
       const deadline = Date.now() + (assertion.timeoutMs ?? 10_000);
       let matches = false;
       do {
@@ -229,10 +229,13 @@ export async function verifyProtectedTransactionAssertions(
               ? await locator.inputValue({ timeout: remaining })
               : ((await locator.textContent({ timeout: remaining })) ?? "");
           const expectedText = String(expected);
+          const exact = assertion.type !== "textMatchesInput" || assertion.exact;
           matches =
-            assertion.type === "textMatchesInput" && !assertion.exact
-              ? actual.includes(expectedText)
-              : actual.trim() === expectedText;
+            input.classification === "known_secret"
+              ? dependencies.verifyPresentedSecret!(input.credentialRef, actual, Boolean(exact))
+              : exact
+                ? actual.trim() === expectedText
+                : actual.includes(expectedText);
         }
         if (!matches && Date.now() < deadline)
           await new Promise((resolve) => setTimeout(resolve, 100));

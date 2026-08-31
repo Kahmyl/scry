@@ -33,7 +33,7 @@ afterEach(() => {
 });
 
 describe("prepared protected production journey", () => {
-  it("completes a generated repository-blind MCP-only create and exact retrieve without replay", async () => {
+  it("round-trips the thin operation and continuation protocol over simulated API responses", async () => {
     vi.stubEnv("SCRY_LEGACY_MCP_FIXTURES", "");
     const state = {
       authenticated: false,
@@ -118,52 +118,21 @@ describe("prepared protected production journey", () => {
                 : [contracts.issue],
           });
         if (path.endsWith("/protected-operations/reserve")) {
-          const observed = Object.values(contracts).find(
-            (candidate) => candidate.id === body.observedOperationContractId,
-          )!;
+          if (body.publicOperationId === "retrieve-order") {
+            expect(body.continuationReference).toBe(ids.checkpoint);
+            expect(body.values).toEqual([]);
+            state.continuationClaimed = true;
+          }
           return json({
             protectedOperationId: operationFor(body.publicOperationId),
+            preparedExecutionCapabilityId: operationFor(body.publicOperationId),
             publicOperationId: body.publicOperationId,
             state: "reserved",
-            authorizationRequired: true,
-            contractDigest: body.observedOperationContractDigest,
+            mutationIdentity: operationFor(body.publicOperationId),
+            contractDigest: body.operationContractRevisionDigest,
             expiresAt,
-            authorization: {
-              missionId: ids.mission,
-              objectiveId: ids.objective,
-              environmentId: ids.environment,
-              agentSessionId: ids.agent,
-              praxisSessionId: ids.praxis,
-              protectedOperationId: operationFor(body.publicOperationId),
-              publicOperationId: body.publicOperationId,
-              operationLabel: observed.operation.label,
-              method: observed.operation.method,
-              targetClass: observed.operation.classification,
-              contractDigest: observed.digest,
-              expiresAt,
-            },
           });
         }
-        if (path === `/missions/${ids.mission}/authorizations`)
-          return json({
-            id: `20000000-0000-4000-8000-${String(body.operationId).slice(-12)}`,
-            status: "approved",
-            preparedOperation: body.preparedOperation,
-          });
-        if (path.endsWith("/protected-operations/resume"))
-          return json({
-            protectedOperationId: body.protectedOperationId,
-            publicOperationId: body.publicOperationId,
-            praxisSessionId: ids.praxis,
-            authorizationId: "20000000-0000-4000-8000-000000000001",
-            state: "planned",
-            operationContractId: Object.values(contracts).find(
-              (candidate) => candidate.digest === body.observedOperationContractDigest,
-            )!.id,
-            documentEpoch: 1,
-            resumeAllowed: true,
-            immutableReservation: true,
-          });
         if (path.endsWith("/protected-operations/dispatch")) {
           if (body.protectedOperationId === ids.issueOperation) state.sourceDispatched = true;
           if (body.protectedOperationId === ids.authOperation) state.authenticated = true;
@@ -175,7 +144,7 @@ describe("prepared protected production journey", () => {
                     code: "PROTECTED_OPERATION_REPLAY_REFUSED",
                     mutationOutcome: "applied",
                     retry: "never",
-                    safeActions: ["list_mission_operation_checkpoints"],
+                    safeActions: ["list_mission_continuations"],
                   },
                 },
                 409,
@@ -191,18 +160,22 @@ describe("prepared protected production journey", () => {
             sourceMutationRepeatable: false,
           });
         }
-        if (path.endsWith("/operation-checkpoints/claim")) {
-          state.continuationClaimed = true;
+        if (path.endsWith("/continuations"))
           return json({
-            checkpointId: body.checkpointId,
-            consumerProtectedOperationId: body.consumerProtectedOperationId,
-            continuation: body.continuation,
-            sourceMutationRepeatable: false,
-            state: "claimed",
+            continuations: state.retrieved
+              ? []
+              : [
+                  {
+                    continuationReference: ids.checkpoint,
+                    sourceOperationId: ids.createOperation,
+                    resourceType: "order",
+                    canonicalIdentityReference: ids.orderValue,
+                    readOnly: true,
+                    description: "Retrieve the created order",
+                    eligibleOperations: [],
+                  },
+                ],
           });
-        }
-        if (path.endsWith("/operation-checkpoints"))
-          return json({ checkpoints: [checkpoint(state.retrieved)] });
         return json(
           {
             message: {
@@ -220,9 +193,10 @@ describe("prepared protected production journey", () => {
     const { client, server } = await connected();
     const call = async (name: string, args: Record<string, unknown>) => {
       const response = await client.callTool({ name, arguments: args });
-      expect(response.isError, `${name}: ${JSON.stringify(response.structuredContent)}`).not.toBe(
-        true,
-      );
+      expect(
+        response.isError,
+        `${name}: ${JSON.stringify({ structured: response.structuredContent, content: response.content })}`,
+      ).not.toBe(true);
       return response.structuredContent as Record<string, any>;
     };
     expect(
@@ -232,76 +206,60 @@ describe("prepared protected production journey", () => {
     const issueObservation = await call("observe_operation_contracts", {
       praxisSessionId: ids.praxis,
     });
-    expect(issueObservation.observation.contracts[0].operation.key).toBe("issueCredentials");
+    expect(issueObservation.observation.contracts[0].revision.facts.operation.key).toBe(
+      "issueCredentials",
+    );
     await execute(call, contracts.issue, ids.issueOperation, "issue-credentials", []);
 
     const authObservation = await call("observe_operation_contracts", {
       praxisSessionId: ids.praxis,
     });
-    expect(authObservation.observation.contracts[0].operation.key).toBe("authenticate");
+    expect(authObservation.observation.contracts[0].revision.facts.operation.key).toBe(
+      "authenticate",
+    );
     await execute(call, contracts.auth, ids.authOperation, "authenticate", [
       value("clientId", control("3"), "generated_safe", {
-        valueId: "30000000-0000-4000-8000-000000000001",
+        valueAssetId: "30000000-0000-4000-8000-000000000001",
       }),
       value(
         "clientSecret",
         control("4"),
-        "protected_reference",
-        { referenceId: "30000000-0000-4000-8000-000000000002" },
+        "generated_protected",
+        { valueAssetId: "30000000-0000-4000-8000-000000000002" },
         "protected_text",
       ),
     ]);
 
     const docs = await call("observe_operation_contracts", { praxisSessionId: ids.praxis });
-    expect(docs.observation.contracts.map((item: any) => item.operation.key)).toEqual([
-      "createOrder",
-      "retrieveOrder",
-    ]);
+    expect(
+      docs.observation.contracts.map((item: any) => item.revision.facts.operation.key),
+    ).toEqual(["createOrder", "retrieveOrder"]);
     await execute(call, contracts.create, ids.createOperation, "create-order", [
       value("clientId", control("6"), "literal_public", { value: "public-client-id" }),
     ]);
     expect(state.businessCreates).toBe(1);
 
-    const beforeRetrieve = await call("list_mission_operation_checkpoints", {
+    const beforeRetrieve = await call("list_mission_continuations", {
       praxisSessionId: ids.praxis,
     });
-    expect(beforeRetrieve.result.checkpoints[0]).toMatchObject({
-      sourceProtectedOperationId: ids.createOperation,
-      mutationOutcome: "applied",
-      sourceMutationRepeatable: false,
-      state: "available",
+    expect(beforeRetrieve.result.continuations[0]).toMatchObject({
+      continuationReference: ids.checkpoint,
+      sourceOperationId: ids.createOperation,
+      readOnly: true,
     });
-    await reserveAndAuthorize(call, contracts.retrieve, ids.retrieveOperation, "retrieve-order", [
-      value("orderId", control("8"), "generated_safe", { valueId: ids.orderValue }),
-    ]);
-    const claim = await call("claim_mission_operation_continuation", {
-      praxisSessionId: ids.praxis,
-      checkpointId: ids.checkpoint,
-      consumerProtectedOperationId: ids.retrieveOperation,
-      continuation: "read_only_retrieve",
-      sourceOutputReference: "orderId",
-      canonicalFieldKey: "orderId",
-      targetReference: control("8"),
-      presentationClass: "plain_text",
-      expiresAt,
-    });
-    expect(claim.continuation).toMatchObject({
-      sourceMutationRepeatable: false,
-      continuation: "read_only_retrieve",
-    });
-    await resumeAndDispatch(call, contracts.retrieve, ids.retrieveOperation, "retrieve-order", [
-      value("orderId", control("8"), "generated_safe", { valueId: ids.orderValue }),
-    ]);
-
-    const settled = await call("list_mission_operation_checkpoints", {
-      praxisSessionId: ids.praxis,
-    });
-    expect(settled.result.checkpoints[0]).toMatchObject({
-      state: "completed",
-      identityMatches: true,
-      createdIdentityDigest: digest("a"),
-      retrievedIdentityDigest: digest("a"),
-    });
+    await reserve(
+      call,
+      contracts.retrieve,
+      ids.retrieveOperation,
+      "retrieve-order",
+      [],
+      ids.checkpoint,
+    );
+    await dispatch(call, contracts.retrieve, ids.retrieveOperation, "retrieve-order", []);
+    expect(
+      (await call("list_mission_continuations", { praxisSessionId: ids.praxis })).result
+        .continuations,
+    ).toEqual([]);
     expect(state).toMatchObject({
       authenticated: true,
       businessCreates: 1,
@@ -328,37 +286,73 @@ function contract(
   retrieval?: { canonicalTargetFieldKey: string; pathTemplate: string },
 ) {
   return {
-    id,
-    digest: contractDigest,
-    praxisSessionId: ids.praxis,
-    documentEpoch: 1,
-    origin: "https://preview.vitract.test",
-    sourceKind: "public_document",
-    observationId: `observation-${key}`,
-    operation: {
-      key,
-      label: key,
-      method,
-      pathTemplate,
-      transports: ["fetch"],
-      classification,
+    revision: {
+      id,
+      revision: 1,
+      digest: contractDigest,
+      retentionState: "active",
+      staleness: "current",
+      createdAt: "2026-08-30T12:00:00.000Z",
+      provenance: {
+        sourceKind: "public_document",
+        observationId: `observation-${key}`,
+        origin: "https://preview.vitract.test",
+        observedAt: "2026-08-30T12:00:00.000Z",
+      },
+      facts: {
+        application: { key: "laboratory", provider: "laboratory" },
+        adapter: { key: "public_document", version: 1 },
+        operation: {
+          key,
+          label: key,
+          method,
+          pathTemplate,
+          transports: ["fetch"],
+          semantics: {
+            dispatch: classification,
+            effects: classification === "mutation" ? ["business_effect"] : ["read"],
+          },
+        },
+        inputs: inputs.map(({ controlReference: _controlReference, ...field }) => field),
+        auth: { presentationClasses: ["protected_text"] },
+        response: {
+          statusClasses: [2],
+          ...(classification === "mutation"
+            ? { mutationPolicy: { confirmedNotAppliedStatuses: [400, 401, 403, 422] } }
+            : {}),
+          outputs: safeOutputKeys.map((outputKey) => ({
+            key: outputKey,
+            label: outputKey,
+            classification: outputKey === "clientSecret" ? "protected" : "public",
+            ...(publicIdentityOutputPath && outputKey === "orderId"
+              ? {
+                  extractor: { kind: "json_path", path: publicIdentityOutputPath },
+                  identityRole: "continuation_identity",
+                }
+              : {}),
+            generatedValueEligible: true,
+          })),
+          continuation,
+        },
+        ...(retrieval ? { retrieval } : {}),
+      },
+    },
+    interaction: {
+      id,
+      operationContractRevisionId: id,
+      operationContractRevisionDigest: contractDigest,
+      praxisSessionId: ids.praxis,
+      documentEpoch: 1,
+      origin: "https://preview.vitract.test",
       activationControlReference,
+      inputControlReferences: Object.fromEntries(
+        inputs.map((input) => [input.key, input.controlReference]),
+      ),
+      issuedAt: "2026-08-30T12:00:00.000Z",
+      expiresAt,
+      state: "active",
     },
-    inputs,
-    auth: { presentationClasses: ["protected_text"] },
-    response: {
-      statusClasses: [2],
-      confirmedNotAppliedStatuses: classification === "mutation" ? [400, 401, 403, 422] : [],
-      safeOutputKeys,
-      safeOutputs: safeOutputKeys.map((outputKey) => ({
-        key: outputKey,
-        label: outputKey,
-        classification: outputKey === "clientSecret" ? "protected" : "public",
-      })),
-      ...(publicIdentityOutputPath ? { publicIdentityOutputPath } : {}),
-      continuation,
-    },
-    ...(retrieval ? { retrieval } : {}),
+    executableInteractionAvailable: true,
   };
 }
 function field(
@@ -385,22 +379,6 @@ function value(
 ) {
   return { canonicalFieldKey, targetReference, presentationClass, source: { kind, ...source } };
 }
-function checkpoint(settled: boolean) {
-  return {
-    id: ids.checkpoint,
-    sourceProtectedOperationId: ids.createOperation,
-    mutationReceiptDigest: digest("9"),
-    mutationOutcome: "applied",
-    dispatchAcknowledged: true,
-    persistedReferences: { orderId: { classification: "public", valueId: ids.orderValue } },
-    permittedContinuations: ["read_only_retrieve", "reconcile"],
-    sourceMutationRepeatable: false,
-    state: settled ? "completed" : "available",
-    createdIdentityDigest: digest("a"),
-    retrievedIdentityDigest: settled ? digest("a") : null,
-    identityMatches: settled ? true : null,
-  };
-}
 function operationFor(publicOperationId: string) {
   return (
     {
@@ -411,23 +389,14 @@ function operationFor(publicOperationId: string) {
     } as Record<string, string>
   )[publicOperationId];
 }
-function commitments(contractDigest: string, values: unknown[]) {
-  return {
-    observedOperationContractDigest: contractDigest,
-    targetCommitment: digest("5"),
-    inputCommitment: digest("6"),
-    outputCommitment: digest("7"),
-    values,
-  };
-}
-async function reserveAndAuthorize(
+async function reserve(
   call: (name: string, args: Record<string, unknown>) => Promise<Record<string, any>>,
   observed: ReturnType<typeof contract>,
   protectedOperationId: string,
   publicOperationId: string,
   values: unknown[],
+  continuationReference?: string,
 ) {
-  const common = commitments(observed.digest, values);
   await call("reserve_prepared_protected_operation", {
     projectId: ids.project,
     environmentId: ids.environment,
@@ -436,50 +405,31 @@ async function reserveAndAuthorize(
     agentSessionId: ids.agent,
     praxisSessionId: ids.praxis,
     publicOperationId,
-    observedOperationContractId: observed.id,
-    documentEpoch: 1,
-    ...common,
-    expectedOutputs: observed.response.safeOutputs.map(({ key, classification }) => ({
+    operationContractRevisionId: observed.revision.id,
+    operationContractRevisionDigest: observed.revision.digest,
+    runtimeInteractionCapabilityId: observed.interaction.id,
+    values,
+    continuationReference,
+    expectedOutputs: observed.revision.facts.response.outputs.map(({ key, classification }) => ({
       key,
       classification,
     })),
     expiresAt,
   });
-  await call("grant_mission_execution_authorization", {
-    authorization: {
-      missionId: ids.mission,
-      objectiveId: ids.objective,
-      agentSessionId: ids.agent,
-      environmentId: ids.environment,
-      kind: "protected_mutation",
-      reason: `Authorize ${publicOperationId}`,
-      expiresAt,
-      confirmedUserAuthorized: true,
-      operationId: publicOperationId,
-      praxisSessionId: ids.praxis,
-      preparedOperation: {
-        protectedOperationId,
-        publicOperationId,
-        contractDigest: observed.digest,
-      },
-    },
-  });
 }
-async function resumeAndDispatch(
+async function dispatch(
   call: (name: string, args: Record<string, unknown>) => Promise<Record<string, any>>,
   observed: ReturnType<typeof contract>,
   protectedOperationId: string,
   publicOperationId: string,
-  values: unknown[],
+  _values: unknown[],
 ) {
   const exact = {
     protectedOperationId,
+    preparedExecutionCapabilityId: protectedOperationId,
     publicOperationId,
     praxisSessionId: ids.praxis,
-    ...commitments(observed.digest, values),
   };
-  delete (exact as any).values;
-  await call("resume_prepared_protected_operation", exact);
   await call("dispatch_prepared_protected_operation", exact);
 }
 async function execute(
@@ -489,8 +439,8 @@ async function execute(
   publicOperationId: string,
   values: unknown[],
 ) {
-  await reserveAndAuthorize(call, observed, protectedOperationId, publicOperationId, values);
-  await resumeAndDispatch(call, observed, protectedOperationId, publicOperationId, values);
+  await reserve(call, observed, protectedOperationId, publicOperationId, values);
+  await dispatch(call, observed, protectedOperationId, publicOperationId, values);
 }
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {

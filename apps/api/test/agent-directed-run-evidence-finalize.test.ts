@@ -53,7 +53,7 @@ function harness(
       };
     }
 
-    if (sql.includes("JOIN protected_operations protected")) {
+    if (sql.includes("JOIN canonical_completed_executions protected")) {
       const boundary = options.praxisDecisionBoundary;
       const boundaryPredicate =
         sql.includes("session.decision_boundary->>'type'='objective_completed'") &&
@@ -327,8 +327,10 @@ describe("agent-directed Run evidence finalization", () => {
       },
       undefined,
     );
-    const terminalQuery = database.query.mock.calls.find(([sql]) =>
-      sql.includes("JOIN protected_operations protected"),
+    const terminalQuery = database.query.mock.calls.find(
+      ([sql]) =>
+        sql.includes("JOIN canonical_completed_executions protected") &&
+        sql.includes("JOIN adaptive_sessions session"),
     )?.[0];
     expect(terminalQuery).toContain("session.decision_boundary->>'type'='objective_completed'");
     expect(terminalQuery).toContain(
