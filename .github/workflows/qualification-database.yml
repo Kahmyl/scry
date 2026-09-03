@@ -15,22 +15,24 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_DB: scry_ci
+          POSTGRES_DB: scry_browser_v2_ci
           POSTGRES_USER: scry
           POSTGRES_PASSWORD: scry-ci
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U scry -d scry_ci"
+          --health-cmd "pg_isready -U scry -d scry_browser_v2_ci"
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
     env:
-      DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci
-      SCRY_AUTHORING_TEST_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci
-      SCRY_ORCHESTRATION_TEST_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci
-      SCRY_BINDING_TEST_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci
-      SCRY_CREDENTIAL_TEST_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci
+      DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_browser_v2_ci
+      BROWSER_V2_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_browser_v2_ci
+      BROWSER_V2_TEST_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_browser_v2_ci
+      BROWSER_V2_EXPECTED_DATABASE: scry_browser_v2_ci
+      BROWSER_V2_SCHEMA_CONFIRM: CREATE_EMPTY_V2
+      BROWSER_V2_PROTECTED_KEY_BASE64: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+      BROWSER_V2_PROTECTED_KEY_VERSION: browser-v2-key-1
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -49,66 +51,32 @@ jobs:
       - name: Install exact workspace dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Record exact schema identity
-        run: echo "SCRY_SCHEMA_FINGERPRINT=$(pnpm --silent schema:fingerprint)" >> "$GITHUB_ENV"
-
       - name: Apply fresh migration
         run: pnpm run db:migrate
 
       - name: Prove migration second-run idempotence
         run: pnpm run db:migrate
 
-      - name: Verify migration lineage contracts
+      - name: Verify migration, key custody, and safe error contracts
         run: >-
           pnpm --filter @scry/api exec vitest run
-          test/migration-fingerprint-compatibility.test.ts
-          test/mission-recording-selection-migration.test.ts
-          test/migration-manifest.test.ts
-          test/document-transition-gap-migration-authority.test.ts
+          test/browser-execution-v2-migration.test.ts
+          test/browser-protected-keyring.test.ts
+          test/browser-v2-exception.filter.test.ts
           --maxWorkers=1
 
-      - name: Verify protected-operation persistence and server deadlines
-        env:
-          DATABASE_STATEMENT_TIMEOUT_MS: "250"
-          DATABASE_LOCK_TIMEOUT_MS: "100"
+      - name: Verify browser lifecycle, failure truth, authorization, and scope integrity
         run: >-
           pnpm --filter @scry/api exec vitest run
-          test/protected-operation.repository.integration.test.ts
+          test/browser-execution-v2.repository.integration.test.ts
+          test/browser-execution-v2.process-failure.integration.test.ts
+          test/browser-lifecycle-v2.repository.integration.test.ts
+          test/browser-v2-auth-scope.integration.test.ts
+          test/browser-v2-scope-integrity.integration.test.ts
           --maxWorkers=1
 
-      - name: Verify authoring and orchestration persistence
-        run: >-
-          pnpm --filter @scry/api exec vitest run
-          test/authoring.integration.test.ts
-          test/adaptive-session.repository.integration.test.ts
-          test/execution-kernel.repository.integration.test.ts
-          test/orchestration.integration.test.ts
-          test/praxis.integration.test.ts
-          test/external-resource-binding.integration.test.ts
-          test/project-credential-scope.integration.test.ts
-          --maxWorkers=1
-
-      - name: Classify historical M1 qualification outcome
-        run: |
-          set +e
-          output="$(node scripts/verify-m1-preflight.mjs --migration-only)"
-          status=$?
-          set -e
-          printf '%s\n' "$output"
-          QUALIFICATION_OUTPUT="$output" QUALIFICATION_STATUS="$status" node --input-type=module <<'NODE'
-          const status = Number(process.env.QUALIFICATION_STATUS);
-          const lines = process.env.QUALIFICATION_OUTPUT.trim().split(/\r?\n/);
-          const report = JSON.parse(lines.at(-1));
-          const passed = status === 0 && report.verdict === "pass";
-          const truthfullyUnavailable =
-            status !== 0 &&
-            report.verdict === "blocked" &&
-            report.reasonCode === "M1_SNAPSHOT_REQUIRED";
-          if (!passed && !truthfullyUnavailable) {
-            console.error("M1 qualification neither passed nor reported the exact admitted unavailable state.");
-            process.exit(1);
-          }
-          NODE
+      - name: Verify production cutover authority selection
+        run: pnpm verify:browser-v2-cutover
 
       - name: Upload database failure evidence
         if: failure()

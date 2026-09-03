@@ -53,6 +53,7 @@ jobs:
           pnpm run verify:direct-browser-boundary
           pnpm run verify:release-fingerprint
           pnpm run verify:docker-publish-workflow
+          pnpm run verify:browser-v2-cutover
 
       - name: Run deterministic impact-aware qualification
         env:

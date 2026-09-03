@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "e2e:demo": "tsx scripts/e2e-demo.ts",
-    "start": "tsx src/main.ts",
-    "start:http": "tsx src/http.ts",
+    "start": "tsx src/browser-v2-main.ts",
+    "start:http": "tsx src/browser-v2-http.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

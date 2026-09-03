@@ -81,20 +81,19 @@ for (const forbidden of [
 }
 
 for (const required of [
-  'status === 0 && report.verdict === "pass"',
-  'report.reasonCode === "M1_SNAPSHOT_REQUIRED"',
+  "BROWSER_V2_SCHEMA_CONFIRM: CREATE_EMPTY_V2",
+  "test/browser-v2-scope-integrity.integration.test.ts",
+  "pnpm verify:browser-v2-cutover",
 ]) {
   if (!databaseQualification.includes(required))
     fail(`database qualification outcome contract missing: ${required}`);
 }
 
-if (databaseQualification.includes('grep -q \'"reasonCode":"M1_SNAPSHOT_REQUIRED"\''))
-  fail("database qualification still accepts M1 unavailability by substring grep");
-
 if (!fastQualification.includes("artifacts/verification-ci-unit-results.json"))
   fail("fast qualification artifact omits CI unit results");
 
 const runtimePackages = [
+  "browser-runtime",
   "chronicle",
   "contracts",
   "executor",
@@ -155,9 +154,9 @@ if (fastStartupProbeCount < 4)
   );
 
 for (const required of [
-  'test: ["CMD-SHELL", "pg_isready -U scry -d scry"]',
+  'test: ["CMD-SHELL", "pg_isready -U scry -d ${SCRY_DATABASE_NAME:-scry_browser_v2}"]',
   'test: ["CMD", "redis-cli", "ping"]',
-  'test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/ready"]',
+  'test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/v2/health"]',
   'test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4100/health"]',
 ]) {
   const index = deployCompose.indexOf(required);
@@ -220,17 +219,24 @@ for (const forbidden of [
 }
 
 for (const required of [
-  'command: ["apps/api/node_modules/.bin/tsx", "apps/api/src/main.ts"]',
-  'command: ["apps/api/node_modules/.bin/tsx", "apps/api/src/worker.ts"]',
-  'command: ["apps/api/node_modules/.bin/tsx", "apps/api/scripts/migrate.ts"]',
-  'command: ["apps/mcp/node_modules/.bin/tsx", "apps/mcp/src/http.ts"]',
+  '"apps/api/tsconfig.json",\n        "apps/api/src/browser-v2-main.ts"',
+  '"apps/api/tsconfig.json",\n        "apps/api/src/browser-v2-worker.ts"',
+  '"apps/api/tsconfig.json",\n        "apps/api/scripts/migrate-browser-v2.ts"',
+  '"apps/mcp/tsconfig.json",\n        "apps/mcp/src/browser-v2-http.ts"',
 ]) {
   if (!deployCompose.includes(required))
     fail(`production Compose runtime command missing: ${required}`);
 }
 
-if (!dockerfile.includes('CMD ["apps/api/node_modules/.bin/tsx", "apps/api/src/main.ts"]'))
+if (
+  !dockerfile.includes(
+    'CMD ["apps/api/node_modules/.bin/tsx", "--tsconfig", "apps/api/tsconfig.json", "apps/api/src/browser-v2-main.ts"]',
+  )
+)
   fail("Docker default runtime command must invoke app-local tsx directly");
+
+if (!dockerfile.includes("COPY packages/browser-runtime packages/browser-runtime"))
+  fail("Docker runtime must include the browser execution package");
 
 const runnerSection = dockerfile.slice(dockerfile.indexOf(" AS runner"));
 
@@ -279,8 +285,11 @@ const environment = {
   SCRY_SCHEMA_FINGERPRINT: "2".repeat(64),
   POSTGRES_PASSWORD: "verification",
   SCRY_SERVICE_TOKEN: "verification",
-  SCRY_CREDENTIAL_ENCRYPTION_KEY: "3".repeat(64),
-  VEIL_ADMISSION_KEY: "4".repeat(64),
+  BROWSER_V2_PROTECTED_KEYS_JSON: JSON.stringify({
+    "verification-v1": Buffer.alloc(32, 3).toString("base64"),
+  }),
+  BROWSER_V2_PROTECTED_KEY_VERSION: "verification-v1",
+  BROWSER_V2_REQUIRE_ACTIVATED_CUTOVER: "false",
   SUPABASE_URL: "https://example.invalid",
   SUPABASE_PUBLISHABLE_KEY: "verification",
 };

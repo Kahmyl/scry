@@ -1,4 +1,7 @@
 export * from "./api.js";
+export * from "./browser-execution-v2.js";
+export * from "./browser-lifecycle-v2.js";
+export * from "./browser-command-v2.js";
 export * from "./agent-guidance.js";
 export * from "./current.js";
 export * from "./flow.js";

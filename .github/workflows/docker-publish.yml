@@ -171,8 +171,9 @@ jobs:
           SCRY_DOMAIN: scry.example.com
           POSTGRES_PASSWORD: integration-password
           SCRY_SERVICE_TOKEN: integration-service-token
-          SCRY_CREDENTIAL_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-          VEIL_ADMISSION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          BROWSER_V2_PROTECTED_KEYS_JSON: '{"integration-v1":"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="}'
+          BROWSER_V2_PROTECTED_KEY_VERSION: integration-v1
+          BROWSER_V2_REQUIRE_ACTIVATED_CUTOVER: "false"
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_PUBLISHABLE_KEY: integration-placeholder
           SCRY_IMAGE_REF: scry-beta-ci:${{ env.QUALIFIED_SHA }}
@@ -180,7 +181,7 @@ jobs:
         run: |
           trap 'docker compose -f "$SCRY_COMPOSE_FILE" down -v' EXIT
           docker compose -f "$SCRY_COMPOSE_FILE" up -d --wait postgres redis migrate api worker mcp web
-          docker compose -f "$SCRY_COMPOSE_FILE" exec -T api wget -qO- http://127.0.0.1:4000/api/ready
+          docker compose -f "$SCRY_COMPOSE_FILE" exec -T api wget -qO- http://127.0.0.1:4000/api/v2/health
           docker compose -f "$SCRY_COMPOSE_FILE" exec -T mcp wget -qO- http://127.0.0.1:4100/health
           docker compose -f "$SCRY_COMPOSE_FILE" exec -T web wget -qO- http://127.0.0.1:3000/
           test -z "$(docker compose -f "$SCRY_COMPOSE_FILE" ps --services --filter status=running | grep -E 'backup|restore-drill|prometheus|alertmanager' || true)"
@@ -262,8 +263,8 @@ jobs:
           SCRY_DOMAIN: scry.example.com
           POSTGRES_PASSWORD: publish-placeholder
           SCRY_SERVICE_TOKEN: publish-placeholder
-          SCRY_CREDENTIAL_ENCRYPTION_KEY: publish-placeholder
-          VEIL_ADMISSION_KEY: publish-placeholder-at-least-32-bytes
+          BROWSER_V2_PROTECTED_KEYS_JSON: '{"production-v1":"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="}'
+          BROWSER_V2_PROTECTED_KEY_VERSION: production-v1
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_PUBLISHABLE_KEY: publish-placeholder
           SCRY_IMAGE_REF: ${{ env.APP_IMAGE }}@${{ steps.publish-image.outputs.digest }}

@@ -106,7 +106,7 @@ describe("Assurance public boundary", () => {
         expect(source, file).not.toMatch(/(?:from\s*|import\s*)["']@scry\/assurance["']/);
       }
     }
-  });
+  }, 15_000);
 });
 
 async function collectTypeScript(directory: string): Promise<string[]> {

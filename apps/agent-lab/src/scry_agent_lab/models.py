@@ -3,7 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from openai import AsyncOpenAI
+import asyncio
+
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    AsyncOpenAI,
+    InternalServerError,
+    RateLimitError,
+)
 
 from .config import ModelConfig
 
@@ -64,11 +72,25 @@ class OpenAICompatibleModel:
                 self.config.extra_body
             )
 
-        response = (
-            await self.client.chat.completions.create(
-                **request
-            )
+        response = None
+        retryable = (
+            APIConnectionError,
+            APITimeoutError,
+            InternalServerError,
+            RateLimitError,
         )
+        for attempt in range(3):
+            try:
+                response = await self.client.chat.completions.create(
+                    **request
+                )
+                break
+            except retryable:
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(0.5 * (2 ** attempt))
+        if response is None:
+            raise RuntimeError("MODEL_RESPONSE_UNAVAILABLE")
 
         message = response.choices[0].message
 

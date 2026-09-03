@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 describe("MCP Streamable HTTP session authority", () => {
   it("uses explicit stateful sessions rather than a per-request no-option transport", async () => {
-    const source = await readFile(new URL("../src/http.ts", import.meta.url), "utf8");
+    const source = await readFile(new URL("../src/browser-v2-http.ts", import.meta.url), "utf8");
 
     expect(source).toContain("sessionIdGenerator: () => randomUUID()");
 
@@ -12,9 +12,9 @@ describe("MCP Streamable HTTP session authority", () => {
 
     expect(source).toContain('request.headers["mcp-session-id"]');
 
-    expect(source).toContain("mcpSessions.get");
+    expect(source).toContain("sessions.get");
 
-    expect(source).toContain("mcpSessions.set");
+    expect(source).toContain("sessions.set");
 
     expect(source).toContain("tokenDigest");
 

@@ -42,7 +42,6 @@ export function Sidebar({
     ["missions", "Missions", <Eye size={17} />],
     ["runs", "Runs", <Activity size={17} />],
     ["reports", "Reports", <FileText size={17} />],
-    ["operations", "Operations", <AlertTriangle size={17} />],
   ];
 
   useEffect(() => {
@@ -142,12 +141,6 @@ export function Sidebar({
           onClick={() => onNavigate("integrations")}
         >
           <PlugZap size={17} /> Integrations
-        </button>
-        <button
-          className={view === "settings" ? "nav-active" : ""}
-          onClick={() => onNavigate("settings")}
-        >
-          <Settings2 size={17} /> Project settings
         </button>
       </div>
     </aside>

@@ -127,7 +127,10 @@ def _rejection(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _observation_tool(name: str) -> bool:
-    return name.startswith(("get_", "list_", "observe_", "search_"))
+    return name.startswith(("get_", "list_", "observe_", "search_")) or any(
+        marker in name
+        for marker in ("_get_", "_list_", "_observe_", "_search_")
+    )
 
 
 def _safe_actions(payload: dict[str, Any]) -> list[str]:
@@ -220,10 +223,24 @@ def _mission_completion_evidence(
     spec: AgentRunSpec,
     lifecycle: dict[str, Any],
 ) -> dict[str, Any] | None:
-    if tool_name != "publish_mission_report" or payload.get("isError"):
+    if tool_name not in {
+        "publish_mission_report",
+        "browser_v2_publish_mission_report",
+    } or payload.get("isError"):
         return None
     structured = payload.get("structuredContent")
     if not isinstance(structured, dict):
+        return None
+    if tool_name == "browser_v2_publish_mission_report":
+        report_id = structured.get("reportId")
+        mission_id = arguments.get("missionId")
+        if isinstance(report_id, str) and isinstance(mission_id, str):
+            return {
+                "kind": "mission_report",
+                "missionId": mission_id,
+                "reportId": report_id,
+                "reportStatus": "published",
+            }
         return None
     report = structured.get("report")
     if not isinstance(report, dict):
@@ -784,6 +801,7 @@ async def run_agent(
                 if call.name in {
                     "preview_mission_report",
                     "publish_mission_report",
+                    "browser_v2_publish_mission_report",
                 }:
                     report_composition_ms += tool_duration_ms
 

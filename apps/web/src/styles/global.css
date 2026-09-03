@@ -1153,6 +1153,38 @@ select:focus-visible {
   border-radius: 13px;
   overflow: hidden;
 }
+.browser-v2-fact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.browser-v2-fact:last-child {
+  border-bottom: 0;
+}
+.browser-v2-fact > div {
+  min-width: 0;
+}
+.browser-v2-fact strong,
+.browser-v2-fact span {
+  display: block;
+}
+.browser-v2-fact > div > span {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.browser-v2-safe-report {
+  margin: 0;
+  padding: 20px;
+  overflow: auto;
+  color: var(--text);
+  background: var(--surface-2);
+  font: 12px/1.6 var(--font-mono);
+}
 .panel-head {
   padding: 18px 20px 15px;
   border-bottom: 1px solid var(--line-soft);

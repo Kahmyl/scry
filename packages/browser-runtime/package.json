@@ -1,0 +1,24 @@
+{
+  "name": "@scry/browser-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:browser": "SCRY_BROWSER_E2E=1 vitest run test/browser-recording.test.ts --maxWorkers=1",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@scry/contracts": "workspace:*",
+    "playwright": "1.62.0",
+    "rrweb": "2.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.3",
+    "vitest": "^4.0.15"
+  }
+}

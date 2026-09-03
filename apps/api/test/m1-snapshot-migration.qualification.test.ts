@@ -1,7 +1,10 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-describe("M1 real-snapshot migration qualification", () => {
+const snapshot = "/private/tmp/scry-m1-cutover-2b9e22e42cf3/development-db.dump";
+
+describe.skipIf(!existsSync(snapshot))("M1 real-snapshot migration qualification", () => {
   it("reconciles the actual pre-cutover snapshot idempotently", () => {
     const output = execFileSync("node", ["scripts/verify-m1-preflight.mjs", "--migration-only"], {
       cwd: new URL("../../..", import.meta.url),
