@@ -19,6 +19,7 @@ describe("browser v2 MCP profile", () => {
       "browser_v2_list_projects",
       "browser_v2_list_missions",
       "browser_v2_list_environments",
+      "browser_v2_create_environment",
       "browser_v2_list_credentials",
       "browser_v2_create_credential",
       "browser_v2_bind_credentials",
@@ -47,7 +48,9 @@ describe("browser v2 MCP profile", () => {
     expect(command.description).toContain("BROWSER_V2_EFFECT_OUTCOME_PENDING");
     const mission = tools.find((tool) => tool.name === "browser_v2_start_mission")!;
     expect(JSON.stringify(mission.inputSchema)).not.toContain("publicReleaseGrants");
-    expect(tools.map((tool) => tool.name)).not.toContain("browser_v2_create_environment");
+    expect(
+      tools.find((tool) => tool.name === "browser_v2_create_environment")?.description,
+    ).toContain("do not ask the user to configure it manually");
     expect(
       tools.find((tool) => tool.name === "browser_v2_list_credentials")?.description,
     ).toContain("never infer first-use permission");
@@ -159,6 +162,57 @@ describe("browser v2 MCP profile", () => {
     );
     expect(fetchMock.mock.calls[0]![1]?.method).toBeUndefined();
     expect(fetchMock.mock.calls[0]![1]?.body).toBeUndefined();
+    await client.close();
+    await server.close();
+  });
+
+  it("creates an assigned application environment idempotently through the customer MCP", async () => {
+    const projectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const environmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ environmentId, replay: false }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ environmentId, replay: true }), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const { client, server } = await connected();
+    const arguments_ = {
+      projectId,
+      name: "Vitract Preview",
+      baseOrigin: "https://preview.vitract.com",
+      allowedServiceOrigins: ["https://preview-api.vitract.com"],
+      disclosureMode: "confidential",
+    };
+    const created = await client.callTool({
+      name: "browser_v2_create_environment",
+      arguments: arguments_,
+    });
+    const replayed = await client.callTool({
+      name: "browser_v2_create_environment",
+      arguments: arguments_,
+    });
+    expect(created.structuredContent).toMatchObject({ environmentId, replay: false });
+    expect(replayed.structuredContent).toMatchObject({ environmentId, replay: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]![0])).toBe(
+      `http://scry.test/api/v2/projects/${projectId}/environments`,
+    );
+    const request = fetchMock.mock.calls[0]![1] as RequestInit;
+    const replayRequest = fetchMock.mock.calls[1]![1] as RequestInit;
+    expect(request.method).toBe("POST");
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      name: arguments_.name,
+      baseOrigin: arguments_.baseOrigin,
+      allowedServiceOrigins: arguments_.allowedServiceOrigins,
+      disclosureMode: arguments_.disclosureMode,
+      idempotencyKey: expect.stringMatching(/^mcp-browser-v2-environment-/u),
+    });
+    expect(JSON.parse(String(replayRequest.body)).idempotencyKey).toBe(
+      JSON.parse(String(request.body)).idempotencyKey,
+    );
     await client.close();
     await server.close();
   });

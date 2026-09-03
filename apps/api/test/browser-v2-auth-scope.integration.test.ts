@@ -96,26 +96,46 @@ run("browser v2 customer MCP scope", () => {
       commands,
       undefined as never,
     );
-    expect(() =>
-      controller.createEnvironment(projectA, authenticated, {
-        name: "mcp-forbidden",
-        baseOrigin: "https://mcp-forbidden.example",
-        allowedServiceOrigins: [],
-        disclosureMode: "trusted_application_output",
-        idempotencyKey: `mcp-environment-${projectA}`,
-      }),
-    ).toThrow("BROWSER_V2_ENVIRONMENT_POLICY_FORBIDDEN");
-    await expect(controller.listEnvironments(projectA, authenticated)).resolves.toEqual([
-      expect.objectContaining({
-        id: environmentA,
-        projectId: projectA,
-        name: "environment A",
-        baseOrigin: "https://fixture.example",
+    const mcpEnvironment = await controller.createEnvironment(projectA, authenticated, {
+      name: "mcp-assigned",
+      baseOrigin: "https://mcp-assigned.example",
+      allowedServiceOrigins: [],
+      disclosureMode: "trusted_application_output",
+      idempotencyKey: `mcp-environment-${projectA}`,
+    });
+    expect(mcpEnvironment).toMatchObject({
+      replay: false,
+      environmentId: expect.stringMatching(/^[0-9a-f-]{36}$/u),
+    });
+    await expect(controller.listEnvironments(projectA, authenticated)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: environmentA,
+          projectId: projectA,
+          name: "environment A",
+          baseOrigin: "https://fixture.example",
+          allowedServiceOrigins: [],
+          disclosureMode: "confidential",
+          state: "active",
+        }),
+        expect.objectContaining({
+          id: mcpEnvironment.environmentId,
+          projectId: projectA,
+          name: "mcp-assigned",
+          baseOrigin: "https://mcp-assigned.example",
+          state: "active",
+        }),
+      ]),
+    );
+    await expect(
+      controller.createEnvironment(projectB, authenticated, {
+        name: "cross-workspace",
+        baseOrigin: "https://cross-workspace.example",
         allowedServiceOrigins: [],
         disclosureMode: "confidential",
-        state: "active",
+        idempotencyKey: `cross-workspace-${projectB}`,
       }),
-    ]);
+    ).rejects.toThrow("BROWSER_V2_PROJECT_NOT_FOUND");
     await expect(controller.listEnvironments(projectB, authenticated)).rejects.toThrow(
       "BROWSER_V2_PROJECT_NOT_FOUND",
     );
@@ -202,6 +222,29 @@ run("browser v2 customer MCP scope", () => {
       businessCommitLimit: 0,
       protectedInputIds: [],
       idempotencyKey: `scoped-run-${projectA}`,
+    });
+    await controller.createEnvironment(projectA, authenticated, {
+      name: "later mission scope",
+      baseOrigin: "https://later-scope.example",
+      allowedServiceOrigins: ["https://later-api.example"],
+      disclosureMode: "trusted_application_output",
+      idempotencyKey: `later-environment-${projectA}`,
+    });
+    const runScope = await database.query<{
+      allowedFirstPartyOrigins: string[];
+      allowedServiceOrigins: string[];
+      disclosureMode: string;
+    }>(
+      `SELECT allowed_first_party_origins AS "allowedFirstPartyOrigins",
+              allowed_service_origins AS "allowedServiceOrigins",
+              disclosure_mode AS "disclosureMode"
+       FROM browser_execution_sessions WHERE id=$1`,
+      [run.browserSessionId],
+    );
+    expect(runScope.rows[0]).toEqual({
+      allowedFirstPartyOrigins: ["https://fixture.example"],
+      allowedServiceOrigins: [],
+      disclosureMode: "confidential",
     });
     await expect(
       controller.bindProtectedInputs(run.runId, authenticated, {
