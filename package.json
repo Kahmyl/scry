@@ -33,6 +33,7 @@
     "verify:production-recovery": "sh scripts/qualify-production-recovery.sh",
     "verify:docker-publish-workflow": "node scripts/verify-docker-publish-workflow.mjs",
     "verify:server-deployment": "node scripts/verify-server-deployment.mjs",
+    "verify:deployment-runtime": "node scripts/verify-deployment-runtime.mjs",
     "verify:browser-v2-cutover": "node scripts/verify-browser-v2-cutover.mjs",
     "verify:workflow-manifests": "node scripts/verify-workflow-manifests.mjs",
     "verify:ci-unit": "node scripts/run-ci-unit-affected.mjs",

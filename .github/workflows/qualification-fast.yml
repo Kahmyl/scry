@@ -54,6 +54,7 @@ jobs:
           pnpm run verify:release-fingerprint
           pnpm run verify:docker-publish-workflow
           pnpm run verify:server-deployment
+          pnpm run verify:deployment-runtime
           pnpm run verify:browser-v2-cutover
 
       - name: Run deterministic impact-aware qualification

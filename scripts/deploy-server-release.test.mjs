@@ -46,6 +46,7 @@ assertInOrder(success.log, [
   "run --rm --no-deps migrate",
   "up -d --no-deps --force-recreate --wait",
   "exec -T api wget",
+  "run --rm --no-deps --entrypoint caddy caddy validate",
 ]);
 assert.match(success.state, new RegExp(`CURRENT_RELEASE_ID=${candidateRelease}`));
 assert.match(success.state, new RegExp(`CURRENT_IMAGE_REF=${candidateImage}`));
@@ -123,7 +124,7 @@ assert.notEqual(caddyValidationFailure.status, 0);
 assert.match(caddyValidationFailure.stderr, /beginning recovery/);
 assertInOrder(caddyValidationFailure.log, [
   "run --rm --no-deps migrate",
-  "run --rm --no-deps caddy validate",
+  "run --rm --no-deps --entrypoint caddy caddy validate",
   "dropdb",
   "pg_restore",
   `SCRY_RELEASE_ID=${previousRelease}`,
@@ -207,7 +208,7 @@ if [[ "$args" == *"pg_dump"* ]]; then printf 'mock-database-dump\\n'; exit 0; fi
 if [[ "$args" == *"printenv SCRY_RELEASE_ID"* ]]; then printf '%s\\n' "$SCRY_RELEASE_ID"; exit 0; fi
 if [[ "$args" == *"run --rm --no-deps migrate"* && "\${FAIL_MIGRATE:-false}" == true ]]; then exit 55; fi
 if [[ "$args" == *"pg_restore"* && "\${FAIL_RESTORE:-false}" == true ]]; then exit 66; fi
-if [[ "$args" == *"run --rm --no-deps caddy validate"* && "\${FAIL_CADDY_VALIDATE:-false}" == true ]]; then exit 77; fi
+if [[ "$args" == *"run --rm --no-deps --entrypoint caddy caddy validate"* && "\${FAIL_CADDY_VALIDATE:-false}" == true ]]; then exit 77; fi
 cat >/dev/null 2>&1 || true
 exit 0
 `,

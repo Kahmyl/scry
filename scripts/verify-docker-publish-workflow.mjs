@@ -212,6 +212,9 @@ for (const required of [
 if (!workflow.includes("node scripts/verify-deployment-preflight.mjs"))
   fail("publication must execute the image-owned deployment preflight before publishing");
 
+if (!workflow.includes("--entrypoint caddy caddy validate --config /etc/caddy/Caddyfile"))
+  fail("publication must validate the rendered Caddy configuration with the real Caddy executable");
+
 for (const forbidden of [
   'command: ["pnpm", "--filter", "@scry/api"',
   'command: ["pnpm", "--filter", "@scry/mcp"',

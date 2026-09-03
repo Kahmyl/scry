@@ -380,7 +380,7 @@ run_candidate up -d --no-deps --force-recreate --wait --wait-timeout "$health_ti
 
 phase=health_verification
 health_check "$candidate_compose" "$image_ref" "$release_id" "$schema_fingerprint"
-run_candidate run --rm --no-deps caddy validate --config /etc/caddy/Caddyfile
+run_candidate run --rm --no-deps --entrypoint caddy caddy validate --config /etc/caddy/Caddyfile
 
 phase=activation
 {
