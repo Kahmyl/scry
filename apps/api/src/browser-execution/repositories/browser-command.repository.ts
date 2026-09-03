@@ -12,11 +12,11 @@ import { browserProtectionSinkSchema } from "@scry/contracts";
 import type { QueryResultRow } from "pg";
 import type { BrowserContextOptions } from "playwright";
 
-import { Database } from "../infrastructure/database.js";
+import { Database } from "../../infrastructure/database.js";
 import {
   BrowserProtectedValueCipher,
   type EncryptedProtectedValue,
-} from "./protected-value-cipher.js";
+} from "../protected-value-cipher.js";
 
 interface CommandRow extends QueryResultRow {
   id: string;

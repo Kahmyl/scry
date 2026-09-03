@@ -13,12 +13,12 @@ import { browserProtectionSinkSchema } from "@scry/contracts";
 import { ProtectionAuthority } from "@scry/browser-runtime";
 import type { PoolClient, QueryResultRow } from "pg";
 
-import { Database } from "../infrastructure/database.js";
+import { Database } from "../../infrastructure/database.js";
 import {
   BrowserProtectedValueCipher,
   type EncryptedProtectedValue,
-} from "./protected-value-cipher.js";
-import { BROWSER_RUNTIME_CAPABILITY_VERSION } from "./browser-runtime-capability.js";
+} from "../protected-value-cipher.js";
+import { BROWSER_RUNTIME_CAPABILITY_VERSION } from "../browser-runtime-capability.js";
 
 interface IdRow extends QueryResultRow {
   id: string;

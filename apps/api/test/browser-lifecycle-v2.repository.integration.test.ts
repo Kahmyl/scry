@@ -1,8 +1,8 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { BrowserExecutionRepository } from "../src/browser-execution/browser-execution.repository.js";
-import { BrowserLifecycleRepository } from "../src/browser-execution/browser-lifecycle.repository.js";
+import { BrowserExecutionRepository } from "../src/browser-execution/repositories/browser-execution.repository.js";
+import { BrowserLifecycleRepository } from "../src/browser-execution/repositories/browser-lifecycle.repository.js";
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
 import { Database } from "../src/infrastructure/database.js";
 

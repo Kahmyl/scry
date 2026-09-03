@@ -2,8 +2,8 @@ import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/commo
 import { Queue } from "bullmq";
 
 import { RedisConnection } from "../infrastructure/redis.js";
-import { BrowserExecutionRepository } from "./browser-execution.repository.js";
-import { BrowserCommandRepository } from "./browser-command.repository.js";
+import { BrowserExecutionRepository } from "./repositories/browser-execution.repository.js";
+import { BrowserCommandRepository } from "./repositories/browser-command.repository.js";
 
 const queueNamespace = process.env.BROWSER_V2_QUEUE_NAMESPACE?.trim();
 if (queueNamespace && !/^[a-z0-9][a-z0-9_-]{0,63}$/u.test(queueNamespace))

@@ -8,10 +8,16 @@ const mcpSource = path.join(root, "apps/mcp/src");
 const webSource = path.join(root, "apps/web/src");
 
 const allowedApiRootFiles = new Set(["app.module.ts", "main.ts", "worker.ts"]);
+const allowedVersionedApiComposition = /^browser-v\d+-(?:app\.module|main|worker)\.ts$/u;
 
 const entries = await readdir(apiSource, { withFileTypes: true });
 const violations = entries
-  .filter((entry) => entry.isFile() && !allowedApiRootFiles.has(entry.name))
+  .filter(
+    (entry) =>
+      entry.isFile() &&
+      !allowedApiRootFiles.has(entry.name) &&
+      !allowedVersionedApiComposition.test(entry.name),
+  )
   .map((entry) => `API source root accepts composition only: apps/api/src/${entry.name}`);
 
 const appModule = await readFile(path.join(apiSource, "app.module.ts"), "utf8");
@@ -78,9 +84,14 @@ const allowedMcpRootFiles = new Set([
   "server.ts",
   "tool-registry.ts",
 ]);
+const allowedVersionedMcpTransport = /^browser-v\d+-(?:api-client|http|main|server)\.ts$/u;
 const mcpEntries = await readdir(mcpSource, { withFileTypes: true });
 for (const entry of mcpEntries) {
-  if (entry.isFile() && !allowedMcpRootFiles.has(entry.name))
+  if (
+    entry.isFile() &&
+    !allowedMcpRootFiles.has(entry.name) &&
+    !allowedVersionedMcpTransport.test(entry.name)
+  )
     violations.push(
       `MCP source root accepts composition and transport only: apps/mcp/src/${entry.name}`,
     );

@@ -31,15 +31,15 @@ import {
   type SubmitBrowserCommandV2Input,
 } from "@scry/contracts";
 
-import { CurrentPrincipal } from "../auth/current-principal.decorator.js";
-import { Public } from "../auth/auth.guard.js";
-import type { Principal } from "../auth/auth.types.js";
-import { ZodValidationPipe } from "../common/validation.pipe.js";
-import { BrowserExecutionRepository } from "./browser-execution.repository.js";
-import { BrowserLifecycleRepository } from "./browser-lifecycle.repository.js";
-import { BrowserCommandRepository } from "./browser-command.repository.js";
-import { BrowserExecutionQueueService } from "./browser-execution-queue.service.js";
-import { BROWSER_RUNTIME_CAPABILITY_VERSION } from "./browser-runtime-capability.js";
+import { CurrentPrincipal } from "../../auth/current-principal.decorator.js";
+import { Public } from "../../auth/auth.guard.js";
+import type { Principal } from "../../auth/auth.types.js";
+import { ZodValidationPipe } from "../../common/validation.pipe.js";
+import { BrowserExecutionRepository } from "../repositories/browser-execution.repository.js";
+import { BrowserLifecycleRepository } from "../repositories/browser-lifecycle.repository.js";
+import { BrowserCommandRepository } from "../repositories/browser-command.repository.js";
+import { BrowserExecutionQueueService } from "../browser-execution-queue.service.js";
+import { BROWSER_RUNTIME_CAPABILITY_VERSION } from "../browser-runtime-capability.js";
 
 @Controller("api/v2")
 export class BrowserLifecycleController {

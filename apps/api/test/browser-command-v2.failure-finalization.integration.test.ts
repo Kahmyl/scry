@@ -3,9 +3,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { BrowserCommandV2 } from "@scry/contracts";
 
-import { BrowserCommandRepository } from "../src/browser-execution/browser-command.repository.js";
-import { BrowserExecutionRepository } from "../src/browser-execution/browser-execution.repository.js";
-import { BrowserLifecycleRepository } from "../src/browser-execution/browser-lifecycle.repository.js";
+import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
+import { BrowserExecutionRepository } from "../src/browser-execution/repositories/browser-execution.repository.js";
+import { BrowserLifecycleRepository } from "../src/browser-execution/repositories/browser-lifecycle.repository.js";
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
 import { BrowserV2WorkerEngine } from "../src/browser-execution/browser-v2-worker-engine.js";
 import { Database } from "../src/infrastructure/database.js";

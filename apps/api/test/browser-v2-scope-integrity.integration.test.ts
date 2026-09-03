@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { BrowserLifecycleRepository } from "../src/browser-execution/browser-lifecycle.repository.js";
+import { BrowserLifecycleRepository } from "../src/browser-execution/repositories/browser-lifecycle.repository.js";
 import { Database } from "../src/infrastructure/database.js";
 
 const databaseUrl = process.env.BROWSER_V2_TEST_DATABASE_URL;

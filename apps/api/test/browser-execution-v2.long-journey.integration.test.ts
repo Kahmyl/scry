@@ -18,9 +18,9 @@ import {
   BrowserExecutionQueueService,
   BROWSER_EXECUTION_V2_QUEUE,
 } from "../src/browser-execution/browser-execution-queue.service.js";
-import { BrowserExecutionRepository } from "../src/browser-execution/browser-execution.repository.js";
+import { BrowserExecutionRepository } from "../src/browser-execution/repositories/browser-execution.repository.js";
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
-import { BrowserCommandRepository } from "../src/browser-execution/browser-command.repository.js";
+import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
 import { BROWSER_RUNTIME_CAPABILITY_VERSION } from "../src/browser-execution/browser-runtime-capability.js";
 import { Database } from "../src/infrastructure/database.js";
 import { RedisConnection } from "../src/infrastructure/redis.js";

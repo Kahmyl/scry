@@ -5,13 +5,13 @@ import { Worker } from "bullmq";
 import type { BrowserCommandV2 } from "@scry/contracts";
 
 import { BrowserV2AppModule } from "./browser-v2-app.module.js";
-import { BrowserCommandRepository } from "./browser-execution/browser-command.repository.js";
+import { BrowserCommandRepository } from "./browser-execution/repositories/browser-command.repository.js";
 import {
   BROWSER_COMMAND_V2_QUEUE,
   BROWSER_EXECUTION_V2_QUEUE,
   type BrowserExecutionV2Job,
 } from "./browser-execution/browser-execution-queue.service.js";
-import { BrowserExecutionRepository } from "./browser-execution/browser-execution.repository.js";
+import { BrowserExecutionRepository } from "./browser-execution/repositories/browser-execution.repository.js";
 import { BrowserV2WorkerEngine } from "./browser-execution/browser-v2-worker-engine.js";
 import { BROWSER_RUNTIME_CAPABILITY_VERSION } from "./browser-execution/browser-runtime-capability.js";
 import { RedisConnection } from "./infrastructure/redis.js";

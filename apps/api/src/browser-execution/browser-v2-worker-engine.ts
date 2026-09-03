@@ -16,8 +16,8 @@ import {
   renderSanitizedReplay,
 } from "@scry/browser-runtime";
 
-import { BrowserCommandRepository } from "./browser-command.repository.js";
-import { BrowserExecutionRepository } from "./browser-execution.repository.js";
+import { BrowserCommandRepository } from "./repositories/browser-command.repository.js";
+import { BrowserExecutionRepository } from "./repositories/browser-execution.repository.js";
 import { BrowserProtectedKeyring } from "./browser-protected-keyring.js";
 
 interface ActiveSession {

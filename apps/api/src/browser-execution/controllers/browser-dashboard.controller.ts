@@ -1,8 +1,8 @@
 import { Controller, Get, Inject, Param } from "@nestjs/common";
 
-import { CurrentPrincipal } from "../auth/current-principal.decorator.js";
-import type { Principal } from "../auth/auth.types.js";
-import { BrowserDashboardRepository } from "./browser-dashboard.repository.js";
+import { CurrentPrincipal } from "../../auth/current-principal.decorator.js";
+import type { Principal } from "../../auth/auth.types.js";
+import { BrowserDashboardRepository } from "../repositories/browser-dashboard.repository.js";
 
 @Controller("api/v2")
 export class BrowserDashboardController {

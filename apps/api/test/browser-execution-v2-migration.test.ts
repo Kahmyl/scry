@@ -64,11 +64,11 @@ describe("browser execution v2 fresh schema", () => {
       await Promise.all(
         [
           "../src/browser-v2-worker.ts",
-          "../src/browser-execution/browser-command.repository.ts",
+          "../src/browser-execution/repositories/browser-command.repository.ts",
           "../src/browser-execution/browser-execution-queue.service.ts",
-          "../src/browser-execution/browser-execution.repository.ts",
-          "../src/browser-execution/browser-lifecycle.controller.ts",
-          "../src/browser-execution/browser-lifecycle.repository.ts",
+          "../src/browser-execution/repositories/browser-execution.repository.ts",
+          "../src/browser-execution/controllers/browser-lifecycle.controller.ts",
+          "../src/browser-execution/repositories/browser-lifecycle.repository.ts",
         ].map((source) => readFile(new URL(source, import.meta.url), "utf8")),
       )
     ).join("\n");

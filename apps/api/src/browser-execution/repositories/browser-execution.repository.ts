@@ -3,16 +3,16 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { BrowserProtectionDecision } from "@scry/contracts";
 import type { PoolClient, QueryResultRow } from "pg";
 
-import { Database } from "../infrastructure/database.js";
-import { BrowserProtectedValueCipher } from "./protected-value-cipher.js";
+import { Database } from "../../infrastructure/database.js";
+import { BrowserProtectedValueCipher } from "../protected-value-cipher.js";
 import {
   BROWSER_RUNTIME_CAPABILITY_VERSION,
   BROWSER_V2_SCHEMA_VERSION,
-} from "./browser-runtime-capability.js";
+} from "../browser-runtime-capability.js";
 import {
   browserV2CatalogFingerprint,
   loadBrowserV2SchemaManifest,
-} from "./browser-v2-schema-manifest.js";
+} from "../browser-v2-schema-manifest.js";
 
 const CAPABILITY_VERSION = BROWSER_RUNTIME_CAPABILITY_VERSION;
 

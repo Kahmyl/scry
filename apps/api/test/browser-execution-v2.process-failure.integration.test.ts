@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { BrowserProtectionDecision } from "@scry/contracts";
 
-import { BrowserCommandRepository } from "../src/browser-execution/browser-command.repository.js";
-import { BrowserExecutionRepository } from "../src/browser-execution/browser-execution.repository.js";
+import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
+import { BrowserExecutionRepository } from "../src/browser-execution/repositories/browser-execution.repository.js";
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
 import { Database } from "../src/infrastructure/database.js";
 

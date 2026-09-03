@@ -1,6 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 
-import { Database } from "../infrastructure/database.js";
+import { Database } from "../../infrastructure/database.js";
 
 @Injectable()
 export class BrowserDashboardRepository {

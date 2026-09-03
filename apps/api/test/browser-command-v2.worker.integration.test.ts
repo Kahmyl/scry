@@ -4,15 +4,15 @@ import { QueueEvents, Worker } from "bullmq";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { BrowserCommandV2 } from "@scry/contracts";
 
-import { BrowserCommandRepository } from "../src/browser-execution/browser-command.repository.js";
+import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
 import {
   BROWSER_COMMAND_V2_QUEUE,
   BROWSER_EXECUTION_V2_QUEUE,
   BrowserExecutionQueueService,
 } from "../src/browser-execution/browser-execution-queue.service.js";
-import { BrowserExecutionRepository } from "../src/browser-execution/browser-execution.repository.js";
-import { BrowserLifecycleRepository } from "../src/browser-execution/browser-lifecycle.repository.js";
-import { BrowserLifecycleController } from "../src/browser-execution/browser-lifecycle.controller.js";
+import { BrowserExecutionRepository } from "../src/browser-execution/repositories/browser-execution.repository.js";
+import { BrowserLifecycleRepository } from "../src/browser-execution/repositories/browser-lifecycle.repository.js";
+import { BrowserLifecycleController } from "../src/browser-execution/controllers/browser-lifecycle.controller.js";
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
 import { BrowserV2WorkerEngine } from "../src/browser-execution/browser-v2-worker-engine.js";
 import { Database } from "../src/infrastructure/database.js";

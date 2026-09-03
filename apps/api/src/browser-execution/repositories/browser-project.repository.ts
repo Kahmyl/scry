@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { ConflictException, ForbiddenException, Inject, Injectable } from "@nestjs/common";
 
-import type { Principal } from "../auth/auth.types.js";
-import { Database } from "../infrastructure/database.js";
+import type { Principal } from "../../auth/auth.types.js";
+import { Database } from "../../infrastructure/database.js";
 
 @Injectable()
 export class BrowserProjectRepository {

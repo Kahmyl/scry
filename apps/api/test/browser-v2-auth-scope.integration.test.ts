@@ -5,9 +5,9 @@ import { AuthService } from "../src/auth/auth.service.js";
 import { IdentityRepository } from "../src/auth/repositories/identity.repository.js";
 import { McpTokenRepository } from "../src/auth/repositories/mcp-token.repository.js";
 import type { UserPrincipal } from "../src/auth/auth.types.js";
-import { BrowserCommandRepository } from "../src/browser-execution/browser-command.repository.js";
-import { BrowserLifecycleController } from "../src/browser-execution/browser-lifecycle.controller.js";
-import { BrowserLifecycleRepository } from "../src/browser-execution/browser-lifecycle.repository.js";
+import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
+import { BrowserLifecycleController } from "../src/browser-execution/controllers/browser-lifecycle.controller.js";
+import { BrowserLifecycleRepository } from "../src/browser-execution/repositories/browser-lifecycle.repository.js";
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
 import { Database } from "../src/infrastructure/database.js";
 

@@ -1,10 +1,10 @@
 import { Body, Controller, Get, Inject, Post } from "@nestjs/common";
 import { z } from "zod";
 
-import { CurrentPrincipal } from "../auth/current-principal.decorator.js";
-import type { Principal } from "../auth/auth.types.js";
-import { ZodValidationPipe } from "../common/validation.pipe.js";
-import { BrowserProjectRepository } from "./browser-project.repository.js";
+import { CurrentPrincipal } from "../../auth/current-principal.decorator.js";
+import type { Principal } from "../../auth/auth.types.js";
+import { ZodValidationPipe } from "../../common/validation.pipe.js";
+import { BrowserProjectRepository } from "../repositories/browser-project.repository.js";
 
 const createProjectSchema = z.object({
   name: z.string().trim().min(1).max(120),
