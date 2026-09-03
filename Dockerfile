@@ -47,6 +47,7 @@ COPY packages/observability packages/observability
 COPY packages/policy packages/policy
 COPY packages/praxis packages/praxis
 COPY packages/veil packages/veil
+COPY scripts/schema-fingerprint.mjs scripts/verify-deployment-preflight.mjs ./scripts/
 COPY --from=build /workspace/apps/web/dist ./apps/web/dist
 COPY apps/web/scripts ./apps/web/scripts
 

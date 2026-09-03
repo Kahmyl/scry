@@ -203,10 +203,14 @@ for (const required of [
   "COPY --from=prod-deps /workspace/node_modules ./node_modules",
   "COPY --from=prod-deps /workspace/apps ./apps",
   "COPY --from=prod-deps /workspace/packages ./packages",
+  "COPY scripts/schema-fingerprint.mjs scripts/verify-deployment-preflight.mjs ./scripts/",
 ]) {
   if (!dockerfile.includes(required))
     fail(`runtime image does not inherit pruned production dependencies: ${required}`);
 }
+
+if (!workflow.includes("node scripts/verify-deployment-preflight.mjs"))
+  fail("publication must execute the image-owned deployment preflight before publishing");
 
 for (const forbidden of [
   'command: ["pnpm", "--filter", "@scry/api"',
