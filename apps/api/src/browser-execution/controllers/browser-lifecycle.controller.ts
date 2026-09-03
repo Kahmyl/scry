@@ -83,7 +83,7 @@ export class BrowserLifecycleController {
     input: Omit<CreateBrowserEnvironmentV2Input, "projectId">,
   ) {
     this.enabled();
-    if (principal.kind === "user" && !["owner", "admin"].includes(principal.role))
+    if (principal.kind === "user" && principal.role === "viewer")
       throw new ForbiddenException("BROWSER_V2_ENVIRONMENT_POLICY_FORBIDDEN");
     return this.lifecycle.createEnvironment(workspace(principal), { ...input, projectId });
   }

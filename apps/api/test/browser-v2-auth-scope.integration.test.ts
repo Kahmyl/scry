@@ -158,6 +158,22 @@ run("browser v2 customer MCP scope", () => {
     await expect(controller.listProtectedInputs(projectB, authenticated)).rejects.toThrow(
       "BROWSER_V2_PROJECT_NOT_FOUND",
     );
+    await expect(
+      controller.createEnvironment(
+        projectA,
+        { ...principalA, credentialKind: "mcp", role: "member" },
+        {
+          name: "member-assigned",
+          baseOrigin: "https://member-assigned.example",
+          allowedServiceOrigins: [],
+          disclosureMode: "confidential",
+          idempotencyKey: `member-environment-${projectA}`,
+        },
+      ),
+    ).resolves.toMatchObject({
+      replay: false,
+      environmentId: expect.stringMatching(/^[0-9a-f-]{36}$/u),
+    });
     expect(() =>
       controller.createEnvironment(
         projectA,
