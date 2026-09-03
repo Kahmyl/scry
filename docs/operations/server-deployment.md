@@ -13,7 +13,7 @@ Set these environment variables:
 | Variable           | Example                    | Purpose                                        |
 | ------------------ | -------------------------- | ---------------------------------------------- |
 | `SCRY_DEPLOY_HOST` | `testnet.example.com`      | Pinned SSH target host                         |
-| `SCRY_DEPLOY_USER` | `scry-deploy`              | Dedicated server deployment account            |
+| `SCRY_DEPLOY_USER` | `scry-deploy`              | Exact case-sensitive SSH deployment account    |
 | `SCRY_DEPLOY_PATH` | `/opt/scry`                | Directory containing the protected `.env` file |
 | `SCRY_DEPLOY_URL`  | `https://scry.example.com` | GitHub deployment link                         |
 

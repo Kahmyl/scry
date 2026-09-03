@@ -49,8 +49,8 @@ jobs:
             echo "SCRY_DEPLOY_HOST is missing or invalid"
             exit 1
           }
-          [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || {
-            echo "SCRY_DEPLOY_USER is missing or invalid"
+          [[ "$DEPLOY_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || {
+            echo "SCRY_DEPLOY_USER is missing or invalid; use the exact case-sensitive SSH account name"
             exit 1
           }
           [[ "$DEPLOY_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]] || {

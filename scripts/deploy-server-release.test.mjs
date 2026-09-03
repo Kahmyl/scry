@@ -18,6 +18,7 @@ for (const required of [
   "SCRY_DEPLOY_KNOWN_HOSTS",
   "docker.io/kahmyl/scry:sha-$QUALIFIED_SHA",
   "scripts/deploy-server-release.sh",
+  "^[A-Za-z_][A-Za-z0-9_-]*$",
 ]) {
   assert.ok(workflow.includes(required), `deployment workflow is missing ${required}`);
 }
