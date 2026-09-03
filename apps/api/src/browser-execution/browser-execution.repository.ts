@@ -619,9 +619,15 @@ export class BrowserExecutionRepository {
             WHERE id=$1`,
           [input.effectId, input.responseStatus],
         );
-        await this.appendEffectEvent(client, input.effectId, effect.session_id, "response_observed", {
-          status: input.responseStatus,
-        });
+        await this.appendEffectEvent(
+          client,
+          input.effectId,
+          effect.session_id,
+          "response_observed",
+          {
+            status: input.responseStatus,
+          },
+        );
       } else {
         await client.query(
           "UPDATE browser_effects SET capture_state='durable',updated_at=now() WHERE id=$1",
@@ -843,9 +849,10 @@ export class BrowserExecutionRepository {
         );
         protectedReferences[canonicalName] = protectedValueId;
       }
-      await client.query("UPDATE browser_captures SET state='published',structural_index='[]'::jsonb,encrypted_payload=NULL,encrypted_payload_digest=NULL WHERE id=$1", [
-        input.captureId,
-      ]);
+      await client.query(
+        "UPDATE browser_captures SET state='published',structural_index='[]'::jsonb,encrypted_payload=NULL,encrypted_payload_digest=NULL WHERE id=$1",
+        [input.captureId],
+      );
       await client.query(
         "UPDATE browser_effects SET publication_state='published',updated_at=now() WHERE id=$1",
         [input.effectId],

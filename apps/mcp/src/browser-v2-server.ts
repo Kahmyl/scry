@@ -111,7 +111,8 @@ function registerLifecycleTools(server: McpServer, client: BrowserV2ApiClient): 
     "browser_v2_list_projects",
     {
       title: "List Projects",
-      description: "List Projects visible to the current MCP identity before choosing Mission scope.",
+      description:
+        "List Projects visible to the current MCP identity before choosing Mission scope.",
       inputSchema: {},
       outputSchema: { message, projects: z.array(z.record(z.string(), z.unknown())) },
       annotations: localFactualRead,

@@ -86,10 +86,7 @@ export class BrowserLifecycleController {
       (principal.credentialKind === "mcp" || !["owner", "admin"].includes(principal.role))
     )
       throw new ForbiddenException("BROWSER_V2_ENVIRONMENT_POLICY_FORBIDDEN");
-    return this.lifecycle.createEnvironment(
-      workspace(principal),
-      { ...input, projectId },
-    );
+    return this.lifecycle.createEnvironment(workspace(principal), { ...input, projectId });
   }
 
   @Post("projects/:projectId/protected-inputs")

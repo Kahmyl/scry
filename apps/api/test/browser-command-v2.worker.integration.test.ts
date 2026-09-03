@@ -186,9 +186,9 @@ run("browser v2 durable command worker", () => {
     await waitFor(() =>
       commands.sessionContext(started.browserSessionId).then((value) => value.ownerGeneration > 0),
     );
-    expect(
-      (await lifecycle.observeMission(workspaceId, mission.missionId)).runs[0],
-    ).toMatchObject({ disclosureMode: "trusted_application_output" });
+    expect((await lifecycle.observeMission(workspaceId, mission.missionId)).runs[0]).toMatchObject({
+      disclosureMode: "trusted_application_output",
+    });
     const leased = await commands.submit(started.browserSessionId, {
       idempotencyKey: "lease-probe",
       command: { kind: "observe" },

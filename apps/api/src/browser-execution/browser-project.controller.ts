@@ -13,7 +13,9 @@ const createProjectSchema = z.object({
 
 @Controller("api")
 export class BrowserProjectController {
-  constructor(@Inject(BrowserProjectRepository) private readonly projects: BrowserProjectRepository) {}
+  constructor(
+    @Inject(BrowserProjectRepository) private readonly projects: BrowserProjectRepository,
+  ) {}
 
   @Get(["projects", "v2/projects"])
   list(@CurrentPrincipal() principal: Principal) {

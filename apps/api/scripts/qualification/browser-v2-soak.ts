@@ -349,11 +349,7 @@ async function vitract(context: Context): Promise<void> {
     "exact_credential_identity",
     "determine-credential",
   );
-  const credentialSettled = await command(
-    context,
-    { kind: "observe" },
-    "observe-after-credential",
-  );
+  const credentialSettled = await command(context, { kind: "observe" }, "observe-after-credential");
   const docs = await command(
     context,
     { kind: "click", reference: control(credentialSettled, "API documentation") },
@@ -588,11 +584,7 @@ async function asynchronous(context: Context): Promise<void> {
     "exact_workspace_activation",
     "determine-activation",
   );
-  const activationSettled = await command(
-    context,
-    { kind: "observe" },
-    "observe-after-activation",
-  );
+  const activationSettled = await command(context, { kind: "observe" }, "observe-after-activation");
   if (!String(activationSettled.text).includes("Activated"))
     throw new Error(`async_activation_failed:${context.namespace}`);
 }

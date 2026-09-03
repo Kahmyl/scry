@@ -11,10 +11,7 @@ const tokenOutputPath = process.env.BROWSER_V2_MCP_TOKEN_OUTPUT;
 if (!databaseUrl) throw new Error("BROWSER_V2_DATABASE_URL_REQUIRED");
 if (!origin || new URL(origin).origin !== origin)
   throw new Error("BROWSER_V2_FIXTURE_ORIGIN_REQUIRED");
-if (
-  !process.env.BROWSER_V2_PROTECTED_KEYS_JSON &&
-  !process.env.BROWSER_V2_PROTECTED_KEY_BASE64
-)
+if (!process.env.BROWSER_V2_PROTECTED_KEYS_JSON && !process.env.BROWSER_V2_PROTECTED_KEY_BASE64)
   throw new Error("BROWSER_V2_PROTECTED_KEY_REQUIRED");
 
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });

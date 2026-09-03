@@ -194,9 +194,9 @@ export class BrowserCommandRepository {
     return result.rows[0]?.state === "complete";
   }
 
-  async safeActionLedger(sessionId: string): Promise<
-    Array<{ at: string; tool: string; outcome: string; durationMs: number }>
-  > {
+  async safeActionLedger(
+    sessionId: string,
+  ): Promise<Array<{ at: string; tool: string; outcome: string; durationMs: number }>> {
     const result = await this.database.query<{
       kind: string;
       state: string;

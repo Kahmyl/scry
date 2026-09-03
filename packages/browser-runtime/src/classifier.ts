@@ -18,10 +18,7 @@ const BUILTIN_PATTERNS: readonly PatternDefinition[] = [
   ["email", /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu],
   ["payment-card", /\b(?:\d[ -]*?){13,19}\b/gu],
   ["nigerian-bvn-or-nin", /\b\d{11}\b/gu],
-  [
-    "phone",
-    /(?<![A-Za-z0-9.-])(?:\+\d[\d\s()-]{7,}\d|\d[\d\s()-]{8,}\d)(?![A-Za-z0-9.-])/gu,
-  ],
+  ["phone", /(?<![A-Za-z0-9.-])(?:\+\d[\d\s()-]{7,}\d|\d[\d\s()-]{8,}\d)(?![A-Za-z0-9.-])/gu],
 ];
 
 export interface SensitiveFinding {

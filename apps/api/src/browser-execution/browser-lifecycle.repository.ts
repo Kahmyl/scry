@@ -32,10 +32,7 @@ export class BrowserLifecycleRepository {
     private readonly cipher: BrowserProtectedValueCipher = new BrowserProtectedValueCipher(),
   ) {}
 
-  async createEnvironment(
-    workspaceId: string | undefined,
-    input: CreateBrowserEnvironmentV2Input,
-  ) {
+  async createEnvironment(workspaceId: string | undefined, input: CreateBrowserEnvironmentV2Input) {
     return this.database.transaction(async (client) => {
       await this.requireProject(client, workspaceId, input.projectId);
       const existing = await client.query<{
@@ -54,7 +51,8 @@ export class BrowserLifecycleRepository {
         if (
           row.name !== input.name ||
           row.base_origin !== input.baseOrigin ||
-          JSON.stringify(row.allowed_service_origins) !== JSON.stringify(input.allowedServiceOrigins) ||
+          JSON.stringify(row.allowed_service_origins) !==
+            JSON.stringify(input.allowedServiceOrigins) ||
           row.disclosure_mode !== input.disclosureMode
         )
           throw new Error("BROWSER_V2_ENVIRONMENT_IDEMPOTENCY_CONFLICT");

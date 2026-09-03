@@ -19,7 +19,8 @@ requireValue("BROWSER_V2_LEGACY_ARTIFACTS_DISPOSED", "I_ATTEST_LEGACY_ARTIFACTS_
 const databaseUrl = required("BROWSER_V2_DATABASE_URL");
 const expectedDatabase = required("BROWSER_V2_EXPECTED_DATABASE");
 const configuredDatabase = decodeURIComponent(new URL(databaseUrl).pathname.replace(/^\//u, ""));
-if (configuredDatabase !== expectedDatabase) throw new Error("BROWSER_V2_DATABASE_IDENTITY_MISMATCH");
+if (configuredDatabase !== expectedDatabase)
+  throw new Error("BROWSER_V2_DATABASE_IDENTITY_MISMATCH");
 
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
 const client = await pool.connect();

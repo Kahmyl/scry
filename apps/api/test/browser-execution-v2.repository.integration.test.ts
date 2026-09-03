@@ -255,11 +255,7 @@ run("browser execution v2 repository", () => {
       60_000,
       "worker recovery",
     );
-    const recoveredCapture = capturedResponse(
-      admitted.effect.id,
-      ownerGeneration,
-      "fenced-owner",
-    );
+    const recoveredCapture = capturedResponse(admitted.effect.id, ownerGeneration, "fenced-owner");
     await expect(repository.registerCapture(recoveredCapture)).rejects.toThrow(
       "BROWSER_V2_OWNER_FENCED",
     );

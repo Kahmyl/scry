@@ -42,7 +42,9 @@ describe("browser execution v2 fresh schema", () => {
     const script = fileURLToPath(
       new URL("../../../scripts/schema-fingerprint.mjs", import.meta.url),
     );
-    const releaseFingerprint = execFileSync(process.execPath, [script], { encoding: "utf8" }).trim();
+    const releaseFingerprint = execFileSync(process.execPath, [script], {
+      encoding: "utf8",
+    }).trim();
     const manifest = await loadBrowserV2SchemaManifest();
 
     expect(releaseFingerprint).toBe(manifest.schemaFingerprint);

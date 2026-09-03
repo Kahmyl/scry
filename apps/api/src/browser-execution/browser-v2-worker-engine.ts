@@ -335,11 +335,9 @@ export class BrowserV2WorkerEngine {
     if (process.env.BROWSER_V2_RENDER_VIDEO === "true") {
       const ledgerPath = path.join(session.root, "actions.jsonl");
       const ledger = await this.commands.safeActionLedger(sessionId);
-      await writeFile(
-        ledgerPath,
-        `${ledger.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-        { mode: 0o600 },
-      );
+      await writeFile(ledgerPath, `${ledger.map((entry) => JSON.stringify(entry)).join("\n")}\n`, {
+        mode: 0o600,
+      });
       const publication = await renderSanitizedReplay({
         events: verified.events,
         ledgerPath,
@@ -671,8 +669,7 @@ export class BrowserV2WorkerEngine {
     let actionStarted = false;
     let lastNetworkActivity = Date.now();
     const pendingReads = new Set<Request>();
-    const isRead = (request: Request) =>
-      ["GET", "HEAD", "OPTIONS"].includes(request.method());
+    const isRead = (request: Request) => ["GET", "HEAD", "OPTIONS"].includes(request.method());
     const onRequest = (request: Request) => {
       if (!actionStarted || !isRead(request)) return;
       pendingReads.add(request);

@@ -303,9 +303,7 @@ export class ProtectedCaptureVault {
     this.#retentionMs = options.retentionMs ?? DEFAULT_RETENTION_MS;
     if (options.encryptionKey && options.encryptionKey.length !== 32)
       throw new Error("capture_master_key_invalid");
-    this.#encryptionKey = options.encryptionKey
-      ? Buffer.from(options.encryptionKey)
-      : undefined;
+    this.#encryptionKey = options.encryptionKey ? Buffer.from(options.encryptionKey) : undefined;
   }
 
   async initialize(): Promise<this> {
@@ -493,7 +491,8 @@ export class ProtectedCaptureVault {
     await durableWrite(this.#receiptPath(envelope.captureId), JSON.stringify(stored));
     const plaintext = await this.#decryptRaw(envelope.captureId);
     try {
-      if (sha256(plaintext) !== stored.rawDigest) throw new Error("capture_plaintext_digest_invalid");
+      if (sha256(plaintext) !== stored.rawDigest)
+        throw new Error("capture_plaintext_digest_invalid");
     } finally {
       plaintext.fill(0);
     }

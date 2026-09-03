@@ -37,11 +37,7 @@ export class BrowserProtectedValueCipher {
   decrypt(record: EncryptedProtectedValue, context: Record<string, string>): string {
     const keyring = BrowserProtectedKeyring.fromEnvironment();
     const aad = Buffer.from(JSON.stringify({ version: 1, ...context }), "utf8");
-    const decipher = createDecipheriv(
-      "aes-256-gcm",
-      keyring.key(record.keyVersion),
-      record.nonce,
-    );
+    const decipher = createDecipheriv("aes-256-gcm", keyring.key(record.keyVersion), record.nonce);
     decipher.setAAD(aad);
     decipher.setAuthTag(record.authenticationTag);
     const plaintext = Buffer.concat([decipher.update(record.ciphertext), decipher.final()]);

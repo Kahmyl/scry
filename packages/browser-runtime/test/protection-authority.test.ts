@@ -260,24 +260,24 @@ describe("single protection authority", () => {
     const authority = trustedAuthority();
     const token = authority.begin("effect-scoped-secret");
     const [decision] = authority.settle({
-        token,
-        captureId: "capture-scoped-secret",
-        candidates: [{ path: ["result", "value"], value: "brief7" }],
-        proposals: [
-          {
-            key: "resourceId",
-            semantic: "resourceId",
-            path: ["result", "value"],
-            classification: "public",
-            evidence: authority.publicEvidence(
-              token,
-              "resourceId",
-              ["result", "value"],
-              capture("capture-scoped-secret"),
-            ),
-          },
-        ],
-      });
+      token,
+      captureId: "capture-scoped-secret",
+      candidates: [{ path: ["result", "value"], value: "brief7" }],
+      proposals: [
+        {
+          key: "resourceId",
+          semantic: "resourceId",
+          path: ["result", "value"],
+          classification: "public",
+          evidence: authority.publicEvidence(
+            token,
+            "resourceId",
+            ["result", "value"],
+            capture("capture-scoped-secret"),
+          ),
+        },
+      ],
+    });
     expect(decision).toMatchObject({
       label: "public",
       publicAdmissionMode: "trusted_application_output",
@@ -375,12 +375,7 @@ describe("single protection authority", () => {
             semantic: "resource_identity",
             path: ["id"],
             classification: "public",
-            evidence: evidence(
-              "resource_identity",
-              ["id"],
-              "0".repeat(64),
-              99,
-            ),
+            evidence: evidence("resource_identity", ["id"], "0".repeat(64), 99),
           },
         ],
       }),
@@ -398,11 +393,7 @@ describe("single protection authority", () => {
             semantic: "resource_identity",
             path: ["id"],
             classification: "public",
-            evidence: evidence(
-              "resource_identity",
-              ["id"],
-              "0".repeat(64),
-            ),
+            evidence: evidence("resource_identity", ["id"], "0".repeat(64)),
           },
         ],
       }),

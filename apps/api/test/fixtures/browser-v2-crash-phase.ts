@@ -29,8 +29,7 @@ if (phase === "before_dispatch") {
 } else if (phase === "after_capture_commit") {
   const capture = input.capture as Record<string, unknown>;
   const serializedPayload = capture.encryptedPayload as
-    | { type?: string; data?: number[] }
-    | undefined;
+    { type?: string; data?: number[] } | undefined;
   if (serializedPayload?.type === "Buffer" && Array.isArray(serializedPayload.data)) {
     capture.encryptedPayload = Buffer.from(serializedPayload.data);
   }

@@ -341,7 +341,9 @@ export class ProtectionAuthority {
       const value = scalarText(candidate.value);
       const valueDigest = digestText(value);
       const automaticallyProtected =
-        candidate.protectedLineage || this.#isKnownProtected(candidate) || isDetectedSensitive(candidate);
+        candidate.protectedLineage ||
+        this.#isKnownProtected(candidate) ||
+        isDetectedSensitive(candidate);
       if (!proposal && !automaticallyProtected) continue;
 
       let label: ProtectionDecision["label"] = "protected";
@@ -349,10 +351,7 @@ export class ProtectionAuthority {
       let reason = proposal ? "caller_selected_protected" : "authority_detected_protected";
       let publicProvenance: Pick<
         ProtectionDecision,
-        | "publicAdmissionMode"
-        | "publicSemantic"
-        | "publicEvidenceDigest"
-        | "publicProposalDigest"
+        "publicAdmissionMode" | "publicSemantic" | "publicEvidenceDigest" | "publicProposalDigest"
       > = {};
 
       if (proposal?.classification === "public") {

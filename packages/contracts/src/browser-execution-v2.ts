@@ -11,10 +11,7 @@ export const browserProtectionSinkSchema = z.enum([
   "replay",
 ]);
 
-export const browserDisclosureModeSchema = z.enum([
-  "confidential",
-  "trusted_application_output",
-]);
+export const browserDisclosureModeSchema = z.enum(["confidential", "trusted_application_output"]);
 
 export const browserExecutionSessionStateSchema = z.enum([
   "starting",

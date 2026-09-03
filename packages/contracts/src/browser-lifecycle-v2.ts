@@ -17,9 +17,17 @@ export const startBrowserMissionV2Schema = z.object({
 export const createBrowserEnvironmentV2Schema = z.object({
   projectId: uuid,
   name: z.string().min(1).max(200),
-  baseOrigin: z.string().url().refine((value) => new URL(value).origin === value),
+  baseOrigin: z
+    .string()
+    .url()
+    .refine((value) => new URL(value).origin === value),
   allowedServiceOrigins: z
-    .array(z.string().url().refine((value) => new URL(value).origin === value))
+    .array(
+      z
+        .string()
+        .url()
+        .refine((value) => new URL(value).origin === value),
+    )
     .max(20)
     .default([]),
   disclosureMode: browserDisclosureModeSchema,

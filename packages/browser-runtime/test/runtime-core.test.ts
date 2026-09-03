@@ -96,8 +96,7 @@ describe("privacy surfaces", () => {
 
   it("does not treat ordinary URL paths and UUIDs as high-entropy secrets", () => {
     const classifier = new SensitiveValueClassifier();
-    const url =
-      "http://127.0.0.1:4500/inventory/v24-portfolio-gate-1-inventory/";
+    const url = "http://127.0.0.1:4500/inventory/v24-portfolio-gate-1-inventory/";
     const uuid = "a9d665c9-db83-4101-9259-5b157646b59f";
     expect(classifier.sanitize(url)).toBe(url);
     expect(classifier.sanitize(uuid)).toBe(uuid);
@@ -162,9 +161,7 @@ describe("privacy surfaces", () => {
     };
     expect(sanitized.data.node.compatMode).toBe("CSS1Compat");
     expect(sanitized.data.node.childNodes[0]?.tagName).toBe("main");
-    expect(sanitized.data.node.childNodes[0]?.childNodes[0]?.textContent).toBe(
-      "[QUARANTINED]",
-    );
+    expect(sanitized.data.node.childNodes[0]?.childNodes[0]?.textContent).toBe("[QUARANTINED]");
   });
 });
 
