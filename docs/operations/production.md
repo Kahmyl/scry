@@ -85,8 +85,10 @@ Alertmanager sends grouped alerts to `SCRY_ALERT_WEBHOOK_URL`. Critical alerts f
 3. Provision an off-host restic repository with independent credentials and retention protection.
 4. For remote artifact storage, enable provider versioning and lifecycle controls before confirming them.
 5. Run `pnpm verify:deployment-preflight`, `pnpm verify:production-operations`, `pnpm verify:production-recovery`, and render `docker compose --env-file <secret-file> -f compose.deploy.yml config`.
-6. Deploy, confirm all health checks, and confirm Prometheus has every declared target.
+6. Deploy the exact qualified SHA through **Deploy qualified Scry release**. The server controller must report a healthy activated release; a raw `docker compose pull/up` is not an accepted retained-data deployment procedure.
 7. Require successful base, WAL, artifact, maintenance, and restore-drill metrics before release acceptance.
+
+The complete GitHub environment, server bootstrap, rollback, and maintenance-window procedure is documented in [Reliable single-server deployment](server-deployment.md).
 
 ## Restore and incident procedure
 

@@ -1,0 +1,182 @@
+name: Deploy qualified Scry release
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Protected GitHub environment and server target
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+      qualified_sha:
+        description: Exact qualified and published 40-character commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scry-deploy-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy immutable release to ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    environment:
+      name: scry-${{ inputs.target }}
+      url: ${{ vars.SCRY_DEPLOY_URL }}
+    steps:
+      - name: Validate deployment request
+        shell: bash
+        env:
+          QUALIFIED_SHA: ${{ inputs.qualified_sha }}
+          DEPLOY_HOST: ${{ vars.SCRY_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.SCRY_DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.SCRY_DEPLOY_PATH }}
+          DEPLOY_URL: ${{ vars.SCRY_DEPLOY_URL }}
+        run: |
+          set -euo pipefail
+          [[ "$QUALIFIED_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "qualified_sha must be an exact lowercase commit SHA"
+            exit 1
+          }
+          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || {
+            echo "SCRY_DEPLOY_HOST is missing or invalid"
+            exit 1
+          }
+          [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || {
+            echo "SCRY_DEPLOY_USER is missing or invalid"
+            exit 1
+          }
+          [[ "$DEPLOY_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]] || {
+            echo "SCRY_DEPLOY_PATH must be an absolute simple path"
+            exit 1
+          }
+          [[ "$DEPLOY_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || {
+            echo "SCRY_DEPLOY_URL must be an HTTPS origin without a path"
+            exit 1
+          }
+
+      - name: Check out the exact qualified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.qualified_sha }}
+
+      - name: Resolve and verify the published application image
+        shell: bash
+        env:
+          QUALIFIED_SHA: ${{ inputs.qualified_sha }}
+        run: |
+          set -euo pipefail
+          image_tag="docker.io/kahmyl/scry:sha-$QUALIFIED_SHA"
+          docker pull "$image_tag" >/dev/null
+          image_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "$image_tag")"
+          [[ "$image_ref" =~ @sha256:[0-9a-f]{64}$ ]] || {
+            echo "Published image did not resolve to an immutable digest"
+            exit 1
+          }
+          image_release="$(docker image inspect --format '{{index .Config.Labels "org.scry.release-id"}}' "$image_ref")"
+          [[ "$image_release" == "$QUALIFIED_SHA" ]] || {
+            echo "Published image release label does not match the requested SHA"
+            exit 1
+          }
+          schema_fingerprint="$(node scripts/schema-fingerprint.mjs)"
+          image_schema="$(docker image inspect --format '{{index .Config.Labels "org.scry.schema-fingerprint"}}' "$image_ref")"
+          [[ "$image_schema" == "$schema_fingerprint" ]] || {
+            echo "Published image schema label does not match the qualified source"
+            exit 1
+          }
+          printf 'SCRY_DEPLOY_IMAGE_REF=%s\n' "$image_ref" >>"$GITHUB_ENV"
+          printf 'SCRY_DEPLOY_SCHEMA_FINGERPRINT=%s\n' "$schema_fingerprint" >>"$GITHUB_ENV"
+
+      - name: Render the self-contained release topology
+        run: node scripts/render-compose-oci.mjs "$RUNNER_TEMP/scry-compose.yml"
+
+      - name: Configure pinned SSH host identity
+        shell: bash
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.SCRY_DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.SCRY_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ -n "$DEPLOY_SSH_KEY" ]] || { echo "SCRY_DEPLOY_SSH_KEY is required"; exit 1; }
+          [[ -n "$DEPLOY_KNOWN_HOSTS" ]] || { echo "SCRY_DEPLOY_KNOWN_HOSTS is required"; exit 1; }
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" >"$HOME/.ssh/scry_deploy"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" >"$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/scry_deploy" "$HOME/.ssh/known_hosts"
+
+      - name: Transfer the qualified release controller and topology
+        shell: bash
+        env:
+          QUALIFIED_SHA: ${{ inputs.qualified_sha }}
+          DEPLOY_HOST: ${{ vars.SCRY_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.SCRY_DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.SCRY_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          target="$DEPLOY_USER@$DEPLOY_HOST"
+          incoming="$DEPLOY_PATH/.scry-deploy/incoming/$QUALIFIED_SHA"
+          ssh -i "$HOME/.ssh/scry_deploy" -o BatchMode=yes "$target" \
+            "install -d -m 0700 '$incoming'"
+          scp -i "$HOME/.ssh/scry_deploy" -o BatchMode=yes \
+            scripts/deploy-server-release.sh "$target:$incoming/deploy-server-release.sh"
+          scp -i "$HOME/.ssh/scry_deploy" -o BatchMode=yes \
+            "$RUNNER_TEMP/scry-compose.yml" "$target:$incoming/compose.yml"
+
+      - name: Deploy, verify, or restore the previous release
+        shell: bash
+        env:
+          QUALIFIED_SHA: ${{ inputs.qualified_sha }}
+          DEPLOY_HOST: ${{ vars.SCRY_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.SCRY_DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.SCRY_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          target="$DEPLOY_USER@$DEPLOY_HOST"
+          incoming="$DEPLOY_PATH/.scry-deploy/incoming/$QUALIFIED_SHA"
+          ssh -i "$HOME/.ssh/scry_deploy" -o BatchMode=yes "$target" \
+            "chmod 0700 '$incoming/deploy-server-release.sh' && \
+             '$incoming/deploy-server-release.sh' \
+             '$DEPLOY_PATH' \
+             '$QUALIFIED_SHA' \
+             '$SCRY_DEPLOY_IMAGE_REF' \
+             '$SCRY_DEPLOY_SCHEMA_FINGERPRINT' \
+             '$incoming/compose.yml'"
+
+      - name: Verify public TLS and reverse-proxy routing
+        shell: bash
+        env:
+          DEPLOY_URL: ${{ vars.SCRY_DEPLOY_URL }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            --retry 8 --retry-delay 2 --retry-all-errors \
+            --connect-timeout 5 --max-time 20 \
+            "$DEPLOY_URL/api/v2/health" >/dev/null
+          curl --fail --silent --show-error \
+            --retry 8 --retry-delay 2 --retry-all-errors \
+            --connect-timeout 5 --max-time 20 \
+            "$DEPLOY_URL/" >/dev/null
+
+      - name: Record deployment receipt
+        if: success()
+        shell: bash
+        env:
+          QUALIFIED_SHA: ${{ inputs.qualified_sha }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          {
+            echo "## Scry deployment"
+            echo
+            echo "- Target: \`$TARGET\`"
+            echo "- Release: \`$QUALIFIED_SHA\`"
+            echo "- Image: \`$SCRY_DEPLOY_IMAGE_REF\`"
+            echo "- Schema: \`$SCRY_DEPLOY_SCHEMA_FINGERPRINT\`"
+            echo "- Result: healthy release activated"
+          } >>"$GITHUB_STEP_SUMMARY"
