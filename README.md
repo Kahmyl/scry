@@ -78,28 +78,34 @@ repository clone.
 
 You need an AMD64 Linux server with Docker Engine, Docker Compose 2.34 or later,
 a domain pointing to the server, and inbound ports 80 and 443 open. Create an
-empty deployment directory and its environment:
+empty deployment directory and a mode-`0600` `.env` from `deploy.env.example`.
+Then configure the protected GitHub deployment environment and deploy an exact
+qualified commit through **Deploy qualified Scry release**. The same controlled
+workflow handles first installation and later upgrades.
 
 ```bash
 mkdir -p /opt/scry
 cd /opt/scry
-
-# Create .env using .env.auth.example as the template, then start:
-docker compose \
-  --env-file .env \
-  -f oci://docker.io/kahmyl/scry-stack:latest \
-  up -d
+install -m 0600 /dev/null .env
+# Populate .env from deploy.env.example through the server's secret-management path.
 ```
 
+The workflow selects an immutable image digest, serializes deployments, fences
+traffic, refuses active browser work, snapshots PostgreSQL, gates migration,
+verifies every service, and restores the previous release on a pre-activation
+failure. See the [single-server deployment runbook](docs/operations/server-deployment.md).
+
 Caddy obtains and renews TLS automatically. It is the only public service and
-routes `/v1/*` to the API, `/mcp` to the MCP server, and everything else to the
+routes `/api/*` to the API, `/mcp` to the MCP server, and everything else to the
 web app. PostgreSQL, Redis, API, worker, MCP, and migrations stay on the private
 Compose network. Supabase browser settings are injected at container runtime;
 no `VITE_*` GitHub variables are required.
 
 Pushes to `main` and version tags publish both artifacts through
 `.github/workflows/docker-publish.yml`. Configure only `DOCKERHUB_USERNAME` and
-`DOCKERHUB_TOKEN` as GitHub Actions secrets.
+`DOCKERHUB_TOKEN` as repository secrets. Configure the SSH deployment values in
+the protected `scry-staging` or `scry-production` GitHub environment as described
+in the runbook.
 
 Compose loads browser-safe variables from `apps/web/.env` and server-only
 variables from `apps/api/.env`. Never put `SCRY_SERVICE_TOKEN`, credential

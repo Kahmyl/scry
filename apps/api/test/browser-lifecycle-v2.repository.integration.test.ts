@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { BrowserExecutionRepository } from "../src/browser-execution/repositories/browser-execution.repository.js";
+import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
 import { BrowserLifecycleRepository } from "../src/browser-execution/repositories/browser-lifecycle.repository.js";
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
 import { Database } from "../src/infrastructure/database.js";
@@ -13,6 +14,7 @@ run("browser v2 Mission/Flow/Run lifecycle", () => {
   let database: Database;
   let lifecycle: BrowserLifecycleRepository;
   let execution: BrowserExecutionRepository;
+  let commands: BrowserCommandRepository;
 
   beforeAll(async () => {
     process.env.DATABASE_URL = databaseUrl;
@@ -20,6 +22,7 @@ run("browser v2 Mission/Flow/Run lifecycle", () => {
     database = new Database();
     lifecycle = new BrowserLifecycleRepository(database);
     execution = new BrowserExecutionRepository(database, new BrowserProtectedValueCipher());
+    commands = new BrowserCommandRepository(database, new BrowserProtectedValueCipher());
   });
 
   afterAll(async () => {
@@ -108,6 +111,24 @@ run("browser v2 Mission/Flow/Run lifecycle", () => {
       businessCommitLimit: 1,
       protectedInputIds: [],
     });
+    const credential = await commands.createProtectedInput(workspaceId, {
+      projectId,
+      displayName: "late_discovered_login",
+      value: "late-bound-protected-canary",
+      expiresInSeconds: null,
+      idempotencyKey: `late-credential-${projectId}`,
+    });
+    await expect(
+      commands.bindProtectedInputs(workspaceId, started.runId, [credential.protectedValueId]),
+    ).resolves.toMatchObject({
+      browserSessionId: started.browserSessionId,
+      protectedInputIds: [credential.protectedValueId],
+      added: 1,
+      replay: false,
+    });
+    await expect(
+      commands.bindProtectedInputs(workspaceId, started.runId, [credential.protectedValueId]),
+    ).resolves.toMatchObject({ added: 0, replay: true });
     const owner = await execution.claimOwner(started.browserSessionId, "lifecycle-worker", 60_000);
     const chainHead = createHash("sha256").update("authenticated-evidence-chain").digest("hex");
     await database.query(

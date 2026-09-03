@@ -46,9 +46,19 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - web
-      - api
-      - mcp
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+      mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
+      start_period: 10s
+      start_interval: 1s
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   web:
     image: ${SCRY_IMAGE_REF:?Set SCRY_IMAGE_REF to an immutable image digest}
@@ -67,6 +77,13 @@ services:
         condition: service_started
       mcp:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
+      start_period: 10s
+      start_interval: 1s
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   api:
     image: ${SCRY_IMAGE_REF:?Set SCRY_IMAGE_REF to an immutable image digest}

@@ -79,6 +79,7 @@ run("browser v2 customer MCP scope", () => {
     const authenticated = await new AuthService(new IdentityRepository(database)).authenticate(
       `Bearer ${issued.token}`,
     );
+    if (authenticated.kind !== "user") throw new Error("Expected an authenticated user");
     expect(authenticated).toMatchObject({
       kind: "user",
       credentialKind: "mcp",
@@ -88,10 +89,11 @@ run("browser v2 customer MCP scope", () => {
     });
 
     const lifecycle = new BrowserLifecycleRepository(database);
+    const commands = new BrowserCommandRepository(database, new BrowserProtectedValueCipher());
     const controller = new BrowserLifecycleController(
       lifecycle,
       undefined as never,
-      undefined as never,
+      commands,
       undefined as never,
     );
     expect(() =>
@@ -103,6 +105,39 @@ run("browser v2 customer MCP scope", () => {
         idempotencyKey: `mcp-environment-${projectA}`,
       }),
     ).toThrow("BROWSER_V2_ENVIRONMENT_POLICY_FORBIDDEN");
+    await expect(controller.listEnvironments(projectA, authenticated)).resolves.toEqual([
+      expect.objectContaining({
+        id: environmentA,
+        projectId: projectA,
+        name: "environment A",
+        baseOrigin: "https://fixture.example",
+        allowedServiceOrigins: [],
+        disclosureMode: "confidential",
+        state: "active",
+      }),
+    ]);
+    await expect(controller.listEnvironments(projectB, authenticated)).rejects.toThrow(
+      "BROWSER_V2_PROJECT_NOT_FOUND",
+    );
+    const credential = await controller.createProtectedInput(projectA, authenticated, {
+      displayName: "Preview_password",
+      value: "scope-protected-canary",
+      expiresInSeconds: null,
+      idempotencyKey: `credential-${projectA}`,
+    });
+    await expect(controller.listProtectedInputs(projectA, authenticated)).resolves.toEqual([
+      expect.objectContaining({
+        id: credential.protectedValueId,
+        referenceId: credential.protectedValueId,
+        projectId: projectA,
+        displayName: "Preview_password",
+        state: "active",
+        expiresAt: null,
+      }),
+    ]);
+    await expect(controller.listProtectedInputs(projectB, authenticated)).rejects.toThrow(
+      "BROWSER_V2_PROJECT_NOT_FOUND",
+    );
     expect(() =>
       controller.createEnvironment(
         projectA,
@@ -140,6 +175,54 @@ run("browser v2 customer MCP scope", () => {
       settings: {},
       idempotencyKey: `scoped-mission-${projectA}`,
     });
+    const objective = await lifecycle.createObjective(workspaceA, mission.missionId, {
+      agentSessionId: mission.agentSessionId,
+      title: "Authenticate safely",
+      description: "Use only the credential selected for this Project",
+      completionCriteria: { authenticated: true },
+      objectiveOrder: 0,
+      idempotencyKey: `scoped-objective-${projectA}`,
+    });
+    const flow = await lifecycle.createFlow(workspaceA, mission.missionId, {
+      agentSessionId: mission.agentSessionId,
+      name: "Discover login",
+      purpose: "Reach and authenticate through the approved login surface",
+      definition: {},
+      idempotencyKey: `scoped-flow-${projectA}`,
+    });
+    const run = await lifecycle.startRun(workspaceA, {
+      projectId: projectA,
+      missionId: mission.missionId,
+      objectiveId: objective.objectiveId,
+      agentSessionId: mission.agentSessionId,
+      flowId: flow.flowId,
+      flowRevisionId: flow.flowRevisionId,
+      environmentId: environmentA,
+      authenticationCommitLimit: 1,
+      businessCommitLimit: 0,
+      protectedInputIds: [],
+      idempotencyKey: `scoped-run-${projectA}`,
+    });
+    await expect(
+      controller.bindProtectedInputs(run.runId, authenticated, {
+        protectedInputIds: [credential.protectedValueId],
+        userConfirmed: true,
+      }),
+    ).resolves.toMatchObject({
+      browserSessionId: run.browserSessionId,
+      protectedInputIds: [credential.protectedValueId],
+      added: 1,
+    });
+    await expect(
+      controller.bindProtectedInputs(
+        run.runId,
+        { ...authenticated, workspaceId: workspaceB },
+        {
+          protectedInputIds: [credential.protectedValueId],
+          userConfirmed: true,
+        },
+      ),
+    ).rejects.toThrow("BROWSER_V2_RUN_NOT_ACTIVE");
     await expect(
       lifecycle.startMission(workspaceA, {
         projectId: projectB,
@@ -155,7 +238,6 @@ run("browser v2 customer MCP scope", () => {
     );
     expect(await lifecycle.listMissions(workspaceA, projectB)).toEqual([]);
 
-    const commands = new BrowserCommandRepository(database, new BrowserProtectedValueCipher());
     await expect(
       commands.createProtectedInput(workspaceA, {
         projectId: projectB,

@@ -13,6 +13,7 @@ import {
   Sidebar,
   Topbar,
 } from "./components/index.js";
+import { BrowserV2ProjectSettings } from "./BrowserV2ProjectSettings.js";
 
 type Mission = {
   id: string;
@@ -177,7 +178,7 @@ export function BrowserV2Dashboard({
         <Topbar
           project={projects.find((project) => project.id === projectId)}
           userEmail={userEmail}
-          onWorkspaceSettings={() => navigate("/dashboard/account")}
+          onWorkspaceSettings={() => navigate("/dashboard/settings")}
           onAccountSettings={() => navigate("/dashboard/account")}
           {...(onSignOut ? { onSignOut } : {})}
         />
@@ -189,6 +190,8 @@ export function BrowserV2Dashboard({
             <Integrations />
           ) : !projectId ? (
             <EmptyWorkspace onCreate={() => setCreateProjectOpen(true)} />
+          ) : view === "settings" ? (
+            <BrowserV2ProjectSettings projectId={projectId} />
           ) : reportId ? (
             <ReportDetail reportId={reportId} onBack={() => navigate("/dashboard/reports")} />
           ) : runId ? (
@@ -654,10 +657,11 @@ function message(error: unknown) {
 }
 function dashboardView(
   path: string,
-): "overview" | "missions" | "runs" | "reports" | "integrations" | "account" {
+): "overview" | "missions" | "runs" | "reports" | "settings" | "integrations" | "account" {
   if (path.startsWith("/dashboard/missions")) return "missions";
   if (path.startsWith("/dashboard/runs")) return "runs";
   if (path.startsWith("/dashboard/reports")) return "reports";
+  if (path.startsWith("/dashboard/settings")) return "settings";
   if (path.startsWith("/dashboard/integrations")) return "integrations";
   if (path.startsWith("/dashboard/account")) return "account";
   return "overview";

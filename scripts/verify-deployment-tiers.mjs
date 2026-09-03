@@ -12,8 +12,10 @@ const base = {
   SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_PUBLISHABLE_KEY: "verification",
   SCRY_SERVICE_TOKEN: "verification",
-  SCRY_CREDENTIAL_ENCRYPTION_KEY: "verification",
-  VEIL_ADMISSION_KEY: "v".repeat(32),
+  BROWSER_V2_PROTECTED_KEY_VERSION: "browser-v2-key-1",
+  BROWSER_V2_PROTECTED_KEYS_JSON: JSON.stringify({
+    "browser-v2-key-1": Buffer.alloc(32, 7).toString("base64"),
+  }),
 };
 
 const staging = { ...base, SCRY_DEPLOYMENT_TIER: "staging", COMPOSE_PROFILES: "" };
