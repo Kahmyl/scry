@@ -215,6 +215,12 @@ export function Sidebar({
           >
             <PlugZap size={17} /> Integrations
           </button>
+          <button
+            className={view === "settings" ? "nav-active" : ""}
+            onClick={() => navigate("settings")}
+          >
+            <Settings2 size={17} /> Project settings
+          </button>
         </div>
       </aside>
     </>
@@ -297,7 +303,7 @@ export function Topbar({
                     onWorkspaceSettings();
                   }}
                 >
-                  <Box size={15} /> Workspace settings
+                  <Box size={15} /> Project settings
                 </button>
                 <button
                   onClick={() => {

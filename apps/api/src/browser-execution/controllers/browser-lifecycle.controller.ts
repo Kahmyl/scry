@@ -12,6 +12,7 @@ import {
 import { randomUUID } from "node:crypto";
 import {
   createBrowserFlowV2Schema,
+  bindBrowserProtectedInputsV2Schema,
   createBrowserEnvironmentV2Schema,
   createBrowserProtectedInputV2Schema,
   createBrowserObjectiveV2Schema,
@@ -21,6 +22,7 @@ import {
   startBrowserRunV2Schema,
   submitBrowserCommandV2Schema,
   type CreateBrowserFlowV2Input,
+  type BindBrowserProtectedInputsV2Input,
   type CreateBrowserEnvironmentV2Input,
   type CreateBrowserProtectedInputV2Input,
   type CreateBrowserObjectiveV2Input,
@@ -107,6 +109,26 @@ export class BrowserLifecycleController {
   ) {
     this.enabled();
     return this.commands.createProtectedInput(workspace(principal), { ...input, projectId });
+  }
+
+  @Get("projects/:projectId/protected-inputs")
+  listProtectedInputs(
+    @Param("projectId") projectId: string,
+    @CurrentPrincipal() principal: Principal,
+  ) {
+    this.enabled();
+    return this.commands.listProtectedInputs(workspace(principal), projectId);
+  }
+
+  @Post("runs/:runId/protected-inputs")
+  bindProtectedInputs(
+    @Param("runId") runId: string,
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodValidationPipe(bindBrowserProtectedInputsV2Schema))
+    input: BindBrowserProtectedInputsV2Input,
+  ) {
+    this.enabled();
+    return this.commands.bindProtectedInputs(workspace(principal), runId, input.protectedInputIds);
   }
 
   @Post("browser-sessions/:sessionId/commands")

@@ -19,6 +19,9 @@ describe("browser v2 MCP profile", () => {
       "browser_v2_list_projects",
       "browser_v2_list_missions",
       "browser_v2_list_environments",
+      "browser_v2_list_credentials",
+      "browser_v2_create_credential",
+      "browser_v2_bind_credentials",
       "browser_v2_start_mission",
       "browser_v2_create_objective",
       "browser_v2_create_flow",
@@ -45,6 +48,87 @@ describe("browser v2 MCP profile", () => {
     const mission = tools.find((tool) => tool.name === "browser_v2_start_mission")!;
     expect(JSON.stringify(mission.inputSchema)).not.toContain("publicReleaseGrants");
     expect(tools.map((tool) => tool.name)).not.toContain("browser_v2_create_environment");
+    expect(
+      tools.find((tool) => tool.name === "browser_v2_list_credentials")?.description,
+    ).toContain("never infer first-use permission");
+    expect(
+      tools.find((tool) => tool.name === "browser_v2_bind_credentials")?.description,
+    ).toContain("explicitly selected");
+    await client.close();
+    await server.close();
+  });
+
+  it("lists only metadata, creates without echoing plaintext, and binds a user-selected credential", async () => {
+    const projectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const runId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const protectedValueId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const browserSessionId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const secret = "never-return-this-value";
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith(`/projects/${projectId}/protected-inputs`) && !init?.method)
+          return new Response(
+            JSON.stringify([
+              {
+                id: protectedValueId,
+                referenceId: protectedValueId,
+                projectId,
+                displayName: "Vitract_password",
+                state: "active",
+              },
+            ]),
+            { status: 200 },
+          );
+        if (url.endsWith(`/projects/${projectId}/protected-inputs`))
+          return new Response(JSON.stringify({ protectedValueId, replay: false }), { status: 200 });
+        if (url.endsWith(`/runs/${runId}/protected-inputs`))
+          return new Response(
+            JSON.stringify({
+              browserSessionId,
+              protectedInputIds: [protectedValueId],
+              added: 1,
+              replay: false,
+            }),
+            { status: 200 },
+          );
+        return new Response(JSON.stringify({ code: "UNEXPECTED_REQUEST" }), { status: 500 });
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const { client, server } = await connected();
+    const listed = await client.callTool({
+      name: "browser_v2_list_credentials",
+      arguments: { projectId },
+    });
+    expect(JSON.stringify(listed)).not.toContain(secret);
+    const created = await client.callTool({
+      name: "browser_v2_create_credential",
+      arguments: {
+        projectId,
+        displayName: "Vitract_password",
+        value: secret,
+        idempotencyKey: "create-vitract-password-1",
+      },
+    });
+    expect(created.structuredContent).toMatchObject({ protectedValueId, replay: false });
+    expect(JSON.stringify(created)).not.toContain(secret);
+    const bound = await client.callTool({
+      name: "browser_v2_bind_credentials",
+      arguments: { runId, protectedInputIds: [protectedValueId], userConfirmed: true },
+    });
+    expect(bound.structuredContent).toMatchObject({ browserSessionId, added: 1, replay: false });
+    const bodies = fetchMock.mock.calls
+      .map((call) => (call[1] as RequestInit | undefined)?.body)
+      .filter((body): body is string => typeof body === "string")
+      .map((body) => JSON.parse(body) as Record<string, unknown>);
+    expect(bodies[0]).toMatchObject({
+      displayName: "Vitract_password",
+      value: secret,
+      expiresInSeconds: null,
+      idempotencyKey: "create-vitract-password-1",
+    });
+    expect(bodies[1]).toEqual({ protectedInputIds: [protectedValueId], userConfirmed: true });
     await client.close();
     await server.close();
   });

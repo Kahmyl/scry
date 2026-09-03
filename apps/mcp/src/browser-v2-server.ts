@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
+  bindBrowserProtectedInputsV2Schema,
   createBrowserFlowV2Schema,
+  createBrowserProtectedInputV2Schema,
   createBrowserObjectiveV2Schema,
   finalizeBrowserRunV2Schema,
   publishBrowserMissionReportV2Schema,
@@ -23,7 +25,7 @@ import {
 const message = z.string();
 
 const INSTRUCTIONS =
-  "Use one Mission for one user objective. Before starting a Mission, list the Project's Missions and resume a matching active Mission when one exists. Before starting a Run, list that Project's approved Environments and select the active scope whose origins match the assigned application. You may create any number of Flows inside that Mission whenever distinct work streams, retries, resumptions, experiments, or approaches help; Flows are not restricted to alternatives and creating another Flow does not abandon the Mission. Every Run belongs to exactly one Flow revision. Observe current Mission facts before deciding what to do. The agent chooses browser actions and judges task completion. Mutation truth, owner fencing, protected values, evidence capture, and publication are mechanical invariants. UNKNOWN means a mutation may have happened: never replay it; reconcile or stop accurately. Protected references are opaque and must never be requested as plaintext. Each Run exposes the Environment's immutable disclosure mode. The agent can discover approved Environments but cannot create or broaden them. In confidential mode, selected outputs remain protected. In trusted_application_output mode, the single protection authority may release selected ordinary values but protected lineage and high-confidence secret findings always veto public release. After reading a durable capture's structural index, propose an output meaning and exact path. Bind user-supplied protected references to the Run with protectedInputIds, then use those IDs only in protected fills. Every navigate, observe, fill, and read-only click is already preserved by the continuous authenticated session recorder, including resulting DOM changes; do not create a protected capture merely to prove a read-only result. Every commit creates its own HTTP capture. Settle that capture before creating a later DOM capture for the same effect. For a passing Run, determine every commit's factual outcome before finalizing. For a failed, blocked, cancelled, or environment-failed Run, finalization closes the browser, proves undispatched effects not-applied, preserves any post-dispatch uncertainty as UNKNOWN, and permits an evidence-backed failure report; it never redispatches. Every durable protected capture must still be published or discarded before any finalization. capture_dom is only for an operation-owned protected result region associated with an acknowledged mutation effect. Publication retains detected or agent-selected protected values as opaque references and destroys unselected ordinary data with the raw capture. Discard performs no field interpretation and creates no handles; it destroys the encrypted capture and records only a safe tombstone. Publish a report only after every required Objective and Run is terminal with durable evidence.";
+  "Use one Mission for one user objective. Before starting a Mission, list the Project's Missions and resume a matching active Mission when one exists. Before starting a Run, list that Project's approved Environments and select the active scope whose origins match the assigned application. You may create any number of Flows inside that Mission whenever distinct work streams, retries, resumptions, experiments, or approaches help; Flows are not restricted to alternatives and creating another Flow does not abandon the Mission. Every Run belongs to exactly one Flow revision. Observe current Mission facts before deciding what to do. The agent chooses browser actions and judges task completion. Mutation truth, owner fencing, protected values, evidence capture, and publication are mechanical invariants. UNKNOWN means a mutation may have happened: never replay it; reconcile or stop accurately. Protected references are opaque and must never be requested as plaintext. Each Run exposes the Environment's immutable disclosure mode. The agent can discover approved Environments but cannot create or broaden them. When authentication is required, never guess credentials and never select a saved credential merely because its name appears unique, similar, or obvious. You may list safe credential metadata to present choices, but every binding requires an explicit current-user choice. Offer the matching saved candidates, Create a new credential in Project settings, or explicitly provide a new value to this agent. Only after that choice may you bind the selected opaque references to the active Run. In confidential mode, selected outputs remain protected. In trusted_application_output mode, the single protection authority may release selected ordinary values but protected lineage and high-confidence secret findings always veto public release. After reading a durable capture's structural index, propose an output meaning and exact path. Bind user-supplied protected references to the Run with protectedInputIds, then use those IDs only in protected fills. Every navigate, observe, fill, and read-only click is already preserved by the continuous authenticated session recorder, including resulting DOM changes; do not create a protected capture merely to prove a read-only result. Every commit creates its own HTTP capture. Settle that capture before creating a later DOM capture for the same effect. For a passing Run, determine every commit's factual outcome before finalizing. For a failed, blocked, cancelled, or environment-failed Run, finalization closes the browser, proves undispatched effects not-applied, preserves any post-dispatch uncertainty as UNKNOWN, and permits an evidence-backed failure report; it never redispatches. Every durable protected capture must still be published or discarded before any finalization. capture_dom is only for an operation-owned protected result region associated with an acknowledged mutation effect. Publication retains detected or agent-selected protected values as opaque references and destroys unselected ordinary data with the raw capture. Discard performs no field interpretation and creates no handles; it destroys the encrypted capture and records only a safe tombstone. Publish a report only after every required Objective and Run is terminal with durable evidence.";
 
 export function createBrowserV2McpServer(client = new BrowserV2ApiClient()) {
   const server = new McpServer(
@@ -166,6 +168,74 @@ function registerLifecycleTools(server: McpServer, client: BrowserV2ApiClient): 
       ),
   );
 
+  server.registerTool(
+    "browser_v2_list_credentials",
+    {
+      title: "List Project Credentials",
+      description:
+        "List safe metadata for reusable Project credentials without returning values. Results are candidates only: never infer first-use permission from a unique, similar, or obvious name. Ask the current user to choose a candidate or create a new credential before binding it to a Run.",
+      inputSchema: { projectId: uuid },
+      outputSchema: { message, credentials: z.array(z.record(z.string(), z.unknown())) },
+      annotations: localFactualRead,
+    },
+    async ({ projectId }) =>
+      toolResult(
+        {
+          credentials: (await client.get(`/v2/projects/${projectId}/protected-inputs`)) as Array<
+            Record<string, unknown>
+          >,
+        },
+        "Credential metadata loaded. User choice is still required before first use.",
+      ),
+  );
+
+  const createCredentialInput = createBrowserProtectedInputV2Schema.omit({
+    projectId: true,
+    expiresInSeconds: true,
+  });
+  server.registerTool(
+    "browser_v2_create_credential",
+    {
+      title: "Create Project Credential",
+      description:
+        "Create one encrypted Project credential only when the current user explicitly chooses to provide its plaintext in this agent interaction. Prefer Project settings when the user does not want the model or conversation host to receive the value. The value is never returned by Scry.",
+      inputSchema: { projectId: uuid, ...createCredentialInput.shape },
+      outputSchema: { message, protectedValueId: uuid, replay: z.boolean() },
+      annotations: idempotentDurableWrite,
+    },
+    async ({ projectId, ...input }) =>
+      toolResult(
+        await client.post(`/v2/projects/${projectId}/protected-inputs`, {
+          ...input,
+          expiresInSeconds: null,
+        }),
+        "Credential encrypted and stored. Scry did not return its value.",
+      ),
+  );
+
+  server.registerTool(
+    "browser_v2_bind_credentials",
+    {
+      title: "Bind Selected Credentials to Run",
+      description:
+        "Bind only the opaque Project credential references explicitly selected by the current user to an existing active Run. This supports authentication discovered after navigation. Never call it based only on credential-name similarity or agent preference.",
+      inputSchema: { runId: uuid, ...bindBrowserProtectedInputsV2Schema.shape },
+      outputSchema: {
+        message,
+        browserSessionId: uuid,
+        protectedInputIds: z.array(uuid),
+        added: z.number().int().nonnegative(),
+        replay: z.boolean(),
+      },
+      annotations: idempotentDurableWrite,
+    },
+    async ({ runId, ...input }) =>
+      toolResult(
+        await client.post(`/v2/runs/${runId}/protected-inputs`, input),
+        "The user-selected credentials are now available to this Run as opaque references.",
+      ),
+  );
+
   const startMissionInput = startBrowserMissionV2Schema.omit({ idempotencyKey: true });
   server.registerTool(
     "browser_v2_start_mission",
@@ -239,7 +309,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserV2ApiClient): 
     {
       title: "Start Flow Run",
       description:
-        "Start one browser Run under exactly one current Flow revision. Bind any user-supplied opaque protected input IDs needed by this Run. This queues a browser owner but does not itself dispatch an external application mutation.",
+        "Start one browser Run under exactly one current Flow revision. Include protected input IDs only after the current user has explicitly selected them; credentials discovered later can be bound to this active Run after user choice. This queues a browser owner but does not itself dispatch an external application mutation.",
       inputSchema: startRunInput.shape,
       outputSchema: { message, runId: uuid, browserSessionId: uuid, replay: z.boolean() },
       annotations: idempotentDurableWrite,

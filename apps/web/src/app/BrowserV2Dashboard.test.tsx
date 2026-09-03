@@ -11,7 +11,25 @@ vi.mock("../infrastructure/api/index.js", async (load) => ({
   api: vi.fn(),
 }));
 
-beforeEach(() => localStorage.clear());
+const browserStorage = new Map<string, string>();
+const browserLocalStorage = {
+  get length() {
+    return browserStorage.size;
+  },
+  clear: () => browserStorage.clear(),
+  getItem: (key: string) => browserStorage.get(key) ?? null,
+  key: (index: number) => [...browserStorage.keys()][index] ?? null,
+  removeItem: (key: string) => browserStorage.delete(key),
+  setItem: (key: string, value: string) => browserStorage.set(key, value),
+} satisfies Storage;
+
+beforeEach(() => {
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: browserLocalStorage,
+  });
+  window.localStorage.clear();
+});
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -48,7 +66,13 @@ describe("browser v2 production dashboard", () => {
     expect(screen.queryByText(/unresolved/i)).toBeNull();
     expect(screen.queryByText(/execution baseline/i)).toBeNull();
     expect(screen.queryByText(/authoritative durable state/i)).toBeNull();
-    expect(screen.queryByText("Project settings")).toBeNull();
+    const integrations = screen.getByRole("button", { name: "Integrations" });
+    const projectSettings = screen.getByRole("button", { name: "Project settings" });
+    expect(projectSettings.parentElement).toBe(integrations.parentElement);
+    expect(projectSettings.parentElement?.classList.contains("sidebar-bottom")).toBe(true);
+    expect(
+      integrations.compareDocumentPosition(projectSettings) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("opens and closes the mobile navigation drawer without changing the navigation set", async () => {

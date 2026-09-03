@@ -46,6 +46,27 @@ export class BrowserCommandRepository {
     @Inject(BrowserProtectedValueCipher) private readonly cipher: BrowserProtectedValueCipher,
   ) {}
 
+  async listProtectedInputs(workspaceId: string | undefined, projectId: string) {
+    return this.database.transaction(async (client) => {
+      const project = await client.query(
+        "SELECT 1 FROM projects WHERE id=$1 AND ($2::uuid IS NULL OR workspace_id=$2)",
+        [projectId, workspaceId ?? null],
+      );
+      if (!project.rowCount) throw new Error("BROWSER_V2_PROJECT_NOT_FOUND");
+      const result = await client.query(
+        `SELECT id,id AS "referenceId",project_id AS "projectId",display_name AS "displayName",
+                CASE WHEN state='active' AND expires_at IS NOT NULL AND expires_at<=now()
+                     THEN 'expired' ELSE state END AS state,
+                created_at AS "createdAt",expires_at AS "expiresAt"
+         FROM protected_values
+         WHERE project_id=$1 AND source_kind='user_input' AND state<>'deleted'
+         ORDER BY display_name,created_at`,
+        [projectId],
+      );
+      return result.rows;
+    });
+  }
+
   async createProtectedInput(
     workspaceId: string | undefined,
     input: CreateBrowserProtectedInputV2Input,
@@ -83,7 +104,8 @@ export class BrowserCommandRepository {
       await client.query(
         `INSERT INTO protected_values(id,project_id,source_kind,display_name,external_reference,ciphertext,nonce,
            authentication_tag,value_digest,key_version,state,expires_at,idempotency_key)
-         VALUES($1,$2,'user_input',$3,$4,$5,$6,$7,$8,$9,'active',now()+($10::int * interval '1 second'),$11)`,
+         VALUES($1,$2,'user_input',$3,$4,$5,$6,$7,$8,$9,'active',
+                CASE WHEN $10::int IS NULL THEN NULL ELSE now()+($10::int * interval '1 second') END,$11)`,
         [
           protectedValueId,
           input.projectId,
@@ -99,6 +121,53 @@ export class BrowserCommandRepository {
         ],
       );
       return { protectedValueId, replay: false };
+    });
+  }
+
+  async bindProtectedInputs(
+    workspaceId: string | undefined,
+    runId: string,
+    protectedInputIds: string[],
+  ) {
+    return this.database.transaction(async (client) => {
+      const uniqueIds = [...new Set(protectedInputIds)];
+      if (uniqueIds.length !== protectedInputIds.length)
+        throw new Error("BROWSER_V2_PROTECTED_INPUT_DUPLICATE");
+      const session = await client.query<{ sessionId: string; projectId: string }>(
+        `SELECT s.id AS "sessionId",s.project_id AS "projectId"
+         FROM runs r
+         JOIN browser_execution_sessions s ON s.run_id=r.id
+         JOIN projects p ON p.id=r.project_id
+         WHERE r.id=$1 AND r.state='running' AND s.state IN ('starting','active')
+           AND ($2::uuid IS NULL OR p.workspace_id=$2)
+         FOR UPDATE OF s`,
+        [runId, workspaceId ?? null],
+      );
+      if (!session.rows[0]) throw new Error("BROWSER_V2_RUN_NOT_ACTIVE");
+      const available = await client.query<{ id: string }>(
+        `SELECT id FROM protected_values
+         WHERE id=ANY($1::uuid[]) AND project_id=$2 AND source_kind='user_input' AND state='active'
+           AND (expires_at IS NULL OR expires_at>now())
+         FOR UPDATE`,
+        [uniqueIds, session.rows[0].projectId],
+      );
+      if (available.rowCount !== uniqueIds.length)
+        throw new Error("BROWSER_V2_PROTECTED_INPUT_UNAVAILABLE");
+      let added = 0;
+      for (const protectedValueId of uniqueIds) {
+        const inserted = await client.query(
+          `INSERT INTO browser_session_protected_inputs(session_id,protected_value_id,project_id)
+           VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+          [session.rows[0].sessionId, protectedValueId, session.rows[0].projectId],
+        );
+        added += inserted.rowCount ?? 0;
+      }
+      return {
+        browserSessionId: session.rows[0].sessionId,
+        protectedInputIds: uniqueIds,
+        added,
+        replay: added === 0,
+      };
     });
   }
 

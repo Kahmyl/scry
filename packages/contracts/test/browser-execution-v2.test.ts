@@ -6,6 +6,7 @@ import {
 } from "../src/browser-execution-v2.js";
 import { browserCommandV2Schema } from "../src/browser-command-v2.js";
 import {
+  bindBrowserProtectedInputsV2Schema,
   createBrowserProtectedInputV2Schema,
   createBrowserEnvironmentV2Schema,
   startBrowserMissionV2Schema,
@@ -123,6 +124,39 @@ describe("browser execution v2 contracts", () => {
         idempotencyKey: "protected-input-1",
       }).displayName,
     ).toBe("login_password");
+  });
+
+  it("requires explicit user confirmation when credentials are bound after Run start", () => {
+    const protectedValueId = "00000000-0000-4000-8000-000000000006";
+    expect(
+      bindBrowserProtectedInputsV2Schema.parse({
+        protectedInputIds: [protectedValueId],
+        userConfirmed: true,
+      }),
+    ).toEqual({ protectedInputIds: [protectedValueId], userConfirmed: true });
+    expect(() =>
+      bindBrowserProtectedInputsV2Schema.parse({
+        protectedInputIds: [protectedValueId],
+        userConfirmed: false,
+      }),
+    ).toThrow();
+    expect(
+      createBrowserProtectedInputV2Schema.parse({
+        projectId: "00000000-0000-4000-8000-000000000001",
+        displayName: "Vitract test password",
+        value: "secret-value",
+        expiresInSeconds: null,
+        idempotencyKey: "persistent-input-1",
+      }).expiresInSeconds,
+    ).toBeNull();
+    expect(
+      createBrowserProtectedInputV2Schema.parse({
+        projectId: "00000000-0000-4000-8000-000000000001",
+        displayName: "Ephemeral input",
+        value: "secret-value",
+        idempotencyKey: "ephemeral-input-1",
+      }).expiresInSeconds,
+    ).toBe(3_600);
   });
 
   it("binds an explicit generic disclosure mode to an environment", () => {

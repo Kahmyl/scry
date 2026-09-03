@@ -67,10 +67,15 @@ export const startBrowserRunV2Schema = z.object({
 
 export const createBrowserProtectedInputV2Schema = z.object({
   projectId: uuid,
-  displayName: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,127}$/),
+  displayName: z.string().trim().min(1).max(128),
   value: z.string().min(1).max(65_536),
-  expiresInSeconds: z.number().int().min(60).max(86_400).default(3_600),
+  expiresInSeconds: z.number().int().min(60).max(31_536_000).nullable().default(3_600),
   idempotencyKey,
+});
+
+export const bindBrowserProtectedInputsV2Schema = z.object({
+  protectedInputIds: z.array(uuid).min(1).max(50),
+  userConfirmed: z.literal(true),
 });
 
 export const finalizeBrowserRunV2Schema = z.object({
@@ -93,6 +98,7 @@ export type StartBrowserRunV2Input = z.infer<typeof startBrowserRunV2Schema>;
 export type CreateBrowserProtectedInputV2Input = z.infer<
   typeof createBrowserProtectedInputV2Schema
 >;
+export type BindBrowserProtectedInputsV2Input = z.infer<typeof bindBrowserProtectedInputsV2Schema>;
 export type FinalizeBrowserRunV2Input = z.infer<typeof finalizeBrowserRunV2Schema>;
 export type PublishBrowserMissionReportV2Input = z.infer<
   typeof publishBrowserMissionReportV2Schema
