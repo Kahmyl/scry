@@ -23,11 +23,11 @@ import {
 const message = z.string();
 
 const INSTRUCTIONS =
-  "Use one Mission for one user objective. Before starting a Mission, list the Project's Missions and resume a matching active Mission when one exists. You may create any number of Flows inside that Mission whenever distinct work streams, retries, resumptions, experiments, or approaches help; Flows are not restricted to alternatives and creating another Flow does not abandon the Mission. Every Run belongs to exactly one Flow revision. Observe current Mission facts before deciding what to do. The agent chooses browser actions and judges task completion. Mutation truth, owner fencing, protected values, evidence capture, and publication are mechanical invariants. UNKNOWN means a mutation may have happened: never replay it; reconcile or stop accurately. Protected references are opaque and must never be requested as plaintext. Each Run exposes the Environment's immutable disclosure mode. The agent cannot create or broaden it. In confidential mode, selected outputs remain protected. In trusted_application_output mode, the single protection authority may release selected ordinary values but protected lineage and high-confidence secret findings always veto public release. After reading a durable capture's structural index, propose an output meaning and exact path. Bind user-supplied protected references to the Run with protectedInputIds, then use those IDs only in protected fills. Every navigate, observe, fill, and read-only click is already preserved by the continuous authenticated session recorder, including resulting DOM changes; do not create a protected capture merely to prove a read-only result. Every commit creates its own HTTP capture. Settle that capture before creating a later DOM capture for the same effect. For a passing Run, determine every commit's factual outcome before finalizing. For a failed, blocked, cancelled, or environment-failed Run, finalization closes the browser, proves undispatched effects not-applied, preserves any post-dispatch uncertainty as UNKNOWN, and permits an evidence-backed failure report; it never redispatches. Every durable protected capture must still be published or discarded before any finalization. capture_dom is only for an operation-owned protected result region associated with an acknowledged mutation effect. Publication retains detected or agent-selected protected values as opaque references and destroys unselected ordinary data with the raw capture. Discard performs no field interpretation and creates no handles; it destroys the encrypted capture and records only a safe tombstone. Publish a report only after every required Objective and Run is terminal with durable evidence.";
+  "Use one Mission for one user objective. Before starting a Mission, list the Project's Missions and resume a matching active Mission when one exists. Before starting a Run, list that Project's approved Environments and select the active scope whose origins match the assigned application. You may create any number of Flows inside that Mission whenever distinct work streams, retries, resumptions, experiments, or approaches help; Flows are not restricted to alternatives and creating another Flow does not abandon the Mission. Every Run belongs to exactly one Flow revision. Observe current Mission facts before deciding what to do. The agent chooses browser actions and judges task completion. Mutation truth, owner fencing, protected values, evidence capture, and publication are mechanical invariants. UNKNOWN means a mutation may have happened: never replay it; reconcile or stop accurately. Protected references are opaque and must never be requested as plaintext. Each Run exposes the Environment's immutable disclosure mode. The agent can discover approved Environments but cannot create or broaden them. In confidential mode, selected outputs remain protected. In trusted_application_output mode, the single protection authority may release selected ordinary values but protected lineage and high-confidence secret findings always veto public release. After reading a durable capture's structural index, propose an output meaning and exact path. Bind user-supplied protected references to the Run with protectedInputIds, then use those IDs only in protected fills. Every navigate, observe, fill, and read-only click is already preserved by the continuous authenticated session recorder, including resulting DOM changes; do not create a protected capture merely to prove a read-only result. Every commit creates its own HTTP capture. Settle that capture before creating a later DOM capture for the same effect. For a passing Run, determine every commit's factual outcome before finalizing. For a failed, blocked, cancelled, or environment-failed Run, finalization closes the browser, proves undispatched effects not-applied, preserves any post-dispatch uncertainty as UNKNOWN, and permits an evidence-backed failure report; it never redispatches. Every durable protected capture must still be published or discarded before any finalization. capture_dom is only for an operation-owned protected result region associated with an acknowledged mutation effect. Publication retains detected or agent-selected protected values as opaque references and destroys unselected ordinary data with the raw capture. Discard performs no field interpretation and creates no handles; it destroys the encrypted capture and records only a safe tombstone. Publish a report only after every required Objective and Run is terminal with durable evidence.";
 
 export function createBrowserV2McpServer(client = new BrowserV2ApiClient()) {
   const server = new McpServer(
-    { name: "scry-browser-v2", version: "2.6.0" },
+    { name: "scry-browser-v2", version: "2.7.0" },
     { instructions: INSTRUCTIONS },
   );
   registerLifecycleTools(server, client);
@@ -142,6 +142,27 @@ function registerLifecycleTools(server: McpServer, client: BrowserV2ApiClient): 
           >,
         },
         "Project Missions loaded.",
+      ),
+  );
+
+  server.registerTool(
+    "browser_v2_list_environments",
+    {
+      title: "List Project Environments",
+      description:
+        "List the approved Environments visible in one Project, including immutable origin scope, disclosure mode, and active or disabled state. Use an active matching Environment when starting a Run. This tool cannot create or broaden an Environment.",
+      inputSchema: { projectId: uuid },
+      outputSchema: { message, environments: z.array(z.record(z.string(), z.unknown())) },
+      annotations: localFactualRead,
+    },
+    async ({ projectId }) =>
+      toolResult(
+        {
+          environments: (await client.get(`/v2/projects/${projectId}/environments`)) as Array<
+            Record<string, unknown>
+          >,
+        },
+        "Project Environments loaded.",
       ),
   );
 

@@ -32,6 +32,23 @@ export class BrowserLifecycleRepository {
     private readonly cipher: BrowserProtectedValueCipher = new BrowserProtectedValueCipher(),
   ) {}
 
+  async listEnvironments(workspaceId: string | undefined, projectId: string) {
+    return this.database.transaction(async (client) => {
+      await this.requireProject(client, workspaceId, projectId);
+      const result = await client.query(
+        `SELECT id,project_id AS "projectId",name,base_origin AS "baseOrigin",
+                allowed_service_origins AS "allowedServiceOrigins",
+                disclosure_mode AS "disclosureMode",state,
+                created_at AS "createdAt",updated_at AS "updatedAt"
+         FROM environments
+         WHERE project_id=$1
+         ORDER BY name,created_at`,
+        [projectId],
+      );
+      return result.rows;
+    });
+  }
+
   async createEnvironment(workspaceId: string | undefined, input: CreateBrowserEnvironmentV2Input) {
     return this.database.transaction(async (client) => {
       await this.requireProject(client, workspaceId, input.projectId);

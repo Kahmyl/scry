@@ -18,6 +18,7 @@ describe("browser v2 MCP profile", () => {
     expect(tools.map((tool) => tool.name)).toEqual([
       "browser_v2_list_projects",
       "browser_v2_list_missions",
+      "browser_v2_list_environments",
       "browser_v2_start_mission",
       "browser_v2_create_objective",
       "browser_v2_create_flow",
@@ -43,6 +44,37 @@ describe("browser v2 MCP profile", () => {
     expect(command.description).toContain("BROWSER_V2_EFFECT_OUTCOME_PENDING");
     const mission = tools.find((tool) => tool.name === "browser_v2_start_mission")!;
     expect(JSON.stringify(mission.inputSchema)).not.toContain("publicReleaseGrants");
+    expect(tools.map((tool) => tool.name)).not.toContain("browser_v2_create_environment");
+    await client.close();
+    await server.close();
+  });
+
+  it("discovers approved Environment IDs and scope through a read-only project call", async () => {
+    const environment = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      projectId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      name: "Test",
+      baseOrigin: "https://example.test",
+      allowedServiceOrigins: ["https://api.example.test"],
+      disclosureMode: "confidential",
+      state: "active",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify([environment]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { client, server } = await connected();
+    const result = await client.callTool({
+      name: "browser_v2_list_environments",
+      arguments: { projectId: environment.projectId },
+    });
+    expect(result.structuredContent).toMatchObject({ environments: [environment] });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]![0])).toBe(
+      `http://scry.test/api/v2/projects/${environment.projectId}/environments`,
+    );
+    expect(fetchMock.mock.calls[0]![1]?.method).toBeUndefined();
+    expect(fetchMock.mock.calls[0]![1]?.body).toBeUndefined();
     await client.close();
     await server.close();
   });

@@ -89,6 +89,15 @@ export class BrowserLifecycleController {
     return this.lifecycle.createEnvironment(workspace(principal), { ...input, projectId });
   }
 
+  @Get("projects/:projectId/environments")
+  listEnvironments(
+    @Param("projectId") projectId: string,
+    @CurrentPrincipal() principal: Principal,
+  ) {
+    this.enabled();
+    return this.lifecycle.listEnvironments(workspace(principal), projectId);
+  }
+
   @Post("projects/:projectId/protected-inputs")
   createProtectedInput(
     @Param("projectId") projectId: string,

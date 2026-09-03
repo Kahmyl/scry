@@ -103,6 +103,20 @@ run("browser v2 customer MCP scope", () => {
         idempotencyKey: `mcp-environment-${projectA}`,
       }),
     ).toThrow("BROWSER_V2_ENVIRONMENT_POLICY_FORBIDDEN");
+    await expect(controller.listEnvironments(projectA, authenticated)).resolves.toEqual([
+      expect.objectContaining({
+        id: environmentA,
+        projectId: projectA,
+        name: "environment A",
+        baseOrigin: "https://fixture.example",
+        allowedServiceOrigins: [],
+        disclosureMode: "confidential",
+        state: "active",
+      }),
+    ]);
+    await expect(controller.listEnvironments(projectB, authenticated)).rejects.toThrow(
+      "BROWSER_V2_PROJECT_NOT_FOUND",
+    );
     expect(() =>
       controller.createEnvironment(
         projectA,
