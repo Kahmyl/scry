@@ -254,7 +254,7 @@ function Overview({
       <PageTitle
         eyebrow="PROJECT OVERVIEW"
         title="Dashboard"
-        copy="Mission progress, browser runs, durable evidence, and final reports from the active execution baseline."
+        copy="Mission progress, browser runs, durable evidence, and final reports for this project."
       />
       <section className="metric-grid metric-grid-compact">
         <Metric label="Missions" value={data.missions.length} />
@@ -321,7 +321,7 @@ function ReportList({ projectId, onOpen }: { projectId: string; onOpen: (id: str
       eyebrow="FINAL EVIDENCE"
       copy="Sanitized Mission conclusions derived from completed durable evidence."
     >
-      <div className="run-list">
+      <div className="run-list browser-v2-list">
         {(state.data ?? []).map((report) => (
           <button key={report.id} onClick={() => onOpen(report.id)}>
             <span className="run-primary">
@@ -498,7 +498,7 @@ function MissionRows({ missions, onOpen }: { missions: Mission[]; onOpen: (id: s
       />
     );
   return (
-    <div className="run-list">
+    <div className="run-list browser-v2-list">
       {missions.map((mission) => (
         <button key={mission.id} onClick={() => onOpen(mission.id)}>
           <span className="run-primary">
@@ -526,7 +526,7 @@ function RunRows({ runs, onOpen }: { runs: Run[]; onOpen: (id: string) => void }
       />
     );
   return (
-    <div className="run-list">
+    <div className="run-list browser-v2-list">
       {runs.map((run) => (
         <button key={run.id} onClick={() => onOpen(run.id)}>
           <span className="run-primary">
@@ -573,10 +573,7 @@ function useResource<T>(path: string, intervalMs?: number) {
 function ListHeading({ title, onOpen }: { title: string; onOpen?: () => void }) {
   return (
     <div className="panel-head">
-      <div>
-        <span>AUTHORITATIVE STATE</span>
-        <h2>{title}</h2>
-      </div>
+      <h2>{title}</h2>
       {onOpen && (
         <button onClick={onOpen}>
           View all <ArrowRight size={14} />
@@ -590,7 +587,6 @@ function Metric({ label, value }: { label: string; value: string | number }) {
     <div className="metric lime">
       <span>{label}</span>
       <strong>{value}</strong>
-      <small>Authoritative durable state</small>
     </div>
   );
 }
@@ -638,8 +634,8 @@ function AccountView({ userEmail }: { userEmail: string }) {
     <>
       <PageTitle
         eyebrow="ACCOUNT"
-        title="Signed-in identity"
-        copy="Authentication remains attached to the existing identity provider during the execution cutover."
+        title="Your account"
+        copy="Your identity and access are managed securely for this workspace."
       />
       <section className="panel">
         <Fact title={userEmail} detail="Current authenticated account" state="active" />
