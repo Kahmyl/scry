@@ -19,6 +19,7 @@ import type { ScryApiClient } from "../../api-client.js";
 import {
   missionContext,
   objectiveContext,
+  potentiallyDestructiveExternalOperation,
   readOnly,
   stableKey,
   toolResult as result,
@@ -36,7 +37,7 @@ export function registerRevokeAuthenticatedSessionLeaseTool(
       title: "Revoke authenticated session lease",
       description: "Revoke an encrypted reusable browser session without exposing its contents.",
       inputSchema: { leaseId: uuid },
-      annotations: writes,
+      annotations: potentiallyDestructiveExternalOperation,
     },
     async ({ leaseId }) =>
       result(

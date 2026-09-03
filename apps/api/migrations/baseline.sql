@@ -421,3 +421,17 @@ CREATE INDEX credential_incidents_project_idx ON credential_incidents(project_id
 \ir 20260820-0910_scope_unknown_fence_to_resource_mutations.sql
 \ir 20260816-231045_add_document_transition_gap.sql
 \ir mission-recording-selection.sql
+\ir operational-events.sql
+\ir mission-diagnostic-isolation.sql
+\ir external-agent-lifecycle.sql
+\ir pre-mission-external-agent-lifecycle.sql
+\ir flow-name-identity-cutover.sql
+\ir system-correctness-m4-reconciliation-lease.sql
+\ir targeted-region-perception.sql
+\ir qualification-campaign-safety.sql
+\ir authoritative-q5-qualification.sql
+\ir q5-canonical-scope-bootstrap.sql
+\ir prepared-protected-operation-journeys.sql
+\ir vitract-q5-composition.sql
+\ir prepared-protected-operation-reservation-settlement.sql
+\ir canonical-execution-authority.sql

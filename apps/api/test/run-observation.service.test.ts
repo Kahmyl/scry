@@ -7,11 +7,47 @@ const attemptId = "22222222-2222-4222-8222-222222222222";
 const artifactId = "33333333-3333-4333-8333-333333333333";
 const timelineId = "44444444-4444-4444-8444-444444444444";
 
+const receipts = () => ({ listMutationReceiptsForRun: vi.fn(async () => []) }) as never;
+
 describe("canonical run observation", () => {
+  it("distinguishes the current Praxis association from immutable launch provenance", async () => {
+    const currentPraxisSessionId = "99999999-9999-4999-8999-999999999999";
+    const launchPraxisSessionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const repository = {
+      getRun: vi.fn().mockResolvedValue({
+        ...failedRun(),
+        executionSnapshot: {
+          browser: "chromium",
+          viewport: { width: 1280, height: 720 },
+          seed: 1,
+          praxisSessionId: launchPraxisSessionId,
+        },
+        currentPraxisSession: {
+          id: currentPraxisSessionId,
+          epoch: 2,
+          state: "active",
+        },
+      }),
+    };
+    const database = { query: vi.fn(async (text: string) => rowsFor(text)) };
+    const service = new RunObservationService(database as never, repository as never, receipts());
+
+    const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
+
+    expect(observation.run.executionSnapshot).toMatchObject({
+      praxisSessionId: launchPraxisSessionId,
+    });
+    expect(observation.run.currentPraxisSession).toEqual({
+      id: currentPraxisSessionId,
+      epoch: 2,
+      state: "active",
+    });
+  });
+
   it("assembles failure channels and safe artifact resources from one authoritative model", async () => {
     const repository = { getRun: vi.fn().mockResolvedValue(failedRun()) };
     const database = { query: vi.fn(async (text: string) => rowsFor(text)) };
-    const service = new RunObservationService(database as never, repository as never);
+    const service = new RunObservationService(database as never, repository as never, receipts());
 
     const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
 
@@ -63,10 +99,57 @@ describe("canonical run observation", () => {
     });
   });
 
+  it("keeps the public artifact manifest bounded without projecting evidence authority", async () => {
+    const repository = { getRun: vi.fn().mockResolvedValue(failedRun()) };
+    const regions = Array.from({ length: 1_786 }, (_, index) => ({
+      id: `region-${index}`,
+      masked: true,
+      bounds: { x: index, y: index, width: 10, height: 10 },
+    }));
+    const database = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes("FROM artifacts WHERE"))
+          return {
+            rows: [
+              {
+                ...rowsFor(text).rows[0],
+                kind: "screenshot",
+                contentType: "image/png",
+                observation: {
+                  documentIdentity: "https://example.test/orders",
+                  revision: 2,
+                  screenshotMode: "viewport-fallback",
+                  regions,
+                  veilManifest: { contentDigest: "b".repeat(64) },
+                  veilSanitation: { structuredEvidence: "sanitized" },
+                  veilAdmissionToken: "internal-admission-authority",
+                },
+              },
+            ],
+          };
+        return rowsFor(text);
+      }),
+    };
+    const service = new RunObservationService(database as never, repository as never, receipts());
+
+    const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
+
+    expect(observation.artifacts[0]?.observation).toMatchObject({
+      documentIdentity: "https://example.test/orders",
+      revision: 2,
+      screenshotMode: "viewport-fallback",
+      visualRegionCount: 1_786,
+      omittedFields: ["regions", "veilAdmissionToken"],
+    });
+    expect(observation.artifacts[0]?.observation).not.toHaveProperty("regions");
+    expect(observation.artifacts[0]?.observation).not.toHaveProperty("veilAdmissionToken");
+    expect(JSON.stringify(observation.artifacts[0]).length).toBeLessThan(10_000);
+  });
+
   it("scopes protected operations and credential incidents to the current attempt", async () => {
     const repository = { getRun: vi.fn().mockResolvedValue(failedRun()) };
     const database = { query: vi.fn(async (text: string) => rowsFor(text)) };
-    const service = new RunObservationService(database as never, repository as never);
+    const service = new RunObservationService(database as never, repository as never, receipts());
 
     await service.observe({ kind: "service", subject: "scry-service" }, runId);
 
@@ -103,7 +186,7 @@ describe("canonical run observation", () => {
         return rowsFor(text);
       }),
     };
-    const service = new RunObservationService(database as never, repository as never);
+    const service = new RunObservationService(database as never, repository as never, receipts());
 
     const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
 
@@ -141,7 +224,7 @@ describe("canonical run observation", () => {
         return rowsFor(text);
       }),
     };
-    const service = new RunObservationService(database as never, repository as never);
+    const service = new RunObservationService(database as never, repository as never, receipts());
 
     const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
 
@@ -177,7 +260,7 @@ describe("canonical run observation", () => {
         return result;
       }),
     };
-    const service = new RunObservationService(database as never, repository as never);
+    const service = new RunObservationService(database as never, repository as never, receipts());
 
     const observation = await service.observe({ kind: "service", subject: "scry-service" }, runId);
 

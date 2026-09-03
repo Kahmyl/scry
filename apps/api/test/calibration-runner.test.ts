@@ -5,12 +5,15 @@ import {
   protectedTransactionDigest,
   transactionInputDigest,
   transactionInputSchemaDigest,
-  type MutationLedgerState,
 } from "@scry/executor";
 import type { ProtectedTransaction } from "@scry/contracts";
 
 import { runCalibrationAttestation } from "../src/calibration/index.js";
 import type { CalibrationRuntime } from "../src/calibration/index.js";
+import {
+  ProtectedTransactionKernel,
+  type MutationLedgerState,
+} from "../src/runtime/protected-transactions/protected-transaction-coordinator.js";
 
 const servers: Array<ReturnType<typeof createServer>> = [];
 const intent = (
@@ -378,6 +381,14 @@ function calibrationExecutor() {
         await page.goto(url, { waitUntil: "domcontentloaded", ...timeout });
         await page.locator("body").waitFor({ state: "visible", ...timeout });
       },
+      protectedTransactionExecutor: ({ transaction, dependencies }) =>
+        new ProtectedTransactionKernel({
+          ...dependencies,
+          canonicalProgramDigest: protectedTransactionDigest(
+            transaction,
+            input.plan.allowedOrigins,
+          ),
+        }).execute(transaction),
       protectedTransactionStore: {
         claim: async ({ operationId }) => ({
           id: operationId,

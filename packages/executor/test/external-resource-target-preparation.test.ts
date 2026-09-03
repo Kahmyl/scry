@@ -7,7 +7,7 @@ import {
   prepareExternalResourceDestructiveTarget,
   type AuthoritativeExternalResourceObservation,
   type TrustedExternalSemanticIdentity,
-} from "../src/external-resource-target-preparation.js";
+} from "@scry/praxis";
 
 describe("cross-surface external resource destructive target preparation", () => {
   let browser: Browser;

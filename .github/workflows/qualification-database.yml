@@ -1,0 +1,88 @@
+name: Scry database qualification lane
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  database:
+    name: Fresh migration and database-backed lifecycle
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: scry_browser_v2_ci
+          POSTGRES_USER: scry
+          POSTGRES_PASSWORD: scry-ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U scry -d scry_browser_v2_ci"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_browser_v2_ci
+      BROWSER_V2_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_browser_v2_ci
+      BROWSER_V2_TEST_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_browser_v2_ci
+      BROWSER_V2_EXPECTED_DATABASE: scry_browser_v2_ci
+      BROWSER_V2_SCHEMA_CONFIRM: CREATE_EMPTY_V2
+      BROWSER_V2_PROTECTED_KEY_BASE64: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+      BROWSER_V2_PROTECTED_KEY_VERSION: browser-v2-key-1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install exact workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply fresh migration
+        run: pnpm run db:migrate
+
+      - name: Prove migration second-run idempotence
+        run: pnpm run db:migrate
+
+      - name: Verify migration, key custody, and safe error contracts
+        run: >-
+          pnpm --filter @scry/api exec vitest run
+          test/browser-execution-v2-migration.test.ts
+          test/browser-protected-keyring.test.ts
+          test/browser-v2-exception.filter.test.ts
+          --maxWorkers=1
+
+      - name: Verify browser lifecycle, failure truth, authorization, and scope integrity
+        run: >-
+          pnpm --filter @scry/api exec vitest run
+          test/browser-execution-v2.repository.integration.test.ts
+          test/browser-execution-v2.process-failure.integration.test.ts
+          test/browser-lifecycle-v2.repository.integration.test.ts
+          test/browser-v2-auth-scope.integration.test.ts
+          test/browser-v2-scope-integrity.integration.test.ts
+          --maxWorkers=1
+
+      - name: Verify production cutover authority selection
+        run: pnpm verify:browser-v2-cutover
+
+      - name: Upload database failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14

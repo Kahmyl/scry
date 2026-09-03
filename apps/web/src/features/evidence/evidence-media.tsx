@@ -282,7 +282,7 @@ export function RecordingPlaylist({
 
   if (!entry) return null;
   const durationMs =
-    "endedAt" in entry && "startedAt" in entry
+    "endedAt" in entry && "startedAt" in entry && entry.endedAt && entry.startedAt
       ? Math.max(0, new Date(entry.endedAt).getTime() - new Date(entry.startedAt).getTime())
       : 0;
   return (
@@ -324,6 +324,30 @@ export function RecordingPlaylist({
           <ShieldCheck size={24} />
           <strong>Protected operation</strong>
           <span>Visual capture was suspended for this interval.</span>
+        </div>
+      )}
+      {entry.type === "document_transition_gap" && (
+        <div className="recording-gap">
+          <ShieldCheck size={24} />
+          <strong>Document transition</strong>
+          <span>Capture was intentionally segmented at this navigation boundary.</span>
+        </div>
+      )}
+      {entry.type === "recording_boundary" && (
+        <div
+          className={`recording-gap ${entry.boundaryKind === "recording_gap" ? "recording-unavailable" : ""}`}
+        >
+          {entry.boundaryKind === "recording_gap" ? (
+            <AlertTriangle size={24} />
+          ) : (
+            <ShieldCheck size={24} />
+          )}
+          <strong>
+            {entry.boundaryKind === "recording_gap"
+              ? "Recording authority boundary"
+              : "Verified checkpoint continuation"}
+          </strong>
+          <span>{entry.reason.replaceAll("_", " ")}</span>
         </div>
       )}
       {(entry.type === "unavailable_interval" ||

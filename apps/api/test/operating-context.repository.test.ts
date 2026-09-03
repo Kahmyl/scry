@@ -9,6 +9,22 @@ const environmentId = "44444444-4444-4444-8444-444444444444";
 const sessionId = "55555555-5555-4555-8555-555555555555";
 const flowDraftId = "66666666-6666-4666-8666-666666666666";
 
+function selectionFact(status: "running" | "awaiting_user") {
+  return {
+    id: missionId,
+    title: "Mission",
+    status,
+    purpose: "primary",
+    latestExternalRunId: null,
+    latestAgentSessionStatus: null,
+    knownExternalRunIds: [],
+    activeExternalRunIds: [],
+    activeExecutionOwnership: status === "running",
+    unresolvedMutationRisk: false,
+    outstandingReconciliation: false,
+  };
+}
+
 describe("operating context repository", () => {
   it("fails closed across ambiguous projects without reading scoped resources", async () => {
     const query = vi.fn(async (text: string) =>
@@ -46,6 +62,8 @@ describe("operating context repository", () => {
     const query = vi.fn(async (text: string) => {
       if (text.includes("FROM projects"))
         return { rowCount: 1, rows: [{ id: projectId, name: "One", description: "" }] };
+      if (text.includes("SELECT mission.id::text"))
+        return { rowCount: 1, rows: [selectionFact("awaiting_user")] };
       if (text.includes("FROM missions"))
         return {
           rowCount: 1,
@@ -54,6 +72,7 @@ describe("operating context repository", () => {
               id: missionId,
               title: "Mission",
               status: "awaiting_user",
+              purpose: "primary",
               revision: 1,
               currentObjectiveId: objectiveId,
               resumePointer: {
@@ -192,6 +211,8 @@ describe("operating context repository", () => {
     const query = vi.fn(async (text: string) => {
       if (text.includes("FROM projects"))
         return { rowCount: 1, rows: [{ id: projectId, name: "One", description: "" }] };
+      if (text.includes("SELECT mission.id::text"))
+        return { rowCount: 1, rows: [selectionFact("running")] };
       if (text.includes("FROM missions"))
         return {
           rowCount: 1,
@@ -200,6 +221,7 @@ describe("operating context repository", () => {
               id: missionId,
               title: "Mission",
               status: "running",
+              purpose: "primary",
               revision: 1,
               currentObjectiveId: objectiveId,
               resumePointer: null,
@@ -300,6 +322,8 @@ describe("operating context repository", () => {
             },
           ],
         };
+      if (text.includes("SELECT mission.id::text"))
+        return { rowCount: 1, rows: [selectionFact("running")] };
       if (text.includes("FROM missions"))
         return {
           rowCount: 1,
@@ -308,6 +332,7 @@ describe("operating context repository", () => {
               id: missionId,
               title: "Mission",
               status: "running",
+              purpose: "primary",
               revision: 1,
               currentObjectiveId: objectiveId,
               resumePointer: null,
@@ -390,6 +415,16 @@ describe("operating context repository", () => {
       if (text.includes("FROM projects"))
         return { rowCount: 1, rows: [{ id: projectId, name: "One", description: "" }] };
       if (text.includes("session.state='recovery_required'")) return { rowCount: 0, rows: [] };
+      if (text.includes("SELECT mission.id::text"))
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              ...selectionFact("running"),
+              title: "Potentially related Mission",
+            },
+          ],
+        };
       if (text.includes("FROM missions"))
         return {
           rowCount: 1,
@@ -398,6 +433,7 @@ describe("operating context repository", () => {
               id: missionId,
               title: "Potentially related Mission",
               status: "running",
+              purpose: "primary",
               revision: 1,
               currentObjectiveId: objectiveId,
               resumePointer: null,

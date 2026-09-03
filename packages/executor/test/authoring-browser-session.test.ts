@@ -1,9 +1,10 @@
 import { createServer, type Server } from "node:http";
 
 import { executionPolicySchema, type InteractionTargetIntent } from "@scry/contracts";
+import { SecretRedactor } from "@scry/policy";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createAuthoringBrowserSession } from "../src/authoring-browser-session.js";
+import { createAuthoringBrowserSession } from "@scry/praxis";
 import { kernelInteractionExecutor, openTestBrowser } from "./kernel-harness.js";
 
 let server: Server;
@@ -73,6 +74,70 @@ afterAll(async () => {
 });
 
 describe("persistent authoring browser session", () => {
+  it("keeps one session active across two navigations and a same-origin GET", async () => {
+    const sessionId = "12121212-1212-4212-8212-121212121212";
+    const policy = executionPolicySchema.parse({
+      allowedOrigins: [origin],
+      allowPrivateNetwork: true,
+    });
+    const session = await createAuthoringBrowserSession({
+      sessionId,
+      environmentId: "authoring-test-environment",
+      veilAdmissionKey: "authoring-test-only-veil-admission-key-32-bytes",
+      browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+      policy,
+      openBrowser: openTestBrowser,
+      executeInteraction: kernelInteractionExecutor({
+        sessionId,
+        environmentId: "authoring-test-environment",
+        policy,
+        executeSameOriginRequest: async (page, request, allowedOrigins, beforeDispatch) => {
+          const url = new URL(request.path, page.url());
+          if (!allowedOrigins.includes(url.origin)) throw new Error("ORIGIN_NOT_ALLOWED");
+          await beforeDispatch?.();
+          const response = await page.context().request.fetch(url.href, {
+            method: request.method,
+          });
+          const status = response.status();
+          await response.dispose();
+          if (status < request.expectedStatus.min || status > request.expectedStatus.max)
+            throw new Error("STATUS_UNEXPECTED");
+          return { status, classification: "expected" };
+        },
+      }),
+    });
+
+    try {
+      await session.page.goto(origin, { waitUntil: "domcontentloaded" });
+      await session.observeDocument();
+      const first = await session.interact({ type: "navigate", url: origin, timeoutMs: 2_000 });
+      const second = await session.interact({
+        type: "navigate",
+        url: `${origin}/`,
+        timeoutMs: 2_000,
+      });
+      const third = await session.interact({
+        type: "sameOriginRequest",
+        method: "GET",
+        path: "/",
+        authentication: "current_browser_session",
+        expectedStatus: { min: 200, max: 299 },
+        timeoutMs: 2_000,
+      });
+
+      expect(first.outcome.functionalResult).toBe("succeeded");
+      expect(second.outcome.functionalResult).toBe("succeeded");
+      expect(third.outcome).toMatchObject({
+        functionalResult: "succeeded",
+        mutationOutcome: "not_applied",
+      });
+      expect(session.state()).toBe("active");
+      expect(third.documentEpoch).toBe(3);
+    } finally {
+      await session.close();
+    }
+  }, 20_000);
+
   it("uses a stable UUID provenance identity for the actual authoring browser context", async () => {
     const sessionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const policy = executionPolicySchema.parse({
@@ -546,6 +611,7 @@ describe("persistent authoring browser session", () => {
       ["66666666-6666-4666-8666-666666666666", "user@example.test"],
       ["77777777-7777-4777-8777-777777777777", "protected-test-value"],
     ]);
+    const secretRedactor = new SecretRedactor();
     const session = await createAuthoringBrowserSession({
       sessionId: "88888888-8888-4888-8888-888888888888",
       environmentId: "authoring-test-environment",
@@ -559,6 +625,7 @@ describe("persistent authoring browser session", () => {
         environmentId: "authoring-test-environment",
         policy,
         secretResolver: async (reference) => values.get(reference)!,
+        secretRedactor,
       }),
     });
     try {
@@ -626,6 +693,7 @@ describe("persistent authoring browser session", () => {
       expect(await session.page.locator("body").getAttribute("data-authenticated")).toBe("yes");
       expect(JSON.stringify(result)).not.toContain("protected-test-value");
       expect(JSON.stringify(result)).not.toContain("user@example.test");
+      expect(secretRedactor.redact("later page user@example.test")).toBe("later page [REDACTED]");
     } finally {
       await session.close();
     }
@@ -633,9 +701,7 @@ describe("persistent authoring browser session", () => {
 });
 
 function outcomeOf(
-  result: Awaited<
-    ReturnType<import("../src/authoring-browser-session.js").AuthoringBrowserSession["interact"]>
-  >,
+  result: Awaited<ReturnType<import("@scry/praxis").AuthoringBrowserSession["interact"]>>,
 ) {
   return result.outcome;
 }

@@ -80,6 +80,7 @@ export type RecordingCoordinatorOptions = {
   observeVisualMask?: (page: Page) => Promise<VeilVisualMaskObservation>;
   transitionTimeoutMs?: number;
   abortCapture?: () => Promise<void>;
+  beforeStartScreencast?: (reason: SegmentReason) => Promise<void>;
 };
 
 export class RecordingCoordinator {
@@ -91,6 +92,7 @@ export class RecordingCoordinator {
   private activeSegment: ActiveSegment | undefined;
   private openGap: OpenGap | undefined;
   private openDocumentTransition: OpenDocumentTransition | undefined;
+  private nextSequence = 0;
   private sealed = false;
   private finalized = false;
 
@@ -113,7 +115,7 @@ export class RecordingCoordinator {
       await this.closeGap();
       this.activePage = page;
       const id = this.options.createId?.() ?? randomUUID();
-      const sequence = this.timelineEntries.length;
+      const sequence = this.reserveSequence();
       const relativePath = path.posix.join(
         "video",
         `segment-${String(sequence).padStart(4, "0")}-${id}.webm`,
@@ -138,7 +140,9 @@ export class RecordingCoordinator {
         // makes Playwright pad smaller shared frames with gray pixels.
         await this.bounded(startPraxisScreencast(page, filePath), "SCREENCAST_START_TIMEOUT");
       } catch (error) {
-        this.timelineEntries.push(this.unavailable(segment.startedAt, "SCREENCAST_START_FAILED"));
+        this.timelineEntries.push(
+          this.unavailable(segment.startedAt, "SCREENCAST_START_FAILED", segment.sequence),
+        );
         await this.sealUnsafe("SCREENCAST_START_FAILED");
         return;
       }
@@ -164,7 +168,7 @@ export class RecordingCoordinator {
       if (this.sealed) return;
       this.openGap = {
         id: this.options.createId?.() ?? randomUUID(),
-        sequence: this.timelineEntries.length,
+        sequence: this.reserveSequence(),
         operationId: input.operationId,
         reason: input.reason,
         startedAt: this.now(),
@@ -193,7 +197,7 @@ export class RecordingCoordinator {
 
       this.openDocumentTransition = {
         id: this.options.createId?.() ?? randomUUID(),
-        sequence: this.timelineEntries.length,
+        sequence: this.reserveSequence(),
         operationId: input.operationId,
         startedAt: this.now(),
       };
@@ -218,7 +222,11 @@ export class RecordingCoordinator {
         const transition = this.openDocumentTransition;
         this.openDocumentTransition = undefined;
         this.timelineEntries.push(
-          this.unavailable(transition.startedAt, "DOCUMENT_TRANSITION_PAGE_UNAVAILABLE"),
+          this.unavailable(
+            transition.startedAt,
+            "DOCUMENT_TRANSITION_PAGE_UNAVAILABLE",
+            transition.sequence,
+          ),
         );
         await this.sealUnsafe("DOCUMENT_TRANSITION_PAGE_UNAVAILABLE");
         throw new Error("DOCUMENT_TRANSITION_PAGE_UNAVAILABLE");
@@ -229,7 +237,14 @@ export class RecordingCoordinator {
       this.activePage = page;
       await this.closeDocumentTransitionGap();
 
-      if (!this.sealed) {
+      if (!this.sealed && this.activeSegment && this.activeSegment.page !== page) {
+        await this.stopActive("page_switch", false);
+      }
+
+      // A protected interaction may already have resumed safe recording on
+      // the successor document. Reuse that segment instead of attempting to
+      // start a second screencast for the same document transition.
+      if (!this.sealed && !this.activeSegment) {
         await this.startInternal(page, "document_resume");
       }
 
@@ -244,7 +259,7 @@ export class RecordingCoordinator {
       const transition = this.openDocumentTransition;
       if (transition) {
         this.openDocumentTransition = undefined;
-        const entry = this.unavailable(transition.startedAt, failureCode);
+        const entry = this.unavailable(transition.startedAt, failureCode, transition.sequence);
         this.timelineEntries.push(entry);
         await this.emit("recording.gap_ended", {
           type: "document_transition_gap",
@@ -287,7 +302,11 @@ export class RecordingCoordinator {
         const transition = this.openDocumentTransition;
         this.openDocumentTransition = undefined;
         this.timelineEntries.push(
-          this.unavailable(transition.startedAt, "DOCUMENT_TRANSITION_INCOMPLETE"),
+          this.unavailable(
+            transition.startedAt,
+            "DOCUMENT_TRANSITION_INCOMPLETE",
+            transition.sequence,
+          ),
         );
         await this.sealUnsafe("DOCUMENT_TRANSITION_INCOMPLETE");
       }
@@ -298,7 +317,9 @@ export class RecordingCoordinator {
   }
 
   timeline() {
-    return recordingTimelineSchema.parse(structuredClone(this.timelineEntries));
+    return recordingTimelineSchema.parse(
+      structuredClone(this.timelineEntries).sort((left, right) => left.sequence - right.sequence),
+    );
   }
 
   artifacts() {
@@ -316,7 +337,7 @@ export class RecordingCoordinator {
   private async startInternal(page: Page, reason: SegmentReason) {
     await this.closeGap();
     const id = this.options.createId?.() ?? randomUUID();
-    const sequence = this.timelineEntries.length;
+    const sequence = this.reserveSequence();
     const relativePath = path.posix.join(
       "video",
       `segment-${String(sequence).padStart(4, "0")}-${id}.webm`,
@@ -334,6 +355,7 @@ export class RecordingCoordinator {
       relativePath,
     };
     try {
+      await this.options.beforeStartScreencast?.(reason);
       await this.armVideoVeil(segment);
       await this.bounded(startPraxisScreencast(page, filePath), "SCREENCAST_START_TIMEOUT");
       this.activeSegment = segment;
@@ -344,7 +366,9 @@ export class RecordingCoordinator {
         reason,
       });
     } catch {
-      this.timelineEntries.push(this.unavailable(segment.startedAt, "SCREENCAST_START_FAILED"));
+      this.timelineEntries.push(
+        this.unavailable(segment.startedAt, "SCREENCAST_START_FAILED", segment.sequence),
+      );
       await this.sealUnsafe("SCREENCAST_START_FAILED");
     }
   }
@@ -463,6 +487,46 @@ export class RecordingCoordinator {
         return;
       }
       const failureCode = segmentFailureCode(error);
+      // A document transition can invalidate the visual checkpoint. Never retain
+      // those unverified frames. Record a durable destruction fact so reporting
+      // can represent an omitted interval rather than an impossible missing file.
+      if (failureCode === "VEIL_VIDEO_DOCUMENT_CONTEXT_LOST") {
+        await rm(segment.filePath, { force: true }); // failure must not certify destruction
+        const artifact: Artifact = {
+          id: randomUUID(),
+          kind: "video",
+          availability: "destroyed",
+          privacyClassification: "uncertain",
+          failureProvenance: "browser",
+          reasonCode: failureCode,
+          contentType: "video/webm",
+          relativePath: segment.relativePath,
+          observation: {
+            bytesDestroyed: true,
+            recoverableCaptureLoss: true,
+            reasonCode: failureCode,
+          },
+        };
+        const entry: RecordingTimelineEntry = {
+          type: "video_segment",
+          id: segment.id,
+          sequence: segment.sequence,
+          pageId: segment.pageId,
+          startedAt: segment.startedAt,
+          endedAt,
+          reason: segment.reason,
+          status: "quarantined",
+          privacyStatus: "quarantined",
+          artifactId: artifact.id,
+          failureCode,
+        };
+        artifact.observation = { ...artifact.observation, timelineEntry: entry };
+        this.recordedArtifacts.push(artifact);
+        this.timelineEntries.push(entry);
+        await this.emit("recording.segment_stopped", { reason, entry });
+        await this.sealUnsafe(failureCode);
+        return;
+      }
       this.timelineEntries.push({
         type: "video_segment",
         id: segment.id,
@@ -554,15 +618,23 @@ export class RecordingCoordinator {
     if (this.activeSegment) await this.stopActive("run_failed", true);
   }
 
-  private unavailable(startedAt: string, failureCode: string): RecordingTimelineEntry {
+  private unavailable(
+    startedAt: string,
+    failureCode: string,
+    sequence = this.reserveSequence(),
+  ): RecordingTimelineEntry {
     return {
       type: "unavailable_interval",
       id: this.options.createId?.() ?? randomUUID(),
-      sequence: this.timelineEntries.length,
+      sequence,
       startedAt,
       endedAt: this.now(),
       failureCode,
     };
+  }
+
+  private reserveSequence() {
+    return this.nextSequence++;
   }
 
   private pageId(page: Page) {

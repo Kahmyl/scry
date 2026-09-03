@@ -4,6 +4,11 @@ import path from "node:path";
 import { type ArtifactStore } from "@scry/chronicle/legacy";
 import { veilEvidenceManifestSchema, type Artifact } from "@scry/contracts";
 import type { ExecutionReport } from "@scry/executor";
+import type {
+  OperationalCausality,
+  OperationalComponent,
+  OperationalEventInput,
+} from "@scry/observability";
 
 import type { ExecutionRepository } from "./repositories/execution.repository.js";
 
@@ -13,6 +18,10 @@ export type CommitExecutionReportOptions = {
   artifactRetentionMs: number;
   artifactStore: ArtifactStore;
   artifactStoreRemote: boolean;
+  operationalEvents?: {
+    emit(component: OperationalComponent, input: OperationalEventInput): Promise<void>;
+  };
+  causality?: OperationalCausality;
 };
 
 export type CommitExecutionReportScope = {
@@ -29,6 +38,7 @@ export async function commitExecutionReport(
   claimToken: string,
   scope: CommitExecutionReportScope = {},
 ) {
+  const startedAt = performance.now();
   const stepId = (raw: string) => (scope.stepIdPrefix ? `${scope.stepIdPrefix}::${raw}` : raw);
 
   const timelineOffset = scope.timelineSequenceOffset ?? 0;
@@ -168,6 +178,39 @@ export async function commitExecutionReport(
       await executions.recordArtifactTimeline(attemptId, claimToken, artifactTimeline);
     });
   } catch (error) {
+    const reasonCode = reportFailureCode(error);
+    const classification = /^(VEIL|PRIVACY|PROTECTED)_/.test(reasonCode)
+      ? "policy_refusal"
+      : "persistence";
+    const causality = {
+      ...options.causality,
+      runId: report.runId,
+      attemptId,
+    };
+    await options.operationalEvents?.emit("runtime", {
+      name: "report.finalization_failed",
+      classification,
+      reasonCode,
+      outcome: "failed",
+      causality,
+      durationMs: performance.now() - startedAt,
+      transition: { from: "finalizing", to: "failed" },
+      details: {
+        reportState: report.state,
+        artifactCount: report.artifacts.length,
+        stepCount: report.steps.length,
+      },
+    });
+    if (classification === "persistence")
+      await options.operationalEvents?.emit("runtime", {
+        name: "persistence.write_failed",
+        classification: "persistence",
+        reasonCode,
+        outcome: "failed",
+        causality,
+        durationMs: performance.now() - startedAt,
+        details: { boundary: "execution_report_commit" },
+      });
     const cleanupFailures: unknown[] = [];
 
     for (const storageKey of new Set(uploadedStorageKeys)) {
@@ -187,6 +230,11 @@ export async function commitExecutionReport(
 
     throw error;
   }
+}
+
+function reportFailureCode(error: unknown) {
+  const candidate = error instanceof Error ? error.message : String(error);
+  return /^[A-Z][A-Z0-9_]*$/.test(candidate) ? candidate : "REPORT_FINALIZATION_FAILED";
 }
 
 function artifactStorageKey(artifactRoot: string, outputDirectory: string, artifact: Artifact) {

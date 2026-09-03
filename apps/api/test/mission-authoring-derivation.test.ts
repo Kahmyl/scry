@@ -77,7 +77,8 @@ describe("Mission authoring semantic derivation", () => {
         .requiredCapabilities,
     ).toEqual(["focusable", "accepts_text", "editable"]);
     expect(
-      (derive({ kind: "activate", target }).action as any).target.requiredCapabilities,
+      (derive({ kind: "activate", target, semanticEffect: "unknown" }).action as any).target
+        .requiredCapabilities,
     ).toEqual(["focusable", "pointer_activatable"]);
     expect(
       (derive({ kind: "select", target, value: "value" }).action as any).target
@@ -132,14 +133,24 @@ describe("Mission authoring semantic derivation", () => {
       mode: "observe",
       action: { type: "click", dispatchSemantics: "read_only", activationMechanism: "dom" },
     });
-    const unknownByDefault = missionAuthoringIntentSchema.parse({
+    const unknown = missionAuthoringIntentSchema.parse({
       ...base,
       intentId: "unknown-context",
-      action: { kind: "activate", target },
+      action: { kind: "activate", target, semanticEffect: "unknown" },
+    });
+    expect(deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: unknown })).toMatchObject({
+      mode: "observe",
+      action: { type: "click", dispatchSemantics: "mutation" },
+    });
+    const resourceMutation = missionAuthoringIntentSchema.parse({
+      ...base,
+      intentId: "resource-mutation",
+      authorization: { kind: "ordinary" },
+      action: { kind: "activate", target, semanticEffect: "resource_mutation" },
     });
     expect(
-      deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: unknownByDefault }),
-    ).toMatchObject({ mode: "observe", action: { type: "click", dispatchSemantics: "mutation" } });
+      deriveMissionAuthoringOperation({ turnId: ids.turnId, intent: resourceMutation }),
+    ).toMatchObject({ mode: "rehearse", action: { type: "click", dispatchSemantics: "mutation" } });
     const readContextPress = missionAuthoringIntentSchema.parse({
       ...base,
       intentId: "read-context-press",
@@ -183,7 +194,7 @@ describe("Mission authoring semantic derivation", () => {
       intent: {
         intentId: "popup",
         ...ids,
-        action: { kind: "activate", target },
+        action: { kind: "activate", target, semanticEffect: "unknown" },
         expectedEffect: { kind: "new_page", origin: "https://example.test" },
         constraints: { timeoutMs: 1_000, allowNewPage: true, allowNonExact: false },
         authorization: { kind: "ordinary" },
@@ -199,7 +210,7 @@ describe("Mission authoring semantic derivation", () => {
 
     expect(
       deriveWithEffect(
-        { kind: "activate", target },
+        { kind: "activate", target, semanticEffect: "unknown" },
         { kind: "target_visibility", target: credentials, visible: true },
       ).expectedEffect,
     ).toMatchObject({
@@ -209,7 +220,7 @@ describe("Mission authoring semantic derivation", () => {
     });
     expect(
       deriveWithEffect(
-        { kind: "activate", target },
+        { kind: "activate", target, semanticEffect: "unknown" },
         { kind: "target_visibility", target: addCredential, visible: true },
       ).expectedEffect,
     ).toMatchObject({ target: { requiredCapabilities: ["observable"] } });
@@ -225,7 +236,7 @@ describe("Mission authoring semantic derivation", () => {
 
   it("produces positive observation targets accepted by the runtime contracts", () => {
     const operation = deriveWithEffect(
-      { kind: "activate", target },
+      { kind: "activate", target, semanticEffect: "unknown" },
       {
         kind: "target_visibility",
         target: { concept: "navigation", role: "link", name: "Credentials" },
@@ -259,7 +270,7 @@ describe("Mission authoring semantic derivation", () => {
   it("preserves conservative negative observation and value-reading capabilities", () => {
     expect(
       deriveWithEffect(
-        { kind: "activate", target },
+        { kind: "activate", target, semanticEffect: "unknown" },
         { kind: "target_visibility", target, visible: false },
       ).expectedEffect,
     ).toMatchObject({ target: { requiredCapabilities: ["observable"] } });
@@ -270,12 +281,13 @@ describe("Mission authoring semantic derivation", () => {
     }
     expect(
       deriveWithEffect(
-        { kind: "activate", target },
+        { kind: "activate", target, semanticEffect: "unknown" },
         { kind: "target_value", target, expected: "ready" },
       ).expectedEffect,
     ).toMatchObject({ target: { requiredCapabilities: ["readable_value"] } });
     expect(
-      (derive({ kind: "activate", target }).action as any).target.requiredCapabilities,
+      (derive({ kind: "activate", target, semanticEffect: "unknown" }).action as any).target
+        .requiredCapabilities,
     ).toEqual(["focusable", "pointer_activatable"]);
   });
 
@@ -681,7 +693,7 @@ describe("Mission authoring semantic derivation", () => {
   it("derives checked and mixed target-state capability unions", () => {
     expect(
       deriveWithEffect(
-        { kind: "activate", target },
+        { kind: "activate", target, semanticEffect: "unknown" },
         {
           kind: "target_state",
           target: { concept: "active", role: "checkbox", name: "Active" },
@@ -691,7 +703,7 @@ describe("Mission authoring semantic derivation", () => {
     ).toMatchObject({ target: { requiredCapabilities: ["toggleable"] } });
     expect(
       deriveWithEffect(
-        { kind: "activate", target },
+        { kind: "activate", target, semanticEffect: "unknown" },
         {
           kind: "target_state",
           target: { concept: "active", role: "checkbox", name: "Active" },

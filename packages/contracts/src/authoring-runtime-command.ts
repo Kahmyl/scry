@@ -1,12 +1,16 @@
 import { z } from "zod";
 
 import { currentActionSchema } from "./current.js";
-import { advanceAuthoringTurnPayloadSchema } from "./execution-kernel.js";
+import {
+  advanceAuthoringTurnPayloadSchema,
+  inspectPraxisRegionInputSchema,
+} from "./execution-kernel.js";
 
 const uuid = z.string().uuid();
 
 export const authoringRuntimeCommandTypeSchema = z.enum([
   "observe_document",
+  "inspect_region",
   "interact",
   "advance_turn",
   "suspend",
@@ -41,6 +45,15 @@ export const createAuthoringRuntimeCommandSchema = z.discriminatedUnion("type", 
       agentSessionId: uuid,
       type: z.literal("observe_document"),
       payload: observePayloadSchema.default({}),
+      idempotencyKey: z.string().trim().min(8).max(200),
+    })
+    .strict(),
+  z
+    .object({
+      missionId: uuid,
+      agentSessionId: uuid,
+      type: z.literal("inspect_region"),
+      payload: inspectPraxisRegionInputSchema,
       idempotencyKey: z.string().trim().min(8).max(200),
     })
     .strict(),

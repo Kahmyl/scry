@@ -92,6 +92,7 @@ export const agentDecisionBoundarySchema = z
     ]),
     reasonCode: z.string().trim().min(1).max(120),
     safeActions: z.array(z.string().trim().min(1).max(120)).default([]),
+    requiresFreshIntentId: z.literal(true).optional(),
     candidateDistinctions: z
       .array(
         z
@@ -118,6 +119,20 @@ export const agentDecisionBoundarySchema = z
       .object({
         environmentId: z.string().uuid(),
         missingAllowedOrigin: z.string().url(),
+        currentAllowedOrigins: z.array(z.string().url()).max(20),
+        recoveryTools: z.tuple([
+          z.literal("create_test_environment"),
+          z.literal("create_flow_draft"),
+        ]),
+        requiresNewFlowDraftAndAuthoringSession: z.literal(true),
+      })
+      .strict()
+      .optional(),
+    popupRecovery: z
+      .object({
+        environmentId: z.string().uuid(),
+        currentAllowPopups: z.literal(false),
+        requiredAllowPopups: z.literal(true),
         currentAllowedOrigins: z.array(z.string().url()).max(20),
         recoveryTools: z.tuple([
           z.literal("create_test_environment"),
@@ -236,6 +251,7 @@ export const operationOutcomeSchema = z
                   .optional(),
                 selected: z.boolean().optional(),
                 expanded: z.boolean().optional(),
+                pressed: z.boolean().optional(),
                 checked: z.boolean().optional(),
                 disabled: z.boolean().optional(),
                 current: z.boolean().optional(),
@@ -247,6 +263,88 @@ export const operationOutcomeSchema = z
               .strict(),
           )
           .max(64),
+        readableValues: z
+          .array(
+            z
+              .object({
+                reference: z.string().regex(/^context-value-[a-f0-9]{32}$/),
+                kind: z.enum(["code", "pre", "output", "annotated"]),
+                classification: z.enum(["public", "protected", "unknown"]),
+                context: z.string().trim().min(1).max(160).optional(),
+              })
+              .strict(),
+          )
+          .max(24)
+          .default([]),
+        readableValueCompleteness: z
+          .object({
+            kind: z.literal("bounded"),
+            observed: z.number().int().nonnegative(),
+            returned: z.number().int().nonnegative().max(24),
+            truncated: z.boolean(),
+          })
+          .strict()
+          .default({
+            kind: "bounded",
+            observed: 0,
+            returned: 0,
+            truncated: false,
+          }),
+        browserSensor: z
+          .object({
+            kind: z.literal("chromium_read_only"),
+            authority: z
+              .object({
+                frameId: z.string().trim().min(1).max(200),
+                loaderId: z.string().trim().min(1).max(200),
+                previousLoaderId: z.string().trim().min(1).max(200).optional(),
+                loaderChanged: z.boolean(),
+                loaderTransitionsObserved: z.number().int().nonnegative(),
+              })
+              .strict(),
+            network: z
+              .object({
+                observedRequests: z.number().int().nonnegative(),
+                recentRequests: z
+                  .array(
+                    z
+                      .object({
+                        requestId: z.string().trim().min(1).max(200),
+                        loaderId: z.string().trim().min(1).max(200).optional(),
+                        frameId: z.string().trim().min(1).max(200).optional(),
+                        type: z.string().trim().min(1).max(40).optional(),
+                        monotonicTimestamp: z.number().nonnegative(),
+                      })
+                      .strict(),
+                  )
+                  .max(12),
+                observedFailures: z.number().int().nonnegative(),
+                recentFailures: z
+                  .array(
+                    z
+                      .object({
+                        requestId: z.string().trim().min(1).max(200),
+                        type: z.string().trim().min(1).max(40).optional(),
+                        monotonicTimestamp: z.number().nonnegative(),
+                        reasonCode: z.string().regex(/^(?:NET::[A-Z0-9_]+|NETWORK_FAILURE)$/),
+                        canceled: z.boolean(),
+                        blockedReason: z.string().trim().min(1).max(80).optional(),
+                      })
+                      .strict(),
+                  )
+                  .max(6),
+                truncated: z.boolean(),
+              })
+              .strict(),
+            layout: z
+              .object({
+                clientWidth: z.number().nonnegative(),
+                clientHeight: z.number().nonnegative(),
+              })
+              .strict(),
+          })
+          .strict()
+          .optional(),
         containers: z
           .array(
             z
@@ -385,6 +483,7 @@ export const operationOutcomeSchema = z
             classification: z.enum(["public", "protected"]),
             credentialId: z.string().uuid().optional(),
             valueId: z.string().uuid().optional(),
+            valueAssetId: z.string().uuid().optional(),
             scope: z.literal("project"),
           })
           .strict()
@@ -403,6 +502,365 @@ export const operationOutcomeSchema = z
       .optional(),
   })
   .strict();
+
+export const readPraxisPublicValueInputSchema = z
+  .object({
+    reference: z.string().regex(/^context-value-[a-f0-9]{32}$/),
+    offset: z.number().int().min(0).max(2_097_152).default(0),
+    maxBytes: z.number().int().min(1).max(4_096).default(2_048),
+  })
+  .strict();
+
+export const readPraxisPublicValueResultSchema = z
+  .object({
+    reference: z.string().regex(/^context-value-[a-f0-9]{32}$/),
+    classification: z.literal("public"),
+    provenance: z
+      .object({
+        referenceVersion: z.literal(1),
+        pageId: z.string().trim().min(1).max(120),
+        frameId: z.string().trim().min(1).max(120),
+        documentEpoch: z.number().int().nonnegative(),
+        documentIdentity: z.string().trim().min(1).max(2_000),
+      })
+      .strict(),
+    element: z
+      .object({
+        kind: z.enum(["code", "pre", "output", "annotated"]),
+        context: z.string().trim().min(1).max(160).optional(),
+      })
+      .strict(),
+    text: z.string().max(4_096),
+    offset: z.number().int().nonnegative(),
+    returnedBytes: z.number().int().nonnegative().max(4_096),
+    totalBytes: z.number().int().nonnegative().max(2_097_152),
+    truncated: z.boolean(),
+    nextOffset: z.number().int().positive().max(2_097_152).optional(),
+    admission: z
+      .object({
+        admissionRevision: z.number().int().min(1),
+        contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
+        admissionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const inspectPraxisRegionInputSchema = z
+  .object({
+    contextControlReference: z.string().regex(/^context-control-[a-f0-9]{32}$/),
+  })
+  .strict();
+
+export const inspectPraxisRegionResultSchema = z
+  .object({
+    contextControlReference: z.string().regex(/^context-control-[a-f0-9]{32}$/),
+    authority: z
+      .object({
+        referenceVersion: z.literal(1),
+        pageId: z.string().trim().min(1).max(120),
+        frameId: z.string().trim().min(1).max(120),
+        documentEpoch: z.number().int().nonnegative(),
+        documentIdentity: z.string().trim().min(1).max(2_000),
+      })
+      .strict(),
+    region: z
+      .object({
+        kind: z.enum(["dialog", "region", "form", "section", "article", "main", "aside"]),
+      })
+      .strict(),
+    readableValues: z
+      .array(
+        z
+          .object({
+            reference: z.string().regex(/^context-value-[a-f0-9]{32}$/),
+            kind: z.enum(["code", "pre", "output", "annotated"]),
+            classification: z.enum(["public", "protected", "unknown"]),
+            context: z.string().trim().min(1).max(160).optional(),
+          })
+          .strict(),
+      )
+      .max(32),
+    readableValueCompleteness: z
+      .object({
+        kind: z.literal("bounded"),
+        observed: z.number().int().nonnegative(),
+        returned: z.number().int().nonnegative().max(32),
+        truncated: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (
+      result.readableValueCompleteness.returned !== result.readableValues.length ||
+      result.readableValueCompleteness.observed < result.readableValueCompleteness.returned
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["readableValueCompleteness"],
+        message: "readable value completeness must match the bounded region projection",
+      });
+    if (
+      new Set(result.readableValues.map((value) => value.reference)).size !==
+      result.readableValues.length
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["readableValues"],
+        message: "region readable value references must be unique",
+      });
+  });
+
+export type ReadPraxisPublicValueInput = z.infer<typeof readPraxisPublicValueInputSchema>;
+export type ReadPraxisPublicValueResult = z.infer<typeof readPraxisPublicValueResultSchema>;
+export type InspectPraxisRegionInput = z.infer<typeof inspectPraxisRegionInputSchema>;
+export type InspectPraxisRegionResult = z.infer<typeof inspectPraxisRegionResultSchema>;
+
+export const inspectPraxisBrowserResourcesInputSchema = z.object({}).strict();
+
+const praxisResourceAuthoritySchema = z
+  .object({
+    referenceVersion: z.literal(1),
+    pageId: z.string().trim().min(1).max(120),
+    frameId: z.string().trim().min(1).max(120),
+    documentEpoch: z.number().int().nonnegative(),
+    documentIdentity: z.string().trim().min(1).max(2_000),
+  })
+  .strict();
+
+export const inspectPraxisBrowserResourcesResultSchema = z
+  .object({
+    authority: praxisResourceAuthoritySchema,
+    resources: z
+      .array(
+        z
+          .object({
+            reference: z.string().regex(/^context-resource-[a-f0-9]{32}$/),
+            kind: z.enum(["json", "text", "xml"]),
+            bytes: z.number().int().positive().max(2_097_152),
+          })
+          .strict(),
+      )
+      .max(8),
+    completeness: z
+      .object({
+        kind: z.literal("bounded"),
+        observed: z.number().int().nonnegative(),
+        returned: z.number().int().nonnegative().max(8),
+        truncated: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const readPraxisPublicResourceInputSchema = z
+  .object({
+    reference: z.string().regex(/^context-resource-[a-f0-9]{32}$/),
+    offset: z.number().int().min(0).max(2_097_152).default(0),
+    maxBytes: z.number().int().min(1).max(4_096).default(2_048),
+  })
+  .strict();
+
+export const readPraxisPublicResourceResultSchema = z
+  .object({
+    reference: z.string().regex(/^context-resource-[a-f0-9]{32}$/),
+    classification: z.literal("public"),
+    provenance: praxisResourceAuthoritySchema,
+    resource: z.object({ kind: z.enum(["json", "text", "xml"]) }).strict(),
+    text: z.string().max(4_096),
+    offset: z.number().int().nonnegative(),
+    returnedBytes: z.number().int().nonnegative().max(4_096),
+    totalBytes: z.number().int().nonnegative().max(2_097_152),
+    truncated: z.boolean(),
+    nextOffset: z.number().int().positive().max(2_097_152).optional(),
+    admission: z
+      .object({
+        admissionRevision: z.number().int().min(1),
+        contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
+        admissionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type InspectPraxisBrowserResourcesInput = z.infer<
+  typeof inspectPraxisBrowserResourcesInputSchema
+>;
+export type InspectPraxisBrowserResourcesResult = z.infer<
+  typeof inspectPraxisBrowserResourcesResultSchema
+>;
+export type ReadPraxisPublicResourceInput = z.infer<typeof readPraxisPublicResourceInputSchema>;
+export type ReadPraxisPublicResourceResult = z.infer<typeof readPraxisPublicResourceResultSchema>;
+
+const praxisSnapshotAuthoritySchema = praxisResourceAuthoritySchema;
+const praxisStructureFieldSchema = z.enum(["text", "name", "value", "description"]);
+const praxisRuntimeValueKindSchema = z.enum(["scalar", "object", "array"]);
+
+export const inspectPraxisStructureInputSchema = z.object({}).strict();
+export const inspectPraxisStructureResultSchema = z
+  .object({
+    authority: praxisSnapshotAuthoritySchema,
+    structures: z
+      .array(
+        z
+          .object({
+            reference: z.string().regex(/^context-structure-[a-f0-9]{32}$/),
+            source: z.enum(["dom", "accessibility"]),
+            role: z
+              .enum([
+                "button",
+                "checkbox",
+                "combobox",
+                "dialog",
+                "field",
+                "form",
+                "heading",
+                "link",
+                "region",
+                "text",
+                "value",
+              ])
+              .optional(),
+            depth: z.number().int().nonnegative().max(128),
+            childCount: z.number().int().nonnegative().max(10_000),
+            readableFields: z.array(praxisStructureFieldSchema).min(1).max(4),
+          })
+          .strict(),
+      )
+      .max(32),
+    completeness: z
+      .object({
+        kind: z.literal("bounded"),
+        observed: z.number().int().nonnegative(),
+        returned: z.number().int().nonnegative().max(32),
+        truncated: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (
+      result.completeness.returned !== result.structures.length ||
+      result.completeness.observed < result.completeness.returned ||
+      result.completeness.truncated !== result.completeness.observed > result.completeness.returned
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["completeness"],
+        message: "structure completeness must match the bounded metadata projection",
+      });
+    if (
+      new Set(result.structures.map((structure) => structure.reference)).size !==
+      result.structures.length
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["structures"],
+        message: "structure references must be unique",
+      });
+  });
+export const readPraxisPublicStructureValueInputSchema = z
+  .object({
+    reference: z.string().regex(/^context-structure-[a-f0-9]{32}$/),
+    field: praxisStructureFieldSchema,
+  })
+  .strict();
+export const readPraxisPublicStructureValueResultSchema = z
+  .object({
+    reference: z.string().regex(/^context-structure-[a-f0-9]{32}$/),
+    field: praxisStructureFieldSchema,
+    classification: z.literal("public"),
+    provenance: praxisSnapshotAuthoritySchema,
+    text: z.string().max(4_096),
+    admission: z
+      .object({
+        admissionRevision: z.number().int().min(1),
+        contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
+        admissionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const inspectPraxisRuntimeStateInputSchema = z.object({}).strict();
+export const inspectPraxisRuntimeStateResultSchema = z
+  .object({
+    authority: praxisSnapshotAuthoritySchema,
+    values: z
+      .array(
+        z
+          .object({
+            reference: z.string().regex(/^context-runtime-[a-f0-9]{32}$/),
+            kind: praxisRuntimeValueKindSchema,
+            bytes: z.number().int().positive().max(524_288),
+            memberCount: z.number().int().nonnegative().max(512),
+          })
+          .strict(),
+      )
+      .max(16),
+    completeness: z
+      .object({
+        kind: z.literal("bounded"),
+        observed: z.number().int().nonnegative(),
+        returned: z.number().int().nonnegative().max(16),
+        truncated: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (
+      result.completeness.returned !== result.values.length ||
+      result.completeness.observed < result.completeness.returned ||
+      result.completeness.truncated !== result.completeness.observed > result.completeness.returned
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["completeness"],
+        message: "runtime completeness must match the bounded metadata projection",
+      });
+    if (new Set(result.values.map((value) => value.reference)).size !== result.values.length)
+      context.addIssue({
+        code: "custom",
+        path: ["values"],
+        message: "runtime references must be unique",
+      });
+  });
+export const readPraxisPublicRuntimeValueInputSchema = z
+  .object({ reference: z.string().regex(/^context-runtime-[a-f0-9]{32}$/) })
+  .strict();
+export const readPraxisPublicRuntimeValueResultSchema = z
+  .object({
+    reference: z.string().regex(/^context-runtime-[a-f0-9]{32}$/),
+    classification: z.literal("public"),
+    provenance: praxisSnapshotAuthoritySchema,
+    kind: praxisRuntimeValueKindSchema,
+    text: z.string().max(4_096),
+    admission: z
+      .object({
+        admissionRevision: z.number().int().min(1),
+        contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
+        admissionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type InspectPraxisStructureResult = z.infer<typeof inspectPraxisStructureResultSchema>;
+export type ReadPraxisPublicStructureValueInput = z.infer<
+  typeof readPraxisPublicStructureValueInputSchema
+>;
+export type ReadPraxisPublicStructureValueResult = z.infer<
+  typeof readPraxisPublicStructureValueResultSchema
+>;
+export type InspectPraxisRuntimeStateResult = z.infer<typeof inspectPraxisRuntimeStateResultSchema>;
+export type ReadPraxisPublicRuntimeValueInput = z.infer<
+  typeof readPraxisPublicRuntimeValueInputSchema
+>;
+export type ReadPraxisPublicRuntimeValueResult = z.infer<
+  typeof readPraxisPublicRuntimeValueResultSchema
+>;
 
 export const executionRequestSchema = z
   .object({

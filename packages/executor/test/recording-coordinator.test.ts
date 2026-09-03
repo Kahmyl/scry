@@ -286,6 +286,41 @@ describe("RecordingCoordinator", () => {
     }
   });
 
+  it("reuses a safe segment already resumed inside a document transition", async () => {
+    const { page, coordinator, startInputs } = await fixture();
+
+    await coordinator.startSegment({ page, reason: "run_started" });
+    await coordinator.beginDocumentTransition({
+      operationId: "protected-navigation-operation",
+    });
+    await coordinator.createProtectedGap({
+      operationId: "protected-navigation-operation",
+      reason: "Veil protected interval",
+    });
+    await coordinator.startSegment({ page, reason: "safe_resume" });
+
+    await coordinator.completeDocumentTransition(page);
+    await coordinator.finalize();
+
+    expect(startInputs).toHaveLength(2);
+    expect(coordinator.isSealed()).toBe(false);
+    expect(coordinator.timeline()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "protected_gap" }),
+        expect.objectContaining({ type: "document_transition_gap" }),
+        expect.objectContaining({ type: "video_segment", reason: "safe_resume" }),
+      ]),
+    );
+    expect(coordinator.timeline()).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "unavailable_interval",
+          failureCode: "SCREENCAST_START_FAILED",
+        }),
+      ]),
+    );
+  });
+
   it("fails closed when a document transition cannot be re-qualified", async () => {
     const { page, coordinator } = await fixture();
 

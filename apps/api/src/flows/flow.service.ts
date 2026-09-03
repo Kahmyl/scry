@@ -28,7 +28,7 @@ import type { PoolClient, QueryResultRow } from "pg";
 
 import type { Principal } from "../auth/index.js";
 import { Database } from "../infrastructure/index.js";
-import { ReleaseAdmissionService } from "../runtime/index.js";
+import { QualificationCampaignRepository, ReleaseAdmissionService } from "../runtime/index.js";
 import { snapshotVeilPolicy } from "../veil/index.js";
 import { FlowReadRepository } from "./flow-read.repository.js";
 
@@ -50,6 +50,8 @@ export class FlowService {
     @Inject(Database) private readonly database: Database,
     @Inject(ReleaseAdmissionService) private readonly admission: ReleaseAdmissionService,
     @Optional() @Inject(FlowReadRepository) private readonly reads?: FlowReadRepository,
+    @Inject(QualificationCampaignRepository)
+    private readonly qualificationCampaigns?: QualificationCampaignRepository,
   ) {}
 
   capabilities() {
@@ -57,6 +59,17 @@ export class FlowService {
     return {
       releaseId: process.env.SCRY_RELEASE_ID ?? "development",
       schemaFingerprint: process.env.SCRY_SCHEMA_FINGERPRINT ?? "development-baseline",
+      sourceIdentity: {
+        gitCommit: process.env.SCRY_GIT_COMMIT ?? "unknown",
+        dirty:
+          process.env.SCRY_SOURCE_DIRTY === "true"
+            ? true
+            : process.env.SCRY_SOURCE_DIRTY === "false"
+              ? false
+              : null,
+        manifestSha256: process.env.SCRY_SOURCE_MANIFEST_SHA256 ?? "unknown",
+        runtimeVersion: process.env.SCRY_RUNTIME_VERSION ?? "unknown",
+      },
       adaptiveExecution: {
         kernel: true,
         authoringTurn: false,
@@ -127,7 +140,6 @@ export class FlowService {
         "environment-history",
         "exact-reference-stale-rejection",
         "typed-acquisition",
-        "bounded-protected-recovery",
       ],
       groundingManifest: {
         browserObservationRuntime: "available",
@@ -515,6 +527,20 @@ export class FlowService {
         hash(input),
       );
       if (replay) return replay;
+      if (input.qualificationCampaignAuthorizationId && !this.qualificationCampaigns)
+        throw new ServiceUnavailableException({
+          code: "QUALIFICATION_CAMPAIGN_AUTHORITY_UNAVAILABLE",
+        });
+      const campaignAuthorizationId = await this.qualificationCampaigns?.consumeRun(client, {
+        ...(input.qualificationCampaignAuthorizationId
+          ? { campaignId: input.qualificationCampaignAuthorizationId }
+          : {}),
+        projectId,
+        environmentId: input.environmentId,
+        missionId: input.missionId,
+        objectiveId: input.objectiveId,
+        agentSessionId: input.agentSessionId,
+      });
       const unknownMutation = await query(
         `SELECT 1 FROM adaptive_operations operation JOIN adaptive_sessions session ON session.id=operation.session_id
          WHERE session.mission_id=$1 AND operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id) LIMIT 1`,
@@ -541,7 +567,18 @@ export class FlowService {
            AND ($3::uuid IS NULL OR p.workspace_id = $3)`,
         [input.flowRevisionId, projectId, workspaceId(principal)],
       );
-      if (!revision.rowCount) throw new NotFoundException("Flow revision not found");
+      if (!revision.rowCount)
+        throw new NotFoundException({
+          code: "FLOW_REVISION_NOT_FOUND",
+          mutationOutcome: "not_applied",
+          projectId,
+          missionId: input.missionId,
+          objectiveId: input.objectiveId,
+          agentSessionId: input.agentSessionId,
+          praxisSessionId: input.praxisSessionId,
+          flowRevisionId: input.flowRevisionId,
+          safeActions: ["publish_flow_draft"],
+        });
       const praxisSession = await query(
         `SELECT 1 FROM adaptive_sessions
          WHERE id=$1 AND project_id=$2 AND mission_id=$3 AND objective_id=$4
@@ -610,8 +647,8 @@ export class FlowService {
       );
       const run = await query<{ id: string; state: string }>(
         `INSERT INTO runs(project_id,mission_id,objective_id,agent_session_id,environment_id,flow_revision_id,compiled_contract_id,compiled_contract_digest,state,phase,
-                          plan_snapshot, environment_snapshot, policy_snapshot,veil_policy_snapshot, execution_snapshot, idempotency_key)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'running','executing_action',$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14)
+                          plan_snapshot, environment_snapshot, policy_snapshot,veil_policy_snapshot, execution_snapshot, idempotency_key,qualification_campaign_authorization_id)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'running','executing_action',$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15)
          RETURNING id, state`,
         [
           projectId,
@@ -639,6 +676,7 @@ export class FlowService {
             protectedAuthorizations: Object.fromEntries(authorizationByOperation),
           }),
           input.idempotencyKey,
+          campaignAuthorizationId ?? null,
         ],
       );
       await query(

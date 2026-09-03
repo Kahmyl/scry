@@ -179,10 +179,48 @@ describe("MissionFlowAuthoringService grouped turns", () => {
       decisionBoundary: {
         type: "authorization_required",
         reasonCode: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
-        safeActions: ["authorize_environment_credentials"],
+        safeActions: ["authorize_environment_credentials", "dispatch_run_operation"],
+        requiresFreshIntentId: true,
       },
     });
     expect(repository.settleTurn).toHaveBeenCalledOnce();
+    expect(repository.handoff).not.toHaveBeenCalled();
+    expect(repository.beginMissionOperation).not.toHaveBeenCalled();
+    expect(runner.execute).not.toHaveBeenCalled();
+  });
+
+  it("directs protected work to a protected Praxis session before browser execution", async () => {
+    const sessionId = randomUUID();
+    const repository = {
+      beginTurn: vi.fn().mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
+      validateIntentAdmission: vi.fn().mockRejectedValue(
+        new ConflictException({
+          code: "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED",
+          mutationOutcome: "not_applied",
+        }),
+      ),
+      handoff: vi.fn(),
+      beginMissionOperation: vi.fn(),
+      settleTurn: vi.fn(async ({ result }) => result),
+    };
+    const runner = { execute: vi.fn() };
+    const service = new MissionFlowAuthoringService(
+      repository as never,
+      runner as never,
+      { assertAcceptingWork: vi.fn() } as never,
+    );
+
+    const result = await service.advance(principal, sessionId, input());
+
+    expect(result).toMatchObject({
+      state: "decision_required",
+      completed: [],
+      decisionBoundary: {
+        type: "authorization_required",
+        reasonCode: "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED",
+        safeActions: ["start_praxis_session", "attach_run_praxis_session"],
+      },
+    });
     expect(repository.handoff).not.toHaveBeenCalled();
     expect(repository.beginMissionOperation).not.toHaveBeenCalled();
     expect(runner.execute).not.toHaveBeenCalled();
@@ -246,7 +284,7 @@ describe("MissionFlowAuthoringService grouped turns", () => {
     expect(runner.execute).not.toHaveBeenCalled();
   });
 
-  it("settles a turn when protected preparation fails before an operation is created", async () => {
+  it("cuts legacy protected authoring off before local preparation or reservation", async () => {
     const sessionId = randomUUID();
     const authorizationId = randomUUID();
     const preparationError = new ConflictException({
@@ -307,17 +345,23 @@ describe("MissionFlowAuthoringService grouped turns", () => {
       state: "decision_required",
       completed: [],
       decisionBoundary: {
-        type: "environment_unavailable",
-        reasonCode: "MISSION_AUTHORING_PREPARATION_INVALID",
-        safeActions: ["get_flow_authoring"],
+        type: "effect_observation_required",
+        reasonCode: "PREPARED_EXECUTION_CAPABILITY_REQUIRED",
+        safeActions: [
+          "observe_operation_contracts",
+          "reserve_prepared_protected_operation",
+          "dispatch_prepared_protected_operation",
+        ],
       },
     });
     expect(repository.settleTurn).toHaveBeenCalledOnce();
+    expect(repository.reserveMissionProtectedOperation).not.toHaveBeenCalled();
+    expect(repository.protectedPreparationFor).not.toHaveBeenCalled();
     expect(repository.beginMissionOperation).not.toHaveBeenCalled();
     expect(runner.execute).not.toHaveBeenCalled();
   });
 
-  it("returns a genuine pending first response, then continues a durable protected operation without replay", async () => {
+  it("refuses legacy protected authoring instead of creating a second execution authority", async () => {
     const sessionId = randomUUID();
     const credentialId = randomUUID();
     const valueId = randomUUID();
@@ -458,74 +502,12 @@ describe("MissionFlowAuthoringService grouped turns", () => {
       idempotencyKey: "protected-first",
       budgets: { maxOperations: 1, maxDurationMs: 30_000 },
     } as never);
-    expect(first.state).toBe("pending");
-    expect(runner.execute).toHaveBeenCalledOnce();
-    expect(repository.protectedPreparationFor).toHaveBeenCalledWith({
-      sessionId,
-      objectiveId: ids.objectiveId,
-      flowDraftId: ids.flowDraftId,
-      intentIds: ["fill-name"],
-      entryUrl: "https://example.test/credentials",
+    expect(first).toMatchObject({
+      state: "decision_required",
+      decisionBoundary: { reasonCode: "PREPARED_EXECUTION_CAPABILITY_REQUIRED" },
     });
-    expect(repository.beginMissionOperation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        protectedReservation: expect.objectContaining({
-          mutationIdentity: expect.any(String),
-          programDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
-          safeOutputManifest: [
-            { reference: "clientId", classification: "public", storageName: "Client ID" },
-            {
-              reference: "clientSecret",
-              classification: "protected",
-              storageName: "Client secret",
-            },
-          ],
-        }),
-      }),
-    );
-    expect(repository.beginMissionOperation.mock.invocationCallOrder[0]).toBeLessThan(
-      runner.execute.mock.invocationCallOrder[0]!,
-    );
-    finishExecution({
-      outcome: {
-        operationId: "generate",
-        functionalResult: "failed",
-        mutationOutcome: "not_applied",
-        privacyResult: "unverified",
-        evidenceResult: [],
-        qualityFindings: [],
-        durationMs: 1,
-        reasonCode: "ADAPTIVE_SESSION_EXECUTION_FAILED",
-      },
-      capabilityManifestDigest: "a".repeat(64),
-      decisionBoundary: {
-        type: "environment_unavailable",
-        reasonCode: "ADAPTIVE_SESSION_EXECUTION_FAILED",
-        safeActions: [],
-      },
-      timings: { resolveMs: 1, executeMs: 1, verifyMs: 1 },
-    });
-    await vi.waitFor(() =>
-      expect(repository.projectProtectedOperationForAuthoring).toHaveBeenCalledOnce(),
-    );
-    const second = await service.advance(principal, sessionId, {
-      kind: "continue",
-      turnId: ids.turnId,
-      idempotencyKey: "poll-two",
-      budgets: { maxOperations: 1, maxDurationMs: 30_000 },
-    });
-    expect(second.channels.privacy).toEqual({ state: "passed" });
-    expect(second.completed[0]?.generatedReferences).toEqual(
-      expect.arrayContaining([
-        { reference: "clientId", classification: "public", valueId, scope: "project" },
-        { reference: "clientSecret", classification: "protected", credentialId, scope: "project" },
-      ]),
-    );
-    expect(JSON.stringify(second)).not.toMatch(
-      /client.?secret.?value|selector|runtimeId|fingerprint|handle|outerHTML/i,
-    );
-    expect(runner.execute).toHaveBeenCalledOnce();
-    expect(repository.projectProtectedOperationForAuthoring).toHaveBeenCalledTimes(2);
+    expect(runner.execute).not.toHaveBeenCalled();
+    expect(repository.beginMissionOperation).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -539,7 +521,7 @@ describe("MissionFlowAuthoringService grouped turns", () => {
     "persisted",
     "reconciling",
   ] as const)(
-    "re-drives an unleased %s reservation through authoritative reclaim after process loss",
+    "refuses legacy %s recovery without a PreparedExecutionCapability",
     async (expiredState) => {
       const sessionId = randomUUID();
       const authorizationId = randomUUID();
@@ -613,12 +595,12 @@ describe("MissionFlowAuthoringService grouped turns", () => {
         idempotencyKey: "restart-continuation",
         budgets: { maxOperations: 1, maxDurationMs: 30_000 },
       });
-      expect(result.state).toBe("pending");
-      await vi.waitFor(() => expect(runner.execute).toHaveBeenCalledOnce());
-      expect(repository.replayMissionOperation).toHaveBeenCalledOnce();
-      expect(repository.beginMissionOperation).toHaveBeenCalledWith(
-        expect.not.objectContaining({ protectedReservation: expect.anything() }),
-      );
+      expect(result).toMatchObject({
+        state: "decision_required",
+        decisionBoundary: { reasonCode: "PREPARED_EXECUTION_CAPABILITY_REQUIRED" },
+      });
+      expect(runner.execute).not.toHaveBeenCalled();
+      expect(repository.replayMissionOperation).not.toHaveBeenCalled();
     },
   );
 
@@ -1007,51 +989,58 @@ describe("MissionFlowAuthoringService grouped turns", () => {
     expect(runner.close).toHaveBeenCalledOnce();
   });
 
-  it("returns a causal fail-closed boundary for an unknown-effect activate under live_read", async () => {
-    const repository = {
-      beginTurn: vi.fn().mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
-      validateIntentAdmission: vi.fn(),
-      handoff: vi.fn().mockResolvedValue({ handedOff: false }),
-      beginMissionOperation: vi.fn().mockResolvedValue({ replayed: false, state: "running" }),
-      markOperationFailed: vi.fn(),
-      settleTurn: vi.fn(async ({ result }) => result),
-    };
-    const denied = Object.assign(new Error("denied"), { code: "EXECUTION_MODE_POLICY_DENIED" });
-    const runner = { execute: vi.fn().mockRejectedValue(denied) };
-    const service = new MissionFlowAuthoringService(
-      repository as never,
-      runner as never,
-      { assertAcceptingWork: vi.fn() } as never,
-    );
-    const intent = {
-      ...input().intents[0],
-      intentId: "unknown-live-activate",
-      action: {
-        kind: "activate" as const,
-        target: { concept: "unclassified control", role: "button" as const },
-      },
-      authorization: { kind: "live_read" as const },
-    };
-
-    await expect(
-      service.advance(principal, randomUUID(), { ...input(), intents: [intent] } as never),
-    ).resolves.toMatchObject({
-      state: "decision_required",
-      decisionBoundary: {
-        type: "policy_refused",
-        reasonCode: "EXECUTION_MODE_POLICY_DENIED",
-        safeActions: [],
-        policyContext: {
-          governingMode: "observe",
-          requestedSemanticEffect: "unknown",
-          gesture: "activate",
-          effectApplied: false,
-          strongerAuthorityCouldPermit: false,
-          recoverable: false,
+  it.each(["activate", "press"] as const)(
+    "returns a causal fail-closed boundary for an unknown-effect %s under live_read",
+    async (kind) => {
+      const repository = {
+        beginTurn: vi
+          .fn()
+          .mockResolvedValue({ turnId: ids.turnId, replayed: false, response: null }),
+        validateIntentAdmission: vi.fn(),
+        handoff: vi.fn().mockResolvedValue({ handedOff: false }),
+        beginMissionOperation: vi.fn().mockResolvedValue({ replayed: false, state: "running" }),
+        markOperationFailed: vi.fn(),
+        settleTurn: vi.fn(async ({ result }) => result),
+      };
+      const denied = Object.assign(new Error("denied"), { code: "EXECUTION_MODE_POLICY_DENIED" });
+      const runner = { execute: vi.fn().mockRejectedValue(denied) };
+      const service = new MissionFlowAuthoringService(
+        repository as never,
+        runner as never,
+        { assertAcceptingWork: vi.fn() } as never,
+      );
+      const intent = {
+        ...input().intents[0],
+        intentId: `unknown-live-${kind}`,
+        action: {
+          kind,
+          target: { concept: "unclassified control", role: "button" as const },
+          semanticEffect: "unknown" as const,
+          ...(kind === "press" ? { key: "Enter" as const } : {}),
         },
-      },
-    });
-  });
+        authorization: { kind: "live_read" as const },
+      };
+
+      await expect(
+        service.advance(principal, randomUUID(), { ...input(), intents: [intent] } as never),
+      ).resolves.toMatchObject({
+        state: "decision_required",
+        decisionBoundary: {
+          type: "policy_refused",
+          reasonCode: "EXECUTION_MODE_POLICY_DENIED",
+          safeActions: [],
+          policyContext: {
+            governingMode: "observe",
+            requestedSemanticEffect: "unknown",
+            gesture: kind,
+            effectApplied: false,
+            strongerAuthorityCouldPermit: false,
+            recoverable: false,
+          },
+        },
+      });
+    },
+  );
 
   it("aggregates only protected actions into the privacy channel", async () => {
     const ordinary = {
@@ -1403,6 +1392,7 @@ describe("MissionFlowAuthoringService grouped turns", () => {
           intentId: "open-original",
           action: {
             kind: "activate" as const,
+            semanticEffect: "unknown" as const,
             target: {
               concept: "created application",
               role: "link" as const,
@@ -1434,6 +1424,7 @@ describe("MissionFlowAuthoringService grouped turns", () => {
           constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: true },
           action: {
             kind: "activate" as const,
+            semanticEffect: "unknown" as const,
             target: {
               concept: "created application",
               role: "link" as const,

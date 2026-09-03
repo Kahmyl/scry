@@ -191,9 +191,13 @@ describe("recording timeline", () => {
     fireEvent.click(overlay);
     expect(play).toHaveBeenCalledTimes(1);
     fireEvent.play(video);
-    expect(screen.queryByRole("button", { name: "Play recording segment 1" })).toBeNull();
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Play recording segment 1" })).toBeNull(),
+    );
     fireEvent.pause(video);
-    expect(screen.getByRole("button", { name: "Play recording segment 1" })).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Play recording segment 1" })).toBeTruthy(),
+    );
   });
 
   it("places prominent previous and next actions in the recording header", async () => {

@@ -3,6 +3,7 @@ export type DashboardView =
   | "missions"
   | "runs"
   | "reports"
+  | "operations"
   | "settings"
   | "workspace"
   | "account"
@@ -33,6 +34,7 @@ export const dashboardPaths: Record<DashboardView, string> = {
   missions: "/dashboard/missions",
   runs: "/dashboard/runs",
   reports: "/dashboard/reports",
+  operations: "/dashboard/operations",
   settings: "/dashboard/settings",
   workspace: "/dashboard/workspace",
   account: "/dashboard/account",
@@ -48,6 +50,7 @@ export function resolveDashboardView(pathname: string): DashboardView {
     return "runs";
   if (pathname === dashboardPaths.reports || pathname.startsWith(`${dashboardPaths.reports}/`))
     return "reports";
+  if (pathname === dashboardPaths.operations) return "operations";
   if (pathname === dashboardPaths.settings) return "settings";
   if (pathname === dashboardPaths.workspace) return "workspace";
   if (pathname === dashboardPaths.account) return "account";

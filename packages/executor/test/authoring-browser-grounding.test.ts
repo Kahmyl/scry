@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createAuthoringBrowserSession } from "../src/index.js";
+import { createAuthoringBrowserSession } from "@scry/praxis";
 
 import { inspectPraxisCandidates } from "@scry/praxis";
 import { kernelInteractionExecutor, openTestBrowser } from "./kernel-harness.js";

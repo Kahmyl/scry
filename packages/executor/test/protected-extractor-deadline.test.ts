@@ -6,7 +6,7 @@ const state = vi.hoisted(() => ({
   resolveTarget: undefined as undefined | ((target: any) => Promise<any>),
 }));
 
-vi.mock("../src/protected-response-envelope.js", () => ({
+vi.mock("../../praxis/src/observation/protected-response-envelope.js", () => ({
   acquireProtectedResponseValue: vi.fn(async () => {
     state.networkCalls += 1;
     if (!state.networkAvailable) throw new Error("PROTECTED_RESPONSE_NOT_OBSERVED");
@@ -14,8 +14,9 @@ vi.mock("../src/protected-response-envelope.js", () => ({
   }),
 }));
 
-vi.mock("@scry/praxis", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@scry/praxis")>();
+vi.mock("../../praxis/src/grounding.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../praxis/src/grounding.js")>();
+
   return {
     ...actual,
     resolveTarget: vi.fn(async (_page: unknown, target: unknown) => {
@@ -25,7 +26,7 @@ vi.mock("@scry/praxis", async (importOriginal) => {
   };
 });
 
-import { acquireValue } from "../src/protected-extractor.js";
+import { acquireValue } from "../../praxis/src/protected-acquisition.js";
 
 const never = () => new Promise<never>(() => undefined);
 const target = (concept = "order id") => ({

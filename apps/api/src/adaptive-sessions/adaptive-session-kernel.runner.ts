@@ -11,14 +11,13 @@ import type {
   ExpectedEffect,
   OperationOutcome,
 } from "@scry/contracts";
-import {
-  captureSuccessorCheckpointPayload,
-  runProtectedStage,
-  type AuthoringBrowserSession,
-  type ExecutionReport,
-} from "@scry/executor";
+import { captureSuccessorCheckpointPayload } from "@scry/executor";
+import type { ExecutionReport } from "@scry/executor";
+import type { AuthoringBrowserSession } from "@scry/praxis";
+import { runProtectedStage } from "@scry/praxis";
 import {
   observeSemanticPageContext,
+  observeOperationContracts,
   observeSemanticPageContextReferenceState,
   resolveTargetLocator,
 } from "@scry/praxis";
@@ -31,10 +30,14 @@ import {
   NativeBrowserDriver,
 } from "../runtime/index.js";
 import { AdaptiveSessionRepository } from "./repositories/adaptive-session.repository.js";
+import { SecretRedactor } from "@scry/policy";
 import {
   bindProtectedInputDelivery,
   type ProtectedInputDeliveryBinding,
 } from "./protected-input-capability.js";
+
+import { resolveRecoveryBoundary } from "../recovery/recovery-registry.js";
+import { QualificationCampaignRepository } from "../runtime/repositories/qualification-campaign.repository.js";
 
 export type AdaptiveKernelExecutionResult = {
   outcome: OperationOutcome;
@@ -51,9 +54,15 @@ type TestRuntimeBinding = (
 ) => Promise<AdaptiveKernelExecutionResult>;
 
 type OwnedRuntime = {
-  session: AuthoringBrowserSession;
+  session: AuthoringBrowserSession<ExecutionReport>;
   fencingToken: number;
   tail: Promise<void>;
+  heartbeat?: RuntimeOwnerHeartbeat;
+};
+
+type RuntimeOwnerHeartbeat = {
+  assertOwned(): void;
+  stop(): Promise<void>;
 };
 
 type OperationTimingCollector = {
@@ -76,10 +85,12 @@ type OperationLeaseGuard = {
 export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
   private readonly testBindings = new Map<string, TestRuntimeBinding>();
   private readonly runtimes = new Map<string, OwnedRuntime>();
+  private readonly sessionRedactors = new Map<string, SecretRedactor>();
   private readonly provisioning = new Map<string, Promise<OwnedRuntime>>();
   private readonly operationModes = new Map<string, ExecutionMode>();
   private readonly operationTimingCollectors = new Map<string, OperationTimingCollector>();
   private readonly operationLeaseGuards = new Map<string, OperationLeaseGuard>();
+  private readonly operationMutationDispatches = new Map<string, () => Promise<void>>();
   private readonly operationCaptureReports = new Set<string>();
   private readonly operationOutputDirectories = new Map<string, string>();
   private readonly operationVeilPolicies = new Map<
@@ -102,6 +113,8 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     @Inject(ExecutionCapabilityFactory) private readonly capabilities: ExecutionCapabilityFactory,
     @Inject(AdaptiveSessionRepository) private readonly sessions: AdaptiveSessionRepository,
     @Inject(NativeBrowserDriver) private readonly nativeBrowser: NativeBrowserDriver,
+    @Inject(QualificationCampaignRepository)
+    private readonly qualificationCampaigns?: QualificationCampaignRepository,
   ) {}
 
   /** Test seam only. Production execution always provisions from durable session state. */
@@ -120,87 +133,121 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     const testBinding = this.testBindings.get(sessionId);
     if (testBinding) return testBinding(this.kernel, { sessionId, operation });
 
-    const owned = await this.runtime(sessionId, operation);
-    return this.exclusive(owned, async () => {
-      const leaseGuard = await this.startOperationLeaseGuard(sessionId, owned);
-      const context = await this.sessions.runtimeContextFor(sessionId);
-      const protectedContext =
-        operation.action.type === "protectedTransaction"
-          ? await this.sessions.protectedExecutionContext(sessionId, operation.operationId)
-          : undefined;
-      let resolveMs = 0;
-      let verifyMs = 0;
-      const capability = this.createCapabilities({
-        sessionId,
-        environmentId: context.environmentId,
-        correlationId: context.correlationId,
-        operationId: operation.operationId,
-        mode: operation.mode,
-        policy: context.policy,
-        ...(protectedContext
-          ? { protectedContext, leaseOwner: `${this.ownerId}:${owned.fencingToken}` }
-          : {}),
-        onPraxisResult: (result) => {
-          resolveMs += result.timing.groundingMs ?? 0;
-        },
-        onExpectedEffectVerification: (result) => {
-          verifyMs += result.durationMs;
-        },
-      });
-      const modeKey = `${sessionId}:${operation.operationId}`;
-      this.operationModes.set(modeKey, operation.mode);
-      this.operationTimingCollectors.set(modeKey, {
-        onPraxisResult: (result) => {
-          resolveMs += result.timing.groundingMs ?? 0;
-        },
-        onExpectedEffectVerification: (result) => {
-          verifyMs += result.durationMs;
-        },
-      });
-      this.operationLeaseGuards.set(modeKey, leaseGuard);
-      try {
-        await this.sessions.recordDispatchBaseline({
+    throwIfAborted(signal);
+    const owned = await awaitWithAbort(this.runtime(sessionId, operation), signal);
+    return this.exclusive(
+      owned,
+      async () => {
+        throwIfAborted(signal);
+        const leaseGuard = await this.startOperationLeaseGuard(sessionId, owned);
+        throwIfAborted(signal);
+        const context = await this.sessions.runtimeContextFor(sessionId);
+        throwIfAborted(signal);
+        if (operation.action.type === "protectedTransaction") {
+          const observation = await owned.session.observeDocument();
+          await this.sessions.invalidateInteractionCapabilitiesForDocument({
+            sessionId,
+            ownerId: this.ownerId,
+            fencingToken: owned.fencingToken,
+            documentEpoch: observation.documentEpoch,
+            origin: new URL(observation.url).origin,
+          });
+        }
+        const protectedContext =
+          operation.action.type === "protectedTransaction"
+            ? await this.sessions.protectedExecutionContext(sessionId, operation.operationId)
+            : undefined;
+        throwIfAborted(signal);
+        let resolveMs = 0;
+        let verifyMs = 0;
+        const capability = this.createCapabilities({
           sessionId,
-          operationId: operation.operationId,
-          expectedEffect: operation.expectedEffect,
-          documentEpoch: owned.session.documentEpoch(),
-          url: owned.session.page.url(),
-          effectState: await observeEffectState(owned.session.page, operation.expectedEffect),
-        });
-        const executeStartedAt = performance.now();
-        const result = await owned.session.interact(operation.action, {
-          operationId: operation.operationId,
+          environmentId: context.environmentId,
           correlationId: context.correlationId,
-          mutationIdentity: `adaptive-${sessionId}-${operation.idempotencyKey}`,
-          expectedEffect: operation.expectedEffect,
-          ...(signal ? { signal } : {}),
-        });
-        if (result.outcome.mutationOutcome !== "unknown") leaseGuard.assertOwned();
-        await this.sessions.recordVerifiedObservation({
-          sessionId,
           operationId: operation.operationId,
-          documentEpoch: result.documentEpoch,
-          url: result.url,
+          mode: operation.mode,
+          policy: context.policy,
+          ...(isBusinessMutation(operation)
+            ? {
+                onMutationDispatch: () =>
+                  this.qualificationCampaigns?.refuseCampaignBoundMutationOutsideRun(sessionId) ??
+                  Promise.resolve(),
+              }
+            : {}),
+          ...(protectedContext
+            ? { protectedContext, leaseOwner: `${this.ownerId}:${owned.fencingToken}` }
+            : {}),
+          onPraxisResult: (result) => {
+            resolveMs += result.timing.groundingMs ?? 0;
+          },
+          onExpectedEffectVerification: (result) => {
+            verifyMs += result.durationMs;
+          },
         });
-        return {
-          outcome: result.outcome,
-          capabilityManifestDigest: capability.manifest.digest,
-          decisionBoundary: decisionBoundary(result.outcome, {
-            environmentId: context.environmentId,
-            allowedOrigins: context.policy.allowedOrigins,
-            trustedScriptOrigins: context.policy.trustedScriptOrigins ?? [],
-          }),
-          timings: { resolveMs, executeMs: performance.now() - executeStartedAt, verifyMs },
-          safeState: { url: result.url, documentEpoch: result.documentEpoch },
-          ...(result.report ? { report: result.report } : {}),
-        };
-      } finally {
-        this.operationLeaseGuards.delete(modeKey);
-        this.operationModes.delete(modeKey);
-        this.operationTimingCollectors.delete(modeKey);
-        await leaseGuard.stop();
-      }
-    });
+        const modeKey = `${sessionId}:${operation.operationId}`;
+        this.operationModes.set(modeKey, operation.mode);
+        this.operationTimingCollectors.set(modeKey, {
+          onPraxisResult: (result) => {
+            resolveMs += result.timing.groundingMs ?? 0;
+          },
+          onExpectedEffectVerification: (result) => {
+            verifyMs += result.durationMs;
+          },
+        });
+        this.operationLeaseGuards.set(modeKey, leaseGuard);
+        this.operationMutationDispatches.set(modeKey, async () => {
+          await this.qualificationCampaigns?.refuseCampaignBoundMutationOutsideRun(sessionId);
+        });
+        try {
+          await this.sessions.recordDispatchBaseline({
+            sessionId,
+            operationId: operation.operationId,
+            expectedEffect: operation.expectedEffect,
+            documentEpoch: owned.session.documentEpoch(),
+            url: owned.session.page.url(),
+            effectState: await observeEffectState(owned.session.page, operation.expectedEffect),
+          });
+          const executeStartedAt = performance.now();
+          const result = await owned.session.interact(operation.action, {
+            operationId: operation.operationId,
+            correlationId: context.correlationId,
+            ...(operation.action.type === "protectedTransaction"
+              ? {}
+              : { mutationIdentity: `adaptive-${sessionId}-${operation.idempotencyKey}` }),
+            expectedEffect: operation.expectedEffect,
+            ...(signal ? { signal } : {}),
+          });
+          if (result.outcome.mutationOutcome !== "unknown") leaseGuard.assertOwned();
+          const outcome = await this.recordVerifiedObservationOutcome({
+            sessionId,
+            operationId: operation.operationId,
+            documentEpoch: result.documentEpoch,
+            url: result.url,
+            outcome: result.outcome,
+          });
+          return {
+            outcome,
+            capabilityManifestDigest: capability.manifest.digest,
+            decisionBoundary: resolveRecoveryBoundary(outcome, {
+              environmentId: context.environmentId,
+              allowedOrigins: context.policy.allowedOrigins,
+              trustedScriptOrigins: context.policy.trustedScriptOrigins ?? [],
+              allowPopups: context.policy.allowPopups ?? false,
+            }),
+            timings: { resolveMs, executeMs: performance.now() - executeStartedAt, verifyMs },
+            safeState: { url: result.url, documentEpoch: result.documentEpoch },
+            ...(result.report ? { report: result.report } : {}),
+          };
+        } finally {
+          this.operationLeaseGuards.delete(modeKey);
+          this.operationMutationDispatches.delete(modeKey);
+          this.operationModes.delete(modeKey);
+          this.operationTimingCollectors.delete(modeKey);
+          await leaseGuard.stop();
+        }
+      },
+      signal,
+    );
   }
 
   async executeForRun(input: {
@@ -208,6 +255,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     operation: AdaptiveSessionOperationInput;
     outputDirectory: string;
     veilPolicySnapshot: import("@scry/contracts").VeilPolicySnapshot;
+    beforeBusinessMutationDispatch?(operation: AdaptiveSessionOperationInput): Promise<void>;
     signal?: AbortSignal;
   }) {
     const testBinding = this.testBindings.get(input.sessionId);
@@ -218,6 +266,16 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     return this.exclusive(owned, async () => {
       const leaseGuard = await this.startOperationLeaseGuard(input.sessionId, owned);
       const context = await this.sessions.runtimeContextFor(input.sessionId);
+      if (input.operation.action.type === "protectedTransaction") {
+        const observation = await owned.session.observeDocument();
+        await this.sessions.invalidateInteractionCapabilitiesForDocument({
+          sessionId: input.sessionId,
+          ownerId: this.ownerId,
+          fencingToken: owned.fencingToken,
+          documentEpoch: observation.documentEpoch,
+          origin: new URL(observation.url).origin,
+        });
+      }
       const protectedContext =
         input.operation.action.type === "protectedTransaction"
           ? await this.sessions.protectedExecutionContext(
@@ -236,6 +294,11 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         policy: context.policy,
         outputDirectory: input.outputDirectory,
         veilPolicySnapshot: input.veilPolicySnapshot,
+        ...(input.beforeBusinessMutationDispatch
+          ? {
+              onMutationDispatch: () => input.beforeBusinessMutationDispatch!(input.operation),
+            }
+          : {}),
         ...(protectedContext
           ? { protectedContext, leaseOwner: `${this.ownerId}:${owned.fencingToken}` }
           : {}),
@@ -257,6 +320,11 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         },
       });
       this.operationLeaseGuards.set(modeKey, leaseGuard);
+      if (input.beforeBusinessMutationDispatch) {
+        this.operationMutationDispatches.set(modeKey, () =>
+          input.beforeBusinessMutationDispatch!(input.operation),
+        );
+      }
       this.operationCaptureReports.add(modeKey);
       this.operationOutputDirectories.set(modeKey, input.outputDirectory);
       this.operationVeilPolicies.set(modeKey, input.veilPolicySnapshot);
@@ -273,24 +341,30 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         const result = await owned.session.interact(input.operation.action, {
           operationId: input.operation.operationId,
           correlationId: context.correlationId,
-          mutationIdentity: `adaptive-${input.sessionId}-${input.operation.idempotencyKey}`,
+          ...(input.operation.action.type === "protectedTransaction"
+            ? {}
+            : {
+                mutationIdentity: `adaptive-${input.sessionId}-${input.operation.idempotencyKey}`,
+              }),
           expectedEffect: input.operation.expectedEffect,
           ...(input.signal ? { signal: input.signal } : {}),
         });
         if (result.outcome.mutationOutcome !== "unknown") leaseGuard.assertOwned();
-        await this.sessions.recordVerifiedObservation({
+        const outcome = await this.recordVerifiedObservationOutcome({
           sessionId: input.sessionId,
           operationId: input.operation.operationId,
           documentEpoch: result.documentEpoch,
           url: result.url,
+          outcome: result.outcome,
         });
         return {
-          outcome: result.outcome,
+          outcome,
           capabilityManifestDigest: capability.manifest.digest,
-          decisionBoundary: decisionBoundary(result.outcome, {
+          decisionBoundary: resolveRecoveryBoundary(outcome, {
             environmentId: context.environmentId,
             allowedOrigins: context.policy.allowedOrigins,
             trustedScriptOrigins: context.policy.trustedScriptOrigins ?? [],
+            allowPopups: context.policy.allowPopups ?? false,
           }),
           timings: { resolveMs, executeMs: performance.now() - executeStartedAt, verifyMs },
           safeState: { url: result.url, documentEpoch: result.documentEpoch },
@@ -301,6 +375,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         this.operationOutputDirectories.delete(modeKey);
         this.operationCaptureReports.delete(modeKey);
         this.operationLeaseGuards.delete(modeKey);
+        this.operationMutationDispatches.delete(modeKey);
         this.operationModes.delete(modeKey);
         this.operationTimingCollectors.delete(modeKey);
         await leaseGuard.stop();
@@ -335,7 +410,170 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
   async observe(sessionId: string) {
     const runtime = this.runtimes.get(sessionId);
     if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
-    return this.exclusive(runtime, () => runtime.session.observeDocument());
+    return this.exclusive(runtime, async () => {
+      const observation = await runtime.session.observeDocument();
+      await this.sessions.invalidateInteractionCapabilitiesForDocument({
+        sessionId,
+        ownerId: this.ownerId,
+        fencingToken: runtime.fencingToken,
+        documentEpoch: observation.documentEpoch,
+        origin: new URL(observation.url).origin,
+      });
+      return observation;
+    });
+  }
+
+  async observeOperationContracts(sessionId: string) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, () =>
+      observeOperationContracts(runtime.session.page, sessionId),
+    );
+  }
+
+  async readPublicValue(
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicValueInput,
+  ) {
+    const runtime = this.runtimes.get(sessionId);
+
+    if (!runtime) {
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    }
+
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.readPublicValue(input);
+      } catch (error) {
+        const code =
+          error && typeof error === "object" && "code" in error && typeof error.code === "string"
+            ? error.code
+            : undefined;
+
+        if (code?.startsWith("PUBLIC_VALUE_")) {
+          throw new ConflictException({
+            code,
+            mutationOutcome: "not_applied",
+            safeActions: ["observe_praxis_session"],
+          });
+        }
+
+        throw error;
+      }
+    });
+  }
+
+  async inspectRegion(
+    sessionId: string,
+    input: import("@scry/contracts").InspectPraxisRegionInput,
+  ) {
+    const runtime = this.runtimes.get(sessionId);
+
+    if (!runtime) {
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    }
+
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.inspectRegion(input);
+      } catch (error) {
+        const code =
+          error && typeof error === "object" && "code" in error && typeof error.code === "string"
+            ? error.code
+            : undefined;
+
+        if (code?.startsWith("REGION_")) {
+          throw new ConflictException({
+            code,
+            mutationOutcome: "not_applied",
+            safeActions: ["observe_praxis_session"],
+          });
+        }
+
+        throw error;
+      }
+    });
+  }
+
+  async inspectBrowserResources(sessionId: string) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.inspectResources();
+      } catch (error) {
+        throw resourceReadConflict(error);
+      }
+    });
+  }
+
+  async readPublicResource(
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicResourceInput,
+  ) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.readPublicResource(input);
+      } catch (error) {
+        throw resourceReadConflict(error);
+      }
+    });
+  }
+
+  async inspectStructure(sessionId: string) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.inspectStructure();
+      } catch (error) {
+        throw perceptionReadConflict(error, "structure");
+      }
+    });
+  }
+
+  async readPublicStructureValue(
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicStructureValueInput,
+  ) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.readPublicStructureValue(input);
+      } catch (error) {
+        throw perceptionReadConflict(error, "structure");
+      }
+    });
+  }
+
+  async inspectRuntimeState(sessionId: string) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.inspectRuntimeState();
+      } catch (error) {
+        throw perceptionReadConflict(error, "runtime");
+      }
+    });
+  }
+
+  async readPublicRuntimeValue(
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicRuntimeValueInput,
+  ) {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.exclusive(runtime, async () => {
+      try {
+        return await runtime.session.readPublicRuntimeValue(input);
+      } catch (error) {
+        throw perceptionReadConflict(error, "runtime");
+      }
+    });
   }
 
   /**
@@ -517,6 +755,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     if (!runtime) return;
     this.runtimes.delete(sessionId);
     try {
+      await runtime.heartbeat?.stop();
       try {
         await runProtectedStage({
           stage: "adaptive_runtime_tail_shutdown",
@@ -542,11 +781,26 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
         work: () => runtime.session.close(),
       }).catch(() => undefined);
     } finally {
-      await this.sessions.releaseRuntimeLease?.({
-        sessionId,
-        ownerId: this.ownerId,
-        fencingToken: runtime.fencingToken,
-      });
+      this.clearSessionRedactor(sessionId);
+      try {
+        const released = await this.sessions.releaseRuntimeLease?.({
+          sessionId,
+          ownerId: this.ownerId,
+          fencingToken: runtime.fencingToken,
+        });
+        if (released === false)
+          throw new ConflictException({ code: "ADAPTIVE_SESSION_RUNTIME_LEASE_LOST" });
+      } catch (releaseError) {
+        if (!this.sessions.settleRuntimeOwnerLoss) throw releaseError;
+        await this.sessions.settleRuntimeOwnerLoss({
+          sessionId,
+          ownerId: this.ownerId,
+          fencingToken: runtime.fencingToken,
+          runtimePresent: false,
+          recoveryObservationAvailable: false,
+          reasonCode: "ADAPTIVE_RUNTIME_CLOSED_BEFORE_LEASE_RELEASE",
+        });
+      }
     }
   }
 
@@ -559,9 +813,12 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     if (current) return Promise.resolve(current);
     const pending = this.provisioning.get(sessionId);
     if (pending) return pending;
-    const provisioning = this.provision(sessionId, operation).finally(() =>
-      this.provisioning.delete(sessionId),
-    );
+    const provisioning = this.provision(sessionId, operation)
+      .catch((error) => {
+        this.clearSessionRedactor(sessionId);
+        throw error;
+      })
+      .finally(() => this.provisioning.delete(sessionId));
     this.provisioning.set(sessionId, provisioning);
     return provisioning;
   }
@@ -577,6 +834,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       ownerId: this.ownerId,
       leaseDurationMs: this.leaseDurationMs,
     });
+    const heartbeat = this.startRuntimeOwnerHeartbeat(sessionId, lease.fencingToken);
     const operationId = `adaptive-runtime-${lease.fencingToken}`;
     const capability = this.createCapabilities({
       sessionId,
@@ -596,7 +854,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       capabilities: capability,
       idempotencyKey: operationId,
     });
-    let browser: AuthoringBrowserSession | undefined;
+    let browser: AuthoringBrowserSession<ExecutionReport> | undefined;
     let successorCheckpoint: Awaited<
       ReturnType<AdaptiveSessionRepository["claimSuccessorCheckpoint"]>
     >;
@@ -710,10 +968,17 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           lease.fencingToken,
           "verified",
         );
-      const owned = { session: browser, fencingToken: lease.fencingToken, tail: Promise.resolve() };
+      heartbeat.assertOwned();
+      const owned = {
+        session: browser,
+        fencingToken: lease.fencingToken,
+        tail: Promise.resolve(),
+        heartbeat,
+      };
       this.runtimes.set(sessionId, owned);
       return owned;
     } catch (error) {
+      await heartbeat.stop();
       if (successorCheckpoint!)
         await this.sessions
           .completeSuccessorCheckpoint(
@@ -745,7 +1010,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     fencingToken: number;
     browser: import("playwright").Browser;
     context: import("playwright").BrowserContext;
-    provenance: import("@scry/executor").BrowserSessionProvenance;
+    provenance: import("@scry/praxis").BrowserSessionProvenance;
     page: Parameters<AuthoringBrowserSession["interact"]>[0] extends never
       ? never
       : import("playwright").Page;
@@ -765,7 +1030,10 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       objectiveId: string;
       agentSessionId: string;
       flowDraftId: string;
-      authorizationId: string;
+      authorizationId?: string;
+      mutationIdentity: string;
+      preparedExecutionCapabilityId: string;
+      canonicalProgramDigest: string;
     };
     leaseOwner?: string;
     privacyGate: import("@scry/veil").VeilRuntimeCoordinator;
@@ -780,6 +1048,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       input.action.type === "protectedTransaction"
         ? await this.sessions.protectedExecutionContext(input.sessionId, input.operationId)
         : undefined;
+    const canonicalMutationIdentity = protectedContext?.mutationIdentity ?? input.mutationIdentity;
     const protectedInputBindings = exactProtectedInputBindings(
       input.sessionId,
       input.operationId,
@@ -807,6 +1076,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           }
         : {}),
       onMutationDispatch: async () => {
+        await this.operationMutationDispatches.get(operationKey)?.();
         await leaseGuard?.heartbeat();
         await this.sessions.markOperationDispatching({
           sessionId: input.sessionId,
@@ -831,7 +1101,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
             correlationId,
             mode: input.mode,
             policy: input.policy,
-            ...(input.mutationIdentity ? { mutationIdentity: input.mutationIdentity } : {}),
+            ...(canonicalMutationIdentity ? { mutationIdentity: canonicalMutationIdentity } : {}),
             ...(input.objectiveDelta ? { semanticContext: input.objectiveDelta } : {}),
           },
           capabilities: capability,
@@ -856,7 +1126,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
             correlationId,
             mode: input.mode,
             policy: input.policy,
-            ...(input.mutationIdentity ? { mutationIdentity: input.mutationIdentity } : {}),
+            ...(canonicalMutationIdentity ? { mutationIdentity: canonicalMutationIdentity } : {}),
             ...(input.objectiveDelta ? { semanticContext: input.objectiveDelta } : {}),
           },
           capabilities: capability,
@@ -874,6 +1144,46 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
           ordinal: input.ordinal,
           privacyGate: input.privacyGate,
         });
+  }
+
+  private clearSessionRedactor(sessionId: string) {
+    const redactor = this.sessionRedactors.get(sessionId);
+    redactor?.clear();
+    this.sessionRedactors.delete(sessionId);
+  }
+
+  private async recordVerifiedObservationOutcome(input: {
+    sessionId: string;
+    operationId: string;
+    documentEpoch: number;
+    url: string;
+    outcome: OperationOutcome;
+  }) {
+    try {
+      await this.sessions.recordVerifiedObservation(input);
+      return input.outcome;
+    } catch {
+      return {
+        ...input.outcome,
+        evidenceResult: [
+          ...input.outcome.evidenceResult.filter((entry) => entry.channel !== "report"),
+          {
+            channel: "report" as const,
+            state: "failed" as const,
+            reasonCode: "ADAPTIVE_VERIFIED_OBSERVATION_PERSISTENCE_FAILED",
+          },
+        ].sort((left, right) => left.channel.localeCompare(right.channel)),
+      };
+    }
+  }
+
+  private sessionRedactor(sessionId: string) {
+    let redactor = this.sessionRedactors.get(sessionId);
+    if (!redactor) {
+      redactor = new SecretRedactor();
+      this.sessionRedactors.set(sessionId, redactor);
+    }
+    return redactor;
   }
 
   private createCapabilities(input: {
@@ -895,8 +1205,11 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       objectiveId: string;
       agentSessionId: string;
       flowDraftId: string;
-      authorizationId: string;
+      authorizationId?: string;
       dispatchDisposition: "execute" | "qualification_only";
+      mutationIdentity: string;
+      preparedExecutionCapabilityId: string;
+      canonicalProgramDigest: string;
     };
     protectedInputBindings?: ProtectedInputDeliveryBinding[];
     leaseOwner?: string;
@@ -916,6 +1229,7 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       correlationId: input.correlationId,
       mode: input.mode,
       options: {
+        secretRedactor: this.sessionRedactor(input.sessionId),
         outputDirectory:
           input.outputDirectory ?? path.join(this.artifactRoot, "adaptive", input.sessionId),
         browserChannel: this.browserChannel,
@@ -963,13 +1277,22 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
     });
   }
 
-  private async exclusive<T>(runtime: OwnedRuntime, operation: () => Promise<T>) {
+  private async exclusive<T>(
+    runtime: OwnedRuntime,
+    operation: () => Promise<T>,
+    signal?: AbortSignal,
+  ) {
     const predecessor = runtime.tail;
     let release!: () => void;
     runtime.tail = new Promise<void>((resolve) => {
       release = resolve;
     });
-    await predecessor;
+    try {
+      await awaitWithAbort(predecessor, signal);
+    } catch (error) {
+      void predecessor.finally(release);
+      throw error;
+    }
     try {
       return await operation();
     } finally {
@@ -1038,6 +1361,67 @@ export class AdaptiveSessionKernelRunner implements OnModuleDestroy {
       },
     };
   }
+
+  private startRuntimeOwnerHeartbeat(
+    sessionId: string,
+    fencingToken: number,
+  ): RuntimeOwnerHeartbeat {
+    const intervalMs = Math.max(250, Math.floor(this.leaseDurationMs / 3));
+    let stopped = false;
+    let failure: unknown;
+    let tail = Promise.resolve();
+    const renew = () => {
+      tail = tail
+        .then(async () => {
+          if (stopped || failure) return;
+          await runProtectedStage({
+            stage: "adaptive_runtime_owner_heartbeat",
+            timeoutMs: intervalMs,
+            timeoutCode: "ADAPTIVE_RUNTIME_OWNER_HEARTBEAT_TIMEOUT",
+            dispatchPosition: "post_dispatch",
+            work: () =>
+              this.sessions.heartbeatRuntimeLease({
+                sessionId,
+                ownerId: this.ownerId,
+                fencingToken,
+                leaseDurationMs: this.leaseDurationMs,
+              }),
+          });
+        })
+        .catch(async (error) => {
+          if (failure || stopped) return;
+          failure = error;
+          const runtime = this.runtimes.get(sessionId);
+          if (runtime?.fencingToken === fencingToken) {
+            this.runtimes.delete(sessionId);
+            await runtime.session.cancelActiveOperation().catch(() => undefined);
+            await runtime.session.close().catch(() => undefined);
+          }
+          await this.sessions
+            .settleRuntimeOwnerLoss?.({
+              sessionId,
+              ownerId: this.ownerId,
+              fencingToken,
+              runtimePresent: false,
+              recoveryObservationAvailable: false,
+              reasonCode: "ADAPTIVE_RUNTIME_OWNER_HEARTBEAT_LOST",
+            })
+            .catch(() => undefined);
+        });
+    };
+    renew();
+    const timer = setInterval(renew, intervalMs);
+    return {
+      assertOwned() {
+        if (failure) throw failure;
+      },
+      async stop() {
+        stopped = true;
+        clearInterval(timer);
+        await tail;
+      },
+    };
+  }
 }
 
 async function observeEffectState(page: import("playwright").Page, effect: ExpectedEffect) {
@@ -1076,79 +1460,45 @@ function safeCheckpointFailure(message: string) {
     : "SUCCESSOR_CHECKPOINT_RESTORE_FAILED";
 }
 
+function resourceReadConflict(error: unknown): never {
+  const code =
+    error && typeof error === "object" && "code" in error && typeof error.code === "string"
+      ? error.code
+      : undefined;
+  if (code?.startsWith("PUBLIC_RESOURCE_"))
+    throw new ConflictException({
+      code,
+      mutationOutcome: "not_applied",
+      safeActions:
+        code === "PUBLIC_RESOURCE_REFERENCE_UNKNOWN" || code === "PUBLIC_RESOURCE_REFERENCE_STALE"
+          ? ["inspect_praxis_resources"]
+          : [],
+    });
+  throw error;
+}
+
+function perceptionReadConflict(error: unknown, channel: "structure" | "runtime"): never {
+  const code =
+    error && typeof error === "object" && "code" in error && typeof error.code === "string"
+      ? error.code
+      : undefined;
+  const prefix = channel === "structure" ? "PUBLIC_STRUCTURE_" : "PUBLIC_RUNTIME_";
+  if (code?.startsWith(prefix))
+    throw new ConflictException({
+      code,
+      mutationOutcome: "not_applied",
+      safeActions:
+        code.endsWith("REFERENCE_UNKNOWN") || code.endsWith("REFERENCE_STALE")
+          ? [channel === "structure" ? "inspect_praxis_structure" : "inspect_praxis_runtime_state"]
+          : [],
+    });
+  throw error;
+}
+
 function composeSignals(...signals: Array<AbortSignal | undefined>) {
   const present = signals.filter((signal): signal is AbortSignal => Boolean(signal));
   if (present.length === 0) return undefined;
   return present.length === 1 ? present[0] : AbortSignal.any(present);
-}
-
-function decisionBoundary(
-  outcome: OperationOutcome,
-  environment?: {
-    environmentId: string;
-    allowedOrigins: string[];
-    trustedScriptOrigins: string[];
-  },
-): AgentDecisionBoundary {
-  if (outcome.nextDecisionBoundary) return outcome.nextDecisionBoundary;
-  if (outcome.reasonCode === "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED") {
-    return {
-      type: "environment_unavailable",
-      reasonCode: outcome.reasonCode,
-      safeActions: ["create_test_environment", "create_flow_draft"],
-      ...(environment && outcome.environmentFailure
-        ? {
-            environmentRecovery: {
-              environmentId: environment.environmentId,
-              missingTrustedScriptOrigins: outcome.environmentFailure.missingTrustedScriptOrigins,
-              missingOriginClassification: outcome.environmentFailure.missingOriginClassification,
-              currentTrustedScriptOrigins: environment.trustedScriptOrigins,
-              recoveryTool: "create_test_environment" as const,
-              requiresNewFlowDraftAndAuthoringSession: true as const,
-            },
-          }
-        : {}),
-    };
-  }
-  if (
-    outcome.reasonCode === "EXPECTED_NEW_PAGE_ORIGIN_NOT_ALLOWED" &&
-    environment &&
-    outcome.navigationEnvironmentFailure
-  ) {
-    return {
-      type: "environment_unavailable",
-      reasonCode: outcome.reasonCode,
-      safeActions: ["create_test_environment", "create_flow_draft"],
-      navigationRecovery: {
-        environmentId: environment.environmentId,
-        missingAllowedOrigin: outcome.navigationEnvironmentFailure.missingAllowedOrigin,
-        currentAllowedOrigins: environment.allowedOrigins,
-        recoveryTools: ["create_test_environment", "create_flow_draft"],
-        requiresNewFlowDraftAndAuthoringSession: true,
-      },
-    };
-  }
-  if (outcome.mutationOutcome === "unknown") {
-    return {
-      type: "mutation_reconciliation_required",
-      reasonCode: "MUTATION_OUTCOME_UNKNOWN",
-      safeActions: ["get_run", "get_praxis_session", "reconcile_unknown_operation"],
-    };
-  }
-  if (outcome.mutationOutcome === "applied" && outcome.functionalResult !== "succeeded") {
-    return {
-      type: "effect_observation_required",
-      reasonCode: outcome.reasonCode ?? "EXPECTED_EFFECT_NOT_OBSERVED",
-      safeActions: ["get_run", "get_praxis_session", "observe_praxis_session"],
-    };
-  }
-  return outcome.functionalResult === "succeeded"
-    ? { type: "objective_completed", reasonCode: "OPERATION_COMPLETED", safeActions: [] }
-    : {
-        type: "environment_unavailable",
-        reasonCode: outcome.reasonCode ?? "ADAPTIVE_OPERATION_FAILED",
-        safeActions: ["get_run", "get_praxis_session", "observe_praxis_session"],
-      };
 }
 
 function safeContinuationUrl(candidate: string | undefined, allowedOrigins: string[]) {
@@ -1213,4 +1563,50 @@ function observationPlan(policy: ExecutionPolicy) {
       },
     ],
   };
+}
+
+function isBusinessMutation(operation: AdaptiveSessionOperationInput) {
+  const action = operation.action;
+  if (action.type === "protectedTransaction")
+    return (action.mutation.dispatchSemantics ?? "mutation") === "mutation";
+  if (action.type === "sameOriginRequest") return action.method !== "GET";
+  if (action.type === "click" || action.type === "press")
+    return action.dispatchSemantics === "mutation";
+  return false;
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : Object.assign(new Error("ADAPTIVE_SESSION_EXECUTION_CANCELLED"), {
+        code: "ADAPTIVE_SESSION_EXECUTION_CANCELLED",
+      });
+}
+
+function awaitWithAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  throwIfAborted(signal);
+  return new Promise<T>((resolve, reject) => {
+    const aborted = () => {
+      cleanup();
+      try {
+        throwIfAborted(signal);
+      } catch (error) {
+        reject(error);
+      }
+    };
+    const cleanup = () => signal.removeEventListener("abort", aborted);
+    signal.addEventListener("abort", aborted, { once: true });
+    work.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 }

@@ -1,7 +1,13 @@
 import {
+  agentRetrySemanticsSchema,
+  missionCompletionReadinessSchema,
+  mutationAppliedStateSchema,
+  publicApiRejectionSchema,
   PRAXIS_CONTRACT_VERSION,
   PRAXIS_RUNTIME_VERSION,
   PRAXIS_SCORING_POLICY_VERSION,
+  type AgentResolutionClass,
+  type PublicRejectionClass,
 } from "@scry/contracts";
 
 export class ScryApiError extends Error {
@@ -32,6 +38,15 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "sourceMissionRevision",
   "currentMissionRevision",
   "objectiveId",
+  "projectId",
+  "runId",
+  "attemptId",
+  "agentSessionId",
+  "praxisSessionId",
+  "protectedOperationId",
+  "evidenceId",
+  "evidenceRecommendationId",
+  "recordingId",
   "dependencyId",
   "mutationOutcome",
   "retry",
@@ -51,6 +66,7 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "recoveryBinding",
   "recoveryKind",
   "requiresFreshIdempotencyKey",
+  "requiresFreshIntentId",
   "requiresPendingTurn",
   "failedAuthoringSessionId",
   "failedOperationId",
@@ -61,6 +77,7 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "preservesCurrentFlow",
   "missionId",
   "flowDraftId",
+  "flowRevisionId",
   "sessionId",
   "environmentResourceExists",
   "refreshedDecisionBoundary",
@@ -76,46 +93,198 @@ const SAFE_REJECTION_CONTEXT_KEYS = new Set([
   "missionFenceCleared",
   "validationIssueCount",
   "safeActions",
+  "nextActions",
+  "resolution",
+  "reason",
+  "readiness",
 ]);
 
-export function apiRejection(error: ScryApiError) {
+function baseApiRejection(error: ScryApiError) {
   const { mutationOutcome, retry, retryClass, ...context } = error.context;
-  return {
+  const appliedState = mutationAppliedStateSchema.catch("not_applicable").parse(mutationOutcome);
+  const rejectionClass = classifyPublicRejection(error.code, error.status, appliedState);
+  const factualRetry = agentRetrySemanticsSchema
+    .catch("unspecified")
+    .parse(appliedState === "unknown" ? "reconciliation_required" : (retry ?? retryClass));
+  const safeActions = error.safeActions.slice(0, 20);
+  const projectedNextActions = Array.isArray(context.nextActions)
+    ? context.nextActions.filter((value): value is string => typeof value === "string").slice(0, 20)
+    : safeActions.filter((action) => action !== "do_not_retry");
+  const nextActions =
+    appliedState === "unknown"
+      ? projectedNextActions.filter(
+          (action) => action.includes("reconcil") || action.startsWith("get_"),
+        )
+      : projectedNextActions;
+
+  return publicApiRejectionSchema.parse({
     code: error.code,
     status: error.status,
-    appliedState: mutationOutcome ?? "unknown",
-    retry: retry ?? retryClass ?? "unspecified",
-    safeActions: error.safeActions,
+    rejectionClass,
+    reason:
+      typeof context.reason === "string"
+        ? context.reason.slice(0, 500)
+        : error.code.toLowerCase().replaceAll("_", " "),
+    exactIds: exactIds(context),
+    resolution: resolutionFor(rejectionClass),
+    appliedState,
+    retry: factualRetry,
+    safeActions,
+    nextActions,
     ...(Object.keys(context).length ? { context } : {}),
+  });
+}
+
+export function apiRejection(error: ScryApiError) {
+  const rejection = baseApiRejection(error);
+
+  if (error.code !== "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED") {
+    return rejection;
+  }
+
+  return {
+    ...rejection,
+    rejectionClass: "policy_authorization" as const,
+    resolution: "obtain_authorization" as const,
   };
+}
+
+function classifyPublicRejection(
+  code: string,
+  status: number,
+  appliedState: string,
+): PublicRejectionClass {
+  const normalized = code.toUpperCase();
+  if (
+    appliedState === "unknown" ||
+    normalized.includes("UNKNOWN") ||
+    normalized.includes("RECONCIL")
+  )
+    return "reconciliation_unknown";
+  if (
+    normalized.includes("STALE") ||
+    normalized.includes("REVISION_CONFLICT") ||
+    normalized.includes("VERSION_CONFLICT") ||
+    normalized.includes("REFERENCE_") ||
+    normalized.includes("DOCUMENT_CHANGED") ||
+    normalized.includes("FENCED")
+  )
+    return "stale_authority";
+  if (
+    status === 401 ||
+    status === 403 ||
+    normalized.includes("AUTHORIZ") ||
+    normalized.includes("POLICY") ||
+    normalized.includes("PERMISSION") ||
+    normalized.includes("FORBIDDEN")
+  )
+    return "policy_authorization";
+  if (
+    status === 400 ||
+    status === 404 ||
+    normalized.includes("INVALID") ||
+    normalized.includes("VALIDATION") ||
+    normalized.includes("NOT_FOUND") ||
+    normalized.includes("MISSING")
+  )
+    return "invalid_input";
+  if (
+    status >= 500 ||
+    normalized.includes("INFRASTRUCTURE") ||
+    normalized.includes("PERSIST") ||
+    normalized.includes("DATABASE") ||
+    normalized.includes("STORAGE") ||
+    normalized.includes("RUNTIME_UNAVAILABLE") ||
+    normalized.includes("RELEASE_MISMATCH") ||
+    normalized.includes("VERSION_MISMATCH")
+  )
+    return "infrastructure_persistence";
+  return "application_provider";
+}
+
+function resolutionFor(rejectionClass: PublicRejectionClass): AgentResolutionClass {
+  return {
+    invalid_input: "correct_input",
+    stale_authority: "refresh_authority",
+    policy_authorization: "obtain_authorization",
+    application_provider: "inspect_application",
+    infrastructure_persistence: "restore_infrastructure",
+    reconciliation_unknown: "reconcile_unknown",
+  }[rejectionClass] as AgentResolutionClass;
+}
+
+function exactIds(context: Record<string, unknown>) {
+  const result: Record<string, string> = {};
+  const visit = (value: unknown, depth: number) => {
+    if (!value || typeof value !== "object" || Array.isArray(value) || depth > 3) return;
+    for (const [key, candidate] of Object.entries(value as Record<string, unknown>)) {
+      if (
+        Object.keys(result).length < 20 &&
+        /^[a-z][A-Za-z0-9]{0,99}Id$/.test(key) &&
+        typeof candidate === "string" &&
+        candidate.length <= 200
+      )
+        result[key] ??= candidate;
+      else if (candidate && typeof candidate === "object") visit(candidate, depth + 1);
+    }
+  };
+  visit(context, 0);
+  return result;
 }
 
 export class ScryApiClient {
   private capabilitiesPromise?: Promise<ScryCapabilities>;
+  private mcpSessionId?: string;
   constructor(
     readonly baseUrl = process.env.SCRY_API_BASE_URL ?? "http://127.0.0.1:4000/api",
     readonly serviceToken = process.env.SCRY_SERVICE_TOKEN,
     readonly publicBaseUrl = process.env.SCRY_PUBLIC_API_BASE_URL ?? baseUrl,
+    readonly externalAgentIdentity: ExternalAgentIdentity = externalAgentIdentityFromEnvironment(),
   ) {}
+
+  setMcpSessionId(sessionId: string) {
+    this.mcpSessionId = sessionId;
+  }
+
+  missionProvenance() {
+    return {
+      provider: this.externalAgentIdentity.provider,
+      ...(this.externalAgentIdentity.model ? { model: this.externalAgentIdentity.model } : {}),
+      ...(this.externalAgentIdentity.externalRunId
+        ? { externalRunId: this.externalAgentIdentity.externalRunId }
+        : {}),
+      ...(this.externalAgentIdentity.experimentId
+        ? { experimentId: this.externalAgentIdentity.experimentId }
+        : {}),
+    };
+  }
 
   async get<T>(path: string): Promise<T> {
     return this.request(path);
   }
 
   async post<T>(path: string, body: unknown = {}): Promise<T> {
-    return this.request(path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    return this.request(
+      path,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      body,
+    );
   }
 
   async patch<T>(path: string, body: unknown): Promise<T> {
-    return this.request(path, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    return this.request(
+      path,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      body,
+    );
   }
 
   async delete<T>(path: string): Promise<T> {
@@ -176,9 +345,13 @@ export class ScryApiClient {
     };
   }
 
-  private async request<T>(path: string, init?: RequestInit): Promise<T> {
+  private async request<T>(path: string, init?: RequestInit, factualBody?: unknown): Promise<T> {
     const headers = new Headers(init?.headers);
     if (this.serviceToken) headers.set("authorization", `Bearer ${this.serviceToken}`);
+    for (const [name, value] of Object.entries(
+      causalRequestHeaders(path, factualBody, this.externalAgentIdentity, this.mcpSessionId),
+    ))
+      headers.set(name, value);
     const response = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     const body = await response.json().catch(() => undefined);
     if (!response.ok) {
@@ -219,12 +392,103 @@ export class ScryApiClient {
   }
 }
 
+export type ExternalAgentIdentity = Readonly<{
+  provider: string;
+  model?: string;
+  externalRunId?: string;
+  experimentId?: string;
+  correlationId?: string;
+}>;
+
+const causalHeaderNames = {
+  projectId: "x-scry-project-id",
+  missionId: "x-scry-mission-id",
+  objectiveId: "x-scry-objective-id",
+  agentSessionId: "x-scry-agent-session-id",
+  runId: "x-scry-run-id",
+  attemptId: "x-scry-attempt-id",
+  praxisSessionId: "x-scry-praxis-session-id",
+  operationId: "x-scry-operation-id",
+  protectedOperationId: "x-scry-protected-operation-id",
+} as const;
+
+function causalRequestHeaders(
+  path: string,
+  body: unknown,
+  identity: ExternalAgentIdentity,
+  mcpSessionId?: string,
+) {
+  const exact = exactCausalIds(path, body);
+  return {
+    ...(identity.correlationId ? { "x-correlation-id": identity.correlationId } : {}),
+    ...(mcpSessionId ? { "x-scry-mcp-session-id": mcpSessionId } : {}),
+    ...(identity.externalRunId ? { "x-scry-external-run-id": identity.externalRunId } : {}),
+    ...Object.fromEntries(
+      Object.entries(exact).map(([key, value]) => [
+        causalHeaderNames[key as keyof typeof causalHeaderNames],
+        value,
+      ]),
+    ),
+  };
+}
+
+function exactCausalIds(path: string, body: unknown) {
+  const result: Partial<Record<keyof typeof causalHeaderNames, string>> = {};
+  const pathMappings = [
+    ["projectId", /\/projects\/([^/]+)/],
+    ["missionId", /\/missions\/([^/]+)/],
+    ["runId", /\/runs\/([^/]+)/],
+    ["agentSessionId", /\/agent-sessions\/([^/]+)/],
+    ["praxisSessionId", /\/praxis-sessions\/([^/]+)/],
+  ] as const;
+  for (const [key, pattern] of pathMappings) {
+    const value = pattern.exec(path)?.[1];
+    if (value && boundedCausalIdentity(value)) result[key] = decodeURIComponent(value);
+  }
+  const visit = (value: unknown, depth: number) => {
+    if (!value || typeof value !== "object" || Array.isArray(value) || depth > 3) return;
+    for (const [key, candidate] of Object.entries(value as Record<string, unknown>)) {
+      if (
+        key in causalHeaderNames &&
+        typeof candidate === "string" &&
+        boundedCausalIdentity(candidate)
+      )
+        result[key as keyof typeof causalHeaderNames] ??= candidate;
+      else if (candidate && typeof candidate === "object") visit(candidate, depth + 1);
+    }
+  };
+  visit(body, 0);
+  return result;
+}
+
+function boundedCausalIdentity(value: string) {
+  return value.length >= 1 && value.length <= 200 && !/[\r\n]/.test(value);
+}
+
+function externalAgentIdentityFromEnvironment(): ExternalAgentIdentity {
+  return {
+    provider: process.env.SCRY_EXTERNAL_AGENT_PROVIDER ?? "unknown",
+    ...(process.env.SCRY_EXTERNAL_AGENT_MODEL
+      ? { model: process.env.SCRY_EXTERNAL_AGENT_MODEL }
+      : {}),
+    ...(process.env.SCRY_EXTERNAL_AGENT_RUN_ID
+      ? { externalRunId: process.env.SCRY_EXTERNAL_AGENT_RUN_ID }
+      : {}),
+    ...(process.env.SCRY_EXTERNAL_AGENT_EXPERIMENT_ID
+      ? { experimentId: process.env.SCRY_EXTERNAL_AGENT_EXPERIMENT_ID }
+      : {}),
+    ...(process.env.SCRY_CORRELATION_ID ? { correlationId: process.env.SCRY_CORRELATION_ID } : {}),
+  };
+}
+
 function safeRejectionContext(value: Record<string, unknown> | undefined) {
-  return Object.fromEntries(
+  const safe = Object.fromEntries(
     Object.entries(value ?? {}).filter(
       ([key, candidate]) => SAFE_REJECTION_CONTEXT_KEYS.has(key) && isSafeRejectionValue(candidate),
     ),
   );
+  const readiness = missionCompletionReadinessSchema.safeParse(value?.readiness);
+  return readiness.success ? { ...safe, readiness: readiness.data } : safe;
 }
 
 function isSafeRejectionValue(value: unknown): boolean {

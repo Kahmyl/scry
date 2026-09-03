@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { uuidSchema } from "./api.js";
 import { missionContextSchema } from "./mission.js";
+import { preparedOperationAuthorizationBindingSchema } from "./prepared-protected-operation.js";
 
 export const orchestrationStateSchema = z.enum([
   "unscheduled",
@@ -54,30 +55,65 @@ export const authorizationKindSchema = z.enum([
   "protected_mutation",
   "authentication_calibration",
 ]);
-export const grantMissionAuthorizationSchema = missionContextSchema
-  .extend({
-    objectiveId: uuidSchema,
-    environmentId: uuidSchema,
-    kind: authorizationKindSchema,
-    operationId: z.string().trim().min(1).max(200).optional(),
-    praxisSessionId: uuidSchema.optional(),
-    reason: z.string().trim().min(1).max(2000),
-    expiresAt: z.string().datetime().optional(),
-    confirmedUserAuthorized: z.literal(true),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if (value.kind === "protected_mutation" && !value.operationId)
+const grantMissionAuthorizationBase = missionContextSchema.extend({
+  objectiveId: uuidSchema,
+  environmentId: uuidSchema,
+  reason: z.string().trim().min(1).max(2000),
+  expiresAt: z.string().datetime().optional(),
+  confirmedUserAuthorized: z.literal(true),
+});
+
+/** Historical wire compatibility only. Canonical prepared execution does not use approval rows. */
+export const legacyGrantMissionAuthorizationSchema = z.discriminatedUnion("kind", [
+  grantMissionAuthorizationBase
+    .extend({
+      kind: authorizationKindSchema.exclude(["protected_mutation"]),
+      operationId: z.string().trim().min(1).max(200).optional(),
+      praxisSessionId: uuidSchema.optional(),
+    })
+    .strict(),
+  grantMissionAuthorizationBase
+    .extend({
+      kind: z.literal("protected_mutation"),
+      operationId: z.string().trim().min(1).max(200),
+      praxisSessionId: uuidSchema,
+    })
+    .strict(),
+]);
+
+export const grantMissionAuthorizationSchema = z
+  .discriminatedUnion("kind", [
+    grantMissionAuthorizationBase
+      .extend({
+        kind: authorizationKindSchema.exclude(["protected_mutation"]),
+        operationId: z.string().trim().min(1).max(200).optional(),
+        praxisSessionId: uuidSchema.optional(),
+      })
+      .strict(),
+    grantMissionAuthorizationBase
+      .extend({
+        kind: z.literal("protected_mutation"),
+        operationId: z.string().trim().min(1).max(200),
+        praxisSessionId: uuidSchema,
+        preparedOperation: preparedOperationAuthorizationBindingSchema,
+      })
+      .strict(),
+  ])
+  .superRefine((input, context) => {
+    if (
+      input.kind === "protected_mutation" &&
+      input.preparedOperation.publicOperationId !== input.operationId
+    )
       context.addIssue({
         code: "custom",
-        path: ["operationId"],
-        message: "Protected mutation authorization must name the exact operation",
+        path: ["preparedOperation", "publicOperationId"],
+        message: "prepared operation public ID must match the authorization operation ID",
       });
-    if (value.kind === "protected_mutation" && !value.praxisSessionId)
+    if (input.kind === "protected_mutation" && !input.expiresAt)
       context.addIssue({
         code: "custom",
-        path: ["praxisSessionId"],
-        message: "Protected mutation authorization must bind the live protected Praxis session",
+        path: ["expiresAt"],
+        message: "prepared protected operation authorization requires an expiry",
       });
   });
 export type GrantMissionAuthorizationInput = z.infer<typeof grantMissionAuthorizationSchema>;

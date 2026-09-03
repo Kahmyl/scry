@@ -2,8 +2,11 @@ import { z } from "zod";
 
 import { flowRevisionContentSchema, nameSchema, uuidSchema } from "./api.js";
 import { currentPlanSchema } from "./current.js";
+import { agentDecisionBoundarySchema, operationOutcomeSchema } from "./execution-kernel.js";
 import { missionAuthoringIntentSchema } from "./authoring.js";
 import { flowPurposeSchema, flowVisibilitySchema, objectiveContextSchema } from "./mission.js";
+import { outcomeClassificationSchema } from "./run.js";
+import { mutationReceiptSchema } from "./protected-operation.js";
 
 export const idempotencyKeySchema = z.string().trim().min(8).max(200);
 
@@ -47,6 +50,7 @@ export const createFlowRunSchema = objectiveContextSchema
     environmentId: uuidSchema,
     flowRevisionId: uuidSchema,
     executionModel: z.literal("agent_directed_v1").default("agent_directed_v1"),
+    qualificationCampaignAuthorizationId: uuidSchema.optional(),
     praxisSessionId: uuidSchema,
     protectedAuthorizations: z
       .array(
@@ -146,6 +150,72 @@ export const finalizeAgentDirectedRunSchema = z
   })
   .strict();
 
+export const dispatchedRunOperationResultSchema = z
+  .object({
+    runId: uuidSchema,
+    praxisSessionId: uuidSchema,
+    operationId: z.string().trim().min(1).max(200),
+    artifactRefs: z.array(uuidSchema),
+    intentId: z.string().trim().min(1).max(200),
+    functionalResult: z.enum(["succeeded", "failed", "inconclusive"]),
+    mutationOutcome: z.enum(["not_applied", "applied", "unknown"]),
+    privacyApplicable: z.boolean(),
+    privacyResult: z.enum(["verified", "unverified", "degraded", "sealed"]),
+    evidence: z
+      .object({
+        state: z.enum(["available", "suppressed", "quarantined", "failed"]),
+        count: z.number().int().nonnegative(),
+        reasonCodes: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/)).max(8),
+      })
+      .strict(),
+    successorObservation: z
+      .object({
+        documentEpoch: z.number().int().nonnegative(),
+        url: z.string().url(),
+        semanticPageContext: operationOutcomeSchema.shape.semanticPageContext.unwrap(),
+      })
+      .strict()
+      .superRefine((observation, context) => {
+        if (
+          observation.documentEpoch !== observation.semanticPageContext.authority.documentEpoch ||
+          observation.url !== observation.semanticPageContext.authority.url
+        )
+          context.addIssue({
+            code: "custom",
+            message: "successor observation authority must match its semantic page context",
+          });
+      })
+      .optional(),
+    reasonCode: z
+      .string()
+      .regex(/^[A-Z][A-Z0-9_]*$/)
+      .optional(),
+    decisionBoundary: agentDecisionBoundarySchema.optional(),
+    mutationReceipt: mutationReceiptSchema.optional(),
+    replayed: z.boolean(),
+  })
+  .strict();
+
+export const finalizedAgentDirectedRunResultSchema = z
+  .object({
+    runId: uuidSchema,
+    state: z.enum(["passed", "failed", "cancelled"]),
+    outcomeClassification: outcomeClassificationSchema,
+    reason: finalizeAgentDirectedRunSchema.shape.reason,
+  })
+  .strict();
+
+export const runPraxisAttachmentResultSchema = z
+  .object({
+    runId: uuidSchema,
+    praxisSessionId: uuidSchema,
+    epoch: z.number().int().positive().optional(),
+    replayed: z.boolean(),
+  })
+  .strict();
+
 export type DispatchRunOperationInput = z.infer<typeof dispatchRunOperationSchema>;
 export type AttachRunPraxisSessionInput = z.infer<typeof attachRunPraxisSessionSchema>;
 export type FinalizeAgentDirectedRunInput = z.infer<typeof finalizeAgentDirectedRunSchema>;
+export type DispatchedRunOperationResult = z.infer<typeof dispatchedRunOperationResultSchema>;
+export type FinalizedAgentDirectedRunResult = z.infer<typeof finalizedAgentDirectedRunResultSchema>;

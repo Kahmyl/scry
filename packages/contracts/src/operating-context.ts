@@ -14,6 +14,7 @@ export const getOperatingContextSchema = z
       .transform((value) => new URL(value).origin)
       .optional(),
     requiredCredentialReferences: z.array(uuid).max(20).default([]),
+    intendedPurpose: z.enum(["primary", "diagnostic", "recovery"]).optional(),
     authorizeDistinctMissionForReadOnlyUnknown: z.boolean().default(false),
   })
   .strict();
@@ -46,14 +47,47 @@ export const operatingContextSchema = z
             .object({
               id: uuid,
               title: z.string(),
-              status: z.enum(["planning", "running", "blocked", "awaiting_user"]),
+              status: z.enum([
+                "planning",
+                "running",
+                "blocked",
+                "awaiting_user",
+                "completed",
+                "failed",
+                "cancelled",
+              ]),
+              purpose: z.enum(["primary", "diagnostic", "recovery"]),
               revision: z.number().int().nonnegative(),
               currentObjectiveId: uuid.nullable(),
               resumePointer: missionResumePointerSchema.nullable(),
+              classification: z.enum([
+                "same_run_continuation",
+                "same_run_settled",
+                "active_other_run",
+                "mutation_reconciliation_required",
+                "settled_history",
+              ]),
+              activeExecutionOwnership: z.boolean(),
+              unresolvedMutationRisk: z.boolean(),
+              outstandingReconciliation: z.boolean(),
+              continuationAvailable: z.boolean(),
             })
             .strict(),
           5,
         ),
+        policy: z
+          .object({
+            decision: z.enum([
+              "fresh_primary_permitted",
+              "continuation_available",
+              "explicit_mission_selected",
+              "selection_required",
+            ]),
+            freshPrimaryMissionPermitted: z.boolean(),
+            continuationAvailable: z.boolean(),
+            historicalMissionCount: z.number().int().nonnegative(),
+          })
+          .strict(),
       })
       .strict(),
     credentials: boundedCollection(
@@ -171,6 +205,9 @@ export const operatingContextSchema = z
             "NO_PROJECT",
             "PROJECT_SELECTION_REQUIRED",
             "MISSION_SELECTION_REQUIRED",
+            "MISSION_MUTATION_RECONCILIATION_REQUIRED",
+            "MISSION_DISTINCT_WORK_AUTHORITY_REQUIRED",
+            "EXTERNAL_AGENT_RUN_ALREADY_SETTLED",
             "REQUIREMENTS_UNSATISFIED",
           ])
           .optional(),

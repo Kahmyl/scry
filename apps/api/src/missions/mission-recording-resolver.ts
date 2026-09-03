@@ -22,6 +22,11 @@ export type MissionRecordingSelectionSnapshot = Readonly<{
   sourceMissionRevision: number;
   selectedByAgentSessionId: string;
   createdAt: string;
+  sources: readonly Readonly<{
+    order: number;
+    runId: string;
+    canonicalAttemptId: string;
+  }>[];
 }>;
 
 export type ResolvedMissionRecording = Readonly<{
@@ -35,6 +40,7 @@ type SelectionRow = QueryResultRow & {
   sourceMissionRevision: number;
   selectedByAgentSessionId: string;
   createdAt: string;
+  sources: unknown;
 };
 
 type SelectedRunRow = QueryResultRow & {
@@ -116,11 +122,20 @@ export async function resolveMissionRecording(
          AS "sourceMissionRevision",
        selected_by_agent_session_id::text
          AS "selectedByAgentSessionId",
-       created_at::text AS "createdAt"
-     FROM mission_recording_selections
-     WHERE mission_id=$1
-       AND superseded_at IS NULL
-     ORDER BY revision DESC
+       created_at::text AS "createdAt",
+       COALESCE((
+         SELECT activity.safe_metadata->'sources'
+         FROM mission_activities activity
+         WHERE activity.mission_id=selection.mission_id
+           AND activity.type='recording_selection_updated'
+           AND activity.safe_metadata->>'selectionId'=selection.id::text
+         ORDER BY activity.occurred_at DESC,activity.id DESC
+         LIMIT 1
+       ),'[]'::jsonb) AS sources
+     FROM mission_recording_selections selection
+     WHERE selection.mission_id=$1
+       AND selection.superseded_at IS NULL
+     ORDER BY selection.revision DESC
      LIMIT 2`,
     [missionId],
   );
@@ -146,6 +161,7 @@ export async function resolveMissionRecording(
     sourceMissionRevision: Number(selectedAuthority.sourceMissionRevision),
     selectedByAgentSessionId: selectedAuthority.selectedByAgentSessionId,
     createdAt: iso(selectedAuthority.createdAt, "selection.createdAt"),
+    sources: recordingSources(selectedAuthority.sources),
   });
 
   const selectedRuns = await query<SelectedRunRow>(
@@ -234,6 +250,20 @@ export async function resolveMissionRecording(
 
     if (row.canonicalAttemptRunId !== row.runId)
       fail("MISSION_RECORDING_CANONICAL_ATTEMPT_RUN_MISMATCH");
+  }
+
+  if (selection.sources.length) {
+    if (selection.sources.length !== selectedRuns.rows.length)
+      fail("MISSION_RECORDING_SELECTED_SOURCE_INADMISSIBLE");
+    for (const [index, source] of selection.sources.entries()) {
+      const selected = selectedRuns.rows[index];
+      if (
+        source.order !== index ||
+        source.runId !== selected?.runId ||
+        source.canonicalAttemptId !== selected.canonicalAttemptId
+      )
+        fail("MISSION_RECORDING_SELECTED_SOURCE_INADMISSIBLE");
+    }
   }
 
   const attemptIds = selectedRuns.rows.map((row) => row.canonicalAttemptId!);
@@ -649,6 +679,19 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function text(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function recordingSources(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item, index) => {
+    const source = asRecord(item);
+    const order = Number(source.order);
+    const runId = text(source.runId);
+    const canonicalAttemptId = text(source.canonicalAttemptId);
+    if (!Number.isInteger(order) || order !== index || !runId || !canonicalAttemptId)
+      fail("MISSION_RECORDING_SELECTED_SOURCE_INADMISSIBLE");
+    return { order, runId, canonicalAttemptId };
+  });
 }
 
 function iso(value: string, field: string) {

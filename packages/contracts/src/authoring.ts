@@ -3,7 +3,11 @@ import { z } from "zod";
 import { flowRevisionContentSchema } from "./api.js";
 import { currentPlanSchema } from "./current.js";
 import { objectiveContextSchema } from "./mission.js";
-import { semanticRoleSchema, semanticScopeKindSchema } from "./grounding.js";
+import {
+  semanticRoleSchema,
+  semanticScopeKindSchema,
+  responseJsonPathSchema,
+} from "./grounding.js";
 
 const uuid = z.string().uuid();
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -167,7 +171,9 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
       target: missionAuthoringSemanticTargetSchema,
       semanticEffect: z
         .enum(["read_context_transition", "resource_mutation", "unknown"])
-        .optional(),
+        .describe(
+          "Required semantic classification. Use read_context_transition only for a proven read-only navigation or UI-context transition and pair it with live_read authority. resource_mutation and unknown remain mutation-capable; use unknown when read-only semantics are not established.",
+        ),
       activationMechanism: z.enum(["pointer", "element", "dom"]).optional(),
     })
     .strict(),
@@ -245,7 +251,9 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
       key: safePressKeySchema,
       semanticEffect: z
         .enum(["read_context_transition", "resource_mutation", "unknown"])
-        .optional(),
+        .describe(
+          "Required semantic classification. Use read_context_transition only for a proven read-only UI-context transition and pair it with live_read authority. resource_mutation and unknown remain mutation-capable; use unknown when read-only semantics are not established.",
+        ),
     })
     .strict(),
   z
@@ -266,13 +274,19 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
         .refine(
           (values) => new Set(values).size === values.length,
           "preparation intent IDs must be unique",
+        )
+        .describe(
+          "For dispatch_run_operation: exact intentIds of earlier successful non-mutating preparation operations from the same live Praxis session, Mission, Objective, and Flow. The protected mutation itself must not already have been dispatched.",
         ),
       mutation: z
         .object({
           kind: z.enum(["one_time", "read_only"]),
           target: missionAuthoringSemanticTargetSchema,
         })
-        .strict(),
+        .strict()
+        .describe(
+          "The mutation performed atomically with protected output acquisition. Use kind=one_time when the UI creates, reveals, copies, rotates, or returns a secret, credential, token, key, password, or other one-time protected value.",
+        ),
       syntheticProtectedInputs: z
         .array(
           z
@@ -328,7 +342,10 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
                 .max(100)
                 .regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
               classification: z.enum(["public", "protected"]),
-              target: missionAuthoringSemanticTargetSchema,
+              target: missionAuthoringSemanticTargetSchema.describe(
+                "Post-mutation value target. For one_time acquisition the output does not exist before dispatch: provide concept plus observable role/name/label and omit reference. Never reuse the mutation target reference. Classify safe public identity as public and only secrets or otherwise protected values as protected.",
+              ),
+              responseJsonPath: responseJsonPathSchema.optional(),
               storageName: z.string().trim().min(1).max(200),
             })
             .strict(),
@@ -338,6 +355,9 @@ export const missionAuthoringSemanticActionSchema = z.discriminatedUnion("kind",
         .refine(
           (outputs) => new Set(outputs.map((output) => output.reference)).size === outputs.length,
           "output references must be unique",
+        )
+        .describe(
+          "Typed post-mutation outputs acquired and persisted inside the same protected transaction. Safe public identity such as a client ID uses classification=public; a secret or otherwise protected value uses classification=protected and must never be read through an ordinary observation or public artifact. For one_time acquisition output targets are semantic descriptions without a pre-mutation reference.",
         ),
       externalResourceBindings: z
         .array(
@@ -507,15 +527,25 @@ export const missionAuthoringIntentSchema = z
       .strict(),
     authorization: z
       .object({
-        kind: z.enum([
-          "ordinary",
-          "authentication",
-          "reversible",
-          "live_read",
-          "live_mutation",
-          "protected_mutation",
-        ]),
-        authorizationId: uuid.optional(),
+        kind: z
+          .enum([
+            "ordinary",
+            "authentication",
+            "reversible",
+            "live_read",
+            "live_mutation",
+            "protected_mutation",
+            "prepared_execution",
+          ])
+          .describe(
+            "live_mutation excludes any mutation that may create, reveal, copy, rotate, or return a protected value. Such operations require protected_mutation and action.kind=acquire_protected_outputs.",
+          ),
+        preparedExecutionCapabilityId: uuid.optional(),
+        authorizationId: uuid
+          .optional()
+          .describe(
+            "Use only with live_read, live_mutation, or protected_mutation. Authentication, ordinary, and reversible authority never consume a grant authorization ID.",
+          ),
       })
       .strict(),
     protectedInputReferences: z.array(uuid).max(20).default([]),
@@ -529,6 +559,26 @@ export const missionAuthoringIntentSchema = z
   })
   .strict()
   .superRefine((intent, context) => {
+    if (
+      (intent.authorization.kind === "prepared_execution") !==
+      Boolean(intent.authorization.preparedExecutionCapabilityId)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["authorization"],
+        message: "prepared execution requires its exact mechanical capability",
+      });
+
+    if (
+      intent.authorization.authorizationId &&
+      !["live_read", "live_mutation", "protected_mutation"].includes(intent.authorization.kind)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["authorization", "authorizationId"],
+        message:
+          "authentication, ordinary, and reversible authority must omit authorizationId; authentication_calibration grants are not browser-login authority",
+      });
     if (
       (intent.action.kind === "activate" || intent.action.kind === "press") &&
       intent.action.semanticEffect === "read_context_transition" &&
@@ -586,6 +636,7 @@ export const missionAuthoringIntentSchema = z
       });
     if (
       intent.action.kind === "acquire_protected_outputs" &&
+      intent.authorization.kind !== "prepared_execution" &&
       (intent.authorization.kind !== "protected_mutation" || !intent.authorization.authorizationId)
     )
       context.addIssue({
@@ -640,7 +691,7 @@ export const missionAuthoringIntentSchema = z
     if (
       intent.action.kind === "fill" &&
       intent.action.protectedReferenceId &&
-      !["authentication", "live_mutation"].includes(intent.authorization.kind)
+      !["authentication", "live_mutation", "prepared_execution"].includes(intent.authorization.kind)
     )
       context.addIssue({
         code: "custom",

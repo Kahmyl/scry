@@ -98,7 +98,7 @@ export class ProbeRuntimeRepository {
   }
   async resolveCredential(runtime: any, reference: string) {
     const result = await this.db.query<any>(
-      `SELECT c.ciphertext,c.initialization_vector AS "initializationVector",c.authentication_tag AS "authenticationTag" FROM project_credentials c JOIN environments e ON e.id=$1 AND e.project_id=c.project_id WHERE c.id=$2 AND c.project_id=$3 AND c.security_status='active' AND c.deleted_at IS NULL AND e.secret_refs ? ($2::uuid)::text`,
+      `SELECT c.ciphertext,c.initialization_vector AS "initializationVector",c.authentication_tag AS "authenticationTag" FROM project_credentials c JOIN environments e ON e.id=$1 AND e.project_id=c.project_id WHERE c.id=$2 AND c.project_id=$3 AND c.security_status='active' AND c.deleted_at IS NULL AND c.origin_protected_operation_id IS NULL AND e.secret_refs ? ($2::uuid)::text`,
       [runtime.environmentId, reference, runtime.projectId],
     );
     if (!result.rowCount) throw new Error("PROBE_CREDENTIAL_UNAVAILABLE");

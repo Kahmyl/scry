@@ -91,6 +91,6 @@ describe("adaptive protected-output reference projection", () => {
     expect(admission?.values.at(-1)).toEqual(JSON.stringify([credentialId]));
     expect(admission?.values.at(-1)).not.toContain(inputCredentialId);
     const provenance = queries.find(({ text }) => text.includes("SELECT credential.id::text"));
-    expect(provenance?.values).toEqual([sessionId, [credentialId], protectedOperationId]);
+    expect(provenance?.values).toEqual([sessionId, [credentialId], protectedOperationId, false]);
   });
 });

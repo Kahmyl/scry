@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { nameSchema, uuidSchema } from "./api.js";
+import { mutationReceiptSchema } from "./protected-operation.js";
 
 const missionIdempotencyKeySchema = z.string().trim().min(8).max(200);
 
@@ -21,8 +22,23 @@ export const objectiveStatusSchema = z.enum([
   "blocked",
   "skipped",
 ]);
-export const agentProviderSchema = z.enum(["codex", "claude", "scry_agent", "human"]);
-export const agentSessionStatusSchema = z.enum(["active", "completed", "interrupted", "failed"]);
+/** Factual transport/provider identity. This is provenance, not an architecture switch. */
+export const agentProviderSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .regex(/^[a-z0-9][a-z0-9._-]*$/);
+export const externalAgentModelSchema = z.string().trim().min(1).max(200);
+export const externalAgentRunIdSchema = uuidSchema;
+export const externalAgentExperimentIdSchema = z.string().trim().min(1).max(200);
+export const agentSessionStatusSchema = z.enum([
+  "active",
+  "blocked",
+  "completed",
+  "interrupted",
+  "failed",
+]);
 export const flowVisibilitySchema = z.enum(["reusable", "mission_local", "internal"]);
 export const flowPurposeSchema = z.enum([
   "primary",
@@ -44,6 +60,66 @@ export const runRoleSchema = z.enum([
   "invalidated",
 ]);
 export const reportStatusSchema = z.enum(["published", "superseded"]);
+export const missionReadinessResolutionSchema = z.enum([
+  "automatic",
+  "fresh_observation_required",
+  "mutation_reconciliation_required",
+  "evidence_selection_required",
+  "external_agent_action_required",
+  "human_action_required",
+]);
+export const missionReadinessBlockerSchema = z
+  .object({
+    code: z.string().trim().min(1).max(200),
+    missionId: uuidSchema,
+    objectiveId: uuidSchema.optional(),
+    runId: uuidSchema.optional(),
+    attemptId: uuidSchema.optional(),
+    praxisSessionId: uuidSchema.optional(),
+    protectedOperationId: uuidSchema.optional(),
+    operationId: z.string().trim().min(1).max(200).optional(),
+    evidenceId: uuidSchema.optional(),
+    evidenceRecommendationId: uuidSchema.optional(),
+    recordingId: uuidSchema.optional(),
+    artifactId: uuidSchema.optional(),
+    evidenceClass: z.string().trim().min(1).max(100).optional(),
+    state: z.string().trim().min(1).max(200),
+    reasonCode: z.string().trim().min(1).max(200).optional(),
+    reason: z.string().trim().min(1).max(500).optional(),
+    resolution: missionReadinessResolutionSchema,
+    safeActions: z.array(z.string().trim().min(1).max(200)).max(20),
+    nextActions: z.array(z.string().trim().min(1).max(200)).max(20),
+  })
+  .strict();
+export const missionCompletionReadinessSchema = z
+  .object({
+    ready: z.boolean(),
+    missionId: uuidSchema,
+    blockers: z.array(missionReadinessBlockerSchema).max(500),
+    truncated: z.boolean(),
+    totalBlockerCount: z.number().int().nonnegative(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.ready !== (value.totalBlockerCount === 0))
+      context.addIssue({
+        code: "custom",
+        path: ["ready"],
+        message: "Mission readiness is true exactly when no blockers remain",
+      });
+    if (value.totalBlockerCount < value.blockers.length)
+      context.addIssue({
+        code: "custom",
+        path: ["totalBlockerCount"],
+        message: "Total blocker count cannot be smaller than the returned blocker count",
+      });
+    if (value.truncated !== value.totalBlockerCount > value.blockers.length)
+      context.addIssue({
+        code: "custom",
+        path: ["truncated"],
+        message: "Truncation must report whether blockers were omitted",
+      });
+  });
 export const resumeActionSchema = z.enum([
   "revise_flow",
   "run_candidate",
@@ -181,12 +257,15 @@ export const activityRelationSchema = z.enum([
   "verified_by",
   "accepted_for",
 ]);
+export const missionPurposeSchema = z.enum(["primary", "diagnostic", "recovery"]);
+export const missionRelationKindSchema = z.enum(["diagnoses", "recovery_for", "informs"]);
 export const missionActivityTypeSchema = z.enum([
   "mission_created",
   "mission_updated",
   "mission_resumed",
   "mission_cancelled",
   "mission_reopened",
+  "mission_related",
   "agent_session_started",
   "agent_session_ended",
   "objective_created",
@@ -286,15 +365,34 @@ export const createMissionSchema = z
   .object({
     title: nameSchema,
     originalInstruction: z.string().trim().min(1).max(20_000),
-    provider: agentProviderSchema.default("codex"),
+    maxBusinessMutationDispatches: z
+      .number()
+      .int()
+      .min(0)
+      .max(1000)
+      .optional()
+      .describe(
+        "Immutable Mission business-effect dispatch budget, default 1. Set the numeric limit for requested work at creation; owner rotation and new operation IDs do not reset it.",
+      ),
+    provider: agentProviderSchema,
+    model: externalAgentModelSchema.optional(),
+    externalRunId: externalAgentRunIdSchema.optional(),
+    experimentId: externalAgentExperimentIdSchema.optional(),
     instructionSnapshot: z.string().trim().min(1).max(20_000),
     connectionId: z.string().trim().min(1).max(500).optional(),
+    purpose: missionPurposeSchema.default("primary"),
     idempotencyKey: missionIdempotencyKeySchema,
     distinctReason: z.string().trim().min(1).max(2_000).optional(),
     distinctAuthority: missionDistinctWorkAuthoritySchema.optional(),
   })
   .strict()
   .superRefine((value, context) => {
+    if (value.purpose !== "primary" && !value.distinctReason)
+      context.addIssue({
+        code: "custom",
+        path: ["distinctReason"],
+        message: "Diagnostic and recovery Missions require explicit distinct-work authority.",
+      });
     if (value.distinctReason && !value.distinctAuthority)
       context.addIssue({
         code: "custom",
@@ -311,6 +409,36 @@ export const createMissionSchema = z
       });
   });
 
+export const createMissionRelationSchema = missionContextSchema
+  .extend({
+    targetMissionId: uuidSchema,
+    relation: missionRelationKindSchema,
+    reason: z.string().trim().min(1).max(2_000),
+    idempotencyKey: missionIdempotencyKeySchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.targetMissionId === value.missionId)
+      context.addIssue({
+        code: "custom",
+        path: ["targetMissionId"],
+        message: "A Mission relation requires distinct source and target Missions",
+      });
+  });
+
+export const missionRelationFactSchema = z
+  .object({
+    id: uuidSchema,
+    projectId: uuidSchema,
+    sourceMissionId: uuidSchema,
+    targetMissionId: uuidSchema,
+    relation: missionRelationKindSchema,
+    createdByAgentSessionId: uuidSchema,
+    reason: z.string().trim().min(1).max(2_000),
+    createdAt: z.string().datetime(),
+  })
+  .strict();
+
 export const updateMissionSchema = missionContextSchema
   .extend({
     title: nameSchema.optional(),
@@ -325,6 +453,9 @@ export const updateMissionSchema = missionContextSchema
 export const startAgentSessionSchema = z
   .object({
     provider: agentProviderSchema,
+    model: externalAgentModelSchema.optional(),
+    externalRunId: externalAgentRunIdSchema.optional(),
+    experimentId: externalAgentExperimentIdSchema.optional(),
     instructionSnapshot: z.string().trim().min(1).max(20_000),
     connectionId: z.string().trim().min(1).max(500).optional(),
     idempotencyKey: missionIdempotencyKeySchema,
@@ -332,8 +463,129 @@ export const startAgentSessionSchema = z
   })
   .strict();
 
+export const missionAgentSessionReplayFactsSchema = z
+  .object({
+    idempotencyScope: z.literal("mission_agent_session"),
+    owner: z
+      .object({
+        missionId: uuidSchema,
+        agentSessionId: uuidSchema,
+      })
+      .strict(),
+    sessionTerminal: z.boolean(),
+    requiresFreshIdempotencyKey: z.boolean(),
+    safeActions: z
+      .array(z.enum(["get_mission", "resume_mission"]))
+      .min(1)
+      .max(2),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.sessionTerminal !== value.requiresFreshIdempotencyKey) {
+      context.addIssue({
+        code: "custom",
+        path: ["requiresFreshIdempotencyKey"],
+        message: "a terminal replay requires a fresh idempotency key; an active replay does not",
+      });
+    }
+  });
+
+export const startedAgentSessionSchema = z
+  .object({
+    missionId: uuidSchema,
+    agentSessionId: uuidSchema,
+    status: agentSessionStatusSchema,
+    replayed: z.boolean(),
+    replay: missionAgentSessionReplayFactsSchema.optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.replayed !== Boolean(value.replay)) {
+      context.addIssue({
+        code: "custom",
+        path: ["replay"],
+        message: "replay facts must exist exactly when replayed is true",
+      });
+    }
+
+    if (!value.replay) return;
+
+    if (
+      value.replay.owner.missionId !== value.missionId ||
+      value.replay.owner.agentSessionId !== value.agentSessionId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["replay", "owner"],
+        message: "replay owner must identify the returned Mission agent session",
+      });
+    }
+
+    if (value.replay.sessionTerminal !== (value.status !== "active")) {
+      context.addIssue({
+        code: "custom",
+        path: ["replay", "sessionTerminal"],
+        message: "replay terminality must match the returned agent-session status",
+      });
+    }
+  });
+
+export type StartedAgentSession = z.infer<typeof startedAgentSessionSchema>;
+
 export const endAgentSessionSchema = z
   .object({ status: agentSessionStatusSchema.exclude(["active"]) })
+  .strict();
+
+export const externalAgentTerminationReasonSchema = z.enum([
+  "MAX_TOOL_CALLS_EXCEEDED",
+  "MAX_TURNS_EXCEEDED",
+  "MAX_WALL_TIME_EXCEEDED",
+  "MODEL_PROVIDER_ERROR",
+  "MCP_TOOL_TRANSPORT_ERROR",
+  "EXTERNAL_AGENT_HARNESS_COMPLETED",
+  "EXTERNAL_AGENT_HARNESS_CANCELLED",
+  "EXTERNAL_AGENT_UNRECOVERABLE_FAILURE",
+  "EXTERNAL_AGENT_LEASE_EXPIRED",
+  "EXTERNAL_AGENT_PROCESS_LOST",
+  "EXTERNAL_AGENT_OBJECTIVE_COMPLETED",
+  "EXTERNAL_AGENT_BLOCKED_USER_AUTHORITY",
+  "EXTERNAL_AGENT_BLOCKED_SYSTEM",
+  "EXTERNAL_AGENT_MODEL_STOPPED_WITHOUT_COMPLETION",
+]);
+export const externalAgentTerminalOutcomeSchema = z.enum([
+  "objective_completed",
+  "blocked_user_authority",
+  "blocked_system",
+  "limit_exceeded",
+  "provider_failure",
+  "cancelled",
+  "model_stopped_without_completion",
+]);
+export const startExternalAgentRunSchema = z
+  .object({
+    provider: agentProviderSchema,
+    model: externalAgentModelSchema.optional(),
+    experimentId: externalAgentExperimentIdSchema.optional(),
+    correlationId: externalAgentRunIdSchema.optional(),
+  })
+  .strict();
+export const terminateExternalAgentRunSchema = z
+  .object({
+    reasonCode: externalAgentTerminationReasonSchema,
+    terminalOutcome: externalAgentTerminalOutcomeSchema.optional(),
+    blockerCode: z
+      .string()
+      .regex(/^[A-Z][A-Z0-9_]{0,119}$/)
+      .optional(),
+  })
+  .strict();
+export const adoptLegacyExternalAgentSessionSchema = terminateExternalAgentRunSchema
+  .extend({
+    externalRunId: externalAgentRunIdSchema,
+    provider: agentProviderSchema,
+    model: externalAgentModelSchema.optional(),
+    experimentId: externalAgentExperimentIdSchema.optional(),
+  })
   .strict();
 
 export const finalizeAgentWorkSchema = z.discriminatedUnion("kind", [
@@ -430,7 +682,15 @@ export const acceptEvidenceSchema = missionContextSchema
     artifactIds: z.array(uuidSchema).max(500).default([]),
     conclusion: z.string().trim().min(1).max(10_000),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (new Set(value.artifactIds).size !== value.artifactIds.length)
+      context.addIssue({
+        code: "custom",
+        path: ["artifactIds"],
+        message: "Evidence selection cannot contain duplicate Artifact IDs",
+      });
+  });
 export const createActivityRelationSchema = missionContextSchema
   .extend({
     fromActivityId: uuidSchema,
@@ -455,6 +715,29 @@ export const setMissionRecordingSelectionSchema = missionContextSchema
       });
   });
 
+export const missionRecordingSelectionResultSchema = z
+  .object({
+    selectionId: uuidSchema,
+    missionId: uuidSchema,
+    selectionRevision: z.number().int().positive(),
+    sourceMissionRevision: z.number().int().nonnegative(),
+    orderedRunIds: z.array(uuidSchema),
+    sources: z
+      .array(
+        z
+          .object({
+            order: z.number().int().nonnegative(),
+            runId: uuidSchema,
+            canonicalAttemptId: uuidSchema,
+          })
+          .strict(),
+      )
+      .default([]),
+    missionRevision: z.number().int().nonnegative(),
+    replayed: z.boolean(),
+  })
+  .strict();
+
 export const publishMissionReportSchema = missionContextSchema
   .extend({
     overallConclusion: z.string().trim().min(1).max(20_000),
@@ -465,7 +748,314 @@ export const publishMissionReportSchema = missionContextSchema
   })
   .strict();
 
+export const missionEvidenceArtifactFactSchema = z
+  .object({
+    id: uuidSchema,
+    attemptId: uuidSchema,
+    stepId: z.string().nullable().optional(),
+    kind: z.string().trim().min(1).max(100),
+    availability: z.string().trim().min(1).max(100),
+    privacyClassification: z.string().trim().min(1).max(100),
+    contentType: z.string().trim().min(1).max(500),
+    sizeBytes: z.string().nullable(),
+    checksumSha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable(),
+    contextId: uuidSchema.nullable(),
+    captureEpoch: z.number().int().positive().nullable(),
+    retentionUntil: z.string().datetime().nullable(),
+    createdAt: z.string().datetime(),
+  })
+  .strict();
+
+export const missionAcceptedEvidenceFactSchema = z
+  .object({
+    id: uuidSchema,
+    objectiveId: uuidSchema,
+    runId: uuidSchema,
+    artifactId: uuidSchema.nullable(),
+    selectionOrder: z.number().int().nonnegative().optional(),
+    acceptanceConclusion: z.string().max(10_000),
+    acceptedByAgentSessionId: uuidSchema,
+    acceptedAt: z.string().datetime(),
+    run: z
+      .object({
+        id: uuidSchema,
+        state: z.string().trim().min(1).max(100),
+        outcomeClassification: z.string().trim().min(1).max(200).nullable(),
+        resultClassification: z.string().trim().min(1).max(200).nullable(),
+        reliabilityEligible: z.boolean(),
+        flowRevisionId: uuidSchema,
+        environmentId: uuidSchema,
+        executionModel: z.string().trim().min(1).max(200).nullable(),
+        createdAt: z.string().datetime(),
+        updatedAt: z.string().datetime(),
+      })
+      .strict(),
+    canonicalAttempt: z
+      .object({
+        id: uuidSchema,
+        runId: uuidSchema,
+        attemptNumber: z.number().int().positive(),
+        state: z.string().trim().min(1).max(100),
+        startedAt: z.string().datetime().nullable(),
+        completedAt: z.string().datetime().nullable(),
+      })
+      .strict(),
+    artifact: missionEvidenceArtifactFactSchema.nullable(),
+  })
+  .strict();
+
+export const missionEvidenceCompositionSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    missionId: uuidSchema,
+    sourceMissionRevision: z.number().int().nonnegative(),
+    objectives: z.array(
+      z
+        .object({
+          objectiveId: uuidSchema,
+          order: z.number().int().nonnegative(),
+          acceptedRunIds: z.array(uuidSchema),
+          acceptedArtifactIds: z.array(uuidSchema),
+          acceptedEvidence: z.array(missionAcceptedEvidenceFactSchema),
+        })
+        .strict(),
+    ),
+    supersededAttemptCount: z.number().int().nonnegative(),
+    evidenceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+export const missionRecordingSelectionSnapshotSchema = z
+  .object({
+    id: uuidSchema,
+    revision: z.number().int().positive(),
+    sourceMissionRevision: z.number().int().nonnegative(),
+    selectedByAgentSessionId: uuidSchema,
+    createdAt: z.string().datetime(),
+    sources: z
+      .array(
+        z
+          .object({
+            order: z.number().int().nonnegative(),
+            runId: uuidSchema,
+            canonicalAttemptId: uuidSchema,
+          })
+          .strict(),
+      )
+      .default([]),
+  })
+  .strict();
+
+const missionRecordingArtifactFactSchema = missionEvidenceArtifactFactSchema.omit({
+  retentionUntil: true,
+  stepId: true,
+});
+
+const missionRecordingTimelineEntrySchema = z
+  .object({
+    sequence: z.number().int().nonnegative(),
+    entryType: z.enum([
+      "capture_epoch",
+      "video_segment",
+      "trace_segment",
+      "protected_gap",
+      "document_transition_gap",
+      "unavailable_interval",
+      "quarantine_record",
+      "checkpoint_boundary",
+    ]),
+    operationId: z.string().nullable(),
+    channel: z.string().nullable(),
+    startedAt: z.string().datetime(),
+    endedAt: z.string().datetime().nullable(),
+    reason: z.string().nullable(),
+    status: z.string().nullable(),
+    privacyStatus: z.string().nullable(),
+    contextId: uuidSchema.nullable(),
+    captureEpoch: z.number().int().positive().nullable(),
+    checkpointId: z.string().nullable(),
+    checkpointBoundary: z.string().nullable(),
+    artifactId: uuidSchema.nullable(),
+    artifact: missionRecordingArtifactFactSchema.nullable(),
+    mediaDisposition: z.enum(["playable", "omitted"]).nullable(),
+  })
+  .strict();
+
+export const missionRecordingManifestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    missionId: uuidSchema,
+    sourceMissionRevision: z.number().int().nonnegative(),
+    runs: z.array(
+      z
+        .object({
+          order: z.number().int().nonnegative(),
+          run: z
+            .object({
+              id: uuidSchema,
+              objectiveId: uuidSchema,
+              state: z.string().trim().min(1).max(100),
+              outcomeClassification: z.string().trim().min(1).max(200).nullable(),
+              resultClassification: z.string().trim().min(1).max(200).nullable(),
+              createdAt: z.string().datetime(),
+              completedAt: z.string().datetime().nullable(),
+            })
+            .strict(),
+          canonicalAttempt: z
+            .object({
+              id: uuidSchema,
+              runId: uuidSchema,
+              attemptNumber: z.number().int().positive(),
+              state: z.string().trim().min(1).max(100),
+              startedAt: z.string().datetime().nullable(),
+              completedAt: z.string().datetime().nullable(),
+            })
+            .strict(),
+          continuityFromPrevious: z
+            .object({
+              kind: z.literal("successor_checkpoint"),
+              predecessorRunId: uuidSchema,
+              checkpointId: uuidSchema,
+              restoredByPraxisSessionId: uuidSchema,
+            })
+            .strict()
+            .nullable(),
+          timeline: z.array(missionRecordingTimelineEntrySchema),
+        })
+        .strict(),
+    ),
+    boundaries: z
+      .array(
+        z.discriminatedUnion("kind", [
+          z
+            .object({
+              order: z.number().int().nonnegative(),
+              kind: z.literal("verified_checkpoint"),
+              predecessorRunId: uuidSchema,
+              successorRunId: uuidSchema,
+              checkpointId: uuidSchema,
+              restoredByPraxisSessionId: uuidSchema,
+            })
+            .strict(),
+          z
+            .object({
+              order: z.number().int().nonnegative(),
+              kind: z.literal("recording_gap"),
+              predecessorRunId: uuidSchema,
+              successorRunId: uuidSchema,
+              startedAt: z.string().datetime().nullable(),
+              endedAt: z.string().datetime().nullable(),
+              reason: z.literal("browser_authority_changed_without_verified_continuity"),
+            })
+            .strict(),
+        ]),
+      )
+      .default([]),
+    recordingDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+export const missionRelationDisclosureSchema = z
+  .object({
+    relationId: uuidSchema,
+    relation: missionRelationKindSchema,
+    direction: z.enum(["incoming", "outgoing"]),
+    reason: z.string().trim().min(1).max(2_000),
+    createdAt: z.string().datetime(),
+    relatedMission: z
+      .object({
+        id: uuidSchema,
+        purpose: missionPurposeSchema,
+        status: missionStatusSchema,
+      })
+      .strict(),
+    unresolvedProtectedOperations: z.array(
+      z
+        .object({
+          protectedOperationId: uuidSchema,
+          operationId: z.string().trim().min(1).max(200),
+          objectiveId: uuidSchema,
+          state: z.string().trim().min(1).max(100),
+          mutationOutcome: z.enum(["not_attempted", "not_applied", "applied", "unknown"]),
+          recoveryClass: z.string().trim().min(1).max(100).nullable(),
+          failureCode: z.string().trim().min(1).max(200).nullable(),
+          updatedAt: z.string().datetime(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+export const missionReportSnapshotSchema = z
+  .object({
+    mission: z
+      .object({
+        id: uuidSchema,
+        title: z.string().trim().min(1).max(2_000),
+        originalInstruction: z.string().max(20_000),
+        purpose: missionPurposeSchema.default("primary"),
+        status: missionStatusSchema,
+        sourceRevision: z.number().int().nonnegative(),
+      })
+      .strict(),
+    overallConclusion: z.string().max(20_000),
+    journeySummary: z.array(z.string().max(2_000)).max(500),
+    remainingActions: z.array(z.string().max(2_000)).max(100),
+    objectiveResults: z.array(
+      z
+        .object({
+          id: uuidSchema,
+          title: z.string().max(2_000),
+          status: objectiveStatusSchema,
+          conclusion: z.string().nullable(),
+          acceptedRunIds: z.array(uuidSchema),
+          acceptedArtifactIds: z.array(uuidSchema),
+        })
+        .strict(),
+    ),
+    evidence: missionEvidenceCompositionSchema,
+    evidenceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    recordingSelection: missionRecordingSelectionSnapshotSchema.nullable(),
+    recording: missionRecordingManifestSchema.nullable(),
+    recordingDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable(),
+    mutationReceipts: z.array(mutationReceiptSchema).default([]),
+    relatedMissions: z.array(missionRelationDisclosureSchema).default([]),
+    compositionDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    supersededAttemptCount: z.number().int().nonnegative(),
+    generatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export const missionReportPreviewSchema = z
+  .object({
+    completionReadiness: missionCompletionReadinessSchema,
+    snapshot: missionReportSnapshotSchema.nullable(),
+  })
+  .strict();
+
+export const publishedMissionReportSchema = z
+  .object({
+    id: uuidSchema,
+    missionId: uuidSchema,
+    revision: z.number().int().positive(),
+    status: z.literal("published"),
+    snapshot: missionReportSnapshotSchema,
+    replayed: z.boolean(),
+  })
+  .strict();
+
 export type MissionStatus = z.infer<typeof missionStatusSchema>;
+export type MissionCompletionReadiness = z.infer<typeof missionCompletionReadinessSchema>;
+export type MissionReadinessBlocker = z.infer<typeof missionReadinessBlockerSchema>;
 export type ObjectiveStatus = z.infer<typeof objectiveStatusSchema>;
 export type FlowVisibility = z.infer<typeof flowVisibilitySchema>;
 export type FlowPurpose = z.infer<typeof flowPurposeSchema>;
@@ -473,10 +1063,21 @@ export type RunRole = z.infer<typeof runRoleSchema>;
 export type MissionContext = z.infer<typeof missionContextSchema>;
 export type ObjectiveContext = z.infer<typeof objectiveContextSchema>;
 export type MissionResumePointer = z.infer<typeof missionResumePointerSchema>;
-export type CreateMissionInput = z.infer<typeof createMissionSchema>;
+type ParsedCreateMissionInput = z.infer<typeof createMissionSchema>;
+export type CreateMissionInput = Omit<ParsedCreateMissionInput, "purpose"> & {
+  purpose?: ParsedCreateMissionInput["purpose"];
+};
+export type CreateMissionRelationInput = z.infer<typeof createMissionRelationSchema>;
+export type MissionRelationFact = z.infer<typeof missionRelationFactSchema>;
+export type MissionRelationDisclosure = z.infer<typeof missionRelationDisclosureSchema>;
 export type UpdateMissionInput = z.infer<typeof updateMissionSchema>;
 export type StartAgentSessionInput = z.infer<typeof startAgentSessionSchema>;
 export type EndAgentSessionInput = z.infer<typeof endAgentSessionSchema>;
+export type TerminateExternalAgentRunInput = z.infer<typeof terminateExternalAgentRunSchema>;
+export type StartExternalAgentRunInput = z.infer<typeof startExternalAgentRunSchema>;
+export type AdoptLegacyExternalAgentSessionInput = z.infer<
+  typeof adoptLegacyExternalAgentSessionSchema
+>;
 export type FinalizeAgentWorkInput = z.infer<typeof finalizeAgentWorkSchema>;
 export type FinalizedAgentWork = z.infer<typeof finalizedAgentWorkSchema>;
 export type CreateObjectiveInput = z.infer<typeof createObjectiveSchema>;
@@ -489,3 +1090,5 @@ export type AcceptEvidenceInput = z.infer<typeof acceptEvidenceSchema>;
 export type CreateActivityRelationInput = z.infer<typeof createActivityRelationSchema>;
 export type SetMissionRecordingSelectionInput = z.infer<typeof setMissionRecordingSelectionSchema>;
 export type PublishMissionReportInput = z.infer<typeof publishMissionReportSchema>;
+export type PublishedMissionReport = z.infer<typeof publishedMissionReportSchema>;
+export type MissionReportPreview = z.infer<typeof missionReportPreviewSchema>;

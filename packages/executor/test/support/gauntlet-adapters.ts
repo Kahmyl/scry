@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import { markProtectedClipboardTouched } from "../../src/privacy-clipboard-runtime.js";
+import { markProtectedClipboardTouched } from "@scry/praxis";
 
 export type AdapterCapability =
   "clipboard_extraction" | "network_extraction" | "safe_exit" | "credential_revocation";

@@ -87,10 +87,18 @@ describe("Mission recording selection authority", () => {
           {
             id: runA,
             objectiveId: objectiveA,
+            state: "passed",
+            canonicalAttemptId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            canonicalAttemptState: "passed",
+            canonicalAttemptCompletedAt: "2026-08-23T16:00:00.000Z",
           },
           {
             id: runB,
             objectiveId: objectiveB,
+            state: "passed",
+            canonicalAttemptId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            canonicalAttemptState: "passed",
+            canonicalAttemptCompletedAt: "2026-08-23T16:01:00.000Z",
           },
         ]);
 
@@ -149,6 +157,18 @@ describe("Mission recording selection authority", () => {
       selectionRevision: 1,
       sourceMissionRevision: 11,
       orderedRunIds: [runB, runA],
+      sources: [
+        {
+          order: 0,
+          runId: runB,
+          canonicalAttemptId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        },
+        {
+          order: 1,
+          runId: runA,
+          canonicalAttemptId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        },
+      ],
       missionRevision: 12,
       replayed: false,
     });

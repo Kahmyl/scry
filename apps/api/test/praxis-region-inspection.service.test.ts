@@ -1,0 +1,151 @@
+import { randomUUID } from "node:crypto";
+import { describe, expect, it, vi } from "vitest";
+
+import { PraxisSessionController } from "../src/adaptive-sessions/adaptive-session.controller.js";
+import { MissionFlowAuthoringService } from "../src/adaptive-sessions/mission-flow-authoring.service.js";
+
+const principal = {
+  kind: "user" as const,
+  subject: "user:test",
+  userId: randomUUID(),
+  email: "owner@example.test",
+  workspaceId: randomUUID(),
+  role: "owner" as const,
+};
+const sessionId = randomUUID();
+const input = {
+  contextControlReference: "context-control-0123456789abcdef0123456789abcdef",
+};
+const inspection = {
+  contextControlReference: input.contextControlReference,
+  authority: {
+    referenceVersion: 1 as const,
+    pageId: "page-1",
+    frameId: "frame-1",
+    documentEpoch: 1,
+    documentIdentity: "document-1",
+  },
+  region: { kind: "section" as const },
+  readableValues: [],
+  readableValueCompleteness: {
+    kind: "bounded" as const,
+    observed: 0,
+    returned: 0,
+    truncated: false,
+  },
+};
+
+describe("Praxis region inspection API service", () => {
+  it("delegates structure and runtime factual reads without persistence or plaintext logging", async () => {
+    const repository = {
+      get: vi.fn(async () => ({ id: sessionId, state: "active" })),
+      beginMissionOperation: vi.fn(),
+    };
+    const structure = { structures: [] };
+    const runtime = { values: [] };
+    const structureRead = { text: "public structure" };
+    const runtimeRead = { text: "public runtime" };
+    const runner = {
+      inspectStructure: vi.fn(async () => structure),
+      readPublicStructureValue: vi.fn(async () => structureRead),
+      inspectRuntimeState: vi.fn(async () => runtime),
+      readPublicRuntimeValue: vi.fn(async () => runtimeRead),
+    };
+    const service = new MissionFlowAuthoringService(
+      repository as never,
+      runner as never,
+      { assertAcceptingWork: vi.fn() } as never,
+    );
+    const structureInput = {
+      reference: "context-structure-0123456789abcdef0123456789abcdef",
+      field: "name" as const,
+    };
+    const runtimeInput = { reference: "context-runtime-0123456789abcdef0123456789abcdef" };
+    await expect(service.inspectStructure(principal, sessionId)).resolves.toBe(structure);
+    await expect(
+      service.readPublicStructureValue(principal, sessionId, structureInput),
+    ).resolves.toBe(structureRead);
+    await expect(service.inspectRuntimeState(principal, sessionId)).resolves.toBe(runtime);
+    await expect(service.readPublicRuntimeValue(principal, sessionId, runtimeInput)).resolves.toBe(
+      runtimeRead,
+    );
+    expect(repository.beginMissionOperation).not.toHaveBeenCalled();
+    expect(JSON.stringify({ structure, runtime })).not.toMatch(
+      /protected|nodeId|backendNodeId|objectId|cookie|storage/i,
+    );
+  });
+  it("delegates browser-resource inspection and exact reads without creating an operation", async () => {
+    const repository = {
+      get: vi.fn(async () => ({ id: sessionId, state: "active" })),
+      beginMissionOperation: vi.fn(),
+    };
+    const inspection = { resources: [] };
+    const read = { text: "{}" };
+    const runner = {
+      inspectBrowserResources: vi.fn(async () => inspection),
+      readPublicResource: vi.fn(async () => read),
+    };
+    const service = new MissionFlowAuthoringService(
+      repository as never,
+      runner as never,
+      { assertAcceptingWork: vi.fn() } as never,
+    );
+    const resourceInput = {
+      reference: "context-resource-0123456789abcdef0123456789abcdef",
+      offset: 0,
+      maxBytes: 2048,
+    };
+
+    await expect(service.inspectBrowserResources(principal, sessionId)).resolves.toBe(inspection);
+    await expect(service.readPublicResource(principal, sessionId, resourceInput)).resolves.toBe(
+      read,
+    );
+    expect(runner.inspectBrowserResources).toHaveBeenCalledWith(sessionId);
+    expect(runner.readPublicResource).toHaveBeenCalledWith(sessionId, resourceInput);
+    expect(repository.beginMissionOperation).not.toHaveBeenCalled();
+  });
+  it.each(["active", "suspended"] as const)(
+    "delegates an observable %s session to the owned runtime without creating an operation",
+    async (state) => {
+      const beginMissionOperation = vi.fn();
+      const repository = {
+        get: vi.fn(async () => ({ id: sessionId, state })),
+        beginMissionOperation,
+      };
+      const runner = { inspectRegion: vi.fn(async () => inspection) };
+      const service = new MissionFlowAuthoringService(
+        repository as never,
+        runner as never,
+        { assertAcceptingWork: vi.fn() } as never,
+      );
+
+      await expect(service.inspectRegion(principal, sessionId, input)).resolves.toBe(inspection);
+      expect(repository.get).toHaveBeenCalledWith(principal.workspaceId, sessionId);
+      expect(runner.inspectRegion).toHaveBeenCalledWith(sessionId, input);
+      expect(beginMissionOperation).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a non-live session consistently", async () => {
+    const repository = { get: vi.fn(async () => ({ id: sessionId, state: "completed" })) };
+    const runner = { inspectRegion: vi.fn() };
+    const service = new MissionFlowAuthoringService(
+      repository as never,
+      runner as never,
+      { assertAcceptingWork: vi.fn() } as never,
+    );
+
+    await expect(service.inspectRegion(principal, sessionId, input)).rejects.toMatchObject({
+      response: { code: "PRAXIS_SESSION_NOT_LIVE" },
+    });
+    expect(runner.inspectRegion).not.toHaveBeenCalled();
+  });
+
+  it("exposes the adjacent controller delegation", async () => {
+    const service = { inspectRegion: vi.fn(async () => inspection) };
+    const controller = new PraxisSessionController(service as never);
+
+    await expect(controller.inspectRegion(principal, sessionId, input)).resolves.toBe(inspection);
+    expect(service.inspectRegion).toHaveBeenCalledWith(principal, sessionId, input);
+  });
+});

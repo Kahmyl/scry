@@ -1,4 +1,6 @@
 import { z } from "zod";
+
+import { mutationReceiptSchema } from "./protected-operation.js";
 import { praxisRunObservationSchema } from "./praxis/index.js";
 import { veilRunObservationSchema } from "./veil/index.js";
 
@@ -306,8 +308,39 @@ export const runEvidenceChannelsSchema = z
       });
   });
 
+export const currentRunPraxisSessionSchema = z
+  .object({
+    id: z.string().uuid(),
+    epoch: z.number().int().positive(),
+    state: z.string().trim().min(1).max(100),
+  })
+  .strict();
+
 export const runObservationSchema = z
   .object({
+    canonicalOperations: z
+      .array(
+        z
+          .object({
+            operationId: z.string(),
+            praxisSessionId: z.string().uuid(),
+            missionId: z.string().uuid(),
+            objectiveId: z.string().uuid(),
+            preparedExecutionCapabilityId: z.string().uuid(),
+            protectedOperationId: z.string().uuid(),
+            operationContractRevisionId: z.string().uuid(),
+            runtimeInteractionCapabilityId: z.string().uuid(),
+            mutationIdentity: z.string().uuid(),
+            state: z.string(),
+            mutationOutcome: z.enum(["not_attempted", "not_applied", "applied", "unknown"]),
+            checkpointIds: z.array(z.string().uuid()),
+            continuationCheckpointIds: z.array(z.string().uuid()),
+            valueAssetIds: z.array(z.string().uuid()),
+            valueUseGrantIds: z.array(z.string().uuid()),
+          })
+          .strict(),
+      )
+      .default([]),
     run: z
       .object({
         id: z.string().uuid(),
@@ -322,6 +355,7 @@ export const runObservationSchema = z
         environmentSnapshot: z.record(z.string(), z.unknown()),
         policySnapshot: z.record(z.string(), z.unknown()),
         executionSnapshot: z.record(z.string(), z.unknown()),
+        currentPraxisSession: currentRunPraxisSessionSchema.nullable().default(null),
         rerunOfRunId: z.string().uuid().nullish(),
         createdAt: z.union([z.string(), z.date()]),
         updatedAt: z.union([z.string(), z.date()]),
@@ -419,6 +453,7 @@ export const runObservationSchema = z
     privacy: z.object({
       intervals: z.array(z.record(z.string(), z.unknown())),
       operations: z.array(z.record(z.string(), z.unknown())),
+      mutationReceipts: z.array(mutationReceiptSchema).default([]),
       credentialIncidents: z.array(z.record(z.string(), z.unknown())),
     }),
     veil: veilRunObservationSchema,
@@ -454,5 +489,69 @@ export const runObservationSchema = z
   })
   .strict();
 
+/** Date-free, bounded MCP projection of the canonical Run observation. */
+export const agentRunObservationSchema = z
+  .object({
+    run: z
+      .object({
+        id: z.string().uuid(),
+        state: runStateSchema,
+        phase: z.string().min(1).optional(),
+        currentPhase: z.string().min(1).optional(),
+        outcomeClassification: outcomeClassificationSchema.nullish(),
+        currentPraxisSession: currentRunPraxisSessionSchema.nullable().default(null),
+      })
+      .passthrough(),
+    steps: z.array(
+      z
+        .object({
+          stepId: z.string().min(1),
+          action: z
+            .object({
+              status: z.enum(["passed", "failed", "unevaluated"]),
+              error: z.string().nullish(),
+            })
+            .strict(),
+        })
+        .passthrough(),
+    ),
+    artifacts: z.array(
+      z
+        .object({
+          id: z.string().uuid(),
+          resource: z
+            .string()
+            .regex(/^scry:\/\/artifact\/[0-9a-f-]+$/)
+            .nullish(),
+        })
+        .passthrough(),
+    ),
+    privacy: z
+      .object({ mutationReceipts: z.array(mutationReceiptSchema) })
+      .passthrough()
+      .optional(),
+    artifactTimeline: z.array(z.record(z.string(), z.unknown())),
+    integrity: z
+      .object({
+        status: z.enum(["complete", "partial", "failed"]),
+        issues: z.array(z.object({ code: z.string(), message: z.string() })),
+      })
+      .strict(),
+    failure: z
+      .object({
+        provenance: z.enum(["product", "plan", "policy", "infrastructure", "privacy", "executor"]),
+        code: z.string(),
+        message: z.string().optional(),
+        stepId: z.string().optional(),
+        channel: z.string().optional(),
+      })
+      .nullish()
+      .optional(),
+    safeActions: z.array(z.enum(["cancel", "rerun", "revise_flow", "read_artifact"])),
+    release: z.object({ releaseId: z.string(), schemaFingerprint: z.string() }).strict().optional(),
+  })
+  .passthrough();
+
 export type RunObservation = z.infer<typeof runObservationSchema>;
+export type AgentRunObservation = z.infer<typeof agentRunObservationSchema>;
 export type EvidenceChannelOutcome = z.infer<typeof runEvidenceChannelOutcomeSchema>;

@@ -299,6 +299,7 @@ export class CalibrationRuntimeRepository {
       `SELECT credential.ciphertext,credential.initialization_vector AS "initializationVector",credential.authentication_tag AS "authenticationTag"
        FROM project_credentials credential JOIN environments environment ON environment.id=$1 AND environment.project_id=credential.project_id
        WHERE credential.id=$2 AND credential.project_id=$3 AND credential.deleted_at IS NULL AND credential.security_status='active'
+         AND credential.origin_protected_operation_id IS NULL
          AND environment.secret_refs ? ($2::uuid)::text`,
       [runtime.environmentId, credentialId, runtime.projectId],
     );

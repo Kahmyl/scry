@@ -25,6 +25,7 @@ describe("schema migration manifest", () => {
     const protectedResponseStaging = baseline.indexOf("\\ir protected-response-output-staging.sql");
     const protectedReadOnlyDispatch = baseline.indexOf("\\ir protected-read-only-dispatch.sql");
     const externalResourceBindings = baseline.indexOf("\\ir external-resource-bindings.sql");
+    const targetedRegionPerception = baseline.indexOf("\\ir targeted-region-perception.sql");
 
     expect(preferences).toBeGreaterThan(-1);
     expect(retention).toBeGreaterThan(preferences);
@@ -41,6 +42,7 @@ describe("schema migration manifest", () => {
     expect(protectedResponseStaging).toBeGreaterThan(protectedProjection);
     expect(protectedReadOnlyDispatch).toBeGreaterThan(protectedResponseStaging);
     expect(externalResourceBindings).toBeGreaterThan(protectedReadOnlyDispatch);
+    expect(targetedRegionPerception).toBeGreaterThan(externalResourceBindings);
   });
 
   it("recognizes the compiled-plan schema and applies the guarded interactive command cutover", async () => {
@@ -65,6 +67,8 @@ describe("schema migration manifest", () => {
 
       expect(source).toContain("veil-observation-preferences.sql");
       expect(source).toContain("veil-artifact-retention.sql");
+      expect(source).toContain("operational-events.sql");
+      expect(source).toContain("mission-diagnostic-isolation.sql");
       expect(source).toContain("compiled-plan-cutover.sql");
       expect(source).toContain("stateful-probe-authoring.sql");
       expect(source).toContain("interactive-runtime-commands.sql");
@@ -84,7 +88,29 @@ describe("schema migration manifest", () => {
       expect(source).toContain("external-resource-bindings.sql");
       expect(source).toContain("segmented-flow-successor-checkpoints.sql");
       expect(source).toContain("20260820-0910_scope_unknown_fence_to_resource_mutations.sql");
+      expect(source).toContain("flow-name-identity-cutover.sql");
+      expect(source).toContain("targeted-region-perception.sql");
+      expect(source).toContain("qualification-campaign-safety.sql");
+      expect(source).toContain("prepared-protected-operation-journeys.sql");
+      expect(source).toContain("canonical-execution-authority.sql");
     }
+  });
+
+  it("cuts new dispatch to canonical semantic, interaction, execution, and value authorities", async () => {
+    const migration = await readFile(
+      new URL("migrations/canonical-execution-authority.sql", root),
+      "utf8",
+    );
+
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS operation_contract_revisions");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS runtime_interaction_capabilities");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS prepared_execution_capabilities");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS value_use_grants");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS typed_value_assets");
+    expect(migration).not.toContain("CREATE TABLE IF NOT EXISTS canonical_output_provenance");
+    expect(migration).not.toContain("CREATE TABLE IF NOT EXISTS mission_value_selections");
+    expect(migration).toContain("NEW.authority_model<>'canonical'");
+    expect(migration).not.toContain("regexp_replace");
   });
 
   it("keeps terminal immutability while admitting only canonical durable protected projection", async () => {
@@ -219,5 +245,18 @@ describe("schema migration manifest", () => {
     expect(cutover).toContain("'suspend'");
     expect(cutover).toContain("'resume'");
     expect(cutover).toContain("'cancel'");
+  });
+
+  it("admits targeted region inspection through a forward-only runtime command migration", async () => {
+    const migration = await readFile(
+      new URL("migrations/targeted-region-perception.sql", root),
+      "utf8",
+    );
+    const migrate = await readFile(new URL("scripts/migrate.ts", root), "utf8");
+
+    expect(migration).toContain("DROP CONSTRAINT authoring_runtime_commands_type_check");
+    expect(migration).toContain("'inspect_region'");
+    expect(migrate).toContain("preTargetedRegionPerceptionFingerprint");
+    expect(migrate).toContain("scry-targeted-region-perception");
   });
 });

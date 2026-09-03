@@ -92,22 +92,6 @@ export class AuthoringService {
           safeActions: ["get_flow_authoring"],
         });
 
-      const priorRuns = await q(
-        `SELECT 1 FROM runs
-         WHERE mission_id=$1
-           AND COALESCE((execution_snapshot->>'certificationCandidate')::boolean,false)=false
-         LIMIT 1`,
-        [input.missionId],
-      );
-      if (!priorRuns.rowCount && input.predecessorRunId) {
-        throw new ConflictException({ code: "FIRST_FLOW_PREDECESSOR_FORBIDDEN" });
-      }
-      if (priorRuns.rowCount && !input.predecessorRunId) {
-        throw new ConflictException({
-          code: "SUCCESSOR_PREDECESSOR_RUN_REQUIRED",
-          safeActions: ["get_mission"],
-        });
-      }
       if (input.predecessorRunId) {
         const predecessor = await q(
           `SELECT 1 FROM runs run
@@ -2706,6 +2690,8 @@ export class AuthoringService {
       });
     }
 
+    if (!draft.predecessorRunId) return;
+
     const immediate = await q<{ id: string }>(
       `SELECT id FROM runs
        WHERE mission_id=$1
@@ -2716,16 +2702,6 @@ export class AuthoringService {
       [draft.missionId],
     );
     const immediateRunId = immediate.rows[0]?.id ?? null;
-    if (!draft.predecessorRunId) {
-      if (immediateRunId) {
-        throw new ConflictException({
-          code: "SUCCESSOR_PREDECESSOR_RUN_REQUIRED",
-          mutationOutcome: "not_applied",
-          safeActions: ["get_mission"],
-        });
-      }
-      return;
-    }
     if (immediateRunId !== draft.predecessorRunId) {
       throw new ConflictException({
         code: "FLOW_PREDECESSOR_STATE_STALE",

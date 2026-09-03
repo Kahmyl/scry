@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { SecretRedactor } from "@scry/policy";
-import {
-  acquireProtectedResponseValue,
-  beginProtectedResponseEnvelope,
-} from "../src/protected-response-envelope.js";
+import { acquireProtectedResponseValue, beginProtectedResponseEnvelope } from "@scry/praxis";
 
 type Listener = (value: any) => void;
 

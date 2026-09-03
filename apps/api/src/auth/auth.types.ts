@@ -2,6 +2,7 @@ export type WorkspaceRole = "owner" | "admin" | "member" | "viewer";
 
 export type UserPrincipal = {
   kind: "user";
+  credentialKind?: "user" | "mcp";
   subject: string;
   userId: string;
   email: string;
@@ -11,6 +12,7 @@ export type UserPrincipal = {
 
 export type ServicePrincipal = {
   kind: "service";
+  credentialKind?: "service";
   subject: "scry-service";
   workspaceId?: never;
   role?: never;

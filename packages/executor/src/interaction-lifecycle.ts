@@ -40,8 +40,9 @@ export class InteractionLifecycleTracker {
     observed: OperationOutcome["mutationOutcome"],
   ): OperationOutcome["mutationOutcome"] {
     if (!mutating) return "not_applied";
+    if (!this.dispatchStarted) return "not_applied";
     if (observed === "applied" || observed === "unknown") return observed;
-    return this.dispatchStarted ? "unknown" : "not_applied";
+    return "unknown";
   }
 
   privacyFailure(fallback: OperationOutcome["privacyResult"]): OperationOutcome["privacyResult"] {

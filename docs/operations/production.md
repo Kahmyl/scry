@@ -20,6 +20,19 @@ POSTGRES_ARCHIVE_MODE=off
 
 Then run `pnpm verify:deployment-preflight` before deployment. Backup and observability containers are not created, and PostgreSQL does not accumulate archived WAL.
 
+## Schema and release compatibility admission
+
+Treat the application image, release ID, and schema fingerprint as one immutable release identity. Set `SCRY_SCHEMA_FINGERPRINT` from `pnpm --silent schema:fingerprint` for the exact source used to build the image, and use an image reference pinned by digest. Deployment preflight rejects a configured fingerprint that differs from current source. The one-shot migration container independently recomputes the fingerprint from the migration sources embedded in that image and refuses before touching PostgreSQL if they disagree.
+
+The migration job distinguishes these database states:
+
+- **Fresh installation:** no `schema_baseline` and no legacy `schema_migrations` table. The image applies the complete baseline and records its computed fingerprint.
+- **Supported in-place upgrade:** the installed fingerprint must be a coded, immutable predecessor. The authoritative deployed `d647df…` predecessor is also checked against its expected structural shape before any migration runs; a marker-only change to `schema_baseline` cannot turn a different schema into that lineage.
+- **Same-schema release:** a new code release may reuse the installed schema fingerprint. API and worker release IDs must still agree before readiness succeeds.
+- **Unsupported or unknown lineage:** migration stops without relabeling the database. Preserve the database, restore or clone it for diagnosis, and do not manually stamp `schema_baseline`.
+
+Take and verify a recoverable backup before every in-place upgrade. API and worker services depend on successful migration completion, and API readiness additionally compares the installed database fingerprint, configured image fingerprint, worker release identity, and Praxis runtime identity. A historical M1 upgrade cannot be claimed when its immutable snapshot is absent; local qualification must continue to report `M1_SNAPSHOT_REQUIRED`.
+
 To exercise the complete operational topology in staging or beta, set:
 
 ```env

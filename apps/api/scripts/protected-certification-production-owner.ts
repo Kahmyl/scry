@@ -2,13 +2,9 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 
 import type { Assertion, InteractionTargetIntent, ProtectedTransaction } from "@scry/contracts";
-import {
-  BrowserSessionProvenance,
-  PlaywrightProtectedCapsuleFactory,
-  ProtectedTransactionKernel,
-  type ProtectedOperationClaim,
-  type ProtectedTransactionStore,
-} from "@scry/executor";
+import { PlaywrightProtectedCapsuleFactory } from "@scry/praxis";
+import type { ProtectedOperationClaim, ProtectedTransactionStore } from "@scry/contracts";
+import { BrowserSessionProvenance } from "@scry/praxis";
 import { SecretRedactor } from "@scry/policy";
 import { registerPraxisVeilAuthority, resolveTargetLocator } from "@scry/praxis";
 import {
@@ -27,6 +23,7 @@ import {
   missionAuthoringOperationIdentity,
 } from "../src/adaptive-sessions/mission-authoring-derivation.js";
 import { missionAuthoringProtectedOperationReservation } from "../src/adaptive-sessions/mission-authoring-protected-transaction.js";
+import { ProtectedTransactionKernel } from "../src/runtime/protected-transactions/protected-transaction-coordinator.js";
 
 type OwnerFamily = "D" | "E" | "H" | "I" | "J";
 type OwnerObservation = {
@@ -89,7 +86,7 @@ export async function runKernelOwnerCertification(input: {
   let credentialCompromiseActions = 0;
   let releaseHeartbeat: (() => void) | undefined;
   let releaseReconciliation: (() => void) | undefined;
-  let capsuleSession: import("@scry/executor").ProtectedBrowserSession | undefined;
+  let capsuleSession: import("@scry/praxis").ProtectedBrowserSession | undefined;
   let capsuleForceClose: (() => Promise<void>) | undefined;
   const server = createServer((request, response) => {
     if (request.url === "/dispatch" && request.method === "POST") {
@@ -181,9 +178,11 @@ export async function runKernelOwnerCertification(input: {
         intent: missionIntent as never,
         protectedTransaction,
       });
-      missionReservation = missionAuthoringProtectedOperationReservation(protectedTransaction, [
-        "https://fixture.test",
-      ]);
+      missionReservation = missionAuthoringProtectedOperationReservation(
+        protectedTransaction,
+        ["https://fixture.test"],
+        randomUUID(),
+      );
       // The certification operation id is fixed so the durable row and kernel transaction share identity.
       await fixture.sessions.beginMissionOperation({
         workspaceId: fixture.workspaceId,
@@ -264,6 +263,7 @@ export async function runKernelOwnerCertification(input: {
     if (input.cellId === "D1" || input.cellId === "H2")
       controller.abort("CERTIFICATION_PRE_DISPATCH_FAULT");
     const kernel = new ProtectedTransactionKernel({
+      mutationIdentity: missionReservation?.mutationIdentity ?? operationId,
       safeSession: {
         browser: safeBrowser,
         context: safeContext,
@@ -521,7 +521,11 @@ export async function runPublicMissionReplayCertification(cellId: string): Promi
     intent: intent as never,
     protectedTransaction,
   });
-  const reservation = missionAuthoringProtectedOperationReservation(protectedTransaction, [origin]);
+  const reservation = missionAuthoringProtectedOperationReservation(
+    protectedTransaction,
+    [origin],
+    randomUUID(),
+  );
   const counters = {
     modelInvocations: 0,
     browserLaunches: 0,

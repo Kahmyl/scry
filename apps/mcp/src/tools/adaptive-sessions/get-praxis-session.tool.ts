@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   randomUUID,
   advanceAdaptiveSessionSchema,
+  adaptiveSessionSchema,
   agentDecisionBoundarySchema,
   closeAdaptiveSessionSchema,
   missionAuthoringTurnBudgetsSchema,
@@ -35,6 +36,7 @@ export function registerGetPraxisSessionTool(server: McpServer, client: ScryApiC
       description:
         "Read durable lifecycle facts. This does not observe, dispatch, resume, or choose progression.",
       inputSchema: { praxisSessionId: uuid },
+      outputSchema: z.object({ message: z.string(), session: adaptiveSessionSchema }).strict(),
       annotations: readOnly,
     },
     async ({ praxisSessionId }) =>

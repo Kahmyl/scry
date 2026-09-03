@@ -6,6 +6,7 @@ const runId = "11111111-1111-4111-8111-111111111111";
 const sessionId = "22222222-2222-4222-8222-222222222222";
 const attemptId = "33333333-3333-4333-8333-333333333333";
 const claimToken = "44444444-4444-4444-8444-444444444444";
+const protectedOperationId = "88888888-8888-4888-8888-888888888888";
 
 const checkpoint = {
   schemaVersion: 1 as const,
@@ -22,7 +23,18 @@ const checkpoint = {
   },
 };
 
-function harness(evidenceComplete: boolean) {
+function harness(
+  evidenceComplete: boolean,
+  options: {
+    praxisState?: string;
+    praxisDecisionBoundary?: { type: string; reasonCode: string; safeActions: string[] } | null;
+    terminalProtectedBoundary?: boolean;
+    operationEvidence?: {
+      state: "available" | "suppressed" | "quarantined" | "failed";
+      reasonCodes: string[];
+    };
+  } = {},
+) {
   const query = vi.fn(async (sql: string) => {
     if (sql.includes("FROM runs r") && sql.includes("run_praxis_sessions")) {
       return {
@@ -34,9 +46,28 @@ function harness(evidenceComplete: boolean) {
             attemptId,
             claimToken,
             veilPolicySnapshot: {},
+            praxisState: options.praxisState ?? "active",
+            praxisDecisionBoundary: options.praxisDecisionBoundary ?? null,
           },
         ],
       };
+    }
+
+    if (sql.includes("JOIN canonical_completed_executions protected")) {
+      const boundary = options.praxisDecisionBoundary;
+      const boundaryPredicate =
+        sql.includes("session.decision_boundary->>'type'='objective_completed'") &&
+        sql.includes("session.decision_boundary->>'reasonCode'='PROTECTED_OPERATION_COMPLETED'");
+      if (!sql.includes("last_link ON true"))
+        return options.terminalProtectedBoundary
+          ? { rowCount: 1, rows: [{}] }
+          : { rowCount: 0, rows: [] };
+      return options.terminalProtectedBoundary &&
+        boundaryPredicate &&
+        boundary?.type === "objective_completed" &&
+        boundary.reasonCode === "PROTECTED_OPERATION_COMPLETED"
+        ? { rowCount: 1, rows: [{ protectedOperationId }] }
+        : { rowCount: 0, rows: [] };
     }
 
     if (sql.includes('AS "operationCount"')) {
@@ -46,6 +77,11 @@ function harness(evidenceComplete: boolean) {
           {
             operationCount: 2,
             evidencedOperationCount: evidenceComplete ? 2 : 1,
+            unacceptableOperationEvidenceCount:
+              options.operationEvidence?.state === "failed" ||
+              options.operationEvidence?.state === "quarantined"
+                ? 1
+                : 0,
             unsafeArtifactCount: 0,
             unsafeTimelineCount: 0,
             openPrivacyIntervalCount: 0,
@@ -81,8 +117,14 @@ function harness(evidenceComplete: boolean) {
     } as never,
     sessions as never,
     executions as never,
+    { getMutationReceiptByAuthoringOperation: vi.fn(async () => undefined) } as never,
     {
       assertAcceptingWork: vi.fn(),
+    } as never,
+    {
+      consumeBusinessMutation: vi.fn(async () => ({ campaignBound: false, replayed: false })),
+      settleMutation: vi.fn(async () => undefined),
+      settleRun: vi.fn(async () => undefined),
     } as never,
   );
 
@@ -119,7 +161,9 @@ describe("agent-directed Run evidence finalization", () => {
   });
 
   it("captures and stages the final live Praxis state before common passed completion", async () => {
-    const { service, database, sessions, executions } = harness(true);
+    const { service, database, sessions, executions } = harness(true, {
+      operationEvidence: { state: "available", reasonCodes: [] },
+    });
 
     await expect(
       service.finalize({ kind: "service", subject: "scry-service" }, runId, {
@@ -147,6 +191,7 @@ describe("agent-directed Run evidence finalization", () => {
       claimToken,
       "passed",
       "passed",
+      { kind: "required" },
       undefined,
     );
 
@@ -161,6 +206,203 @@ describe("agent-directed Run evidence finalization", () => {
 
     // Finalization no longer owns a second direct Attempt/Run SQL writer.
     expect(database.transaction).not.toHaveBeenCalled();
+  });
+
+  it("allows passed finalization when optional operation evidence is explicitly suppressed", async () => {
+    const { service, executions } = harness(true, {
+      operationEvidence: { state: "suppressed", reasonCodes: ["EVIDENCE_NOT_APPLICABLE"] },
+    });
+
+    await expect(
+      service.finalize({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        outcome: "passed",
+        reason: "required evidence complete and optional evidence suppressed",
+        idempotencyKey: "finalize-optional-evidence-suppressed",
+      }),
+    ).resolves.toMatchObject({ runId, state: "passed", outcomeClassification: "passed" });
+
+    expect(executions.completeAttempt).toHaveBeenCalledOnce();
+  });
+
+  it("refuses passed finalization when observation-persistence evidence failed after execution", async () => {
+    const { service, database, sessions, executions } = harness(true, {
+      operationEvidence: {
+        state: "failed",
+        reasonCodes: ["ADAPTIVE_VERIFIED_OBSERVATION_PERSISTENCE_FAILED"],
+      },
+    });
+
+    await expect(
+      service.finalize({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        outcome: "passed",
+        reason: "browser action succeeded but required observation evidence failed",
+        idempotencyKey: "finalize-observation-persistence-failed",
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "RUN_EVIDENCE_INCOMPLETE",
+        mutationOutcome: "not_applied",
+        operationCount: 2,
+        evidencedOperationCount: 2,
+        unacceptableOperationEvidenceCount: 1,
+      },
+    });
+
+    const evidenceQuery = database.query.mock.calls.find(([sql]) =>
+      sql.includes('AS "unacceptableOperationEvidenceCount"'),
+    )?.[0];
+    expect(evidenceQuery).toContain("link.safe_result->'evidence'->>'state'");
+    expect(evidenceQuery).toContain("'available'");
+    expect(evidenceQuery).toContain("'suppressed'");
+    expect(sessions.captureRunSuccessorCheckpoint).not.toHaveBeenCalled();
+    expect(executions.stageSuccessorCheckpoint).not.toHaveBeenCalled();
+    expect(executions.completeAttempt).not.toHaveBeenCalled();
+  });
+
+  it("refuses passed finalization when linked operation evidence is quarantined", async () => {
+    const { service, sessions, executions } = harness(true, {
+      operationEvidence: { state: "quarantined", reasonCodes: ["EVIDENCE_QUARANTINED"] },
+    });
+
+    await expect(
+      service.finalize({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        outcome: "passed",
+        reason: "required evidence quarantined",
+        idempotencyKey: "finalize-operation-evidence-quarantined",
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "RUN_EVIDENCE_INCOMPLETE",
+        mutationOutcome: "not_applied",
+        evidencedOperationCount: 2,
+        unacceptableOperationEvidenceCount: 1,
+      },
+    });
+
+    expect(sessions.captureRunSuccessorCheckpoint).not.toHaveBeenCalled();
+    expect(executions.stageSuccessorCheckpoint).not.toHaveBeenCalled();
+    expect(executions.completeAttempt).not.toHaveBeenCalled();
+  });
+
+  it("finalizes after a completed protected transaction retires browser authority", async () => {
+    const { service, database, sessions, executions } = harness(true, {
+      praxisState: "cancelled",
+      praxisDecisionBoundary: {
+        type: "objective_completed",
+        reasonCode: "PROTECTED_OPERATION_COMPLETED",
+        safeActions: [],
+      },
+      terminalProtectedBoundary: true,
+    });
+
+    await expect(
+      service.finalize({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        outcome: "passed",
+        reason: "protected output persisted",
+        idempotencyKey: "finalize-terminal-protected-boundary",
+      }),
+    ).resolves.toMatchObject({
+      runId,
+      state: "passed",
+      outcomeClassification: "passed",
+    });
+
+    expect(sessions.captureRunSuccessorCheckpoint).not.toHaveBeenCalled();
+    expect(executions.stageSuccessorCheckpoint).not.toHaveBeenCalled();
+    expect(executions.completeAttempt).toHaveBeenCalledWith(
+      runId,
+      attemptId,
+      claimToken,
+      "passed",
+      "passed",
+      {
+        kind: "forbidden",
+        reason: "terminal_protected_operation",
+        praxisSessionId: sessionId,
+        protectedOperationId,
+      },
+      undefined,
+    );
+    const terminalQuery = database.query.mock.calls.find(
+      ([sql]) =>
+        sql.includes("JOIN canonical_completed_executions protected") &&
+        sql.includes("JOIN adaptive_sessions session"),
+    )?.[0];
+    expect(terminalQuery).toContain("session.decision_boundary->>'type'='objective_completed'");
+    expect(terminalQuery).toContain(
+      "session.decision_boundary->>'reasonCode'='PROTECTED_OPERATION_COMPLETED'",
+    );
+    expect(terminalQuery).not.toContain(
+      "session.decision_boundary='PROTECTED_OPERATION_COMPLETED'",
+    );
+  });
+
+  it.each([
+    {
+      type: "objective_completed",
+      reasonCode: "SOME_OTHER_COMPLETION",
+      safeActions: [],
+    },
+    {
+      type: "authorization_required",
+      reasonCode: "PROTECTED_OPERATION_COMPLETED",
+      safeActions: [],
+    },
+  ])("refuses a terminal protected completion boundary that is not exact: %o", async (boundary) => {
+    const { service, executions } = harness(true, {
+      praxisState: "cancelled",
+      praxisDecisionBoundary: boundary,
+      terminalProtectedBoundary: true,
+    });
+
+    await expect(
+      service.finalize({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        outcome: "passed",
+        reason: "unproven terminal boundary",
+        idempotencyKey: `finalize-unproven-${boundary.type}-${boundary.reasonCode}`,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "RUN_TERMINAL_PRAXIS_BOUNDARY_UNPROVEN",
+        mutationOutcome: "not_applied",
+      },
+    });
+    expect(executions.completeAttempt).not.toHaveBeenCalled();
+  });
+
+  it("refuses a dead Praxis session without an exact completed protected boundary", async () => {
+    const { service, sessions, executions } = harness(true, {
+      praxisState: "cancelled",
+      praxisDecisionBoundary: {
+        type: "objective_completed",
+        reasonCode: "PROTECTED_OPERATION_COMPLETED",
+        safeActions: [],
+      },
+      terminalProtectedBoundary: false,
+    });
+
+    await expect(
+      service.finalize({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        outcome: "passed",
+        reason: "unproven terminal boundary",
+        idempotencyKey: "finalize-unproven-terminal-boundary",
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "RUN_TERMINAL_PRAXIS_BOUNDARY_UNPROVEN",
+        mutationOutcome: "not_applied",
+      },
+    });
+
+    expect(sessions.captureRunSuccessorCheckpoint).not.toHaveBeenCalled();
+    expect(executions.stageSuccessorCheckpoint).not.toHaveBeenCalled();
+    expect(executions.completeAttempt).not.toHaveBeenCalled();
   });
 
   it("fails closed when final Praxis checkpoint capture cannot be established", async () => {
@@ -235,6 +477,10 @@ describe("agent-directed Run evidence finalization", () => {
       claimToken,
       "failed",
       "inconclusive_plan",
+      {
+        kind: "forbidden",
+        reason: "run_not_successful",
+      },
       "application assertion failed",
     );
   });

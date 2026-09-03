@@ -1,10 +1,13 @@
-import { composeMissionEvidence } from "@scry/chronicle";
+import { startedAgentSessionSchema } from "@scry/contracts";
+import { composeMissionEvidence, digestMissionReportComposition } from "@scry/chronicle";
+import type { ArtifactStore } from "@scry/chronicle/legacy";
 import {
   ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient, QueryResultRow } from "pg";
@@ -14,6 +17,7 @@ import type {
   ClassifyRunInput,
   CreateActivityRelationInput,
   CreateMissionInput,
+  CreateMissionRelationInput,
   CreateObjectiveInput,
   EndAgentSessionInput,
   MissionTransitionInput,
@@ -25,11 +29,20 @@ import type {
   UpdateResumePointerInput,
   FinalizeAgentWorkInput,
   FinalizedAgentWork,
+  MissionCompletionReadiness,
+  MissionReadinessBlocker,
 } from "@scry/contracts";
+import { missionReportPreviewSchema, publishedMissionReportSchema } from "@scry/contracts";
 
 import type { Principal } from "../auth/index.js";
+import { ARTIFACT_STORE } from "../artifacts/index.js";
+import { attachOrCreateExternalAgentSession } from "../external-agents/index.js";
 import { Database } from "../infrastructure/index.js";
+import { ProtectedOperationRepository } from "../runtime/index.js";
 import { resolveMissionRecording } from "./mission-recording-resolver.js";
+import { loadMissionReportCompositionReadiness } from "./mission-report-readiness.js";
+import { insertMissionRelation, loadMissionRelationDisclosures } from "./mission-relations.js";
+import { decideMissionSelection, loadMissionSelectionFacts } from "./mission-selection-policy.js";
 
 type Query = <T extends QueryResultRow = QueryResultRow>(
   text: string,
@@ -39,12 +52,32 @@ type Query = <T extends QueryResultRow = QueryResultRow>(
 const reportableObjectivePredicate = (alias: string) =>
   `(${alias}.status IN ('passed','failed') OR (${alias}.status IN ('blocked','skipped') AND ${alias}.conclusion IS NOT NULL))`;
 
+// A later observation satisfies a request for fresh facts; it does not rewrite
+// the failed action or reconcile an uncertain external mutation.
+const unresolvedEffectObservationPredicate = (alias: string) =>
+  `(${alias}.decision_boundary->>'type'='effect_observation_required'
+    AND NOT EXISTS(
+      SELECT 1 FROM adaptive_observations effect_observation
+      JOIN adaptive_observations later_observation
+        ON later_observation.session_id=effect_observation.session_id
+       AND later_observation.id>effect_observation.id
+      WHERE effect_observation.session_id=${alias}.session_id
+        AND effect_observation.operation_id=${alias}.operation_id
+    ))`;
+
 @Injectable()
 export class MissionService {
-  constructor(@Inject(Database) private readonly database: Database) {}
+  constructor(
+    @Inject(Database) private readonly database: Database,
+    @Optional() @Inject(ARTIFACT_STORE) private readonly artifactStore?: ArtifactStore,
+    @Optional()
+    @Inject(ProtectedOperationRepository)
+    private readonly protectedOperations?: ProtectedOperationRepository,
+  ) {}
 
   async create(principal: Principal, projectId: string, input: CreateMissionInput) {
     this.requireWrite(principal);
+    const purpose = input.purpose ?? "primary";
 
     if (
       input.distinctReason &&
@@ -77,46 +110,84 @@ export class MissionService {
           replayed: true,
         };
       if (!input.distinctReason) {
-        const candidates = await query<{
-          id: string;
-          title: string;
-          status: string;
-          resumePointer: unknown;
-        }>(
-          `SELECT id,title,status,resume_pointer AS "resumePointer" FROM missions WHERE project_id=$1 AND status NOT IN ('completed','failed','cancelled') AND (lower(title)=lower($2) OR lower(original_instruction)=lower($3)) ORDER BY created_at DESC,id DESC`,
-          [projectId, input.title, input.originalInstruction],
-        );
-        if (candidates.rowCount)
+        const candidates = await loadMissionSelectionFacts(query, {
+          projectId,
+          title: input.title,
+          originalInstruction: input.originalInstruction,
+          limit: 20,
+        });
+        const selection = decideMissionSelection({
+          ...(input.externalRunId ? { currentExternalRunId: input.externalRunId } : {}),
+          intendedPurpose: purpose,
+          candidates,
+        });
+        if (selection.decision !== "fresh_primary_permitted")
           throw new ConflictException({
-            code: "MISSION_CONTINUATION_REQUIRED",
+            code:
+              selection.decision === "continuation_available"
+                ? "MISSION_CONTINUATION_REQUIRED"
+                : (selection.blockerCode ?? "MISSION_SELECTION_REQUIRED"),
             message:
-              "A non-terminal Mission with the same durable identity already exists. Do not infer continuation authority from this collision. Ask the user whether to continue a candidate or create distinct work; call resume_mission only after explicit continuation, or retry start_mission with distinctReason only after explicit new-work choice.",
-            candidates: candidates.rows,
-            safeActions: [
-              "list_missions",
-              "resume_mission",
-              "update_mission",
-              "cancel_mission",
-              "start_distinct_mission",
-            ],
+              "Mission identity is not safely available for fresh primary creation. Inspect the factual candidates and preserve active ownership or mutation reconciliation boundaries.",
+            candidates: selection.candidates.map((candidate) => ({
+              id: candidate.id,
+              title: candidate.title,
+              status: candidate.status,
+              purpose: candidate.purpose,
+              classification: candidate.classification,
+              unresolvedMutationRisk: candidate.unresolvedMutationRisk,
+              outstandingReconciliation: candidate.outstandingReconciliation,
+              continuationAvailable: candidate.continuationAvailable,
+            })),
+            safeActions: selection.safeActions,
+          });
+      } else {
+        const candidates = await loadMissionSelectionFacts(query, {
+          projectId,
+          title: input.title,
+          originalInstruction: input.originalInstruction,
+          limit: 20,
+        });
+        const selection = decideMissionSelection({
+          ...(input.externalRunId ? { currentExternalRunId: input.externalRunId } : {}),
+          intendedPurpose: purpose,
+          distinctAuthorityConfirmed: true,
+          candidates,
+        });
+        if (selection.decision !== "fresh_primary_permitted")
+          throw new ConflictException({
+            code: selection.blockerCode ?? "MISSION_SELECTION_REQUIRED",
+            candidates: selection.candidates,
+            safeActions: selection.safeActions,
           });
       }
       const missionId = randomUUID();
-      const agentSessionId = randomUUID();
       await query(
-        `INSERT INTO missions(id,project_id,title,original_instruction,status) VALUES($1,$2,$3,$4,'planning')`,
-        [missionId, projectId, input.title, input.originalInstruction],
-      );
-      await query(
-        `INSERT INTO agent_sessions(id,mission_id,provider,connection_id,instruction_snapshot,idempotency_key) VALUES($1,$2,$3,$4,$5,$6)`,
+        `INSERT INTO missions(id,project_id,title,original_instruction,purpose,status,max_business_mutation_dispatches) VALUES($1,$2,$3,$4,$5,'planning',$6)`,
         [
-          agentSessionId,
           missionId,
-          input.provider,
-          input.connectionId ?? null,
-          input.instructionSnapshot,
-          input.idempotencyKey,
+          projectId,
+          input.title,
+          input.originalInstruction,
+          purpose,
+          input.maxBusinessMutationDispatches ?? 1,
         ],
+      );
+      const { agentSessionId, attachedPreMission } = await attachOrCreateExternalAgentSession(
+        query,
+        {
+          missionId,
+          projectId,
+          workspaceId: workspaceId(principal),
+          provider: input.provider,
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.externalRunId ? { externalRunId: input.externalRunId } : {}),
+          ...(input.experimentId ? { experimentId: input.experimentId } : {}),
+          ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+          instructionSnapshot: input.instructionSnapshot,
+          idempotencyKey: input.idempotencyKey,
+          leaseMs: externalAgentLeaseMs(),
+        },
       );
       await this.activity(
         query,
@@ -127,6 +198,12 @@ export class MissionService {
         `Mission created: ${input.title}`,
         {
           projectId,
+          purpose,
+          provider: input.provider,
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.externalRunId ? { externalRunId: input.externalRunId } : {}),
+          ...(input.experimentId ? { experimentId: input.experimentId } : {}),
+          attachedPreMission,
           ...(input.distinctReason
             ? {
                 distinctReason: input.distinctReason,
@@ -139,7 +216,13 @@ export class MissionService {
             : {}),
         },
       );
-      const response = { missionId, agentSessionId, status: "planning", replayed: false };
+      const response = {
+        missionId,
+        agentSessionId,
+        purpose,
+        status: "planning",
+        replayed: false,
+      };
       await this.completeIdempotency(
         query,
         `mission:create:${projectId}`,
@@ -158,7 +241,7 @@ export class MissionService {
     );
     return (
       await this.database.query(
-        `SELECT m.id,m.project_id AS "projectId",m.title,m.original_instruction AS "originalInstruction",m.status,
+        `SELECT m.id,m.project_id AS "projectId",m.title,m.original_instruction AS "originalInstruction",m.purpose,m.status,
               m.resume_pointer AS "resumePointer",m.revision,m.created_at AS "createdAt",m.updated_at AS "updatedAt",
               COUNT(DISTINCT o.id)::int AS "objectiveCount",COUNT(DISTINCT o.id) FILTER (WHERE ${reportableObjectivePredicate("o")})::int AS "terminalObjectiveCount",
               COUNT(DISTINCT e.id) FILTER (WHERE e.superseded_at IS NULL AND e.invalidated_at IS NULL)::int AS "acceptedEvidenceCount",
@@ -209,36 +292,45 @@ export class MissionService {
       false,
     );
     const missionResult = await this.database.query(
-      `SELECT m.id,m.project_id AS "projectId",m.title,m.original_instruction AS "originalInstruction",m.status,m.current_objective_id AS "currentObjectiveId",m.resume_pointer AS "resumePointer",m.final_report_id AS "finalReportId",m.final_report_id AS "latestReportId",m.revision,m.created_at AS "createdAt",m.updated_at AS "updatedAt",m.completed_at AS "completedAt",(SELECT COUNT(*)::int FROM mission_objectives WHERE mission_id=m.id) AS "objectiveCount",(SELECT COUNT(*)::int FROM mission_objectives o WHERE o.mission_id=m.id AND ${reportableObjectivePredicate("o")}) AS "terminalObjectiveCount",(SELECT COUNT(*)::int FROM accepted_evidence WHERE mission_id=m.id AND superseded_at IS NULL AND invalidated_at IS NULL) AS "acceptedEvidenceCount" FROM missions m WHERE m.id=$1`,
+      `SELECT m.id,m.project_id AS "projectId",m.title,m.original_instruction AS "originalInstruction",m.purpose,m.status,m.current_objective_id AS "currentObjectiveId",m.resume_pointer AS "resumePointer",m.final_report_id AS "finalReportId",m.final_report_id AS "latestReportId",m.revision,m.created_at AS "createdAt",m.updated_at AS "updatedAt",m.completed_at AS "completedAt",(SELECT COUNT(*)::int FROM mission_objectives WHERE mission_id=m.id) AS "objectiveCount",(SELECT COUNT(*)::int FROM mission_objectives o WHERE o.mission_id=m.id AND ${reportableObjectivePredicate("o")}) AS "terminalObjectiveCount",(SELECT COUNT(*)::int FROM accepted_evidence WHERE mission_id=m.id AND superseded_at IS NULL AND invalidated_at IS NULL) AS "acceptedEvidenceCount" FROM missions m WHERE m.id=$1`,
       [missionId],
     );
     const mission = missionResult.rows[0]!;
-    const [objectives, flows, runs, evidence, reports, authoring] = await Promise.all([
-      this.database.query(
-        `SELECT o.id,o.title,o.description,o.status,o.dependencies,o.completion_criteria AS "completionCriteria",o.conclusion,o.objective_order AS "order",o.latest_candidate_run_id AS "latestCandidateRunId",o.created_at AS "createdAt",o.updated_at AS "updatedAt",x.state AS "orchestrationState",x.blocker_code AS "blockerCode",x.blocker_details AS "blockerDetails",x.active_run_id AS "activeRunId",b.mode AS "executionMode" FROM mission_objectives o LEFT JOIN mission_objective_orchestration x ON x.objective_id=o.id LEFT JOIN mission_execution_bindings b ON b.plan_id=x.plan_id AND b.objective_id=o.id WHERE o.mission_id=$1 ORDER BY o.objective_order`,
-        [missionId],
-      ),
-      this.database.query(
-        `SELECT l.objective_id AS "objectiveId",l.visibility,l.purpose,l.reason,f.id,f.name,f.description,f.latest_revision_id AS "latestRevisionId",fr.revision AS "latestRevision" FROM mission_flow_links l JOIN flows f ON f.id=l.flow_id JOIN flow_revisions fr ON fr.id=f.latest_revision_id WHERE l.mission_id=$1 ORDER BY l.created_at`,
-        [missionId],
-      ),
-      this.database.query(
-        `SELECT r.id,r.objective_id AS "objectiveId",r.state,r.phase,r.outcome_classification AS "outcomeClassification",r.result_classification AS "resultClassification",r.reliability_eligible AS "reliabilityEligible",r.compiled_contract_id AS "compiledContractId",fr.flow_id AS "flowId",f.name AS "flowName",l.role,l.reason,r.created_at AS "createdAt",r.updated_at AS "updatedAt",COALESCE(ae.available_count,0)::int AS "availableEvidenceCount",checkpoint.state AS "successorCheckpointState",checkpoint.expires_at AS "successorCheckpointExpiresAt" FROM runs r JOIN mission_run_links l ON l.run_id=r.id JOIN flow_revisions fr ON fr.id=r.flow_revision_id JOIN flows f ON f.id=fr.flow_id LEFT JOIN run_successor_checkpoints checkpoint ON checkpoint.run_id=r.id LEFT JOIN (SELECT ra.run_id,COUNT(*) FILTER (WHERE a.availability='available' AND a.privacy_classification IN ('safe','sanitized')) AS available_count FROM attempts ra JOIN artifacts a ON a.attempt_id=ra.id GROUP BY ra.run_id) ae ON ae.run_id=r.id WHERE r.mission_id=$1 ORDER BY r.created_at DESC,r.id DESC`,
-        [missionId],
-      ),
-      this.database.query(
-        `SELECT e.id,e.objective_id AS "objectiveId",e.run_id AS "runId",e.artifact_id AS "artifactId",e.conclusion,e.accepted_at AS "acceptedAt",e.superseded_at AS "supersededAt",e.invalidated_at AS "invalidatedAt" FROM accepted_evidence e WHERE e.mission_id=$1 ORDER BY e.accepted_at`,
-        [missionId],
-      ),
-      this.database.query(
-        `SELECT id,revision,status,snapshot,created_at AS "createdAt",superseded_at AS "supersededAt" FROM mission_reports WHERE mission_id=$1 ORDER BY revision DESC`,
-        [missionId],
-      ),
-      this.database.query(
-        `SELECT d.id,d.objective_id AS "objectiveId",d.predecessor_run_id AS "predecessorRunId",d.name,d.state,d.version,d.updated_at AS "updatedAt",COALESCE((SELECT jsonb_agg(jsonb_build_object('id',p.id,'level',p.level,'state',p.state,'draftVersion',p.draft_version,'result',p.result,'createdAt',p.created_at) ORDER BY p.created_at DESC) FROM probe_sessions p WHERE p.draft_id=d.id),'[]'::jsonb) probes,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',c.id,'status',c.status,'draftVersion',c.draft_version,'diagnostics',c.diagnostics,'createdAt',c.created_at) ORDER BY c.created_at DESC) FROM flow_compilations c WHERE c.draft_id=d.id),'[]'::jsonb) compilations FROM flow_drafts d WHERE d.mission_id=$1 ORDER BY d.updated_at DESC`,
-        [missionId],
-      ),
-    ]);
+    const [objectives, flows, runs, evidence, reports, authoring, relations, completionReadiness] =
+      await Promise.all([
+        this.database.query(
+          `SELECT o.id,o.title,o.description,o.status,o.dependencies,o.completion_criteria AS "completionCriteria",o.conclusion,o.objective_order AS "order",o.latest_candidate_run_id AS "latestCandidateRunId",o.created_at AS "createdAt",o.updated_at AS "updatedAt",x.state AS "orchestrationState",x.blocker_code AS "blockerCode",x.blocker_details AS "blockerDetails",x.active_run_id AS "activeRunId",b.mode AS "executionMode" FROM mission_objectives o LEFT JOIN mission_objective_orchestration x ON x.objective_id=o.id LEFT JOIN mission_execution_bindings b ON b.plan_id=x.plan_id AND b.objective_id=o.id WHERE o.mission_id=$1 ORDER BY o.objective_order`,
+          [missionId],
+        ),
+        this.database.query(
+          `SELECT l.objective_id AS "objectiveId",l.visibility,l.purpose,l.reason,f.id,f.name,f.description,f.latest_revision_id AS "latestRevisionId",fr.revision AS "latestRevision" FROM mission_flow_links l JOIN flows f ON f.id=l.flow_id JOIN flow_revisions fr ON fr.id=f.latest_revision_id WHERE l.mission_id=$1 ORDER BY l.created_at`,
+          [missionId],
+        ),
+        this.database.query(
+          `SELECT r.id,r.objective_id AS "objectiveId",r.state,r.phase,r.outcome_classification AS "outcomeClassification",r.result_classification AS "resultClassification",r.reliability_eligible AS "reliabilityEligible",r.compiled_contract_id AS "compiledContractId",fr.flow_id AS "flowId",f.name AS "flowName",l.role,l.reason,r.created_at AS "createdAt",r.updated_at AS "updatedAt",COALESCE(ae.available_count,0)::int AS "availableEvidenceCount",checkpoint.state AS "successorCheckpointState",checkpoint.expires_at AS "successorCheckpointExpiresAt" FROM runs r JOIN mission_run_links l ON l.run_id=r.id JOIN flow_revisions fr ON fr.id=r.flow_revision_id JOIN flows f ON f.id=fr.flow_id LEFT JOIN run_successor_checkpoints checkpoint ON checkpoint.run_id=r.id LEFT JOIN (SELECT ra.run_id,COUNT(*) FILTER (WHERE a.availability='available' AND a.privacy_classification IN ('safe','sanitized')) AS available_count FROM attempts ra JOIN artifacts a ON a.attempt_id=ra.id GROUP BY ra.run_id) ae ON ae.run_id=r.id WHERE r.mission_id=$1 ORDER BY r.created_at DESC,r.id DESC`,
+          [missionId],
+        ),
+        this.database.query(
+          `SELECT e.id,e.objective_id AS "objectiveId",e.run_id AS "runId",e.artifact_id AS "artifactId",e.conclusion,e.accepted_at AS "acceptedAt",e.superseded_at AS "supersededAt",e.invalidated_at AS "invalidatedAt" FROM accepted_evidence e WHERE e.mission_id=$1 ORDER BY e.accepted_at`,
+          [missionId],
+        ),
+        this.database.query(
+          `SELECT id,revision,status,snapshot,created_at AS "createdAt",superseded_at AS "supersededAt" FROM mission_reports WHERE mission_id=$1 ORDER BY revision DESC`,
+          [missionId],
+        ),
+        this.database.query(
+          `SELECT d.id,d.objective_id AS "objectiveId",d.predecessor_run_id AS "predecessorRunId",d.name,d.state,d.version,d.updated_at AS "updatedAt",COALESCE((SELECT jsonb_agg(jsonb_build_object('id',p.id,'level',p.level,'state',p.state,'draftVersion',p.draft_version,'result',p.result,'createdAt',p.created_at) ORDER BY p.created_at DESC) FROM probe_sessions p WHERE p.draft_id=d.id),'[]'::jsonb) probes,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',c.id,'status',c.status,'draftVersion',c.draft_version,'diagnostics',c.diagnostics,'createdAt',c.created_at) ORDER BY c.created_at DESC) FROM flow_compilations c WHERE c.draft_id=d.id),'[]'::jsonb) compilations FROM flow_drafts d WHERE d.mission_id=$1 ORDER BY d.updated_at DESC`,
+          [missionId],
+        ),
+        loadMissionRelationDisclosures(
+          (text, values) => this.database.query(text, values),
+          missionId,
+        ),
+        this.loadCompletionReadiness(
+          (text, values) => this.database.query(text, values),
+          missionId,
+        ),
+      ]);
     const runRows = runs.rows as Array<
       Record<string, unknown> & { state: string; phase: string; flowId: string; flowName: string }
     >;
@@ -263,6 +355,8 @@ export class MissionService {
       acceptedEvidence: evidence.rows,
       reports: reports.rows,
       authoring: authoring.rows,
+      relatedMissions: relations,
+      completionReadiness,
       flowProgress: {
         terminalRuns: runRows.filter((run) => terminalRunStates.has(run.state)).length,
         passedRuns: runRows.filter((run) => run.state === "passed").length,
@@ -332,6 +426,53 @@ export class MissionService {
     });
   }
 
+  async relateMissions(
+    principal: Principal,
+    sourceMissionId: string,
+    input: CreateMissionRelationInput,
+  ) {
+    this.requireWrite(principal);
+    return this.database.transaction(async (client) => {
+      const q = bindQuery(client);
+      const source = await this.requireContext(q, principal, sourceMissionId, input.agentSessionId);
+      if (input.missionId !== sourceMissionId)
+        throw new ConflictException({ code: "MISSION_CONTEXT_MISMATCH" });
+      const target = await this.requireMission(q, principal, input.targetMissionId, false);
+      if (target.projectId !== source.projectId)
+        throw new ConflictException({ code: "MISSION_RELATION_PROJECT_MISMATCH" });
+
+      const scope = `mission:relation:${sourceMissionId}`;
+      const replay = await this.claimIdempotency(q, scope, input.idempotencyKey, input);
+      if (replay) return { ...(replay as Record<string, unknown>), replayed: true };
+
+      const relation = await insertMissionRelation(q, {
+        id: randomUUID(),
+        projectId: source.projectId,
+        sourceMissionId,
+        targetMissionId: input.targetMissionId,
+        relation: input.relation,
+        createdByAgentSessionId: input.agentSessionId,
+        reason: input.reason,
+      });
+      await this.activity(
+        q,
+        sourceMissionId,
+        null,
+        input.agentSessionId,
+        "mission_related",
+        `Mission ${input.relation} related Mission`,
+        {
+          relationId: relation.id,
+          targetMissionId: input.targetMissionId,
+          relation: input.relation,
+        },
+      );
+      const response = { ...relation, replayed: false };
+      await this.completeIdempotency(q, scope, input.idempotencyKey, response);
+      return response;
+    });
+  }
+
   async startSession(principal: Principal, missionId: string, input: StartAgentSessionInput) {
     this.requireWrite(principal);
 
@@ -357,33 +498,49 @@ export class MissionService {
             "A terminal Mission cannot start a new agent session through ordinary continuation. Reopen it explicitly before continuing.",
         });
 
-      const existing = await query(
+      const existing = await query<{ id: string; status: string }>(
         `SELECT id,status FROM agent_sessions WHERE mission_id=$1 AND idempotency_key=$2`,
         [missionId, input.idempotencyKey],
       );
-      if (existing.rowCount)
-        return {
+      if (existing.rowCount) return projectMissionAgentSessionReplay(missionId, existing.rows[0]!);
+      const resumedObjectiveId = await this.reopenInterruptedObjective(query, mission);
+      const { agentSessionId, attachedPreMission } = await attachOrCreateExternalAgentSession(
+        query,
+        {
           missionId,
-          agentSessionId: existing.rows[0]!.id,
-          status: existing.rows[0]!.status,
-          replayed: true,
-        };
-      const agentSessionId = randomUUID();
+          projectId: mission.projectId,
+          workspaceId: workspaceId(principal),
+          provider: input.provider,
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.externalRunId ? { externalRunId: input.externalRunId } : {}),
+          ...(input.experimentId ? { experimentId: input.experimentId } : {}),
+          ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+          instructionSnapshot: input.instructionSnapshot,
+          idempotencyKey: input.idempotencyKey,
+          leaseMs: externalAgentLeaseMs(),
+        },
+      );
       await query(
-        `INSERT INTO agent_sessions(id,mission_id,provider,connection_id,instruction_snapshot,idempotency_key) VALUES($1,$2,$3,$4,$5,$6)`,
-        [
+        `UPDATE missions SET
+           status=CASE WHEN status IN ('planning','blocked') THEN 'running' ELSE status END,
+           resume_pointer=CASE
+             WHEN $2::uuid IS NOT NULL AND resume_pointer->>'objectiveId'=$2::text THEN NULL
+             ELSE resume_pointer
+           END,
+           updated_at=now(),revision=revision+1
+         WHERE id=$1`,
+        [missionId, resumedObjectiveId],
+      );
+      if (resumedObjectiveId)
+        await this.activity(
+          query,
+          missionId,
+          resumedObjectiveId,
           agentSessionId,
-          missionId,
-          input.provider,
-          input.connectionId ?? null,
-          input.instructionSnapshot,
-          input.idempotencyKey,
-        ],
-      );
-      await query(
-        `UPDATE missions SET status=CASE WHEN status='planning' THEN 'running' ELSE status END,updated_at=now(),revision=revision+1 WHERE id=$1`,
-        [missionId],
-      );
+          "objective_updated",
+          "Objective resumed after external agent interruption",
+          { source: "external_agent_interruption" },
+        );
       await this.activity(
         query,
         missionId,
@@ -392,14 +549,25 @@ export class MissionService {
         "agent_session_started",
         `Agent session started (${input.provider})`,
         {
+          provider: input.provider,
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.externalRunId ? { externalRunId: input.externalRunId } : {}),
+          ...(input.experimentId ? { experimentId: input.experimentId } : {}),
+          attachedPreMission,
           continuationAuthority: {
             confirmedUserAuthorized: true,
             selection: input.continuationAuthority.selection,
             source: input.continuationAuthority.source,
           },
+          ...(resumedObjectiveId ? { resumedObjectiveId } : {}),
         },
       );
-      return { missionId, agentSessionId, status: "active", replayed: false };
+      return startedAgentSessionSchema.parse({
+        missionId,
+        agentSessionId,
+        status: "active",
+        replayed: false,
+      });
     });
   }
 
@@ -472,37 +640,13 @@ export class MissionService {
         [input.objectiveId, input.missionId],
       );
       if (!objective.rowCount) throw new ConflictException({ code: "OBJECTIVE_NOT_FOUND" });
-      const authoring = await q<{
-        state: string;
-        decisionBoundary: { reasonCode?: string } | null;
-      }>(
-        `SELECT state,decision_boundary AS "decisionBoundary" FROM adaptive_sessions WHERE mission_id=$1
-          AND (objective_id=$2 OR active_objective_id=$2) FOR UPDATE`,
-        [input.missionId, input.objectiveId],
+      const completionReadiness = await this.loadCompletionReadiness(
+        q,
+        input.missionId,
+        input.objectiveId,
+        true,
       );
-      if (
-        authoring.rows.some(
-          ({ state, decisionBoundary }) =>
-            !["completed", "failed", "cancelled"].includes(state) &&
-            !(
-              state === "recovery_required" &&
-              decisionBoundary?.reasonCode === "ENVIRONMENT_TRUSTED_SCRIPT_ORIGIN_REQUIRED"
-            ),
-        )
-      )
-        throw new ConflictException({ code: "MISSION_AUTHORING_CLOSE_REQUIRED" });
-      const unsafe = await q(
-        `SELECT 1 FROM adaptive_operations o
-        WHERE o.mission_id=$1 AND o.objective_id=$2
-          AND (o.state='running' OR (o.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(o.session_id,o.operation_id))) LIMIT 1 FOR UPDATE`,
-        [input.missionId, input.objectiveId],
-      );
-      if (unsafe.rowCount)
-        throw new ConflictException({
-          code: "MISSION_AUTHORING_CLOSE_RECONCILIATION_REQUIRED",
-          mutationOutcome: "unknown",
-          retry: "reconciliation_required",
-        });
+      this.requireCompletionReadiness(completionReadiness);
       let missionStatus: "planning" | "running" | "blocked" | "awaiting_user";
       let objectiveStatus: FinalizedAgentWork["objectiveStatus"];
       let agentSessionStatus: FinalizedAgentWork["agentSessionStatus"];
@@ -910,7 +1054,11 @@ export class MissionService {
         input.agentSessionId,
         "run_accepted",
         "Run accepted as objective evidence",
-        { runId: input.runId, artifactCount: input.artifactIds.length },
+        {
+          runId: input.runId,
+          artifactCount: input.artifactIds.length,
+          orderedArtifactIds: input.artifactIds,
+        },
       );
       return { objectiveId, runId: input.runId, status: "accepted" };
     });
@@ -1046,7 +1194,8 @@ export class MissionService {
     return this.database.transaction(async (client) => {
       const q = bindQuery(client);
 
-      const mission = await this.requireContext(q, principal, missionId, input.agentSessionId);
+      const mission = await this.requireMission(q, principal, missionId, true);
+      await this.requireAgentContext(q, missionId, input.agentSessionId, true);
 
       if (input.missionId !== missionId)
         throw new ConflictException({
@@ -1090,6 +1239,10 @@ export class MissionService {
         {
           id: string;
           objectiveId: string;
+          state: string;
+          canonicalAttemptId: string | null;
+          canonicalAttemptState: string | null;
+          canonicalAttemptCompletedAt: string | null;
         }
       >();
 
@@ -1097,13 +1250,28 @@ export class MissionService {
         const found = await q<{
           id: string;
           objectiveId: string;
+          state: string;
+          canonicalAttemptId: string | null;
+          canonicalAttemptState: string | null;
+          canonicalAttemptCompletedAt: string | null;
         }>(
           `SELECT
-             id,
-             objective_id AS "objectiveId"
-           FROM runs
-           WHERE mission_id=$1
-             AND id=ANY($2::uuid[])`,
+             run.id,
+             run.objective_id AS "objectiveId",
+             run.state,
+             canonical.id::text AS "canonicalAttemptId",
+             canonical.state AS "canonicalAttemptState",
+             canonical.completed_at::text AS "canonicalAttemptCompletedAt"
+           FROM runs run
+           LEFT JOIN LATERAL (
+             SELECT attempt.id,attempt.state,attempt.completed_at
+             FROM attempts attempt
+             WHERE attempt.run_id=run.id
+             ORDER BY attempt.attempt_number DESC,attempt.id DESC
+             LIMIT 1
+           ) canonical ON true
+           WHERE run.mission_id=$1
+             AND run.id=ANY($2::uuid[])`,
           [missionId, orderedRunIds],
         );
 
@@ -1112,6 +1280,23 @@ export class MissionService {
         if (runById.size !== orderedRunIds.length)
           throw new ConflictException({
             code: "MISSION_RECORDING_SELECTION_RUN_CONTEXT_MISMATCH",
+          });
+
+        if (
+          [...runById.values()].some(
+            (run) =>
+              !["passed", "failed", "cancelled", "timed_out", "infrastructure_error"].includes(
+                run.state,
+              ) ||
+              !run.canonicalAttemptId ||
+              !run.canonicalAttemptCompletedAt ||
+              !["passed", "failed", "cancelled", "timed_out", "infrastructure_error"].includes(
+                run.canonicalAttemptState ?? "",
+              ),
+          )
+        )
+          throw new ConflictException({
+            code: "MISSION_RECORDING_SELECTED_SOURCE_INADMISSIBLE",
           });
       } else {
         const existingRun = await q(
@@ -1140,6 +1325,11 @@ export class MissionService {
 
       const selectionRevision = (previous.rows[0]?.revision ?? 0) + 1;
       const selectionId = randomUUID();
+      const sources = orderedRunIds.map((runId, order) => ({
+        order,
+        runId,
+        canonicalAttemptId: runById.get(runId)!.canonicalAttemptId!,
+      }));
 
       await q(
         `UPDATE mission_recording_selections
@@ -1209,6 +1399,7 @@ export class MissionService {
           selectionRevision,
           sourceMissionRevision: mission.revision,
           orderedRunIds,
+          sources,
         },
       );
 
@@ -1218,6 +1409,7 @@ export class MissionService {
         selectionRevision,
         sourceMissionRevision: mission.revision,
         orderedRunIds,
+        sources,
         missionRevision: updated.rows[0]!.revision,
         replayed: false,
       };
@@ -1233,9 +1425,454 @@ export class MissionService {
     });
   }
 
+  private async loadCompletionReadiness(
+    q: Query,
+    missionId: string,
+    objectiveId?: string,
+    lockRows = false,
+  ): Promise<MissionCompletionReadiness> {
+    const blockers: MissionReadinessBlocker[] = [];
+    const seen = new Set<string>();
+    let totalBlockerCount = 0;
+    const add = (blocker: MissionReadinessBlocker) => {
+      const identity = [
+        blocker.code,
+        blocker.objectiveId,
+        blocker.runId,
+        blocker.attemptId,
+        blocker.praxisSessionId,
+        blocker.protectedOperationId,
+        blocker.operationId,
+        blocker.evidenceId,
+        blocker.evidenceRecommendationId,
+        blocker.artifactId,
+        blocker.evidenceClass,
+      ].join(":");
+      if (seen.has(identity)) return;
+      seen.add(identity);
+      totalBlockerCount += 1;
+      if (blockers.length < 500) blockers.push(blocker);
+    };
+    const scope = [missionId, objectiveId ?? null];
+    const mission = await q<{
+      status: string;
+      revision: number;
+      finalReportId: string | null;
+      resumePointer: { explanation?: string } | null;
+    }>(
+      `SELECT status,revision,final_report_id AS "finalReportId",resume_pointer AS "resumePointer"
+       FROM missions WHERE id=$1`,
+      [missionId],
+    );
+
+    if (!mission.rowCount)
+      return {
+        ready: false,
+        missionId,
+        blockers: [
+          {
+            code: "MISSION_NOT_FOUND",
+            missionId,
+            state: "missing",
+            resolution: "external_agent_action_required",
+            safeActions: ["list_missions"],
+            nextActions: ["list_missions"],
+          },
+        ],
+        truncated: false,
+        totalBlockerCount: 1,
+      };
+
+    if (!objectiveId && mission.rows[0]!.status === "awaiting_user")
+      add({
+        code: "AWAITING_USER_REPORT_NOT_FINAL",
+        missionId,
+        state: "awaiting_user",
+        ...(mission.rows[0]!.resumePointer?.explanation
+          ? { reason: mission.rows[0]!.resumePointer!.explanation!.slice(0, 500) }
+          : {}),
+        resolution: "human_action_required",
+        safeActions: ["get_operating_context", "resume_mission", "cancel_mission_orchestration"],
+        nextActions: ["get_operating_context", "resume_mission"],
+      });
+    if (!objectiveId && ["completed", "failed", "cancelled"].includes(mission.rows[0]!.status))
+      add({
+        code: "MISSION_TERMINAL",
+        missionId,
+        state: mission.rows[0]!.status,
+        resolution: "external_agent_action_required",
+        safeActions: ["get_mission"],
+        nextActions: ["get_mission"],
+      });
+
+    const protectedOperations = await q<{
+      protectedOperationId: string;
+      operationId: string;
+      objectiveId: string;
+      runId: string | null;
+      praxisSessionId: string | null;
+      state: string;
+      mutationOutcome: string;
+      failureCode: string | null;
+    }>(
+      `SELECT id AS "protectedOperationId",operation_id AS "operationId",objective_id AS "objectiveId",
+              run_id AS "runId",authoring_session_id AS "praxisSessionId",state,
+              mutation_outcome AS "mutationOutcome",failure_code AS "failureCode"
+       FROM protected_operations
+       WHERE mission_id=$1 AND ($2::uuid IS NULL OR objective_id=$2)
+         AND (mutation_outcome='unknown' OR state NOT IN
+           ('completed','failed_not_applied','compromised','revoked','abandoned'))
+       ORDER BY created_at,id${lockRows ? " FOR UPDATE" : ""}`,
+      scope,
+    );
+    for (const operation of protectedOperations.rows) {
+      const unknown = operation.mutationOutcome === "unknown";
+      const appliedEffectIncomplete =
+        operation.mutationOutcome === "applied" && operation.state !== "completed";
+      add({
+        code: unknown
+          ? "MUTATION_RECONCILIATION_REQUIRED"
+          : appliedEffectIncomplete
+            ? "EFFECT_OBSERVATION_REQUIRED"
+            : "PROTECTED_OPERATION_NOT_TERMINAL",
+        missionId,
+        objectiveId: operation.objectiveId,
+        ...(operation.runId ? { runId: operation.runId } : {}),
+        ...(operation.praxisSessionId ? { praxisSessionId: operation.praxisSessionId } : {}),
+        protectedOperationId: operation.protectedOperationId,
+        operationId: operation.operationId,
+        state: unknown ? "unknown" : operation.state,
+        ...(operation.failureCode ? { reasonCode: operation.failureCode } : {}),
+        resolution: unknown
+          ? "mutation_reconciliation_required"
+          : appliedEffectIncomplete
+            ? "fresh_observation_required"
+            : "automatic",
+        safeActions: unknown
+          ? ["get_mission", "reconcile_unknown_operation", "do_not_retry"]
+          : appliedEffectIncomplete
+            ? ["get_mission", "observe_praxis_session"]
+            : ["get_mission"],
+        nextActions: unknown
+          ? ["reconcile_unknown_operation"]
+          : appliedEffectIncomplete
+            ? ["observe_praxis_session"]
+            : ["get_mission"],
+      });
+    }
+
+    const adaptiveOperations = await q<{
+      praxisSessionId: string;
+      operationId: string;
+      objectiveId: string;
+      state: string;
+      mutationOutcome: string | null;
+      boundaryType: string | null;
+      reasonCode: string | null;
+    }>(
+      `SELECT o.session_id AS "praxisSessionId",o.operation_id AS "operationId",o.objective_id AS "objectiveId",
+              o.state,o.mutation_outcome AS "mutationOutcome",o.decision_boundary->>'type' AS "boundaryType",
+              o.decision_boundary->>'reasonCode' AS "reasonCode"
+       FROM adaptive_operations o
+       LEFT JOIN protected_operations p ON p.owner_kind='authoring_session'
+         AND p.authoring_session_id=o.session_id AND p.operation_id=o.operation_id
+       WHERE o.mission_id=$1 AND ($2::uuid IS NULL OR o.objective_id=$2) AND p.id IS NULL
+         AND (o.state='running'
+           OR (o.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(o.session_id,o.operation_id))
+           OR ${unresolvedEffectObservationPredicate("o")})
+       ORDER BY o.started_at,o.session_id,o.sequence${lockRows ? " FOR UPDATE OF o" : ""}`,
+      scope,
+    );
+    for (const operation of adaptiveOperations.rows) {
+      const unknown = operation.mutationOutcome === "unknown";
+      const effectIncomplete = operation.boundaryType === "effect_observation_required";
+      add({
+        code: unknown
+          ? "MUTATION_RECONCILIATION_REQUIRED"
+          : effectIncomplete
+            ? "EFFECT_OBSERVATION_REQUIRED"
+            : "PRAXIS_OPERATION_NOT_TERMINAL",
+        missionId,
+        objectiveId: operation.objectiveId,
+        praxisSessionId: operation.praxisSessionId,
+        operationId: operation.operationId,
+        state: unknown ? "unknown" : operation.state,
+        ...(operation.reasonCode ? { reasonCode: operation.reasonCode.slice(0, 200) } : {}),
+        resolution: unknown
+          ? "mutation_reconciliation_required"
+          : effectIncomplete
+            ? "fresh_observation_required"
+            : "automatic",
+        safeActions: unknown
+          ? ["get_mission", "get_praxis_session", "reconcile_unknown_operation", "do_not_retry"]
+          : ["get_mission", "get_praxis_session", "observe_praxis_session"],
+        nextActions: unknown
+          ? ["reconcile_unknown_operation"]
+          : effectIncomplete
+            ? ["observe_praxis_session"]
+            : ["get_praxis_session"],
+      });
+    }
+
+    const praxisSessions = await q<{
+      praxisSessionId: string;
+      objectiveId: string | null;
+      state: string;
+      reasonCode: string | null;
+    }>(
+      `SELECT id AS "praxisSessionId",COALESCE(active_objective_id,objective_id) AS "objectiveId",state,
+              decision_boundary->>'reasonCode' AS "reasonCode"
+       FROM adaptive_sessions WHERE mission_id=$1
+         AND ($2::uuid IS NULL OR objective_id=$2 OR active_objective_id=$2)
+         AND state NOT IN ('completed','failed','cancelled')
+       ORDER BY created_at,id${lockRows ? " FOR UPDATE" : ""}`,
+      scope,
+    );
+    const addPraxisSessionBlocker = (session: (typeof praxisSessions.rows)[number]) =>
+      add({
+        code: "MISSION_RUNTIME_CLOSE_REQUIRED",
+        missionId,
+        ...(session.objectiveId ? { objectiveId: session.objectiveId } : {}),
+        praxisSessionId: session.praxisSessionId,
+        state: session.state,
+        ...(session.reasonCode ? { reasonCode: session.reasonCode.slice(0, 200) } : {}),
+        resolution:
+          session.state === "recovery_required" ? "external_agent_action_required" : "automatic",
+        safeActions: ["get_mission", "get_praxis_session", "close_praxis_session"],
+        nextActions: ["get_praxis_session", "close_praxis_session"],
+      });
+
+    if (objectiveId) for (const session of praxisSessions.rows) addPraxisSessionBlocker(session);
+
+    if (!objectiveId) {
+      const runs = await q<{
+        id: string;
+        objectiveId: string;
+        state: string;
+        reasonCode: string | null;
+        praxisSessionId: string | null;
+        executionModel: string | null;
+      }>(
+        `SELECT r.id,r.objective_id AS "objectiveId",r.state,
+                r.outcome_classification AS "reasonCode",
+                current_binding.praxis_session_id AS "praxisSessionId",
+                r.execution_snapshot->>'executionModel' AS "executionModel"
+         FROM runs r
+         LEFT JOIN LATERAL (
+           SELECT binding.praxis_session_id
+           FROM run_praxis_sessions binding
+           WHERE binding.run_id=r.id AND binding.detached_at IS NULL
+           ORDER BY binding.epoch DESC LIMIT 1
+         ) current_binding ON true
+         WHERE r.mission_id=$1 AND r.state NOT IN
+           ('passed','failed','cancelled','timed_out','infrastructure_error')
+         ORDER BY r.created_at,r.id${lockRows ? " FOR UPDATE OF r" : ""}`,
+        [missionId],
+      );
+      const agentFinalizationSessionIds = new Set<string>();
+      for (const run of runs.rows) {
+        const requiresAgentFinalization =
+          run.executionModel === "agent_directed_v1" && Boolean(run.praxisSessionId);
+        if (requiresAgentFinalization) agentFinalizationSessionIds.add(run.praxisSessionId!);
+        add({
+          code: "MISSION_RUNS_NOT_TERMINAL",
+          missionId,
+          objectiveId: run.objectiveId,
+          runId: run.id,
+          ...(run.praxisSessionId ? { praxisSessionId: run.praxisSessionId } : {}),
+          state: run.state,
+          ...(run.reasonCode ? { reasonCode: run.reasonCode.slice(0, 200) } : {}),
+          ...(requiresAgentFinalization
+            ? {
+                reason:
+                  "Finalize this Run through its exact current Praxis association before closing that session.",
+              }
+            : {}),
+          resolution: requiresAgentFinalization ? "external_agent_action_required" : "automatic",
+          safeActions: requiresAgentFinalization
+            ? ["get_mission", "get_run", "finalize_run"]
+            : ["get_mission", "get_run"],
+          nextActions: requiresAgentFinalization ? ["get_run", "finalize_run"] : ["get_run"],
+        });
+      }
+      for (const session of praxisSessions.rows)
+        if (!agentFinalizationSessionIds.has(session.praxisSessionId))
+          addPraxisSessionBlocker(session);
+
+      const attempts = await q<{
+        attemptId: string;
+        runId: string;
+        objectiveId: string;
+        state: string;
+      }>(
+        `SELECT a.id AS "attemptId",r.id AS "runId",r.objective_id AS "objectiveId",a.state
+         FROM attempts a JOIN runs r ON r.id=a.run_id
+         WHERE r.mission_id=$1 AND a.completed_at IS NULL ORDER BY a.created_at,a.id${
+           lockRows ? " FOR UPDATE OF a" : ""
+         }`,
+        [missionId],
+      );
+      for (const attempt of attempts.rows)
+        add({
+          code: "MISSION_ATTEMPTS_NOT_TERMINAL",
+          missionId,
+          objectiveId: attempt.objectiveId,
+          runId: attempt.runId,
+          attemptId: attempt.attemptId,
+          state: attempt.state,
+          resolution: "automatic",
+          safeActions: ["get_mission", "get_run"],
+          nextActions: ["get_run"],
+        });
+
+      const orchestration = await q<{
+        objectiveId: string;
+        runId: string | null;
+        state: string;
+        reasonCode: string | null;
+        evidenceRecommendationId: string | null;
+      }>(
+        `SELECT x.objective_id AS "objectiveId",x.active_run_id AS "runId",x.state,
+                x.blocker_code AS "reasonCode",recommendation.id AS "evidenceRecommendationId"
+         FROM mission_objective_orchestration x
+         LEFT JOIN LATERAL (
+           SELECT id FROM evidence_recommendations e WHERE e.objective_id=x.objective_id
+           ORDER BY revision DESC LIMIT 1
+         ) recommendation ON true
+         WHERE x.mission_id=$1 AND x.state NOT IN ('passed','failed','blocked','cancelled')
+         ORDER BY x.updated_at,x.objective_id${lockRows ? " FOR UPDATE OF x" : ""}`,
+        [missionId],
+      );
+      for (const item of orchestration.rows) {
+        const evidenceRequired = item.state === "awaiting_evidence";
+        add({
+          code: evidenceRequired
+            ? "EVIDENCE_SELECTION_REQUIRED"
+            : "MISSION_ORCHESTRATION_NOT_TERMINAL",
+          missionId,
+          objectiveId: item.objectiveId,
+          ...(item.runId ? { runId: item.runId } : {}),
+          ...(item.evidenceRecommendationId
+            ? { evidenceRecommendationId: item.evidenceRecommendationId }
+            : {}),
+          state: item.state,
+          ...(item.reasonCode ? { reasonCode: item.reasonCode.slice(0, 200) } : {}),
+          resolution: evidenceRequired
+            ? "evidence_selection_required"
+            : "external_agent_action_required",
+          safeActions: evidenceRequired
+            ? ["get_mission", "get_run", "accept_objective_evidence"]
+            : ["get_mission", "get_orchestration_status"],
+          nextActions: evidenceRequired
+            ? ["get_run", "accept_objective_evidence"]
+            : ["get_orchestration_status"],
+        });
+      }
+
+      const objectives = await q<{ id: string; status: string }>(
+        `SELECT id,status FROM mission_objectives o
+         WHERE mission_id=$1 AND NOT ${reportableObjectivePredicate("o")}
+         ORDER BY objective_order,id${lockRows ? " FOR UPDATE OF o" : ""}`,
+        [missionId],
+      );
+      for (const objective of objectives.rows)
+        add({
+          code: "MISSION_OBJECTIVES_NOT_TERMINAL",
+          missionId,
+          objectiveId: objective.id,
+          state: objective.status,
+          resolution: "external_agent_action_required",
+          safeActions: ["get_mission", "finalize_agent_work"],
+          nextActions: ["finalize_agent_work"],
+        });
+
+      const incidents = await q<{
+        runId: string | null;
+        objectiveId: string;
+        protectedOperationId: string | null;
+        evidenceId: string | null;
+        state: string;
+        reasonCode: string | null;
+      }>(
+        `SELECT ci.run_id AS "runId",COALESCE(r.objective_id,p.objective_id) AS "objectiveId",
+                ci.protected_operation_id AS "protectedOperationId",e.id AS "evidenceId",ci.state,
+                ci.reason_code AS "reasonCode"
+         FROM credential_incidents ci
+         LEFT JOIN runs r ON r.id=ci.run_id
+         LEFT JOIN protected_operations p ON p.id=ci.protected_operation_id
+         LEFT JOIN accepted_evidence e ON e.run_id=r.id
+           AND e.superseded_at IS NULL AND e.invalidated_at IS NULL
+         WHERE COALESCE(r.mission_id,p.mission_id)=$1
+           AND ci.state IN ('pending','failed','timed_out','manual_action_required')
+         ORDER BY ci.created_at,ci.id${lockRows ? " FOR UPDATE OF ci" : ""}`,
+        [missionId],
+      );
+      for (const incident of incidents.rows)
+        add({
+          code: "UNRESOLVED_PRIVACY_INCIDENT",
+          missionId,
+          objectiveId: incident.objectiveId,
+          ...(incident.runId ? { runId: incident.runId } : {}),
+          ...(incident.protectedOperationId
+            ? { protectedOperationId: incident.protectedOperationId }
+            : {}),
+          ...(incident.evidenceId ? { evidenceId: incident.evidenceId } : {}),
+          state: incident.state,
+          ...(incident.reasonCode ? { reasonCode: incident.reasonCode.slice(0, 200) } : {}),
+          resolution: "human_action_required",
+          safeActions: ["get_mission"],
+          nextActions: ["get_mission"],
+        });
+
+      await loadMissionReportCompositionReadiness({
+        query: q,
+        missionId,
+        missionRevision: Number(mission.rows[0]!.revision ?? 0),
+        ...(this.artifactStore ? { artifactStore: this.artifactStore } : {}),
+        add,
+      });
+    }
+
+    return {
+      ready: totalBlockerCount === 0,
+      missionId,
+      blockers,
+      truncated: totalBlockerCount > blockers.length,
+      totalBlockerCount,
+    };
+  }
+
+  private requireCompletionReadiness(readiness: MissionCompletionReadiness) {
+    const blocker = readiness.blockers[0];
+    if (!blocker) return;
+    throw new ConflictException({
+      ...blocker,
+      readiness,
+      ...(blocker.code === "AWAITING_USER_REPORT_NOT_FINAL"
+        ? {
+            terminal: false,
+            sameMissionResumable: true,
+            sameObjectiveResumable: true,
+            shouldPublishFinalReport: false,
+          }
+        : {}),
+      ...(blocker.resolution === "mutation_reconciliation_required"
+        ? { mutationOutcome: "unknown", retry: "reconciliation_required" }
+        : {}),
+    });
+  }
+
   async previewReport(principal: Principal, missionId: string) {
-    await this.requireMission((t, v) => this.database.query(t, v), principal, missionId, false);
-    return this.buildReportSnapshot((t, v) => this.database.query(t, v), missionId, "", [], []);
+    const q: Query = (text, values) => this.database.query(text, values);
+    await this.requireMission(q, principal, missionId, false);
+    const completionReadiness = await this.loadCompletionReadiness(q, missionId);
+    const compositionBlocked = completionReadiness.blockers.some((blocker) =>
+      isReportCompositionBlocker(blocker.code),
+    );
+    const snapshot = compositionBlocked
+      ? null
+      : await this.buildReportSnapshot(q, missionId, "", [], []);
+    return missionReportPreviewSchema.parse({ completionReadiness, snapshot });
   }
 
   async publishReport(principal: Principal, missionId: string, input: PublishMissionReportInput) {
@@ -1279,13 +1916,10 @@ export class MissionService {
         });
 
       if (replay.rows[0]!.response)
-        return {
+        return publishedMissionReportSchema.parse({
           ...replay.rows[0]!.response,
           replayed: true,
-        };
-
-      if (["completed", "failed", "cancelled"].includes(mission.status))
-        throw new ConflictException({ code: "MISSION_TERMINAL" });
+        });
 
       if (mission.revision !== input.expectedRevision)
         throw new ConflictException({
@@ -1293,140 +1927,11 @@ export class MissionService {
           actualRevision: mission.revision,
         });
 
-      const agentSession = await q(
-        `SELECT 1
-         FROM agent_sessions
-         WHERE id=$1
-           AND mission_id=$2
-           AND status='active'
-         FOR UPDATE`,
-        [input.agentSessionId, missionId],
-      );
+      const completionReadiness = await this.loadCompletionReadiness(q, missionId, undefined, true);
+      this.requireCompletionReadiness(completionReadiness);
 
-      if (!agentSession.rowCount)
-        throw new ConflictException({
-          code: "AGENT_SESSION_CONTEXT_INVALID",
-        });
+      await this.requireAgentContext(q, missionId, input.agentSessionId, true);
 
-      if (mission.status === "awaiting_user")
-        throw new ConflictException({
-          code: "AWAITING_USER_REPORT_NOT_FINAL",
-          terminal: false,
-          sameMissionResumable: true,
-          sameObjectiveResumable: true,
-          shouldPublishFinalReport: false,
-          safeActions: ["get_operating_context", "resume_mission", "cancel_mission_orchestration"],
-        });
-      const liveAuthoring = await q(
-        `SELECT 1
-         FROM adaptive_sessions
-         WHERE mission_id=$1
-           AND state NOT IN ('completed','failed','cancelled')
-         LIMIT 1
-         FOR UPDATE`,
-        [missionId],
-      );
-
-      if (liveAuthoring.rowCount)
-        throw new ConflictException({
-          code: "MISSION_RUNTIME_CLOSE_REQUIRED",
-        });
-
-      const unresolvedOperations = await q(
-        `SELECT 1
-         FROM adaptive_operations o
-         WHERE o.mission_id=$1
-           AND (
-             o.state='running'
-             OR (
-               o.mutation_outcome='unknown'
-               AND adaptive_operation_unknown_unresolved(
-                 o.session_id,
-                 o.operation_id
-               )
-             )
-           )
-         LIMIT 1
-         FOR UPDATE`,
-        [missionId],
-      );
-
-      if (unresolvedOperations.rowCount)
-        throw new ConflictException({
-          code: "MISSION_RUNTIME_RECONCILIATION_REQUIRED",
-          mutationOutcome: "unknown",
-          retry: "reconciliation_required",
-        });
-
-      const liveRuns = await q(
-        `SELECT 1
-         FROM runs
-         WHERE mission_id=$1
-           AND state NOT IN (
-             'passed',
-             'failed',
-             'cancelled',
-             'timed_out',
-             'infrastructure_error'
-           )
-         LIMIT 1
-         FOR UPDATE`,
-        [missionId],
-      );
-
-      if (liveRuns.rowCount)
-        throw new ConflictException({
-          code: "MISSION_RUNS_NOT_TERMINAL",
-        });
-
-      const openAttempts = await q(
-        `SELECT 1
-         FROM attempts a
-         JOIN runs r
-           ON r.id=a.run_id
-         WHERE r.mission_id=$1
-           AND a.completed_at IS NULL
-         LIMIT 1
-         FOR UPDATE OF a`,
-        [missionId],
-      );
-
-      if (openAttempts.rowCount)
-        throw new ConflictException({
-          code: "MISSION_ATTEMPTS_NOT_TERMINAL",
-        });
-
-      const liveOrchestration = await q(
-        `SELECT 1
-         FROM mission_objective_orchestration
-         WHERE mission_id=$1
-           AND state NOT IN (
-             'passed',
-             'failed',
-             'blocked',
-             'cancelled'
-           )
-         LIMIT 1
-         FOR UPDATE`,
-        [missionId],
-      );
-
-      if (liveOrchestration.rowCount)
-        throw new ConflictException({
-          code: "MISSION_ORCHESTRATION_NOT_TERMINAL",
-        });
-
-      const incomplete = await q(
-        `SELECT o.id,o.status,o.conclusion FROM mission_objectives o WHERE o.mission_id=$1 AND NOT ${reportableObjectivePredicate("o")}`,
-        [missionId],
-      );
-      if (incomplete.rowCount)
-        throw new ConflictException({ code: "MISSION_OBJECTIVES_NOT_TERMINAL" });
-      const privacy = await q(
-        `SELECT 1 FROM credential_incidents ci JOIN runs r ON r.id=ci.run_id JOIN accepted_evidence e ON e.run_id=r.id AND e.superseded_at IS NULL AND e.invalidated_at IS NULL WHERE e.mission_id=$1 AND ci.state IN ('pending','failed','timed_out','manual_action_required') LIMIT 1`,
-        [missionId],
-      );
-      if (privacy.rowCount) throw new ConflictException({ code: "UNRESOLVED_PRIVACY_INCIDENT" });
       const snapshot = await this.buildReportSnapshot(
         q,
         missionId,
@@ -1462,14 +1967,14 @@ export class MissionService {
         `Mission report revision ${revision} published`,
         { reportId, revision },
       );
-      const response = {
+      const response = publishedMissionReportSchema.parse({
         id: reportId,
         missionId,
         revision,
         status: "published" as const,
         snapshot,
         replayed: false,
-      };
+      });
 
       await q(
         `UPDATE idempotency_records
@@ -1514,6 +2019,7 @@ export class MissionService {
       revision: number;
       title: string;
       originalInstruction: string;
+      purpose: "primary" | "diagnostic" | "recovery";
       status: string;
     }>(
       `SELECT
@@ -1521,6 +2027,7 @@ export class MissionService {
          revision,
          title,
          original_instruction AS "originalInstruction",
+         purpose,
          status
        FROM missions
        WHERE id=$1`,
@@ -1553,6 +2060,7 @@ export class MissionService {
       objectiveId: string;
       runId: string;
       artifactId: string | null;
+      selectionOrder: number | string | null;
       acceptanceConclusion: string;
       acceptedByAgentSessionId: string;
       acceptedAt: string;
@@ -1572,6 +2080,7 @@ export class MissionService {
       canonicalAttemptStartedAt: string | null;
       canonicalAttemptCompletedAt: string | null;
       artifactAttemptId: string | null;
+      artifactStepId: string | null;
       artifactKind: string | null;
       artifactAvailability: string | null;
       artifactPrivacyClassification: string | null;
@@ -1588,6 +2097,8 @@ export class MissionService {
          e.objective_id::text AS "objectiveId",
          e.run_id::text AS "runId",
          e.artifact_id::text AS "artifactId",
+         explicit_order.selection_order
+           AS "selectionOrder",
          e.conclusion AS "acceptanceConclusion",
          e.accepted_by_agent_session_id::text
            AS "acceptedByAgentSessionId",
@@ -1624,6 +2135,8 @@ export class MissionService {
 
          a.attempt_id::text
            AS "artifactAttemptId",
+         a.step_id
+           AS "artifactStepId",
          a.kind AS "artifactKind",
          a.availability
            AS "artifactAvailability",
@@ -1670,6 +2183,34 @@ export class MissionService {
        LEFT JOIN artifacts a
          ON a.id=e.artifact_id
 
+       LEFT JOIN LATERAL (
+         SELECT
+           (ordered.ordinality-1)::integer
+             AS selection_order
+         FROM mission_activities activity
+         CROSS JOIN LATERAL
+           jsonb_array_elements_text(
+             COALESCE(
+               activity.safe_metadata->'orderedArtifactIds',
+               '[]'::jsonb
+             )
+           ) WITH ORDINALITY
+             ordered(artifact_id,ordinality)
+         WHERE e.artifact_id IS NOT NULL
+           AND activity.mission_id=e.mission_id
+           AND activity.objective_id=e.objective_id
+           AND activity.agent_session_id=
+                 e.accepted_by_agent_session_id
+           AND activity.type='run_accepted'
+           AND activity.safe_metadata->>'runId'=
+                 e.run_id::text
+           AND ordered.artifact_id=e.artifact_id::text
+         ORDER BY
+           activity.occurred_at DESC,
+           activity.id DESC
+         LIMIT 1
+       ) explicit_order ON true
+
        WHERE e.mission_id=$1
          AND e.superseded_at IS NULL
          AND e.invalidated_at IS NULL
@@ -1711,6 +2252,14 @@ export class MissionService {
         objectiveId: row.objectiveId,
         runId: row.runId,
         artifactId: row.artifactId,
+        selectionOrder:
+          row.selectionOrder == null
+            ? row.artifactId === null
+              ? 0
+              : accepted.rows
+                  .filter((candidate) => candidate.objectiveId === row.objectiveId)
+                  .findIndex((candidate) => candidate.id === row.id)
+            : Number(row.selectionOrder),
         acceptanceConclusion: row.acceptanceConclusion,
         acceptedByAgentSessionId: row.acceptedByAgentSessionId,
         acceptedAt: row.acceptedAt,
@@ -1738,6 +2287,7 @@ export class MissionService {
           ? {
               id: row.artifactId,
               attemptId: row.artifactAttemptId!,
+              stepId: row.artifactStepId,
               kind: row.artifactKind!,
               availability: row.artifactAvailability!,
               privacyClassification: row.artifactPrivacyClassification!,
@@ -1759,12 +2309,38 @@ export class MissionService {
     );
 
     const resolvedRecording = await resolveMissionRecording(query, missionId);
+    const selectedRunIds = [
+      ...new Set([
+        ...composition.objectives.flatMap(({ acceptedRunIds }) => acceptedRunIds),
+        ...(resolvedRecording.recording?.runs.map(({ run }) => run.id) ?? []),
+      ]),
+    ];
+    const selectedRunIdSet = new Set(selectedRunIds);
+    const mutationReceipts = this.protectedOperations
+      ? (await this.protectedOperations.listMutationReceiptsForRuns(selectedRunIds)).filter(
+          (receipt) =>
+            receipt.correlation.missionId === missionId &&
+            receipt.correlation.runId !== undefined &&
+            selectedRunIdSet.has(receipt.correlation.runId),
+        )
+      : [];
+    const relatedMissions = await loadMissionRelationDisclosures(query, missionId);
+    const compositionDigest = digestMissionReportComposition({
+      missionId,
+      sourceMissionRevision: mission.revision,
+      selectedRunIds,
+      evidenceDigest: composition.evidenceDigest,
+      recordingDigest: resolvedRecording.recording?.recordingDigest ?? null,
+      mutationReceipts,
+      relatedMissions,
+    });
 
     return {
       mission: {
         id: mission.id,
         title: mission.title,
         originalInstruction: mission.originalInstruction,
+        purpose: mission.purpose ?? "primary",
         status: finalStatus ?? mission.status,
         sourceRevision: mission.revision,
       },
@@ -1792,6 +2368,9 @@ export class MissionService {
       recordingSelection: resolvedRecording.selection,
       recording: resolvedRecording.recording,
       recordingDigest: resolvedRecording.recording?.recordingDigest ?? null,
+      mutationReceipts,
+      relatedMissions,
+      compositionDigest,
 
       supersededAttemptCount: composition.supersededAttemptCount,
 
@@ -1820,6 +2399,22 @@ export class MissionService {
       if (cycle.rowCount) throw new ConflictException({ code: "OBJECTIVE_DEPENDENCY_CYCLE" });
     }
   }
+  // Ending execution authority does not prevent its owner from settling the report.
+  // Only these reporting methods opt in; ordinary Mission work remains active-only.
+  private async requireAgentContext(
+    q: Query,
+    missionId: string,
+    sessionId: string,
+    reporting = false,
+  ) {
+    const session = await q(
+      `SELECT 1 FROM agent_sessions WHERE id=$1 AND mission_id=$2
+       AND (status='active' OR ($3::boolean AND status='completed' AND ended_at IS NOT NULL))
+       FOR SHARE`,
+      [sessionId, missionId, reporting],
+    );
+    if (!session.rowCount) throw new ConflictException({ code: "AGENT_SESSION_CONTEXT_INVALID" });
+  }
   private async requireContext(
     q: Query,
     principal: Principal,
@@ -1828,11 +2423,7 @@ export class MissionService {
     objectiveId?: string,
   ) {
     const m = await this.requireMission(q, principal, missionId, true);
-    const session = await q(
-      `SELECT 1 FROM agent_sessions WHERE id=$1 AND mission_id=$2 AND status='active'`,
-      [sessionId, missionId],
-    );
-    if (!session.rowCount) throw new ConflictException({ code: "AGENT_SESSION_CONTEXT_INVALID" });
+    await this.requireAgentContext(q, missionId, sessionId);
     if (objectiveId) {
       const objective = await q(`SELECT 1 FROM mission_objectives WHERE id=$1 AND mission_id=$2`, [
         objectiveId,
@@ -1850,12 +2441,183 @@ export class MissionService {
     if (!r.rowCount) throw new NotFoundException("Project not found");
   }
   private async requireMission(q: Query, principal: Principal, id: string, lock: boolean) {
-    const r = await q<{ id: string; projectId: string; status: string; revision: number }>(
-      `SELECT m.id,m.project_id AS "projectId",m.status,m.revision FROM missions m JOIN projects p ON p.id=m.project_id WHERE m.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2) ${lock ? "FOR UPDATE OF m" : ""}`,
+    const r = await q<{
+      id: string;
+      projectId: string;
+      status: string;
+      revision: number;
+      currentObjectiveId: string | null;
+      resumePointer: unknown;
+    }>(
+      `SELECT m.id,m.project_id AS "projectId",m.status,m.revision,
+              m.current_objective_id AS "currentObjectiveId",m.resume_pointer AS "resumePointer"
+         FROM missions m JOIN projects p ON p.id=m.project_id
+        WHERE m.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2) ${lock ? "FOR UPDATE OF m" : ""}`,
       [id, workspaceId(principal)],
     );
     if (!r.rowCount) throw new NotFoundException("Mission not found");
     return r.rows[0]!;
+  }
+
+  private async reopenInterruptedObjective(
+    q: Query,
+    mission: {
+      id: string;
+      status: string;
+      currentObjectiveId: string | null;
+      resumePointer: unknown;
+    },
+  ) {
+    if (mission.status !== "blocked") return null;
+    const pointer = asRow(mission.resumePointer);
+    const objectiveId =
+      typeof pointer.objectiveId === "string"
+        ? pointer.objectiveId
+        : (mission.currentObjectiveId ?? undefined);
+    if (!objectiveId) return null;
+    if (mission.currentObjectiveId && mission.currentObjectiveId !== objectiveId)
+      throw new ConflictException({
+        code: "MISSION_RESUME_POINTER_OBJECTIVE_MISMATCH",
+        safeActions: ["get_operating_context"],
+      });
+
+    const objective = await q<{ status: string; executionMode: string | null }>(
+      `SELECT objective.status,binding.mode AS "executionMode"
+         FROM mission_objectives objective
+         LEFT JOIN mission_objective_orchestration orchestration
+           ON orchestration.objective_id=objective.id
+         LEFT JOIN mission_execution_bindings binding
+           ON binding.plan_id=orchestration.plan_id AND binding.objective_id=objective.id
+        WHERE objective.mission_id=$1 AND objective.id::text=$2
+        FOR UPDATE OF objective`,
+      [mission.id, objectiveId],
+    );
+    if (!objective.rowCount)
+      throw new ConflictException({
+        code: "MISSION_RESUME_POINTER_OBJECTIVE_MISMATCH",
+        safeActions: ["get_operating_context"],
+      });
+    if (objective.rows[0]!.status !== "blocked") return null;
+    if (
+      pointer.recommendedAction !== "review_failure" ||
+      pointer.objectiveId !== objectiveId ||
+      typeof pointer.runId !== "string" ||
+      typeof pointer.explanation !== "string"
+    )
+      throw new ConflictException({
+        code: "MISSION_OBJECTIVE_RESUME_NOT_AVAILABLE",
+        objectiveId,
+        safeActions: ["get_operating_context", "create_mission_objective"],
+      });
+    if (objective.rows[0]!.executionMode === "automatic")
+      throw new ConflictException({
+        code: "MISSION_AUTOMATIC_OBJECTIVE_RESUME_REQUIRES_ORCHESTRATION",
+        safeActions: ["get_orchestration_status", "resume_mission_orchestration"],
+      });
+
+    const settlement = await q<{
+      terminalOutcome: string | null;
+      terminationReason: string | null;
+    }>(
+      `SELECT session.terminal_outcome AS "terminalOutcome",
+              session.termination_reason AS "terminationReason"
+         FROM runs run
+         JOIN agent_sessions session ON session.id=run.agent_session_id
+        WHERE run.mission_id=$1 AND run.objective_id::text=$2 AND run.id::text=$3
+          AND run.state='infrastructure_error'
+          AND session.termination_reason=$4
+        ORDER BY session.ended_at DESC NULLS LAST
+        LIMIT 1
+        FOR UPDATE OF run,session`,
+      [mission.id, pointer.objectiveId, pointer.runId, pointer.explanation],
+    );
+    const resumableInterruptions = new Set([
+      "provider_failure",
+      "limit_exceeded",
+      "cancelled",
+      "model_stopped_without_completion",
+    ]);
+    if (
+      !settlement.rowCount ||
+      !resumableInterruptions.has(settlement.rows[0]!.terminalOutcome ?? "")
+    )
+      throw new ConflictException({
+        code: "MISSION_OBJECTIVE_RESUME_NOT_AVAILABLE",
+        objectiveId: pointer.objectiveId,
+        safeActions: ["get_operating_context", "create_mission_objective"],
+      });
+
+    const safety = await q<{
+      unresolvedMutation: boolean;
+      unresolvedProtectedOperation: boolean;
+      unresolvedEffectObservation: boolean;
+      livePraxisSession: boolean;
+      nonterminalRun: boolean;
+    }>(
+      `SELECT
+         EXISTS(
+           SELECT 1 FROM unresolved_adaptive_unknown_operations operation
+            WHERE operation.mission_id=$1 AND operation.objective_id::text=$2
+         ) AS "unresolvedMutation",
+         EXISTS(
+           SELECT 1 FROM protected_operations protected
+            WHERE protected.mission_id=$1 AND protected.objective_id::text=$2
+              AND (protected.mutation_outcome='unknown'
+                OR protected.state IN ('recovery_required','compromised'))
+         ) AS "unresolvedProtectedOperation",
+         EXISTS(
+           SELECT 1 FROM adaptive_operations operation
+            WHERE operation.mission_id=$1 AND operation.objective_id::text=$2
+              AND ${unresolvedEffectObservationPredicate("operation")}
+         ) AS "unresolvedEffectObservation",
+         EXISTS(
+           SELECT 1 FROM adaptive_sessions session
+            WHERE session.mission_id=$1
+              AND (session.objective_id::text=$2 OR session.active_objective_id::text=$2)
+              AND session.state NOT IN ('completed','failed','cancelled')
+         ) AS "livePraxisSession",
+         EXISTS(
+           SELECT 1 FROM runs run
+            WHERE run.mission_id=$1 AND run.objective_id::text=$2
+              AND run.state NOT IN
+                ('passed','failed','cancelled','timed_out','infrastructure_error')
+         ) AS "nonterminalRun"`,
+      [mission.id, pointer.objectiveId],
+    );
+    const facts = safety.rows[0]!;
+    if (facts.unresolvedMutation || facts.unresolvedProtectedOperation)
+      throw new ConflictException({
+        code: "MISSION_RECONCILIATION_REQUIRED",
+        mutationOutcome: "unknown",
+        safeActions: ["get_operating_context", "reconcile_unknown_operation", "do_not_retry"],
+      });
+    if (facts.unresolvedEffectObservation)
+      throw new ConflictException({
+        code: "MISSION_EFFECT_OBSERVATION_REQUIRED",
+        safeActions: ["get_operating_context", "observe_praxis_session"],
+      });
+    if (facts.livePraxisSession || facts.nonterminalRun)
+      throw new ConflictException({
+        code: "MISSION_RESUME_SETTLEMENT_INCOMPLETE",
+        safeActions: ["get_mission", "get_run", "get_praxis_session", "finalize_run"],
+      });
+
+    const reopened = await q<{ id: string }>(
+      `UPDATE mission_objectives SET status='pending',conclusion=NULL,updated_at=now()
+        WHERE mission_id=$1 AND id::text=$2 AND status='blocked'
+        RETURNING id::text`,
+      [mission.id, pointer.objectiveId],
+    );
+    if (!reopened.rowCount)
+      throw new ConflictException({ code: "MISSION_OBJECTIVE_RESUME_FENCED" });
+    await q(
+      `UPDATE mission_objective_orchestration
+          SET state='ready',active_run_id=NULL,blocker_code=NULL,
+              blocker_details='{}'::jsonb,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+        WHERE objective_id::text=$1 AND state='blocked' AND active_run_id::text=$2`,
+      [pointer.objectiveId, pointer.runId],
+    );
+    return pointer.objectiveId;
   }
   private activity(
     q: Query,
@@ -1907,6 +2669,7 @@ function projectAgentMissionContext(value: MissionProjectionRow) {
     projectId: mission.projectId,
     title: bounded(mission.title, 500),
     originalInstruction: bounded(mission.originalInstruction, 20_000),
+    purpose: mission.purpose,
     status: mission.status,
     currentObjectiveId: mission.currentObjectiveId,
     resumePointer: projectResumePointer(mission.resumePointer),
@@ -1919,6 +2682,8 @@ function projectAgentMissionContext(value: MissionProjectionRow) {
     objectiveCount: mission.objectiveCount,
     terminalObjectiveCount: mission.terminalObjectiveCount,
     acceptedEvidenceCount: mission.acceptedEvidenceCount,
+    completionReadiness: mission.completionReadiness,
+    relatedMissions: Array.isArray(mission.relatedMissions) ? mission.relatedMissions : [],
     objectives: rows(mission.objectives, 100).map((item) =>
       compact({
         id: item.id,
@@ -2133,9 +2898,48 @@ function compact<T extends MissionProjectionRow>(value: T) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
 }
 
+function isReportCompositionBlocker(code: string) {
+  return (
+    code.startsWith("MISSION_RECORDING_") ||
+    code.startsWith("CHRONICLE_RECORDING_") ||
+    code.startsWith("REPORT_")
+  );
+}
+
 function bindQuery(client: PoolClient): Query {
   return (text, values = []) => client.query(text, values);
 }
 function workspaceId(principal: Principal) {
   return principal.kind === "user" ? principal.workspaceId : null;
+}
+
+function externalAgentLeaseMs() {
+  const value = Number(process.env.SCRY_EXTERNAL_AGENT_LEASE_MS ?? 180_000);
+  if (!Number.isSafeInteger(value) || value < 30_000 || value > 3_600_000)
+    throw new Error("SCRY_EXTERNAL_AGENT_LEASE_MS_INVALID");
+  return value;
+}
+
+export function projectMissionAgentSessionReplay(
+  missionId: string,
+  session: { id: string; status: string },
+) {
+  const sessionTerminal = session.status !== "active";
+
+  return startedAgentSessionSchema.parse({
+    missionId,
+    agentSessionId: session.id,
+    status: session.status,
+    replayed: true,
+    replay: {
+      idempotencyScope: "mission_agent_session",
+      owner: {
+        missionId,
+        agentSessionId: session.id,
+      },
+      sessionTerminal,
+      requiresFreshIdempotencyKey: sessionTerminal,
+      safeActions: sessionTerminal ? ["get_mission", "resume_mission"] : ["get_mission"],
+    },
+  });
 }

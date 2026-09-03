@@ -41,15 +41,21 @@ export class ExecutionRepository {
     releaseId: string,
     schemaFingerprint: string,
     praxis: { contractVersion: number; runtimeVersion: string; scoringPolicyVersion: number },
+    source: { commit: string; dirty: boolean; manifestSha256: string },
   ) {
     await this.database.query(
-      `INSERT INTO worker_heartbeats(worker_id, release_id, schema_fingerprint, praxis_contract_version, praxis_runtime_version, praxis_scoring_policy_version, heartbeat_at)
-       VALUES ($1, $2, $3, $4, $5, $6, now())
+      `INSERT INTO worker_heartbeats(
+         worker_id,release_id,schema_fingerprint,praxis_contract_version,praxis_runtime_version,
+         praxis_scoring_policy_version,source_commit,source_dirty,source_manifest_sha256,heartbeat_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
        ON CONFLICT (worker_id) DO UPDATE SET release_id = EXCLUDED.release_id,
          schema_fingerprint = EXCLUDED.schema_fingerprint,
          praxis_contract_version = EXCLUDED.praxis_contract_version,
          praxis_runtime_version = EXCLUDED.praxis_runtime_version,
          praxis_scoring_policy_version = EXCLUDED.praxis_scoring_policy_version,
+         source_commit = EXCLUDED.source_commit,
+         source_dirty = EXCLUDED.source_dirty,
+         source_manifest_sha256 = EXCLUDED.source_manifest_sha256,
          heartbeat_at = now()`,
       [
         workerId,
@@ -58,6 +64,9 @@ export class ExecutionRepository {
         praxis.contractVersion,
         praxis.runtimeVersion,
         praxis.scoringPolicyVersion,
+        source.commit,
+        source.dirty,
+        source.manifestSha256,
       ],
     );
   }
@@ -296,7 +305,8 @@ export class ExecutionRepository {
               credential.authentication_tag AS "authenticationTag", credential.deleted_at AS "deletedAt",
               credential.security_status AS "securityStatus"
        FROM project_credentials credential
-       WHERE credential.project_id = $1 AND credential.id = $2`,
+       WHERE credential.project_id = $1 AND credential.id = $2
+         AND credential.origin_protected_operation_id IS NULL`,
         [authorization.rows[0]!.projectId, credentialId],
       );
       if (!credential.rowCount || credential.rows[0]!.deletedAt) return { status: "deleted" };

@@ -103,6 +103,11 @@ describe("Mission lifecycle regression", () => {
             },
           ],
         };
+      if (text.includes("FROM missions WHERE id=$1"))
+        return {
+          rowCount: 1,
+          rows: [{ status: "awaiting_user", finalReportId: null, resumePointer: null }],
+        };
       if (text.includes("FROM agent_sessions")) return { rowCount: 1, rows: [{}] };
       if (text.includes("SELECT 1 FROM mission_objectives")) return { rowCount: 1, rows: [{}] };
       return { rowCount: 0, rows: [] };
@@ -195,11 +200,15 @@ describe("Mission lifecycle regression", () => {
       response: expect.objectContaining({
         code: "AWAITING_USER_REPORT_NOT_FINAL",
         shouldPublishFinalReport: false,
+        readiness: expect.objectContaining({
+          ready: false,
+          blockers: [expect.objectContaining({ code: "AWAITING_USER_REPORT_NOT_FINAL" })],
+        }),
       }),
     });
     expect(
       query.mock.calls.some(([text]) => String(text).includes("FROM mission_objectives o")),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("does not attach an awaiting-user pointer to an already terminal Objective", async () => {
@@ -273,10 +282,27 @@ describe("Mission lifecycle regression", () => {
         return { rowCount: 1, rows: [{ requestHash, response: null }] };
       if (text.includes("FROM missions m JOIN projects"))
         return { rowCount: 1, rows: [{ status: "running", revision: 1 }] };
+      if (text.includes("FROM missions WHERE id=$1"))
+        return {
+          rowCount: 1,
+          rows: [{ status: "running", finalReportId: null, resumePointer: null }],
+        };
       if (text.includes("FROM agent_sessions") || text.includes("FROM mission_objectives"))
         return { rowCount: 1, rows: [{ status: "running" }] };
+      if (text.includes("FROM protected_operations") || text.includes("FROM adaptive_operations"))
+        return { rowCount: 0, rows: [] };
       if (text.includes("FROM adaptive_sessions"))
-        return { rowCount: 1, rows: [{ state: "active" }] };
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              praxisSessionId: "55555555-5555-4555-8555-555555555555",
+              objectiveId: "22222222-2222-4222-8222-222222222222",
+              state: "active",
+              reasonCode: null,
+            },
+          ],
+        };
       return { rowCount: 1, rows: [] };
     });
     const service = new MissionService({ transaction: (work: any) => work({ query }) } as never);
@@ -296,7 +322,7 @@ describe("Mission lifecycle regression", () => {
         },
       ),
     ).rejects.toMatchObject({
-      response: expect.objectContaining({ code: "MISSION_AUTHORING_CLOSE_REQUIRED" }),
+      response: expect.objectContaining({ code: "MISSION_RUNTIME_CLOSE_REQUIRED" }),
     });
     expect(
       query.mock.calls.some(([text]) => String(text).includes("UPDATE mission_objectives")),
@@ -605,7 +631,7 @@ describe("Mission lifecycle regression", () => {
     expect(queries.join("\n")).not.toContain("Execution failed and requires review");
   });
 
-  it("requires continuation when related non-terminal work already exists", async () => {
+  it("requires selection when related non-terminal work already exists", async () => {
     let requestHash = "";
     const query = vi.fn(async (text: string, values: unknown[] = []) => {
       if (text.includes("SELECT 1 FROM projects")) return { rowCount: 1, rows: [{}] };
@@ -615,7 +641,7 @@ describe("Mission lifecycle regression", () => {
       }
       if (text.includes("SELECT request_hash"))
         return { rowCount: 1, rows: [{ requestHash, response: null }] };
-      if (text.includes("SELECT id,title,status,resume_pointer"))
+      if (text.includes("FROM missions mission") && text.includes('"activeExternalRunIds"'))
         return {
           rowCount: 1,
           rows: [
@@ -623,7 +649,34 @@ describe("Mission lifecycle regression", () => {
               id: "33333333-3333-4333-8333-333333333333",
               title: "Existing",
               status: "planning",
-              resumePointer: null,
+              purpose: "primary",
+              latestExternalRunId: null,
+              latestAgentSessionStatus: null,
+              knownExternalRunIds: [],
+              activeExternalRunIds: [],
+              activeExecutionOwnership: true,
+              unresolvedMutationRisk: false,
+              outstandingReconciliation: false,
+            },
+          ],
+        };
+      if (text.includes("WITH scoped_missions"))
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              kind: "praxis_runtime_owner",
+              projectId: "11111111-1111-4111-8111-111111111111",
+              missionId: "33333333-3333-4333-8333-333333333333",
+              environmentId: null,
+              resourceDomain: null,
+              credentialDomain: null,
+              operationId: null,
+              protectedOperationId: null,
+              recoveryId: null,
+              authority: "lifecycle",
+              blocking: true,
+              lifecycle: "live",
             },
           ],
         };
@@ -645,7 +698,7 @@ describe("Mission lifecycle regression", () => {
           idempotencyKey: "mission-regression-1",
         },
       ),
-    ).rejects.toMatchObject({ response: { code: "MISSION_CONTINUATION_REQUIRED" } });
+    ).rejects.toMatchObject({ response: { code: "MISSION_SELECTION_REQUIRED" } });
   });
 
   it("writes the final completed state into an immutable report snapshot", async () => {
@@ -677,6 +730,9 @@ describe("Mission lifecycle regression", () => {
       // This synthetic lifecycle fixture is genuinely Run-free,
       // so recording=null is valid rather than auto-selecting Runs.
       { rows: [{ count: 0 }] },
+
+      // No cross-Mission provenance for this legacy lifecycle fixture.
+      { rows: [] },
     ];
 
     const query = vi.fn(async () => {

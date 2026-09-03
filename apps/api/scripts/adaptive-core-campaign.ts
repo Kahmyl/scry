@@ -2,14 +2,13 @@ import { randomUUID } from "node:crypto";
 import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { CampaignMetricsCollector, retainCampaignReport } from "@scry/assurance";
+import { evaluateRequiredChecks } from "./adaptive-campaign-evaluation.js";
 import {
-  CampaignMetricsCollector,
-  evaluateRequiredChecks,
   milestoneCampaignResultSchema,
-  retainCampaignReport,
   type AdaptiveMilestone,
   type CampaignCheck,
-} from "@scry/assurance/legacy";
+} from "@scry/contracts";
 
 import { milestoneCommands, runMilestoneCommands } from "./adaptive-milestone-checks.js";
 

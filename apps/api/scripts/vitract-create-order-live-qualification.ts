@@ -11,9 +11,6 @@ import { AppModule } from "../src/app.module.js";
 import { MissionProtectedQualificationRunner } from "../src/adaptive-sessions/index.js";
 
 export const VITRACT_CREATE_QUALIFICATION = {
-  projectId: "6b3b5011-0f41-430c-a8a2-d4abfd9ff3f1",
-  environmentId: "9a581bb0-2276-4888-9ddb-07b2485cddc3",
-  credentialIssuanceOperationId: "64d30899-8278-4a42-89b9-c34dce6b000f",
   providerOrigin: "https://preview-api.vitract.com",
   path: "/api/v1/partner-api/orders",
 } as const;
@@ -56,12 +53,7 @@ export function selectAuthoritativeCredentialPair(
     projectId: string;
     environmentId: string;
     providerOrigin: string;
-    credentialIssuanceOperationId: string;
-  } = {
-    projectId: VITRACT_CREATE_QUALIFICATION.projectId,
-    environmentId: VITRACT_CREATE_QUALIFICATION.environmentId,
-    providerOrigin: VITRACT_CREATE_QUALIFICATION.providerOrigin,
-    credentialIssuanceOperationId: VITRACT_CREATE_QUALIFICATION.credentialIssuanceOperationId,
+    credentialIssuanceOperationId?: string;
   },
 ): [string, string] {
   const eligible = candidates.filter(
@@ -69,7 +61,8 @@ export function selectAuthoritativeCredentialPair(
       candidate.projectId === authority.projectId &&
       candidate.environmentId === authority.environmentId &&
       candidate.providerOrigin === authority.providerOrigin &&
-      candidate.issuanceOperationId === authority.credentialIssuanceOperationId &&
+      (!authority.credentialIssuanceOperationId ||
+        candidate.issuanceOperationId === authority.credentialIssuanceOperationId) &&
       candidate.listRequestMethod === "GET" &&
       candidate.listOperationCompleted &&
       candidate.listPersistenceCommitted &&
@@ -229,7 +222,8 @@ export async function main() {
   }
   if (live && process.env.SCRY_VITRACT_CREATE_LIVE_AUTHORIZATION !== "explicit")
     throw new Error("LIVE_CREATE_EXPLICIT_AUTHORIZATION_REQUIRED");
-  const context = await loadDurableContext();
+  const authority = await resolveCanonicalCreateScope();
+  const context = await loadDurableContext(authority);
   const policy = executionPolicySchema.parse(context.policy);
   for (const contract of ["opaque_operation_token", "nested_client_order_json"]) {
     if (
@@ -248,12 +242,12 @@ export async function main() {
     const runner = app.get(MissionProtectedQualificationRunner);
     const runId = randomUUID();
     if (readOnlyAuthProbe) {
-      const probe = await loadReadOnlyAuthProbe(context, runId);
+      const probe = await loadReadOnlyAuthProbe(context, runId, authority);
       const result = await runner.execute({
         principal: { kind: "service", subject: "scry-service" },
         session: {
-          projectId: VITRACT_CREATE_QUALIFICATION.projectId,
-          environmentId: VITRACT_CREATE_QUALIFICATION.environmentId,
+          projectId: authority.projectId,
+          environmentId: authority.environmentId,
           missionId: context.missionId,
           objectiveId: context.objectiveId,
           flowDraftId: context.flowDraftId,
@@ -282,8 +276,8 @@ export async function main() {
     const result = await runner.execute({
       principal: { kind: "service", subject: "scry-service" },
       session: {
-        projectId: VITRACT_CREATE_QUALIFICATION.projectId,
-        environmentId: VITRACT_CREATE_QUALIFICATION.environmentId,
+        projectId: authority.projectId,
+        environmentId: authority.environmentId,
         missionId: context.missionId,
         objectiveId: context.objectiveId,
         flowDraftId: context.flowDraftId,
@@ -322,7 +316,11 @@ export async function main() {
   }
 }
 
-async function loadReadOnlyAuthProbe(context: DurableContext, runId: string) {
+async function loadReadOnlyAuthProbe(
+  context: DurableContext,
+  runId: string,
+  authority: { projectId: string; environmentId: string },
+) {
   const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL ?? "postgres://scry:scry-local@127.0.0.1:54329/scry",
   });
@@ -357,7 +355,7 @@ async function loadReadOnlyAuthProbe(context: DurableContext, runId: string) {
             LIMIT 1
          ) resolved
         GROUP BY candidate.operation`,
-      [VITRACT_CREATE_QUALIFICATION.projectId, VITRACT_CREATE_QUALIFICATION.environmentId],
+      [authority.projectId, authority.environmentId],
     );
     if (result.rowCount !== 1) throw new Error("READ_ONLY_AUTH_PROBE_UNAVAILABLE");
     const source = result.rows[0]!;
@@ -426,13 +424,59 @@ async function loadReadOnlyAuthProbe(context: DurableContext, runId: string) {
   }
 }
 
-async function loadDurableContext(): Promise<DurableContext> {
+export async function loadDurableContext(authority: {
+  projectId: string;
+  environmentId: string;
+  credentialReferenceIds?: [string, string];
+  clientIdPublicValueId?: string;
+  clientSecretReferenceId?: string;
+  clientIdValueAssetId?: string;
+  clientSecretValueAssetId?: string;
+}): Promise<any> {
   const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL ?? "postgres://scry:scry-local@127.0.0.1:54329/scry",
   });
   try {
-    const credentialPairs = await pool.query<CredentialPairCandidate>(
-      `WITH candidates AS (
+    if (authority.clientIdValueAssetId || authority.clientSecretValueAssetId) {
+      if (!authority.clientIdValueAssetId || !authority.clientSecretValueAssetId)
+        throw new Error("Q5_TYPED_CREDENTIAL_PAIR_INCOMPLETE");
+      const typed = await pool.query<any>(
+        `SELECT environment.policy->'allowedOrigins' AS "allowedOrigins",environment.policy
+           FROM environments environment
+           JOIN typed_value_assets client_id_asset ON client_id_asset.id=$3
+             AND client_id_asset.project_id=environment.project_id
+             AND client_id_asset.environment_id=environment.id
+             AND client_id_asset.canonical_output_key='clientId'
+           JOIN generated_public_values client_id ON client_id.id=client_id_asset.generated_public_value_id
+             AND client_id.reference='clientId'
+           JOIN typed_value_assets client_secret_asset ON client_secret_asset.id=$4
+             AND client_secret_asset.project_id=environment.project_id
+             AND client_secret_asset.environment_id=environment.id
+             AND client_secret_asset.canonical_output_key='clientSecret'
+             AND client_secret_asset.producer_protected_operation_id=client_id_asset.producer_protected_operation_id
+           JOIN project_credentials client_secret ON client_secret.id=client_secret_asset.project_credential_id
+             AND client_secret.security_status='active' AND client_secret.deleted_at IS NULL
+          WHERE environment.project_id=$1 AND environment.id=$2`,
+        [
+          authority.projectId,
+          authority.environmentId,
+          authority.clientIdValueAssetId,
+          authority.clientSecretValueAssetId,
+        ],
+      );
+      if (typed.rowCount !== 1) throw new Error("Q5_TYPED_CREDENTIAL_PAIR_UNAVAILABLE");
+      return {
+        ...typed.rows[0],
+        clientIdPublicValueId: authority.clientIdPublicValueId,
+        clientSecretReferenceId: authority.clientSecretReferenceId,
+        clientIdValueAssetId: authority.clientIdValueAssetId,
+        clientSecretValueAssetId: authority.clientSecretValueAssetId,
+      };
+    }
+    const credentialPairs = authority.credentialReferenceIds
+      ? undefined
+      : await pool.query<CredentialPairCandidate>(
+          `WITH candidates AS (
          SELECT operation.id,operation.authoring_session_id,operation.project_id,operation.environment_id,
                 operation.state,operation.persistence_state,operation.safe_diagnostics,
                 adaptive.authoring_intent AS operation
@@ -502,9 +546,15 @@ async function loadDurableContext(): Promise<DurableContext> {
                             WHERE entry.value->>'credentialId'=client_secret)
                 AND jsonb_array_length(safe_output_manifest)=2 AS "pairAtomicallyPersisted"
          FROM provenance`,
-      [VITRACT_CREATE_QUALIFICATION.projectId, VITRACT_CREATE_QUALIFICATION.environmentId],
-    );
-    const credentialReferenceIds = selectAuthoritativeCredentialPair(credentialPairs.rows);
+          [authority.projectId, authority.environmentId],
+        );
+    const credentialReferenceIds =
+      authority.credentialReferenceIds ??
+      selectAuthoritativeCredentialPair(credentialPairs!.rows, {
+        projectId: authority.projectId,
+        environmentId: authority.environmentId,
+        providerOrigin: VITRACT_CREATE_QUALIFICATION.providerOrigin,
+      });
     const result = await pool.query<any>(
       `SELECT session.mission_id AS "missionId",session.active_objective_id AS "objectiveId",
       session.active_flow_draft_id AS "flowDraftId",session.agent_session_id AS "agentSessionId",
@@ -524,10 +574,27 @@ async function loadDurableContext(): Promise<DurableContext> {
       ) observation ON true
       WHERE session.project_id=$1 AND session.environment_id=$2 AND jsonb_array_length(session.protected_reference_allowlist)=2
       ORDER BY operation.completed_at DESC LIMIT 1`,
-      [VITRACT_CREATE_QUALIFICATION.projectId, VITRACT_CREATE_QUALIFICATION.environmentId],
+      [authority.projectId, authority.environmentId],
     );
     if (result.rowCount !== 1) throw new Error("CREATE_DURABLE_CONTEXT_UNAVAILABLE");
     return { ...result.rows[0], credentialReferenceIds };
+  } finally {
+    await pool.end();
+  }
+}
+
+async function resolveCanonicalCreateScope() {
+  const pool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL ?? "postgres://scry:scry-local@127.0.0.1:54329/scry",
+  });
+  try {
+    const result = await pool.query<{ projectId: string; environmentId: string }>(
+      `SELECT project_id::text AS "projectId",environment_id::text AS "environmentId"
+         FROM q5_canonical_scope_designations
+        WHERE qualification_key='m6-q5-authoritative'`,
+    );
+    if (result.rowCount !== 1) throw new Error("Q5_CANONICAL_SCOPE_NOT_PREPARED");
+    return result.rows[0]!;
   } finally {
     await pool.end();
   }

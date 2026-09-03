@@ -1,7 +1,7 @@
 import { chromium } from "playwright";
 import { describe, expect, it } from "vitest";
 
-import { acquireValue } from "../src/protected-extractor.js";
+import { acquireValue } from "@scry/praxis";
 
 describe("protected semantic extraction", () => {
   it("adapts a field-shaped semantic target across field, static, definition, and delayed output shapes", async () => {

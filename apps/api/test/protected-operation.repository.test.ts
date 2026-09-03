@@ -24,6 +24,7 @@ const { flowDraftId: _flowDraftId, ...bindingWithoutDraft } = binding;
 const runBinding = {
   ...bindingWithoutDraft,
   flowRevisionId: "99999999-9999-4999-8999-999999999999",
+  preparedExecutionCapabilityId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 };
 
 function harness() {
@@ -46,10 +47,10 @@ function harness() {
   const database = {
     transaction: vi.fn((work: (value: typeof client) => unknown) => work(client)),
   };
-  return { repository: new ProtectedOperationRepository(database as never), client };
+  return { repository: new ProtectedOperationRepository(database as never), client, row };
 }
 
-function runHarness(authorized: boolean) {
+function runHarness(capabilityValid: boolean) {
   const row = {
     id: "88888888-8888-4888-8888-888888888888",
     state: "planned",
@@ -65,11 +66,13 @@ function runHarness(authorized: boolean) {
     flowDraftId: null,
     flowRevisionId: "99999999-9999-4999-8999-999999999999",
     dispatchSemantics: "mutation",
+    authorityModel: "canonical",
+    preparedExecutionCapabilityId: runBinding.preparedExecutionCapabilityId,
   };
   const client = {
     query: vi.fn(async (sql: string) =>
-      sql.includes("FROM mission_authorizations")
-        ? { rowCount: authorized ? 1 : 0, rows: authorized ? [{}] : [] }
+      sql.includes("FROM prepared_execution_capabilities")
+        ? { rowCount: capabilityValid ? 1 : 0, rows: capabilityValid ? [{}] : [] }
         : { rowCount: 1, rows: [row] },
     ),
   };
@@ -80,6 +83,57 @@ function runHarness(authorized: boolean) {
 }
 
 describe("protected operation immutable claims", () => {
+  it("refuses an undispatched historical row after the canonical cutoff", async () => {
+    const { repository, row } = harness();
+    row.state = "planned";
+    row.dispatchState = "not_started";
+    await expect(
+      repository.claim({
+        ownerKind: "authoring_session",
+        ownerId: "99999999-9999-4999-8999-999999999999",
+        operationId: "generate",
+        leaseOwner: "old-worker",
+        leaseDurationMs: 30_000,
+        binding,
+      }),
+    ).rejects.toThrow("LEGACY_PROTECTED_OPERATION_DISPATCH_FORBIDDEN");
+  });
+
+  it("refuses canonical worker admission without the exact prepared capability", async () => {
+    const { repository } = runHarness(true);
+    const { preparedExecutionCapabilityId: _capability, ...oldBinding } = runBinding;
+    await expect(
+      repository.claim({
+        ownerKind: "run",
+        ownerId: randomRunId,
+        operationId: "generate",
+        leaseOwner: "old-worker",
+        leaseDurationMs: 30_000,
+        binding: oldBinding,
+      }),
+    ).rejects.toThrow("PREPARED_EXECUTION_CAPABILITY_REQUIRED");
+  });
+  it("persists non-state receipt observations as fenced append-only self transitions", async () => {
+    const { repository, client } = harness();
+    await repository.record({
+      id: "88888888-8888-4888-8888-888888888888",
+      leaseOwner: "worker-a",
+      fencingToken: 3,
+      phase: "request_initiated",
+      safeDiagnostics: {
+        mutation: {
+          request: { status: "initiated", method: "POST", transport: "fetch" },
+        },
+      },
+    });
+
+    expect(client.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("INSERT INTO protected_operation_transitions"),
+      expect.arrayContaining(["acquiring", "acquiring", "request_initiated"]),
+    );
+  });
+
   it("returns an idempotent same-owner claim without rotating its fence", async () => {
     const { repository, client } = harness();
     const claim = await repository.claim({
@@ -109,7 +163,7 @@ describe("protected operation immutable claims", () => {
     expect(client.query).toHaveBeenCalledOnce();
   });
 
-  it("revalidates a run authorization in the claim transaction", async () => {
+  it("revalidates the exact finalized prepared capability in the claim transaction", async () => {
     const { repository, client } = runHarness(true);
     await repository.claim({
       ownerKind: "run",
@@ -119,16 +173,21 @@ describe("protected operation immutable claims", () => {
       leaseDurationMs: 30_000,
       binding: runBinding,
     });
-    expect(client.query).toHaveBeenCalledWith(expect.stringContaining("operation_id=$5"), [
-      binding.authorizationId,
-      binding.missionId,
-      binding.objectiveId,
-      binding.environmentId,
-      "generate",
-    ]);
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("FROM prepared_execution_capabilities"),
+      [
+        runBinding.preparedExecutionCapabilityId,
+        "88888888-8888-4888-8888-888888888888",
+        binding.programDigest,
+        binding.mutationIdentity,
+      ],
+    );
+    expect(
+      client.query.mock.calls.some(([sql]) => sql.includes("FROM mission_authorizations")),
+    ).toBe(false);
   });
 
-  it("refuses an expired, revoked, or cross-scope run authorization before dispatch", async () => {
+  it("refuses a missing, expired or non-finalized prepared capability before dispatch", async () => {
     const { repository } = runHarness(false);
     await expect(
       repository.claim({
@@ -139,7 +198,7 @@ describe("protected operation immutable claims", () => {
         leaseDurationMs: 30_000,
         binding: runBinding,
       }),
-    ).rejects.toThrow("PROTECTED_OPERATION_AUTHORIZATION_INVALID");
+    ).rejects.toThrow("PREPARED_EXECUTION_CAPABILITY_INVALID");
   });
 });
 

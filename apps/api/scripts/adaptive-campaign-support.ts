@@ -6,13 +6,12 @@ import path from "node:path";
 
 import {
   CampaignMetricsCollector,
-  finalizeCampaignResult,
   retainCampaignReport,
   retainMissionLiveCampaignReport,
   startAdaptiveFixture,
-  type CampaignCheck,
-  type MilestoneCampaignResult,
-} from "@scry/assurance/legacy";
+} from "@scry/assurance";
+import { finalizeCampaignResult } from "./adaptive-campaign-evaluation.js";
+import { type CampaignCheck, type MilestoneCampaignResult } from "@scry/contracts";
 import {
   currentPlanSchema,
   executionPolicySchema,
@@ -47,8 +46,10 @@ export type CampaignContext = {
   secretValue: string;
   forbiddenValues: string[];
   campaignProjectId?: string;
+  campaignEnvironmentId?: string;
   campaignMissionId?: string;
   campaignObjectiveId?: string;
+  campaignAgentSessionId?: string;
   campaignFlowDraftId?: string;
   beforeCounts?: Record<string, number>;
   requiredChecks: CampaignCheck[];
@@ -175,8 +176,10 @@ export async function generatedCoreCampaignSpec(
     await pool.end();
   }
   context.campaignProjectId = projectId;
+  context.campaignEnvironmentId = environmentId;
   context.campaignMissionId = missionId;
   context.campaignObjectiveId = objectiveId;
+  context.campaignAgentSessionId = agentSessionId;
   context.campaignFlowDraftId = flowDraftId;
   context.forbiddenValues.push(emailValue);
 

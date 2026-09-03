@@ -12,6 +12,7 @@ import {
   authorizationKindSchema,
   protectedRecoveryCommandSchema,
   veilPreferenceUpdateSchema,
+  missionPurposeSchema,
 } from "@scry/contracts";
 import { z } from "zod";
 
@@ -32,15 +33,15 @@ export function registerStartMissionTool(server: McpServer, client: ScryApiClien
     {
       title: "Start Mission",
       description:
-        "Create a durable work item only after listing Missions. If a non-terminal Mission plausibly overlaps the request and the user has not already decided, ask whether to continue it or start distinct work. Normal creation with no related durable-identity collision does not require user-choice attestation. If distinctReason is used to intentionally bypass a related Mission collision, distinctAuthority must attest the user's explicit new-work choice; never construct it merely to bypass the comparison.",
+        "Create a durable work item only after listing Missions. Purpose is immutable: primary is the user-facing acceptance path, diagnostic is isolated exploratory diagnosis, and recovery owns reconciliation work. Before risky exploration when a primary Mission exists, expose the choice: continue inside it and inherit its blockers, or—only with explicit user authority—start a distinct diagnostic/recovery Mission and then relate it. Never auto-create distinct work, move UNKNOWN truth, or invent authority. Normal unrelated creation needs no confirmation; distinctReason always requires distinctAuthority.",
       annotations: writes,
       inputSchema: {
         projectId: uuid,
         title: z.string().trim().min(1).max(200),
         originalInstruction: z.string().trim().min(1).max(20_000),
         instructionSnapshot: z.string().trim().min(1).max(20_000),
-        provider: z.enum(["codex", "claude", "scry_agent", "human"]).default("codex"),
         connectionId: z.string().trim().min(1).max(500).optional(),
+        purpose: missionPurposeSchema.default("primary"),
         idempotencyKey: z.string().trim().min(8).max(200).optional(),
         distinctReason: z.string().trim().min(1).max(2000).optional(),
         distinctAuthority: z
@@ -53,13 +54,17 @@ export function registerStartMissionTool(server: McpServer, client: ScryApiClien
           .optional(),
       },
     },
-    async ({ projectId, idempotencyKey, ...body }) =>
-      result(
+    async ({ projectId, idempotencyKey, ...body }) => {
+      const provenance = client.missionProvenance();
+      return result(
         await client.post(`/projects/${projectId}/missions`, {
           ...body,
-          idempotencyKey: idempotencyKey ?? stableKey("mission", { projectId, ...body }),
+          ...provenance,
+          idempotencyKey:
+            idempotencyKey ?? stableKey("mission", { projectId, ...body, ...provenance }),
         }),
         "Mission and agent session started. Pass both IDs to every later write.",
-      ),
+      );
+    },
   );
 }

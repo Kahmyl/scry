@@ -98,7 +98,13 @@ import {
   Settings,
   WorkspaceSettings,
 } from "../features/settings/index.js";
-import { FlowDetailView, Flows, Overview, Runs } from "../features/operations/index.js";
+import {
+  FlowDetailView,
+  Flows,
+  OperationalEventsView,
+  Overview,
+  Runs,
+} from "../features/operations/index.js";
 import { formatDuration } from "../shared/format/index.js";
 import {
   AuthenticatedArtifact,
@@ -255,6 +261,8 @@ export function App({
               projectId={projectId}
               onOpen={(id) => navigate(`/dashboard/reports/${id}`)}
             />
+          ) : view === "operations" ? (
+            <OperationalEventsView projectId={projectId} />
           ) : view === "settings" ? (
             <Settings projectId={projectId} />
           ) : (

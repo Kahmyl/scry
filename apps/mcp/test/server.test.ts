@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ScryApiClient } from "../src/api-client.js";
 import { createScryMcpServer } from "../src/server.js";
-import { SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS } from "../src/server-composition.js";
+import {
+  SCRY_MCP_INSTRUCTIONS,
+  SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS,
+} from "../src/server-composition.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -37,17 +40,108 @@ const admittedCapabilities = {
 };
 
 describe("current Scry MCP surface", () => {
+  it("returns an observation when request loader identity is unavailable", async () => {
+    vi.stubEnv("SCRY_LEGACY_MCP_FIXTURES", "");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            documentEpoch: 2,
+            url: "https://example.test/loading",
+            semanticPageContext: {
+              schemaVersion: 2,
+              authority: {
+                pageId: "page-authority",
+                documentEpoch: 2,
+                url: "https://example.test/loading",
+                title: "Loading",
+                readiness: "stable",
+              },
+              completeness: { kind: "bounded", observed: 0, returned: 0, truncated: false },
+              controls: [],
+              browserSensor: {
+                kind: "chromium_read_only",
+                authority: {
+                  frameId: "frame-1",
+                  loaderId: "document-loader-1",
+                  loaderChanged: false,
+                  loaderTransitionsObserved: 0,
+                },
+                network: {
+                  observedRequests: 1,
+                  recentRequests: [
+                    {
+                      requestId: "worker-script-1",
+                      frameId: "frame-1",
+                      type: "Script",
+                      monotonicTimestamp: 1,
+                    },
+                  ],
+                  observedFailures: 0,
+                  recentFailures: [],
+                  truncated: false,
+                },
+                layout: { clientWidth: 900, clientHeight: 600 },
+              },
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const { client, server } = await connected();
+
+    const response = await client.callTool({
+      name: "observe_praxis_session",
+      arguments: { praxisSessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+    });
+
+    expect(response.isError).not.toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      observation: {
+        documentEpoch: 2,
+        semanticPageContext: {
+          browserSensor: {
+            authority: { loaderId: "document-loader-1" },
+            network: { recentRequests: [{ requestId: "worker-script-1" }] },
+          },
+        },
+      },
+    });
+    expect(
+      (response.structuredContent as any).observation.semanticPageContext.browserSensor.network
+        .recentRequests[0],
+    ).not.toHaveProperty("loaderId");
+
+    await client.close();
+    await server.close();
+  });
+
   it("exposes the agent-first public surface without legacy admission or progression tools", async () => {
     vi.stubEnv("SCRY_LEGACY_MCP_FIXTURES", "");
     const { client, server } = await connected();
     const tools = (await client.listTools()).tools;
     const names = tools.map(({ name }) => name);
+    expect(tools).toHaveLength(65);
     expect(names).toEqual(
       expect.arrayContaining([
         "start_praxis_session",
         "observe_praxis_session",
+        "inspect_praxis_region",
+        "inspect_praxis_resources",
+        "read_praxis_public_resource",
+        "inspect_praxis_structure",
+        "read_praxis_public_structure_value",
+        "inspect_praxis_runtime_state",
+        "read_praxis_public_runtime_value",
         "get_praxis_session",
         "close_praxis_session",
+        "reserve_prepared_protected_operation",
+        "get_praxis_runtime_ownership",
+        "list_mission_continuations",
+        "dispatch_prepared_protected_operation",
+        "observe_operation_contracts",
         "start_run",
         "dispatch_run_operation",
         "attach_run_praxis_session",
@@ -66,17 +160,86 @@ describe("current Scry MCP surface", () => {
         "start_ready_objectives",
         "pause_mission_orchestration",
         "resume_mission_orchestration",
+        "get_protected_recovery",
+        "act_on_protected_recovery",
       ]),
     );
     const observe = tools.find(({ name }) => name === "observe_praxis_session")!;
     expect(observe.description).toContain("opaque context-control references");
+    const inspectRegion = tools.find(({ name }) => name === "inspect_praxis_region")!;
+    expect(inspectRegion.description).toContain("First call observe_praxis_session");
+    expect(inspectRegion.description).toContain("exact context-control reference");
+    expect(inspectRegion.description).toContain("read_praxis_public_value");
+    expect(inspectRegion.description).toContain("without returning its plaintext");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("inspect_praxis_resources");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("Never infer a resource URL");
+    const inspectStructure = tools.find(({ name }) => name === "inspect_praxis_structure")!;
+    const readStructure = tools.find(({ name }) => name === "read_praxis_public_structure_value")!;
+    const inspectRuntime = tools.find(({ name }) => name === "inspect_praxis_runtime_state")!;
+    const readRuntime = tools.find(({ name }) => name === "read_praxis_public_runtime_value")!;
+    expect(Object.keys((inspectStructure.inputSchema as any).properties)).toEqual([
+      "praxisSessionId",
+    ]);
+    expect(Object.keys((readStructure.inputSchema as any).properties).sort()).toEqual([
+      "field",
+      "praxisSessionId",
+      "reference",
+    ]);
+    expect(Object.keys((inspectRuntime.inputSchema as any).properties)).toEqual([
+      "praxisSessionId",
+    ]);
+    expect(Object.keys((readRuntime.inputSchema as any).properties).sort()).toEqual([
+      "praxisSessionId",
+      "reference",
+    ]);
+    expect(
+      JSON.stringify([inspectStructure.outputSchema, inspectRuntime.outputSchema]),
+    ).not.toMatch(
+      /nodeId|backendNodeId|objectId|html|expression|javascript|cookie|storage|secret/i,
+    );
+    const guidance = SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS;
+    expect(SCRY_MCP_INSTRUCTIONS).toContain("Intelligence chooses actions");
+    expect(SCRY_MCP_INSTRUCTIONS).toContain("continuationReference");
+    const escalationPositions = [
+      "ordinary semantic perception",
+      "targeted semantic-region perception",
+      "browser-resource perception",
+      "DOMSnapshot/accessibility structural perception",
+      "constrained runtime-state perception",
+    ].map((phrase) => guidance.indexOf(phrase));
+    expect(
+      escalationPositions.every(
+        (value, index) => value >= 0 && (index === 0 || value > escalationPositions[index - 1]!),
+      ),
+    ).toBe(true);
     const dispatch = tools.find(({ name }) => name === "dispatch_run_operation")!;
-    expect(dispatch.description).toContain("semantic-only targets");
-    expect(dispatch.description).toContain("no selector fallback");
-    expect(dispatch.description).toContain("protectedReferenceId");
-    expect(dispatch.description).toContain("protectedInputReferences");
-    expect(dispatch.description).toContain("Do not send value or valueSource");
-    expect(dispatch.description).toContain("never expose the protected plaintext");
+    for (const phrase of [
+      "exact context-control",
+      "same current page/document",
+      "successorObservation",
+      "protectedReferenceId",
+      "protectedInputReferences",
+      "never expose plaintext",
+      "semanticEffect:'read_context_transition'",
+      "intent.authorization:{kind:'live_read'}",
+      "reserve_prepared_protected_operation",
+      "dispatch_prepared_protected_operation",
+      "No second owner approval",
+    ])
+      expect(dispatch.description).toContain(phrase);
+    expect(dispatch.description).not.toMatch(
+      /grant protected_mutation|authorizationId|grant_mission_execution_authorization/,
+    );
+
+    const actionSchema = (dispatch.inputSchema as any).properties.intent.properties.action;
+    const actionVariants = actionSchema.oneOf;
+    for (const kind of ["activate", "press"]) {
+      const variant = actionVariants.find(
+        (candidate: any) => candidate.properties.kind.const === kind,
+      );
+      expect(variant.required).toContain("semanticEffect");
+      expect(variant.properties.semanticEffect.description).toContain("Required semantic");
+    }
 
     const startPraxis = tools.find(({ name }) => name === "start_praxis_session")!;
     expect(startPraxis.description).toContain("start_mission or resume_mission");
@@ -87,6 +250,15 @@ describe("current Scry MCP surface", () => {
       "authoring.reusable.sessionId is not an agentSessionId",
     );
     expect(startPraxis.description).toContain("runtime_admitted is not proof");
+    expect((startPraxis.outputSchema as any).properties.session.properties.replayed).toMatchObject({
+      type: "boolean",
+    });
+    const closePraxis = tools.find(({ name }) => name === "close_praxis_session")!;
+    expect((closePraxis.outputSchema as any).properties.session.properties).toMatchObject({
+      id: { type: "string", format: "uuid" },
+      state: { type: "string", const: "completed" },
+      replayed: { type: "boolean" },
+    });
 
     const listMissions = tools.find(({ name }) => name === "list_missions")!;
     expect(listMissions.description).toContain("ignore clearly unrelated Missions");
@@ -121,6 +293,93 @@ describe("current Scry MCP surface", () => {
     expect(operatingContext.description).toContain("sole Mission candidate is never auto-selected");
     expect(operatingContext.description).toContain("Project/environment metadata only");
 
+    const approvedProfiles = new Set([
+      JSON.stringify([true, false, null, false]),
+      JSON.stringify([true, false, null, true]),
+      JSON.stringify([false, false, true, false]),
+      JSON.stringify([false, false, false, false]),
+      JSON.stringify([false, false, true, true]),
+      JSON.stringify([false, true, false, true]),
+      JSON.stringify([false, true, true, true]),
+    ]);
+    const observedProfiles = new Set(
+      tools.map(({ annotations }) =>
+        JSON.stringify([
+          annotations?.readOnlyHint ?? false,
+          annotations?.destructiveHint ?? true,
+          annotations?.idempotentHint ?? null,
+          annotations?.openWorldHint ?? true,
+        ]),
+      ),
+    );
+    expect(observedProfiles).toEqual(approvedProfiles);
+    expect(
+      tools.every(({ annotations }) =>
+        approvedProfiles.has(
+          JSON.stringify([
+            annotations?.readOnlyHint ?? false,
+            annotations?.destructiveHint ?? true,
+            annotations?.idempotentHint ?? null,
+            annotations?.openWorldHint ?? true,
+          ]),
+        ),
+      ),
+    ).toBe(true);
+
+    for (const name of [
+      "start_praxis_session",
+      "observe_praxis_session",
+      "get_praxis_session",
+      "reconcile_unknown_operation",
+      "close_praxis_session",
+      "dispatch_run_operation",
+      "attach_run_praxis_session",
+      "finalize_run",
+      "get_run",
+      "relate_missions",
+      "set_mission_recording_selection",
+      "preview_mission_report",
+      "publish_mission_report",
+    ])
+      expect(tools.find((tool) => tool.name === name)?.outputSchema, name).toBeDefined();
+    expect(
+      JSON.stringify(tools.find(({ name }) => name === "dispatch_run_operation")?.outputSchema),
+    ).toContain("mutationReceipt");
+    expect(JSON.stringify(tools.find(({ name }) => name === "get_run")?.outputSchema)).toContain(
+      "mutationReceipts",
+    );
+    const startMissionTool = tools.find(({ name }) => name === "start_mission")!;
+    expect(JSON.stringify(startMissionTool.inputSchema)).toContain("diagnostic");
+    expect(startMissionTool.description).toContain("inherit its blockers");
+    const relateMissions = tools.find(({ name }) => name === "relate_missions")!;
+    expect(relateMissions.description).toContain("cannot move UNKNOWN mutation truth");
+
+    expect(tools.some(({ name }) => name === "grant_mission_execution_authorization")).toBe(false);
+
+    expect(tools.find(({ name }) => name === "get_run")?.annotations).toMatchObject({
+      readOnlyHint: true,
+      openWorldHint: false,
+    });
+    expect(tools.find(({ name }) => name === "observe_praxis_session")?.annotations).toMatchObject({
+      readOnlyHint: true,
+      openWorldHint: true,
+    });
+    expect(tools.find(({ name }) => name === "start_praxis_session")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    });
+    expect(tools.find(({ name }) => name === "finalize_run")?.annotations).toMatchObject({
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+    expect(tools.find(({ name }) => name === "dispatch_run_operation")?.annotations).toMatchObject({
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    });
+
     await client.close();
     await server.close();
   });
@@ -131,10 +390,109 @@ describe("current Scry MCP surface", () => {
     expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain(
       "not action targets or resource identity",
     );
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("inspect_praxis_region");
+    expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("no region plaintext");
     expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("Never select by list order");
     expect(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS).toContain("request clarification");
     const { client, server } = await connected();
     expect(client.getInstructions()).toContain(SCRY_STRUCTURAL_CONTEXT_INSTRUCTIONS);
+    await client.close();
+    await server.close();
+  });
+
+  it("returns the typed publication-readiness envelope through report preview", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        const body = path.endsWith("/capabilities")
+          ? admittedCapabilities
+          : {
+              completionReadiness: {
+                ready: false,
+                missionId: context.missionId,
+                blockers: [
+                  {
+                    code: "REPORT_REQUIRED_EVIDENCE_CLASS_MISSING",
+                    missionId: context.missionId,
+                    objectiveId: context.objectiveId,
+                    runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    evidenceClass: "network",
+                    state: "missing",
+                    resolution: "evidence_selection_required",
+                    safeActions: ["get_run", "accept_objective_evidence"],
+                    nextActions: ["get_run", "accept_objective_evidence"],
+                  },
+                ],
+                truncated: false,
+                totalBlockerCount: 1,
+              },
+              snapshot: null,
+            };
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "preview_mission_report",
+      arguments: { missionId: context.missionId },
+    });
+    expect(response.structuredContent).toMatchObject({
+      preview: {
+        snapshot: null,
+        completionReadiness: {
+          blockers: [
+            expect.objectContaining({
+              code: "REPORT_REQUIRED_EVIDENCE_CLASS_MISSING",
+              evidenceClass: "network",
+            }),
+          ],
+        },
+      },
+    });
+    await client.close();
+    await server.close();
+  });
+  it("returns typed factual provenance from the distinct-Mission relation tool", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        const body = path.endsWith("/capabilities")
+          ? admittedCapabilities
+          : {
+              id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              projectId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              sourceMissionId: context.missionId,
+              targetMissionId: context.objectiveId,
+              relation: "diagnoses",
+              createdByAgentSessionId: context.agentSessionId,
+              reason: "Isolated diagnostic provenance.",
+              createdAt: "2026-08-23T17:00:00.000Z",
+              replayed: false,
+            };
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "relate_missions",
+      arguments: {
+        missionId: context.missionId,
+        agentSessionId: context.agentSessionId,
+        targetMissionId: context.objectiveId,
+        relation: "diagnoses",
+        reason: "Isolated diagnostic provenance.",
+      },
+    });
+    expect(response.structuredContent).toMatchObject({
+      relation: {
+        sourceMissionId: context.missionId,
+        targetMissionId: context.objectiveId,
+        relation: "diagnoses",
+        replayed: false,
+      },
+    });
     await client.close();
     await server.close();
   });
@@ -145,7 +503,15 @@ describe("current Scry MCP surface", () => {
         requiresProjectSelection: false,
         projectCandidates: { items: [], truncated: false },
       },
-      missions: { candidates: { items: [], truncated: false } },
+      missions: {
+        candidates: { items: [], truncated: false },
+        policy: {
+          decision: "selection_required",
+          freshPrimaryMissionPermitted: false,
+          continuationAvailable: false,
+          historicalMissionCount: 0,
+        },
+      },
       credentials: { items: [], truncated: false },
       environments: { items: [], truncated: false },
       authoring: {
@@ -259,6 +625,7 @@ describe("current Scry MCP surface", () => {
                 missionId: context.missionId,
                 agentSessionId: context.agentSessionId,
                 status: "active",
+                replayed: false,
               }
             : safeMission;
         return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
@@ -275,7 +642,6 @@ describe("current Scry MCP surface", () => {
       arguments: {
         missionId: context.missionId,
         instructionSnapshot: "Resume safely",
-        provider: "codex",
         continuationAuthority: {
           confirmedUserAuthorized: true,
           selection: "continue_existing_mission",
@@ -297,10 +663,13 @@ describe("current Scry MCP surface", () => {
     );
     const { client, server } = await connected();
     const tools = (await client.listTools()).tools;
-    expect(
-      tools.find(({ name }) => name === "grant_mission_execution_authorization")?.inputSchema
-        .properties,
-    ).toHaveProperty("operationId");
+    for (const removed of [
+      "grant_mission_execution_authorization",
+      "select_mission_value",
+      "resume_prepared_protected_operation",
+      "claim_mission_operation_continuation",
+    ])
+      expect(tools.some(({ name }) => name === removed)).toBe(false);
     expect(tools.map(({ name }) => name)).toEqual([
       "get_capabilities",
       "list_projects",
@@ -314,7 +683,6 @@ describe("current Scry MCP surface", () => {
       "close_flow_authoring",
       "start_mission",
       "resume_mission",
-      "attach_to_mission",
       "get_mission",
       "list_missions",
       "update_mission",
@@ -328,13 +696,14 @@ describe("current Scry MCP surface", () => {
       "pause_mission_orchestration",
       "resume_mission_orchestration",
       "cancel_mission_orchestration",
-      "grant_mission_execution_authorization",
       "relate_mission_activity",
+      "relate_missions",
       "create_mission_objective",
       "update_mission_objective",
       "attach_flow_to_mission",
       "finalize_agent_work",
       "set_mission_recording_selection",
+      "preview_mission_report",
       "publish_mission_report",
       "list_environments",
       "create_test_environment",
@@ -364,8 +733,6 @@ describe("current Scry MCP surface", () => {
       "get_run",
       "get_veil_findings",
       "tighten_veil_preferences",
-      "get_protected_recovery",
-      "act_on_protected_recovery",
       "accept_objective_evidence",
       "classify_run",
       "set_mission_resume_pointer",
@@ -898,6 +1265,97 @@ describe("current Scry MCP surface", () => {
     await server.close();
   });
 
+  it("preserves popup recovery facts through the external MCP result", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/capabilities"))
+          return Promise.resolve(
+            new Response(JSON.stringify(admittedCapabilities), { status: 200 }),
+          );
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              praxisSessionId: "11111111-1111-4111-8111-111111111111",
+              operationId: "m2-open-docs",
+              artifactRefs: [],
+              intentId: "open-documentation",
+              functionalResult: "failed",
+              mutationOutcome: "not_applied",
+              privacyApplicable: false,
+              privacyResult: "verified",
+              evidence: { state: "available", count: 1, reasonCodes: [] },
+              reasonCode: "POPUP_NOT_ALLOWED",
+              decisionBoundary: {
+                type: "environment_unavailable",
+                reasonCode: "POPUP_NOT_ALLOWED",
+                safeActions: ["create_test_environment", "create_flow_draft"],
+                popupRecovery: {
+                  environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                  currentAllowPopups: false,
+                  requiredAllowPopups: true,
+                  currentAllowedOrigins: ["https://app.example.test"],
+                  recoveryTools: ["create_test_environment", "create_flow_draft"],
+                  requiresNewFlowDraftAndAuthoringSession: true,
+                },
+              },
+              replayed: false,
+            }),
+            { status: 201 },
+          ),
+        );
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "dispatch_run_operation",
+      arguments: {
+        runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        praxisSessionId: "11111111-1111-4111-8111-111111111111",
+        intent: {
+          intentId: "open-documentation",
+          objectiveId: context.objectiveId,
+          flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          action: {
+            kind: "activate",
+            target: {
+              concept: "Developer documentation",
+              reference: `context-control-${"a".repeat(32)}`,
+              role: "link",
+              name: "Developer documentation",
+            },
+            semanticEffect: "read_context_transition",
+            activationMechanism: "pointer",
+          },
+          expectedEffect: { kind: "navigation" },
+          constraints: { timeoutMs: 30_000, allowNewPage: false, allowNonExact: false },
+          authorization: {
+            kind: "live_read",
+            authorizationId: "99999999-9999-4999-8999-999999999999",
+          },
+          protectedInputReferences: [],
+        },
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      result: {
+        reasonCode: "POPUP_NOT_ALLOWED",
+        decisionBoundary: {
+          safeActions: ["create_test_environment", "create_flow_draft"],
+          popupRecovery: {
+            currentAllowPopups: false,
+            requiredAllowPopups: true,
+          },
+        },
+      },
+    });
+    await client.close();
+    await server.close();
+  });
+
   it("preserves the complete typed rejection for dispatch_run_operation", async () => {
     vi.stubGlobal(
       "fetch",
@@ -1036,6 +1494,62 @@ describe("current Scry MCP surface", () => {
     await server.close();
   });
 
+  it("classifies a zero Flow revision as an invalid call with structured recovery", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/capabilities"))
+          return Promise.resolve(
+            new Response(JSON.stringify(admittedCapabilities), { status: 200 }),
+          );
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              statusCode: 404,
+              message: {
+                code: "FLOW_REVISION_NOT_FOUND",
+                mutationOutcome: "not_applied",
+                safeActions: ["publish_flow_draft"],
+                flowRevisionId: "00000000-0000-0000-0000-000000000000",
+              },
+            }),
+            { status: 404 },
+          ),
+        );
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "start_run",
+      arguments: {
+        projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        missionId: context.missionId,
+        objectiveId: context.objectiveId,
+        agentSessionId: context.agentSessionId,
+        environmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        flowRevisionId: "00000000-0000-0000-0000-000000000000",
+        praxisSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      },
+    });
+
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      rejection: {
+        code: "FLOW_REVISION_NOT_FOUND",
+        rejectionClass: "invalid_input",
+        resolution: "correct_input",
+        appliedState: "not_applied",
+        exactIds: {
+          flowRevisionId: "00000000-0000-0000-0000-000000000000",
+        },
+        safeActions: ["publish_flow_draft"],
+      },
+    });
+    await client.close();
+    await server.close();
+  });
+
   it("keeps safe rejection context when a direct tool delegates error translation to MCP", async () => {
     vi.stubGlobal(
       "fetch",
@@ -1129,7 +1643,42 @@ describe("current Scry MCP surface", () => {
 
           const body = path.endsWith("/capabilities")
             ? admittedCapabilities
-            : { id: "terminal-resource" };
+            : path.endsWith("/reports")
+              ? {
+                  id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                  missionId: context.missionId,
+                  revision: 1,
+                  status: "published",
+                  snapshot: {
+                    mission: {
+                      id: context.missionId,
+                      title: "Mission",
+                      originalInstruction: "Verify the current objective.",
+                      status: "completed",
+                      sourceRevision: 1,
+                    },
+                    overallConclusion: "Mission complete",
+                    journeySummary: ["Verified"],
+                    remainingActions: [],
+                    objectiveResults: [],
+                    evidence: {
+                      schemaVersion: 1,
+                      missionId: context.missionId,
+                      sourceMissionRevision: 1,
+                      objectives: [],
+                      supersededAttemptCount: 0,
+                      evidenceDigest: "a".repeat(64),
+                    },
+                    evidenceDigest: "a".repeat(64),
+                    recordingSelection: null,
+                    recording: null,
+                    recordingDigest: null,
+                    supersededAttemptCount: 0,
+                    generatedAt: new Date(0).toISOString(),
+                  },
+                  replayed: false,
+                }
+              : { id: "terminal-resource" };
 
           return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
         }),
@@ -1649,6 +2198,70 @@ describe("current Scry MCP surface", () => {
         ...context,
         reasonCode: "USER_AUTHORIZED_AGENT_CALIBRATION",
         confirmedUserAuthorized: true,
+      },
+    });
+    await client.close();
+    await server.close();
+  });
+
+  it("preserves the fresh intent recovery directive through the external MCP result", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string | URL | Request) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/capabilities"))
+          return Promise.resolve(
+            new Response(JSON.stringify(admittedCapabilities), { status: 200 }),
+          );
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              statusCode: 409,
+              message: {
+                code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+                mutationOutcome: "not_applied",
+                retry: "safe_after_prerequisite",
+                safeActions: ["authorize_environment_credentials", "dispatch_run_operation"],
+                requiresFreshIntentId: true,
+              },
+            }),
+            { status: 409 },
+          ),
+        );
+      }),
+    );
+    const { client, server } = await connected();
+    const response = await client.callTool({
+      name: "dispatch_run_operation",
+      arguments: {
+        runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        praxisSessionId: "11111111-1111-4111-8111-111111111111",
+        intent: {
+          intentId: "login-password-before-admission",
+          objectiveId: context.objectiveId,
+          flowDraftId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          action: {
+            kind: "fill",
+            target: {
+              concept: "password",
+              reference: `context-control-${"a".repeat(32)}`,
+            },
+            protectedReferenceId: "88888888-8888-4888-8888-888888888888",
+          },
+          expectedEffect: { kind: "none" },
+          constraints: { timeoutMs: 30_000, allowNewPage: false, allowNonExact: false },
+          authorization: { kind: "authentication" },
+          protectedInputReferences: ["88888888-8888-4888-8888-888888888888"],
+        },
+      },
+    });
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      rejection: {
+        code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+        retry: "safe_after_prerequisite",
+        safeActions: ["authorize_environment_credentials", "dispatch_run_operation"],
+        context: { requiresFreshIntentId: true },
       },
     });
     await client.close();

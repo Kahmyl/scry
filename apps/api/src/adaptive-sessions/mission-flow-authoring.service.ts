@@ -16,6 +16,10 @@ import type {
   ReconcileAdaptiveOperationInput,
   CurrentAction,
   PrepareFlowAuthoringInput,
+  ReservePreparedProtectedOperationInput,
+  ResumePreparedProtectedOperationInput,
+  DispatchPreparedProtectedOperationInput,
+  PraxisObservation,
 } from "@scry/contracts";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -25,14 +29,13 @@ import { AdaptiveSessionKernelRunner } from "./adaptive-session-kernel.runner.js
 import { AdaptiveSessionRepository } from "./repositories/adaptive-session.repository.js";
 import { OperationBoundProtectedInputRepository } from "./repositories/operation-bound-protected-input.repository.js";
 import { AdaptiveOperationReconciliationRegistry } from "./adaptive-operation-reconciliation.registry.js";
+import { PreparedProtectedOperationRepository } from "./repositories/prepared-protected-operation.repository.js";
+import { compilePreparedProtectedOperation } from "./prepared-protected-operation.compiler.js";
 import {
-  deriveMissionAuthoringOperation,
-  missionAuthoringOperationIdentity,
-} from "./mission-authoring-derivation.js";
-import {
-  compileMissionAuthoringProtectedTransaction,
-  missionAuthoringProtectedOperationReservation,
-} from "./mission-authoring-protected-transaction.js";
+  OperationContractProviderRegistry,
+  OperationContractRegistry,
+} from "./operation-contract.registry.js";
+import { deriveMissionAuthoringOperation } from "./mission-authoring-derivation.js";
 
 export type MissionRunEvidenceContext = {
   veilPolicySnapshot: import("@scry/contracts").VeilPolicySnapshot;
@@ -42,12 +45,25 @@ export type MissionRunEvidenceContext = {
     report: import("@scry/executor").ExecutionReport;
     outputDirectory: string;
   }): Promise<void>;
+  beforeBusinessMutationDispatch(operation: AdaptiveSessionOperationInput): Promise<void>;
+  preparedOperationAdmitted?(
+    operation: AdaptiveSessionOperationInput,
+    preparedExecutionCapabilityId: string,
+  ): Promise<void>;
 };
+
+type PreparedExecutionProjection = Awaited<
+  ReturnType<AdaptiveSessionRepository["projectProtectedOperationForAuthoring"]>
+>;
 
 @Injectable()
 export class MissionFlowAuthoringService {
   private readonly inFlightTurns = new Map<string, Promise<MissionAuthoringTurnResult>>();
   private readonly inFlightProtectedOperations = new Map<string, Promise<void>>();
+  private readonly inFlightPreparedExecutions = new Map<
+    string,
+    Promise<PreparedExecutionProjection>
+  >();
 
   constructor(
     @Inject(AdaptiveSessionRepository) private readonly sessions: AdaptiveSessionRepository,
@@ -59,6 +75,15 @@ export class MissionFlowAuthoringService {
     @Optional()
     @Inject(AdaptiveOperationReconciliationRegistry)
     private readonly reconciliationRegistry?: AdaptiveOperationReconciliationRegistry,
+    @Optional()
+    @Inject(PreparedProtectedOperationRepository)
+    private readonly preparedOperations?: PreparedProtectedOperationRepository,
+    @Optional()
+    @Inject(OperationContractProviderRegistry)
+    private readonly operationContractProviders?: OperationContractProviderRegistry,
+    @Optional()
+    @Inject(OperationContractRegistry)
+    private readonly operationContracts?: OperationContractRegistry,
   ) {}
 
   async start(principal: Principal, input: StartAdaptiveSessionInput) {
@@ -179,6 +204,427 @@ export class MissionFlowAuthoringService {
     return this.runner.observe(sessionId);
   }
 
+  async observeOperationContracts(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.operationContracts)
+      throw new ConflictException({ code: "OPERATION_CONTRACT_REGISTRY_UNAVAILABLE" });
+    if (
+      (session.state !== "active" && session.state !== "suspended") ||
+      session.runtime.state !== "owned"
+    )
+      return { contracts: await this.operationContracts.readDurable(sessionId) };
+    const current = await this.runner.observe(sessionId);
+    const contracts = await this.currentOperationContracts(sessionId, current);
+    return {
+      contracts: contracts.map(({ interaction, ...entry }) => ({
+        ...entry,
+        ...(interaction
+          ? {
+              interaction: (({ runtimeOwnerId: _owner, fencingEpoch: _fence, ...safe }) => safe)(
+                interaction,
+              ),
+            }
+          : {}),
+      })),
+    };
+  }
+
+  async runtimeOwnership(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    return { sessionState: session.state, runtime: session.runtime };
+  }
+
+  async listMissionValues(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    const { missionValueAssetsResultSchema } = await import("@scry/contracts");
+    return missionValueAssetsResultSchema.parse(
+      await this.preparedOperations.listMissionValues({
+        projectId: session.projectId,
+        environmentId: session.environmentId,
+        missionId: session.missionId,
+      }),
+    );
+  }
+
+  async reservePreparedOperation(
+    principal: Principal,
+    sessionId: string,
+    input: ReservePreparedProtectedOperationInput,
+  ) {
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+    await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    const current = await this.runner.observe(sessionId);
+    const contracts = await this.currentOperationContracts(sessionId, current);
+    if (
+      !contracts.some(
+        (contract) =>
+          contract.revision.id === input.operationContractRevisionId &&
+          contract.revision.digest === input.operationContractRevisionDigest &&
+          contract.interaction?.id === input.runtimeInteractionCapabilityId &&
+          contract.executableInteractionAvailable,
+      )
+    )
+      throw new ConflictException({ code: "PREPARED_OPERATION_OBSERVATION_STALE" });
+    return this.preparedOperations.reserve(sessionId, input);
+  }
+
+  async abandonPreparedReservations(principal: Principal, sessionId: string) {
+    this.requireWrite(principal);
+    await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    return this.preparedOperations.abandonReservedForSession(sessionId);
+  }
+
+  async resumePreparedOperation(
+    principal: Principal,
+    sessionId: string,
+    input: ResumePreparedProtectedOperationInput,
+  ) {
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+    await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    const current = await this.runner.observe(sessionId);
+    const prepared = await this.preparedOperations.assertResumable(sessionId, input);
+    if (current.documentEpoch !== prepared.documentEpoch)
+      throw new ConflictException({ code: "PREPARED_OPERATION_DOCUMENT_REPLACED" });
+    return {
+      ...prepared,
+      resumeAllowed: true as const,
+      immutableReservation: true as const,
+    };
+  }
+
+  async dispatchPreparedOperation(
+    principal: Principal,
+    sessionId: string,
+    input: DispatchPreparedProtectedOperationInput,
+    runEvidence?: MissionRunEvidenceContext,
+  ) {
+    await this.admission.assertAcceptingWork();
+    this.requireWrite(principal);
+    await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    const current = await this.runner.observe(sessionId);
+    const material = await this.preparedOperations.executionMaterial(sessionId, input);
+    if (current.documentEpoch !== material.documentEpoch)
+      throw new ConflictException({ code: "PREPARED_OPERATION_DOCUMENT_REPLACED" });
+    if (new URL(current.url).origin !== new URL(material.origin).origin)
+      throw new ConflictException({ code: "PREPARED_OPERATION_ORIGIN_REPLACED" });
+    const executionTimeoutMs = preparedExecutionTimeoutMs();
+    const compiled = compilePreparedProtectedOperation({
+      material,
+      entryUrl: current.url,
+      timeoutMs: Math.min(executionTimeoutMs, 60_000),
+    });
+    const protectedReservation = await this.preparedOperations.finalizeExecutionCapability(
+      input.preparedExecutionCapabilityId,
+      compiled.transaction,
+    );
+    const operation: AdaptiveSessionOperationInput = {
+      operationId: material.publicOperationId,
+      idempotencyKey: `prepared:${material.protectedOperationId}`,
+      action: compiled.transaction,
+      expectedEffect: { type: "none" },
+      mode: "transact",
+      protectedInputReferences: Object.values(compiled.transaction.inputs).flatMap((value) =>
+        value.classification === "known_secret" ? [value.credentialRef] : [],
+      ),
+    };
+    const claim = await this.sessions.beginMissionOperation({
+      workspaceId: workspaceId(principal),
+      sessionId,
+      intent: compiled.intent,
+      operationId: operation.operationId,
+      idempotencyKey: operation.idempotencyKey,
+      action: operation.action,
+      expectedEffect: operation.expectedEffect,
+      mode: operation.mode,
+      protectedReservation,
+      earlyProtectedOperationId: material.protectedOperationId,
+      preparedProtectedOperationId: material.protectedOperationId,
+    });
+    await this.preparedOperations.consumeGeneratedBindings(material.protectedOperationId);
+    await runEvidence?.preparedOperationAdmitted?.(operation, input.preparedExecutionCapabilityId);
+    const executionKey = `${sessionId}:${operation.operationId}`;
+    const inFlightExecution = this.inFlightPreparedExecutions.get(executionKey);
+    const projection = claim.replayed
+      ? inFlightExecution
+        ? await inFlightExecution
+        : await this.sessions.projectProtectedOperationForAuthoring({
+            sessionId,
+            operationId: operation.operationId,
+          })
+      : await this.supervisePreparedExecution(
+          sessionId,
+          operation,
+          executionTimeoutMs,
+          runEvidence,
+        );
+    if (projection.status === "pending")
+      throw new ConflictException({
+        code: "PREPARED_EXECUTION_AUTHORITATIVE_SETTLEMENT_MISSING",
+        state: projection.state,
+      });
+    return {
+      protectedOperationId: material.protectedOperationId,
+      publicOperationId: material.publicOperationId,
+      state: projection.state,
+      replayed: claim.replayed,
+      sourceMutationRepeatable: false,
+    };
+  }
+
+  private async supervisePreparedExecution(
+    sessionId: string,
+    operation: AdaptiveSessionOperationInput,
+    timeoutMs: number,
+    runEvidence?: MissionRunEvidenceContext,
+  ) {
+    const key = `${sessionId}:${operation.operationId}`;
+    const existing = this.inFlightPreparedExecutions.get(key);
+    if (existing) return existing;
+    const work = this.runPreparedExecutionSupervisor(sessionId, operation, timeoutMs, runEvidence);
+    this.inFlightPreparedExecutions.set(key, work);
+    try {
+      return await work;
+    } finally {
+      if (this.inFlightPreparedExecutions.get(key) === work)
+        this.inFlightPreparedExecutions.delete(key);
+    }
+  }
+
+  private async runPreparedExecutionSupervisor(
+    sessionId: string,
+    operation: AdaptiveSessionOperationInput,
+    timeoutMs: number,
+    runEvidence?: MissionRunEvidenceContext,
+  ) {
+    const startedAt = performance.now();
+    const controller = new AbortController();
+    let deadlineExpired = false;
+    let cancellationWork: Promise<unknown> | undefined;
+    await this.sessions.recordPreparedExecutionStage({
+      sessionId,
+      operationId: operation.operationId,
+      stage: "supervisor_launched",
+    });
+    const timeout = setTimeout(() => {
+      deadlineExpired = true;
+      const error = Object.assign(new Error("PREPARED_EXECUTION_DEADLINE_EXCEEDED"), {
+        code: "PREPARED_EXECUTION_DEADLINE_EXCEEDED",
+      });
+      controller.abort(error);
+      cancellationWork = this.runner.cancelActiveOperation(sessionId).catch(() => undefined);
+    }, timeoutMs);
+    timeout.unref();
+    try {
+      await this.sessions.recordPreparedExecutionStage({
+        sessionId,
+        operationId: operation.operationId,
+        stage: "protected_admission_requested",
+      });
+      await this.executeWithOnePreDispatchRetry(
+        sessionId,
+        operation,
+        controller.signal,
+        runEvidence,
+      );
+      await this.sessions.recordPreparedExecutionStage({
+        sessionId,
+        operationId: operation.operationId,
+        stage: "protected_admission_acknowledged",
+        durationMs: performance.now() - startedAt,
+      });
+      let projection = await this.sessions.projectProtectedOperationForAuthoring({
+        sessionId,
+        operationId: operation.operationId,
+      });
+      if (projection.status === "pending") {
+        cancellationWork = this.runner.cancelActiveOperation(sessionId).catch(() => undefined);
+        await cancellationWork;
+        await this.sessions.settlePreparedExecutionDeadline({
+          sessionId,
+          operationId: operation.operationId,
+          reasonCode: "PREPARED_EXECUTION_RETURNED_WITHOUT_SETTLEMENT",
+        });
+        projection = await this.sessions.projectProtectedOperationForAuthoring({
+          sessionId,
+          operationId: operation.operationId,
+          missingFailureCode: "PREPARED_EXECUTION_RETURNED_WITHOUT_SETTLEMENT",
+        });
+      }
+      await this.sessions.recordPreparedExecutionStage({
+        sessionId,
+        operationId: operation.operationId,
+        stage: projection.status === "settled" ? "terminal_observed" : "execution_returned_pending",
+        durationMs: performance.now() - startedAt,
+      });
+      return projection;
+    } catch (error) {
+      const code = deadlineExpired
+        ? "PREPARED_EXECUTION_DEADLINE_EXCEEDED"
+        : errorCode(error, "ADAPTIVE_SESSION_EXECUTION_FAILED");
+      if (deadlineExpired) {
+        await this.sessions.settlePreparedExecutionDeadline({
+          sessionId,
+          operationId: operation.operationId,
+          reasonCode: code,
+        });
+      }
+      const projection = await this.sessions.projectProtectedOperationForAuthoring({
+        sessionId,
+        operationId: operation.operationId,
+        missingFailureCode: code,
+      });
+      await this.sessions.recordPreparedExecutionStage({
+        sessionId,
+        operationId: operation.operationId,
+        stage: projection.status === "settled" ? "terminal_observed" : "execution_failed_pending",
+        durationMs: performance.now() - startedAt,
+        reasonCode: code,
+      });
+      return projection;
+    } finally {
+      clearTimeout(timeout);
+      if (cancellationWork) await cancellationWork;
+    }
+  }
+
+  async listMissionContinuations(principal: Principal, sessionId: string) {
+    await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    const { missionContinuationsResultSchema } = await import("@scry/contracts");
+    return missionContinuationsResultSchema.parse(
+      await this.preparedOperations.listContinuations(sessionId),
+    );
+  }
+
+  async listMissionOperationCheckpoints(principal: Principal, sessionId: string) {
+    await this.sessions.get(workspaceId(principal), sessionId);
+    if (!this.preparedOperations)
+      throw new ConflictException({ code: "PREPARED_OPERATION_RUNTIME_UNAVAILABLE" });
+    return this.preparedOperations.listCheckpoints(sessionId);
+  }
+
+  private async currentOperationContracts(sessionId: string, current: PraxisObservation) {
+    if (!this.operationContracts || !this.operationContractProviders)
+      throw new ConflictException({ code: "OPERATION_CONTRACT_REGISTRY_UNAVAILABLE" });
+    const generic = await this.runner.observeOperationContracts(sessionId);
+    // DOM perception and the authoring owner have distinct epoch counters.
+    // Correlate the same observed document first, then bind to the authoritative
+    // owner epoch; never treat a perception counter as runtime authority.
+    const correlated = generic.map((contract) => {
+      if (
+        contract.provenance.sourceDocumentEpoch !==
+          current.semanticPageContext.authority.documentEpoch ||
+        !contract.provenance.observationId.startsWith(
+          `${current.semanticPageContext.authority.pageId}:operation-contract:`,
+        ) ||
+        contract.provenance.origin !== new URL(current.url).origin
+      )
+        throw new ConflictException({ code: "OPERATION_CONTRACT_OBSERVATION_CHANGED" });
+      return {
+        ...contract,
+        provenance: { ...contract.provenance, sourceDocumentEpoch: current.documentEpoch },
+        interaction: { ...contract.interaction, documentEpoch: current.documentEpoch },
+      };
+    });
+    const projected = this.operationContractProviders.project(sessionId, current, correlated);
+    return this.operationContracts.register(sessionId, projected);
+  }
+
+  async readPublicValue(
+    principal: Principal,
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicValueInput,
+  ) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+
+    if (session.state !== "active" && session.state !== "suspended") {
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    }
+
+    return this.runner.readPublicValue(sessionId, input);
+  }
+
+  async inspectRegion(
+    principal: Principal,
+    sessionId: string,
+    input: import("@scry/contracts").InspectPraxisRegionInput,
+  ) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+
+    if (session.state !== "active" && session.state !== "suspended") {
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    }
+
+    return this.runner.inspectRegion(sessionId, input);
+  }
+
+  async inspectBrowserResources(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.inspectBrowserResources(sessionId);
+  }
+
+  async readPublicResource(
+    principal: Principal,
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicResourceInput,
+  ) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.readPublicResource(sessionId, input);
+  }
+
+  async inspectStructure(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.inspectStructure(sessionId);
+  }
+
+  async readPublicStructureValue(
+    principal: Principal,
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicStructureValueInput,
+  ) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.readPublicStructureValue(sessionId, input);
+  }
+
+  async inspectRuntimeState(principal: Principal, sessionId: string) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.inspectRuntimeState(sessionId);
+  }
+
+  async readPublicRuntimeValue(
+    principal: Principal,
+    sessionId: string,
+    input: import("@scry/contracts").ReadPraxisPublicRuntimeValueInput,
+  ) {
+    const session = await this.sessions.get(workspaceId(principal), sessionId);
+    if (session.state !== "active" && session.state !== "suspended")
+      throw new ConflictException({ code: "PRAXIS_SESSION_NOT_LIVE" });
+    return this.runner.readPublicRuntimeValue(sessionId, input);
+  }
+
   async reconcileUnknown(
     principal: Principal,
     sessionId: string,
@@ -216,6 +662,12 @@ export class MissionFlowAuthoringService {
         mutationOutcome: "unknown",
         safeActions: ["get_flow_authoring"],
       });
+    if (!claim.id || claim.fencingToken === undefined)
+      throw new ConflictException({
+        code: "UNKNOWN_RECONCILIATION_FENCE_LOST",
+        mutationOutcome: "unknown",
+        safeActions: ["get_flow_authoring"],
+      });
     const readOnlyObservation =
       (claim.authority.action.type === "click" || claim.authority.action.type === "press") &&
       claim.authority.action.dispatchSemantics === "read_only"
@@ -245,6 +697,8 @@ export class MissionFlowAuthoringService {
       missionId: input.missionId,
       operationId: input.operationId,
       idempotencyKey: input.idempotencyKey,
+      reconciliationId: claim.id,
+      fencingToken: claim.fencingToken,
       runtimeOwned: this.runner.hasRuntime(sessionId),
       ...observation,
     });
@@ -467,9 +921,6 @@ export class MissionFlowAuthoringService {
       }
       const resolveStartedAt = performance.now();
       let operation: AdaptiveSessionOperationInput;
-      let protectedReservation:
-        ReturnType<typeof missionAuthoringProtectedOperationReservation> | undefined;
-      let earlyProtectedOperationId: string | undefined;
       let replayedOperation: AdaptiveSessionOperationInput | null = null;
       try {
         await this.sessions.validateIntentAdmission({ sessionId, intent });
@@ -486,84 +937,50 @@ export class MissionFlowAuthoringService {
           active = { objectiveId: intent.objectiveId, flowDraftId: intent.flowDraftId };
         let protectedTransaction;
         if (intent.action.kind === "acquire_protected_outputs") {
-          const identity = missionAuthoringOperationIdentity(turnId, intent.intentId);
-          replayedOperation = await this.sessions.replayMissionOperation({
-            sessionId,
-            operationId: identity.operationId,
+          throw new ConflictException({
+            code: "PREPARED_EXECUTION_CAPABILITY_REQUIRED",
+            recovery: "reserve_prepared_protected_operation",
           });
-          if (!replayedOperation) {
-            const reserved = await this.sessions.reserveMissionProtectedOperation({
-              sessionId,
-              operationId: identity.operationId,
-              intent,
-            });
-            earlyProtectedOperationId = reserved.protectedOperationId;
-            const runtime = await this.sessions.runtimeContextFor(sessionId);
-            const entryUrl = runtime.lastObservation?.url;
-            if (!entryUrl)
-              throw new ConflictException({
-                code: "MISSION_AUTHORING_PROTECTED_ENTRY_UNAVAILABLE",
-              });
-            const preparation = await this.sessions.protectedPreparationFor({
-              sessionId,
-              objectiveId: intent.objectiveId,
-              flowDraftId: intent.flowDraftId,
-              intentIds: intent.action.preparationIntentIds,
-              entryUrl,
-            });
-            const resolvedSyntheticReferences: Record<string, string> = {};
-            for (const preparationIntent of preparation) {
-              if (
-                preparationIntent.action.kind !== "fill" ||
-                !preparationIntent.action.syntheticProtectedSource
-              )
-                continue;
-              if (!this.syntheticInputs)
-                throw new ConflictException({
-                  code: "SYNTHETIC_PROTECTED_INPUT_RUNTIME_UNAVAILABLE",
-                });
-              const source = preparationIntent.action.syntheticProtectedSource;
-              const materialized = await this.syntheticInputs.materialize({
-                protectedOperationId: earlyProtectedOperationId,
-                projectId: runtime.projectId,
-                environmentId: runtime.environmentId,
-                policy: runtime.policy,
-                resourceKind: source.resourceKind,
-                operation: source.operation,
-                declaration: source,
-              });
-              resolvedSyntheticReferences[preparationIntent.intentId] = materialized.referenceId;
+        }
+        if (
+          this.operationContracts &&
+          (intent.action.kind === "activate" ||
+            intent.action.kind === "press" ||
+            intent.action.kind === "same_origin_request")
+        ) {
+          const action = intent.action;
+          const current = await this.runner.observe(sessionId);
+          const declared = await this.currentOperationContracts(sessionId, current);
+          const selected = declared.filter((entry) => {
+            if (!entry.interaction) return false;
+            if (action.kind === "same_origin_request") {
+              const expected = entry.revision.facts.operation;
+              const parts = expected.pathTemplate.split("/");
+              const actual = new URL(action.path, current.url).pathname.split("/");
+              return (
+                action.method === expected.method &&
+                parts.length === actual.length &&
+                parts.every((part, index) =>
+                  /^\{[^}]+\}$/.test(part) ? Boolean(actual[index]) : part === actual[index],
+                )
+              );
             }
-            for (const source of intent.action.syntheticProtectedInputs ?? []) {
-              if (!this.syntheticInputs)
-                throw new ConflictException({
-                  code: "SYNTHETIC_PROTECTED_INPUT_RUNTIME_UNAVAILABLE",
-                });
-              const materialized = await this.syntheticInputs.materialize({
-                protectedOperationId: earlyProtectedOperationId,
-                projectId: runtime.projectId,
-                environmentId: runtime.environmentId,
-                policy: runtime.policy,
-                resourceKind: source.resourceKind,
-                operation: source.operation,
-                declaration: source,
-              });
-              resolvedSyntheticReferences[`synthetic:${source.semantic}`] =
-                materialized.referenceId;
-            }
-            protectedTransaction = compileMissionAuthoringProtectedTransaction({
-              operationId: identity.operationId,
-              entryUrl,
-              action: intent.action,
-              preparation,
-              timeoutMs: intent.constraints.timeoutMs,
-              resolvedSyntheticReferences,
-            });
-            protectedReservation = missionAuthoringProtectedOperationReservation(
-              protectedTransaction,
-              runtime.policy.allowedOrigins,
+            return (
+              entry.interaction.activationControlReference === action.target?.reference ||
+              (action.kind === "press" &&
+                action.key === "Enter" &&
+                (!action.target ||
+                  Object.values(entry.interaction.inputControlReferences).includes(
+                    action.target.reference ?? "",
+                  )))
             );
-          }
+          });
+          if (selected.length)
+            throw new ConflictException({
+              code: "PREPARED_EXECUTION_CAPABILITY_REQUIRED",
+              recovery: "reserve_prepared_protected_operation",
+              operationContractRevisionIds: selected.map((entry) => entry.revision.id),
+            });
         }
         const derived =
           replayedOperation ??
@@ -581,12 +998,6 @@ export class MissionFlowAuthoringService {
           protectedInputReferences: intent.protectedInputReferences,
         };
       } catch (error) {
-        if (earlyProtectedOperationId) {
-          await this.sessions.closeReservedMissionProtectedOperation({
-            protectedOperationId: earlyProtectedOperationId,
-            reasonCode: "PROTECTED_OPERATION_COMPILATION_FAILED",
-          });
-        }
         timings.resolveMs += performance.now() - resolveStartedAt;
         const decision = turnResult({
           turnId,
@@ -611,8 +1022,6 @@ export class MissionFlowAuthoringService {
         action: operation.action,
         expectedEffect: operation.expectedEffect,
         mode: operation.mode,
-        ...(protectedReservation ? { protectedReservation } : {}),
-        ...(earlyProtectedOperationId ? { earlyProtectedOperationId } : {}),
       });
       timings.resolveMs += performance.now() - resolveStartedAt;
       if (
@@ -927,6 +1336,7 @@ export class MissionFlowAuthoringService {
         operation,
         outputDirectory,
         veilPolicySnapshot: runEvidence.veilPolicySnapshot,
+        beforeBusinessMutationDispatch: runEvidence.beforeBusinessMutationDispatch,
         ...(signal ? { signal } : {}),
       });
 
@@ -1038,6 +1448,29 @@ export class MissionFlowAuthoringService {
     }
   }
 
+  async settleExternalOwnerLoss(
+    principal: Principal,
+    sessionId: string,
+    reasonCode: string,
+    idempotencyKey: string,
+  ) {
+    this.requireWrite(principal);
+    try {
+      return await this.sessions.settleExternalOwnerLoss({
+        workspaceId: workspaceId(principal),
+        sessionId,
+        reasonCode,
+        idempotencyKey,
+      });
+    } finally {
+      await this.runner.close(sessionId);
+    }
+  }
+
+  convergeExpiredRuntimeOwners() {
+    return this.sessions.convergeExpiredRuntimeOwners();
+  }
+
   private requireWrite(principal: Principal) {
     if (principal.kind === "user" && principal.role === "viewer") {
       throw new ForbiddenException("Workspace viewers have read-only access");
@@ -1049,8 +1482,8 @@ function liveReadPolicyBoundary(
   intent: import("@scry/contracts").MissionAuthoringIntent,
 ): NonNullable<MissionAuthoringTurnResult["decisionBoundary"]> {
   const semanticEffect =
-    intent.action.kind === "activate"
-      ? (intent.action.semanticEffect ?? "unknown")
+    intent.action.kind === "activate" || intent.action.kind === "press"
+      ? intent.action.semanticEffect
       : "resource_mutation";
   const readContext = semanticEffect === "read_context_transition";
   return {
@@ -1098,6 +1531,11 @@ function errorCode(error: unknown, fallback: string) {
     }
   }
   return error instanceof Error && valid(error.message) ? error.message : fallback;
+}
+
+function preparedExecutionTimeoutMs() {
+  const value = Number(process.env.SCRY_PREPARED_EXECUTION_TIMEOUT_MS ?? 120_000);
+  return Number.isFinite(value) ? Math.max(1_000, Math.min(600_000, Math.floor(value))) : 120_000;
 }
 
 function authoringProvisioningFailure(
@@ -1173,11 +1611,30 @@ function admissionDecisionBoundary(
   error: unknown,
 ): NonNullable<MissionAuthoringTurnResult["decisionBoundary"]> {
   const code = errorCode(error, "MISSION_AUTHORING_ADMISSION_FAILED");
+  if (code === "PREPARED_EXECUTION_CAPABILITY_REQUIRED") {
+    return {
+      type: "effect_observation_required",
+      reasonCode: code,
+      safeActions: [
+        "observe_operation_contracts",
+        "reserve_prepared_protected_operation",
+        "dispatch_prepared_protected_operation",
+      ],
+    };
+  }
   if (code === "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED") {
     return {
       type: "authorization_required",
       reasonCode: code,
-      safeActions: ["authorize_environment_credentials"],
+      safeActions: ["authorize_environment_credentials", "dispatch_run_operation"],
+      requiresFreshIntentId: true,
+    };
+  }
+  if (code === "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED") {
+    return {
+      type: "authorization_required",
+      reasonCode: code,
+      safeActions: ["start_praxis_session", "attach_run_praxis_session"],
     };
   }
   if (code.includes("ORIGIN_NOT_ALLOWED") || code.includes("AUTHORIZATION")) {

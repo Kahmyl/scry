@@ -6,14 +6,11 @@ import path from "node:path";
 
 import { SecretRedactor } from "@scry/policy";
 import { requirePraxisSuccess } from "@scry/praxis";
-import {
-  acquireValue,
-  beginProtectedResponseEnvelope,
-  PlaywrightProtectedCapsuleFactory,
-  registerProtectedAcquisitionAdapter,
-  runProtectedStage,
-  type ProtectedOperationClaim,
-} from "@scry/executor";
+import { PlaywrightProtectedCapsuleFactory } from "@scry/praxis";
+import { acquireValue, registerProtectedAcquisitionAdapter } from "@scry/praxis";
+import { beginProtectedResponseEnvelope } from "@scry/praxis";
+import type { ProtectedOperationClaim } from "@scry/contracts";
+import { runProtectedStage } from "@scry/praxis";
 import { VeilChannelCollector, VeilClipboardCollector, VeilRuntimeCoordinator } from "@scry/veil";
 import { ProtectedCertificationDatabase } from "./protected-certification-database.js";
 import { NativeBrowserDriver } from "../src/runtime/native-browser-driver/native-browser-driver.js";

@@ -1,8 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { finalizeAgentDirectedRunSchema } from "@scry/contracts";
+import {
+  finalizeAgentDirectedRunSchema,
+  finalizedAgentDirectedRunResultSchema,
+} from "@scry/contracts";
+import { z } from "zod";
 
 import type { ScryApiClient } from "../../api-client.js";
-import { toolResult, uuid, writes } from "../../tool-registry.js";
+import { idempotentDurableWrite, toolResult, uuid } from "../../tool-registry.js";
 
 export function registerFinalizeRunTool(server: McpServer, client: ScryApiClient) {
   server.registerTool(
@@ -12,7 +16,10 @@ export function registerFinalizeRunTool(server: McpServer, client: ScryApiClient
       description:
         "Explicitly finalize an agent-directed Run after the external agent interprets the recorded operation facts. Scry does not infer success or progression from expected effects.",
       inputSchema: { runId: uuid, ...finalizeAgentDirectedRunSchema.shape },
-      annotations: writes,
+      outputSchema: z
+        .object({ message: z.string(), run: finalizedAgentDirectedRunResultSchema })
+        .strict(),
+      annotations: idempotentDurableWrite,
     },
     async ({ runId, ...input }) => {
       await client.requireCurrentRelease();

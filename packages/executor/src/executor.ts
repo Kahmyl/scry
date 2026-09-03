@@ -50,13 +50,10 @@ import { VeilRuntimeCoordinator, type PrivacyCollector, type PrivacyPreparation 
 import { VeilChannelCollector } from "@scry/veil";
 import { VeilVisualCaptureAuthority } from "@scry/veil";
 import { VeilVideoSegmentAuthority } from "@scry/veil";
-import { BrowserSessionProvenance } from "./browser-session.js";
-import { createVeilClipboardCollector } from "./privacy-clipboard-runtime.js";
-import {
-  PlaywrightProtectedCapsuleFactory,
-  ProtectedTransactionCoordinator,
-  type ProtectedTransactionExecution,
-} from "./protected-transaction-coordinator.js";
+import { BrowserSessionProvenance } from "@scry/praxis";
+import { createVeilClipboardCollector } from "@scry/praxis";
+import type { ProtectedTransactionExecution } from "./protected-transaction-port.js";
+import { PlaywrightProtectedCapsuleFactory } from "@scry/praxis";
 import { TraceCoordinator } from "./trace-coordinator.js";
 import { sanitizeTraceArchive } from "./trace-sanitizer.js";
 import { capturePageStructure } from "./calibration.js";
@@ -94,7 +91,7 @@ import {
   isBrowserInfrastructureFailure,
   stopBrowser,
   throwIfAborted,
-} from "./execution-browser-policy.js";
+} from "@scry/praxis";
 import { buildExecutionReport } from "./execution-report.js";
 import { resolveVeilPolicyForExecution } from "./execution-veil-policy.js";
 import { ExecutionState } from "./execution-state.js";
@@ -114,6 +111,10 @@ function registerPraxisGroundingObservers(page: Page, options: ExecuteOptions) {
   if (options.onGroundingDiagnostic) registerGroundingObserver(page, options.onGroundingDiagnostic);
 }
 
+function isDocumentRecordingResumeFailure(error: unknown) {
+  return error instanceof Error && error.message === "DOCUMENT_TRANSITION_RECORDING_RESUME_FAILED";
+}
+
 export async function executePlan(options: ExecuteOptions): Promise<ExecutionReport> {
   const violations = validatePlanAgainstPolicy(options.plan, options.policy);
   if (violations.length > 0) {
@@ -129,10 +130,9 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
   const steps = initializeSteps(options);
   const diagnostics: DiagnosticRecord[] = [];
   const networkRecords: Array<Record<string, unknown>> = [];
-  const pendingNetworkBodies = new Set<Promise<void>>();
   const networkActivity = { active: new Map<string, { url: string; resourceType: string }>() };
   const policyViolations: PolicyViolationRecord[] = [];
-  const redactor = new SecretRedactor();
+  const redactor = options.secretRedactor ?? new SecretRedactor();
   const capturedSecrets = new Map<string, string>();
   const capturedValues = new Map<string, string>();
   const usesProtectedValues = options.plan.steps.some(
@@ -291,7 +291,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       networkRecords,
       redactor,
       networkActivity,
-      pendingNetworkBodies,
       () =>
         veilChannelCollectors.get("network")!.isCaptureSuppressed() ||
         privacyGate?.getDecision("network") === "suppress" ||
@@ -306,6 +305,9 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
       abortCapture: async () => {
         if (context) await closePraxisContext(context);
       },
+      ...(options.recordingSegmentStartTestHook
+        ? { beforeStartScreencast: options.recordingSegmentStartTestHook }
+        : {}),
     });
     trace = new TraceCoordinator({
       context,
@@ -478,129 +480,144 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           const liveContext = context;
           const livePage = page;
           const liveProvenance = safeProvenance;
+          if (!options.protectedTransactionExecutor) {
+            throw new InfrastructureDependencyError(
+              "Protected transaction runtime capability is unavailable",
+            );
+          }
           const transaction: ProtectedTransactionExecution =
-            await new ProtectedTransactionCoordinator({
-              safeSession: { browser, context, page, provenance: safeProvenance },
-              gate: privacyGate,
-              redactor,
-              store: options.protectedTransactionStore,
-              capsuleFactory: new PlaywrightProtectedCapsuleFactory(
-                options.openBrowser ??
-                  ((contextOptions) =>
-                    openCompatibilityBrowser(options.browserChannel, contextOptions)),
-              ),
-              ...(options.existingProtectedSession
-                ? {
-                    liveProtectedSession: {
-                      browser: liveBrowser,
-                      context: liveContext,
-                      page: livePage,
-                      provenance: liveProvenance,
-                      clipboardCollector: createVeilClipboardCollector(livePage),
-                      destroy: async () => {
-                        // This close is the coordinator's verified terminal boundary for an
-                        // existing protected session, not an unexpected privacy incident.
-                        // A failed teardown is still handled fail-closed by the coordinator.
-                        protectedContextTeardownOwned = true;
-                        const outcome = await destroyPraxisIsolatedSession({
-                          context: liveContext,
-                          browser: liveBrowser,
-                        });
-                        if (liveProvenance.value() !== "destroyed")
-                          liveProvenance.transition("destroyed");
-                        return outcome;
+            await options.protectedTransactionExecutor({
+              transaction: step.action,
+              dependencies: {
+                mutationIdentity: options.mutationIdentity!,
+                ...(options.canonicalProgramDigest
+                  ? { canonicalProgramDigest: options.canonicalProgramDigest }
+                  : {}),
+                ...(options.preparedExecutionCapabilityId
+                  ? { preparedExecutionCapabilityId: options.preparedExecutionCapabilityId }
+                  : {}),
+                safeSession: { browser, context, page, provenance: safeProvenance },
+                gate: privacyGate,
+                redactor,
+                store: options.protectedTransactionStore,
+                capsuleFactory: new PlaywrightProtectedCapsuleFactory(
+                  options.openBrowser ??
+                    ((contextOptions) =>
+                      openCompatibilityBrowser(options.browserChannel, contextOptions)),
+                ),
+                ...(options.existingProtectedSession
+                  ? {
+                      liveProtectedSession: {
+                        browser: liveBrowser,
+                        context: liveContext,
+                        page: livePage,
+                        provenance: liveProvenance,
+                        clipboardCollector: createVeilClipboardCollector(livePage),
+                        destroy: async () => {
+                          // This close is the coordinator's verified terminal boundary for an
+                          // existing protected session, not an unexpected privacy incident.
+                          // A failed teardown is still handled fail-closed by the coordinator.
+                          protectedContextTeardownOwned = true;
+                          const outcome = await destroyPraxisIsolatedSession({
+                            context: liveContext,
+                            browser: liveBrowser,
+                          });
+                          if (liveProvenance.value() !== "destroyed")
+                            liveProvenance.transition("destroyed");
+                          return outcome;
+                        },
                       },
-                    },
-                  }
-                : {}),
-              allowedOrigins: options.plan.allowedOrigins,
-              persistSecret: options.atomicSecretCapture,
-              persistPublicValue: options.publicValueCapture,
-              ...(options.atomicOutputCapture
-                ? { persistOutputsAtomically: options.atomicOutputCapture }
-                : {}),
-              ...(options.stageProtectedResponseOutputs
-                ? { stageResponseOutputsAtomically: options.stageProtectedResponseOutputs }
-                : {}),
-              ...(options.recoverStagedProtectedResponseOutputs
-                ? { recoverStagedResponseOutputs: options.recoverStagedProtectedResponseOutputs }
-                : {}),
-              resolveKnownSecret: options.secretResolver ?? missingSecretResolver,
-              prepareCapsule: async (capsule) => {
-                registerPraxisVeilAuthority(capsule.page, {
-                  authority: veilAuthority,
-                  userId: "executor",
-                  environmentId: options.environmentId ?? "local-environment",
-                  browserContextId: capsule.provenance.contextId,
-                });
-                registerPraxisGroundingObservers(capsule.page, options);
-                await attachRequestInterception(
-                  capsule.context,
-                  capsule.page,
-                  requestPolicy,
-                  rejectPolicy,
-                );
-                attachCapabilityGuards(capsule.context, capsule.page, options, rejectPolicy);
-              },
-              onPreparationVerified: async (capsule, action) => {
-                if (options.calibrationRehearsal?.operationId !== action.operationId) return;
-                const structure = await capturePageStructure(capsule.page, action);
-                await options.calibrationRehearsal.onBoundary({
-                  stepId: step.id,
-                  structure,
-                  url: capsule.page.url(),
-                });
-                await emit("calibration.boundary_reached", {
-                  stepId: step.id,
-                  operationId: action.operationId,
-                });
-                state.calibrationBoundaryReached = true;
-              },
-              verifyAssertions: async (targetPage, assertions) => {
-                for (const assertion of assertions)
-                  await executeAssertion(
-                    targetPage,
-                    assertion,
-                    options.plan.allowedOrigins[0]!,
-                    {
-                      runId,
-                      attemptId,
-                      stepId: step.id,
-                      channel: "assertion",
-                      ordinal: protectedAssertionOrdinal++,
-                      allowedOrigins: options.plan.allowedOrigins,
-                      timeoutMs: assertion.timeoutMs ?? 10_000,
-                      ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}),
-                    },
-                    timeoutController.signal,
+                    }
+                  : {}),
+                allowedOrigins: options.plan.allowedOrigins,
+                persistSecret: options.atomicSecretCapture,
+                persistPublicValue: options.publicValueCapture,
+                ...(options.atomicOutputCapture
+                  ? { persistOutputsAtomically: options.atomicOutputCapture }
+                  : {}),
+                ...(options.stageProtectedResponseOutputs
+                  ? { stageResponseOutputsAtomically: options.stageProtectedResponseOutputs }
+                  : {}),
+                ...(options.recoverStagedProtectedResponseOutputs
+                  ? { recoverStagedResponseOutputs: options.recoverStagedProtectedResponseOutputs }
+                  : {}),
+                resolveKnownSecret: options.secretResolver ?? missingSecretResolver,
+                prepareCapsule: async (capsule) => {
+                  registerPraxisVeilAuthority(capsule.page, {
+                    authority: veilAuthority,
+                    userId: "executor",
+                    environmentId: options.environmentId ?? "local-environment",
+                    browserContextId: capsule.provenance.contextId,
+                  });
+                  registerPraxisGroundingObservers(capsule.page, options);
+                  await attachRequestInterception(
+                    capsule.context,
+                    capsule.page,
+                    requestPolicy,
+                    rejectPolicy,
                   );
+                  attachCapabilityGuards(capsule.context, capsule.page, options, rejectPolicy);
+                },
+                onPreparationVerified: async (capsule, action) => {
+                  if (options.calibrationRehearsal?.operationId !== action.operationId) return;
+                  const structure = await capturePageStructure(capsule.page, action);
+                  await options.calibrationRehearsal.onBoundary({
+                    stepId: step.id,
+                    structure,
+                    url: capsule.page.url(),
+                  });
+                  await emit("calibration.boundary_reached", {
+                    stepId: step.id,
+                    operationId: action.operationId,
+                  });
+                  state.calibrationBoundaryReached = true;
+                },
+                verifyAssertions: async (targetPage, assertions) => {
+                  for (const assertion of assertions)
+                    await executeAssertion(
+                      targetPage,
+                      assertion,
+                      options.plan.allowedOrigins[0]!,
+                      {
+                        runId,
+                        attemptId,
+                        stepId: step.id,
+                        channel: "assertion",
+                        ordinal: protectedAssertionOrdinal++,
+                        allowedOrigins: options.plan.allowedOrigins,
+                        timeoutMs: assertion.timeoutMs ?? 10_000,
+                        ...(options.onPraxisResult ? { record: options.onPraxisResult } : {}),
+                      },
+                      timeoutController.signal,
+                    );
+                },
+                reconcile: async () => "unknown",
+                ...(options.recordContextProvenance
+                  ? { onContextProvenance: options.recordContextProvenance }
+                  : {}),
+                ...(options.recoverAcquisition
+                  ? { recoverAcquisition: options.recoverAcquisition }
+                  : {}),
+                onEvidenceResumed: async ({ contextId }) => {
+                  state.endCaptureEpoch("sealed", "sealed");
+                  state.startCaptureEpoch("checkpoint_restored", contextId);
+                },
+                emit,
+                signal: timeoutController.signal,
+                ...(options.dispatchDisposition
+                  ? { dispatchDisposition: options.dispatchDisposition }
+                  : {}),
+                ...(options.onReadyToDispatch
+                  ? { onReadyToDispatch: options.onReadyToDispatch }
+                  : {}),
+                ...(options.onMutationDispatch
+                  ? { onMutationDispatch: options.onMutationDispatch }
+                  : {}),
+                ...(options.markCredentialCompromised
+                  ? { markCredentialCompromised: options.markCredentialCompromised }
+                  : {}),
               },
-              reconcile: async () => "unknown",
-              ...(options.recordContextProvenance
-                ? { onContextProvenance: options.recordContextProvenance }
-                : {}),
-              ...(options.recoverAcquisition
-                ? { recoverAcquisition: options.recoverAcquisition }
-                : {}),
-              onEvidenceResumed: async ({ contextId }) => {
-                state.endCaptureEpoch("sealed", "sealed");
-                state.startCaptureEpoch("checkpoint_restored", contextId);
-              },
-              emit,
-              signal: timeoutController.signal,
-              ...(options.dispatchDisposition
-                ? { dispatchDisposition: options.dispatchDisposition }
-                : {}),
-              ...(options.onReadyToDispatch
-                ? { onReadyToDispatch: options.onReadyToDispatch }
-                : {}),
-              ...(options.onMutationDispatch
-                ? { onMutationDispatch: options.onMutationDispatch }
-                : {}),
-              ...(options.markCredentialCompromised
-                ? { markCredentialCompromised: options.markCredentialCompromised }
-                : {}),
-            }).execute(step.action);
+            });
           browser = transaction.safeSession.browser;
           context = transaction.safeSession.context;
           page = transaction.safeSession.page;
@@ -678,6 +695,7 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
 
           if (documentTransitionOpen) {
             try {
+              await options.settleExpectedEffectBeforeCapture?.();
               const transitionTimeoutMs =
                 "timeoutMs" in step.action && typeof step.action.timeoutMs === "number"
                   ? Math.min(10_000, step.action.timeoutMs)
@@ -693,13 +711,20 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
               await recording.completeDocumentTransition(page);
               documentTransitionOpen = false;
             } catch (error) {
-              if (documentTransitionOpen) {
-                await recording
-                  .failDocumentTransition("DOCUMENT_TRANSITION_QUALIFICATION_FAILED")
-                  .catch(() => undefined);
+              if (isDocumentRecordingResumeFailure(error)) {
+                // The action and the new document have already been observed.
+                // Preserve that product truth while the sealed recording
+                // timeline carries the independent evidence failure.
                 documentTransitionOpen = false;
+              } else {
+                if (documentTransitionOpen) {
+                  await recording
+                    .failDocumentTransition("DOCUMENT_TRANSITION_QUALIFICATION_FAILED")
+                    .catch(() => undefined);
+                  documentTransitionOpen = false;
+                }
+                throw error;
               }
-              throw error;
             }
           }
         }
@@ -858,7 +883,6 @@ export async function executePlan(options: ExecuteOptions): Promise<ExecutionRep
           result,
           networkRecords,
           redactor,
-          pendingNetworkBodies,
           observation,
           privacyGate,
           veilChannelCollectors,

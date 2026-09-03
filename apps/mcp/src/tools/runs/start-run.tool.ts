@@ -15,10 +15,11 @@ import {
 } from "@scry/contracts";
 import { z } from "zod";
 
-import type { ScryApiClient } from "../../api-client.js";
+import { apiRejection, ScryApiError, type ScryApiClient } from "../../api-client.js";
 import {
   missionContext,
   objectiveContext,
+  idempotentDurableWrite,
   readOnly,
   stableKey,
   toolResult as result,
@@ -32,13 +33,14 @@ export function registerStartRunTool(server: McpServer, client: ScryApiClient) {
     {
       title: "Start run",
       description:
-        "Open a durable agent-directed Run ledger bound to an existing live Praxis session. This does not create or queue a browser.",
+        "Open a durable agent-directed Run ledger bound to an existing live Praxis session. flowRevisionId must be the exact publication.revisionId returned by publish_flow_draft; never use a Flow draft ID as flowRevisionId. This does not create or queue a browser.",
       inputSchema: {
         ...objectiveContext,
         projectId: uuid,
         environmentId: uuid,
         flowRevisionId: uuid,
         praxisSessionId: uuid,
+        qualificationCampaignAuthorizationId: uuid.optional(),
         protectedAuthorizations: z
           .array(z.object({ operationId: z.string().min(1), authorizationId: uuid }))
           .default([]),
@@ -52,16 +54,24 @@ export function registerStartRunTool(server: McpServer, client: ScryApiClient) {
         seed: z.number().int().min(0).max(4_294_967_295).default(1),
         idempotencyKey: z.string().trim().min(8).max(200).optional(),
       },
-      annotations: writes,
+      annotations: idempotentDurableWrite,
     },
     async ({ projectId, idempotencyKey, ...body }) => {
-      await client.requireCurrentRelease();
-      const run = await client.post<Record<string, unknown>>(`/projects/${projectId}/runs`, {
-        ...body,
-        browser: "chromium",
-        idempotencyKey: idempotencyKey ?? stableKey("run", { projectId, ...body }),
-      });
-      return result({ run }, "Agent-directed Run ledger opened.");
+      try {
+        await client.requireCurrentRelease();
+        const run = await client.post<Record<string, unknown>>(`/projects/${projectId}/runs`, {
+          ...body,
+          browser: "chromium",
+          idempotencyKey: idempotencyKey ?? stableKey("run", { projectId, ...body }),
+        });
+        return result({ run }, "Agent-directed Run ledger opened.");
+      } catch (error) {
+        if (!(error instanceof ScryApiError)) throw error;
+        return {
+          ...result({ rejection: apiRejection(error) }, "Run creation was rejected."),
+          isError: true,
+        };
+      }
     },
   );
 }

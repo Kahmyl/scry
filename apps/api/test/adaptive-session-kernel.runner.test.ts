@@ -1,9 +1,84 @@
 import { describe, expect, it, vi } from "vitest";
+import { praxisObservationSchema } from "@scry/contracts";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 
 import { AdaptiveSessionKernelRunner } from "../src/adaptive-sessions/adaptive-session-kernel.runner.js";
+import { SecretRedactor } from "@scry/policy";
 
 describe("AdaptiveSessionKernelRunner timing propagation", () => {
+  it("removes an aborted exclusive waiter without releasing a live predecessor", async () => {
+    let releasePredecessor!: () => void;
+    const predecessor = new Promise<void>((resolve) => {
+      releasePredecessor = resolve;
+    });
+    const runtime = { tail: predecessor };
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const exclusive = (
+      runner as unknown as {
+        exclusive<T>(
+          owned: typeof runtime,
+          operation: () => Promise<T>,
+          signal?: AbortSignal,
+        ): Promise<T>;
+      }
+    ).exclusive.bind(runner);
+    const controller = new AbortController();
+    const cancelledOperation = vi.fn(async () => undefined);
+    const cancelled = exclusive(runtime, cancelledOperation, controller.signal);
+
+    controller.abort(new Error("cancelled while queued"));
+    await expect(cancelled).rejects.toThrow("cancelled while queued");
+    expect(cancelledOperation).not.toHaveBeenCalled();
+
+    const successorOperation = vi.fn(async () => "completed");
+    const successor = exclusive(runtime, successorOperation);
+    await Promise.resolve();
+    expect(successorOperation).not.toHaveBeenCalled();
+
+    releasePredecessor();
+    await expect(successor).resolves.toBe("completed");
+    expect(successorOperation).toHaveBeenCalledOnce();
+  });
+
+  it("renews live runtime ownership during idle human authorization delay", async () => {
+    vi.useFakeTimers();
+    const heartbeatRuntimeLease = vi.fn(async (_claim: unknown) => undefined);
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      {} as never,
+      { heartbeatRuntimeLease } as never,
+      {} as never,
+    );
+    (runner as unknown as { leaseDurationMs: number }).leaseDurationMs = 900;
+    const heartbeat = (
+      runner as unknown as {
+        startRuntimeOwnerHeartbeat(
+          sessionId: string,
+          fencingToken: number,
+        ): {
+          assertOwned(): void;
+          stop(): Promise<void>;
+        };
+      }
+    ).startRuntimeOwnerHeartbeat("idle-protected-session", 7);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(heartbeatRuntimeLease.mock.calls.length).toBeGreaterThanOrEqual(3);
+    for (const [claim] of heartbeatRuntimeLease.mock.calls)
+      expect(claim).toMatchObject({
+        sessionId: "idle-protected-session",
+        fencingToken: 7,
+        leaseDurationMs: 900,
+      });
+    expect(() => heartbeat.assertOwned()).not.toThrow();
+    await heartbeat.stop();
+    vi.useRealTimers();
+  });
+
   it("binds protected input resolution to the exact session, operation, reference, and target", async () => {
     const resolveProtectedInput = vi.fn(async () => "protected-test-value");
     const createSession = vi.fn((input) => input);
@@ -51,14 +126,49 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     const runner = new AdaptiveSessionKernelRunner(
       {} as never,
       {} as never,
-      {} as never,
+      { invalidateInteractionCapabilitiesForDocument: vi.fn() } as never,
       {} as never,
     );
     const observeDocument = vi.fn(async () => ({
       url: "https://example.test/current",
       documentEpoch: 4,
       semanticPageContext: {
-        controls: [{ reference: "context-control-0123456789abcdef0123456789abcdef" }],
+        schemaVersion: 2,
+        authority: {
+          pageId: "page-authority",
+          documentEpoch: 4,
+          url: "https://example.test/current",
+          title: "Current",
+          readiness: "stable",
+        },
+        completeness: { kind: "bounded", observed: 1, returned: 1, truncated: false },
+        controls: [
+          {
+            reference: "context-control-0123456789abcdef0123456789abcdef",
+            role: "button",
+            name: "Continue",
+            capabilities: ["observe", "activate"],
+          },
+        ],
+        browserSensor: {
+          kind: "chromium_read_only",
+          authority: {
+            frameId: "frame-1",
+            loaderId: "document-loader-1",
+            loaderChanged: false,
+            loaderTransitionsObserved: 0,
+          },
+          network: {
+            observedRequests: 1,
+            recentRequests: [
+              { requestId: "worker-script-1", type: "Script", monotonicTimestamp: 1 },
+            ],
+            observedFailures: 0,
+            recentFailures: [],
+            truncated: false,
+          },
+          layout: { clientWidth: 900, clientHeight: 600 },
+        },
       },
     }));
     (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set("live-session", {
@@ -67,7 +177,9 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       tail: Promise.resolve(),
     });
 
-    await expect(runner.observe("live-session")).resolves.toMatchObject({
+    const observation = await runner.observe("live-session");
+    expect(() => praxisObservationSchema.parse(observation)).not.toThrow();
+    expect(observation).toMatchObject({
       url: "https://example.test/current",
       documentEpoch: 4,
       semanticPageContext: {
@@ -83,6 +195,133 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
       response: { code: "PRAXIS_SESSION_NOT_LIVE" },
     });
   });
+
+  it("inspects a region through the already-owned browser session without dispatch", async () => {
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const input = {
+      contextControlReference: "context-control-0123456789abcdef0123456789abcdef",
+    };
+    const inspection = {
+      contextControlReference: input.contextControlReference,
+      readableValues: [],
+      readableValueCompleteness: { kind: "bounded", observed: 0, returned: 0, truncated: false },
+    };
+    const inspectRegion = vi.fn(async () => inspection);
+    const interact = vi.fn();
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set("live-session", {
+      session: { inspectRegion, interact },
+      fencingToken: 1,
+      tail: Promise.resolve(),
+    });
+
+    await expect(runner.inspectRegion("live-session", input)).resolves.toBe(inspection);
+    expect(inspectRegion).toHaveBeenCalledWith(input);
+    expect(interact).not.toHaveBeenCalled();
+    await expect(runner.inspectRegion("dead-session", input)).rejects.toMatchObject({
+      response: { code: "PRAXIS_SESSION_NOT_LIVE" },
+    });
+  });
+
+  it("inspects and reads an exact browser resource through the owned session without dispatch", async () => {
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const inspection = { resources: [] };
+    const resource = { text: "{}" };
+    const inspectResources = vi.fn(async () => inspection);
+    const readPublicResource = vi.fn(async () => resource);
+    const interact = vi.fn();
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(
+      "live-resource-session",
+      {
+        session: { inspectResources, readPublicResource, interact },
+        fencingToken: 1,
+        tail: Promise.resolve(),
+      },
+    );
+    const input = {
+      reference: "context-resource-0123456789abcdef0123456789abcdef",
+      offset: 0,
+      maxBytes: 2048,
+    };
+    await expect(runner.inspectBrowserResources("live-resource-session")).resolves.toBe(inspection);
+    await expect(runner.readPublicResource("live-resource-session", input)).resolves.toBe(resource);
+    expect(interact).not.toHaveBeenCalled();
+  });
+
+  it("serializes direct structure and runtime reads through the owned session without dispatch", async () => {
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const session = {
+      inspectStructure: vi.fn(async () => ({ structures: [] })),
+      readPublicStructureValue: vi.fn(async () => ({ text: "structure" })),
+      inspectRuntimeState: vi.fn(async () => ({ values: [] })),
+      readPublicRuntimeValue: vi.fn(async () => ({ text: "runtime" })),
+      interact: vi.fn(),
+    };
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(
+      "live-perception-session",
+      { session, fencingToken: 1, tail: Promise.resolve() },
+    );
+    await runner.inspectStructure("live-perception-session");
+    await runner.readPublicStructureValue("live-perception-session", {
+      reference: "context-structure-0123456789abcdef0123456789abcdef",
+      field: "text",
+    });
+    await runner.inspectRuntimeState("live-perception-session");
+    await runner.readPublicRuntimeValue("live-perception-session", {
+      reference: "context-runtime-0123456789abcdef0123456789abcdef",
+    });
+    expect(session.interact).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["structure", "PUBLIC_STRUCTURE_CLASSIFICATION_REFUSED", "refused-structure-secret"],
+    ["runtime", "PUBLIC_RUNTIME_CLASSIFICATION_REFUSED", "refused-runtime-secret"],
+  ] as const)(
+    "projects %s perception refusals without protected plaintext",
+    async (channel, code, protectedText) => {
+      const runner = new AdaptiveSessionKernelRunner(
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+      const refusal = Object.assign(new Error(protectedText), { code });
+      const session = {
+        inspectStructure: vi.fn(async () => {
+          throw refusal;
+        }),
+        inspectRuntimeState: vi.fn(async () => {
+          throw refusal;
+        }),
+      };
+      (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(
+        "live-private-perception",
+        { session, fencingToken: 1, tail: Promise.resolve() },
+      );
+
+      const result =
+        channel === "structure"
+          ? runner.inspectStructure("live-private-perception")
+          : runner.inspectRuntimeState("live-private-perception");
+      const caught = await result.catch((error) => error);
+      expect(caught.response).toEqual({ code, mutationOutcome: "not_applied", safeActions: [] });
+      expect(JSON.stringify(caught.response)).not.toContain(protectedText);
+    },
+  );
 
   it("projects the exact safe missing origin and replacement-session recovery", async () => {
     const sessionId = "11111111-1111-4111-8111-111111111111";
@@ -232,6 +471,120 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
         requiresNewFlowDraftAndAuthoringSession: true,
       },
     });
+  });
+
+  it("preserves completed execution truth when verified-observation persistence fails", async () => {
+    const sessionId = "55555555-5555-4555-8555-555555555555";
+    const policy = {
+      allowedOrigins: ["https://example.test"],
+      trustedScriptOrigins: [],
+      allowPrivateNetwork: false,
+      allowDownloads: false as const,
+      allowPopups: false as const,
+      maxActions: 4,
+      maxDurationMs: 60_000,
+      maxNavigations: 2,
+    };
+    let documentEpoch = 1;
+    const recordVerifiedObservation = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("transient observation persistence failure"));
+    const sessions = {
+      heartbeatRuntimeLease: vi.fn(async () => undefined),
+      runtimeContextFor: vi.fn(async () => ({
+        environmentId: "environment",
+        correlationId: "correlation",
+        policy,
+      })),
+      recordDispatchBaseline: vi.fn(async () => undefined),
+      recordVerifiedObservation,
+    };
+    const runner = new AdaptiveSessionKernelRunner(
+      {} as never,
+      { createSession: vi.fn(() => ({ manifest: { digest: "a".repeat(64) } })) } as never,
+      sessions as never,
+      {} as never,
+    );
+    const interact = vi.fn(async (_action: never, context: { operationId: string }) => {
+      documentEpoch += 1;
+      return {
+        documentEpoch,
+        url: "https://example.test/",
+        outcome: {
+          operationId: context.operationId,
+          functionalResult: "succeeded" as const,
+          mutationOutcome: "not_applied" as const,
+          privacyResult: "verified" as const,
+          evidenceResult: [{ channel: "report" as const, state: "passed" as const }],
+          qualityFindings: [],
+          durationMs: 1,
+        },
+        report: { operationId: context.operationId },
+      };
+    });
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
+      session: {
+        page: { url: () => "https://example.test/" },
+        documentEpoch: () => documentEpoch,
+        interact,
+      },
+      fencingToken: 1,
+      tail: Promise.resolve(),
+    });
+    const operation = (ordinal: number) =>
+      ({
+        operationId: `operation-${ordinal}`,
+        idempotencyKey: `operation-${ordinal}-idempotency`,
+        mode: "rehearse",
+        action:
+          ordinal < 3
+            ? { type: "navigate", url: "https://example.test/", timeoutMs: 30_000 }
+            : {
+                type: "sameOriginRequest",
+                method: "GET",
+                path: "/",
+                authentication: "current_browser_session",
+                expectedStatus: { min: 200, max: 299 },
+                timeoutMs: 30_000,
+              },
+        expectedEffect: { type: "none" },
+        protectedInputReferences: [],
+      }) as never;
+    const execute = (ordinal: number) =>
+      runner.executeForRun({
+        sessionId,
+        operation: operation(ordinal),
+        outputDirectory: `/tmp/operation-${ordinal}`,
+        veilPolicySnapshot: compileDefaultVeilPolicy(policy),
+      });
+
+    await expect(execute(1)).resolves.toMatchObject({
+      outcome: { functionalResult: "succeeded", mutationOutcome: "not_applied" },
+    });
+    await expect(execute(2)).resolves.toMatchObject({
+      outcome: { functionalResult: "succeeded", mutationOutcome: "not_applied" },
+    });
+    await expect(execute(3)).resolves.toMatchObject({
+      outcome: {
+        functionalResult: "succeeded",
+        mutationOutcome: "not_applied",
+        evidenceResult: [
+          {
+            channel: "report",
+            state: "failed",
+            reasonCode: "ADAPTIVE_VERIFIED_OBSERVATION_PERSISTENCE_FAILED",
+          },
+        ],
+      },
+    });
+
+    expect(interact).toHaveBeenCalledTimes(3);
+    expect(recordVerifiedObservation).toHaveBeenCalledTimes(3);
+    expect((runner as unknown as { runtimes: Map<string, unknown> }).runtimes.has(sessionId)).toBe(
+      true,
+    );
   });
 
   it("bounds a pending operation tail, cancels the browser, and releases its lease", async () => {
@@ -887,5 +1240,90 @@ describe("AdaptiveSessionKernelRunner timing propagation", () => {
     expect(kernel.interact).toHaveBeenCalledOnce();
     expect(result.timings).toMatchObject({ resolveMs: 7, verifyMs: 11 });
     expect(result.timings.executeMs).toBeGreaterThan(0);
+  });
+
+  it("retains protected redaction knowledge across live-session operations and clears it on close", async () => {
+    const sessionId = "99999999-9999-4999-8999-999999999999";
+    const secret = "session-protected-email@example.test";
+    const observedRedactors: SecretRedactor[] = [];
+    const outcome = {
+      operationId: "operation",
+      functionalResult: "succeeded" as const,
+      mutationOutcome: "not_applied" as const,
+      privacyResult: "unverified" as const,
+      evidenceResult: [],
+      qualityFindings: [],
+      durationMs: 1,
+    };
+    const kernel = {
+      interact: vi.fn(
+        async ({ capabilities }: { capabilities: { options: Record<string, unknown> } }) => {
+          const redactor = capabilities.options.secretRedactor as SecretRedactor;
+          observedRedactors.push(redactor);
+          if (observedRedactors.length === 1) redactor.add(secret);
+          else expect(redactor.redact(`account=${secret}`)).toBe("account=[REDACTED]");
+          return outcome;
+        },
+      ),
+    };
+    const capabilities = {
+      createSession: vi.fn((input: { options: unknown }) => ({
+        manifest: { digest: "a".repeat(64) },
+        options: input.options,
+      })),
+    };
+    const releaseRuntimeLease = vi.fn(async () => true);
+    const close = vi.fn(async () => undefined);
+    const runner = new AdaptiveSessionKernelRunner(
+      kernel as never,
+      capabilities as never,
+      { releaseRuntimeLease } as never,
+      {} as never,
+    );
+    (runner as unknown as { runtimes: Map<string, unknown> }).runtimes.set(sessionId, {
+      session: { close },
+      fencingToken: 4,
+      tail: Promise.resolve(),
+    });
+    const executeInteraction = (
+      runner as unknown as { executeInteraction(input: Record<string, unknown>): Promise<unknown> }
+    ).executeInteraction.bind(runner);
+    const base = {
+      sessionId,
+      environmentId: "environment",
+      policy: {
+        allowedOrigins: ["https://example.test"],
+        allowPrivateNetwork: false,
+        allowDownloads: false,
+        allowPopups: false,
+        maxActions: 2,
+        maxDurationMs: 30_000,
+        maxNavigations: 1,
+      },
+      mode: "rehearse",
+      fencingToken: 4,
+      browser: {},
+      context: {},
+      provenance: {},
+      page: {},
+      action: { type: "waitFor", target: {}, state: "visible" },
+      ordinal: 1,
+      correlationId: "correlation",
+      privacyGate: {},
+    };
+
+    await executeInteraction({ ...base, operationId: "operation-1" });
+    await executeInteraction({ ...base, operationId: "operation-2" });
+
+    expect(observedRedactors).toHaveLength(2);
+    expect(observedRedactors[1]).toBe(observedRedactors[0]);
+    await runner.close(sessionId);
+    expect(observedRedactors[0]!.redact(secret)).toBe(secret);
+    expect(close).toHaveBeenCalledOnce();
+    expect(releaseRuntimeLease).toHaveBeenCalledWith({
+      sessionId,
+      ownerId: expect.any(String),
+      fencingToken: 4,
+    });
   });
 });

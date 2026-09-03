@@ -50,6 +50,9 @@ describe("execution capability factory", () => {
       agentSessionId: randomUUID(),
       flowDraftId: randomUUID(),
       authorizationId: randomUUID(),
+      mutationIdentity: randomUUID(),
+      preparedExecutionCapabilityId: randomUUID(),
+      canonicalProgramDigest: "a".repeat(64),
       leaseOwner: "authoring-owner",
       options: {
         outputDirectory: "/tmp/authoring",
@@ -68,6 +71,7 @@ describe("execution capability factory", () => {
       operationId: "generate",
       mutationKind: "one_time",
       mutationIdentity: "generate-once",
+      preparedExecutionCapabilityId: capabilities.options.preparedExecutionCapabilityId!,
       programDigest: "a".repeat(64),
       inputSchemaDigest: "b".repeat(64),
       inputDigest: "c".repeat(64),
@@ -119,7 +123,7 @@ describe("execution capability factory", () => {
     );
   });
 
-  it("preserves lazy reservation for synchronous run-owned protected execution", async () => {
+  it("refuses legacy lazy reservation for run-owned protected execution after cutoff", async () => {
     const authorizationId = randomUUID();
     const executions = {
       resolveCredential: vi.fn(),
@@ -186,25 +190,24 @@ describe("execution capability factory", () => {
         veilPolicySnapshot: {} as never,
       },
     });
-    await capabilities.options.protectedTransactionStore!.claim({
-      operationId: "run-generate",
-      mutationKind: "one_time",
-      mutationIdentity: "run-generate-once",
-      programDigest: "a".repeat(64),
-      inputSchemaDigest: "b".repeat(64),
-      inputDigest: "c".repeat(64),
-      safeOutputManifest: [
-        { reference: "secret", classification: "protected", storageName: "Secret" },
-      ],
-    });
-    expect(protectedOperations.create).toHaveBeenCalledOnce();
-    expect(protectedOperations.create).toHaveBeenCalledWith(
-      expect.objectContaining({ authorizationId }),
-    );
-    expect(protectedOperations.claim).toHaveBeenCalledOnce();
+    await expect(
+      capabilities.options.protectedTransactionStore!.claim({
+        operationId: "run-generate",
+        mutationKind: "one_time",
+        mutationIdentity: "run-generate-once",
+        programDigest: "a".repeat(64),
+        inputSchemaDigest: "b".repeat(64),
+        inputDigest: "c".repeat(64),
+        safeOutputManifest: [
+          { reference: "secret", classification: "protected", storageName: "Secret" },
+        ],
+      }),
+    ).rejects.toThrow("PREPARED_EXECUTION_CAPABILITY_REQUIRED");
+    expect(protectedOperations.create).not.toHaveBeenCalled();
+    expect(protectedOperations.claim).not.toHaveBeenCalled();
   });
 
-  it("refuses a run-owned protected operation without an exact authorization binding", async () => {
+  it("refuses a run-owned protected operation without an exact prepared capability", async () => {
     const factory = new ExecutionCapabilityFactory(
       {} as never,
       { appendEvent: vi.fn(), recordContextProvenance: vi.fn() } as never,
@@ -245,7 +248,7 @@ describe("execution capability factory", () => {
         inputDigest: "c".repeat(64),
         safeOutputManifest: [],
       }),
-    ).rejects.toThrow("PROTECTED_OPERATION_AUTHORIZATION_REQUIRED");
+    ).rejects.toThrow("PREPARED_EXECUTION_CAPABILITY_REQUIRED");
   });
 
   it("keeps project protected-output authority out of generic sessions", () => {
@@ -506,6 +509,45 @@ describe("execution capability factory", () => {
       }),
     ).toThrow("PROJECT_SECRET_PERSISTENCE_AUTHORITY_REQUIRED");
     expect(kernelRepository.persistSecret).not.toHaveBeenCalled();
+  });
+
+  it("does not synthesize protected execution authority for calibration sessions", () => {
+    const kernelRepository = {
+      appendEvent: vi.fn(),
+      persistSecret: vi.fn(),
+      persistPublicValue: vi.fn(),
+      resolvePublicValue: vi.fn(),
+      establishCheckpoint: vi.fn(),
+      claimCheckpoint: vi.fn(),
+      completeCheckpoint: vi.fn(),
+      recordContextProvenance: vi.fn(),
+    };
+    const factory = new ExecutionCapabilityFactory(
+      {} as never,
+      kernelRepository as never,
+      { openBrowser: vi.fn() } as never,
+    );
+
+    const capabilities = factory.createSession({
+      sessionId: "calibration-session",
+      operationId: "calibration-operation",
+      correlationId: randomUUID(),
+      mode: "certify",
+      beforeMutationTransition: vi.fn(async () => true),
+      options: {
+        outputDirectory: "/tmp/calibration",
+        browserChannel: "chrome",
+        environmentId: "environment",
+        veilAdmissionKey: "test-key",
+        veilPolicySnapshot: {} as never,
+        secretResolver: vi.fn(),
+      },
+    });
+
+    expect(capabilities.options.protectedTransactionExecutor).toBeUndefined();
+    expect(capabilities.options.protectedTransactionStore).toBeUndefined();
+    expect(capabilities.options.atomicOutputCapture).toBeUndefined();
+    expect(capabilities.manifest.capabilities.protected_operations.state).toBe("unavailable");
   });
 
   it("does not make calibration evidence a runtime capability requirement", () => {

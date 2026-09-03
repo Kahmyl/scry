@@ -145,6 +145,26 @@ export type MissionRecordingManifest = Readonly<{
     timeline: readonly MissionRecordingManifestTimelineEntry[];
   }>[];
 
+  boundaries: readonly Readonly<
+    | {
+        order: number;
+        kind: "verified_checkpoint";
+        predecessorRunId: string;
+        successorRunId: string;
+        checkpointId: string;
+        restoredByPraxisSessionId: string;
+      }
+    | {
+        order: number;
+        kind: "recording_gap";
+        predecessorRunId: string;
+        successorRunId: string;
+        startedAt: string | null;
+        endedAt: string | null;
+        reason: "browser_authority_changed_without_verified_continuity";
+      }
+  >[];
+
   recordingDigest: string;
 }>;
 
@@ -270,6 +290,27 @@ export function composeMissionRecording(
     missionId: input.missionId,
     sourceMissionRevision: input.sourceMissionRevision,
     runs,
+    boundaries: runs.slice(1).map((run, index) => {
+      const predecessor = runs[index]!;
+      return run.continuityFromPrevious
+        ? {
+            order: index,
+            kind: "verified_checkpoint" as const,
+            predecessorRunId: predecessor.run.id,
+            successorRunId: run.run.id,
+            checkpointId: run.continuityFromPrevious.checkpointId,
+            restoredByPraxisSessionId: run.continuityFromPrevious.restoredByPraxisSessionId,
+          }
+        : {
+            order: index,
+            kind: "recording_gap" as const,
+            predecessorRunId: predecessor.run.id,
+            successorRunId: run.run.id,
+            startedAt: predecessor.run.completedAt,
+            endedAt: run.run.createdAt,
+            reason: "browser_authority_changed_without_verified_continuity" as const,
+          };
+    }),
   };
 
   const recordingDigest = createHash("sha256").update(canonical(factual)).digest("hex");

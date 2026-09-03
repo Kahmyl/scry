@@ -163,6 +163,18 @@ export class RunAttemptRepository {
     claimToken: string,
     state: Extract<RunState, "passed" | "failed" | "cancelled" | "timed_out">,
     outcomeClassification: OutcomeClassification,
+    successorCheckpoint:
+      | { kind: "required" }
+      | {
+          kind: "forbidden";
+          reason: "run_not_successful";
+        }
+      | {
+          kind: "forbidden";
+          reason: "terminal_protected_operation";
+          praxisSessionId: string;
+          protectedOperationId: string;
+        },
     error?: string,
   ) {
     return this.database.transaction(async (client) => {
@@ -227,7 +239,61 @@ export class RunAttemptRepository {
          WHERE id = $1 AND state IN ('preparing','running','finalizing')`,
         [runId, state, outcomeClassification, resultClassification],
       );
-      if (state === "passed" && resultClassification === "application_pass") {
+      await client.query(
+        `UPDATE qualification_campaign_authorizations campaign
+            SET disposition=CASE
+                  WHEN campaign.disposition='inconclusive' THEN 'inconclusive'
+                  WHEN $2='passed' THEN 'succeeded'
+                  WHEN $3 IN ('inconclusive_plan','infrastructure_failure') THEN 'inconclusive'
+                  ELSE 'failed'
+                END,
+                terminal_at=COALESCE(campaign.terminal_at,now()),updated_at=now()
+           FROM runs run
+          WHERE run.id=$1
+            AND campaign.id=run.qualification_campaign_authorization_id
+            AND campaign.disposition IN ('authorized','inconclusive')`,
+        [runId, state, outcomeClassification],
+      );
+      if (
+        successorCheckpoint.kind === "forbidden" &&
+        successorCheckpoint.reason === "terminal_protected_operation"
+      ) {
+        const terminalProof = await client.query(
+          `SELECT 1
+             FROM run_praxis_sessions binding
+             JOIN adaptive_sessions session
+               ON session.id=binding.praxis_session_id
+             JOIN run_operation_links link
+               ON link.run_id=binding.run_id
+              AND link.praxis_session_id=binding.praxis_session_id
+             JOIN canonical_completed_executions protected
+               ON protected.operation_id=link.operation_id
+              AND protected.praxis_session_id=link.praxis_session_id
+              AND protected.prepared_execution_capability_id=link.prepared_execution_capability_id
+            WHERE binding.run_id=$1
+              AND binding.praxis_session_id=$2
+              AND protected.id=$3
+              AND EXISTS (
+                SELECT 1
+                  FROM runs completed_run
+                 WHERE completed_run.id=$1
+                   AND completed_run.state='passed'
+                   AND completed_run.outcome_classification='passed'
+                   AND completed_run.result_classification='application_pass'
+              )
+              AND binding.detached_at IS NULL
+              AND (session.state='completed' OR (session.state='cancelled'
+                AND session.decision_boundary->>'type'='objective_completed'
+                AND session.decision_boundary->>'reasonCode'='PROTECTED_OPERATION_COMPLETED'))
+            ORDER BY link.created_at DESC
+            LIMIT 1`,
+          [runId, successorCheckpoint.praxisSessionId, successorCheckpoint.protectedOperationId],
+        );
+
+        if (!terminalProof.rowCount) throw new Error("RUN_TERMINAL_PROTECTED_COMPLETION_UNPROVEN");
+      }
+
+      if (successorCheckpoint.kind === "required") {
         const checkpoint = await client.query(
           `UPDATE run_successor_checkpoints checkpoint
            SET state='available',sealed_at=now(),updated_at=now()
@@ -267,9 +333,14 @@ OR (
         await client.query(
           `UPDATE run_successor_checkpoints
            SET state='destroyed',ciphertext=NULL,initialization_vector=NULL,
-               authentication_tag=NULL,reason_code='RUN_NOT_SUCCESSFUL',updated_at=now()
+               authentication_tag=NULL,reason_code=$2,updated_at=now()
            WHERE run_id=$1 AND state='establishing'`,
-          [runId],
+          [
+            runId,
+            successorCheckpoint.reason === "terminal_protected_operation"
+              ? "TERMINAL_PROTECTED_OPERATION"
+              : "RUN_NOT_SUCCESSFUL",
+          ],
         );
       }
       await client.query(
@@ -438,6 +509,15 @@ OR (
          WHERE id = $1`,
         [runId, retry ? "queued" : "infrastructure_error", retry],
       );
+      if (!retry)
+        await client.query(
+          `UPDATE qualification_campaign_authorizations campaign
+              SET disposition='inconclusive',terminal_at=COALESCE(terminal_at,now()),updated_at=now()
+             FROM runs run
+            WHERE run.id=$1 AND campaign.id=run.qualification_campaign_authorization_id
+              AND campaign.disposition='authorized'`,
+          [runId],
+        );
       if (!retry)
         await client.query(
           `INSERT INTO mission_activities(mission_id,objective_id,agent_session_id,type,summary,safe_metadata)

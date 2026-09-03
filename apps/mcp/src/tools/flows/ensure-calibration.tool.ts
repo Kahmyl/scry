@@ -19,6 +19,7 @@ import type { ScryApiClient } from "../../api-client.js";
 import {
   missionContext,
   objectiveContext,
+  idempotentPotentiallyDestructiveExternalOperation,
   readOnly,
   stableKey,
   toolResult as result,
@@ -34,7 +35,7 @@ export function registerEnsureCalibrationTool(server: McpServer, client: ScryApi
       description:
         "Find an effective attestation or idempotently create a disposable protected calibration session. Scry derives the operation digest and structure, exercises the protected operation once, and returns only safe actions. Call only with explicit user authorization and confirmed disposable data.",
       inputSchema: { projectId: uuid, calibration: requestCalibrationSchema },
-      annotations: writes,
+      annotations: idempotentPotentiallyDestructiveExternalOperation,
     },
     async ({ projectId, calibration }) =>
       result(

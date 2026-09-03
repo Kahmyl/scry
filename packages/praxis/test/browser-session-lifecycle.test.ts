@@ -7,6 +7,14 @@ import {
   openPraxisBrowserSession,
   openPraxisBrowserServerSession,
 } from "../src/lifecycle/browser-session.js";
+import {
+  createAuthoringBrowserSession,
+  PraxisBrowserAuthorityLostError,
+} from "../src/lifecycle/authoring-browser-session.js";
+import {
+  isBrowserAuthorityLoss as isBrowserAuthorityLossFromPolicy,
+  isBrowserInfrastructureFailure as isBrowserInfrastructureFailureFromPolicy,
+} from "../src/lifecycle/execution-browser-policy.js";
 
 it("owns browser, context, and initial page creation and teardown as one lifecycle", async () => {
   const session = await openPraxisBrowserSession({
@@ -69,3 +77,51 @@ it("force-terminates an isolated session when graceful context destruction stall
   expect(forceClose).toHaveBeenCalledOnce();
   expect(browserClose).not.toHaveBeenCalled();
 });
+
+it("classifies a Playwright target crash as browser authority loss", () => {
+  const playwrightCrash = new Error("page.evaluate: Target crashed");
+  const canonical = new PraxisBrowserAuthorityLostError(playwrightCrash);
+
+  expect(isBrowserInfrastructureFailureFromPolicy(playwrightCrash)).toBe(true);
+  expect(isBrowserAuthorityLossFromPolicy(playwrightCrash)).toBe(true);
+  expect(isBrowserAuthorityLossFromPolicy(canonical)).toBe(true);
+  expect(JSON.stringify(canonical)).not.toContain("Target crashed");
+});
+
+it("canonicalizes a real renderer crash and revokes document authority", async () => {
+  const opened = await openPraxisBrowserSession({
+    browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    context: { viewport: { width: 900, height: 600 }, acceptDownloads: false },
+  });
+  const session = await createAuthoringBrowserSession({
+    sessionId: "11111111-1111-4111-8111-111111111111",
+    environmentId: "22222222-2222-4222-8222-222222222222",
+    veilAdmissionKey: "test-veil-admission-key",
+    browserChannel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+    policy: {
+      allowedOrigins: ["https://example.test"],
+      trustedScriptOrigins: [],
+      allowPrivateNetwork: false,
+      allowDownloads: false,
+      allowPopups: false,
+      maxActions: 2,
+      maxDurationMs: 30_000,
+      maxNavigations: 1,
+    },
+    openBrowser: async () => opened,
+    executeInteraction: async () => {
+      throw new Error("INTERACTION_NOT_EXPECTED");
+    },
+  });
+  const cdp = await session.context.newCDPSession(session.page);
+
+  const crashed = new Promise<void>((resolve) => session.page.once("crash", () => resolve()));
+  void cdp.send("Page.crash").catch(() => undefined);
+  await crashed;
+  await expect(session.observeDocument()).rejects.toMatchObject({
+    code: "PRAXIS_BROWSER_AUTHORITY_LOST",
+  });
+  expect(session.state()).toBe("crashed");
+
+  await session.close();
+}, 30_000);

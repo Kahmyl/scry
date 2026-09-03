@@ -19,6 +19,7 @@ import type { ScryApiClient } from "../../api-client.js";
 import {
   missionContext,
   objectiveContext,
+  externalOpenWorldOperation,
   readOnly,
   stableKey,
   toolResult as result,
@@ -37,7 +38,7 @@ export function registerRetryCalibrationTool(server: McpServer, client: ScryApiC
         sessionId: uuid,
         idempotencyKey: z.string().trim().min(8).max(200),
       },
-      annotations: writes,
+      annotations: externalOpenWorldOperation,
     },
     async ({ sessionId, ...body }) =>
       result(

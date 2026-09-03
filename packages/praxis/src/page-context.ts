@@ -1,12 +1,22 @@
 import { randomBytes } from "node:crypto";
 
-import type { OperationOutcome } from "@scry/contracts";
+import {
+  operationContractFactsSchema,
+  proposedOperationContractSchema,
+  type InspectPraxisRegionResult,
+  type OperationOutcome,
+} from "@scry/contracts";
 import type { ElementHandle, Locator, Page } from "playwright";
 
 import { observationIdentity, PraxisDocumentEpoch, PraxisDocumentIdentity } from "./observation.js";
 import { PraxisTargetHandle } from "./observation.js";
+import {
+  observePublicValueCandidates,
+  observePublicValueCandidatesInRegion,
+} from "./public-value.js";
 
 type SemanticPageContext = NonNullable<OperationOutcome["semanticPageContext"]>;
+const publicOperationDeclarationSchema = operationContractFactsSchema;
 
 const MAX_CONTEXT_CONTROLS = 48;
 const MAX_CONTEXT_CANDIDATES = 5_000;
@@ -70,6 +80,21 @@ export function resolveSemanticPageContextControl(page: Page, reference: string)
   return contextControls.get(page)?.get(reference);
 }
 
+export class PraxisRegionInspectionError extends Error {
+  override readonly name = "PraxisRegionInspectionError";
+
+  constructor(
+    readonly code:
+      | "REGION_CONTEXT_CONTROL_REFERENCE_UNKNOWN"
+      | "REGION_CONTEXT_CONTROL_REFERENCE_STALE"
+      | "REGION_CONTEXT_CONTROL_REFERENCE_AMBIGUOUS"
+      | "REGION_PROTECTED_BOUNDARY_REFUSED"
+      | "REGION_SEMANTIC_BOUNDARY_NOT_FOUND",
+  ) {
+    super(code);
+  }
+}
+
 export type SemanticPageContextReferenceState = {
   state: "visible" | "hidden" | "absent" | "ambiguous_stale";
   reasonCode:
@@ -127,6 +152,146 @@ export async function observeSemanticPageContextReferenceState(
   return { state: "absent", reasonCode: "CONTEXT_REFERENCE_ABSENT" };
 }
 
+const SEMANTIC_REGION_SELECTOR =
+  "dialog,[role=dialog],[role=region],[role=form],section,article,form,main,aside";
+
+/**
+ * Resolves one exact current context control to its semantic region. A
+ * same-document fragment is browser-native structural authority, so it takes
+ * precedence over the control's physical ancestor. Unresolvable or ambiguous
+ * local fragments fail closed rather than widening inspection elsewhere.
+ */
+async function resolveSemanticRegionFromExactControl(
+  control: ElementHandle<Element>,
+): Promise<ElementHandle<HTMLElement> | undefined> {
+  const candidate = await control
+    .evaluateHandle((element, regionSelector) => {
+      if (element instanceof HTMLAnchorElement && element.hasAttribute("href")) {
+        const destination = new URL(element.href);
+        const current = new URL(document.location.href);
+        const sameDocument =
+          destination.protocol === current.protocol &&
+          destination.host === current.host &&
+          destination.pathname === current.pathname &&
+          destination.search === current.search;
+
+        if (sameDocument && destination.hash.length > 1) {
+          let fragment: string;
+          try {
+            fragment = decodeURIComponent(destination.hash.slice(1));
+          } catch {
+            return null;
+          }
+
+          const matches = Array.from(document.querySelectorAll("[id],a[name]")).filter(
+            (candidate) =>
+              candidate.id === fragment ||
+              (candidate instanceof HTMLAnchorElement && candidate.name === fragment),
+          );
+          if (matches.length !== 1) return null;
+
+          const destinationRegion = matches[0]!;
+          return destinationRegion.matches(regionSelector)
+            ? destinationRegion
+            : destinationRegion.closest(regionSelector);
+        }
+      }
+
+      return element.closest(regionSelector);
+    }, SEMANTIC_REGION_SELECTOR)
+    .catch(() => undefined);
+  const region = candidate?.asElement() as ElementHandle<HTMLElement> | null | undefined;
+  if (!region) await candidate?.dispose().catch(() => undefined);
+  return region ?? undefined;
+}
+
+async function regionHasProtectedBoundary(region: ElementHandle<HTMLElement>) {
+  return region
+    .evaluate((element) => {
+      const protectedInputSelector =
+        'input[type=password],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]';
+      const protectedForm = element.closest("form,[role=form]");
+      return (
+        Boolean(element.closest('[data-scry-redacted="true"]')) ||
+        Boolean(protectedForm?.querySelector(protectedInputSelector))
+      );
+    })
+    .catch(() => true);
+}
+
+/**
+ * Inspect ordinary public-value candidates beneath the closest exact semantic
+ * region owned by one current context-control reference. This returns only
+ * opaque value references and bounded metadata; exact text remains exclusively
+ * available through readPraxisPublicValue.
+ */
+export async function inspectPraxisRegion(
+  page: Page,
+  contextControlReference: string,
+): Promise<InspectPraxisRegionResult> {
+  const entry = resolveSemanticPageContextControl(page, contextControlReference);
+  if (!entry) throw new PraxisRegionInspectionError("REGION_CONTEXT_CONTROL_REFERENCE_UNKNOWN");
+
+  const state = await observeSemanticPageContextReferenceState(page, contextControlReference);
+  if (state.state === "absent")
+    throw new PraxisRegionInspectionError("REGION_CONTEXT_CONTROL_REFERENCE_STALE");
+  if (state.state === "ambiguous_stale")
+    throw new PraxisRegionInspectionError("REGION_CONTEXT_CONTROL_REFERENCE_AMBIGUOUS");
+
+  try {
+    await entry.handle.assertCurrent();
+  } catch {
+    throw new PraxisRegionInspectionError("REGION_CONTEXT_CONTROL_REFERENCE_STALE");
+  }
+
+  const region = await resolveSemanticRegionFromExactControl(entry.element);
+  if (!region) {
+    throw new PraxisRegionInspectionError("REGION_SEMANTIC_BOUNDARY_NOT_FOUND");
+  }
+
+  try {
+    if (entry.valueProtected || (await regionHasProtectedBoundary(region)))
+      throw new PraxisRegionInspectionError("REGION_PROTECTED_BOUNDARY_REFUSED");
+
+    const kind = await region.evaluate((element) => {
+      const role = element.getAttribute("role");
+      const tag = element.tagName.toLowerCase();
+      if (role === "dialog" || tag === "dialog") return "dialog" as const;
+      if (role === "region") return "region" as const;
+      if (role === "form" || tag === "form") return "form" as const;
+      if (tag === "section") return "section" as const;
+      if (tag === "article") return "article" as const;
+      if (tag === "main") return "main" as const;
+      return "aside" as const;
+    });
+    const readableValueObservation = await observePublicValueCandidatesInRegion(page, region);
+    const authority = entry.handle.toJSON();
+
+    return {
+      contextControlReference,
+      authority: {
+        referenceVersion: 1,
+        pageId: authority.pageId,
+        frameId: authority.frameId,
+        documentEpoch: authority.documentEpoch,
+        documentIdentity: authority.documentIdentity,
+      },
+      region: { kind },
+      readableValues: readableValueObservation.values.map((value) => ({ ...value })),
+      readableValueCompleteness: readableValueObservation.completeness,
+    };
+  } catch (error) {
+    if (error instanceof PraxisRegionInspectionError) throw error;
+    const current = await entry.element
+      .evaluate((element) => element.isConnected)
+      .catch(() => false);
+    if (!current) throw new PraxisRegionInspectionError("REGION_CONTEXT_CONTROL_REFERENCE_STALE");
+    throw error;
+  } finally {
+    await region.dispose().catch(() => undefined);
+  }
+}
+
 async function semanticIdentityForLocator(locator: Locator) {
   const identity = await locator.evaluate((element) => {
     const html = element as HTMLElement;
@@ -141,7 +306,12 @@ async function semanticIdentityForLocator(locator: Locator) {
             input.autocomplete.toLowerCase(),
           ) ||
           input.inputMode === "numeric"));
-    const label = "labels" in input && input.labels ? input.labels[0]?.textContent : undefined;
+    const labelElement = "labels" in input && input.labels ? input.labels[0] : undefined;
+    const labelCopy = labelElement?.cloneNode(true) as Element | undefined;
+    labelCopy
+      ?.querySelectorAll('input,textarea,select,[contenteditable],[data-scry-redacted="true"]')
+      .forEach((child) => child.remove());
+    const label = labelCopy?.textContent?.replace(/\s+/g, " ").trim();
     const role =
       element.getAttribute("role") ||
       (tag === "a"
@@ -186,9 +356,8 @@ async function semanticIdentityForLocator(locator: Locator) {
       : undefined;
     const groupSensitive = Boolean(
       boundary?.closest('[data-scry-redacted="true"]') ||
-      boundary?.querySelector(
-        '[data-scry-redacted="true"],input[type=password],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]',
-      ),
+      boundary?.querySelector('[data-scry-redacted="true"]') ||
+      heading?.closest('[data-scry-redacted="true"]'),
     );
     const group = groupSensitive
       ? ""
@@ -306,19 +475,26 @@ async function contextContainersCurrent(
 }
 
 async function locateCurrentControl(page: Page, expected: ElementHandle<Element>) {
-  const candidates = page.locator(CONTEXT_CONTROL_SELECTOR);
-  const count = Math.min(await candidates.count(), MAX_CONTEXT_CANDIDATES);
-  for (let index = 0; index < count; index += 1) {
-    const locator = candidates.nth(index);
-    const current = await locator.elementHandle();
-    if (!current) continue;
-    const same = await expected
-      .evaluate((observed, candidate) => observed === candidate, current)
-      .catch(() => false);
-    await current.dispose();
-    if (same) return locator;
-  }
-  return undefined;
+  // Locate by object identity in one browser turn. A CDP round trip per preceding
+  // control makes dense documents exceed the execution deadline before any action.
+  const index = await expected
+    .evaluate(
+      (observed, { selector, limit }) => {
+        if (!observed.isConnected) return -1;
+        return Array.from(document.querySelectorAll(selector)).slice(0, limit).indexOf(observed);
+      },
+      { selector: CONTEXT_CONTROL_SELECTOR, limit: MAX_CONTEXT_CANDIDATES },
+    )
+    .catch(() => -1);
+  if (index < 0) return undefined;
+  const locator = page.locator(CONTEXT_CONTROL_SELECTOR).nth(index);
+  const current = await locator.elementHandle();
+  if (!current) return undefined;
+  const same = await expected
+    .evaluate((observed, candidate) => observed === candidate, current)
+    .catch(() => false);
+  await current.dispose();
+  return same ? locator : undefined;
 }
 
 /**
@@ -361,7 +537,34 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       };
       state.__scryGroundingIds ??= new WeakMap();
       state.__scryGroundingSequence ??= 0;
-      for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+      // A bounded observation follows factual browser attention, not DOM insertion order.
+      // Sidebar links must not starve the section the agent explicitly navigated to.
+      let fragment: Element | null = null;
+      try {
+        fragment = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+      } catch {}
+      const region = fragment?.closest("section,article,[role=region]") ?? fragment;
+      const orderedIndices = candidates
+        .map((element, index) => {
+          const rect = element.getBoundingClientRect();
+          const inViewport =
+            rect.width > 0 &&
+            rect.height > 0 &&
+            rect.bottom > 0 &&
+            rect.right > 0 &&
+            rect.top < innerHeight &&
+            rect.left < innerWidth;
+          const score = region?.contains(element)
+            ? 3
+            : element === document.activeElement
+              ? 2
+              : inViewport
+                ? 1
+                : 0;
+          return { index, score };
+        })
+        .sort((a, b) => b.score - a.score || a.index - b.index);
+      for (const { index: candidateIndex } of orderedIndices) {
         const element = candidates[candidateIndex]!;
         if (projected.length >= limit) break;
         const html = element as HTMLElement;
@@ -392,7 +595,12 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
           runtimeId = `control-${state.__scryGroundingSequence}`;
           state.__scryGroundingIds.set(element, runtimeId);
         }
-        const label = "labels" in input && input.labels ? input.labels[0]?.textContent : undefined;
+        const labelElement = "labels" in input && input.labels ? input.labels[0] : undefined;
+        const labelCopy = labelElement?.cloneNode(true) as Element | undefined;
+        labelCopy
+          ?.querySelectorAll('input,textarea,select,[contenteditable],[data-scry-redacted="true"]')
+          .forEach((child) => child.remove());
+        const label = labelCopy?.textContent?.replace(/\s+/g, " ").trim();
         const role =
           element.getAttribute("role")?.slice(0, 100) ||
           (tag === "a"
@@ -440,9 +648,8 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
           : undefined;
         const groupSensitive = Boolean(
           boundary?.closest('[data-scry-redacted="true"]') ||
-          boundary?.querySelector(
-            '[data-scry-redacted="true"],input[type=password],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]',
-          ),
+          boundary?.querySelector('[data-scry-redacted="true"]') ||
+          heading?.closest('[data-scry-redacted="true"]'),
         );
         const group = groupSensitive
           ? ""
@@ -496,6 +703,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
             : undefined;
         const selectedAttribute = element.getAttribute("aria-selected");
         const expandedAttribute = element.getAttribute("aria-expanded");
+        const pressedAttribute = element.getAttribute("aria-pressed");
         const checkedAttribute = element.getAttribute("aria-checked");
         const containerElements: Element[] = [];
         let ancestor = element.parentElement;
@@ -526,6 +734,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         }) as ContextContainerKind[];
         const selected = selectedAttribute === null ? undefined : selectedAttribute === "true";
         const expanded = expandedAttribute === null ? undefined : expandedAttribute === "true";
+        const pressed = pressedAttribute === null ? undefined : pressedAttribute === "true";
         const ariaChecked = checkedAttribute === null ? undefined : checkedAttribute === "true";
         projected.push({
           candidateIndex,
@@ -544,6 +753,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
           ...(inputSources ? { inputSources } : {}),
           ...(selected === undefined ? {} : { selected }),
           ...(expanded === undefined ? {} : { expanded }),
+          ...(pressed === undefined ? {} : { pressed }),
           ...("checked" in input && ["checkbox", "radio"].includes(input.type)
             ? { checked: Boolean(input.checked) }
             : ariaChecked === undefined
@@ -615,20 +825,16 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
   const previousContainers = contextContainers.get(page);
   const registeredContainers = new Map<string, ContextContainerEntry>();
   const containerControls = new Map<string, string[]>();
-  const candidateElements = (await page
-    .locator(CONTEXT_CONTROL_SELECTOR)
-    .elementHandles()) as ElementHandle<Element>[];
-  const containerElements = (await page
-    .locator(CONTEXT_CONTAINER_SELECTOR)
-    .elementHandles()) as ElementHandle<Element>[];
-  const retainedCandidateIndices = new Set<number>();
+  const controlCandidates = page.locator(CONTEXT_CONTROL_SELECTOR);
+  const containerCandidates = page.locator(CONTEXT_CONTAINER_SELECTOR);
+  const loadedContainerElements = new Map<number, ElementHandle<Element>>();
   const retainedContainerIndices = new Set<number>();
   for (const control of observed.controls) {
     const role = cleanContextText(control.role, 40);
     const name = cleanContextText(control.name, 160);
     const group = cleanContextText(control.group, 120);
     if (!role || !name) continue;
-    const locator = page.locator(CONTEXT_CONTROL_SELECTOR).nth(control.candidateIndex);
+    const locator = controlCandidates.nth(control.candidateIndex);
     const semanticIdentity = JSON.stringify({
       role,
       name,
@@ -640,7 +846,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       disabled: Boolean(control.disabled),
     });
     let reference: string | undefined;
-    const currentElement = candidateElements[control.candidateIndex] ?? null;
+    const currentElement = (await locator.elementHandle()) as ElementHandle<Element> | null;
     const currentIdentityMatches = currentElement
       ? await currentElement
           .evaluate((element, runtimeId) => {
@@ -675,11 +881,18 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
       }
     }
     if (!currentElement) continue;
-    retainedCandidateIndices.add(control.candidateIndex);
     const containers: ContextContainerEntry[] = [];
     for (let index = 0; index < control.containerIndices.length; index += 1) {
-      const containerElement = containerElements[control.containerIndices[index]!] ?? null;
-      if (!containerElement) continue;
+      const containerIndex = control.containerIndices[index]!;
+      let containerElement = loadedContainerElements.get(containerIndex);
+      if (!containerElement) {
+        const loaded = (await containerCandidates
+          .nth(containerIndex)
+          .elementHandle()) as ElementHandle<Element> | null;
+        if (!loaded) continue;
+        containerElement = loaded;
+        loadedContainerElements.set(containerIndex, loaded);
+      }
       const containerIdentityMatches = await containerElement
         .evaluate((element, runtimeId) => {
           const state = globalThis as typeof globalThis & {
@@ -689,7 +902,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         }, control.containerRuntimeIds[index]!)
         .catch(() => false);
       if (!containerIdentityMatches) continue;
-      retainedContainerIndices.add(control.containerIndices[index]!);
+      retainedContainerIndices.add(containerIndex);
       const kind = control.containerKinds[index]!;
       let containerReference: string | undefined;
       for (const [candidateReference, entry] of registeredContainers) {
@@ -720,7 +933,6 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
         }
       }
       if (!containerReference && registeredContainers.size >= MAX_CONTEXT_CONTAINERS) {
-        await containerElement.dispose();
         continue;
       }
       containerReference ??= `context-container-${randomBytes(16).toString("hex")}`;
@@ -774,10 +986,7 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
     }
   }
   await Promise.all([
-    ...candidateElements.flatMap((element, index) =>
-      retainedCandidateIndices.has(index) ? [] : [element.dispose().catch(() => undefined)],
-    ),
-    ...containerElements.flatMap((element, index) =>
+    ...[...loadedContainerElements.entries()].flatMap(([index, element]) =>
       retainedContainerIndices.has(index) ? [] : [element.dispose().catch(() => undefined)],
     ),
     ...[...(previous?.values() ?? [])].map((entry) =>
@@ -789,9 +998,12 @@ export async function observeSemanticPageContext(page: Page): Promise<SemanticPa
   ]);
   contextControls.set(page, registered);
   contextContainers.set(page, registeredContainers);
+  const readableValueObservation = await observePublicValueCandidates(page);
   const pageId = observationIdentity(page, { kind: "page" }, "public", documentEpoch, frame).pageId;
   return {
     schemaVersion: 2,
+    readableValues: readableValueObservation.values.map((value) => ({ ...value })),
+    readableValueCompleteness: readableValueObservation.completeness,
     authority: {
       pageId,
       documentEpoch,
@@ -857,4 +1069,65 @@ function cleanContextText(value: string | null | undefined, maximum: number) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, maximum);
+}
+
+export async function observeOperationContracts(page: Page, praxisSessionId: string) {
+  const context = await observeSemanticPageContext(page);
+  const declarations = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('script[type="application/scry-operation-contract+json"]'))
+      .slice(0, 24)
+      .flatMap((node) => {
+        const source = node.textContent ?? "";
+        if (!source || source.length > 50_000) return [];
+        try {
+          return [JSON.parse(source)];
+        } catch {
+          return [];
+        }
+      }),
+  );
+  return declarations.flatMap((candidate, index) => {
+    const declaration = publicOperationDeclarationSchema.safeParse(candidate);
+    if (!declaration.success) return [];
+    const activation = uniqueControl(context, [declaration.data.operation.label], ["activate"]);
+    if (!activation) return [];
+    const inputControlReferences: Record<string, string> = {};
+    for (const field of declaration.data.inputs) {
+      // Aliases are display-only. Only the declared safe label may correlate a canonical
+      // field key with one unique current-document control.
+      const control = uniqueControl(context, [field.label], ["enter_text"]);
+      if (control) inputControlReferences[field.key] = control.reference;
+      else if (field.required) return [];
+    }
+    const provenance = {
+      sourceKind: "public_document" as const,
+      observationId: `${context.authority.pageId}:operation-contract:${index}`,
+      origin: new URL(context.authority.url).origin,
+      observedAt: new Date().toISOString(),
+      sourcePraxisSessionId: praxisSessionId,
+      sourceDocumentEpoch: context.authority.documentEpoch,
+    };
+    const contract = proposedOperationContractSchema.safeParse({
+      facts: declaration.data,
+      provenance,
+      interaction: {
+        praxisSessionId,
+        documentEpoch: context.authority.documentEpoch,
+        origin: provenance.origin,
+        activationControlReference: activation.reference,
+        inputControlReferences,
+      },
+    });
+    return contract.success ? [contract.data] : [];
+  });
+}
+
+function uniqueControl(context: SemanticPageContext, names: string[], capabilities: string[]) {
+  const admitted = new Set(names.map((name) => name.normalize("NFKC").trim().toLowerCase()));
+  const matches = context.controls.filter(
+    (control) =>
+      admitted.has(control.name.normalize("NFKC").trim().toLowerCase()) &&
+      capabilities.every((capability) => control.capabilities.includes(capability as never)),
+  );
+  return matches.length === 1 ? matches[0] : undefined;
 }

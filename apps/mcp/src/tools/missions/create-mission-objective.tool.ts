@@ -31,7 +31,8 @@ export function registerCreateMissionObjectiveTool(server: McpServer, client: Sc
     "create_mission_objective",
     {
       title: "Create Mission objective",
-      description: "Create an ordered, user-visible completion objective.",
+      description:
+        "Create an ordered, user-visible completion objective. agentSessionId must be the exact active Mission agent-session ID returned by start_mission or resume_mission; never invent or use a placeholder ID.",
       inputSchema: {
         ...missionContext,
         title: z.string().trim().min(1).max(200),

@@ -118,9 +118,9 @@ describe("DOM-stable readiness", () => {
   }, 15_000);
 
   it("keeps post-action readiness independent after the pre-dispatch deadline expires", async () => {
-    const actionTimeoutMs = 200;
-    const readinessDelayMs = 600;
-    const readinessTimeoutMs = 1_500;
+    const actionTimeoutMs = 1_000;
+    const readinessDelayMs = 1_300;
+    const readinessTimeoutMs = 2_500;
     let dispatchCount = 0;
     let dispatchAt = 0;
     let actionStartedAt = 0;

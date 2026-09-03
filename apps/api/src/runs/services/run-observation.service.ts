@@ -10,6 +10,7 @@ import { compileDefaultVeilPolicy } from "@scry/veil";
 import type { Principal } from "../../auth/index.js";
 import { Database } from "../../infrastructure/index.js";
 import { ScryRepository } from "../../access/index.js";
+import { ProtectedOperationRepository } from "../../runtime/index.js";
 
 const terminalStates = new Set([
   "passed",
@@ -24,10 +25,35 @@ export class RunObservationService {
   constructor(
     @Inject(Database) private readonly database: Database,
     @Inject(ScryRepository) private readonly repository: ScryRepository,
+    @Inject(ProtectedOperationRepository)
+    private readonly protectedOperations: ProtectedOperationRepository,
   ) {}
 
   async observe(principal: Principal, runId: string): Promise<RunObservation> {
     const run = normalizeObservedRun(await this.repository.getRun(principal, runId));
+    const mutationReceipts = await this.protectedOperations.listMutationReceiptsForRun(runId);
+    const canonicalOperations = await this.database.query(
+      `SELECT link.operation_id AS "operationId",link.praxis_session_id AS "praxisSessionId",
+              capability.mission_id AS "missionId",capability.objective_id AS "objectiveId",
+              capability.id AS "preparedExecutionCapabilityId",operation.id AS "protectedOperationId",
+              capability.operation_contract_revision_id AS "operationContractRevisionId",
+              capability.runtime_interaction_capability_id AS "runtimeInteractionCapabilityId",
+              capability.mutation_identity AS "mutationIdentity",operation.state,
+              operation.mutation_outcome AS "mutationOutcome",
+              ARRAY(SELECT checkpoint.id FROM mission_operation_checkpoints checkpoint
+                WHERE checkpoint.source_protected_operation_id=operation.id) AS "checkpointIds",
+              ARRAY(SELECT checkpoint.id FROM mission_operation_checkpoints checkpoint
+                WHERE checkpoint.claimed_by_protected_operation_id=operation.id) AS "continuationCheckpointIds",
+              ARRAY(SELECT asset.id FROM typed_value_assets asset
+                WHERE asset.producer_protected_operation_id=operation.id) AS "valueAssetIds",
+              ARRAY(SELECT authority.id FROM value_use_grants authority
+                WHERE authority.consumer_prepared_execution_capability_id=capability.id) AS "valueUseGrantIds"
+         FROM run_operation_links link
+         JOIN prepared_execution_capabilities capability ON capability.id=link.prepared_execution_capability_id
+         JOIN protected_operations operation ON operation.id=capability.protected_operation_id
+        WHERE link.run_id=$1 ORDER BY link.sequence`,
+      [runId],
+    );
     const attempts = (
       await this.database.query(
         `SELECT id, attempt_number AS "attemptNumber", state, started_at AS "startedAt",
@@ -201,7 +227,7 @@ export class RunObservationService {
       reasonCode: artifact.reasonCode ?? null,
       sizeBytes: artifact.sizeBytes ?? null,
       checksumSha256: artifact.checksumSha256 ?? null,
-      observation: artifact.observation ?? {},
+      observation: publicArtifactObservation(artifact.observation),
       resource: artifact.availability === "available" ? `scry://artifact/${artifact.id}` : null,
     }));
     const artifactTimeline = timelineRows.rows.map(({ metadata, id, sequence, type }) => ({
@@ -233,6 +259,7 @@ export class RunObservationService {
     );
 
     return runObservationSchema.parse({
+      canonicalOperations: canonicalOperations.rows,
       run,
       attempts,
       currentAttempt,
@@ -244,6 +271,7 @@ export class RunObservationService {
       privacy: {
         intervals: intervals.rows,
         operations: operations.rows,
+        mutationReceipts,
         credentialIncidents: incidents.rows,
       },
       veil,
@@ -283,6 +311,36 @@ export class RunObservationService {
       },
     });
   }
+}
+
+const publicArtifactObservationKeys = new Set([
+  "bytesDestroyed",
+  "captureIntent",
+  "documentIdentity",
+  "millisecondsSinceAction",
+  "readiness",
+  "reasonCode",
+  "revision",
+  "screenshotMode",
+  "stabilization",
+  "timelineEntry",
+  "veilManifest",
+  "veilSanitation",
+  "visualRedaction",
+]);
+
+function publicArtifactObservation(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const source = value as Record<string, unknown>;
+  const observation = Object.fromEntries(
+    Object.entries(source).filter(([key]) => publicArtifactObservationKeys.has(key)),
+  );
+  if (Array.isArray(source.regions)) observation.visualRegionCount = source.regions.length;
+  const omittedFields = Object.keys(source)
+    .filter((key) => !publicArtifactObservationKeys.has(key))
+    .sort();
+  if (omittedFields.length) observation.omittedFields = omittedFields;
+  return observation;
 }
 
 function normalizeObservedRun(run: Record<string, any>): Record<string, any> {

@@ -19,6 +19,7 @@ const intent = {
       role: "button" as const,
       exact: true,
     },
+    semanticEffect: "unknown" as const,
   },
   expectedEffect: {
     kind: "target_state" as const,
@@ -35,10 +36,12 @@ const intent = {
   protectedInputReferences: [],
 };
 
-function harness(associated = true) {
+function harness(associated = true, existingSafeResult?: Record<string, unknown>) {
   const query = vi.fn(async (sql: string) => {
     if (sql.includes("FROM run_operation_links") && sql.includes("operation_id"))
-      return { rowCount: 0, rows: [] };
+      return existingSafeResult
+        ? { rowCount: 1, rows: [{ operationId: "m2-operation", safeResult: existingSafeResult }] }
+        : { rowCount: 0, rows: [] };
     if (sql.includes('operation_id AS "operationId"'))
       return { rowCount: 1, rows: [{ operationId: "m2-operation" }] };
     if (sql.includes("FROM runs r") && sql.includes("run_praxis_sessions"))
@@ -81,52 +84,120 @@ function harness(associated = true) {
           privacyApplicable: false,
           privacyResult: "verified",
           evidence: { state: "available", count: 0, reasonCodes: [] },
+          semanticPageContext: {
+            schemaVersion: 2,
+            authority: {
+              pageId: "page-1",
+              documentEpoch: 2,
+              url: "https://example.test/next",
+              title: "Next",
+              readiness: "stable",
+            },
+            completeness: { kind: "bounded", observed: 0, returned: 0, truncated: false },
+            controls: [],
+            containers: [],
+            containerCompleteness: {
+              kind: "bounded",
+              observed: 0,
+              returned: 0,
+              truncated: false,
+            },
+          },
         },
       ],
     })),
   };
   const executions = {};
   const admission = { assertAcceptingWork: vi.fn() };
+  const qualificationCampaigns = {
+    consumeBusinessMutation: vi.fn(async () => ({ campaignBound: false, replayed: false })),
+    settleMutation: vi.fn(async () => undefined),
+    settleRun: vi.fn(async () => undefined),
+  };
   return {
     service: new AgentDirectedRunService(
       database as never,
       scry as never,
       sessions as never,
       executions as never,
+      { getMutationReceiptByAuthoringOperation: vi.fn(async () => undefined) } as never,
       admission as never,
+      qualificationCampaigns as never,
     ),
     sessions,
+    qualificationCampaigns,
   };
 }
 
 describe("agent-directed Run live Praxis ownership", () => {
-  it("dispatches one exact-reference operation and preserves expected effects as mechanical assertions only", async () => {
+  it("gives a short read-only documentation activation the bounded Run-turn settlement window", async () => {
+    const documentationIntent = {
+      ...intent,
+      intentId: "focus-create-order-documentation",
+      action: {
+        kind: "activate" as const,
+        target: {
+          concept: "Create Order documentation",
+          reference: `context-control-${"c".repeat(32)}`,
+          role: "link" as const,
+          exact: true,
+        },
+        semanticEffect: "read_context_transition" as const,
+      },
+      expectedEffect: { kind: "none" as const },
+      constraints: { timeoutMs: 10_000, allowNewPage: false, allowNonExact: false },
+      authorization: { kind: "live_read" as const },
+    };
     const { service, sessions } = harness();
     await expect(
       service.dispatch({ kind: "service", subject: "scry-service" }, runId, {
         praxisSessionId: sessionId,
-        intent,
+        intent: documentationIntent,
       }),
     ).resolves.toMatchObject({
       runId,
       praxisSessionId: sessionId,
       operationId: "m2-operation",
-      intentId: "activate-submit",
+      intentId: "focus-create-order-documentation",
       functionalResult: "succeeded",
       mutationOutcome: "applied",
+      successorObservation: {
+        documentEpoch: 2,
+        url: "https://example.test/next",
+      },
     });
     expect(sessions.advance).toHaveBeenCalledWith(
       expect.anything(),
       sessionId,
       expect.objectContaining({
-        intents: [expect.objectContaining({ expectedEffect: intent.expectedEffect })],
-        budgets: { maxOperations: 1, maxDurationMs: 5_000 },
+        intents: [
+          expect.objectContaining({
+            expectedEffect: documentationIntent.expectedEffect,
+            constraints: documentationIntent.constraints,
+          }),
+        ],
+        budgets: { maxOperations: 1, maxDurationMs: 60_000 },
       }),
       expect.objectContaining({
         commit: expect.any(Function),
         outputDirectoryFor: expect.any(Function),
       }),
     );
+  });
+
+  it("rejects omitted activation semantics before execution or campaign consumption", async () => {
+    const { semanticEffect: _, ...actionWithoutSemanticEffect } = intent.action;
+    const { service, sessions, qualificationCampaigns } = harness();
+
+    await expect(
+      service.dispatch({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        intent: { ...intent, action: actionWithoutSemanticEffect } as never,
+      }),
+    ).rejects.toThrow();
+
+    expect(sessions.advance).not.toHaveBeenCalled();
+    expect(qualificationCampaigns.consumeBusinessMutation).not.toHaveBeenCalled();
   });
 
   it("refuses a Run/session mismatch before invoking Praxis", async () => {
@@ -137,6 +208,159 @@ describe("agent-directed Run live Praxis ownership", () => {
         intent,
       }),
     ).rejects.toMatchObject({ response: { code: "RUN_PRAXIS_SESSION_MISMATCH_OR_STALE" } });
+    expect(sessions.advance).not.toHaveBeenCalled();
+  });
+
+  it("projects a predispatch protected-session prerequisite without hiding it as a missing result", async () => {
+    const { service, sessions } = harness();
+    sessions.advance.mockResolvedValueOnce({
+      state: "decision_required",
+      completed: [],
+      decisionBoundary: {
+        type: "authorization_required",
+        reasonCode: "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED",
+        safeActions: ["start_praxis_session", "attach_run_praxis_session"],
+      },
+    });
+
+    await expect(
+      service.dispatch({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        intent,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "MISSION_AUTHORING_PROTECTED_SESSION_REQUIRED",
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+        safeActions: ["start_praxis_session", "attach_run_praxis_session"],
+      },
+    });
+  });
+
+  it("projects the fresh intent identity required after protected-reference admission", async () => {
+    const { service, sessions } = harness();
+    sessions.advance.mockResolvedValueOnce({
+      state: "decision_required",
+      completed: [],
+      decisionBoundary: {
+        type: "authorization_required",
+        reasonCode: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+        safeActions: ["authorize_environment_credentials", "dispatch_run_operation"],
+        requiresFreshIntentId: true,
+      },
+    });
+
+    await expect(
+      service.dispatch({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        intent,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "MISSION_AUTHORING_PROTECTED_REFERENCE_NOT_ALLOWED",
+        mutationOutcome: "not_applied",
+        retry: "safe_after_prerequisite",
+        safeActions: ["authorize_environment_credentials", "dispatch_run_operation"],
+        requiresFreshIntentId: true,
+      },
+    });
+  });
+
+  it("preserves a completed popup-policy failure and its exact recovery boundary", async () => {
+    const { service, sessions } = harness();
+    sessions.advance.mockResolvedValueOnce({
+      state: "decision_required",
+      completed: [
+        {
+          intentId: intent.intentId,
+          functionalResult: "failed",
+          mutationOutcome: "not_applied",
+          privacyApplicable: false,
+          privacyResult: "verified",
+          evidence: { state: "available", count: 1, reasonCodes: [] },
+          reasonCode: "POPUP_NOT_ALLOWED",
+        },
+      ],
+      decisionBoundary: {
+        type: "environment_unavailable",
+        reasonCode: "POPUP_NOT_ALLOWED",
+        safeActions: ["create_test_environment", "create_flow_draft"],
+        popupRecovery: {
+          environmentId: "55555555-5555-4555-8555-555555555555",
+          currentAllowPopups: false,
+          requiredAllowPopups: true,
+          currentAllowedOrigins: ["https://example.test"],
+          recoveryTools: ["create_test_environment", "create_flow_draft"],
+          requiresNewFlowDraftAndAuthoringSession: true,
+        },
+      },
+    });
+
+    await expect(
+      service.dispatch({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        intent,
+      }),
+    ).resolves.toMatchObject({
+      functionalResult: "failed",
+      mutationOutcome: "not_applied",
+      reasonCode: "POPUP_NOT_ALLOWED",
+      decisionBoundary: {
+        type: "environment_unavailable",
+        reasonCode: "POPUP_NOT_ALLOWED",
+        safeActions: ["create_test_environment", "create_flow_draft"],
+        popupRecovery: {
+          currentAllowPopups: false,
+          requiredAllowPopups: true,
+        },
+      },
+    });
+  });
+
+  it("replays the persisted exact successor observation without redispatch", async () => {
+    const persisted = {
+      runId,
+      praxisSessionId: sessionId,
+      operationId: "m2-operation",
+      artifactRefs: [],
+      intentId: intent.intentId,
+      functionalResult: "succeeded",
+      mutationOutcome: "not_applied",
+      privacyApplicable: false,
+      privacyResult: "verified",
+      evidence: { state: "available", count: 0, reasonCodes: [] },
+      successorObservation: {
+        documentEpoch: 7,
+        url: "https://example.test/replayed",
+        semanticPageContext: {
+          schemaVersion: 2,
+          authority: {
+            pageId: "page-replayed",
+            documentEpoch: 7,
+            url: "https://example.test/replayed",
+            title: "Replayed",
+            readiness: "stable",
+          },
+          completeness: { kind: "bounded", observed: 0, returned: 0, truncated: false },
+          controls: [],
+        },
+      },
+      replayed: false,
+    };
+    const { service, sessions } = harness(true, persisted);
+    await expect(
+      service.dispatch({ kind: "service", subject: "scry-service" }, runId, {
+        praxisSessionId: sessionId,
+        intent,
+      }),
+    ).resolves.toMatchObject({
+      replayed: true,
+      successorObservation: {
+        documentEpoch: 7,
+        url: "https://example.test/replayed",
+      },
+    });
     expect(sessions.advance).not.toHaveBeenCalled();
   });
 
@@ -172,7 +396,7 @@ describe("agent-directed Run live Praxis ownership", () => {
         {
           kind: "continue",
           turnId: "protected-turn",
-          budgets: { maxOperations: 1, maxDurationMs: 5_000 },
+          budgets: { maxOperations: 1, maxDurationMs: 60_000 },
           idempotencyKey: `${intent.intentId}:continue:1`,
         },
         expect.objectContaining({

@@ -59,6 +59,13 @@ export const campaignMetricsSchema = z
     modelClientIdleMs: z.number().nonnegative(),
     bytesReturnedToAgent: z.number().int().nonnegative(),
     unchangedStateReads: z.number().int().nonnegative(),
+    invalidCalls: z.number().int().nonnegative().default(0),
+    staleReferenceCalls: z.number().int().nonnegative().default(0),
+    browserLaunches: z.number().int().nonnegative().default(0),
+    browserRestarts: z.number().int().nonnegative().default(0),
+    browserReacquisitions: z.number().int().nonnegative().default(0),
+    reconciliationWaits: z.number().int().nonnegative().default(0),
+    evidenceFinalizations: z.number().int().nonnegative().default(0),
     retriesByReason: z.record(z.string(), z.number().int().nonnegative()),
     phases: z.record(z.string(), campaignDistributionSchema),
     slowestOperations: z

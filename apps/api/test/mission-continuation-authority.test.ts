@@ -147,6 +147,200 @@ describe("Mission continuation authority", () => {
     expect(transaction).not.toHaveBeenCalled();
   });
 
+  it("reopens the exact blocked Objective after an explicitly resumed provider interruption", async () => {
+    const objectiveId = "33333333-3333-4333-8333-333333333333";
+    const runId = "44444444-4444-4444-8444-444444444444";
+    const statements: string[] = [];
+    const query = vi.fn(async (text: string) => {
+      statements.push(text);
+      if (text.includes("FROM missions m JOIN projects"))
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: missionId,
+              projectId,
+              status: "blocked",
+              revision: 4,
+              currentObjectiveId: objectiveId,
+              resumePointer: {
+                objectiveId,
+                recommendedAction: "review_failure",
+                runId,
+                explanation: "MODEL_PROVIDER_ERROR",
+              },
+            },
+          ],
+        };
+      if (text.includes("SELECT id,status FROM agent_sessions")) return { rowCount: 0, rows: [] };
+      if (text.includes("FROM mission_objectives objective"))
+        return { rowCount: 1, rows: [{ status: "blocked" }] };
+      if (text.includes("session.terminal_outcome AS"))
+        return {
+          rowCount: 1,
+          rows: [
+            { terminalOutcome: "provider_failure", terminationReason: "MODEL_PROVIDER_ERROR" },
+          ],
+        };
+      if (text.includes('AS "unresolvedMutation"'))
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              unresolvedMutation: false,
+              unresolvedProtectedOperation: false,
+              livePraxisSession: false,
+              nonterminalRun: false,
+            },
+          ],
+        };
+      return { rowCount: 1, rows: [] };
+    });
+    const service = new MissionService({
+      transaction: (work: (client: { query: typeof query }) => unknown) => work({ query }),
+    } as never);
+
+    await expect(
+      service.startSession(principal as never, missionId, {
+        provider: "codex",
+        instructionSnapshot: "Continue after provider interruption",
+        idempotencyKey: "provider-interruption-resume",
+        continuationAuthority,
+      }),
+    ).resolves.toMatchObject({ missionId, status: "active" });
+
+    const sql = statements.join("\n");
+    expect(sql).toContain("unresolved_adaptive_unknown_operations");
+    expect(sql).toContain("UPDATE mission_objectives SET status='pending'");
+    expect(sql).toContain("UPDATE mission_objective_orchestration");
+    expect(sql).toContain("resume_pointer=CASE");
+  });
+
+  it("does not relabel a system-blocked Objective as resumable provider interruption", async () => {
+    const objectiveId = "33333333-3333-4333-8333-333333333333";
+    const runId = "44444444-4444-4444-8444-444444444444";
+    const query = vi.fn(async (text: string) => {
+      if (text.includes("FROM missions m JOIN projects"))
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: missionId,
+              projectId,
+              status: "blocked",
+              revision: 4,
+              currentObjectiveId: objectiveId,
+              resumePointer: {
+                objectiveId,
+                recommendedAction: "review_failure",
+                runId,
+                explanation: "EXTERNAL_AGENT_BLOCKED_SYSTEM",
+              },
+            },
+          ],
+        };
+      if (text.includes("SELECT id,status FROM agent_sessions")) return { rowCount: 0, rows: [] };
+      if (text.includes("FROM mission_objectives objective"))
+        return { rowCount: 1, rows: [{ status: "blocked" }] };
+      if (text.includes("session.terminal_outcome AS"))
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              terminalOutcome: "blocked_system",
+              terminationReason: "EXTERNAL_AGENT_BLOCKED_SYSTEM",
+            },
+          ],
+        };
+      return { rowCount: 1, rows: [] };
+    });
+    const service = new MissionService({
+      transaction: (work: (client: { query: typeof query }) => unknown) => work({ query }),
+    } as never);
+
+    await expect(
+      service.startSession(principal as never, missionId, {
+        provider: "codex",
+        instructionSnapshot: "Continue blocked work",
+        idempotencyKey: "system-blocked-resume",
+        continuationAuthority,
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "MISSION_OBJECTIVE_RESUME_NOT_AVAILABLE" }),
+    });
+  });
+
+  it("keeps UNKNOWN fenced when a provider-interrupted Objective is resumed", async () => {
+    const objectiveId = "33333333-3333-4333-8333-333333333333";
+    const runId = "44444444-4444-4444-8444-444444444444";
+    const statements: string[] = [];
+    const query = vi.fn(async (text: string) => {
+      statements.push(text);
+      if (text.includes("FROM missions m JOIN projects"))
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: missionId,
+              projectId,
+              status: "blocked",
+              revision: 4,
+              currentObjectiveId: objectiveId,
+              resumePointer: {
+                objectiveId,
+                recommendedAction: "review_failure",
+                runId,
+                explanation: "MODEL_PROVIDER_ERROR",
+              },
+            },
+          ],
+        };
+      if (text.includes("SELECT id,status FROM agent_sessions")) return { rowCount: 0, rows: [] };
+      if (text.includes("FROM mission_objectives objective"))
+        return { rowCount: 1, rows: [{ status: "blocked", executionMode: null }] };
+      if (text.includes("session.terminal_outcome AS"))
+        return {
+          rowCount: 1,
+          rows: [
+            { terminalOutcome: "provider_failure", terminationReason: "MODEL_PROVIDER_ERROR" },
+          ],
+        };
+      if (text.includes('AS "unresolvedMutation"'))
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              unresolvedMutation: true,
+              unresolvedProtectedOperation: false,
+              unresolvedEffectObservation: false,
+              livePraxisSession: false,
+              nonterminalRun: false,
+            },
+          ],
+        };
+      return { rowCount: 1, rows: [] };
+    });
+    const service = new MissionService({
+      transaction: (work: (client: { query: typeof query }) => unknown) => work({ query }),
+    } as never);
+
+    await expect(
+      service.startSession(principal as never, missionId, {
+        provider: "codex",
+        instructionSnapshot: "Continue after provider interruption",
+        idempotencyKey: "provider-interruption-unknown",
+        continuationAuthority,
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: "MISSION_RECONCILIATION_REQUIRED",
+        mutationOutcome: "unknown",
+        safeActions: expect.arrayContaining(["do_not_retry"]),
+      }),
+    });
+    expect(statements.join("\n")).not.toContain("UPDATE mission_objectives SET status='pending'");
+  });
+
   it("fails closed in MissionService before creating unauthorized distinct work", async () => {
     const transaction = vi.fn();
 

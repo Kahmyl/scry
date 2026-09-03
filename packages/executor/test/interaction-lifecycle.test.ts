@@ -4,16 +4,19 @@ import { InteractionLifecycleTracker } from "../src/interaction-lifecycle.js";
 
 describe("interaction lifecycle authority", () => {
   it.each([
-    "target absent",
-    "target ambiguous",
-    "section ambiguous",
-    "capability incompatible",
-    "policy refused",
-    "resolver introduced a future code",
-  ])("settles pre-dispatch mutation failure as not-applied regardless of diagnostic: %s", () => {
-    const lifecycle = new InteractionLifecycleTracker();
-    expect(lifecycle.mutationFailure(true, "not_applied")).toBe("not_applied");
-  });
+    ["target absent", "not_applied"],
+    ["target ambiguous", "not_applied"],
+    ["section ambiguous", "not_applied"],
+    ["capability incompatible", "not_applied"],
+    ["policy refused", "unknown"],
+    ["resolver introduced a future code", "unknown"],
+  ] as const)(
+    "settles pre-dispatch mutation failure as not-applied regardless of diagnostic: %s",
+    (_diagnostic, observed) => {
+      const lifecycle = new InteractionLifecycleTracker();
+      expect(lifecycle.mutationFailure(true, observed)).toBe("not_applied");
+    },
+  );
 
   it("preserves uncertainty only after the dispatch transition", async () => {
     const lifecycle = new InteractionLifecycleTracker();

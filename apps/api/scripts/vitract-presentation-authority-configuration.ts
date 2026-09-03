@@ -3,8 +3,6 @@ import { executionPolicySchema } from "@scry/contracts";
 import { Database } from "../src/infrastructure/database.js";
 
 const EXPECTED = {
-  projectId: "6b3b5011-0f41-430c-a8a2-d4abfd9ff3f1",
-  environmentId: "9a581bb0-2276-4888-9ddb-07b2485cddc3",
   origin: "https://preview.vitract.com",
   authority: {
     provider: "vitract",
@@ -23,14 +21,23 @@ const EXPECTED = {
 
 export async function configureVitractPresentationAuthority(database: Database) {
   return database.transaction(async (client) => {
-    const result = await client.query<{ policy: unknown; baseOrigin: string }>(
-      `SELECT policy,base_origin AS "baseOrigin" FROM environments
-        WHERE id=$1 AND project_id=$2 FOR UPDATE`,
-      [EXPECTED.environmentId, EXPECTED.projectId],
+    const result = await client.query<{
+      policy: unknown;
+      baseOrigin: string;
+      projectId: string;
+      environmentId: string;
+    }>(
+      `SELECT environment.policy,environment.base_origin AS "baseOrigin",
+              environment.project_id::text AS "projectId",environment.id::text AS "environmentId"
+         FROM q5_canonical_scope_designations designation
+         JOIN environments environment ON environment.id=designation.environment_id
+        WHERE designation.qualification_key='m6-q5-authoritative'
+          AND designation.project_id=environment.project_id FOR UPDATE`,
     );
-    if (result.rowCount !== 1 || new URL(result.rows[0]!.baseOrigin).origin !== EXPECTED.origin)
-      throw new Error("VITRACT_PRESENTATION_AUTHORITY_OWNER_MISMATCH");
+    if (result.rowCount !== 1) throw new Error("VITRACT_PRESENTATION_AUTHORITY_OWNER_MISMATCH");
     const policy = executionPolicySchema.parse(result.rows[0]!.policy);
+    if (!policy.allowedOrigins.includes(EXPECTED.origin))
+      throw new Error("VITRACT_PRESENTATION_AUTHORITY_OWNER_MISMATCH");
     const authorities = policy.externalResourcePresentationAuthorities ?? [];
     const sameRevision = authorities.filter(
       (candidate) =>
@@ -61,8 +68,8 @@ export async function configureVitractPresentationAuthority(database: Database) 
       externalResourcePresentationAuthorities: [...superseded, EXPECTED.authority],
     });
     await client.query(`UPDATE environments SET policy=$3::jsonb WHERE id=$1 AND project_id=$2`, [
-      EXPECTED.environmentId,
-      EXPECTED.projectId,
+      result.rows[0]!.environmentId,
+      result.rows[0]!.projectId,
       JSON.stringify(updated),
     ]);
     return "configured" as const;

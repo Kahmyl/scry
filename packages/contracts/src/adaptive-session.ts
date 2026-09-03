@@ -196,6 +196,14 @@ export const adaptiveOperationReconciliationResultSchema = z
   })
   .strict();
 
+export const praxisObservationSchema = z
+  .object({
+    documentEpoch: z.number().int().nonnegative(),
+    url: z.string().url(),
+    semanticPageContext: operationOutcomeSchema.shape.semanticPageContext.unwrap(),
+  })
+  .strict();
+
 export const advanceAdaptiveSessionSchema = z.discriminatedUnion("kind", [
   advanceAdaptiveSessionIntentsSchema,
   continueAdaptiveSessionTurnSchema,
@@ -379,6 +387,10 @@ export const adaptiveSessionSchema = z
     environmentId: uuid,
     correlationId: uuid,
     state: adaptiveSessionStateSchema,
+    runtime: z
+      .object({ state: z.enum(["owned", "unowned", "expired"]) })
+      .strict()
+      .optional(),
     version: z.number().int().positive(),
     objective: z.string(),
     allowedOrigins: z.array(z.string().url()),
@@ -419,6 +431,18 @@ export const adaptiveSessionSchema = z
   })
   .strict();
 
+export const praxisSessionStartResultSchema = adaptiveSessionSchema.extend({
+  replayed: z.boolean(),
+});
+
+export const praxisSessionCloseResultSchema = z
+  .object({
+    id: uuid,
+    state: z.literal("completed"),
+    replayed: z.boolean(),
+  })
+  .strict();
+
 export type AdaptiveSessionState = z.infer<typeof adaptiveSessionStateSchema>;
 export type AdaptiveSessionEventType = z.infer<typeof adaptiveSessionEventTypeSchema>;
 export type StartAdaptiveSessionInput = z.input<typeof startAdaptiveSessionSchema>;
@@ -436,4 +460,7 @@ export type ReconcileAdaptiveOperationInput = z.infer<typeof reconcileAdaptiveOp
 export type AdaptiveOperationReconciliationResult = z.infer<
   typeof adaptiveOperationReconciliationResultSchema
 >;
+export type PraxisObservation = z.infer<typeof praxisObservationSchema>;
 export type AdaptiveSession = z.infer<typeof adaptiveSessionSchema>;
+export type PraxisSessionStartResult = z.infer<typeof praxisSessionStartResultSchema>;
+export type PraxisSessionCloseResult = z.infer<typeof praxisSessionCloseResultSchema>;

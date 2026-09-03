@@ -77,6 +77,7 @@ describe("Mission authoring protected replay checkpoints", () => {
     );
     expect(selected[0]?.action).toMatchObject({
       kind: "activate",
+      semanticEffect: "unknown",
       target: { concept: "open-dialog", role: "button", name: "Add credential" },
     });
     expect(
@@ -182,6 +183,7 @@ function activate(intentId: string, name: string): MissionAuthoringIntent {
     ...base(intentId),
     action: {
       kind: "activate",
+      semanticEffect: "unknown",
       target: { concept: intentId, role: "button", name, exact: true },
     },
   };

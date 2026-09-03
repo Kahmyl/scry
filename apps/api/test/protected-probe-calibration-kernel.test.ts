@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { currentPlanSchema, executionPolicySchema } from "@scry/contracts";
-import { ExecutionKernel, type ExecutionReport } from "@scry/executor";
+import { ExecutionKernel } from "@scry/executor";
+import type { ExecutionReport } from "@scry/executor";
 import { compileDefaultVeilPolicy } from "@scry/veil";
 import { describe, expect, it, vi } from "vitest";
 

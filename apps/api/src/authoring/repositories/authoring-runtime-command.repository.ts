@@ -89,12 +89,12 @@ export class AuthoringRuntimeCommandRepository {
            AND probe.cancellation_requested_at IS NULL
            AND (
              (
-               $4 IN ('observe_document','interact','advance_turn','suspend','cancel')
+               $4 IN ('observe_document','inspect_region','interact','advance_turn','suspend','cancel')
                AND authoring.status='active'
                AND lease.state='active'
              )
              OR (
-               $4 IN ('resume','cancel')
+               $4 IN ('inspect_region','resume','cancel')
                AND authoring.status='suspended'
                AND lease.state='suspended'
              )
@@ -175,6 +175,7 @@ export class AuthoringRuntimeCommandRepository {
                  AND authoring.status='active'
                  AND command.type IN (
                    'observe_document',
+                   'inspect_region',
                    'interact',
                    'advance_turn',
                    'suspend',
@@ -184,7 +185,7 @@ export class AuthoringRuntimeCommandRepository {
                OR (
                  lease.state='suspended'
                  AND authoring.status='suspended'
-                 AND command.type IN ('resume','cancel')
+                 AND command.type IN ('inspect_region','resume','cancel')
                )
              )
            ORDER BY command.created_at

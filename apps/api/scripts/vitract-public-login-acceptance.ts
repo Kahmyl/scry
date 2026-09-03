@@ -12,7 +12,7 @@ import { Database } from "../src/infrastructure/database.js";
 import { NativeBrowserDriver } from "../src/runtime/native-browser-driver/native-browser-driver.js";
 
 const LOGIN_URL = "https://preview.vitract.com/login";
-const VITRACT_TEST_ENVIRONMENT_ID = "9a581bb0-2276-4888-9ddb-07b2485cddc3";
+const Q5_QUALIFICATION_KEY = "m6-q5-authoritative";
 const SYNTHETIC_VALUE = "scry-live-acceptance@example.invalid";
 const ACTION_TIMEOUT_MS = 10_000;
 const emailTarget: InteractionTargetIntent = {
@@ -265,16 +265,14 @@ async function loadAuthoritativeEnvironmentPolicy(
   const targetOrigin = new URL(targetUrl).origin;
   const result = await repository.query<{ policy: unknown; baseOrigin: string }>(
     `SELECT environment.policy,environment.base_origin AS "baseOrigin"
-       FROM environments environment
-      WHERE environment.id=$1`,
-    [VITRACT_TEST_ENVIRONMENT_ID],
+       FROM q5_canonical_scope_designations designation
+       JOIN environments environment ON environment.id=designation.environment_id
+      WHERE designation.qualification_key=$1`,
+    [Q5_QUALIFICATION_KEY],
   );
   if (result.rowCount !== 1) throw new Error("LIVE_LOGIN_ENVIRONMENT_POLICY_UNAVAILABLE");
   const policy = executionPolicySchema.parse(result.rows[0]!.policy);
-  if (
-    new URL(result.rows[0]!.baseOrigin).origin !== targetOrigin ||
-    !policy.allowedOrigins.includes(targetOrigin)
-  )
+  if (!policy.allowedOrigins.includes(targetOrigin))
     throw new Error("LIVE_LOGIN_ENVIRONMENT_POLICY_INVALID");
   return policy;
 }

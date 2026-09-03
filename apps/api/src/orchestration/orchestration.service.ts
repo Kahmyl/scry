@@ -228,9 +228,10 @@ export class OrchestrationService {
     this.write(p);
     if (input.missionId !== missionId)
       throw new ConflictException({ code: "MISSION_CONTEXT_MISMATCH" });
-    await this.db.transaction((c) =>
-      this.scheduleProject(c, missionId, input.agentSessionId, input.objectiveIds),
-    );
+    await this.db.transaction(async (c) => {
+      await this.reconcileMission(c, missionId);
+      await this.scheduleProject(c, missionId, input.agentSessionId, input.objectiveIds);
+    });
     return this.status(p, missionId);
   }
 
@@ -281,6 +282,8 @@ export class OrchestrationService {
 
   async grantAuthorization(p: Principal, missionId: string, input: GrantMissionAuthorizationInput) {
     this.write(p);
+    if (input.kind === "protected_mutation")
+      throw new ConflictException({ code: "PREPARED_EXECUTION_DOES_NOT_REQUIRE_APPROVAL" });
     if (p.kind !== "user" || !["owner", "admin"].includes(p.role))
       throw new ForbiddenException("Live and protected authorization requires an owner or admin");
     if (input.missionId !== missionId)
@@ -288,23 +291,19 @@ export class OrchestrationService {
     return this.db.transaction(async (c) => {
       await this.requireSession(c, missionId, input.agentSessionId);
       const valid = await c.query(
-        `SELECT 1 FROM mission_objectives o JOIN missions m ON m.id=o.mission_id JOIN environments e ON e.project_id=m.project_id WHERE o.id=$1 AND o.mission_id=$2 AND e.id=$3`,
-        [input.objectiveId, missionId, input.environmentId],
+        `SELECT 1 FROM mission_objectives o JOIN missions m ON m.id=o.mission_id
+         JOIN projects project ON project.id=m.project_id
+         JOIN environments e ON e.project_id=m.project_id
+         WHERE o.id=$1 AND o.mission_id=$2 AND e.id=$3 AND project.workspace_id=$4`,
+        [input.objectiveId, missionId, input.environmentId, p.workspaceId],
       );
       if (!valid.rowCount) throw new ConflictException({ code: "AUTHORIZATION_SCOPE_MISMATCH" });
-      if (input.kind === "protected_mutation") {
-        const protectedSession = await c.query(
-          `SELECT 1 FROM adaptive_sessions
-           WHERE id=$1 AND project_id=(SELECT project_id FROM missions WHERE id=$2)
-             AND mission_id=$2 AND active_objective_id=$3 AND environment_id=$4
-             AND protection='protected' AND state IN ('active','provisioning')`,
-          [input.praxisSessionId, missionId, input.objectiveId, input.environmentId],
-        );
-        if (!protectedSession.rowCount)
-          throw new ConflictException({ code: "AUTHORIZATION_PRAXIS_SESSION_SCOPE_MISMATCH" });
-      }
       const result = await c.query<{ id: string }>(
-        `INSERT INTO mission_authorizations(mission_id,objective_id,environment_id,kind,operation_id,praxis_session_id,reason,granted_by_agent_session_id,granted_by_user_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+        `INSERT INTO mission_authorizations(
+           mission_id,objective_id,environment_id,kind,operation_id,praxis_session_id,reason,
+           granted_by_agent_session_id,granted_by_user_id,expires_at,protected_operation_id,
+           protected_operation_contract_digest
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
         [
           missionId,
           input.objectiveId,
@@ -316,6 +315,8 @@ export class OrchestrationService {
           input.agentSessionId,
           p.userId,
           input.expiresAt ?? null,
+          null,
+          null,
         ],
       );
       await this.activity(

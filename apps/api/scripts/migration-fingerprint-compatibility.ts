@@ -3,6 +3,63 @@ import { createHash } from "node:crypto";
 export const AUTHORITATIVE_D647_FINGERPRINT =
   "d647df341b454e74f0e2263dc7e54c4c41b05e440b59adceac5566ef5d7a05c3";
 
+export const AUTHORITATIVE_D647_SHAPE_SQL = `
+  SELECT
+    to_regclass('public.protected_operations') IS NOT NULL AS "hasProtectedOperations",
+    to_regclass('public.adaptive_operations') IS NOT NULL AS "hasAdaptiveOperations",
+    to_regclass('public.adaptive_operation_reconciliations') IS NOT NULL AS "hasReconciliations",
+    to_regclass('public.mission_recording_selections') IS NOT NULL AS "hasRecordingSelections",
+    COALESCE((
+      SELECT pg_get_constraintdef(oid) LIKE '%document_transition_gap%'
+      FROM pg_constraint
+      WHERE conrelid=to_regclass('public.artifact_timeline_entries')
+        AND conname='artifact_timeline_entries_entry_type_check'
+    ),false) AS "hasDocumentTransitionGap",
+    COALESCE((
+      SELECT pg_get_functiondef(oid) LIKE '%action'' ->> ''kind'' <> ''authenticate''%'
+      FROM pg_proc
+      WHERE oid=to_regprocedure('public.adaptive_operation_unknown_unresolved(uuid,text)')
+    ),false) AS "hasScopedUnknownFence",
+    COALESCE((
+      SELECT pg_get_functiondef(oid) LIKE '%Applied recovery adaptive protected projection%'
+      FROM pg_proc
+      WHERE oid=to_regprocedure('public.protect_adaptive_operation_identity()')
+    ),false) AS "hasAppliedRecoveryProjection"
+`;
+
+export type AuthoritativeD647Shape = {
+  hasProtectedOperations: boolean;
+  hasAdaptiveOperations: boolean;
+  hasReconciliations: boolean;
+  hasRecordingSelections: boolean;
+  hasDocumentTransitionGap: boolean;
+  hasScopedUnknownFence: boolean;
+  hasAppliedRecoveryProjection: boolean;
+};
+
+export function assertAuthoritativeD647Shape(shape: AuthoritativeD647Shape | undefined): void {
+  if (
+    !shape?.hasProtectedOperations ||
+    !shape.hasAdaptiveOperations ||
+    !shape.hasReconciliations ||
+    shape.hasRecordingSelections ||
+    shape.hasDocumentTransitionGap ||
+    shape.hasScopedUnknownFence ||
+    shape.hasAppliedRecoveryProjection
+  )
+    throw new Error("AUTHORITATIVE_D647_LINEAGE_SHAPE_MISMATCH");
+}
+
+export function assertConfiguredMigrationFingerprint(
+  configured: string | undefined,
+  embedded: string,
+): void {
+  if (configured && configured !== embedded)
+    throw new Error(
+      `MIGRATION_IMAGE_SCHEMA_FINGERPRINT_MISMATCH: configured=${configured} embedded=${embedded}`,
+    );
+}
+
 export const SUPPORTED_HISTORICAL_BASELINES = [
   "base",
   "authoring",
@@ -55,6 +112,20 @@ export const OPTIONAL_BASELINE_MIGRATIONS = [
   "20260820-0910_scope_unknown_fence_to_resource_mutations.sql",
   "20260816-231045_add_document_transition_gap.sql",
   "mission-recording-selection.sql",
+  "operational-events.sql",
+  "mission-diagnostic-isolation.sql",
+  "external-agent-lifecycle.sql",
+  "pre-mission-external-agent-lifecycle.sql",
+  "flow-name-identity-cutover.sql",
+  "targeted-region-perception.sql",
+  "system-correctness-m4-reconciliation-lease.sql",
+  "qualification-campaign-safety.sql",
+  "authoritative-q5-qualification.sql",
+  "q5-canonical-scope-bootstrap.sql",
+  "prepared-protected-operation-journeys.sql",
+  "vitract-q5-composition.sql",
+  "prepared-protected-operation-reservation-settlement.sql",
+  "canonical-execution-authority.sql",
 ] as const;
 
 export type OptionalBaselineMigration = (typeof OPTIONAL_BASELINE_MIGRATIONS)[number];
@@ -135,6 +206,19 @@ export function compatibilityBaseline(source: string): string {
     "20260820-0910_scope_unknown_fence_to_resource_mutations.sql",
     "20260816-231045_add_document_transition_gap.sql",
     "mission-recording-selection.sql",
+    "operational-events.sql",
+    "mission-diagnostic-isolation.sql",
+    "external-agent-lifecycle.sql",
+    "pre-mission-external-agent-lifecycle.sql",
+    "flow-name-identity-cutover.sql",
+    "system-correctness-m4-reconciliation-lease.sql",
+    "qualification-campaign-safety.sql",
+    "authoritative-q5-qualification.sql",
+    "q5-canonical-scope-bootstrap.sql",
+    "prepared-protected-operation-journeys.sql",
+    "vitract-q5-composition.sql",
+    "prepared-protected-operation-reservation-settlement.sql",
+    "canonical-execution-authority.sql",
   ].reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}\\r?\\n`, "g"), ""),
@@ -148,12 +232,42 @@ export function expandBaselineStage(
   included: readonly OptionalBaselineMigration[],
 ): string {
   const admitted = new Set(included);
+  const prepared = admitted.has("system-correctness-m4-reconciliation-lease.sql")
+    ? source
+    : source.replace(/\\ir\s+system-correctness-m4-reconciliation-lease\.sql(?:\r?\n|$)/g, "");
   return OPTIONAL_BASELINE_MIGRATIONS.reduce(
     (current, migration) =>
       current.replace(new RegExp(`\\\\ir\\s+${escape(migration)}(?:\\r?\\n|$)`, "g"), () =>
         admitted.has(migration) ? migrationSources[migration] : "",
       ),
-    source,
+    prepared,
+  );
+}
+
+export function calculatePreTargetedRegionPerceptionFingerprint(input: {
+  baselineSource: string;
+  migrationSources: Record<OptionalBaselineMigration, string>;
+  expandFoundation(source: string): string;
+}): string {
+  return digest(
+    input.expandFoundation(
+      expandBaselineStage(
+        input.baselineSource,
+        input.migrationSources,
+        OPTIONAL_BASELINE_MIGRATIONS.filter(
+          (name) =>
+            name !== "targeted-region-perception.sql" &&
+            name !== "system-correctness-m4-reconciliation-lease.sql" &&
+            name !== "qualification-campaign-safety.sql" &&
+            name !== "authoritative-q5-qualification.sql" &&
+            name !== "q5-canonical-scope-bootstrap.sql" &&
+            name !== "prepared-protected-operation-journeys.sql" &&
+            name !== "vitract-q5-composition.sql" &&
+            name !== "prepared-protected-operation-reservation-settlement.sql" &&
+            name !== "canonical-execution-authority.sql",
+        ),
+      ),
+    ),
   );
 }
 

@@ -8,19 +8,7 @@ import { AdaptiveSessionRepository } from "../src/adaptive-sessions/repositories
 type AuthorizationKind =
   "live_read" | "live_mutation" | "protected_mutation" | "authentication_calibration";
 
-type AuthorizationRow = {
-  id: string;
-  missionId: string;
-  objectiveId: string;
-  environmentId: string;
-  kind: AuthorizationKind;
-  status: "approved" | "revoked";
-  expired: boolean;
-  operationId: string;
-  praxisSessionId: string;
-};
-
-function createHarness(authorizationKind: AuthorizationKind) {
+function createHarness(_historicalApprovalKind: AuthorizationKind) {
   const ids = {
     sessionId: randomUUID(),
     missionId: randomUUID(),
@@ -28,18 +16,6 @@ function createHarness(authorizationKind: AuthorizationKind) {
     flowDraftId: randomUUID(),
     environmentId: randomUUID(),
     authorizationId: randomUUID(),
-  };
-
-  const authorization: AuthorizationRow = {
-    id: ids.authorizationId,
-    missionId: ids.missionId,
-    objectiveId: ids.objectiveId,
-    environmentId: ids.environmentId,
-    kind: authorizationKind,
-    status: "approved",
-    expired: false,
-    operationId: "r07-save-live-mutation-auth-binding",
-    praxisSessionId: ids.sessionId,
   };
 
   const query = vi.fn(
@@ -72,50 +48,8 @@ function createHarness(authorizationKind: AuthorizationKind) {
         };
       }
 
-      if (text.includes("FROM mission_authorizations WHERE id=$1")) {
-        const [
-          authorizationId,
-          missionId,
-          objectiveId,
-          environmentId,
-          requiredKind,
-          operationId,
-          praxisSessionId,
-        ] = values;
-
-        let matches =
-          authorization.id === authorizationId &&
-          authorization.missionId === missionId &&
-          authorization.objectiveId === objectiveId &&
-          authorization.environmentId === environmentId &&
-          authorization.status === "approved" &&
-          !authorization.expired;
-
-        /*
-         * Model exactly what the SQL proves.
-         *
-         * Before the remediation there is no kind=$5
-         * predicate, so a cross-kind authorization matches.
-         *
-         * After remediation the same fake database applies
-         * the new predicate and exposes the intended behavior.
-         */
-        if (/(?:^|\s)kind\s*=\s*\$5(?:\s|$)/m.test(text)) {
-          matches = matches && authorization.kind === requiredKind;
-        }
-        if (text.includes("operation_id=$6 AND praxis_session_id=$7")) {
-          matches =
-            matches &&
-            (requiredKind !== "protected_mutation" ||
-              (authorization.operationId === operationId &&
-                authorization.praxisSessionId === praxisSessionId));
-        }
-
-        return {
-          rowCount: matches ? 1 : 0,
-          rows: matches ? [{ authorized: true }] : [],
-        };
-      }
+      if (text.includes("FROM mission_authorizations"))
+        throw new Error("LEGACY_APPROVAL_QUERY_FORBIDDEN");
 
       throw new Error(`Unexpected query in authorization binding regression:\n${text}`);
     },
@@ -161,7 +95,7 @@ function createHarness(authorizationKind: AuthorizationKind) {
   };
 }
 
-describe("Mission authoring authorization kind binding", () => {
+describe("Legacy approvals cannot replace prepared execution", () => {
   it("rejects cross-kind authorization reuse for live mutation", async () => {
     const { ids, intent, repository } = createHarness("authentication_calibration");
 
@@ -172,12 +106,12 @@ describe("Mission authoring authorization kind binding", () => {
       }),
     ).rejects.toMatchObject({
       response: {
-        code: "MISSION_AUTHORING_AUTHORIZATION_INVALID",
+        code: "PREPARED_EXECUTION_REQUIRED",
       },
     });
   });
 
-  it("accepts an approved authorization of the exact declared kind", async () => {
+  it("rejects even an approved authorization of the exact declared kind", async () => {
     const { ids, intent, repository } = createHarness("live_mutation");
 
     await expect(
@@ -185,7 +119,7 @@ describe("Mission authoring authorization kind binding", () => {
         sessionId: ids.sessionId,
         intent,
       }),
-    ).resolves.toBeUndefined();
+    ).rejects.toMatchObject({ response: { code: "PREPARED_EXECUTION_REQUIRED" } });
   });
 
   it("rejects protected authorization bound to a different intent", async () => {
@@ -196,7 +130,7 @@ describe("Mission authoring authorization kind binding", () => {
     await expect(
       repository.validateIntentAdmission({ sessionId: ids.sessionId, intent }),
     ).rejects.toMatchObject({
-      response: { code: "MISSION_AUTHORING_AUTHORIZATION_INVALID" },
+      response: { code: "PREPARED_EXECUTION_REQUIRED" },
     });
   });
 
@@ -207,7 +141,7 @@ describe("Mission authoring authorization kind binding", () => {
     await expect(
       repository.validateIntentAdmission({ sessionId: randomUUID(), intent }),
     ).rejects.toMatchObject({
-      response: { code: "MISSION_AUTHORING_AUTHORIZATION_INVALID" },
+      response: { code: "PREPARED_EXECUTION_REQUIRED" },
     });
   });
 });

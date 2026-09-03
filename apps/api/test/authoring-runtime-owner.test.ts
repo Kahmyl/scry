@@ -13,7 +13,14 @@ const runtime = {
 };
 
 function command(
-  type: "observe_document" | "interact" | "advance_turn" | "suspend" | "resume" | "cancel",
+  type:
+    | "observe_document"
+    | "inspect_region"
+    | "interact"
+    | "advance_turn"
+    | "suspend"
+    | "resume"
+    | "cancel",
   payload: Record<string, unknown> = {},
 ) {
   return {
@@ -74,6 +81,19 @@ function harness(input?: {
 
   const suspend = vi.fn();
   const resume = vi.fn();
+  const inspectRegion = vi.fn(async (regionInput) => ({
+    contextControlReference: regionInput.contextControlReference,
+    authority: {
+      referenceVersion: 1,
+      pageId: "page-1",
+      frameId: "frame-1",
+      documentEpoch: 2,
+      documentIdentity: "document-1",
+    },
+    region: { kind: "section" },
+    readableValues: [],
+    readableValueCompleteness: { kind: "bounded", observed: 0, returned: 0, truncated: false },
+  }));
 
   const repository = {
     claimNext: vi.fn().mockResolvedValueOnce(runtime).mockResolvedValue(undefined),
@@ -103,6 +123,7 @@ function harness(input?: {
     state: () => "active" as const,
     documentEpoch: () => 0,
     observeDocument,
+    inspectRegion,
     interact,
     suspend,
     resume,
@@ -128,6 +149,7 @@ function harness(input?: {
     createSession,
     close,
     observeDocument,
+    inspectRegion,
     interact,
     suspend,
     resume,
@@ -158,6 +180,49 @@ describe("authoring runtime owner", () => {
     );
   });
 
+  it("contains a transient runtime-claim dependency failure and retries on the next poll", async () => {
+    const { owner, repository } = harness();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    repository.claimNext
+      .mockReset()
+      .mockRejectedValueOnce(new Error("Connection terminated due to connection timeout"))
+      .mockResolvedValueOnce(runtime)
+      .mockResolvedValue(undefined);
+
+    await expect(owner.start()).resolves.toBeUndefined();
+
+    await vi.waitFor(() => expect(repository.activate).toHaveBeenCalledOnce());
+
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("authoring.runtime.poll_failed"));
+
+    await owner.close();
+    stderr.mockRestore();
+  });
+
+  it("contains a transient command-poll dependency failure without discarding the owned session", async () => {
+    const claimed = command("observe_document");
+    const { owner, repository, commands, close } = harness();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    commands.claimNext
+      .mockReset()
+      .mockRejectedValueOnce(new Error("Connection terminated due to connection timeout"))
+      .mockResolvedValueOnce(claimed)
+      .mockResolvedValue(undefined);
+
+    await owner.start();
+
+    await vi.waitFor(() => expect(commands.complete).toHaveBeenCalledOnce());
+
+    expect(repository.activate).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("authoring.command.poll_failed"));
+
+    await owner.close();
+    stderr.mockRestore();
+  });
+
   it("executes an observation command and persists its safe state", async () => {
     const claimed = command("observe_document");
     const { owner, repository, commands, observeDocument } = harness({
@@ -183,6 +248,33 @@ describe("authoring runtime owner", () => {
         url: "https://example.com/dashboard",
       },
     });
+
+    await owner.close();
+  });
+
+  it("executes a read-only region command through the owned browser session", async () => {
+    const input = {
+      contextControlReference: "context-control-0123456789abcdef0123456789abcdef",
+    };
+    const claimed = command("inspect_region", input);
+    const { owner, repository, commands, inspectRegion, interact } = harness({
+      commands: [claimed],
+    });
+
+    await owner.start();
+    await vi.waitFor(() => expect(commands.complete).toHaveBeenCalledOnce());
+
+    expect(inspectRegion).toHaveBeenCalledWith(input);
+    expect(interact).not.toHaveBeenCalled();
+    expect(repository.recordObservation).not.toHaveBeenCalled();
+    expect(commands.complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        safeResult: expect.objectContaining({
+          contextControlReference: input.contextControlReference,
+          readableValues: [],
+        }),
+      }),
+    );
 
     await owner.close();
   });

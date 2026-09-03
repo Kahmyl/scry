@@ -289,6 +289,7 @@ export type MissionSummary = {
   projectId: string;
   title: string;
   originalInstruction: string;
+  purpose?: "primary" | "diagnostic" | "recovery";
   status:
     "planning" | "running" | "blocked" | "awaiting_user" | "completed" | "failed" | "cancelled";
   resumePointer?: MissionResumePointer;
@@ -367,6 +368,7 @@ export type MissionObjective = {
   latestCandidateRunId?: string;
 };
 export type MissionDetail = MissionSummary & {
+  relatedMissions?: MissionRelationDisclosure[];
   flowProgress: {
     terminalRuns: number;
     passedRuns: number;
@@ -417,7 +419,12 @@ export type MissionReport = {
   revision: number;
   status: "published" | "superseded";
   snapshot: {
-    mission: { title: string; originalInstruction: string; status: string };
+    mission: {
+      title: string;
+      originalInstruction: string;
+      purpose?: "primary" | "diagnostic" | "recovery";
+      status: string;
+    };
     overallConclusion: string;
     journeySummary: string[];
     remainingActions: string[];
@@ -429,10 +436,125 @@ export type MissionReport = {
       acceptedRunIds: string[];
       acceptedArtifactIds: string[];
     }>;
+    evidence: {
+      objectives: Array<{
+        objectiveId: string;
+        acceptedEvidence: Array<{
+          id: string;
+          runId: string;
+          artifactId: string | null;
+          selectionOrder?: number;
+          acceptanceConclusion: string;
+          run: {
+            id: string;
+            state: string;
+            environmentId: string;
+          };
+          canonicalAttempt: { id: string; runId: string };
+          artifact: {
+            id: string;
+            attemptId: string;
+            stepId?: string | null;
+            kind: string;
+            availability: string;
+            privacyClassification: string;
+            contentType: string;
+            sizeBytes: string | null;
+          } | null;
+        }>;
+      }>;
+    };
+    recording?: {
+      schemaVersion: 1;
+      missionId: string;
+      sourceMissionRevision: number;
+      runs: Array<{
+        order: number;
+        run: { id: string; objectiveId: string; createdAt: string; completedAt: string | null };
+        canonicalAttempt: { id: string; runId: string };
+        timeline: Array<{
+          sequence: number;
+          entryType: string;
+          operationId: string | null;
+          startedAt: string;
+          endedAt: string | null;
+          reason: string | null;
+          status: string | null;
+          privacyStatus: string | null;
+          artifactId: string | null;
+          mediaDisposition: "playable" | "omitted" | null;
+          artifact: {
+            id: string;
+            attemptId: string;
+            kind: string;
+            availability: string;
+            privacyClassification: string;
+            contentType: string;
+            sizeBytes: string | null;
+          } | null;
+        }>;
+      }>;
+      boundaries: Array<
+        | {
+            order: number;
+            kind: "verified_checkpoint";
+            predecessorRunId: string;
+            successorRunId: string;
+          }
+        | {
+            order: number;
+            kind: "recording_gap";
+            predecessorRunId: string;
+            successorRunId: string;
+            startedAt: string | null;
+            endedAt: string | null;
+            reason: string;
+          }
+      >;
+      recordingDigest: string;
+    } | null;
+    mutationReceipts?: Array<{
+      receiptId: string;
+      operationId: string;
+      mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
+      reconciliation: { state: string };
+      responseIdentities: Array<{
+        bindingId: string;
+        provider: string;
+        resourceKind: string;
+        lifecycleState: string;
+      }>;
+    }>;
+    relatedMissions?: MissionRelationDisclosure[];
+    compositionDigest?: string;
     supersededAttemptCount: number;
     generatedAt: string;
   };
   createdAt: string;
+};
+
+export type MissionRelationDisclosure = {
+  relationId: string;
+  relation: "diagnoses" | "recovery_for" | "informs";
+  direction: "incoming" | "outgoing";
+  reason: string;
+  createdAt: string;
+  relatedMission: {
+    id: string;
+    purpose: "primary" | "diagnostic" | "recovery";
+    status:
+      "planning" | "running" | "blocked" | "awaiting_user" | "completed" | "failed" | "cancelled";
+  };
+  unresolvedProtectedOperations: Array<{
+    protectedOperationId: string;
+    operationId: string;
+    objectiveId: string;
+    state: string;
+    mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
+    recoveryClass: string | null;
+    failureCode: string | null;
+    updatedAt: string;
+  }>;
 };
 
 export type OutcomeClassification =
@@ -483,6 +605,24 @@ export type RecordingTimelineEntry =
       endedAt: string;
       reason: string;
       privacyStatus: "capture_suppressed";
+    }
+  | {
+      type: "document_transition_gap";
+      id: string;
+      sequence: number;
+      operationId: string;
+      startedAt: string;
+      endedAt: string;
+      reason: string;
+    }
+  | {
+      type: "recording_boundary";
+      id: string;
+      sequence: number;
+      boundaryKind: "verified_checkpoint" | "recording_gap";
+      startedAt?: string | null;
+      endedAt?: string | null;
+      reason: string;
     }
   | {
       type: "unavailable_interval";
@@ -644,6 +784,44 @@ export type Report = {
   privacy: {
     intervals: Array<Record<string, unknown>>;
     operations: Array<Record<string, unknown>>;
+    mutationReceipts: Array<{
+      receiptId: string;
+      operationId: string;
+      owner: { kind: "authoring_session" | "run"; id: string };
+      correlation: {
+        projectId: string;
+        environmentId: string;
+        missionId: string;
+        objectiveId: string;
+        agentSessionId: string;
+        runId?: string;
+        praxisSessionId?: string;
+      };
+      operationClass: "protected_mutation" | "protected_read";
+      dispatch: { state: "not_started" | "authorized" | "started" | "acknowledged" };
+      persistence: {
+        state: "not_started" | "running" | "committed" | "failed" | "uncertain";
+        references: Array<{
+          reference: string;
+          classification: "public" | "protected";
+          credentialId?: string;
+          valueId?: string;
+          scope: "run" | "project";
+        }>;
+      };
+      mutationOutcome: "not_attempted" | "not_applied" | "applied" | "unknown";
+      reconciliation: {
+        state:
+          | "not_configured"
+          | "pending"
+          | "proven_applied"
+          | "proven_not_applied"
+          | "unknown"
+          | "failed";
+      };
+      redispatchAllowed: boolean;
+      reasonCodes: string[];
+    }>;
     credentialIncidents: Array<Record<string, unknown>>;
   };
   veil: VeilRunObservation;

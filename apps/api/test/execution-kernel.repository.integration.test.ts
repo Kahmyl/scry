@@ -1,11 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import type { ExecutionRequest } from "@scry/contracts";
-import {
-  createExecutionCapabilityManifest,
-  ExecutionKernel,
-  type ExecutionReport,
-} from "@scry/executor";
+import { createExecutionCapabilityManifest, ExecutionKernel } from "@scry/executor";
+import type { ExecutionReport } from "@scry/executor";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { Database } from "../src/infrastructure/index.js";

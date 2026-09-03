@@ -192,21 +192,23 @@ export function compileMissionAuthoringProtectedTransaction(input: {
     // Output semantics describe the value, not the page's implementation. A generated value may
     // be rendered as a field, static text, a definition value, or a copy-enabled control. Keep the
     // adapter set bounded while allowing the protected extractor to resolve those equivalent shapes.
-    const permittedMethods = responseIdentityReferences.has(output.reference)
-      ? (["protected_network_value"] as const)
-      : ([
-          "semantic_field_value",
-          "input_value",
-          "text_content",
-          "copy_control",
-          "protected_network_value",
-        ] as const);
+    const permittedMethods =
+      output.responseJsonPath || responseIdentityReferences.has(output.reference)
+        ? (["protected_network_value"] as const)
+        : ([
+            "semantic_field_value",
+            "input_value",
+            "text_content",
+            "copy_control",
+            "protected_network_value",
+          ] as const);
     return output.classification === "protected"
       ? {
           classification: "protected" as const,
           reference: output.reference,
           acquisition: {
             target: outputTarget,
+            ...(output.responseJsonPath ? { responseJsonPath: output.responseJsonPath } : {}),
             prohibitedSourceTargets: protectedInputTargets,
             classification: "unknown_secret" as const,
             permittedMethods: [...permittedMethods],
@@ -223,6 +225,7 @@ export function compileMissionAuthoringProtectedTransaction(input: {
           reference: output.reference,
           acquisition: {
             target: outputTarget,
+            ...(output.responseJsonPath ? { responseJsonPath: output.responseJsonPath } : {}),
             prohibitedSourceTargets: protectedInputTargets,
             classification: "public" as const,
             permittedMethods: [...permittedMethods],
@@ -305,9 +308,12 @@ export function compileMissionAuthoringProtectedTransaction(input: {
 export function missionAuthoringProtectedOperationReservation(
   transaction: ProtectedTransaction,
   allowedOrigins: string[],
+  mutationIdentity: string,
+  preparedExecutionCapabilityId?: string,
 ) {
   return {
-    mutationIdentity: transaction.operationId,
+    mutationIdentity,
+    ...(preparedExecutionCapabilityId ? { preparedExecutionCapabilityId } : {}),
     dispatchSemantics: transaction.mutation.dispatchSemantics ?? "mutation",
     programDigest: protectedTransactionDigest(transaction, allowedOrigins),
     safeOutputManifest: transaction.extraction.outputs.map((output) => ({
@@ -316,6 +322,7 @@ export function missionAuthoringProtectedOperationReservation(
       storageName:
         output.classification === "protected" ? output.storage.credentialName : output.storage.name,
     })),
+    ...(transaction.mutation.request ? { requestContract: transaction.mutation.request } : {}),
   };
 }
 

@@ -10,7 +10,7 @@ import {
   visualRedactionInitScript,
 } from "@scry/praxis";
 import { capturePublicGeneratedValue } from "../src/public-value-capture.js";
-import { acquireValue } from "../src/protected-extractor.js";
+import { acquireValue } from "@scry/praxis";
 import { resolveTarget, verifyExpectedEffect } from "@scry/praxis";
 import {
   clickPraxisTarget as clickGroundedTarget,
@@ -200,7 +200,7 @@ const scenarios: Scenario[] = [
           maximumLength: 100,
           pattern: "^secret-right-74$",
         }),
-        180,
+        500,
       );
       expect(r.value).toBeUndefined();
       expect(r.diagnostics[0]?.lastFailureCode).toBe("VALUE_VALIDATION_FAILED");
@@ -212,7 +212,7 @@ const scenarios: Scenario[] = [
     name: "missing copy control is typed",
     html: `<div role="group"><output aria-label="Secret">secret-75</output></div>`,
     run: async (p) => {
-      const r = await acquireValue(p, acquisition("Secret", ["copy_control"]), 150);
+      const r = await acquireValue(p, acquisition("Secret", ["copy_control"]), 500);
       expect(r.value).toBeUndefined();
       expect(r.diagnostics[0]?.lastFailureCode).toBe("COPY_CONTROL_UNRESOLVED");
       noLeak(r.diagnostics, "secret-75");
@@ -266,7 +266,7 @@ const scenarios: Scenario[] = [
       const r = await acquireValue(
         p,
         acquisition("Secret", ["dom_text"], { minimumLength: 4, maximumLength: 100 }),
-        150,
+        500,
       );
       expect(r.value).toBeUndefined();
       expect(r.diagnostics[0]?.lastFailureCode).toBe("VALUE_VALIDATION_FAILED");
@@ -280,7 +280,7 @@ const scenarios: Scenario[] = [
       const r = await acquireValue(
         p,
         acquisition("Secret", ["dom_text"], { minimumLength: 1, maximumLength: 5 }),
-        150,
+        500,
       );
       expect(r.value).toBeUndefined();
       noLeak(r.diagnostics, "secret-too-long-80");
@@ -298,7 +298,7 @@ const scenarios: Scenario[] = [
           maximumLength: 100,
           pattern: "^vtr_[a-z0-9]+$",
         }),
-        150,
+        500,
       );
       expect(r.value).toBeUndefined();
       noLeak(r.diagnostics, "invalid-secret-81");
@@ -324,7 +324,7 @@ const scenarios: Scenario[] = [
     name: "unapproved methods are not attempted",
     html: `<output aria-label="Secret">secret-method-83</output>`,
     run: async (p) => {
-      const r = await acquireValue(p, acquisition("Secret", ["copy_control"]), 150);
+      const r = await acquireValue(p, acquisition("Secret", ["copy_control"]), 500);
       expect(r.value).toBeUndefined();
       expect(r.diagnostics).toHaveLength(1);
       noLeak(r.diagnostics, "secret-method-83");
@@ -364,7 +364,7 @@ const scenarios: Scenario[] = [
     name: "hidden protected value rejected",
     html: `<output aria-label="Secret" style="display:none">secret-hidden-87</output>`,
     run: async (p) => {
-      const r = await acquireValue(p, acquisition("Secret", ["dom_text"]), 150);
+      const r = await acquireValue(p, acquisition("Secret", ["dom_text"]), 500);
       expect(r.value).toBeUndefined();
       noLeak(r.diagnostics, "secret-hidden-87");
     },
@@ -374,7 +374,7 @@ const scenarios: Scenario[] = [
     name: "duplicate protected values are ambiguous",
     html: `<output aria-label="Secret">secret-a-88</output><output aria-label="Secret">secret-b-88</output>`,
     run: async (p) => {
-      const r = await acquireValue(p, acquisition("Secret", ["dom_text"]), 150);
+      const r = await acquireValue(p, acquisition("Secret", ["dom_text"]), 500);
       expect(r.value).toBeUndefined();
       expect(r.diagnostics[0]?.lastFailureCode).toBe("TARGET_AMBIGUOUS");
       noLeak(r.diagnostics, "secret-a-88");

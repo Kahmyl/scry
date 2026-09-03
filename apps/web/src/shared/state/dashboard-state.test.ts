@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   dashboardAuthority,
+  dashboardPaths,
   reconcileProjectSelection,
   resolveDashboardView,
   veilPolicyIdentity,
@@ -13,6 +14,7 @@ describe("dashboard state", () => {
     expect(resolveDashboardView("/dashboard/missions")).toBe("missions");
     expect(resolveDashboardView("/dashboard/missions/mission-1")).toBe("missions");
     expect(resolveDashboardView("/dashboard/missions/mission-1/flows")).toBe("missions");
+    expect(resolveDashboardView("/dashboard/operations")).toBe("operations");
     expect(resolveDashboardView("/dashboard/flows")).toBe("missions");
   });
 
@@ -35,6 +37,7 @@ describe("dashboard state", () => {
     expect(dashboardAuthority.prohibitedDashboardMutations).toContain("run_rerun");
     expect(dashboardAuthority.retainedHumanControls).toContain("active_run_cancel");
     expect(dashboardAuthority.retainedHumanControls).toContain("calibration_approval");
+    expect(dashboardPaths.operations).toBe("/dashboard/operations");
   });
 
   it("renders the exact API policy digest identity", () => {

@@ -2,7 +2,14 @@ import { z } from "zod";
 
 import { flowRevisionContentSchema, uuidSchema } from "./api.js";
 import { currentPlanSchema } from "./current.js";
-import { agentProviderSchema, objectiveCriterionSchema } from "./mission.js";
+import {
+  agentProviderSchema,
+  externalAgentExperimentIdSchema,
+  externalAgentModelSchema,
+  externalAgentRunIdSchema,
+  missionDistinctWorkAuthoritySchema,
+  objectiveCriterionSchema,
+} from "./mission.js";
 import { flowDraftPurposeSchema } from "./authoring.js";
 import { missionAuthoringTurnBudgetsSchema } from "./adaptive-session.js";
 
@@ -15,12 +22,31 @@ const createPreparationSchema = z
       .object({
         title: z.string().trim().min(1).max(200),
         originalInstruction: z.string().trim().min(1).max(20_000),
-        provider: agentProviderSchema.default("codex"),
+        maxBusinessMutationDispatches: z.number().int().min(0).max(1000).optional(),
+        provider: agentProviderSchema,
+        model: externalAgentModelSchema.optional(),
+        externalRunId: externalAgentRunIdSchema.optional(),
+        experimentId: externalAgentExperimentIdSchema.optional(),
         instructionSnapshot: z.string().trim().min(1).max(20_000),
         connectionId: z.string().trim().min(1).max(500).optional(),
         distinctReason: z.string().trim().min(1).max(2_000).optional(),
+        distinctAuthority: missionDistinctWorkAuthoritySchema.optional(),
       })
-      .strict(),
+      .strict()
+      .superRefine((value, context) => {
+        if (value.distinctReason && !value.distinctAuthority)
+          context.addIssue({
+            code: "custom",
+            path: ["distinctAuthority"],
+            message: "Distinct Mission preparation requires explicit current-user authority.",
+          });
+        if (!value.distinctReason && value.distinctAuthority)
+          context.addIssue({
+            code: "custom",
+            path: ["distinctAuthority"],
+            message: "Distinct authority requires a distinctReason.",
+          });
+      }),
     objective: z
       .object({
         title: z.string().trim().min(1).max(200),

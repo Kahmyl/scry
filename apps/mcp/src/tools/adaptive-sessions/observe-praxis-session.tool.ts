@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   randomUUID,
   advanceAdaptiveSessionSchema,
+  praxisObservationSchema,
   agentDecisionBoundarySchema,
   closeAdaptiveSessionSchema,
   missionAuthoringTurnBudgetsSchema,
@@ -15,6 +16,7 @@ import {
   flowDraftPurposeSchema,
   flowRevisionContentSchema,
   z,
+  externalFactualRead,
   readOnly,
   stableKey,
   toolResult,
@@ -35,7 +37,10 @@ export function registerObservePraxisSessionTool(server: McpServer, client: Scry
       description:
         "Return bounded factual browser state and opaque context-control references from the current Page/document. References are session/document scoped and the external agent selects one explicitly.",
       inputSchema: { praxisSessionId: uuid },
-      annotations: readOnly,
+      outputSchema: z
+        .object({ message: z.string(), observation: praxisObservationSchema })
+        .strict(),
+      annotations: externalFactualRead,
     },
     async ({ praxisSessionId }) =>
       withAdaptiveSessionError(

@@ -1,12 +1,30 @@
 name: Publish Scry beta to Docker Hub
 
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - "v*.*.*"
+  workflow_run:
+    workflows:
+      - Scry required qualification
+    types:
+      - completed
   workflow_dispatch:
+    inputs:
+      qualified_sha:
+        description: Exact 40-character commit SHA to publish
+        required: true
+        type: string
+      publication_reason:
+        description: Why this manually qualified commit must be published
+        required: true
+        type: string
+      residual_risk_acknowledgement:
+        description: Enter I_ACKNOWLEDGE_RESIDUAL_RISK to accept remaining publication risk
+        required: true
+        type: string
+      publish_latest:
+        description: Also move the mutable latest tag to this exact commit
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -18,15 +36,99 @@ env:
   COMPOSE_PROFILES: ""
   POSTGRES_ARCHIVE_MODE: off
   SCRY_BROWSER_CHANNEL: chromium
+  QUALIFIED_SHA: ${{ github.event.workflow_run.head_sha || inputs.qualified_sha }}
+  QUALIFIED_VERSION_TAG: ${{ github.event_name == 'workflow_run' && startsWith(github.event.workflow_run.head_branch, 'v') && github.event.workflow_run.head_branch || '' }}
+  PUBLISH_LATEST: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main') || (github.event_name == 'workflow_dispatch' && inputs.publish_latest) }}
 
 jobs:
   publish:
     name: Build, smoke, and publish beta application and stack
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      (github.event.workflow_run.head_branch == 'main' ||
+      startsWith(github.event.workflow_run.head_branch, 'v')))
 
     steps:
+      - name: Verify manual publication authority
+        shell: bash
+        env:
+          PUBLICATION_REASON: ${{ inputs.publication_reason }}
+          RESIDUAL_RISK_ACKNOWLEDGEMENT: ${{ inputs.residual_risk_acknowledgement }}
+          QUALIFIED_SOURCE_REF: ${{ github.event.workflow_run.head_branch || '' }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            if [[ "$QUALIFIED_SOURCE_REF" == "main" ]] ||
+               [[ "$QUALIFIED_SOURCE_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              exit 0
+            fi
+            echo "Automated publication requires qualification from main or a semantic version tag."
+            exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+            echo "Unsupported publication event."
+            exit 1
+          fi
+          if ! [[ "$QUALIFIED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Manual publication requires an exact lowercase 40-character commit SHA."
+            exit 1
+          fi
+          if [[ -z "${PUBLICATION_REASON//[[:space:]]/}" ]]; then
+            echo "Manual publication requires a non-empty reason."
+            exit 1
+          fi
+          if [[ "$RESIDUAL_RISK_ACKNOWLEDGEMENT" != "I_ACKNOWLEDGE_RESIDUAL_RISK" ]]; then
+            echo "Manual publication requires the exact residual-risk acknowledgement."
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.QUALIFIED_SHA }}
+
+      - name: Record publication audit evidence
+        shell: bash
+        env:
+          PUBLICATION_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.publication_reason || 'Successful required qualification for an admitted push' }}
+          RESIDUAL_RISK_ACKNOWLEDGEMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.residual_risk_acknowledgement || 'Automated publication after required qualification' }}
+          REQUESTED_LATEST: ${{ env.PUBLISH_LATEST }}
+          QUALIFICATION_RUN_ID: ${{ github.event.workflow_run.id || '' }}
+          QUALIFIED_SOURCE_REF: ${{ github.event.workflow_run.head_branch || '' }}
+        run: |
+          mkdir -p artifacts
+          node --input-type=module <<'NODE'
+          import { appendFileSync, writeFileSync } from "node:fs";
+
+          const audit = {
+            schemaVersion: 1,
+            eventName: process.env.GITHUB_EVENT_NAME,
+            actor: process.env.GITHUB_ACTOR,
+            publicationRunId: process.env.GITHUB_RUN_ID,
+            publicationRunAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            qualifiedSha: process.env.QUALIFIED_SHA,
+            qualifiedSourceRef: process.env.QUALIFIED_SOURCE_REF || null,
+            qualificationRunId: process.env.QUALIFICATION_RUN_ID || null,
+            reason: process.env.PUBLICATION_REASON,
+            residualRiskAcknowledgement: process.env.RESIDUAL_RISK_ACKNOWLEDGEMENT,
+            publishLatest: process.env.REQUESTED_LATEST === "true",
+          };
+          writeFileSync("artifacts/publication-audit.json", `${JSON.stringify(audit, null, 2)}\n`);
+          appendFileSync(
+            process.env.GITHUB_STEP_SUMMARY,
+            `## Publication authority\n\n- Qualified SHA: \`${audit.qualifiedSha}\`\n- Source: \`${audit.eventName}\`\n- Move latest: \`${audit.publishLatest}\`\n- Reason: ${audit.reason}\n`,
+          );
+          NODE
+
+      - name: Upload publication audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/publication-audit.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -43,9 +145,9 @@ jobs:
         with:
           images: ${{ env.APP_IMAGE }}
           tags: |
-            type=ref,event=tag
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=sha-${{ env.QUALIFIED_SHA }}
+            type=raw,value=${{ env.QUALIFIED_VERSION_TAG }},enable=${{ env.QUALIFIED_VERSION_TAG != '' }}
+            type=raw,value=latest,enable=${{ env.PUBLISH_LATEST == 'true' }}
 
       - name: Build the combined Scry beta image
         id: candidate-build
@@ -55,29 +157,31 @@ jobs:
           file: Dockerfile
           load: true
           platforms: linux/amd64
-          tags: scry-beta-ci:${{ github.sha }}
+          tags: scry-beta-ci:${{ env.QUALIFIED_SHA }}
           labels: |
             ${{ steps.meta.outputs.labels }}
             org.scry.privacy-authority=veil-only
             org.scry.schema-fingerprint=${{ env.SCRY_SCHEMA_FINGERPRINT }}
-            org.scry.release-id=${{ github.sha }}
+            org.scry.release-id=${{ env.QUALIFIED_SHA }}
           cache-from: type=gha,scope=scry
+          cache-to: type=gha,mode=max,scope=scry
 
       - name: Boot and smoke-test the candidate beta topology
         env:
           SCRY_DOMAIN: scry.example.com
           POSTGRES_PASSWORD: integration-password
           SCRY_SERVICE_TOKEN: integration-service-token
-          SCRY_CREDENTIAL_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-          VEIL_ADMISSION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          BROWSER_V2_PROTECTED_KEYS_JSON: '{"integration-v1":"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="}'
+          BROWSER_V2_PROTECTED_KEY_VERSION: integration-v1
+          BROWSER_V2_REQUIRE_ACTIVATED_CUTOVER: "false"
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_PUBLISHABLE_KEY: integration-placeholder
-          SCRY_IMAGE_REF: scry-beta-ci:${{ github.sha }}
-          SCRY_RELEASE_ID: ${{ github.sha }}
+          SCRY_IMAGE_REF: scry-beta-ci:${{ env.QUALIFIED_SHA }}
+          SCRY_RELEASE_ID: ${{ env.QUALIFIED_SHA }}
         run: |
           trap 'docker compose -f "$SCRY_COMPOSE_FILE" down -v' EXIT
           docker compose -f "$SCRY_COMPOSE_FILE" up -d --wait postgres redis migrate api worker mcp web
-          docker compose -f "$SCRY_COMPOSE_FILE" exec -T api wget -qO- http://127.0.0.1:4000/api/ready
+          docker compose -f "$SCRY_COMPOSE_FILE" exec -T api wget -qO- http://127.0.0.1:4000/api/v2/health
           docker compose -f "$SCRY_COMPOSE_FILE" exec -T mcp wget -qO- http://127.0.0.1:4100/health
           docker compose -f "$SCRY_COMPOSE_FILE" exec -T web wget -qO- http://127.0.0.1:3000/
           test -z "$(docker compose -f "$SCRY_COMPOSE_FILE" ps --services --filter status=running | grep -E 'backup|restore-drill|prometheus|alertmanager' || true)"
@@ -88,31 +192,59 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and publish the Scry beta image
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: |
-            ${{ steps.meta.outputs.labels }}
-            org.scry.privacy-authority=veil-only
-            org.scry.schema-fingerprint=${{ env.SCRY_SCHEMA_FINGERPRINT }}
-            org.scry.release-id=${{ github.sha }}
-          cache-from: type=gha,scope=scry
-          cache-to: type=gha,mode=max,scope=scry
+      - name: Publish the smoke-tested Scry beta image
+        id: publish-image
+        shell: bash
+        env:
+          SOURCE_IMAGE: scry-beta-ci:${{ env.QUALIFIED_SHA }}
+          PUBLISH_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+
+          published_digest=""
+
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+
+            docker tag "$SOURCE_IMAGE" "$tag"
+
+            push_output="$(docker push "$tag" 2>&1)"
+            printf '%s\n' "$push_output"
+
+            tag_digest="$(
+              printf '%s\n' "$push_output"                 | sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p'                 | tail -n 1
+            )"
+
+            if [ -z "$tag_digest" ]; then
+              echo "Unable to determine registry digest after publishing $tag."
+              exit 1
+            fi
+
+            if [ -z "$published_digest" ]; then
+              published_digest="$tag_digest"
+            elif [ "$published_digest" != "$tag_digest" ]; then
+              echo "Published tags resolved to different image digests."
+              exit 1
+            fi
+          done <<< "$PUBLISH_TAGS"
+
+          if [ -z "$published_digest" ]; then
+            echo "No Docker publication tags were produced."
+            exit 1
+          fi
+
+          echo "digest=$published_digest" >> "$GITHUB_OUTPUT"
 
       - name: Select stack tag
         id: stack
         shell: bash
         run: |
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
-          else
+          if [[ -n "$QUALIFIED_VERSION_TAG" ]]; then
+            echo "tag=$QUALIFIED_VERSION_TAG" >> "$GITHUB_OUTPUT"
+          elif [[ "$PUBLISH_LATEST" == "true" ]]; then
             echo "tag=latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=sha-$QUALIFIED_SHA" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Require OCI-capable Docker Compose
@@ -131,12 +263,12 @@ jobs:
           SCRY_DOMAIN: scry.example.com
           POSTGRES_PASSWORD: publish-placeholder
           SCRY_SERVICE_TOKEN: publish-placeholder
-          SCRY_CREDENTIAL_ENCRYPTION_KEY: publish-placeholder
-          VEIL_ADMISSION_KEY: publish-placeholder-at-least-32-bytes
+          BROWSER_V2_PROTECTED_KEYS_JSON: '{"production-v1":"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="}'
+          BROWSER_V2_PROTECTED_KEY_VERSION: production-v1
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_PUBLISHABLE_KEY: publish-placeholder
-          SCRY_IMAGE_REF: ${{ env.APP_IMAGE }}@${{ steps.build.outputs.digest }}
-          SCRY_RELEASE_ID: ${{ github.sha }}
+          SCRY_IMAGE_REF: ${{ env.APP_IMAGE }}@${{ steps.publish-image.outputs.digest }}
+          SCRY_RELEASE_ID: ${{ env.QUALIFIED_SHA }}
         run: |
           docker compose -f "$SCRY_COMPOSE_FILE" publish -y \
             "${STACK_IMAGE}:${{ steps.stack.outputs.tag }}"

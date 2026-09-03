@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { CurrentAction, ExecutionPolicy, ExpectedEffect } from "@scry/contracts";
+import type { SecretRedactor } from "@scry/policy";
 import { chromium, type Page } from "playwright";
 
 import { createExecutionCapabilityManifest, ExecutionKernel } from "../src/execution-kernel.js";
@@ -23,6 +24,10 @@ export function kernelInteractionExecutor(input: {
   environmentId: string;
   policy: ExecutionPolicy;
   secretResolver?: (reference: string) => Promise<string>;
+  secretRedactor?: SecretRedactor;
+  executeSameOriginRequest?: NonNullable<
+    import("../src/types.js").ExecuteOptions["executeSameOriginRequest"]
+  >;
 }) {
   const kernel = new ExecutionKernel();
   const mutationStates = new Map<string, string>();
@@ -77,6 +82,10 @@ export function kernelInteractionExecutor(input: {
           environmentId: input.environmentId,
           veilAdmissionKey: "test-kernel-admission-key",
           ...(input.secretResolver ? { secretResolver: input.secretResolver } : {}),
+          ...(input.secretRedactor ? { secretRedactor: input.secretRedactor } : {}),
+          ...(input.executeSameOriginRequest
+            ? { executeSameOriginRequest: input.executeSameOriginRequest }
+            : {}),
           ...(operation.signal ? { signal: operation.signal } : {}),
         },
       },

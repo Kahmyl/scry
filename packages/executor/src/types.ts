@@ -6,11 +6,15 @@ import type {
   RunEvent,
   CurrentPlan,
   OutcomeClassification,
+  ProtectedTransactionStore,
+  ProtectedOperationClaim,
 } from "@scry/contracts";
 import type { RuntimePolicyViolationCode } from "@scry/policy";
+import type { SecretRedactor } from "@scry/policy";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
 import type { CalibrationStructure } from "./calibration.js";
 
+import type { ProtectedTransactionExecutor } from "./protected-transaction-port.js";
 import type { RecordingCoordinator } from "./recording-coordinator.js";
 import type { VeilRuntimeCoordinator } from "@scry/veil";
 
@@ -32,7 +36,7 @@ export type PublicValueCapture = (input: {
 }) => Promise<{ valueId: string }>;
 export type AtomicOutputCapture = (input: {
   operationId: string;
-  claim: import("./protected-transaction-coordinator.js").ProtectedOperationClaim;
+  claim: ProtectedOperationClaim;
   outputs: Array<{
     reference: string;
     classification: "public" | "protected";
@@ -42,7 +46,7 @@ export type AtomicOutputCapture = (input: {
   }>;
   externalResourceBindings: import("@scry/contracts").ProtectedTransaction["extraction"]["externalResourceBindings"];
 }) => Promise<{
-  claim: import("./protected-transaction-coordinator.js").ProtectedOperationClaim;
+  claim: ProtectedOperationClaim;
   references: Record<
     string,
     {
@@ -53,12 +57,44 @@ export type AtomicOutputCapture = (input: {
     }
   >;
 }>;
+
+export type StageProtectedResponseOutputs = (input: {
+  operationId: string;
+  claim: ProtectedOperationClaim;
+  outputs: Array<{
+    reference: string;
+    classification: "public" | "protected";
+    name: string;
+    value: string;
+    scope: "run" | "project";
+  }>;
+}) => Promise<void>;
+
+export type RecoverStagedProtectedResponseOutputs = (input: {
+  operationId: string;
+  claim: ProtectedOperationClaim;
+}) => Promise<
+  | Array<{
+      reference: string;
+      classification: "public" | "protected";
+      name: string;
+      value: string;
+      scope: "run" | "project";
+    }>
+  | undefined
+>;
+
 export type PublicValueResolver = (reference: string) => Promise<string>;
 export type BrowserStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 
 export type ExecuteOptions = {
   plan: CurrentPlan;
   policy: ExecutionPolicy;
+  /** Canonical mutation identity allocated by the operation authority. */
+  mutationIdentity?: string;
+  /** Canonical program authority for protected execution; never reconstructed by a canonical worker. */
+  canonicalProgramDigest?: string;
+  preparedExecutionCapabilityId?: string;
   outputDirectory: string;
   /** Internal ownership of external expected-effect verification. */
   expectedEffectVerificationOwner?: "kernel" | "praxis";
@@ -67,6 +103,9 @@ export type ExecuteOptions = {
    * This is not authored progression authority.
    */
   recordingOperationId?: string;
+  settleProtectedAuthentication?: () => Promise<void>;
+  /** Await kernel-owned effect observation before qualifying and resuming capture. */
+  settleExpectedEffectBeforeCapture?: () => Promise<void>;
   /**
    * Runtime-only hint that this single-operation execution is expected to
    * cross an ordinary navigation/document boundary.
@@ -110,7 +149,7 @@ export type ExecuteOptions = {
     durationMs: number;
   }) => void | Promise<void>;
   /** Internal authoring boundary: execute against the already-owned safe session. */
-  existingSafeSession?: import("./browser-session.js").SafeBrowserSession;
+  existingSafeSession?: import("@scry/praxis").SafeBrowserSession;
   /** The borrowed session is already a Veil-protected live Praxis session. */
   existingProtectedSession?: boolean;
   captureBrowserState?: (state: BrowserStorageState) => void | Promise<void>;
@@ -126,18 +165,21 @@ export type ExecuteOptions = {
     };
   }) => void | Promise<void>;
   secretResolver?: SecretResolver;
+  /**
+   * Ephemeral browser-session redaction knowledge. The owner must clear it
+   * when browser authority ends; protected values must never be persisted.
+   */
+  secretRedactor?: SecretRedactor;
   secretCapture?: SecretCapture;
   atomicSecretCapture?: AtomicSecretCapture;
   publicValueCapture?: PublicValueCapture;
   atomicOutputCapture?: AtomicOutputCapture;
-  stageProtectedResponseOutputs?: NonNullable<
-    import("./protected-transaction-coordinator.js").ProtectedTransactionDependencies["stageResponseOutputsAtomically"]
-  >;
-  recoverStagedProtectedResponseOutputs?: NonNullable<
-    import("./protected-transaction-coordinator.js").ProtectedTransactionDependencies["recoverStagedResponseOutputs"]
-  >;
+  stageProtectedResponseOutputs?: StageProtectedResponseOutputs;
+  recoverStagedProtectedResponseOutputs?: RecoverStagedProtectedResponseOutputs;
   publicValueResolver?: PublicValueResolver;
-  protectedTransactionStore?: import("./protected-transaction-coordinator.js").ProtectedTransactionStore;
+  /** Runtime composition seam for protected transaction progression. */
+  protectedTransactionExecutor?: ProtectedTransactionExecutor;
+  protectedTransactionStore?: ProtectedTransactionStore;
   checkpointStore?: import("./checkpoint-coordinator.js").CheckpointStore;
   flowRevisionId?: string;
   environmentId?: string;
@@ -208,6 +250,8 @@ export type ExecuteOptions = {
   veilPolicySnapshot?: import("@scry/contracts").VeilPolicySnapshot;
   /** Phase 1 synthetic-gap hook. It must never handle real protected values. */
   recordingTestHook?: (input: { page: Page; recording: RecordingCoordinator }) => Promise<void>;
+  /** Synthetic screencast-start failure hook. It must never handle real protected values. */
+  recordingSegmentStartTestHook?: (reason: string) => Promise<void>;
   /** Phase 2 synthetic privacy interval hook. It must never handle real protected values. */
   privacyTestHook?: (input: { page: Page; privacy: VeilRuntimeCoordinator }) => Promise<void>;
 };

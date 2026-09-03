@@ -99,6 +99,114 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     ).resolves.toMatchObject({ rows: [{ count: 0 }] });
   });
 
+  it("publishes same-named mission-local Flows under distinct Mission owners", async () => {
+    const priorMission = randomUUID();
+    const priorObjective = randomUUID();
+    const priorSession = randomUUID();
+    const name = `Mission-local label ${randomUUID()}`;
+    const plan = currentPlanSchema.parse({
+      name,
+      objective: "Open preview",
+      preconditions: [],
+      allowedOrigins: ["https://example.test"],
+      budgets: { maxActions: 1, maxDurationMs: 10_000, maxNavigations: 1 },
+      checkpoints: [],
+      steps: [
+        {
+          id: "open",
+          title: "Open preview",
+          action: { type: "navigate", url: "https://example.test" },
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "final",
+        },
+      ],
+    });
+
+    await database.query(
+      `INSERT INTO missions(id,project_id,title,original_instruction)
+       VALUES($1,$2,'Prior Mission','Preserve an independently owned Flow')`,
+      [priorMission, project],
+    );
+    await database.query(
+      `INSERT INTO mission_objectives(
+         id,mission_id,title,dependencies,completion_criteria,objective_order)
+       VALUES($1,$2,'Open application','[]','[{"description":"Page opens","required":true}]',0)`,
+      [priorObjective, priorMission],
+    );
+    await database.query(
+      `INSERT INTO agent_sessions(
+         id,mission_id,provider,instruction_snapshot,idempotency_key)
+       VALUES($1,$2,'scry_agent','Prior Mission authoring',$3)`,
+      [priorSession, priorMission, `session-${priorSession}`],
+    );
+
+    const content = {
+      objective: "Open preview",
+      preconditions: [],
+      expectedOutcomes: ["Preview opens"],
+      prohibitedSideEffects: [],
+    };
+    const priorContext = {
+      missionId: priorMission,
+      objectiveId: priorObjective,
+      agentSessionId: priorSession,
+    };
+    const priorDraft = await service.createDraft(principal, {
+      ...priorContext,
+      projectId: project,
+      environmentId: environment,
+      name,
+      description: "Prior Mission representation",
+      content,
+      plan,
+      idempotencyKey: `prior-draft-${randomUUID()}`,
+    });
+    const priorPublication = await service.publish(principal, priorDraft.id!, {
+      ...priorContext,
+      expectedVersion: 1,
+      visibility: "mission_local",
+      purpose: "primary",
+      reason: "Publish prior Mission representation",
+      idempotencyKey: `prior-publish-${randomUUID()}`,
+    });
+
+    const currentDraft = await service.createDraft(principal, {
+      ...context,
+      projectId: project,
+      environmentId: environment,
+      name,
+      description: "Current Mission representation",
+      content,
+      plan,
+      idempotencyKey: `current-draft-${randomUUID()}`,
+    });
+    const currentPublication = await service.publish(principal, currentDraft.id!, {
+      ...context,
+      expectedVersion: 1,
+      visibility: "mission_local",
+      purpose: "primary",
+      reason: "Publish independently owned current Mission representation",
+      idempotencyKey: `current-publish-${randomUUID()}`,
+    });
+
+    expect(currentPublication.flowId).not.toBe(priorPublication.flowId);
+    await expect(
+      database.query(
+        `SELECT id,owner_mission_id AS "ownerMissionId"
+         FROM flows WHERE project_id=$1 AND name=$2 ORDER BY owner_mission_id`,
+        [project, name],
+      ),
+    ).resolves.toMatchObject({
+      rowCount: 2,
+      rows: expect.arrayContaining([
+        { id: priorPublication.flowId, ownerMissionId: priorMission },
+        { id: currentPublication.flowId, ownerMissionId: mission },
+      ]),
+    });
+  });
+
   beforeAll(async () => {
     process.env.DATABASE_URL = process.env.SCRY_AUTHORING_TEST_DATABASE_URL;
     process.env.SCRY_CERTIFICATION_WAIT_TIMEOUT_MS = "0";
@@ -451,6 +559,7 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
         claimToken,
         "passed",
         "passed",
+        { kind: "required" },
       );
       const pendingReplay = await pendingReplayPromise;
       expect(pendingReplay).toMatchObject({
@@ -1512,7 +1621,9 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     await attempts.markRunning(certificationRun, attempt!.id, claimToken);
     await stageCertificationEvidence(database, certificationRun, attempt!.id);
     await attempts.markFinalizing(certificationRun, attempt!.id, claimToken);
-    await attempts.completeAttempt(certificationRun, attempt!.id, claimToken, "passed", "passed");
+    await attempts.completeAttempt(certificationRun, attempt!.id, claimToken, "passed", "passed", {
+      kind: "required",
+    });
 
     await database.query(
       `INSERT INTO artifact_timeline_entries(
@@ -1646,6 +1757,153 @@ describe.skipIf(!enabled)("authoring, compilation, and publication boundary", ()
     expect(fixture.observedOutcome.failureCode).toBe("TARGET_NOT_FOUND");
     expect(replayRun).not.toBe(certificationRun);
   });
+
+  it("opens fresh authoring authority after a policy-failed Run without claiming checkpoint continuity", async () => {
+    const recoveryEnvironment = randomUUID();
+    const sourceRunId = randomUUID();
+    const source = await database.query<{ revisionId: string; plan: unknown }>(
+      `SELECT revision.id AS "revisionId",revision.plan
+       FROM flow_revisions revision
+       JOIN flows flow ON flow.id=revision.flow_id
+       WHERE flow.owner_mission_id=$1
+       ORDER BY revision.created_at DESC,revision.id DESC
+       LIMIT 1`,
+      [mission],
+    );
+    if (!source.rowCount) throw new Error("expected a published source Flow revision");
+
+    await database.query(
+      `INSERT INTO environments(id,project_id,name,base_origin,policy)
+       VALUES($1,$2,'Fresh authority recovery','https://preview.vitract.com',$3::jsonb)`,
+      [
+        recoveryEnvironment,
+        project,
+        JSON.stringify({
+          allowedOrigins: ["https://preview.vitract.com"],
+          allowPrivateNetwork: false,
+          allowDownloads: false,
+          allowPopups: false,
+          maxActions: 10,
+          maxDurationMs: 120_000,
+          maxNavigations: 3,
+        }),
+      ],
+    );
+    await database.query(
+      `INSERT INTO runs(
+         id,project_id,mission_id,objective_id,agent_session_id,environment_id,
+         flow_revision_id,state,phase,outcome_classification,result_classification,
+         plan_snapshot,environment_snapshot,policy_snapshot,veil_policy_snapshot,
+         execution_snapshot,idempotency_key
+       ) VALUES(
+         $1,$2,$3,$4,$5,$6,$7,'failed','completed','policy_failure','application_failure',
+         $8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13
+       )`,
+      [
+        sourceRunId,
+        project,
+        mission,
+        objective,
+        session,
+        environment,
+        source.rows[0]!.revisionId,
+        JSON.stringify(source.rows[0]!.plan),
+        JSON.stringify({ id: environment, baseOrigin: "https://preview.vitract.com" }),
+        JSON.stringify({
+          allowedOrigins: ["https://preview.vitract.com"],
+          allowPrivateNetwork: false,
+          allowDownloads: false,
+          allowPopups: false,
+          maxActions: 10,
+          maxDurationMs: 120_000,
+          maxNavigations: 3,
+        }),
+        JSON.stringify({ artifactRetention: "sanitized" }),
+        JSON.stringify({ executionModel: "agent_directed_v1" }),
+        `policy-failed-source-${randomUUID()}`,
+      ],
+    );
+
+    const plan = currentPlanSchema.parse({
+      name: "Consult Developer documentation",
+      objective: "Consult Developer documentation with fresh browser authority",
+      preconditions: [],
+      allowedOrigins: ["https://preview.vitract.com"],
+      budgets: { maxActions: 3, maxDurationMs: 30_000, maxNavigations: 2 },
+      checkpoints: [],
+      steps: [
+        {
+          id: "open-preview",
+          title: "Open Vitract preview",
+          action: { type: "navigate", url: "https://preview.vitract.com" },
+          assertions: [],
+          onFailure: "stop",
+          evidence: [],
+          captureIntent: "final",
+        },
+      ],
+    });
+    const draftInput = {
+      ...context,
+      projectId: project,
+      environmentId: recoveryEnvironment,
+      name: `Policy recovery ${randomUUID()}`,
+      description: "Fresh browser authority after a policy refusal",
+      content: {
+        objective: "Consult Developer documentation",
+        preconditions: [],
+        expectedOutcomes: ["Developer documentation is observed"],
+        prohibitedSideEffects: ["Do not create an order"],
+      },
+      plan,
+    };
+
+    await expect(
+      service.createDraft(principal, {
+        ...draftInput,
+        predecessorRunId: sourceRunId,
+        idempotencyKey: `invalid-policy-predecessor-${randomUUID()}`,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        code: "SUCCESSOR_CHECKPOINT_UNAVAILABLE",
+      },
+    });
+
+    const draft = await service.createDraft(principal, {
+      ...draftInput,
+      idempotencyKey: `fresh-policy-authority-${randomUUID()}`,
+    });
+    const repository = new AdaptiveSessionRepository(database);
+    const praxis = await repository.create(null, {
+      ...context,
+      projectId: project,
+      environmentId: recoveryEnvironment,
+      flowDraftId: draft.id!,
+      objective: "Consult Developer documentation",
+      allowedOrigins: ["https://preview.vitract.com"],
+      idempotencyKey: `fresh-policy-praxis-${randomUUID()}`,
+    });
+    await repository.activateProvisionedSession(praxis.id);
+    await expect(repository.get(null, praxis.id)).resolves.toMatchObject({ state: "active" });
+
+    const publication = await service.publish(principal, draft.id!, {
+      ...context,
+      expectedVersion: 1,
+      visibility: "mission_local",
+      purpose: "primary",
+      reason: "Publish the explicit fresh-authority recovery representation",
+      idempotencyKey: `publish-policy-recovery-${randomUUID()}`,
+    });
+    expect(publication).toMatchObject({ replayed: false });
+    await expect(
+      database.query(
+        `SELECT predecessor_run_id AS "predecessorRunId"
+         FROM flow_drafts WHERE id=$1`,
+        [draft.id],
+      ),
+    ).resolves.toMatchObject({ rows: [{ predecessorRunId: null }] });
+  });
 });
 
 async function insertCompletedProbe(
@@ -1775,6 +2033,7 @@ async function completeCertification(
     claimToken,
     "passed",
     "passed",
+    { kind: "required" },
   );
 }
 

@@ -208,6 +208,7 @@ function recordingQuery(options?: {
   timeline?: Array<Record<string, unknown>>;
 
   continuity?: Array<Record<string, unknown>>;
+  sources?: Array<Record<string, unknown>>;
 }) {
   const config = {
     selection: true,
@@ -235,6 +236,7 @@ function recordingQuery(options?: {
               sourceMissionRevision: 11,
               selectedByAgentSessionId: agentSessionId,
               createdAt: "2026-08-16 22:04:00+00",
+              sources: config.sources,
             },
           ])
         : rows();
@@ -340,6 +342,21 @@ describe("Mission recording report resolution", () => {
     });
   });
 
+  it("fails closed rather than silently pivoting a selected Run to a newer Attempt", async () => {
+    const query = recordingQuery({
+      selectedRuns: [selectedRunRows[0]!],
+      timeline: timelineRows.filter((row) => row.attemptId === attemptA),
+      continuity: [],
+      sources: [{ order: 0, runId: runA, canonicalAttemptId: attemptB }],
+    });
+
+    await expect(resolveMissionRecording(query as never, missionId)).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: "MISSION_RECORDING_SELECTED_SOURCE_INADMISSIBLE",
+      }),
+    });
+  });
+
   it("fails closed when more than one factual restore relation claims the same adjacent Run pair", async () => {
     const query = recordingQuery({
       continuity: [
@@ -410,6 +427,8 @@ describe("Mission recording report resolution", () => {
             count: 0,
           },
         ]);
+
+      if (text.includes("FROM mission_relations relation")) return rows();
 
       return recording(text, values);
     });

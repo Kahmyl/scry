@@ -1,5 +1,6 @@
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import type { OperationContractFacts } from "@scry/contracts";
 
 import { decryptCredential, encryptCredential } from "../../access/credential.crypto.js";
 import { Database } from "../../infrastructure/index.js";
@@ -132,13 +133,30 @@ export class ProtectedOutputPersistenceRepository {
       return await this.database.transaction(async (client) => {
         const operation = await client.query<{
           state: string;
-          safeOutputManifest: Array<{ reference: string; classification: "protected" | "public" }>;
+          authorityModel: "legacy" | "canonical";
+          operationContractRevisionId: string | null;
+          applicationKey: string | null;
+          contractFacts: OperationContractFacts | null;
+          safeOutputManifest: Array<{
+            reference?: string;
+            key?: string;
+            classification: "protected" | "public";
+          }>;
         }>(
-          `SELECT state,safe_output_manifest AS "safeOutputManifest" FROM protected_operations WHERE id=$1 AND project_id=$2 AND environment_id=$3
-             AND mission_id=$4 AND objective_id=$5 AND agent_session_id=$6 AND owner_kind=$7
-             AND (($7='authoring_session' AND authoring_session_id=$8) OR ($7='run' AND run_id=$8))
-             AND operation_id=$9 AND lease_owner=$10 AND fencing_token=$11 AND version=$12
-             AND lease_expires_at>now() FOR UPDATE`,
+          `SELECT operation.state,operation.authority_model AS "authorityModel",
+                  capability.operation_contract_revision_id AS "operationContractRevisionId",
+                  capability.application_key AS "applicationKey",revision.facts AS "contractFacts",
+                  operation.safe_output_manifest AS "safeOutputManifest"
+             FROM protected_operations operation
+             LEFT JOIN prepared_execution_capabilities capability
+               ON capability.id=operation.prepared_execution_capability_id
+             LEFT JOIN operation_contract_revisions revision
+               ON revision.id=capability.operation_contract_revision_id
+            WHERE operation.id=$1 AND operation.project_id=$2 AND operation.environment_id=$3
+             AND operation.mission_id=$4 AND operation.objective_id=$5 AND operation.agent_session_id=$6 AND operation.owner_kind=$7
+             AND (($7='authoring_session' AND operation.authoring_session_id=$8) OR ($7='run' AND operation.run_id=$8))
+             AND operation.operation_id=$9 AND operation.lease_owner=$10 AND operation.fencing_token=$11 AND operation.version=$12
+             AND operation.lease_expires_at>now() FOR UPDATE OF operation`,
           [
             context.protectedOperationId,
             context.projectId,
@@ -156,13 +174,24 @@ export class ProtectedOutputPersistenceRepository {
         );
         if (operation.rows[0]?.state !== "persisting")
           throw new ConflictException("PROTECTED_OPERATION_PERSISTENCE_FENCED");
-        const manifest = operation.rows[0].safeOutputManifest;
+        const authority = operation.rows[0];
+        if (
+          authority.authorityModel === "canonical" &&
+          (!authority.operationContractRevisionId ||
+            !authority.applicationKey ||
+            !authority.contractFacts)
+        )
+          throw new ConflictException("CANONICAL_OUTPUT_AUTHORITY_MISSING");
+        const manifest = authority.safeOutputManifest;
         const admitted = new Map(
           outputs.map((output) => [output.reference, output.classification]),
         );
         if (
           manifest.length !== admitted.size ||
-          manifest.some((output) => admitted.get(output.reference) !== output.classification)
+          manifest.some(
+            (output) =>
+              admitted.get(output.key ?? output.reference ?? "") !== output.classification,
+          )
         )
           throw new ConflictException("PROTECTED_OUTPUT_SET_INCOMPLETE");
 
@@ -172,10 +201,47 @@ export class ProtectedOutputPersistenceRepository {
             classification: "protected" | "public";
             credentialId?: string;
             valueId?: string;
+            valueAssetId?: string;
             scope: "run" | "project";
           }
         > = {};
-        const credentialIds: string[] = [];
+        const persistCanonicalProvenance = async (
+          output: AcquiredProtectedOutput,
+          storedId: string,
+        ) => {
+          if (authority.authorityModel !== "canonical") return undefined;
+          if (output.scope !== "project")
+            throw new ConflictException("CANONICAL_OUTPUT_PROJECT_SCOPE_REQUIRED");
+          const descriptor = authority.contractFacts!.response.outputs.find(
+            (candidate) => candidate.key === output.reference,
+          );
+          if (!descriptor || descriptor.classification !== output.classification)
+            throw new ConflictException("CANONICAL_OUTPUT_DESCRIPTOR_MISMATCH");
+          const valueAssetId = randomUUID();
+          await client.query(
+            `INSERT INTO typed_value_assets(
+               id,project_id,environment_id,application_key,classification,
+               producer_protected_operation_id,operation_contract_revision_id,canonical_output_key,
+               identity_role,generated_public_value_id,project_credential_id,transport_extractor,resource_effect
+             ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb)`,
+            [
+              valueAssetId,
+              context.projectId,
+              context.environmentId,
+              authority.applicationKey,
+              output.classification,
+              context.protectedOperationId,
+              authority.operationContractRevisionId,
+              output.reference,
+              descriptor.identityRole ?? null,
+              output.classification === "public" ? storedId : null,
+              output.classification === "protected" ? storedId : null,
+              JSON.stringify(descriptor.extractor ?? null),
+              JSON.stringify(authority.contractFacts!.resourceEffect ?? null),
+            ],
+          );
+          return valueAssetId;
+        };
         for (const item of encrypted) {
           const id = randomUUID();
           if (item.output.classification === "protected") {
@@ -233,12 +299,13 @@ export class ProtectedOutputPersistenceRepository {
                 context.protectedOperationId,
               ],
             );
-            credentialIds.push(id);
             references[item.output.reference] = {
               classification: "protected",
               credentialId: id,
               scope: "project",
             };
+            const valueAssetId = await persistCanonicalProvenance(item.output, id);
+            if (valueAssetId) references[item.output.reference]!.valueAssetId = valueAssetId;
           } else {
             if (item.output.scope === "run" && context.ownerKind !== "run")
               throw new ConflictException("RUN_OUTPUT_REQUIRES_RUN_OWNER");
@@ -267,6 +334,8 @@ export class ProtectedOutputPersistenceRepository {
               valueId: id,
               scope: item.output.scope,
             };
+            const valueAssetId = await persistCanonicalProvenance(item.output, id);
+            if (valueAssetId) references[item.output.reference]!.valueAssetId = valueAssetId;
           }
         }
         for (const binding of externalResourceBindings) {
@@ -318,14 +387,6 @@ export class ProtectedOutputPersistenceRepository {
               binding.identitySource,
               binding.requiredForDestructiveLifecycle,
             ],
-          );
-        }
-        if (credentialIds.length) {
-          await client.query(
-            `UPDATE environments SET secret_refs=(
-               SELECT jsonb_agg(DISTINCT value) FROM jsonb_array_elements_text(secret_refs || $2::jsonb) value
-             ) WHERE id=$1 AND project_id=$3`,
-            [context.environmentId, JSON.stringify(credentialIds), context.projectId],
           );
         }
         const transitioned = await client.query<{

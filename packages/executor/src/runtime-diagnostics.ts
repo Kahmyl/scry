@@ -4,8 +4,6 @@ import type { Page } from "playwright";
 
 import type { DiagnosticRecord } from "./types.js";
 
-const MAX_NETWORK_ERROR_BODY_BYTES = 64 * 1024;
-
 export function attachDiagnostics(
   page: Page,
   diagnostics: DiagnosticRecord[],
@@ -52,7 +50,6 @@ export function attachNetworkCapture(
   records: Array<Record<string, unknown>>,
   redactor: SecretRedactor,
   activity?: { active: Map<string, { url: string; resourceType: string }> },
-  pendingBodies = new Set<Promise<void>>(),
   isProtectedCaptureActive: () => boolean = () => false,
 ) {
   page.on("request", (request) => {
@@ -80,31 +77,10 @@ export function attachNetworkCapture(
     };
     records.push(record);
     if (response.status() < 400) return;
-    const contentType = response.headers()["content-type"]?.toLowerCase() ?? "";
-    if (!contentType.includes("json") && !contentType.startsWith("text/")) return;
-    const declaredLength = Number(response.headers()["content-length"] ?? 0);
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_NETWORK_ERROR_BODY_BYTES) {
-      record.responseBodyOmitted = "declared_body_too_large";
-      return;
-    }
-    let capture: Promise<void>;
-    capture = response
-      .body()
-      .then((body) => {
-        const truncated = body.byteLength > MAX_NETWORK_ERROR_BODY_BYTES;
-        const text = body.subarray(0, MAX_NETWORK_ERROR_BODY_BYTES).toString("utf8");
-        try {
-          record.responseBody = redactor.redactValue(JSON.parse(text));
-        } catch {
-          record.responseBody = redactor.redact(text);
-        }
-        if (truncated) record.responseBodyTruncated = true;
-      })
-      .catch(() => {
-        record.responseBodyOmitted = "unavailable";
-      })
-      .finally(() => pendingBodies.delete(capture));
-    pendingBodies.add(capture);
+    // Diagnostic evidence deliberately contains metadata only. Reading a body here
+    // can wait forever on streaming/error responses and retain unneeded plaintext.
+    // Protected output acquisition has its own exact response authority.
+    record.responseBodyOmitted = "privacy_metadata_only";
   });
   const complete = (request: { url(): string }) => activity?.active.delete(request.url());
   page.on("requestfinished", complete);

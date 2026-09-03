@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { chromium } from "playwright";
 
 import {
   inspectBrowserRuntimeArtifacts,
@@ -9,6 +8,7 @@ import {
   browserObservationRuntimeHealth,
   verifyBrowserObservationRuntime,
 } from "../src/grounding.js";
+import { openPraxisBrowserSession } from "../src/lifecycle/browser-session.js";
 
 describe("browser observation runtime artifacts", () => {
   it("ships self-contained artifacts without transpiler helpers", () => {
@@ -29,16 +29,18 @@ describe("browser observation runtime artifacts", () => {
   });
 
   it("executes observer and privacy artifacts in the production browser boundary", async () => {
+    const browserChannel = process.env.SCRY_BROWSER_CHANNEL ?? "chrome";
+
     await expect(
-      verifyBrowserObservationRuntime("chrome", async () => {
-        const browser = await chromium.launch({ headless: true, channel: "chrome" });
-        const context = await browser.newContext();
-        const page = await context.newPage();
-        return { browser, context, page };
-      }),
+      verifyBrowserObservationRuntime(browserChannel, () =>
+        openPraxisBrowserSession({
+          browserChannel,
+          headless: true,
+        }),
+      ),
     ).resolves.toMatchObject({
       healthy: true,
       diagnostics: [],
     });
-  });
+  }, 15_000);
 });

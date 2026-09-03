@@ -8,7 +8,8 @@ export function registerGetCapabilitiesTool(server: McpServer, client: ScryApiCl
     "get_capabilities",
     {
       title: "Get Scry capabilities",
-      description: "Verify the exact Scry release and available current-contract actions.",
+      description:
+        "Read Scry release and capability facts. Use this when the task asks about the release or available capabilities, when contract compatibility is uncertain, or when a Scry error explicitly directs you to verify the release. Do not use it as a routine preflight before ordinary Mission, Praxis, Flow, or Run work.",
       inputSchema: {},
       annotations: readOnly,
     },

@@ -32,6 +32,15 @@ const executionFlags = [
 const scanRoots = ["apps", "packages", "scripts", "docker-compose.yml", "compose.deploy.yml"];
 const ignoredDirectories = new Set(["node_modules", "dist", "coverage", ".next", "artifacts"]);
 const sourceExtensions = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".json", ".yml", ".yaml"]);
+const operatorUiDownloadAdapter = "apps/web/src/infrastructure/browser/download-blob.ts";
+const browserMechanicsOwners = ["packages/praxis/src/", "packages/browser-runtime/src/"];
+const browserV2WorkerCoordinator = "apps/api/src/browser-execution/browser-v2-worker-engine.ts";
+const browserV2ActivationOwners = new Set([
+  "apps/api/src/browser-execution/browser-execution-queue.service.ts",
+  "apps/api/src/browser-execution/controllers/browser-lifecycle.controller.ts",
+  "apps/api/src/browser-v2-main.ts",
+  "apps/api/src/browser-v2-worker.ts",
+]);
 
 for (const candidate of deletedPaths) {
   if (existsSync(path.join(root, candidate)))
@@ -49,31 +58,49 @@ for (const file of filesToScan()) {
   const productionSource =
     !relative.includes("/test/") &&
     !relative.includes("/scripts/") &&
+    !relative.startsWith("scripts/") &&
     !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(relative);
+  const ownsBrowserMechanics =
+    browserMechanicsOwners.some((owner) => relative.startsWith(owner)) ||
+    relative === browserV2WorkerCoordinator;
   if (productionSource && /\b(?:chromium|firefox|webkit)\.launch\s*\(/.test(source)) {
-    const allowed = new Set(["packages/praxis/src/lifecycle/browser-session.ts"]);
-    if (!allowed.has(relative))
+    if (!ownsBrowserMechanics)
       violations.push(`${relative}: browser creation is outside an admitted owner`);
   }
   if (
     productionSource &&
-    !relative.startsWith("packages/praxis/src/") &&
+    !ownsBrowserMechanics &&
     /\.(?:newContext|newPage|newCDPSession|goto|reload|waitForURL|waitForLoadState)\s*\(|\b(?:browser|context|page|candidate|popup|previousPage|uncertainContext)\.close\s*\(/.test(
       source,
     )
   ) {
-    violations.push(`${relative}: browser lifecycle mechanics are outside Praxis`);
+    violations.push(`${relative}: browser lifecycle mechanics are outside an admitted owner`);
   }
+  const browserActionPattern =
+    /\.(?:click|dblclick|fill|type|selectOption|setChecked|check|uncheck|press|hover|dragTo|setInputFiles|waitForEvent)\s*\(|\.(?:keyboard|mouse)\.(?:press|type|down|up|click|dblclick|move|wheel)\s*\(/g;
+  const browserActionMatches = source.match(browserActionPattern) ?? [];
+  const admittedOperatorUiDownload =
+    relative === operatorUiDownloadAdapter &&
+    browserActionMatches.length === 1 &&
+    browserActionMatches[0].startsWith(".click(") &&
+    /document\.createElement\(["']a["']\)/.test(source) &&
+    /\.download\s*=/.test(source) &&
+    /URL\.createObjectURL\s*\(/.test(source) &&
+    /URL\.revokeObjectURL\s*\(/.test(source);
+
   if (
     productionSource &&
-    !relative.startsWith("packages/praxis/src/") &&
-    /\.(?:click|dblclick|fill|type|selectOption|setChecked|check|uncheck|press|hover|dragTo|setInputFiles|waitForEvent)\s*\(|\.(?:keyboard|mouse)\.(?:press|type|down|up|click|dblclick|move|wheel)\s*\(/.test(
-      source,
-    )
+    !ownsBrowserMechanics &&
+    browserActionMatches.length > 0 &&
+    !admittedOperatorUiDownload
   ) {
-    violations.push(`${relative}: browser action mechanics are outside Praxis`);
+    violations.push(`${relative}: browser action mechanics are outside an admitted owner`);
   }
-  if (relative.startsWith("apps/api/src/") && !relative.includes("/native-browser-driver/")) {
+  if (
+    relative.startsWith("apps/api/src/") &&
+    !relative.includes("/native-browser-driver/") &&
+    relative !== browserV2WorkerCoordinator
+  ) {
     if (
       /\.(?:getByRole|getByLabel|getByPlaceholder|getByText|getByTestId|locator)\s*\(/.test(source)
     ) {
@@ -84,7 +111,20 @@ for (const file of filesToScan()) {
     productionSource &&
     /process\.env(?:\.[A-Z0-9_]*_ENABLED|\[["'][A-Z0-9_]*_ENABLED["']\])/.test(source)
   ) {
-    violations.push(`${relative}: runtime path-selection *_ENABLED branch is forbidden`);
+    const enabledReferences = [
+      ...source.matchAll(
+        /process\.env(?:\.([A-Z0-9_]*_ENABLED)|\[["']([A-Z0-9_]*_ENABLED)["']\])/g,
+      ),
+    ];
+    const failClosedBrowserV2Guards = [
+      ...source.matchAll(/if\s*\(\s*process\.env\.BROWSER_V2_ENABLED\s*!==\s*["']true["']\s*\)/g),
+    ];
+    const activationOnly =
+      browserV2ActivationOwners.has(relative) &&
+      enabledReferences.every((match) => (match[1] ?? match[2]) === "BROWSER_V2_ENABLED") &&
+      failClosedBrowserV2Guards.length === enabledReferences.length;
+    if (!activationOnly)
+      violations.push(`${relative}: runtime path-selection *_ENABLED branch is forbidden`);
   }
   if (
     relative.startsWith("apps/mcp/src/") &&
@@ -104,7 +144,7 @@ if (violations.length) {
   console.error(violations.join("\n"));
   process.exit(1);
 }
-console.log("Mission-first M1 execution ownership boundary verified.");
+console.log("Browser execution ownership boundary verified.");
 
 function filesToScan() {
   const result = [];

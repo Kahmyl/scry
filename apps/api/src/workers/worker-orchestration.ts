@@ -10,6 +10,7 @@ import {
   type ProbeJob,
   type RunJob,
 } from "../runtime/index.js";
+import type { ApiOperationalEventWriter } from "../infrastructure/index.js";
 
 export interface WorkerFleetOptions {
   connection: WorkerOptions["connection"];
@@ -19,6 +20,7 @@ export interface WorkerFleetOptions {
   processCalibration: (job: Job<CalibrationJob>) => Promise<unknown>;
   processProbe: (job: Job<ProbeJob>) => Promise<unknown>;
   processPraxis: (job: Job<PraxisJob>) => Promise<unknown>;
+  operationalEvents?: ApiOperationalEventWriter;
 }
 
 export interface WorkerFleet {
@@ -47,34 +49,25 @@ export function createWorkerFleet(options: WorkerFleetOptions): WorkerFleet {
     lockDuration: 60_000,
   });
 
-  run.on("failed", (job, error) => {
-    writeFailure({
-      message: "Run job failed",
-      runId: job?.data.runId,
-      attemptsMade: job?.attemptsMade,
-      error: error.message,
-    });
-  });
   calibration.on("failed", (job, error) => {
-    writeFailure({
-      message: "Calibration job failed",
-      calibrationSessionId: job?.data.calibrationSessionId,
-      code: safeWorkerCode(error),
+    void emitFleetFailure(options, safeWorkerCode(error), {
+      workload: "calibration",
+      workloadId: job?.data.calibrationSessionId,
     });
   });
   probe.on("failed", (job, error) => {
-    writeFailure({
-      message: "Probe job failed",
-      probeSessionId: job?.data.probeSessionId,
-      code: safeWorkerCode(error),
+    void emitFleetFailure(options, safeWorkerCode(error), {
+      workload: "probe",
+      workloadId: job?.data.probeSessionId,
     });
   });
   praxis.on("failed", (job, error) => {
-    writeFailure({
-      message: "Praxis job failed",
-      requestId: job?.data.requestId,
-      code: safeWorkerCode(error),
-    });
+    void emitFleetFailure(
+      options,
+      safeWorkerCode(error),
+      { workload: "praxis" },
+      job?.data.requestId,
+    );
   });
 
   return {
@@ -89,6 +82,24 @@ function safeWorkerCode(error: unknown) {
   return /^[A-Z][A-Z0-9_]*$/.test(value) ? value : "WORKER_EXECUTION_FAILED";
 }
 
-function writeFailure(payload: Record<string, unknown>) {
-  process.stderr.write(`${JSON.stringify(payload)}\n`);
+async function emitFleetFailure(
+  options: WorkerFleetOptions,
+  reasonCode: string,
+  details: Record<string, unknown>,
+  operationId?: string,
+) {
+  if (options.operationalEvents) {
+    await options.operationalEvents.emit("worker", {
+      name: "worker.execution_failed",
+      classification: "infrastructure",
+      reasonCode,
+      outcome: "failed",
+      causality: { ...(operationId ? { operationId } : {}) },
+      details,
+    });
+    return;
+  }
+  process.stderr.write(
+    `${JSON.stringify({ kind: "scry.operational_event.unconfigured", reasonCode, details })}\n`,
+  );
 }

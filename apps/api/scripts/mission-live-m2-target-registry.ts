@@ -176,7 +176,11 @@ export function coreM2Intents(input: {
       intent(
         auth,
         "fixture-sign-in",
-        { kind: "activate", target: target("sign in", { role: "button", name: "Sign in" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("sign in", { role: "button", name: "Sign in" }),
+        },
         visible(target("partner portal", { role: "heading", name: "Partner Portal" })),
         "authentication",
       ),
@@ -187,6 +191,7 @@ export function coreM2Intents(input: {
       ),
       intent(controls, "fixture-open-controls", {
         kind: "activate",
+        semanticEffect: "unknown",
         target: target("open controls", { role: "button", name: "Open controls" }),
       }),
       intent(
@@ -194,6 +199,7 @@ export function coreM2Intents(input: {
         "fixture-open-environment",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("environment", { role: "combobox", text: "Choose environment" }),
         },
         visible(target("test mode option", { role: "option", name: "Test Mode" })),
@@ -203,6 +209,7 @@ export function coreM2Intents(input: {
         "fixture-test-mode",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("test mode option", { role: "option", name: "Test Mode" }),
         },
         state(target("continue", { role: "button", name: "Continue" }), { enabled: true }),
@@ -210,7 +217,11 @@ export function coreM2Intents(input: {
       intent(
         details,
         "fixture-continue",
-        { kind: "activate", target: target("continue", { role: "button", name: "Continue" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("continue", { role: "button", name: "Continue" }),
+        },
         navigation(`${input.origin}/details`, "exact"),
       ),
       inspect(
@@ -282,7 +293,11 @@ export function vitractM2Intents(input: {
       intent(
         auth,
         "vitract-login",
-        { kind: "activate", target: target("login", { role: "button", name: "Login" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("login", { role: "button", name: "Login" }),
+        },
         navigation("https://preview.vitract.com/partner", "path"),
         "authentication",
       ),
@@ -294,11 +309,16 @@ export function vitractM2Intents(input: {
       intent(
         developer,
         "vitract-developer",
-        { kind: "activate", target: target("developer", { role: "link", name: "Developer" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("developer", { role: "link", name: "Developer" }),
+        },
         navigation("https://preview.vitract.com/partner/developer", "path"),
       ),
       intent(developer, "vitract-test-mode", {
         kind: "activate",
+        semanticEffect: "unknown",
         target: target("test mode", { role: "button", name: "Test mode" }),
       }),
       intent(
@@ -306,6 +326,7 @@ export function vitractM2Intents(input: {
         "vitract-applications",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("applications", { role: "link", name: "Applications" }),
         },
         navigation("https://preview.vitract.com/partner/developer/applications", "path"),
@@ -320,6 +341,7 @@ export function vitractM2Intents(input: {
         "vitract-new-application",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("new application", { role: "link", name: "New application" }),
         },
         navigation("https://preview.vitract.com/partner/developer/applications/new", "path"),
@@ -335,6 +357,7 @@ export function vitractM2Intents(input: {
         "vitract-save-application",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("save application", { role: "button", name: "Save" }),
         },
         navigation("https://preview.vitract.com/partner/developer/applications", "path"),
@@ -344,6 +367,7 @@ export function vitractM2Intents(input: {
         "vitract-created-application",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("created application", { role: "link", name: applicationName }),
         },
         visible(target("application credentials", { role: "link", name: "Credentials" })),
@@ -353,6 +377,7 @@ export function vitractM2Intents(input: {
         "vitract-credentials",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("application credentials", { role: "link", name: "Credentials" }),
         },
         visible(target("add credential", { role: "button", name: "Add credential" })),
@@ -362,6 +387,7 @@ export function vitractM2Intents(input: {
         "vitract-add-credential",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("add credential", { role: "button", name: "Add credential" }),
         },
         visible(target("add credential dialog", { role: "dialog", name: "Add credential" })),
@@ -418,6 +444,7 @@ function automationExerciseIntents(ownership: M2Ownership): MissionAuthoringInte
         "ae-submit-search",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("submit search", {
             role: "button",
             testId: "submit_search",
@@ -438,12 +465,14 @@ function automationExerciseIntents(ownership: M2Ownership): MissionAuthoringInte
         "ae-add-one",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("add first product", { role: "button", name: "Add to cart" }),
         },
         visible(target("added confirmation", { text: "Added!" })),
       ),
       mutation(add, "ae-continue-one", {
         kind: "activate",
+        semanticEffect: "unknown",
         target: target("continue shopping", { role: "button", name: "Continue Shopping" }),
       }),
       intent(
@@ -458,12 +487,14 @@ function automationExerciseIntents(ownership: M2Ownership): MissionAuthoringInte
         "ae-add-two",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("add second product", { role: "button", name: "Add to cart" }),
         },
         visible(target("added confirmation", { text: "Added!" })),
       ),
       mutation(add, "ae-continue-two", {
         kind: "activate",
+        semanticEffect: "unknown",
         target: target("continue shopping", { role: "button", name: "Continue Shopping" }),
       }),
       intent(
@@ -500,7 +531,11 @@ function automationExerciseIntents(ownership: M2Ownership): MissionAuthoringInte
       intent(
         tests,
         "ae-test-cases",
-        { kind: "activate", target: target("test cases", { role: "link", name: "Test Cases" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("test cases", { role: "link", name: "Test Cases" }),
+        },
         navigation("https://automationexercise.com/test_cases", "path"),
       ),
       inspect(
@@ -527,6 +562,7 @@ function demoBlazeIntents(ownership: M2Ownership): MissionAuthoringIntent[][] {
       ),
       intent(browse, "db-phones", {
         kind: "activate",
+        semanticEffect: "unknown",
         target: target("phones category", { role: "link", name: "Phones" }),
       }),
       inspect(
@@ -536,6 +572,7 @@ function demoBlazeIntents(ownership: M2Ownership): MissionAuthoringIntent[][] {
       ),
       intent(browse, "db-laptops", {
         kind: "activate",
+        semanticEffect: "unknown",
         target: target("laptops category", { role: "link", name: "Laptops" }),
       }),
       inspect(
@@ -552,6 +589,7 @@ function demoBlazeIntents(ownership: M2Ownership): MissionAuthoringIntent[][] {
       ),
       mutation(add, "db-add", {
         kind: "activate",
+        semanticEffect: "unknown",
         target: target("add to cart", { role: "link", name: "Add to cart" }),
       }),
       intent(
@@ -564,7 +602,11 @@ function demoBlazeIntents(ownership: M2Ownership): MissionAuthoringIntent[][] {
       mutation(
         cleanup,
         "db-delete",
-        { kind: "activate", target: target("delete cart item", { role: "link", name: "Delete" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("delete cart item", { role: "link", name: "Delete" }),
+        },
         hidden(target("cart product", { text: "Samsung galaxy s6" })),
       ),
       intent(
@@ -576,25 +618,33 @@ function demoBlazeIntents(ownership: M2Ownership): MissionAuthoringIntent[][] {
       intent(
         modals,
         "db-login-modal",
-        { kind: "activate", target: target("login modal", { role: "link", name: "Log in" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("login modal", { role: "link", name: "Log in" }),
+        },
         visible(target("login dialog", { role: "dialog", name: "Log in" })),
       ),
       intent(
         modals,
         "db-close-login",
-        { kind: "press", key: "Escape" },
+        { kind: "press", semanticEffect: "unknown", key: "Escape" },
         hidden(target("login dialog", { role: "dialog", name: "Log in" })),
       ),
       intent(
         modals,
         "db-contact-modal",
-        { kind: "activate", target: target("contact modal", { role: "link", name: "Contact" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("contact modal", { role: "link", name: "Contact" }),
+        },
         visible(target("contact dialog", { role: "dialog", name: "New message" })),
       ),
       intent(
         modals,
         "db-close-contact",
-        { kind: "press", key: "Escape" },
+        { kind: "press", semanticEffect: "unknown", key: "Escape" },
         hidden(target("contact dialog", { role: "dialog", name: "New message" })),
       ),
     ],
@@ -620,6 +670,7 @@ function xyzBankIntents(ownership: M2Ownership): MissionAuthoringIntent[][] {
         "xyz-customer-login",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("customer login", { role: "button", name: "Customer Login" }),
         },
         visible(target("customer selector", { role: "combobox", name: "Your Name" })),
@@ -632,7 +683,11 @@ function xyzBankIntents(ownership: M2Ownership): MissionAuthoringIntent[][] {
       intent(
         customer,
         "xyz-login",
-        { kind: "activate", target: target("login", { role: "button", name: "Login" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("login", { role: "button", name: "Login" }),
+        },
         visible(target("logout", { role: "button", name: "Logout" })),
       ),
       inspect(customer, "xyz-account-number", target("account number", { text: "Account Number" })),
@@ -641,6 +696,7 @@ function xyzBankIntents(ownership: M2Ownership): MissionAuthoringIntent[][] {
         "xyz-transactions",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("transactions", { role: "button", name: "Transactions" }),
         },
         visible(target("back", { role: "button", name: "Back" })),
@@ -653,13 +709,21 @@ function xyzBankIntents(ownership: M2Ownership): MissionAuthoringIntent[][] {
       intent(
         transactions,
         "xyz-back",
-        { kind: "activate", target: target("back", { role: "button", name: "Back" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("back", { role: "button", name: "Back" }),
+        },
         visible(target("logout", { role: "button", name: "Logout" })),
       ),
       intent(
         logout,
         "xyz-logout",
-        { kind: "activate", target: target("logout", { role: "button", name: "Logout" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("logout", { role: "button", name: "Logout" }),
+        },
         visible(target("customer selector", { role: "combobox", name: "Your Name" })),
       ),
       intent(
@@ -673,6 +737,7 @@ function xyzBankIntents(ownership: M2Ownership): MissionAuthoringIntent[][] {
         "xyz-manager",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("bank manager login", { role: "button", name: "Bank Manager Login" }),
         },
         visible(target("customers", { role: "button", name: "Customers" })),
@@ -680,7 +745,11 @@ function xyzBankIntents(ownership: M2Ownership): MissionAuthoringIntent[][] {
       intent(
         manager,
         "xyz-customers",
-        { kind: "activate", target: target("customers", { role: "button", name: "Customers" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("customers", { role: "button", name: "Customers" }),
+        },
         visible(target("first name column", { text: "First Name" })),
       ),
       inspect(manager, "xyz-customer-proof", target("known customer", { text: "Hermoine" })),
@@ -739,7 +808,11 @@ function contactListIntents(
       mutation(
         user,
         "cl-submit-user",
-        { kind: "activate", target: target("submit user", { role: "button", name: "Submit" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("submit user", { role: "button", name: "Submit" }),
+        },
         navigation("https://thinking-tester-contact-list.herokuapp.com/contactList", "path"),
       ),
       mutation(
@@ -747,6 +820,7 @@ function contactListIntents(
         "cl-add-contact",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("add new contact", { role: "button", name: "Add a New Contact" }),
         },
         navigation("https://thinking-tester-contact-list.herokuapp.com/addContact", "path"),
@@ -778,7 +852,11 @@ function contactListIntents(
       mutation(
         create,
         "cl-submit-contact",
-        { kind: "activate", target: target("submit contact", { role: "button", name: "Submit" }) },
+        {
+          kind: "activate",
+          semanticEffect: "unknown",
+          target: target("submit contact", { role: "button", name: "Submit" }),
+        },
         navigation("https://thinking-tester-contact-list.herokuapp.com/contactList", "path"),
       ),
       intent(
@@ -786,6 +864,7 @@ function contactListIntents(
         "cl-open-contact",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("campaign contact", { text: prefix.slice(0, 20), exact: false }),
         },
         navigation("https://thinking-tester-contact-list.herokuapp.com/contactDetails", "contains"),
@@ -802,6 +881,7 @@ function contactListIntents(
         "cl-edit-contact",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("edit contact", { role: "button", name: "Edit Contact" }),
         },
         navigation("https://thinking-tester-contact-list.herokuapp.com/editContact", "contains"),
@@ -814,6 +894,7 @@ function contactListIntents(
       ),
       mutation(update, "cl-submit-update", {
         kind: "activate",
+        semanticEffect: "unknown",
         target: target("submit contact update", { role: "button", name: "Submit" }),
       }),
       inspect(update, "cl-update-proof", target("updated phone", { text: "8005550199" })),
@@ -824,6 +905,7 @@ function contactListIntents(
         "cl-delete-contact",
         {
           kind: "activate",
+          semanticEffect: "unknown",
           target: target("delete contact", { role: "button", name: "Delete Contact" }),
         },
         navigation("https://thinking-tester-contact-list.herokuapp.com/contactList", "path"),

@@ -31,6 +31,7 @@ export class AuthoringRuntimeRepository {
        WHERE probe.id=$1
          AND credential.security_status='active'
          AND credential.deleted_at IS NULL
+         AND credential.origin_protected_operation_id IS NULL
          AND environment.secret_refs ? ($2::uuid)::text`,
       [probeSessionId, reference],
     );

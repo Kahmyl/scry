@@ -6,6 +6,7 @@ import { resolveTarget } from "../src/grounding.js";
 import {
   observeSemanticPageContext,
   observeSemanticPageContextReferenceState,
+  observeOperationContracts,
 } from "../src/page-context.js";
 
 let browser: Browser;
@@ -32,6 +33,8 @@ describe("bounded semantic page context", () => {
         <section aria-label="Environment">
           <button role="tab" aria-selected="true">Test mode</button>
           <button role="tab" aria-selected="false">Live mode</button>
+          <button aria-pressed="true">Sandbox enabled</button>
+          <button aria-pressed="false">Production enabled</button>
         </section>
         <section aria-label="Applications">
           <h2>Existing application</h2>
@@ -54,6 +57,8 @@ describe("bounded semantic page context", () => {
         expect.objectContaining({ role: "heading", name: "Developer" }),
         expect.objectContaining({ role: "tab", name: "Test mode", selected: true }),
         expect.objectContaining({ role: "tab", name: "Live mode", selected: false }),
+        expect.objectContaining({ role: "button", name: "Sandbox enabled", pressed: true }),
+        expect.objectContaining({ role: "button", name: "Production enabled", pressed: false }),
         expect.objectContaining({ role: "button", name: "Manage credentials" }),
         expect.objectContaining({ role: "link", name: "Developer documentation" }),
       ]),
@@ -247,6 +252,22 @@ describe("bounded semantic page context", () => {
     const bounded = await observeSemanticPageContext(page);
     expect(bounded.completeness).toMatchObject({ observed: 5_002, returned: 0, truncated: true });
     expect(bounded.controls).toHaveLength(0);
+  });
+
+  it("keeps an independently public form label visible beside a protected control", async () => {
+    await page.setContent(`
+      <form aria-label="Account sign in">
+        <label>Password <input type="password" /></label>
+        <button>Continue</button>
+      </form>
+    `);
+    const context = await observeSemanticPageContext(page);
+    expect(context.controls.find((control) => control.name === "Continue")?.group).toBe(
+      "Account sign in",
+    );
+    expect(context.controls.find((control) => control.valueProtected)?.group).toBe(
+      "Account sign in",
+    );
   });
 
   it.each([
@@ -485,6 +506,153 @@ describe("bounded semantic page context", () => {
     expect(
       context.controls.every((control) => control.reference.startsWith("context-control-")),
     ).toBe(true);
+  });
+
+  it("projects redacted operation facts onto exact current controls without trusting aliases", async () => {
+    await page.route("https://operation.example.test/", async (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `
+          <label>Client ID <input /></label>
+          <button>Create item</button>
+          <script type="application/scry-operation-contract+json">${JSON.stringify({
+            application: { key: "example", provider: "example" },
+            adapter: { key: "public_document", version: 1 },
+            operation: {
+              key: "createItem",
+              label: "Create item",
+              method: "POST",
+              pathTemplate: "/items",
+              transports: ["fetch"],
+              semantics: { dispatch: "mutation", effects: ["business_effect"] },
+            },
+            inputs: [
+              {
+                key: "clientId",
+                label: "Client ID",
+                aliases: ["Customer"],
+                required: true,
+                classification: "public",
+                acceptedPresentations: ["plain_text"],
+              },
+            ],
+            auth: { presentationClasses: [] },
+            response: {
+              statusClasses: [2],
+              mutationPolicy: { confirmedNotAppliedStatuses: [400, 401, 403, 422] },
+              outputs: [
+                {
+                  key: "itemId",
+                  label: "id",
+                  classification: "public",
+                  extractor: { kind: "json_path", path: "$.itemId" },
+                  identityRole: "continuation_identity",
+                  generatedValueEligible: true,
+                },
+              ],
+              continuation: "read_only_retrieve",
+            },
+          })}</script>`,
+      }),
+    );
+    await page.goto("https://operation.example.test/");
+    const [contract] = await observeOperationContracts(
+      page,
+      "00000000-0000-4000-8000-000000000001",
+    );
+    expect(contract).toMatchObject({
+      facts: {
+        operation: { key: "createItem" },
+        inputs: [{ key: "clientId", aliases: ["Customer"] }],
+      },
+      interaction: {
+        activationControlReference: expect.stringMatching(/^context-control-[a-f0-9]{32}$/),
+        inputControlReferences: {
+          clientId: expect.stringMatching(/^context-control-[a-f0-9]{32}$/),
+        },
+      },
+    });
+    expect(JSON.stringify(contract)).not.toContain("must-not-leak");
+    await page.unroute("https://operation.example.test/");
+  });
+
+  it("refuses a public declaration that attempts to supply opaque control authority", async () => {
+    await page.setContent(`
+      <label>Password <input type="password" /></label>
+      <button>Sign in</button>
+      <script type="application/scry-operation-contract+json">${JSON.stringify({
+        application: { key: "example", provider: "example" },
+        adapter: { key: "public_document", version: 1 },
+        operation: {
+          key: "authenticate",
+          label: "Sign in",
+          method: "POST",
+          pathTemplate: "/sessions",
+          transports: ["fetch"],
+          semantics: { dispatch: "mutation", effects: ["authentication"] },
+        },
+        inputs: [
+          {
+            key: "password",
+            label: "Password",
+            aliases: [],
+            required: true,
+            classification: "protected",
+            acceptedPresentations: ["protected_text"],
+            controlReference: `context-control-${"f".repeat(32)}`,
+          },
+        ],
+        auth: { presentationClasses: ["protected_text"] },
+        response: {
+          statusClasses: [2],
+          mutationPolicy: { confirmedNotAppliedStatuses: [400, 401, 403] },
+          outputs: [{ key: "authenticated", label: "authenticated", classification: "public" }],
+          continuation: "none",
+        },
+      })}</script>
+    `);
+    await expect(
+      observeOperationContracts(page, "00000000-0000-4000-8000-000000000001"),
+    ).resolves.toEqual([]);
+  });
+
+  it("keeps field aliases display-only instead of using them as execution authority", async () => {
+    await page.setContent(`
+      <label>Customer <input /></label>
+      <button>Create item</button>
+      <script type="application/scry-operation-contract+json">${JSON.stringify({
+        application: { key: "example", provider: "example" },
+        adapter: { key: "public_document", version: 1 },
+        operation: {
+          key: "createItem",
+          label: "Create item",
+          method: "POST",
+          pathTemplate: "/items",
+          transports: ["fetch"],
+          semantics: { dispatch: "mutation", effects: ["business_effect"] },
+        },
+        inputs: [
+          {
+            key: "clientId",
+            label: "Client ID",
+            aliases: ["Customer"],
+            required: true,
+            classification: "public",
+            acceptedPresentations: ["plain_text"],
+          },
+        ],
+        auth: { presentationClasses: [] },
+        response: {
+          statusClasses: [2],
+          mutationPolicy: { confirmedNotAppliedStatuses: [400] },
+          outputs: [{ key: "itemId", label: "id", classification: "public" }],
+          continuation: "none",
+        },
+      })}</script>
+    `);
+    await expect(
+      observeOperationContracts(page, "00000000-0000-4000-8000-000000000001"),
+    ).resolves.toEqual([]);
   });
 });
 

@@ -26,6 +26,16 @@ import {
 import type { Principal } from "../../auth/index.js";
 import { Database } from "../../infrastructure/index.js";
 import { encryptCredential } from "../credential.crypto.js";
+import {
+  decideMissionSelection,
+  loadMissionSelectionFacts,
+  type MissionSelectionPurpose,
+} from "../../missions/mission-selection-policy.js";
+import { loadConflictScope } from "../../recovery/conflict-scope.repository.js";
+
+export type OperatingContextExecutionIdentity = Readonly<{
+  externalRunId?: string;
+}>;
 
 export class ProjectConfigurationRepository {
   constructor(private readonly database: Database) {}
@@ -57,6 +67,7 @@ export class ProjectConfigurationRepository {
   async operatingContext(
     principal: Principal,
     input: GetOperatingContextInput,
+    executionIdentity: OperatingContextExecutionIdentity = {},
   ): Promise<OperatingContext> {
     return this.database.transaction(async (query) => {
       await query.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
@@ -84,7 +95,15 @@ export class ProjectConfigurationRepository {
           requiresProjectSelection: projectCount > 1,
           projectCandidates: { items: projectCandidates, truncated: projectCount > 5 },
         },
-        missions: { candidates: { items: [], truncated: false } },
+        missions: {
+          candidates: { items: [], truncated: false },
+          policy: {
+            decision: "selection_required",
+            freshPrimaryMissionPermitted: false,
+            continuationAvailable: false,
+            historicalMissionCount: 0,
+          },
+        },
         credentials: { items: [], truncated: false },
         environments: { items: [], truncated: false },
         authoring: {
@@ -114,37 +133,51 @@ export class ProjectConfigurationRepository {
       if (!selected) return operatingContextSchema.parse(empty);
 
       const requiredCredentialReferences = input.requiredCredentialReferences;
-      const [missions, credentials, environments, authoring, uncertainAuthoring] =
-        await Promise.all([
-          query.query<{
-            id: string;
-            title: string;
-            status: "planning" | "running" | "blocked" | "awaiting_user";
-            revision: number;
-            currentObjectiveId: string | null;
-            resumePointer: unknown;
-          }>(
-            `SELECT id,title,status,revision,current_objective_id AS "currentObjectiveId",
+      const [
+        missions,
+        credentials,
+        environments,
+        authoring,
+        uncertainAuthoring,
+        selectionFacts,
+        conflictScope,
+      ] = await Promise.all([
+        query.query<{
+          id: string;
+          title: string;
+          status:
+            | "planning"
+            | "running"
+            | "blocked"
+            | "awaiting_user"
+            | "completed"
+            | "failed"
+            | "cancelled";
+          purpose: MissionSelectionPurpose;
+          revision: number;
+          currentObjectiveId: string | null;
+          resumePointer: unknown;
+        }>(
+          `SELECT id,title,status,purpose,revision,current_objective_id AS "currentObjectiveId",
                   resume_pointer AS "resumePointer"
            FROM missions WHERE project_id=$1
-             AND status IN ('planning','running','blocked','awaiting_user')
              AND ($2::uuid IS NULL OR id=$2)
            ORDER BY updated_at DESC LIMIT 6`,
-            [selected.id, input.missionId ?? null],
-          ),
-          query.query<{
-            referenceId: string;
-            name: string;
-            securityStatus: "active" | "compromised" | "revoked";
-            eligibleForAuthorization: boolean;
-            authorizedEnvironmentIds: string[];
-            authorizedEnvironmentIdsTruncated: boolean;
-            createdAt: Date | string;
-            updatedAt: Date | string;
-          }>(
-            `SELECT credential.id AS "referenceId",credential.name,
+          [selected.id, input.missionId ?? null],
+        ),
+        query.query<{
+          referenceId: string;
+          name: string;
+          securityStatus: "active" | "compromised" | "revoked";
+          eligibleForAuthorization: boolean;
+          authorizedEnvironmentIds: string[];
+          authorizedEnvironmentIdsTruncated: boolean;
+          createdAt: Date | string;
+          updatedAt: Date | string;
+        }>(
+          `SELECT credential.id AS "referenceId",credential.name,
                   credential.security_status AS "securityStatus",
-                  (credential.security_status='active') AS "eligibleForAuthorization",
+                  (credential.security_status='active' AND credential.origin_protected_operation_id IS NULL) AS "eligibleForAuthorization",
                   ARRAY(SELECT environment.id::text FROM environments environment
                     WHERE environment.project_id=credential.project_id
                       AND environment.secret_refs ? credential.id::text
@@ -157,58 +190,43 @@ export class ProjectConfigurationRepository {
            FROM project_credentials credential
            WHERE credential.project_id=$1 AND credential.deleted_at IS NULL
            ORDER BY credential.name,credential.created_at LIMIT 21`,
-            [selected.id],
-          ),
-          query.query<{
-            id: string;
-            name: string;
-            baseOrigin: string;
-            secretRefs: string[];
-            policy: Record<string, unknown>;
-            executionReadiness: "runtime_required" | "runtime_admitted" | "recovery_required";
-          }>(
-            `SELECT environment.id,environment.name,environment.base_origin AS "baseOrigin",
+          [selected.id],
+        ),
+        query.query<{
+          id: string;
+          name: string;
+          baseOrigin: string;
+          secretRefs: string[];
+          policy: Record<string, unknown>;
+          executionReadiness: "runtime_required" | "runtime_admitted" | "recovery_required";
+        }>(
+          `SELECT environment.id,environment.name,environment.base_origin AS "baseOrigin",
                   environment.secret_refs AS "secretRefs",environment.policy,
-                  CASE
-                    WHEN EXISTS (
-                      SELECT 1 FROM adaptive_sessions session
-                      WHERE session.environment_id=environment.id AND session.state='active'
-                        AND session.decision_boundary->>'type'='environment_unavailable'
-                    ) THEN 'recovery_required'
-                    WHEN EXISTS (
-                      SELECT 1 FROM adaptive_sessions session
-                      WHERE session.environment_id=environment.id AND session.state='active'
-                    ) THEN 'runtime_admitted'
-                    ELSE 'runtime_required'
-                  END AS "executionReadiness"
+                  'runtime_required'::text AS "executionReadiness"
            FROM environments environment WHERE environment.project_id=$1
            ORDER BY (
              ($2::text IS NULL OR environment.base_origin=$2 OR environment.policy->'allowedOrigins' ? $2)
              AND (environment.secret_refs @> $3::jsonb)
            ) DESC,environment.created_at LIMIT 11`,
-            [
-              selected.id,
-              input.requiredOrigin ?? null,
-              JSON.stringify(requiredCredentialReferences),
-            ],
-          ),
-          query.query<{
-            sessionId: string;
-            missionId: string;
-            objectiveId: string;
-            flowDraftId: string;
-            environmentId: string;
-            state: "active";
-            decisionBoundary: unknown;
-            turnId: string | null;
-            turnState: string | null;
-            operationId: string | null;
-            mutationOutcome: string | null;
-            operationObjectiveId: string | null;
-            operationFlowDraftId: string | null;
-            _categoryRank: number;
-          }>(
-            `SELECT * FROM (SELECT s.id AS "sessionId",s.mission_id AS "missionId",
+          [selected.id, input.requiredOrigin ?? null, JSON.stringify(requiredCredentialReferences)],
+        ),
+        query.query<{
+          sessionId: string;
+          missionId: string;
+          objectiveId: string;
+          flowDraftId: string;
+          environmentId: string;
+          state: "active";
+          decisionBoundary: unknown;
+          turnId: string | null;
+          turnState: string | null;
+          operationId: string | null;
+          mutationOutcome: string | null;
+          operationObjectiveId: string | null;
+          operationFlowDraftId: string | null;
+          _categoryRank: number;
+        }>(
+          `SELECT * FROM (SELECT s.id AS "sessionId",s.mission_id AS "missionId",
                   s.active_objective_id AS "objectiveId",s.active_flow_draft_id AS "flowDraftId",
                   s.environment_id AS "environmentId",s.state,
                   s.decision_boundary AS "decisionBoundary",
@@ -238,18 +256,18 @@ export class ProjectConfigurationRepository {
                AND (operation.state='running' OR (operation.mutation_outcome='unknown' AND adaptive_operation_unknown_unresolved(operation.session_id,operation.operation_id))))
            ) ranked WHERE "_categoryRank"<=6
            ORDER BY ("decisionBoundary" ? 'authoringRecovery') DESC,"_categoryRank"`,
-            [selected.id, input.missionId ?? null],
-          ),
-          query.query<{
-            sessionId: string;
-            missionId: string;
-            objectiveId: string;
-            flowDraftId: string;
-            environmentId: string;
-            operationId: string;
-            dispatchSemantics: string | null;
-          }>(
-            `WITH candidate_missions AS (
+          [selected.id, input.missionId ?? null],
+        ),
+        query.query<{
+          sessionId: string;
+          missionId: string;
+          objectiveId: string;
+          flowDraftId: string;
+          environmentId: string;
+          operationId: string;
+          dispatchSemantics: string | null;
+        }>(
+          `WITH candidate_missions AS (
              SELECT candidate.id FROM missions candidate
               WHERE candidate.project_id=$1
                 AND candidate.status IN ('planning','running','blocked','awaiting_user')
@@ -278,14 +296,41 @@ export class ProjectConfigurationRepository {
               AND ($2::uuid IS NULL OR session.mission_id=$2)
            ) SELECT "sessionId","missionId","objectiveId","flowDraftId","environmentId","operationId","dispatchSemantics"
                FROM ranked WHERE rank<=6 ORDER BY "missionId",rank`,
-            [selected.id, input.missionId ?? null],
-          ),
-        ]);
+          [selected.id, input.missionId ?? null],
+        ),
+        loadMissionSelectionFacts((text, values) => query.query(text, values), {
+          projectId: selected.id,
+          ...(input.missionId ? { missionId: input.missionId } : {}),
+        }),
+        loadConflictScope((text, values) => query.query(text, values), {
+          projectId: selected.id,
+          ...(input.missionId ? { missionId: input.missionId } : {}),
+        }),
+      ]);
       const snapshot = { missions, credentials, environments, authoring, uncertainAuthoring };
-      const missionItems = snapshot.missions.rows.slice(0, 5).map((mission) => ({
-        ...mission,
-        resumePointer: projectOperatingResumePointer(mission.resumePointer),
-      }));
+      const missionSelection = decideMissionSelection({
+        ...(executionIdentity.externalRunId
+          ? { currentExternalRunId: executionIdentity.externalRunId }
+          : {}),
+        intendedPurpose: input.intendedPurpose ?? "primary",
+        ...(input.missionId ? { selectedMissionId: input.missionId } : {}),
+        candidates: selectionFacts,
+      });
+      const selectionByMission = new Map(
+        missionSelection.candidates.map((candidate) => [candidate.id, candidate]),
+      );
+      const missionItems = snapshot.missions.rows.slice(0, 5).map((mission) => {
+        const selection = selectionByMission.get(mission.id)!;
+        return {
+          ...mission,
+          resumePointer: projectOperatingResumePointer(mission.resumePointer),
+          classification: selection.classification,
+          activeExecutionOwnership: selection.activeExecutionOwnership,
+          unresolvedMutationRisk: selection.unresolvedMutationRisk,
+          outstandingReconciliation: selection.outstandingReconciliation,
+          continuationAvailable: selection.continuationAvailable,
+        };
+      });
       if (input.missionId && missionItems.length === 0)
         throw new NotFoundException({ code: "MISSION_NOT_FOUND" });
       const selectedMissionId = input.missionId ? missionItems[0]!.id : undefined;
@@ -308,7 +353,17 @@ export class ProjectConfigurationRepository {
           baseOrigin: environment.baseOrigin,
           resourceExists: true as const,
           policyValid: allowedOrigins.length > 0 && allowedOrigins.includes(environment.baseOrigin),
-          executionReadiness: environment.executionReadiness,
+          executionReadiness: conflictScope.some(
+            ({ environmentId, kind, blocking }) =>
+              environmentId === environment.id && blocking && kind === "praxis_recovery",
+          )
+            ? ("recovery_required" as const)
+            : conflictScope.some(
+                  ({ environmentId, kind, blocking }) =>
+                    environmentId === environment.id && blocking && kind === "praxis_runtime_owner",
+                )
+              ? ("runtime_admitted" as const)
+              : environment.executionReadiness,
           compatible: originCompatible && credentialsCompatible,
           incompatibilities: [
             ...(!originCompatible ? ["origin_not_allowed" as const] : []),
@@ -445,6 +500,14 @@ export class ProjectConfigurationRepository {
             items: missionItems,
             truncated: (snapshot.missions.rowCount ?? snapshot.missions.rows.length) > 5,
           },
+          policy: {
+            decision: missionSelection.decision,
+            freshPrimaryMissionPermitted: missionSelection.freshPrimaryMissionPermitted,
+            continuationAvailable: missionSelection.continuationAvailable,
+            historicalMissionCount: missionSelection.candidates.filter(
+              ({ classification }) => classification === "settled_history",
+            ).length,
+          },
         },
         credentials: {
           items: credentialItems,
@@ -469,9 +532,9 @@ export class ProjectConfigurationRepository {
             uncertain.length === 0 &&
             (recoverable.length > 0 ||
               compatibleReusable.length > 0 ||
-              (missionItems.length === 0 && compatibleEnvironment)),
+              (missionSelection.freshPrimaryMissionPermitted && compatibleEnvironment)),
           userAuthorityRequired:
-            (!selectedMissionId && missionItems.length > 0) ||
+            missionSelection.userAuthorityRequired ||
             (uncertainCandidates.some(
               ({ dispatchSemantics }) => dispatchSemantics === "read_only",
             ) &&
@@ -486,17 +549,19 @@ export class ProjectConfigurationRepository {
                 ]
               : recoverable.length > 0
                 ? ["get_flow_authoring", "advance_flow_authoring"]
-                : missing.length === 0
-                  ? ["advance_flow_authoring"]
-                  : !selectedMissionId && missionItems.length > 0
-                    ? ["list_missions"]
-                    : requirementBlocked
-                      ? ["create_test_environment_or_authorize_credentials"]
-                      : missionItems.length === 0
-                        ? ["prepare_flow_authoring"]
-                        : ["resume_or_start_distinct_mission"],
-          ...(!selectedMissionId && missionItems.length > 0
-            ? { blockerCode: "MISSION_SELECTION_REQUIRED" as const }
+                : !selectedMissionId && missionSelection.freshPrimaryMissionPermitted
+                  ? ["start_mission"]
+                  : !selectedMissionId && missionSelection.decision !== "explicit_mission_selected"
+                    ? [...missionSelection.safeActions]
+                    : missing.length === 0
+                      ? ["advance_flow_authoring"]
+                      : requirementBlocked
+                        ? ["create_test_environment_or_authorize_credentials"]
+                        : missionItems.length === 0
+                          ? ["prepare_flow_authoring"]
+                          : ["resume_or_start_distinct_mission"],
+          ...(!selectedMissionId && missionSelection.blockerCode
+            ? { blockerCode: missionSelection.blockerCode }
             : requirementBlocked
               ? { blockerCode: "REQUIREMENTS_UNSATISFIED" as const }
               : {}),
@@ -540,7 +605,7 @@ export class ProjectConfigurationRepository {
       `SELECT credential.id,credential.id AS "referenceId",
               credential.project_id AS "projectId",credential.name,
               credential.security_status AS "securityStatus",
-              (credential.security_status='active') AS "eligibleForAuthorization",
+              (credential.security_status='active' AND credential.origin_protected_operation_id IS NULL) AS "eligibleForAuthorization",
               ARRAY(SELECT environment.id::text FROM environments environment
                 WHERE environment.project_id=credential.project_id
                   AND environment.secret_refs ? credential.id::text
@@ -667,6 +732,7 @@ export class ProjectConfigurationRepository {
              authentication_tag=$5,updated_at=now()
          FROM projects project
          WHERE credential.id=$1 AND credential.deleted_at IS NULL
+           AND credential.origin_protected_operation_id IS NULL
            AND project.id=credential.project_id
            AND ($6::uuid IS NULL OR project.workspace_id=$6)
          RETURNING credential.*
@@ -958,7 +1024,8 @@ export class ProjectConfigurationRepository {
       );
     const result = await query(
       `SELECT id::text FROM project_credentials WHERE project_id = $1
-         AND deleted_at IS NULL AND security_status='active' AND id = ANY($2::uuid[])`,
+         AND deleted_at IS NULL AND security_status='active'
+         AND origin_protected_operation_id IS NULL AND id = ANY($2::uuid[])`,
       [projectId, references],
     );
     const active = new Set(result.rows.map((row) => String(row.id)));

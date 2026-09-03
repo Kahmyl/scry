@@ -472,10 +472,15 @@ export const acquisitionValidationSchema = z
   })
   .strict()
   .refine((v) => v.minimumLength <= v.maximumLength, "minimumLength must not exceed maximumLength");
+export const responseJsonPathSchema = z
+  .string()
+  .max(500)
+  .regex(/^\$(?:\.[A-Za-z_][A-Za-z0-9_-]*|\[(?:0|[1-9][0-9]*)\])+$/);
 export const acquisitionIntentSchema = z
   .object({
     target: interactionTargetIntentSchema,
     prohibitedSourceTargets: z.array(interactionTargetIntentSchema).max(20).optional(),
+    responseJsonPath: responseJsonPathSchema.optional(),
     classification: z.enum(["public", "known_secret", "unknown_secret"]),
     permittedMethods: z.array(acquisitionMethodSchema).min(1).max(10),
     objective: protectedValueObjectiveSchema.optional(),

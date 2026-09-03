@@ -21,6 +21,7 @@ const agentSessionId = "33333333-3333-4333-8333-333333333333";
 const runId = "44444444-4444-4444-8444-444444444444";
 const canonicalAttemptId = "55555555-5555-4555-8555-555555555555";
 const artifactId = "66666666-6666-4666-8666-666666666666";
+const secondArtifactId = "67676767-6767-4767-8767-676767676767";
 
 function rows(items: unknown[] = []) {
   return {
@@ -31,7 +32,7 @@ function rows(items: unknown[] = []) {
 
 describe("Mission evidence composition", () => {
   it("freezes accepted Run/Attempt/Artifact provenance into the report snapshot", async () => {
-    const query = vi.fn(async (text: string) => {
+    const query = vi.fn(async (text: string, _values?: unknown[]) => {
       if (
         text.includes('original_instruction AS "originalInstruction"') &&
         text.includes("FROM missions")
@@ -86,6 +87,7 @@ describe("Mission evidence composition", () => {
             canonicalAttemptStartedAt: "2026-08-16 22:33:49+00",
             canonicalAttemptCompletedAt: "2026-08-16 22:34:03+00",
             artifactAttemptId: canonicalAttemptId,
+            artifactStepId: "step-1",
             artifactKind: "screenshot",
             artifactAvailability: "available",
             artifactPrivacyClassification: "safe",
@@ -142,10 +144,15 @@ describe("Mission evidence composition", () => {
 
       if (text.includes("FROM artifact_timeline_entries")) return rows([]);
 
+      if (text.includes("FROM mission_relations relation")) return rows([]);
+
       throw new Error(`UNEXPECTED_QUERY: ${text}`);
     });
 
-    const service = new MissionService({} as never);
+    const protectedOperations = {
+      listMutationReceiptsForRuns: vi.fn(async () => []),
+    };
+    const service = new MissionService({} as never, undefined, protectedOperations as never);
 
     const snapshot = await (
       service as unknown as {
@@ -180,6 +187,8 @@ describe("Mission evidence composition", () => {
             acceptedArtifactIds: string[];
           }>;
           supersededAttemptCount: number;
+          mutationReceipts: unknown[];
+          compositionDigest: string;
         }>;
       }
     ).buildReportSnapshot(query, missionId, "Agent conclusion", ["Journey"], [], "completed");
@@ -205,6 +214,45 @@ describe("Mission evidence composition", () => {
     expect(snapshot.objectiveResults[0]!.acceptedRunIds).toEqual([runId]);
 
     expect(snapshot.supersededAttemptCount).toBe(2);
+    expect(snapshot.mutationReceipts).toEqual([]);
+    expect(snapshot.compositionDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(protectedOperations.listMutationReceiptsForRuns).toHaveBeenCalledWith([runId]);
+  });
+
+  it("refuses Objective evidence acceptance while the Run has not passed", async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text.includes("FROM missions m JOIN projects p"))
+        return rows([
+          {
+            id: missionId,
+            projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            status: "running",
+            revision: 11,
+          },
+        ]);
+      if (text.includes("SELECT 1 FROM agent_sessions")) return rows([{}]);
+      if (text.includes("SELECT 1 FROM mission_objectives")) return rows([{}]);
+      if (text.includes("SELECT id,state FROM runs"))
+        return rows([{ id: runId, state: "running" }]);
+      throw new Error(`UNEXPECTED_QUERY: ${text}`);
+    });
+    const service = new MissionService({
+      transaction: (work: (client: { query: QueryStub }) => unknown) => work({ query }),
+    } as never);
+
+    await expect(
+      service.acceptEvidence(principal, objectiveId, {
+        missionId,
+        agentSessionId,
+        runId,
+        artifactIds: [],
+        conclusion: "Must not accept incomplete required evidence.",
+      }),
+    ).rejects.toMatchObject({ response: { code: "RUN_NOT_ACCEPTABLE" } });
+
+    expect(
+      query.mock.calls.some(([text]) => String(text).includes("INSERT INTO accepted_evidence")),
+    ).toBe(false);
   });
 
   it("refuses an Artifact from a non-canonical Attempt", async () => {
@@ -265,5 +313,58 @@ describe("Mission evidence composition", () => {
     expect(
       query.mock.calls.some(([text]) => String(text).includes("INSERT INTO accepted_evidence")),
     ).toBe(false);
+  });
+
+  it("supersedes the previous selection and preserves the caller's exact Artifact order", async () => {
+    const query = vi.fn(async (text: string, _values?: unknown[]) => {
+      if (text.includes("FROM missions m JOIN projects p"))
+        return rows([
+          {
+            id: missionId,
+            projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            status: "running",
+            revision: 11,
+          },
+        ]);
+      if (text.includes("SELECT 1 FROM agent_sessions")) return rows([{}]);
+      if (text.includes("SELECT 1 FROM mission_objectives")) return rows([{}]);
+      if (text.includes("SELECT id,state FROM runs")) return rows([{ id: runId, state: "passed" }]);
+      if (text.includes("FROM attempts") && text.includes("ORDER BY attempt_number DESC"))
+        return rows([{ id: canonicalAttemptId, state: "passed" }]);
+      if (text.includes("FROM artifacts") && text.includes("attempt_id=$1"))
+        return rows([{ id: artifactId }, { id: secondArtifactId }]);
+      if (text.includes("FROM credential_incidents")) return rows();
+      return rows();
+    });
+    const service = new MissionService({
+      transaction: (work: (client: { query: QueryStub }) => unknown) => work({ query }),
+    } as never);
+
+    await expect(
+      service.acceptEvidence(principal, objectiveId, {
+        missionId,
+        agentSessionId,
+        runId,
+        artifactIds: [secondArtifactId, artifactId],
+        conclusion: "Accept the explicitly ordered evidence selection.",
+      }),
+    ).resolves.toEqual({ objectiveId, runId, status: "accepted" });
+
+    const supersedeIndex = query.mock.calls.findIndex(([text]) =>
+      String(text).includes("UPDATE accepted_evidence SET superseded_at=now()"),
+    );
+    const inserts = query.mock.calls.filter(([text]) =>
+      String(text).includes("INSERT INTO accepted_evidence"),
+    );
+    expect(supersedeIndex).toBeGreaterThan(-1);
+    expect(query.mock.calls.indexOf(inserts[0]!)).toBeGreaterThan(supersedeIndex);
+    expect(inserts.map(([, values]) => values?.[3])).toEqual([secondArtifactId, artifactId]);
+
+    const activity = query.mock.calls.find(([text]) =>
+      String(text).includes("INSERT INTO mission_activities"),
+    );
+    expect(JSON.parse(String(activity?.[1]?.[5]))).toMatchObject({
+      orderedArtifactIds: [secondArtifactId, artifactId],
+    });
   });
 });

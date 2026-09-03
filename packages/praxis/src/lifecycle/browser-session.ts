@@ -7,6 +7,8 @@ import {
   type LaunchOptions,
   type Page,
 } from "playwright";
+import type { ContextProvenance } from "@scry/contracts";
+import type { VeilClipboardCollector } from "@scry/veil";
 import { randomUUID } from "node:crypto";
 
 import { playwrightBrowserChannel } from "../browser-runtime-artifacts.js";
@@ -175,3 +177,57 @@ export async function boundedBrowserClose(
     if (timer) clearTimeout(timer);
   }
 }
+
+const provenanceTransitions: Record<ContextProvenance, ContextProvenance[]> = {
+  safe: ["safe_parked", "destroyed"],
+  safe_parked: ["safe", "destroyed"],
+  protected: ["tainted", "destroyed"],
+  tainted: ["destroyed"],
+  destroyed: [],
+  restored_pending_verification: ["restored_safe", "destroyed"],
+  restored_safe: ["safe_parked", "destroyed"],
+};
+
+export class BrowserSessionProvenance {
+  constructor(
+    readonly contextId: string,
+    private current: ContextProvenance,
+  ) {}
+
+  value(): ContextProvenance {
+    return this.current;
+  }
+
+  transition(next: ContextProvenance): void {
+    if (!provenanceTransitions[this.current].includes(next)) {
+      throw new Error(`CONTEXT_PROVENANCE_TRANSITION_REJECTED:${this.current}:${next}`);
+    }
+
+    this.current = next;
+  }
+
+  canProduceEvidence(): boolean {
+    return this.current === "safe" || this.current === "restored_safe";
+  }
+}
+
+export type SafeBrowserSession = {
+  browser: Browser;
+  context: BrowserContext;
+  page: Page;
+  provenance: BrowserSessionProvenance;
+};
+
+/**
+ * Protected sessions deliberately expose no evidence or
+ * artifact interfaces. Veil owns the protected clipboard
+ * collection boundary and Praxis owns the browser lifecycle.
+ */
+export type ProtectedBrowserSession = {
+  browser: Browser;
+  context: BrowserContext;
+  page: Page;
+  provenance: BrowserSessionProvenance;
+  clipboardCollector: VeilClipboardCollector;
+  destroy(): Promise<"destroyed" | "force_terminated">;
+};

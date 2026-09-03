@@ -2,6 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import {
   advanceAdaptiveSessionSchema,
+  adaptiveOperationReconciliationResultSchema,
+  adaptiveSessionSchema,
   agentDecisionBoundarySchema,
   closeAdaptiveSessionSchema,
   missionAuthoringTurnBudgetsSchema,
@@ -9,6 +11,9 @@ import {
   startAdaptiveSessionSchema,
   prepareFlowAuthoringSchema,
   preparedFlowAuthoringSchema,
+  praxisSessionCloseResultSchema,
+  praxisSessionStartResultSchema,
+  praxisObservationSchema,
   reconcileAdaptiveOperationSchema,
   agentProviderSchema,
   flowDraftPurposeSchema,
@@ -17,7 +22,19 @@ import {
 import { z } from "zod";
 
 import { apiRejection, ScryApiError, type ScryApiClient } from "../../api-client.js";
-import { readOnly, stableKey, toolResult, uuid, writes } from "../../tool-registry.js";
+import {
+  externalFactualRead,
+  externalOpenWorldOperation,
+  idempotentDurableWrite,
+  idempotentExternalOpenWorldOperation,
+  idempotentPotentiallyDestructiveExternalOperation,
+  potentiallyDestructiveExternalOperation,
+  readOnly,
+  stableKey,
+  toolResult,
+  uuid,
+  writes,
+} from "../../tool-registry.js";
 import { publicPlanSchema } from "../authoring/create-flow-draft.tool.js";
 
 export const navigationExpectedEffectGuidance =
@@ -94,7 +111,10 @@ export const hostAuthoringIntentSchema = z
         target: hostSemanticTargetSchema.optional(),
         semanticEffect: z
           .enum(["read_context_transition", "resource_mutation", "unknown"])
-          .optional(),
+          .optional()
+          .describe(
+            "Required when kind is activate or press. Use read_context_transition only for a proven read-only navigation or UI-context transition with live_read authority. resource_mutation and unknown remain mutation-capable; use unknown when read-only semantics are not established.",
+          ),
         publicValue: z
           .string()
           .max(20_000)
@@ -239,7 +259,11 @@ export const hostAuthoringIntentSchema = z
           "live_mutation",
           "protected_mutation",
         ]),
-        authorizationId: uuid.optional(),
+        authorizationId: uuid
+          .optional()
+          .describe(
+            "Use only with live_read, live_mutation, or protected_mutation. Omit for authentication; authentication_calibration grants are not browser-login authority.",
+          ),
       })
       .strict(),
     protectedInputReferences: z
@@ -257,7 +281,18 @@ export const hostAuthoringIntentSchema = z
       .strict()
       .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((intent, context) => {
+    if (
+      (intent.action.kind === "activate" || intent.action.kind === "press") &&
+      !intent.action.semanticEffect
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["action", "semanticEffect"],
+        message: "activate and press require an explicit semanticEffect",
+      });
+  });
 
 export async function withAdaptiveSessionError<T>(
   operation: () => Promise<T>,
@@ -282,6 +317,8 @@ export async function withAdaptiveSessionError<T>(
 export {
   randomUUID,
   advanceAdaptiveSessionSchema,
+  adaptiveOperationReconciliationResultSchema,
+  adaptiveSessionSchema,
   agentDecisionBoundarySchema,
   closeAdaptiveSessionSchema,
   missionAuthoringTurnBudgetsSchema,
@@ -289,11 +326,20 @@ export {
   startAdaptiveSessionSchema,
   prepareFlowAuthoringSchema,
   preparedFlowAuthoringSchema,
+  praxisSessionCloseResultSchema,
+  praxisSessionStartResultSchema,
+  praxisObservationSchema,
   reconcileAdaptiveOperationSchema,
   agentProviderSchema,
   flowDraftPurposeSchema,
   flowRevisionContentSchema,
   z,
+  externalFactualRead,
+  externalOpenWorldOperation,
+  idempotentDurableWrite,
+  idempotentExternalOpenWorldOperation,
+  idempotentPotentiallyDestructiveExternalOperation,
+  potentiallyDestructiveExternalOperation,
   readOnly,
   stableKey,
   toolResult,

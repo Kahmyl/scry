@@ -9,9 +9,11 @@ import {
   LayoutDashboard,
   LoaderCircle,
   LogOut,
+  Menu,
   PlugZap,
   Plus,
   Settings2,
+  X,
 } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
@@ -34,8 +36,11 @@ export function Sidebar({
   onNavigate: (view: View) => void;
   onCreateProject: () => void;
 }) {
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const projectMenuRef = useRef<HTMLDivElement>(null);
+  const mobileToggleRef = useRef<HTMLButtonElement>(null);
+  const mobileCloseRef = useRef<HTMLButtonElement>(null);
   const selectedProject = projects.find((project) => project.id === projectId);
   const nav: Array<[View, string, ReactNode]> = [
     ["overview", "Dashboard", <LayoutDashboard size={17} />],
@@ -53,103 +58,180 @@ export function Sidebar({
     return () => document.removeEventListener("pointerdown", closeProjectMenu);
   }, [projectMenuOpen]);
 
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMobileOpen(false);
+        setProjectMenuOpen(false);
+      }
+    };
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", closeOnEscape);
+    mobileCloseRef.current?.focus();
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+      mobileToggleRef.current?.focus();
+    };
+  }, [mobileOpen]);
+
+  const navigate = (next: View) => {
+    setMobileOpen(false);
+    setProjectMenuOpen(false);
+    onNavigate(next);
+  };
+
   return (
-    <aside className="sidebar">
-      <div className="brand">
-        <div className="brand-mark">
-          <Eye size={21} strokeWidth={2.3} />
-        </div>
-        <div>
-          <strong>Scry</strong>
-          <span>TEST INTELLIGENCE</span>
-        </div>
-      </div>
-      <div className="project-switcher">
-        <span className="eyebrow">PROJECT</span>
-        <div className="project-select" ref={projectMenuRef}>
+    <>
+      <header className="mobile-navigation-bar">
+        <Brand />
+        <button
+          ref={mobileToggleRef}
+          className="mobile-navigation-toggle"
+          type="button"
+          aria-label="Open navigation"
+          aria-controls="dashboard-navigation"
+          aria-expanded={mobileOpen}
+          onClick={() => setMobileOpen(true)}
+        >
+          <Menu size={22} />
+        </button>
+      </header>
+      {mobileOpen && (
+        <button
+          className="mobile-navigation-backdrop"
+          type="button"
+          aria-label="Close navigation"
+          onClick={() => {
+            setMobileOpen(false);
+            setProjectMenuOpen(false);
+          }}
+        />
+      )}
+      <aside
+        id="dashboard-navigation"
+        className={`sidebar${mobileOpen ? " sidebar-mobile-open" : ""}`}
+        role={mobileOpen ? "dialog" : undefined}
+        aria-modal={mobileOpen || undefined}
+        aria-label={mobileOpen ? "Dashboard navigation" : undefined}
+      >
+        <div className="sidebar-mobile-head">
+          <Brand />
           <button
-            className="project-select-trigger"
-            onClick={() => setProjectMenuOpen((open) => !open)}
-            aria-expanded={projectMenuOpen}
-            aria-haspopup="listbox"
+            ref={mobileCloseRef}
+            className="mobile-navigation-close"
+            type="button"
+            aria-label="Close navigation"
+            onClick={() => {
+              setMobileOpen(false);
+              setProjectMenuOpen(false);
+            }}
           >
-            <span>{selectedProject?.name ?? "No projects yet"}</span>
-            <ChevronDown size={16} />
+            <X size={20} />
           </button>
-          {projectMenuOpen && (
-            <div className="project-select-menu" role="listbox" aria-label="Select project">
-              <div className="project-select-heading">Switch project</div>
-              <div className="project-select-options">
-                {projects.length ? (
-                  projects.map((project) => (
-                    <button
-                      key={project.id}
-                      className={project.id === projectId ? "selected" : ""}
-                      onClick={() => {
-                        onSelectProject(project.id);
-                        setProjectMenuOpen(false);
-                      }}
-                      role="option"
-                      aria-selected={project.id === projectId}
-                    >
-                      <span className="project-option-icon">
-                        <Box size={15} />
-                      </span>
-                      <span className="project-option-copy">
-                        <strong>{project.name}</strong>
-                        <small>
-                          {project.id === projectId ? "Current project" : "Open workspace"}
-                        </small>
-                      </span>
-                      {project.id === projectId && <Check size={15} />}
-                    </button>
-                  ))
-                ) : (
-                  <div className="project-select-empty">
-                    Create your first project to get started.
-                  </div>
-                )}
+        </div>
+        <div className="desktop-brand">
+          <Brand />
+        </div>
+        <div className="project-switcher">
+          <span className="eyebrow">PROJECT</span>
+          <div className="project-select" ref={projectMenuRef}>
+            <button
+              className="project-select-trigger"
+              onClick={() => setProjectMenuOpen((open) => !open)}
+              aria-expanded={projectMenuOpen}
+              aria-haspopup="listbox"
+            >
+              <span>{selectedProject?.name ?? "No projects yet"}</span>
+              <ChevronDown size={16} />
+            </button>
+            {projectMenuOpen && (
+              <div className="project-select-menu" role="listbox" aria-label="Select project">
+                <div className="project-select-heading">Switch project</div>
+                <div className="project-select-options">
+                  {projects.length ? (
+                    projects.map((project) => (
+                      <button
+                        key={project.id}
+                        className={project.id === projectId ? "selected" : ""}
+                        onClick={() => {
+                          onSelectProject(project.id);
+                          setProjectMenuOpen(false);
+                          setMobileOpen(false);
+                        }}
+                        role="option"
+                        aria-selected={project.id === projectId}
+                      >
+                        <span className="project-option-icon">
+                          <Box size={15} />
+                        </span>
+                        <span className="project-option-copy">
+                          <strong>{project.name}</strong>
+                          <small>
+                            {project.id === projectId ? "Current project" : "Open workspace"}
+                          </small>
+                        </span>
+                        {project.id === projectId && <Check size={15} />}
+                      </button>
+                    ))
+                  ) : (
+                    <div className="project-select-empty">
+                      Create your first project to get started.
+                    </div>
+                  )}
+                </div>
+                <button
+                  className="project-select-create"
+                  onClick={() => {
+                    setProjectMenuOpen(false);
+                    setMobileOpen(false);
+                    onCreateProject();
+                  }}
+                >
+                  <Plus size={15} /> Create new project
+                </button>
               </div>
-              <button
-                className="project-select-create"
-                onClick={() => {
-                  setProjectMenuOpen(false);
-                  onCreateProject();
-                }}
-              >
-                <Plus size={15} /> Create new project
-              </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
-      <nav>
-        {nav.map(([key, label, icon]) => (
+        <nav>
+          {nav.map(([key, label, icon]) => (
+            <button
+              key={key}
+              className={view === key ? "nav-active" : ""}
+              onClick={() => navigate(key)}
+            >
+              {icon}
+              <span>{label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-bottom">
           <button
-            key={key}
-            className={view === key ? "nav-active" : ""}
-            onClick={() => onNavigate(key)}
+            className={view === "integrations" ? "nav-active" : ""}
+            onClick={() => navigate("integrations")}
           >
-            {icon}
-            <span>{label}</span>
+            <PlugZap size={17} /> Integrations
           </button>
-        ))}
-      </nav>
-      <div className="sidebar-bottom">
-        <button
-          className={view === "integrations" ? "nav-active" : ""}
-          onClick={() => onNavigate("integrations")}
-        >
-          <PlugZap size={17} /> Integrations
-        </button>
-        <button
-          className={view === "settings" ? "nav-active" : ""}
-          onClick={() => onNavigate("settings")}
-        >
-          <Settings2 size={17} /> Project settings
-        </button>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+function Brand() {
+  return (
+    <div className="brand">
+      <div className="brand-mark">
+        <Eye size={21} strokeWidth={2.3} />
       </div>
-    </aside>
+      <div>
+        <strong>Scry</strong>
+        <span>TEST INTELLIGENCE</span>
+      </div>
+    </div>
   );
 }
 

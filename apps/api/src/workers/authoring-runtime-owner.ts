@@ -1,3 +1,4 @@
+import type { ExecutionReport } from "@scry/executor";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -5,12 +6,13 @@ import {
   advanceAuthoringTurnResultSchema,
   currentActionSchema,
   executionPolicySchema,
+  inspectPraxisRegionInputSchema,
   type ClaimedAuthoringRuntimeCommand,
   type InteractionTargetIntent,
   type PraxisCandidateResponse,
 } from "@scry/contracts";
-import type { createAuthoringBrowserSession, AuthoringBrowserSession } from "@scry/executor";
-import { runProtectedStage } from "@scry/executor";
+import type { createAuthoringBrowserSession, AuthoringBrowserSession } from "@scry/praxis";
+import { runProtectedStage } from "@scry/praxis";
 import { inspectPraxisCandidates } from "@scry/praxis";
 
 import type {
@@ -18,7 +20,9 @@ import type {
   AuthoringRuntimeRepository,
 } from "../authoring/index.js";
 
-type CreateSession = typeof createAuthoringBrowserSession;
+type CreateSession = (
+  input: Parameters<typeof createAuthoringBrowserSession<ExecutionReport>>[0],
+) => Promise<AuthoringBrowserSession<ExecutionReport>>;
 
 export type AuthoringRuntimeOwner = {
   start(): Promise<void>;
@@ -34,7 +38,7 @@ type OwnedSession = {
   probeSessionId: string;
   environmentId: string;
   policy: import("@scry/contracts").ExecutionPolicy;
-  session: AuthoringBrowserSession;
+  session: AuthoringBrowserSession<ExecutionReport>;
   heartbeat: NodeJS.Timeout;
   commandPoll: NodeJS.Timeout;
   processingCommand: boolean;
@@ -101,7 +105,7 @@ export function createAuthoringRuntimeOwner(options: {
         return;
       }
 
-      let session: AuthoringBrowserSession | undefined;
+      let session: AuthoringBrowserSession<ExecutionReport> | undefined;
 
       try {
         if (!createSession) {
@@ -172,12 +176,17 @@ export function createAuthoringRuntimeOwner(options: {
         };
 
         owned.commandPoll = setInterval(
-          () => void processNextCommand(runtime.browserLeaseId),
+          () =>
+            void processNextCommand(runtime.browserLeaseId).catch(() =>
+              reportPollingFailure("authoring.command.poll_failed"),
+            ),
           options.pollMs,
         );
 
         sessions.set(runtime.browserLeaseId, owned);
-        await processNextCommand(runtime.browserLeaseId);
+        await processNextCommand(runtime.browserLeaseId).catch(() =>
+          reportPollingFailure("authoring.command.poll_failed"),
+        );
       } catch (error) {
         await session?.close().catch(() => undefined);
 
@@ -262,6 +271,22 @@ export function createAuthoringRuntimeOwner(options: {
           );
 
           await complete(command, observation);
+          return;
+        }
+
+        case "inspect_region": {
+          const input = inspectPraxisRegionInputSchema.parse(command.payload);
+          const inspection = options.executeObservation
+            ? await options.executeObservation({
+                sessionId: owned.probeSessionId,
+                environmentId: owned.environmentId,
+                policy: owned.policy,
+                operationId: `authoring-command-${command.id}`,
+                perform: () => owned.session.inspectRegion(input),
+              })
+            : await owned.session.inspectRegion(input);
+
+          await complete(command, inspection);
           return;
         }
 
@@ -696,6 +721,17 @@ export function createAuthoringRuntimeOwner(options: {
       : perform();
   }
 
+  function reportPollingFailure(
+    event: "authoring.runtime.poll_failed" | "authoring.command.poll_failed",
+  ) {
+    process.stderr.write(
+      `${JSON.stringify({
+        event,
+        code: "AUTHORING_POLL_DEPENDENCY_UNAVAILABLE",
+      })}\n`,
+    );
+  }
+
   return {
     inspect,
     async start() {
@@ -703,8 +739,12 @@ export function createAuthoringRuntimeOwner(options: {
         return;
       }
 
-      await claimAvailable();
-      poll = setInterval(() => void claimAvailable(), options.pollMs);
+      await claimAvailable().catch(() => reportPollingFailure("authoring.runtime.poll_failed"));
+      poll = setInterval(
+        () =>
+          void claimAvailable().catch(() => reportPollingFailure("authoring.runtime.poll_failed")),
+        options.pollMs,
+      );
     },
 
     async close() {

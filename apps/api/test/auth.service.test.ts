@@ -22,7 +22,7 @@ describe("AuthService", () => {
     const service = new AuthService({} as IdentityRepository);
 
     await expect(service.authenticate("Bearer service-token-with-enough-entropy")).resolves.toEqual(
-      { kind: "service", subject: "scry-service" },
+      { kind: "service", credentialKind: "service", subject: "scry-service" },
     );
     await expect(service.authenticate("Bearer wrong-token")).rejects.toBeInstanceOf(
       ServiceUnavailableException,

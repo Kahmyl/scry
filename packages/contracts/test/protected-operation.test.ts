@@ -12,6 +12,7 @@ import {
 describe("protected operation state model", () => {
   it("admits the complete normal lifecycle", () => {
     const path = [
+      "reserved",
       "planned",
       "preparing",
       "ready_to_dispatch",

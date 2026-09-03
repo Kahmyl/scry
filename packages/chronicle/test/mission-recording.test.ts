@@ -193,9 +193,41 @@ describe("Mission recording composition", () => {
     // is Attempt-local.
     expect(left.runs[1]!.timeline[0]!.sequence).toBe(1);
 
+    expect(left.boundaries).toEqual([
+      {
+        order: 0,
+        kind: "verified_checkpoint",
+        predecessorRunId: "run-a",
+        successorRunId: "run-b",
+        checkpointId: "checkpoint-a",
+        restoredByPraxisSessionId: "praxis-b",
+      },
+    ]);
+
     expect(left.recordingDigest).toMatch(/^[0-9a-f]{64}$/);
 
     expect(Object.isFrozen(left)).toBe(true);
+  });
+
+  it("records an explicit cross-Run gap when no verified continuity fact exists", () => {
+    const manifest = composeMissionRecording({
+      missionId: "mission-a",
+      sourceMissionRevision: 11,
+      runs: [
+        selectedRun(0, "run-a", "attempt-a", [videoEntry("attempt-a", 1)]),
+        selectedRun(1, "run-b", "attempt-b", [videoEntry("attempt-b", 1)]),
+      ],
+    });
+
+    expect(manifest.boundaries).toEqual([
+      expect.objectContaining({
+        order: 0,
+        kind: "recording_gap",
+        predecessorRunId: "run-a",
+        successorRunId: "run-b",
+        reason: "browser_authority_changed_without_verified_continuity",
+      }),
+    ]);
   });
 
   it("preserves intentional gaps rather than fabricating continuous media", () => {

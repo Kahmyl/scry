@@ -11,6 +11,8 @@ import {
   reconcileAdaptiveOperationSchema,
   adaptiveOperationReconciliationResultSchema,
   grantMissionAuthorizationSchema,
+  praxisSessionCloseResultSchema,
+  praxisSessionStartResultSchema,
 } from "../src/index.js";
 
 const ids = {
@@ -22,6 +24,7 @@ const ids = {
   protectedReferenceId: "00000000-0000-4000-8000-000000000006",
   authorizationId: "00000000-0000-4000-8000-000000000007",
   turnId: "00000000-0000-4000-8000-000000000008",
+  agentSessionId: "00000000-0000-4000-8000-000000000009",
 };
 
 describe("protected live Praxis session binding", () => {
@@ -34,6 +37,7 @@ describe("protected live Praxis session binding", () => {
     operationId: "issue-secret",
     reason: "Owner approved this exact protected operation",
     confirmedUserAuthorized: true as const,
+    expiresAt: "2099-01-01T00:00:00.000Z",
   };
 
   it("defaults sessions to ordinary and permits an explicit protected session", () => {
@@ -60,8 +64,26 @@ describe("protected live Praxis session binding", () => {
       grantMissionAuthorizationSchema.safeParse({
         ...authorization,
         praxisSessionId: ids.flowDraftId,
+        preparedOperation: {
+          protectedOperationId: ids.authorizationId,
+          preparedExecutionCapabilityId: ids.objectiveId,
+          publicOperationId: authorization.operationId,
+          contractDigest: "0".repeat(64),
+        },
       }).success,
     ).toBe(true);
+    expect(
+      grantMissionAuthorizationSchema.safeParse({
+        ...authorization,
+        praxisSessionId: ids.flowDraftId,
+        preparedOperation: {
+          protectedOperationId: ids.authorizationId,
+          preparedExecutionCapabilityId: ids.objectiveId,
+          publicOperationId: "different-operation",
+          contractDigest: "0".repeat(64),
+        },
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -180,7 +202,9 @@ describe("adaptive session contracts", () => {
     ).toThrow();
     expect(() =>
       missionAuthoringIntentSchema.parse(
-        intent({ action: { kind: "activate", target, selector: "#account" } }),
+        intent({
+          action: { kind: "activate", target, semanticEffect: "unknown", selector: "#account" },
+        }),
       ),
     ).toThrow();
     expect(() => missionAuthoringIntentSchema.parse(intent({ javascript: "alert(1)" }))).toThrow();
@@ -199,6 +223,49 @@ describe("adaptive session contracts", () => {
     ).toMatchObject({
       target: { reference: "context-control-0123456789abcdef0123456789abcdef" },
     });
+  });
+
+  it("requires explicit fail-closed semantics for activate and press", () => {
+    for (const action of [
+      { kind: "activate", target },
+      { kind: "press", target, key: "Enter" },
+    ])
+      expect(() => missionAuthoringIntentSchema.parse(intent({ action }))).toThrow();
+
+    for (const action of [
+      { kind: "activate", target, semanticEffect: "read_context_transition" },
+      { kind: "press", target, key: "Enter", semanticEffect: "read_context_transition" },
+    ])
+      expect(
+        missionAuthoringIntentSchema.parse(
+          intent({ action, authorization: { kind: "live_read" } }),
+        ),
+      ).toMatchObject({ action, authorization: { kind: "live_read" } });
+  });
+
+  it("binds read-context transitions to live_read while retaining explicit mutation choices", () => {
+    for (const kind of [
+      "ordinary",
+      "authentication",
+      "reversible",
+      "live_mutation",
+      "protected_mutation",
+    ] as const)
+      expect(() =>
+        missionAuthoringIntentSchema.parse(
+          intent({
+            action: { kind: "activate", target, semanticEffect: "read_context_transition" },
+            authorization: { kind },
+          }),
+        ),
+      ).toThrow("read-context transition requires explicit live_read authority");
+
+    for (const semanticEffect of ["resource_mutation", "unknown"] as const)
+      expect(
+        missionAuthoringIntentSchema.parse(
+          intent({ action: { kind: "activate", target, semanticEffect } }),
+        ),
+      ).toMatchObject({ action: { semanticEffect }, authorization: { kind: "ordinary" } });
   });
 
   it("accepts one absolute navigation URL through url or the host urlPattern alias", () => {
@@ -259,6 +326,27 @@ describe("adaptive session contracts", () => {
         intent({ authorization: { kind: "live_mutation", authorizationId: ids.authorizationId } }),
       ),
     ).toMatchObject({ authorization: { kind: "live_mutation" } });
+  });
+
+  it("rejects grant IDs on authentication authority", () => {
+    const protectedFill = intent({
+      action: { kind: "fill", target, protectedReferenceId: ids.protectedReferenceId },
+      protectedInputReferences: [ids.protectedReferenceId],
+      authorization: {
+        kind: "authentication",
+        authorizationId: ids.authorizationId,
+      },
+    });
+
+    expect(() => missionAuthoringIntentSchema.parse(protectedFill)).toThrow(
+      "authentication_calibration grants are not browser-login authority",
+    );
+    expect(
+      missionAuthoringIntentSchema.parse({
+        ...protectedFill,
+        authorization: { kind: "authentication" },
+      }),
+    ).toMatchObject({ authorization: { kind: "authentication" } });
   });
 
   it("requires one exact operation-scoped binding for protected authentication", () => {
@@ -421,6 +509,7 @@ describe("adaptive session contracts", () => {
       action: {
         kind: "activate",
         target: { ...target, role: "button", name: "Revoke", exact: true },
+        semanticEffect: "resource_mutation",
       },
       authorization: { kind: "live_mutation", authorizationId: ids.authorizationId },
       credentialLifecycle: {
@@ -522,6 +611,29 @@ describe("adaptive session contracts", () => {
       events: [],
     };
     expect(adaptiveSessionSchema.parse(base)).toMatchObject({ missionId: ids.missionId });
+    expect(praxisSessionStartResultSchema.parse({ ...base, replayed: false })).toMatchObject({
+      id: base.id,
+      replayed: false,
+    });
+    for (const state of ["owned", "unowned", "expired"] as const) {
+      expect(
+        praxisSessionStartResultSchema.parse({ ...base, replayed: true, runtime: { state } }),
+      ).toMatchObject({ replayed: true, runtime: { state } });
+    }
+    expect(() =>
+      praxisSessionStartResultSchema.parse({
+        ...base,
+        replayed: false,
+        runtime: { state: "owned", ownerId: ids.agentSessionId },
+      }),
+    ).toThrow();
+    expect(
+      praxisSessionCloseResultSchema.parse({
+        id: base.id,
+        state: "completed",
+        replayed: false,
+      }),
+    ).toEqual({ id: base.id, state: "completed", replayed: false });
     expect(() =>
       adaptiveSessionTransitionSchema.parse({
         expectedVersion: 0,

@@ -35,7 +35,7 @@ export async function executeAction(
   switch (action.type) {
     case "protectedTransaction":
       throw new InfrastructureDependencyError(
-        "Protected transactions must be delegated to ProtectedTransactionKernel",
+        "Protected transactions must be delegated to the protected transaction runtime capability",
       );
     case "capturePublicValue": {
       const captured = await capturePublicGeneratedValue(
@@ -276,14 +276,17 @@ export async function executeAction(
         });
         await privacyGate.beginProtected();
         await options.onPrivacyBoundary?.("entered");
-        await authenticateProtectedReferencedTargets(
-          page,
-          {
-            fields,
-            submitReference: action.submitTarget.authoritativeReference,
-          },
-          options.onMutationDispatch,
+        // Arm activity tracking before submit. An old document may already have
+        // emitted networkidle; waiting for that cached state can resume recording
+        // before the new authentication request or its redirect even starts.
+        await withinAuthenticationActivityBoundary(page, signal, action.timeoutMs ?? 30_000, () =>
+          authenticateProtectedReferencedTargets(
+            page,
+            { fields, submitReference: action.submitTarget.authoritativeReference! },
+            options.onMutationDispatch,
+          ),
         );
+        await options.settleProtectedAuthentication?.();
         await privacyGate.markCaptured();
         await privacyGate.beginSafeBoundary();
         await privacyGate.confirmSafeBoundary({
@@ -458,4 +461,77 @@ function errorMessage(error: unknown) {
 
 function exactUrlPattern(url: string): string {
   return `^${url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 480)}$`;
+}
+
+/** Observe a fresh quiet window, never a cached document lifecycle event. */
+function withinAuthenticationActivityBoundary(
+  page: Page,
+  signal: AbortSignal,
+  timeoutMs: number,
+  dispatch: () => Promise<unknown>,
+): Promise<void> {
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    const pending = new Set<import("playwright").Request>();
+    const previousDocumentRequests = new Set<import("playwright").Request>();
+    let dispatched = false;
+    let finished = false;
+    let quiet: ReturnType<typeof setTimeout> | undefined;
+    const deadline = setTimeout(
+      () => finish(new Error("PROTECTED_AUTHENTICATION_SETTLEMENT_TIMEOUT")),
+      timeoutMs,
+    );
+    const finish = (error?: unknown) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(deadline);
+      clearTimeout(quiet);
+      page.off("request", started);
+      page.off("requestfinished", ended);
+      page.off("requestfailed", ended);
+      page.off("framenavigated", changed);
+      page.off("domcontentloaded", documentLoaded);
+      page.off("close", closed);
+      signal.removeEventListener("abort", aborted);
+      if (error) reject(error);
+      else resolve();
+    };
+    const changed = () => {
+      clearTimeout(quiet);
+      if (dispatched && !pending.size && !finished) quiet = setTimeout(() => finish(), 500);
+    };
+    const started = (request: import("playwright").Request) => {
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame())
+        for (const active of pending)
+          if (!active.isNavigationRequest() && active.frame() === page.mainFrame())
+            previousDocumentRequests.add(active);
+      pending.add(request);
+      changed();
+    };
+    const ended = (request: import("playwright").Request) => {
+      pending.delete(request);
+      changed();
+    };
+    const documentLoaded = () => {
+      // Chromium may discard an unconsumed fetch body without an end event.
+      // DOMContentLoaded proves document replacement (unlike hash navigation).
+      // Retire only requests from before this navigation, retaining new resources.
+      for (const request of previousDocumentRequests) pending.delete(request);
+      previousDocumentRequests.clear();
+      changed();
+    };
+    const closed = () => finish(new Error("PROTECTED_AUTHENTICATION_PAGE_CLOSED"));
+    const aborted = () => finish(signal.reason ?? new Error("Execution aborted"));
+    page.on("request", started);
+    page.on("requestfinished", ended);
+    page.on("requestfailed", ended);
+    page.on("framenavigated", changed);
+    page.on("domcontentloaded", documentLoaded);
+    page.on("close", closed);
+    signal.addEventListener("abort", aborted, { once: true });
+    dispatch().then(() => {
+      dispatched = true;
+      changed();
+    }, finish);
+  });
 }

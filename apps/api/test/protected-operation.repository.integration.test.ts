@@ -1,5 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { SyntheticInputGeneratorRegistry } from "../src/adaptive-sessions/synthetic-input-generator.registry.js";
+import { vitractSyntheticInputGenerators } from "../src/adaptive-sessions/vitract-synthetic-input.provider.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { operationContractFactsSchema, operationContractProvenanceSchema } from "@scry/contracts";
 
 import { AdaptiveSessionRepository } from "../src/adaptive-sessions/repositories/adaptive-session.repository.js";
 import { Database } from "../src/infrastructure/index.js";
@@ -23,14 +26,16 @@ integration("protected operation repository integration", () => {
   const objectiveId = randomUUID();
   const agentSessionId = randomUUID();
   const flowDraftId = randomUUID();
-  const authorizationId = randomUUID();
 
   beforeAll(async () => {
     process.env.DATABASE_URL = databaseUrl;
     database = new Database();
     operations = new ProtectedOperationRepository(database);
     outputs = new ProtectedOutputPersistenceRepository(database);
-    syntheticInputs = new OperationBoundProtectedInputRepository(database);
+    syntheticInputs = new OperationBoundProtectedInputRepository(
+      database,
+      new SyntheticInputGeneratorRegistry(vitractSyntheticInputGenerators),
+    );
     await database.query(
       `INSERT INTO workspaces(id,name,slug) VALUES($1,'Protected integration',$2)`,
       [workspaceId, `protected-${workspaceId}`],
@@ -56,7 +61,7 @@ integration("protected operation repository integration", () => {
       ],
     );
     await database.query(
-      `INSERT INTO missions(id,project_id,title,original_instruction) VALUES($1,$2,'Protected','Acquire outputs')`,
+      `INSERT INTO missions(id,project_id,title,original_instruction,max_business_mutation_dispatches) VALUES($1,$2,'Protected','Acquire outputs',1000)`,
       [missionId, projectId],
     );
     await database.query(
@@ -71,10 +76,6 @@ integration("protected operation repository integration", () => {
       `INSERT INTO flow_drafts(id,project_id,mission_id,objective_id,environment_id,name,content,plan,created_by_agent_session_id) VALUES($1,$2,$3,$4,$5,'Protected','{}'::jsonb,'{}'::jsonb,$6)`,
       [flowDraftId, projectId, missionId, objectiveId, environmentId, agentSessionId],
     );
-    await database.query(
-      `INSERT INTO mission_authorizations(id,mission_id,objective_id,environment_id,kind,reason,status,granted_by_agent_session_id) VALUES($1,$2,$3,$4,'protected_mutation','Integration qualification','approved',$5)`,
-      [authorizationId, missionId, objectiveId, environmentId, agentSessionId],
-    );
     const session = await new AdaptiveSessionRepository(database).create(workspaceId, {
       projectId,
       missionId,
@@ -87,20 +88,264 @@ integration("protected operation repository integration", () => {
       idempotencyKey: `session-${randomUUID()}`,
     });
     sessionId = session.id;
+    await new AdaptiveSessionRepository(database).activateProvisionedSession(sessionId);
+    await new AdaptiveSessionRepository(database).claimRuntimeLease({
+      sessionId,
+      ownerId: fixtureOwner,
+      leaseDurationMs: 600_000,
+    });
   });
 
   afterAll(async () => {
     await database?.onModuleDestroy();
   });
 
+  // Repository fixtures seed mechanical authority explicitly. No approval row
+  // substitutes for a prepared capability; production admission remains intact.
+  const fixtureOwner = randomUUID();
+  const expiredFixtureIds = new Set<string>();
+  const fixtureIds = new Map<
+    string,
+    { id: string; capabilityId: string; mutationIdentity: string }
+  >();
+  type FixtureOperation = Pick<
+    Awaited<ReturnType<ProtectedOperationRepository["create"]>>,
+    | "id"
+    | "state"
+    | "phase"
+    | "version"
+    | "fencingToken"
+    | "leaseOwner"
+    | "leaseExpiresAt"
+    | "dispatchState"
+    | "mutationOutcome"
+    | "persistedReferences"
+    | "dispatchSemantics"
+  >;
+  const fixturePromises = new Map<string, Promise<FixtureOperation>>();
+  const fixturePolicyId = randomUUID();
+  const fixturePolicy = {
+    allowedOrigins: ["https://example.test"],
+    trustedScriptOrigins: [],
+    allowPrivateNetwork: false,
+    allowDownloads: false,
+    allowPopups: false,
+    maxActions: 20,
+    maxDurationMs: 30000,
+    maxNavigations: 10,
+  };
+  function fixtureIdentity(operationId: string) {
+    let x = fixtureIds.get(operationId);
+    if (!x) {
+      x = { id: randomUUID(), capabilityId: randomUUID(), mutationIdentity: randomUUID() };
+      fixtureIds.set(operationId, x);
+    }
+    return x;
+  }
+  const fixtureManifest = [
+    { reference: "clientId", classification: "public", storageName: "Client ID" },
+    { reference: "clientSecret", classification: "protected", storageName: "Client secret" },
+  ];
+  const fixtureOutputs = fixtureManifest.map((x) => ({
+    key: x.reference,
+    classification: x.classification,
+  }));
+  const canonicalHash = (x: unknown): string =>
+    createHash("sha256").update(stableFixture(x)).digest("hex");
+  function stableFixture(x: unknown): string {
+    if (Array.isArray(x)) return `[${x.map(stableFixture).join(",")}]`;
+    if (x && typeof x === "object")
+      return `{${Object.entries(x)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => JSON.stringify(k) + ":" + stableFixture(v))
+        .join(",")}}`;
+    return JSON.stringify(x);
+  }
+  async function seedFixture(
+    operationId: string,
+    dispatchSemantics: "mutation" | "read_only",
+    state: "reserved" | "planned",
+    programDigest: string | null,
+    finalized: boolean,
+  ): Promise<FixtureOperation> {
+    const existing = fixturePromises.get(operationId);
+    if (existing) return existing;
+    const promise = database.transaction(async (client) => {
+      const ids = fixtureIdentity(operationId),
+        revisionId = randomUUID(),
+        interactionId = randomUUID(),
+        policyId = fixturePolicyId;
+      const operationKey = "op" + revisionId.replaceAll("-", "");
+      const facts = operationContractFactsSchema.parse({
+        application: { key: "fixture", provider: "fixture" },
+        adapter: { key: "fixture", version: 1 },
+        operation: {
+          key: operationKey,
+          label: "Acquire credentials",
+          method: dispatchSemantics === "mutation" ? "POST" : "GET",
+          pathTemplate: "/credentials",
+          transports: ["fetch"],
+          semantics: {
+            dispatch: dispatchSemantics,
+            effects:
+              dispatchSemantics === "mutation"
+                ? ["business_effect", "protected_acquisition"]
+                : ["read", "protected_acquisition"],
+          },
+        },
+        inputs: [],
+        auth: { presentationClasses: [] },
+        response: {
+          statusClasses: [2],
+          ...(dispatchSemantics === "mutation"
+            ? { mutationPolicy: { confirmedNotAppliedStatuses: [400, 409, 422] } }
+            : {}),
+          outputs: fixtureManifest.map((x) => ({
+            key: x.reference,
+            label: x.storageName,
+            classification: x.classification,
+            generatedValueEligible: true,
+          })),
+          continuation: "none",
+        },
+      });
+      const provenance = operationContractProvenanceSchema.parse({
+        sourceKind: "runtime_observation",
+        observationId: "fixture-" + revisionId,
+        origin: "https://example.test",
+        observedAt: new Date().toISOString(),
+        sourcePraxisSessionId: sessionId,
+        sourceDocumentEpoch: 0,
+      });
+      const revisionDigest = canonicalHash(facts),
+        policyDigest = canonicalHash({
+          version: 1,
+          projectId,
+          environmentId,
+          applicationKey: "fixture",
+          policy: fixturePolicy,
+        });
+      await client.query(
+        `INSERT INTO operation_contract_revisions(id,project_id,application_key,provider_key,adapter_key,adapter_version,operation_key,revision,facts,provenance,semantic_digest) VALUES($1,$2,'fixture','fixture','fixture',1,$3,1,$4::jsonb,$5::jsonb,$6)`,
+        [
+          revisionId,
+          projectId,
+          operationKey,
+          JSON.stringify(facts),
+          JSON.stringify(provenance),
+          revisionDigest,
+        ],
+      );
+      await client.query(
+        `INSERT INTO runtime_interaction_capabilities(id,operation_contract_revision_id,operation_contract_revision_digest,praxis_session_id,runtime_owner_id,fencing_epoch,document_epoch,origin,activation_control_reference,expires_at) VALUES($1,$2,$3,$4,$5,1,0,'https://example.test','context-control-11111111111111111111111111111111',now()+interval '10 minutes')`,
+        [interactionId, revisionId, revisionDigest, sessionId, fixtureOwner],
+      );
+      await client.query(
+        `INSERT INTO execution_policy_snapshots(id,project_id,environment_id,application_key,policy_version,allowed_origins,policy,digest) VALUES($1,$2,$3,'fixture',1,'["https://example.test"]'::jsonb,$5::jsonb,$4) ON CONFLICT(id) DO NOTHING`,
+        [policyId, projectId, environmentId, policyDigest, JSON.stringify(fixturePolicy)],
+      );
+      await client.query(
+        `INSERT INTO protected_operations(id,operation_id,mutation_identity,owner_kind,authoring_session_id,project_id,environment_id,mission_id,objective_id,agent_session_id,flow_draft_id,authorization_id,program_digest,dispatch_semantics,state,phase,safe_output_manifest,authority_model,praxis_session_id,runtime_owner_id,runtime_fencing_epoch,document_epoch) VALUES($1,$2,$3,'authoring_session',$4,$5,$6,$7,$8,$9,$10,NULL,$11,$12,$13,$13,$14::jsonb,'canonical',$4,$15,1,0)`,
+        [
+          ids.id,
+          operationId,
+          ids.mutationIdentity,
+          sessionId,
+          projectId,
+          environmentId,
+          missionId,
+          objectiveId,
+          agentSessionId,
+          flowDraftId,
+          programDigest,
+          dispatchSemantics,
+          state,
+          JSON.stringify(state === "reserved" ? [] : fixtureManifest),
+          fixtureOwner,
+        ],
+      );
+      await client.query(
+        `INSERT INTO prepared_execution_capabilities(id,protected_operation_id,mutation_identity,operation_contract_revision_id,operation_contract_revision_digest,runtime_interaction_capability_id,execution_policy_snapshot_id,execution_policy_snapshot_digest,project_id,environment_id,mission_id,objective_id,agent_session_id,application_key,dispatch_semantics,effect_semantics,target_commitment,input_commitment,output_commitment,program_manifest,program_digest,state,expires_at,finalized_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'fixture',$14,$21::text[],$15,$15,$16,CASE WHEN $17 THEN $18::jsonb ELSE NULL END,CASE WHEN $17 THEN $19 ELSE NULL END,CASE WHEN $17 THEN 'finalized' ELSE 'reserved' END,CASE WHEN $20 THEN now()-interval '1 minute' ELSE now()+interval '10 minutes' END,CASE WHEN $17 THEN now() ELSE NULL END)`,
+        [
+          ids.capabilityId,
+          ids.id,
+          ids.mutationIdentity,
+          revisionId,
+          revisionDigest,
+          interactionId,
+          policyId,
+          policyDigest,
+          projectId,
+          environmentId,
+          missionId,
+          objectiveId,
+          agentSessionId,
+          dispatchSemantics,
+          "b".repeat(64),
+          canonicalHash(fixtureOutputs),
+          finalized,
+          JSON.stringify({ programDigest: "a".repeat(64) }),
+          "a".repeat(64),
+          expiredFixtureIds.has(operationId),
+          facts.operation.semantics.effects,
+        ],
+      );
+      await client.query(
+        "UPDATE protected_operations SET prepared_execution_capability_id=$2 WHERE id=$1",
+        [ids.id, ids.capabilityId],
+      );
+      await client.query(
+        `INSERT INTO protected_operation_transitions(protected_operation_id,sequence,from_state,to_state,phase,fencing_token,safe_diagnostics) VALUES($1,1,NULL,$2,$2,0,'{}'::jsonb)`,
+        [ids.id, state],
+      );
+      const inserted = (
+        await client.query<FixtureOperation>(
+          `SELECT id,state,phase,version,fencing_token AS "fencingToken",lease_owner AS "leaseOwner",lease_expires_at AS "leaseExpiresAt",dispatch_state AS "dispatchState",mutation_outcome AS "mutationOutcome",persisted_references AS "persistedReferences",dispatch_semantics AS "dispatchSemantics" FROM protected_operations WHERE id=$1`,
+          [ids.id],
+        )
+      ).rows[0];
+      if (!inserted) throw new Error("CANONICAL_FIXTURE_INSERT_MISSING");
+      return inserted;
+    });
+    fixturePromises.set(operationId, promise);
+    return promise;
+  }
+  async function canonicalCreate(input: Parameters<ProtectedOperationRepository["create"]>[0]) {
+    return seedFixture(
+      input.operationId,
+      input.dispatchSemantics ?? "mutation",
+      "planned",
+      input.programDigest,
+      true,
+    );
+  }
+  async function canonicalReserve(input: Parameters<ProtectedOperationRepository["reserve"]>[0]) {
+    return seedFixture(input.operationId, "mutation", "reserved", null, false);
+  }
+  async function canonicalClaim(input: Parameters<ProtectedOperationRepository["claim"]>[0]) {
+    const ids = fixtureIdentity(input.operationId);
+    await database.query(
+      `UPDATE prepared_execution_capabilities capability SET state='finalized',program_manifest=jsonb_build_object('programDigest',operation.program_digest),program_digest=operation.program_digest,finalized_at=now() FROM protected_operations operation WHERE capability.id=$1 AND operation.id=capability.protected_operation_id AND capability.state='reserved' AND operation.program_digest IS NOT NULL`,
+      [ids.capabilityId],
+    );
+    const binding = input.binding;
+    return operations.claim({
+      ...input,
+      binding: {
+        ...binding,
+        preparedExecutionCapabilityId: ids.capabilityId,
+        mutationIdentity: binding.mutationIdentity,
+      },
+    });
+  }
+
   function create(operationId: string, dispatchSemantics: "mutation" | "read_only" = "mutation") {
-    return operations.create({
+    return canonicalCreate({
       ownerKind: "authoring_session",
       ownerId: sessionId,
       flowDraftId,
-      authorizationId,
       operationId,
-      mutationIdentity: `${operationId}-mutation`,
+      mutationIdentity: fixtureIdentity(operationId).mutationIdentity,
       projectId,
       environmentId,
       missionId,
@@ -121,14 +366,14 @@ integration("protected operation repository integration", () => {
     leaseDurationMs = 30_000,
     dispatchSemantics: "mutation" | "read_only" = "mutation",
   ) {
-    return operations.claim({
+    return canonicalClaim({
       ownerKind: "authoring_session",
       ownerId: sessionId,
       operationId,
       leaseOwner,
       leaseDurationMs,
       binding: {
-        mutationIdentity: `${operationId}-mutation`,
+        mutationIdentity: fixtureIdentity(operationId).mutationIdentity,
         projectId,
         environmentId,
         missionId,
@@ -137,7 +382,6 @@ integration("protected operation repository integration", () => {
         programDigest: "a".repeat(64),
         flowDraftId,
         dispatchSemantics,
-        authorizationId,
         safeOutputManifest: [
           { reference: "clientId", classification: "public", storageName: "Client ID" },
           { reference: "clientSecret", classification: "protected", storageName: "Client secret" },
@@ -148,13 +392,12 @@ integration("protected operation repository integration", () => {
 
   it("materializes exactly one encrypted operation-bound value across a concurrent race and restart", async () => {
     const operationId = `synthetic-${randomUUID()}`;
-    const reserved = await operations.reserve({
+    const reserved = await canonicalReserve({
       ownerKind: "authoring_session",
       ownerId: sessionId,
       flowDraftId,
-      authorizationId,
       operationId,
-      mutationIdentity: operationId,
+      mutationIdentity: fixtureIdentity(operationId).mutationIdentity,
       projectId,
       environmentId,
       missionId,
@@ -224,21 +467,20 @@ integration("protected operation repository integration", () => {
       programDigest: "a".repeat(64),
       safeOutputManifest: [],
     });
-    const claimed = await operations.claim({
+    const claimed = await canonicalClaim({
       ownerKind: "authoring_session",
       ownerId: sessionId,
       operationId,
       leaseOwner: "synthetic-terminal-owner",
       leaseDurationMs: 30_000,
       binding: {
-        mutationIdentity: operationId,
+        mutationIdentity: fixtureIdentity(operationId).mutationIdentity,
         projectId,
         environmentId,
         missionId,
         objectiveId,
         agentSessionId,
         flowDraftId,
-        authorizationId,
         programDigest: "a".repeat(64),
         safeOutputManifest: [],
       },
@@ -274,9 +516,11 @@ integration("protected operation repository integration", () => {
   async function beginAdaptiveProtectedOperation(
     operationId: string,
     reserve = false,
-    reservationMutationIdentity = operationId,
+    reservationMutationIdentity = fixtureIdentity(operationId).mutationIdentity,
     protectedInputReferences: string[] = [],
   ) {
+    const fixture = fixtureIdentity(operationId);
+    if (reserve) await seedFixture(operationId, "mutation", "planned", null, true);
     const intent = {
       intentId: operationId,
       objectiveId,
@@ -310,7 +554,10 @@ integration("protected operation repository integration", () => {
       },
       expectedEffect: { kind: "none" },
       constraints: { timeoutMs: 1_000, allowNewPage: false, allowNonExact: false },
-      authorization: { kind: "protected_mutation", authorizationId },
+      authorization: {
+        kind: "prepared_execution",
+        preparedExecutionCapabilityId: fixture.capabilityId,
+      },
       protectedInputReferences,
     };
     await new AdaptiveSessionRepository(database).beginMissionOperation({
@@ -324,7 +571,15 @@ integration("protected operation repository integration", () => {
       mode: "transact",
       ...(reserve
         ? {
+            preparedProtectedOperationId: fixture.id,
+            earlyProtectedOperationId: fixture.id,
             protectedReservation: {
+              preparedExecutionCapabilityId: fixture.capabilityId,
+              requestContract: {
+                method: "POST",
+                pathTemplate: "/credentials",
+                transports: ["fetch"],
+              },
               mutationIdentity: reservationMutationIdentity,
               programDigest: "a".repeat(64),
               safeOutputManifest: [
@@ -372,14 +627,14 @@ integration("protected operation repository integration", () => {
       protectedState: "planned",
       transitions: 1,
     });
-    const claimed = await operations.claim({
+    const claimed = await canonicalClaim({
       ownerKind: "authoring_session",
       ownerId: sessionId,
       operationId,
       leaseOwner: "reservation-owner",
       leaseDurationMs: 30_000,
       binding: {
-        mutationIdentity: operationId,
+        mutationIdentity: fixtureIdentity(operationId).mutationIdentity,
         projectId,
         environmentId,
         missionId,
@@ -387,7 +642,6 @@ integration("protected operation repository integration", () => {
         agentSessionId,
         programDigest: "a".repeat(64),
         flowDraftId,
-        authorizationId,
         safeOutputManifest: [
           { reference: "clientId", classification: "public", storageName: "Client ID" },
           { reference: "clientSecret", classification: "protected", storageName: "Client secret" },
@@ -421,13 +675,13 @@ integration("protected operation repository integration", () => {
     expect(proof.rows[0]).toEqual({ adaptive: 1, protected: 1, transitions: 1 });
   });
 
-  it("rolls back the adaptive operation when reservation identity is invalid", async () => {
+  it("rolls back adaptive admission while retaining the untouched prepared reservation", async () => {
     const operationId = "invalid-reservation";
     await expect(
       beginAdaptiveProtectedOperation(operationId, true, `${operationId}-different`),
     ).rejects.toMatchObject({
       response: {
-        code: "MISSION_AUTHORING_PROTECTED_RESERVATION_INVALID",
+        code: "PREPARED_OPERATION_EXECUTION_CONTRACT_MISMATCH",
       },
     });
     const proof = await database.query<{ adaptive: number; protected: number }>(
@@ -438,7 +692,7 @@ integration("protected operation repository integration", () => {
            WHERE authoring_session_id=$1 AND operation_id=$2)::int AS protected`,
       [sessionId, operationId],
     );
-    expect(proof.rows[0]).toEqual({ adaptive: 0, protected: 0 });
+    expect(proof.rows[0]).toEqual({ adaptive: 0, protected: 1 });
   });
 
   it("fences concurrent owners and makes expired post-dispatch work recovery-only", async () => {
@@ -466,7 +720,7 @@ integration("protected operation repository integration", () => {
       "PROTECTED_OPERATION_LEASE_HELD",
     );
     await expect(
-      operations.claim({
+      canonicalClaim({
         ...({
           ownerKind: "authoring_session",
           ownerId: sessionId,
@@ -483,7 +737,6 @@ integration("protected operation repository integration", () => {
           agentSessionId,
           programDigest: "a".repeat(64),
           flowDraftId,
-          authorizationId,
           safeOutputManifest: [
             {
               reference: "clientSecret",
@@ -531,6 +784,7 @@ integration("protected operation repository integration", () => {
           flowDraftId,
           action: {
             kind: "activate",
+            semanticEffect: "unknown",
             target: { concept: "another mutation", role: "button", name: "Mutate", exact: true },
           },
           expectedEffect: { kind: "none" },
@@ -1344,115 +1598,29 @@ integration("protected operation repository integration", () => {
       `SELECT protected_reference_allowlist AS references FROM adaptive_sessions WHERE id=$1`,
       [sessionId],
     );
-    expect(admitted.rows[0]!.references.filter((id) => id === generatedCredentialId)).toHaveLength(
-      1,
-    );
+    expect(admitted.rows[0]!.references).not.toContain(generatedCredentialId);
 
-    const downstreamOperationId = "consume-projected-reference";
-    await beginAdaptiveProtectedOperation(downstreamOperationId, true, downstreamOperationId, [
-      generatedCredentialId!,
+    await expect(
+      new AdaptiveSessionRepository(database).resolveCredential(sessionId, generatedCredentialId!),
+    ).rejects.toThrow();
+    const asset = await database.query(
+      `SELECT producer_protected_operation_id AS producer,canonical_output_key AS key,classification,project_id AS project FROM typed_value_assets WHERE project_credential_id=$1`,
+      [generatedCredentialId],
+    );
+    expect(asset.rows).toEqual([
+      { producer: claim.id, key: "clientSecret", classification: "protected", project: projectId },
     ]);
-    let downstream = await operations.claim({
-      ownerKind: "authoring_session",
-      ownerId: sessionId,
-      operationId: downstreamOperationId,
-      leaseOwner: "downstream-owner",
-      leaseDurationMs: 30_000,
-      binding: {
-        mutationIdentity: downstreamOperationId,
-        projectId,
-        environmentId,
-        missionId,
-        objectiveId,
-        agentSessionId,
-        programDigest: "a".repeat(64),
-        flowDraftId,
-        dispatchSemantics: "mutation",
-        authorizationId,
-        safeOutputManifest: [
-          { reference: "clientId", classification: "public", storageName: "Client ID" },
-          { reference: "clientSecret", classification: "protected", storageName: "Client secret" },
-        ],
-      },
-    });
-    for (const next of [
-      "preparing",
-      "ready_to_dispatch",
-      "dispatching",
-      "dispatched",
-      "acquiring",
-      "persisting",
-    ] as const) {
-      downstream = await operations.transition({
-        id: downstream.id,
-        leaseOwner: "downstream-owner",
-        fencingToken: downstream.fencingToken,
-        version: downstream.version,
-        expected: downstream.state,
-        next,
-        phase: next,
-      });
-    }
-    const downstreamPersisted = await outputs.persistOutputsAtomically(
-      {
-        protectedOperationId: downstream.id,
-        projectId,
-        environmentId,
-        missionId,
-        objectiveId,
-        agentSessionId,
-        ownerKind: "authoring_session",
-        ownerId: sessionId,
-        operationId: downstreamOperationId,
-        leaseOwner: "downstream-owner",
-        fencingToken: downstream.fencingToken,
-        version: downstream.version,
-      },
-      [
-        {
-          reference: "clientId",
-          classification: "public",
-          storageName: "Client ID",
-          value: "downstream-public",
-          scope: "project",
-        },
-        {
-          reference: "clientSecret",
-          classification: "protected",
-          storageName: "Client secret",
-          value: "downstream-protected-canary",
-          scope: "project",
-        },
-      ],
+    const dispatches = await database.query(
+      `SELECT count(*)::int AS count FROM protected_operation_transitions WHERE protected_operation_id=$1 AND to_state='dispatching'`,
+      [claim.id],
     );
-    downstream = await operations.transition({
-      id: downstreamPersisted.claim.id,
-      leaseOwner: "downstream-owner",
-      fencingToken: downstreamPersisted.claim.fencingToken,
-      version: downstreamPersisted.claim.version,
-      expected: "persisted",
-      next: "reconciling",
-      phase: "reconciling",
-    });
-    await operations.transition({
-      id: downstream.id,
-      leaseOwner: "downstream-owner",
-      fencingToken: downstream.fencingToken,
-      version: downstream.version,
-      expected: "reconciling",
-      next: "completed",
-      phase: "completed",
-    });
-    const composition = await database.query<{ firstDispatches: number; secondDispatches: number }>(
-      `SELECT
-         (SELECT count(*)::int FROM protected_operation_transitions WHERE protected_operation_id=$1 AND to_state='dispatching') AS "firstDispatches",
-         (SELECT count(*)::int FROM protected_operation_transitions WHERE protected_operation_id=$2 AND to_state='dispatching') AS "secondDispatches"`,
-      [claim.id, downstream.id],
-    );
-    expect(composition.rows[0]).toEqual({ firstDispatches: 1, secondDispatches: 1 });
+    expect(dispatches.rows[0]).toEqual({ count: 1 });
+    // Positive reuse belongs to exact consumer-bound one-use admission, exercised
+    // by prepared-protected-operation.repository.integration.test.ts; a backing
+    // credential ID from projection is never an ordinary continuation permit.
   });
 
-  it("rejects incomplete or foreign durable protected-reference provenance atomically", async () => {
+  it("keeps typed provenance authoritative without Environment membership permission", async () => {
     const operationId = "reject-foreign-projection";
     await beginAdaptiveProtectedOperation(operationId);
     await create(operationId);
@@ -1539,9 +1707,16 @@ integration("protected operation repository integration", () => {
         sessionId,
         operationId,
       }),
-    ).rejects.toMatchObject({
-      response: { code: "MISSION_AUTHORING_PROTECTED_REFERENCE_PROVENANCE_INVALID" },
-    });
+    ).resolves.toMatchObject({ status: "settled", state: "completed" });
+    await expect(
+      database.query(`UPDATE typed_value_assets SET project_id=$2 WHERE project_credential_id=$1`, [
+        credentialId,
+        randomUUID(),
+      ]),
+    ).rejects.toThrow();
+    await expect(
+      new AdaptiveSessionRepository(database).resolveCredential(sessionId, credentialId),
+    ).rejects.toThrow();
     const after = await database.query<{ references: string[] }>(
       `SELECT protected_reference_allowlist AS references FROM adaptive_sessions WHERE id=$1`,
       [sessionId],
@@ -2078,8 +2253,9 @@ integration("protected operation repository integration", () => {
     );
   });
 
-  it("scopes invalid pre-dispatch authorization settlement to the owning workspace", async () => {
+  it("scopes expired prepared-authority settlement to the owning workspace", async () => {
     const operationId = `selector-scope-${randomUUID()}`;
+    expiredFixtureIds.add(operationId);
     const repository = new AdaptiveSessionRepository(database);
     await beginAdaptiveProtectedOperation(operationId);
     await create(operationId);
@@ -2109,5 +2285,100 @@ integration("protected operation repository integration", () => {
       mutationOutcome: "not_applied",
       failureCode: "MISSION_AUTHORING_PROTECTED_AUTHORITY_INVALID",
     });
+  });
+
+  it("projects append-only request and owned-response chronology without protected diagnostics", async () => {
+    const operationId = `receipt-${randomUUID()}`;
+    await create(operationId);
+    let claim = await claimOperation(operationId, "receipt-owner");
+    for (const next of ["preparing", "ready_to_dispatch"] as const) {
+      claim = await operations.transition({
+        id: claim.id,
+        leaseOwner: "receipt-owner",
+        fencingToken: claim.fencingToken,
+        version: claim.version,
+        expected: claim.state,
+        next,
+        phase: next,
+      });
+    }
+    await operations.record({
+      id: claim.id,
+      leaseOwner: "receipt-owner",
+      fencingToken: claim.fencingToken,
+      phase: "dispatch_authorized",
+      safeDiagnostics: {
+        requestContract: {
+          method: "POST",
+          pathTemplate: "/clients/{clientId}",
+          transports: ["fetch"],
+        },
+        reconciliationStrategy: "public_api_state",
+      },
+    });
+    claim = await operations.transition({
+      id: claim.id,
+      leaseOwner: "receipt-owner",
+      fencingToken: claim.fencingToken,
+      version: claim.version,
+      expected: "ready_to_dispatch",
+      next: "dispatching",
+      phase: "mutation_dispatching",
+    });
+    await operations.record({
+      id: claim.id,
+      leaseOwner: "receipt-owner",
+      fencingToken: claim.fencingToken,
+      phase: "request_initiated",
+      safeDiagnostics: {
+        mutation: {
+          request: { status: "initiated", method: "POST", transport: "fetch" },
+        },
+      },
+    });
+    await operations.record({
+      id: claim.id,
+      leaseOwner: "receipt-owner",
+      fencingToken: claim.fencingToken,
+      phase: "response_settled",
+      safeDiagnostics: {
+        responseEvidence: {
+          responseEventObserved: true,
+          eligibleResponseSelected: true,
+          ownershipStatus: "unique",
+          ignoredProtectedValue: "integration-protected-canary",
+        },
+      },
+    });
+    claim = await operations.transition({
+      id: claim.id,
+      leaseOwner: "receipt-owner",
+      fencingToken: claim.fencingToken,
+      version: claim.version,
+      expected: "dispatching",
+      next: "recovery_required",
+      phase: "recovery_required",
+      reasonCode: "MUTATION_RECONCILIATION_REQUIRED",
+    });
+
+    const receipt = await operations.getMutationReceiptByAuthoringOperation(sessionId, operationId);
+    expect(receipt).toMatchObject({
+      receiptId: claim.id,
+      operationId,
+      dispatch: { state: "started" },
+      request: {
+        methodClass: "POST",
+        endpointClass: "/clients/{clientId}",
+        responseEventObserved: true,
+        ownershipProof: "unique",
+      },
+      mutationOutcome: "unknown",
+      redispatchAllowed: false,
+      reconciliation: { strategy: "public_api_state", state: "unknown" },
+    });
+    expect(
+      receipt?.transitions.filter(({ fromState, toState }) => fromState === toState),
+    ).toHaveLength(3);
+    expect(JSON.stringify(receipt)).not.toContain("integration-protected-canary");
   });
 });

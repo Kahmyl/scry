@@ -1,35 +1,23 @@
 name: scry
 
 x-app-environment: &app-environment
-  DATABASE_URL: "${DATABASE_URL:-postgres://scry:scry-local@postgres:5432/scry}"
+  DATABASE_URL: "${DATABASE_URL:-postgres://scry:scry-local@postgres:5432/scry_browser_v2}"
   REDIS_URL: redis://redis:6379
   # Local-development service identity shared by API, worker, MCP, and campaigns.
   SCRY_SERVICE_TOKEN: "${SCRY_SERVICE_TOKEN:-local-only-scry-service-token-change-me}"
-  ARTIFACT_ROOT: /workspace/apps/api/artifacts/runs
-  ARTIFACT_STORAGE_PROVIDER: "${ARTIFACT_STORAGE_PROVIDER:-local}"
-  ARTIFACT_STORAGE_PREFIX: "${ARTIFACT_STORAGE_PREFIX:-}"
-  ARTIFACT_S3_BUCKET: "${ARTIFACT_S3_BUCKET:-}"
-  ARTIFACT_S3_REGION: "${ARTIFACT_S3_REGION:-}"
-  ARTIFACT_S3_ENDPOINT: "${ARTIFACT_S3_ENDPOINT:-}"
-  ARTIFACT_S3_ACCESS_KEY_ID: "${ARTIFACT_S3_ACCESS_KEY_ID:-}"
-  ARTIFACT_S3_SECRET_ACCESS_KEY: "${ARTIFACT_S3_SECRET_ACCESS_KEY:-}"
-  ARTIFACT_S3_SESSION_TOKEN: "${ARTIFACT_S3_SESSION_TOKEN:-}"
-  ARTIFACT_S3_FORCE_PATH_STYLE: "${ARTIFACT_S3_FORCE_PATH_STYLE:-false}"
-  CLOUDINARY_CLOUD_NAME: "${CLOUDINARY_CLOUD_NAME:-}"
-  CLOUDINARY_API_KEY: "${CLOUDINARY_API_KEY:-}"
-  CLOUDINARY_API_SECRET: "${CLOUDINARY_API_SECRET:-}"
-  ARTIFACT_GCS_BUCKET: "${ARTIFACT_GCS_BUCKET:-}"
-  GOOGLE_CLOUD_PROJECT: "${GOOGLE_CLOUD_PROJECT:-}"
-  GOOGLE_APPLICATION_CREDENTIALS: "${GOOGLE_APPLICATION_CREDENTIALS:-}"
-  GOOGLE_SERVICE_ACCOUNT_JSON: "${GOOGLE_SERVICE_ACCOUNT_JSON:-}"
-  # Local-development key only; deployments must override this secret.
-  VEIL_ADMISSION_KEY: "${VEIL_ADMISSION_KEY:-local-only-veil-admission-key-change-me}"
+  BROWSER_V2_ARTIFACT_ROOT: /workspace/apps/api/artifacts/browser-v2
+  BROWSER_V2_ENABLED: "true"
+  BROWSER_V2_RENDER_VIDEO: "true"
+  BROWSER_V2_PROTECTED_KEYS_JSON: '${BROWSER_V2_PROTECTED_KEYS_JSON:-{"local-v1":"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="}}'
+  BROWSER_V2_PROTECTED_KEY_VERSION: "${BROWSER_V2_PROTECTED_KEY_VERSION:-local-v1}"
 
 x-release-environment: &release-environment
   SCRY_RELEASE_ID: "${SCRY_RELEASE_ID:-local-20260806-compiled-plan}"
-  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-8abcde60d523d2e8390a686a591c4435efee6331baf15a2468743a1c8cb65a4f}"
+  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-daa811d7119f9bdf1d64cca1ea72a0ca8ce4f3fac4c80c277043d1b3afb21e5b}"
   SCRY_GIT_COMMIT: "${SCRY_GIT_COMMIT:-development}"
   SCRY_RUNTIME_VERSION: "${SCRY_RUNTIME_VERSION:-development}"
+  SCRY_SOURCE_DIRTY: "${SCRY_SOURCE_DIRTY:-unknown}"
+  SCRY_SOURCE_MANIFEST_SHA256: "${SCRY_SOURCE_MANIFEST_SHA256:-unknown}"
 
 x-node-build: &node-build
   context: .
@@ -39,13 +27,13 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: scry
+      POSTGRES_DB: scry_browser_v2
       POSTGRES_USER: scry
       POSTGRES_PASSWORD: scry-local
     ports:
       - "${SCRY_POSTGRES_PORT:-54329}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U scry -d scry"]
+      test: ["CMD-SHELL", "pg_isready -U scry -d scry_browser_v2"]
       interval: 2s
       timeout: 3s
       retries: 20
@@ -78,6 +66,9 @@ services:
         required: false
     environment:
       <<: [*app-environment, *release-environment]
+      BROWSER_V2_DATABASE_URL: "${DATABASE_URL:-postgres://scry:scry-local@postgres:5432/scry_browser_v2}"
+      BROWSER_V2_EXPECTED_DATABASE: scry_browser_v2
+      BROWSER_V2_SCHEMA_CONFIRM: CREATE_EMPTY_V2
     command: ["pnpm", "--filter", "@scry/api", "db:migrate"]
     depends_on:
       postgres:
@@ -106,13 +97,13 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/v2/health"]
       interval: 5s
       timeout: 3s
       retries: 20
       start_period: 10s
     volumes:
-      - scry-artifacts:/workspace/apps/api/artifacts/runs
+      - scry-artifacts:/workspace/apps/api/artifacts/browser-v2
     restart: unless-stopped
     stop_grace_period: 10s
     init: true
@@ -128,8 +119,8 @@ services:
           path: packages/contracts/src
           target: /workspace/packages/contracts/src
         - action: sync
-          path: packages/chronicle/src
-          target: /workspace/packages/chronicle/src
+          path: packages/browser-runtime/src
+          target: /workspace/packages/browser-runtime/src
         - action: rebuild
           path: apps/api/package.json
         - action: rebuild
@@ -145,14 +136,15 @@ services:
     environment:
       <<: [*app-environment, *release-environment]
       SCRY_BROWSER_CHANNEL: chromium
-      WORKER_CONCURRENCY: "${SCRY_WORKER_CONCURRENCY:-1}"
+      BROWSER_V2_SESSION_CONCURRENCY: "${SCRY_WORKER_CONCURRENCY:-4}"
+      BROWSER_V2_COMMAND_CONCURRENCY: "${SCRY_COMMAND_CONCURRENCY:-8}"
     depends_on:
       migrate:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
     volumes:
-      - scry-artifacts:/workspace/apps/api/artifacts/runs
+      - scry-artifacts:/workspace/apps/api/artifacts/browser-v2
     restart: unless-stopped
     stop_grace_period: 30s
     init: true
@@ -163,21 +155,15 @@ services:
           path: apps/api/src
           target: /workspace/apps/api/src
         - action: sync+restart
-          path: packages/executor/src
-          target: /workspace/packages/executor/src
-        - action: sync+restart
-          path: packages/policy/src
-          target: /workspace/packages/policy/src
+          path: packages/browser-runtime/src
+          target: /workspace/packages/browser-runtime/src
         - action: sync+restart
           path: packages/contracts/src
           target: /workspace/packages/contracts/src
-        - action: sync+restart
-          path: packages/chronicle/src
-          target: /workspace/packages/chronicle/src
         - action: rebuild
           path: apps/api/package.json
         - action: rebuild
-          path: packages/executor/package.json
+          path: packages/browser-runtime/package.json
         - action: rebuild
           path: pnpm-lock.yaml
 
