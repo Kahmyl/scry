@@ -38,7 +38,7 @@ printf '\nSCRY_DATABASE_NAME=scry_browser_v2\n' >> .env
 chmod 0600 .env
 ```
 
-Do not append the database setting if it is already present. The first controlled deployment discovers the currently running immutable API release and its existing Compose file, validates that metadata, and writes a non-secret rollback pointer beneath `/opt/scry/.scry-deploy/`.
+Do not append the database setting if it is already present. The first controlled deployment discovers the currently running immutable API release and its exact Compose file set from Docker's `com.docker.compose.project.config_files` and `com.docker.compose.project.working_dir` labels. It supports ordered multi-file configurations and falls back to Docker's four standard filenames (`compose.yaml`, `compose.yml`, `docker-compose.yaml`, and `docker-compose.yml`) when older or remote Compose sources do not retain usable labels. It validates that metadata and writes a non-secret rollback pointer beneath `/opt/scry/.scry-deploy/`.
 
 ## Deploy a release
 

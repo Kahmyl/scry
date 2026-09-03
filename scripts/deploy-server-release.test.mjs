@@ -50,6 +50,30 @@ assertInOrder(success.log, [
 assert.match(success.state, new RegExp(`CURRENT_RELEASE_ID=${candidateRelease}`));
 assert.match(success.state, new RegExp(`CURRENT_IMAGE_REF=${candidateImage}`));
 
+const bootstrap = runScenario("running-release-bootstrap", { BOOTSTRAP: "true" });
+assert.equal(bootstrap.status, 0, bootstrap.stderr);
+assert.match(
+  bootstrap.stdout,
+  new RegExp(`Bootstrapped rollback metadata from running release ${previousRelease}`),
+);
+assert.match(bootstrap.log, /legacy-compose\.yaml/);
+assert.match(bootstrap.state, new RegExp(`CURRENT_RELEASE_ID=${candidateRelease}`));
+
+const multiFileBootstrap = runScenario("multi-file-running-release-bootstrap", {
+  BOOTSTRAP: "true",
+  MULTIPLE_CONFIGS: "true",
+});
+assert.equal(multiFileBootstrap.status, 0, multiFileBootstrap.stderr);
+assert.match(multiFileBootstrap.log, /legacy-compose\.yaml/);
+assert.match(multiFileBootstrap.log, /legacy-override\.yaml/);
+
+const defaultFileBootstrap = runScenario("default-file-running-release-bootstrap", {
+  BOOTSTRAP: "true",
+  OMIT_CONFIG_LABEL: "true",
+});
+assert.equal(defaultFileBootstrap.status, 0, defaultFileBootstrap.stderr);
+assert.match(defaultFileBootstrap.log, /compose\.yaml/);
+
 const replay = runScenario("replay", { SAME_RELEASE: "true" });
 assert.equal(replay.status, 0, replay.stderr);
 assert.match(replay.stdout, /already healthy; deployment replay completed without interruption/);
@@ -120,10 +144,18 @@ function runScenario(name, additions = {}) {
   const previousCompose = join(stateRoot, "releases", previousRelease, "compose.yml");
   const incomingCompose = join(fixture, "candidate-compose.yml");
   const logFile = join(fixture, "docker.log");
+  const bootstrap = additions.BOOTSTRAP === "true";
   const sameRelease = additions.SAME_RELEASE === "true";
   const savedRelease = sameRelease ? candidateRelease : previousRelease;
   const savedImage = sameRelease ? candidateImage : previousImage;
   const savedSchema = sameRelease ? candidateSchema : previousSchema;
+  const discoveredCompose = join(deployDir, "legacy-compose.yaml");
+  const discoveredOverride = join(deployDir, "legacy-override.yaml");
+  const fallbackCompose = join(deployDir, "compose.yaml");
+  const discoveredComposeFiles =
+    additions.MULTIPLE_CONFIGS === "true"
+      ? `${discoveredCompose},${discoveredOverride}`
+      : discoveredCompose;
   writeFileSync(
     envFile,
     [
@@ -136,18 +168,22 @@ function runScenario(name, additions = {}) {
   );
   chmodSync(envFile, 0o600);
   writeFileSync(previousCompose, "services: {}\n");
+  writeFileSync(discoveredCompose, "services: {}\n");
+  writeFileSync(discoveredOverride, "services: {}\n");
+  writeFileSync(fallbackCompose, "services: {}\n");
   writeFileSync(incomingCompose, "services: {}\n");
-  writeFileSync(
-    join(stateRoot, "current.env"),
-    [
-      `CURRENT_RELEASE_ID=${savedRelease}`,
-      `CURRENT_IMAGE_REF=${savedImage}`,
-      `CURRENT_SCHEMA_FINGERPRINT=${savedSchema}`,
-      `CURRENT_COMPOSE_FILE=${previousCompose}`,
-      "",
-    ].join("\n"),
-    { mode: 0o600 },
-  );
+  if (!bootstrap)
+    writeFileSync(
+      join(stateRoot, "current.env"),
+      [
+        `CURRENT_RELEASE_ID=${savedRelease}`,
+        `CURRENT_IMAGE_REF=${savedImage}`,
+        `CURRENT_SCHEMA_FINGERPRINT=${savedSchema}`,
+        `CURRENT_COMPOSE_FILE=${previousCompose}`,
+        "",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
   writeExecutable(join(binDir, "flock"), "#!/usr/bin/env bash\nexit 0\n");
   writeExecutable(join(binDir, "stat"), "#!/usr/bin/env bash\nprintf '600\\n'\n");
   writeExecutable(
@@ -157,6 +193,11 @@ set -u
 printf 'SCRY_RELEASE_ID=%s %s\\n' "\${SCRY_RELEASE_ID:-}" "$*" >>"$MOCK_DOCKER_LOG"
 args="$*"
 if [[ "$args" == "compose version --short" ]]; then printf '2.40.0\\n'; exit 0; fi
+if [[ "$args" == ps\\ -q* ]]; then [[ "\${BOOTSTRAP:-false}" == true ]] && printf 'existing-api\\n'; exit 0; fi
+if [[ "$args" == *"range .Config.Env"* ]]; then printf 'SCRY_RELEASE_ID=%s\\nSCRY_SCHEMA_FINGERPRINT=%s\\n' "$PREVIOUS_RELEASE" "$PREVIOUS_SCHEMA"; exit 0; fi
+if [[ "$args" == *".Config.Image"* ]]; then printf '%s\\n' "$PREVIOUS_IMAGE"; exit 0; fi
+if [[ "$args" == *"com.docker.compose.project.config_files"* ]]; then [[ "\${OMIT_CONFIG_LABEL:-false}" == true ]] || printf '%s\\n' "$DISCOVERED_COMPOSE"; exit 0; fi
+if [[ "$args" == *"com.docker.compose.project.working_dir"* ]]; then printf '%s\\n' "$DEPLOY_DIR"; exit 0; fi
 if [[ "$args" == *"index .RepoDigests 0"* ]]; then printf '%s\\n' "$CANDIDATE_IMAGE"; exit 0; fi
 if [[ "$args" == *"org.scry.release-id"* ]]; then printf '%s\\n' "$CANDIDATE_RELEASE"; exit 0; fi
 if [[ "$args" == *"org.scry.schema-fingerprint"* ]]; then printf '%s\\n' "$CANDIDATE_SCHEMA"; exit 0; fi
@@ -183,6 +224,11 @@ exit 0
         CANDIDATE_IMAGE: candidateImage,
         CANDIDATE_RELEASE: candidateRelease,
         CANDIDATE_SCHEMA: candidateSchema,
+        PREVIOUS_RELEASE: previousRelease,
+        PREVIOUS_IMAGE: previousImage,
+        PREVIOUS_SCHEMA: previousSchema,
+        DISCOVERED_COMPOSE: discoveredComposeFiles,
+        DEPLOY_DIR: deployDir,
         ...additions,
       },
     },

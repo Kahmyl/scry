@@ -74,18 +74,28 @@ candidate_compose="$release_dir/compose.yml"
 install -m 0600 "$incoming_compose" "$candidate_compose"
 
 run_compose() {
-  local compose_file=$1
+  local compose_files=$1
   local selected_image=$2
   local selected_release=$3
   local selected_schema=$4
+  local compose_file
+  local -a compose_arguments=()
+  local -a selected_compose_files=()
   shift 4
+  IFS=',' read -r -a selected_compose_files <<<"$compose_files"
+  ((${#selected_compose_files[@]} > 0)) || fail "no Compose files were selected"
+  for compose_file in "${selected_compose_files[@]}"; do
+    [[ "$compose_file" =~ ^/[A-Za-z0-9._/-]+$ && -f "$compose_file" ]] ||
+      fail "selected Compose file is invalid or missing: $compose_file"
+    compose_arguments+=(-f "$compose_file")
+  done
   SCRY_IMAGE_REF="$selected_image" \
     SCRY_RELEASE_ID="$selected_release" \
     SCRY_SCHEMA_FINGERPRINT="$selected_schema" \
     docker compose \
       --project-name scry \
       --env-file "$env_file" \
-      -f "$compose_file" \
+      "${compose_arguments[@]}" \
       "$@"
 }
 
@@ -104,15 +114,64 @@ write_current_state() {
   local selected_release=$1
   local selected_image=$2
   local selected_schema=$3
-  local selected_compose=$4
+  local selected_compose_files=$4
   local temporary_state="$current_state.tmp"
   {
     printf 'CURRENT_RELEASE_ID=%s\n' "$selected_release"
     printf 'CURRENT_IMAGE_REF=%s\n' "$selected_image"
     printf 'CURRENT_SCHEMA_FINGERPRINT=%s\n' "$selected_schema"
-    printf 'CURRENT_COMPOSE_FILE=%s\n' "$selected_compose"
+    printf 'CURRENT_COMPOSE_FILES=%s\n' "$selected_compose_files"
   } >"$temporary_state"
   mv "$temporary_state" "$current_state"
+}
+
+validate_compose_files() {
+  local compose_files=$1
+  local compose_file
+  local -a selected_compose_files
+  IFS=',' read -r -a selected_compose_files <<<"$compose_files"
+  ((${#selected_compose_files[@]} > 0)) || return 1
+  for compose_file in "${selected_compose_files[@]}"; do
+    [[ "$compose_file" =~ ^/[A-Za-z0-9._/-]+$ && -f "$compose_file" ]] || return 1
+  done
+}
+
+discover_running_compose_files() {
+  local container_id=$1
+  local configured_files working_directory configured_file resolved_file
+  local -a candidates resolved=()
+  configured_files=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$container_id")
+  working_directory=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$container_id")
+
+  if [[ -n "$configured_files" ]]; then
+    IFS=',' read -r -a candidates <<<"$configured_files"
+    for configured_file in "${candidates[@]}"; do
+      resolved_file=$configured_file
+      if [[ "$resolved_file" != /* ]]; then
+        resolved_file="$working_directory/$resolved_file"
+      fi
+      if [[ "$resolved_file" =~ ^/[A-Za-z0-9._/-]+$ && -f "$resolved_file" ]]; then
+        resolved+=("$resolved_file")
+      else
+        resolved=()
+        break
+      fi
+    done
+    if ((${#resolved[@]} > 0)); then
+      local IFS=,
+      printf '%s' "${resolved[*]}"
+      return 0
+    fi
+  fi
+
+  for configured_file in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+    resolved_file="$deploy_dir/$configured_file"
+    if [[ -f "$resolved_file" ]]; then
+      printf '%s' "$resolved_file"
+      return 0
+    fi
+  done
+  return 1
 }
 
 previous_available=false
@@ -129,13 +188,13 @@ if [[ -f "$current_state" ]]; then
   previous_release=$(state_value CURRENT_RELEASE_ID)
   previous_image=$(state_value CURRENT_IMAGE_REF)
   previous_schema=$(state_value CURRENT_SCHEMA_FINGERPRINT)
-  previous_compose=$(state_value CURRENT_COMPOSE_FILE)
+  previous_compose=$(state_value CURRENT_COMPOSE_FILES)
+  previous_compose=${previous_compose:-$(state_value CURRENT_COMPOSE_FILE)}
   [[ "$previous_release" =~ ^[0-9a-f]{40}$ ]] || fail "saved current release ID is invalid"
   [[ "$previous_image" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] ||
     fail "saved current image is not immutable"
   [[ "$previous_schema" =~ ^[0-9a-f]{64}$ ]] || fail "saved current schema is invalid"
-  [[ "$previous_compose" =~ ^/[A-Za-z0-9._/-]+$ && -f "$previous_compose" ]] ||
-    fail "saved current Compose file is invalid"
+  validate_compose_files "$previous_compose" || fail "saved current Compose files are invalid"
   previous_available=true
 else
   existing_api=$(docker ps -q \
@@ -145,13 +204,8 @@ else
     previous_release=$(container_env_value "$existing_api" SCRY_RELEASE_ID)
     previous_schema=$(container_env_value "$existing_api" SCRY_SCHEMA_FINGERPRINT)
     previous_image=$(docker inspect --format '{{.Config.Image}}' "$existing_api")
-    if [[ -f "$deploy_dir/docker-compose.yml" ]]; then
-      previous_compose="$deploy_dir/docker-compose.yml"
-    elif [[ -f "$deploy_dir/compose.yml" ]]; then
-      previous_compose="$deploy_dir/compose.yml"
-    else
-      fail "a running release exists but its Compose file could not be found"
-    fi
+    previous_compose=$(discover_running_compose_files "$existing_api") ||
+      fail "a running release exists but its recorded Compose files are unavailable"
     [[ "$previous_release" =~ ^[0-9a-f]{40}$ ]] ||
       fail "running API does not expose an immutable release ID"
     [[ "$previous_image" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] ||
