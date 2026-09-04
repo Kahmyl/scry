@@ -1,0 +1,546 @@
+{
+  "schemaVersion": 1,
+  "phase": "phase1",
+  "baselineCommit": "0c9cf69cd91eaad1bcd2b11af0c2a8b76d676398",
+  "scope": "Production-reached mixed authority in the deployed browser-execution and @scry/browser-runtime path only.",
+  "rules": [
+    "This inventory starts from the deployed baseline. Unreachable target packages are not promoted to authority by name.",
+    "Every listed source is DELETE_AFTER_CUTOVER and must be decomposed before deletion.",
+    "A target slice names semantic ownership of the responsibility, not permission to move the whole source file.",
+    "Praxis owns browser mechanics only.",
+    "Veil owns protected-value classification, disclosure, sanitization, redaction, encryption, decryption, key custody, sealing, structural protection interpretation, and protected publication.",
+    "Chronicle owns append-only factual history, durable evidence, provenance, integrity, receipts, recording history, replay materialization, offline video, and Mission report evidence.",
+    "Product Composition owns Projects, Missions, Flows, Runs, application transactions, queues, controllers, and persistence orchestration.",
+    "Chronicle may persist an opaque Veil-encrypted object but must not decrypt, classify, sanitize, or authorize disclosure.",
+    "Praxis emits facts through injected ports and must not know Chronicle storage internals.",
+    "No source in this inventory may be deleted until its required behavior is characterized and its listed target slices are proven reachable."
+  ],
+  "entries": [
+    {
+      "id": "active-browser-runtime-classifier",
+      "path": "packages/browser-runtime/src/classifier.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "exact protected-value matching",
+        "encoded and pattern matching",
+        "high-entropy and sensitive-value findings",
+        "text masking"
+      ],
+      "targetSlices": [
+        {
+          "owner": "VEIL",
+          "responsibilities": [
+            "protected-value classification",
+            "exact and encoded matching",
+            "pattern and entropy signals",
+            "classification-backed text sanitization"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "exact protected values never cross a disclosure boundary",
+        "encoded protected values are detected",
+        "pattern and entropy behavior is characterized for both sensitive and benign opaque values",
+        "public values are not released by detector confidence alone"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    },
+    {
+      "id": "active-browser-runtime-sanitizer",
+      "path": "packages/browser-runtime/src/sanitizer.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "structured replay sanitization",
+        "tool-result sanitization",
+        "attribute masking",
+        "URL and input-value suppression"
+      ],
+      "targetSlices": [
+        {
+          "owner": "VEIL",
+          "responsibilities": [
+            "structured sanitization",
+            "protected-field masking",
+            "safe disclosure transformation"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "nested structures cannot leak protected material",
+        "object keys cannot create a disclosure bypass",
+        "URLs and editable values are fail-closed",
+        "sanitization never acts as a second independent classifier"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    },
+    {
+      "id": "active-browser-runtime-protection-authority",
+      "path": "packages/browser-runtime/src/protection-authority.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "protection barriers",
+        "public versus protected decisions",
+        "disclosure-mode enforcement",
+        "sink authorization",
+        "known protected-value sanitization",
+        "public-value admission evidence"
+      ],
+      "targetSlices": [
+        {
+          "owner": "VEIL",
+          "responsibilities": [
+            "sole protection verdict",
+            "disclosure and use authorization",
+            "sink authorization",
+            "public-output admission",
+            "protected-output publication policy",
+            "protection barriers"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "exactly one protection verdict precedes every disclosure boundary",
+        "public admission cannot override a protected exact or high-confidence match",
+        "sink restrictions are enforced after restoration and restart",
+        "active protection barriers fail closed"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    },
+    {
+      "id": "active-browser-runtime-protected-capture-vault",
+      "path": "packages/browser-runtime/src/protected-capture-vault.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "raw response and DOM capture sealing",
+        "capture encryption and decryption",
+        "capture receipts",
+        "structural indexing",
+        "public and protected output preparation",
+        "protected browser delivery",
+        "durable encrypted envelope export and restore"
+      ],
+      "targetSlices": [
+        {
+          "owner": "VEIL",
+          "responsibilities": [
+            "seal raw protected captures",
+            "capture encryption and decryption",
+            "capture key custody",
+            "controlled structural protection interpretation",
+            "protected-output preparation and publication"
+          ]
+        },
+        {
+          "owner": "CHRONICLE",
+          "responsibilities": [
+            "persist opaque encrypted capture objects",
+            "capture provenance and integrity receipts",
+            "durable capture history"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "raw plaintext is never published or durably exposed outside Veil",
+        "scope and authentication failures fail closed",
+        "Chronicle can persist and verify opaque encrypted objects without decrypting them",
+        "publication and discard are mutually exclusive and durable"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    },
+    {
+      "id": "active-browser-runtime-authenticated-evidence-store",
+      "path": "packages/browser-runtime/src/authenticated-evidence-store.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "append-only evidence chunks",
+        "evidence encryption and decryption",
+        "manifest chaining",
+        "sequence verification",
+        "integrity verification"
+      ],
+      "targetSlices": [
+        {
+          "owner": "VEIL",
+          "responsibilities": ["encryption and decryption", "evidence encryption key custody"]
+        },
+        {
+          "owner": "CHRONICLE",
+          "responsibilities": [
+            "append-only evidence chunks",
+            "sequence continuity",
+            "manifest and chain integrity",
+            "durable factual event storage"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "tampered chunks are rejected",
+        "sequence gaps are rejected",
+        "manifest and stored chunk sets remain consistent",
+        "Chronicle receives only safe facts or opaque Veil-encrypted objects"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    },
+    {
+      "id": "active-browser-runtime-recorder",
+      "path": "packages/browser-runtime/src/recorder.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "CDP recorder lifecycle",
+        "rrweb browser instrumentation",
+        "recording sanitization",
+        "recording event emission"
+      ],
+      "targetSlices": [
+        {
+          "owner": "PRAXIS",
+          "responsibilities": [
+            "browser and CDP recording mechanics",
+            "page and frame recording lifecycle"
+          ]
+        },
+        {
+          "owner": "VEIL",
+          "responsibilities": [
+            "recording redaction",
+            "uncertainty-region protection",
+            "recording disclosure verdict"
+          ]
+        },
+        {
+          "owner": "CHRONICLE",
+          "responsibilities": [
+            "recording event history",
+            "recording chunk and manifest persistence"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "recording chronology is preserved across protected content",
+        "protected values are redacted in place rather than creating secret-caused history loss",
+        "recorder restart and page replacement preserve factual ordering",
+        "recording persistence remains independent of semantic interpretation"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    },
+    {
+      "id": "active-browser-runtime-offline-renderer",
+      "path": "packages/browser-runtime/src/offline-renderer.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "offline replay materialization",
+        "video rendering",
+        "frame rendering",
+        "zero-network replay assertion"
+      ],
+      "targetSlices": [
+        {
+          "owner": "CHRONICLE",
+          "responsibilities": [
+            "offline replay materialization",
+            "offline video production",
+            "rendered-evidence provenance"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "offline rendering performs zero external network requests",
+        "the same factual input produces deterministic publication identity",
+        "final Chronicle implementation does not own Playwright or production browser lifecycle",
+        "render failure cannot rewrite factual history"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    },
+    {
+      "id": "active-browser-runtime-effect-ledger",
+      "path": "packages/browser-runtime/src/effect-ledger.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "append-only effect events",
+        "mutation intent history",
+        "effect truth history",
+        "persisted intent sanitization"
+      ],
+      "targetSlices": [
+        {
+          "owner": "VEIL",
+          "responsibilities": ["sanitization before factual persistence"]
+        },
+        {
+          "owner": "CHRONICLE",
+          "responsibilities": [
+            "append-only mutation facts",
+            "effect truth history",
+            "intent and effect provenance"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "possibly dispatched mutations are never automatically retried",
+        "effect history remains append-only",
+        "unknown mutation truth remains unknown until independently reconciled",
+        "sanitization is delegated to the sole Veil boundary"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    },
+    {
+      "id": "active-api-protected-value-cipher",
+      "path": "apps/api/src/browser-execution/protected-value-cipher.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "protected-value encryption",
+        "protected-value decryption",
+        "authenticated encryption context binding",
+        "plaintext digest verification"
+      ],
+      "targetSlices": [
+        {
+          "owner": "VEIL",
+          "responsibilities": [
+            "protected-value encryption and decryption",
+            "authenticated protection context",
+            "protected-value integrity verification"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "ciphertext cannot be replayed under a different protection context",
+        "authentication and digest failures fail closed",
+        "plaintext is not emitted to logs or evidence",
+        "key-version identity remains explicit"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    },
+    {
+      "id": "active-api-protected-keyring",
+      "path": "apps/api/src/browser-execution/browser-protected-keyring.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "active protection key version",
+        "key lookup",
+        "session-key derivation"
+      ],
+      "targetSlices": [
+        {
+          "owner": "VEIL",
+          "responsibilities": [
+            "protected key custody",
+            "key-version selection",
+            "derived protection keys"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "unknown key versions fail closed",
+        "derived keys are purpose and scope separated",
+        "diagnostics expose only safe key-version identity and never key material"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    },
+    {
+      "id": "active-api-browser-worker-engine",
+      "path": "apps/api/src/browser-execution/browser-v2-worker-engine.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "Playwright browser lifecycle",
+        "page and reference lifecycle",
+        "owner lease heartbeat",
+        "browser observations and actions",
+        "dispatch-window mechanics",
+        "capture orchestration",
+        "protection orchestration",
+        "evidence and recording orchestration",
+        "offline replay orchestration"
+      ],
+      "targetSlices": [
+        {
+          "owner": "PRAXIS",
+          "responsibilities": [
+            "Playwright lifecycle",
+            "owner generations, leases, heartbeats, and fencing",
+            "document epochs and exact browser references",
+            "browser observations and action execution",
+            "mechanical waits and dispatch-boundary classification",
+            "mechanical origin and request gating",
+            "checkpoint mechanics"
+          ]
+        },
+        {
+          "owner": "VEIL",
+          "responsibilities": [
+            "all protection verdicts",
+            "protected capture sealing",
+            "sanitization and redaction",
+            "protected-value cryptographic use"
+          ]
+        },
+        {
+          "owner": "CHRONICLE",
+          "responsibilities": [
+            "facts emitted through injected ports",
+            "capture and evidence receipts",
+            "recording facts",
+            "replay publication facts"
+          ]
+        },
+        {
+          "owner": "PRODUCT_COMPOSITION",
+          "responsibilities": [
+            "worker scheduling and composition",
+            "Run and session association",
+            "queue-facing orchestration"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "stale references fail before dispatch",
+        "owner fencing prevents a superseded worker from committing",
+        "possibly dispatched mutations become unknown rather than retried",
+        "every disclosure boundary has one Veil verdict",
+        "factual evidence survives interpretation failures"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    },
+    {
+      "id": "active-api-browser-execution-repository",
+      "path": "apps/api/src/browser-execution/repositories/browser-execution.repository.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "browser session and owner persistence",
+        "effect and dispatch truth persistence",
+        "durable capture persistence",
+        "protection-decision persistence",
+        "public and protected output persistence",
+        "evidence-stream completion persistence"
+      ],
+      "targetSlices": [
+        {
+          "owner": "PRODUCT_COMPOSITION",
+          "responsibilities": [
+            "application database transactions",
+            "Run and session coordination",
+            "queue and lifecycle persistence orchestration"
+          ]
+        },
+        {
+          "owner": "VEIL",
+          "responsibilities": [
+            "protected-value encryption and publication authorization",
+            "protection verdict production before persisted disclosure"
+          ]
+        },
+        {
+          "owner": "CHRONICLE",
+          "responsibilities": [
+            "effect facts",
+            "capture provenance and receipts",
+            "persisted protection-verdict facts",
+            "evidence-stream completion and integrity facts"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "database persistence validates but never independently reclassifies a Veil verdict",
+        "opaque encrypted captures can be durably persisted without Chronicle decryption",
+        "effect truth and capture truth remain append-only factual history",
+        "publication cannot precede durable capture registration"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    },
+    {
+      "id": "active-api-browser-command-repository",
+      "path": "apps/api/src/browser-execution/repositories/browser-command.repository.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "command queue persistence",
+        "protected input persistence",
+        "protected input decryption for browser use",
+        "browser checkpoint persistence",
+        "safe action ledger projection",
+        "evidence completion lookup"
+      ],
+      "targetSlices": [
+        {
+          "owner": "PRODUCT_COMPOSITION",
+          "responsibilities": [
+            "command queue persistence",
+            "application transaction boundaries",
+            "Run and session associations"
+          ]
+        },
+        {
+          "owner": "VEIL",
+          "responsibilities": [
+            "protected input encryption and decryption",
+            "protected-value use authorization",
+            "checkpoint protected-value cryptography"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "protected plaintext is only materialized for the authorized browser-use window",
+        "protected command persistence contains ciphertext rather than plaintext",
+        "checkpoint cryptography is context bound",
+        "queue replay does not duplicate a possibly dispatched mutation"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    },
+    {
+      "id": "active-api-browser-lifecycle-repository",
+      "path": "apps/api/src/browser-execution/repositories/browser-lifecycle.repository.ts",
+      "productionReachability": "production-reached",
+      "sourceDisposition": "DELETE_AFTER_CUTOVER",
+      "currentResponsibilities": [
+        "Project, Mission, Flow, Run, environment, and session composition",
+        "Mission finalization",
+        "evidence-digest assembly",
+        "Mission report sanitization",
+        "protected-value restoration for report sanitization"
+      ],
+      "targetSlices": [
+        {
+          "owner": "PRODUCT_COMPOSITION",
+          "responsibilities": [
+            "Project, Mission, Flow, Run, environment, and session persistence",
+            "Mission lifecycle transitions",
+            "final report application transaction"
+          ]
+        },
+        {
+          "owner": "VEIL",
+          "responsibilities": [
+            "Mission report sanitization",
+            "protected-value restoration strictly for authorized protection processing"
+          ]
+        },
+        {
+          "owner": "CHRONICLE",
+          "responsibilities": [
+            "Mission evidence digest",
+            "Mission report factual evidence composition"
+          ]
+        }
+      ],
+      "requiredCharacterization": [
+        "Mission completion remains Product Composition authority",
+        "Chronicle supplies factual evidence without deciding Mission semantic success",
+        "report disclosure is authorized by exactly one Veil boundary",
+        "Flow creation or selection never implicitly completes, replaces, abandons, fails, or cancels a Mission"
+      ],
+      "finalDisposition": "DELETE_AFTER_CUTOVER"
+    }
+  ]
+}
