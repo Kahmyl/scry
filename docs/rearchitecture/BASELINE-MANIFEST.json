@@ -1,0 +1,38 @@
+{
+  "kind": "scry-four-boundary-reset-baseline",
+  "baselineTag": "four-boundary-reset-baseline",
+  "sourceCommit": "0c9cf69cd91eaad1bcd2b11af0c2a8b76d676398",
+  "sourceTreeDigest": {
+    "algorithm": "sha256",
+    "value": "ecbe1e8d158f61fec436b9e3d8fbaa0967ff0c0f1ba8b6fe5a11b43aeceeabdb",
+    "method": "sha256 of git ls-tree -r --full-tree output for sourceCommit"
+  },
+  "schemaFingerprint": "daa811d7119f9bdf1d64cca1ea72a0ca8ce4f3fac4c80c277043d1b3afb21e5b",
+  "startingCapabilityIdentity": {
+    "value": "browser-runtime-v2.7",
+    "schemaVersion": 8,
+    "status": "starting-baseline-only",
+    "note": "This is evidence of the frozen starting runtime, not the desired canonical naming scheme."
+  },
+  "deployedImage": {
+    "reference": "kahmyl/scry@sha256:6867d5c2bfdb86f7199ce6edf63281b38ceae80035bb2cb8188b19dad0ba5d64",
+    "digest": "sha256:6867d5c2bfdb86f7199ce6edf63281b38ceae80035bb2cb8188b19dad0ba5d64"
+  },
+  "requiredQualification": {
+    "workflow": "Scry required qualification",
+    "runId": 33816326698,
+    "sourceCommit": "0c9cf69cd91eaad1bcd2b11af0c2a8b76d676398",
+    "result": "success",
+    "url": "https://github.com/Kahmyl/scry/actions/runs/33816326698"
+  },
+  "stagingDeployment": {
+    "workflow": "Deploy qualified Scry release",
+    "runId": 33816893051,
+    "sourceCommit": "0c9cf69cd91eaad1bcd2b11af0c2a8b76d676398",
+    "result": "success",
+    "healthResult": "healthy",
+    "activationResult": "active",
+    "url": "https://github.com/Kahmyl/scry/actions/runs/33816893051",
+    "evidence": "Deployment log reports the exact source commit as healthy and active."
+  }
+}
