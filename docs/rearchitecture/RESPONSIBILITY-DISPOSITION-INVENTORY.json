@@ -233,7 +233,6 @@
       "privacySecurity": "Operational facts must already be safe at emission; Assurance cannot sanitize unsafe production facts after exposure.",
       "dataStorage": "Production operational facts become Chronicle evidence/fact records; analysis storage belongs to Assurance tooling."
     },
-
     {
       "id": "api-domain:<root>",
       "kind": "api-domain",
@@ -602,7 +601,6 @@
       "privacySecurity": "Worker must not own browser or protection semantics.",
       "dataStorage": "Worker coordinates product persistence and Chronicle ports but does not implement evidence storage."
     },
-
     {
       "id": "mcp-domain:<root>",
       "kind": "mcp-domain",
@@ -749,5 +747,210 @@
       "privacySecurity": "Run tools cannot reinterpret Veil disclosure or Praxis dispatch truth.",
       "dataStorage": "Run state remains application persistence; evidence links point to Chronicle."
     }
-  ]
+  ],
+  "phase1StaticExceptions": {
+    "versionedRootEntrypoints": [
+      {
+        "path": "apps/api/src/browser-v2-app.module.ts",
+        "removalPhase": "4"
+      },
+      {
+        "path": "apps/api/src/browser-v2-main.ts",
+        "removalPhase": "4"
+      },
+      {
+        "path": "apps/api/src/browser-v2-worker.ts",
+        "removalPhase": "4"
+      },
+      {
+        "path": "apps/mcp/src/browser-v2-api-client.ts",
+        "removalPhase": "4"
+      },
+      {
+        "path": "apps/mcp/src/browser-v2-http.ts",
+        "removalPhase": "4"
+      },
+      {
+        "path": "apps/mcp/src/browser-v2-main.ts",
+        "removalPhase": "4"
+      },
+      {
+        "path": "apps/mcp/src/browser-v2-server.ts",
+        "removalPhase": "4"
+      }
+    ],
+    "playwrightOutsidePraxisProductionSources": [
+      {
+        "path": "apps/api/src/adaptive-sessions/adaptive-session-kernel.runner.ts",
+        "dispositionId": "api-domain:adaptive-sessions"
+      },
+      {
+        "path": "apps/api/src/adaptive-sessions/repositories/adaptive-session.repository.ts",
+        "dispositionId": "api-domain:adaptive-sessions"
+      },
+      {
+        "path": "apps/api/src/browser-execution/browser-v2-worker-engine.ts",
+        "dispositionId": "api-domain:browser-execution"
+      },
+      {
+        "path": "apps/api/src/browser-execution/repositories/browser-command.repository.ts",
+        "dispositionId": "api-domain:browser-execution"
+      },
+      {
+        "path": "apps/api/src/runtime/native-browser-driver/native-browser-driver.ts",
+        "dispositionId": "api-domain:runtime"
+      },
+      {
+        "path": "apps/api/src/runtime/protected-transactions/protected-transaction-acquisition.ts",
+        "dispositionId": "api-domain:runtime"
+      },
+      {
+        "path": "apps/api/src/runtime/protected-transactions/protected-transaction-coordinator.ts",
+        "dispositionId": "api-domain:runtime"
+      },
+      {
+        "path": "apps/api/src/runtime/protected-transactions/protected-transaction-preparation.ts",
+        "dispositionId": "api-domain:runtime"
+      },
+      {
+        "path": "apps/api/src/runtime/services/external-resource-destructive-target-preparation.service.ts",
+        "dispositionId": "api-domain:runtime"
+      },
+      {
+        "path": "packages/browser-runtime/src/offline-renderer.ts",
+        "dispositionId": "package:@scry/browser-runtime"
+      },
+      {
+        "path": "packages/browser-runtime/src/recorder.ts",
+        "dispositionId": "package:@scry/browser-runtime"
+      },
+      {
+        "path": "packages/executor/src/action-runtime.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/calibration.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/checkpoint-coordinator.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/evidence-runtime.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/execution-assertions.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/execution-kernel.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/executor.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/probe.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/protected-transaction-port.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/public-value-capture.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/readiness-runtime.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/recording-coordinator.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/runtime-diagnostics.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/successor-checkpoint.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/trace-coordinator.ts",
+        "dispositionId": "package:@scry/executor"
+      },
+      {
+        "path": "packages/executor/src/types.ts",
+        "dispositionId": "package:@scry/executor"
+      }
+    ],
+    "browserMechanicsOutsidePraxisProductionSources": [
+      {
+        "path": "apps/api/src/browser-execution/browser-v2-worker-engine.ts",
+        "dispositionId": "api-domain:browser-execution"
+      },
+      {
+        "path": "packages/browser-runtime/src/browser-owner-supervisor.ts",
+        "dispositionId": "package:@scry/browser-runtime"
+      },
+      {
+        "path": "packages/browser-runtime/src/offline-renderer.ts",
+        "dispositionId": "package:@scry/browser-runtime"
+      },
+      {
+        "path": "packages/browser-runtime/src/protected-capture-vault.ts",
+        "dispositionId": "package:@scry/browser-runtime"
+      },
+      {
+        "path": "packages/browser-runtime/src/recorder.ts",
+        "dispositionId": "package:@scry/browser-runtime"
+      },
+      {
+        "path": "packages/executor/src/readiness-runtime.ts",
+        "dispositionId": "package:@scry/executor"
+      }
+    ],
+    "assuranceEvaluationInfrastructure": [
+      {
+        "path": "packages/assurance/src/architecture/q3/runner.ts",
+        "rationale": "Explicit Assurance evaluation infrastructure; never a production browser owner."
+      }
+    ],
+    "targetDependencyExceptions": [
+      {
+        "path": "packages/praxis/src/lifecycle/execution-browser-policy.ts",
+        "specifier": "@scry/policy",
+        "removalPhase": "3-5"
+      },
+      {
+        "path": "packages/praxis/src/observation/protected-response-envelope.ts",
+        "specifier": "@scry/policy",
+        "removalPhase": "3-5"
+      },
+      {
+        "path": "packages/assurance/src/observability/qualification.ts",
+        "specifier": "@scry/observability",
+        "removalPhase": "2"
+      }
+    ],
+    "targetManifestDependencyExceptions": [
+      {
+        "path": "packages/praxis/package.json",
+        "section": "dependencies",
+        "specifier": "@scry/policy",
+        "removalPhase": "3-5"
+      },
+      {
+        "path": "packages/assurance/package.json",
+        "section": "dependencies",
+        "specifier": "@scry/observability",
+        "removalPhase": "2"
+      }
+    ]
+  }
 }
