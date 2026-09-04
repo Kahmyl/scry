@@ -1,0 +1,753 @@
+{
+  "kind": "scry-four-boundary-responsibility-disposition",
+  "sourceCommit": "0c9cf69cd91eaad1bcd2b11af0c2a8b76d676398",
+  "architecturePhase": 1,
+  "authorityRule": "External agent reasons. Praxis perceives and acts. Veil protects. Chronicle records. Assurance observes, experiments, diagnoses, and qualifies. Product composition organizes Project, Mission, Flow, Run, authentication, tenancy, queues, and persistence.",
+  "reachabilityRule": "File-level deployed-root reachability is authoritative. Domain-level reachability is descriptive only and does not imply that every file in a reached directory is live.",
+  "dispositions": [
+    {
+      "id": "package:@scry/api",
+      "kind": "workspace-package",
+      "path": "apps/api",
+      "reachability": "production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["HTTP clients", "MCP", "worker processes", "web application"],
+      "rationale": "Application composition owns auth, tenancy, product persistence, queues, transactions, API surfaces, and injected subsystem ports. It must not become a second browser, protection, evidence, or qualification authority.",
+      "requiredTests": [
+        "API composition tests",
+        "authorization and tenancy tests",
+        "queue and transaction tests",
+        "subsystem boundary tests"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "May provide key material and authorization context but must delegate protection classification and disclosure to Veil.",
+      "dataStorage": "Owns product database transactions and product entities; durable evidence implementation belongs to Chronicle."
+    },
+    {
+      "id": "package:@scry/mcp",
+      "kind": "workspace-package",
+      "path": "apps/mcp",
+      "reachability": "production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["external agents", "stdio transport", "HTTP transport"],
+      "rationale": "MCP is a product-facing projection and transport layer. It must not implement browser mechanics, protection decisions, evidence persistence, or qualification decisions.",
+      "requiredTests": ["MCP contract tests", "scope and authorization tests", "projection tests"],
+      "removalPhase": null,
+      "privacySecurity": "Must expose only Veil-admitted values and Chronicle-backed safe evidence projections.",
+      "dataStorage": "No durable subsystem storage implementation."
+    },
+    {
+      "id": "package:@scry/web",
+      "kind": "workspace-package",
+      "path": "apps/web",
+      "reachability": "production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["workspace users"],
+      "rationale": "Web is product presentation and routing.",
+      "requiredTests": ["web routing tests", "API projection tests"],
+      "removalPhase": null,
+      "privacySecurity": "Must not reconstruct or infer protected values outside admitted API responses.",
+      "dataStorage": "No authoritative runtime evidence storage."
+    },
+    {
+      "id": "package:@scry/contracts",
+      "kind": "workspace-package",
+      "path": "packages/contracts",
+      "reachability": "production-reached",
+      "disposition": "KEEP",
+      "consumers": [
+        "API",
+        "MCP",
+        "Praxis",
+        "Veil",
+        "Chronicle",
+        "Assurance",
+        "legacy packages pending removal"
+      ],
+      "rationale": "Keep only as a small wire-contract library. Current policy decisions, state-transition services, mutation projection, plan-risk analysis, and other executable authority must move to their semantic owners.",
+      "requiredTests": [
+        "schema parse tests",
+        "wire compatibility tests",
+        "static no-authority checks"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "May describe protection wire facts but cannot classify or authorize disclosure.",
+      "dataStorage": "No persistence implementation."
+    },
+    {
+      "id": "package:@scry/praxis",
+      "kind": "workspace-package",
+      "path": "packages/praxis",
+      "reachability": "not-production-reached",
+      "disposition": "KEEP",
+      "consumers": ["legacy API runtime", "legacy Executor", "Assurance fixtures and campaigns"],
+      "rationale": "Canonical future browser-mechanics owner. Existing semantic planning, quality interpretation, product composition, and evidence-authority behavior must be removed or transferred.",
+      "requiredTests": [
+        "browser lifecycle",
+        "reference staleness",
+        "owner generation and fencing",
+        "dispatch truth",
+        "request gating",
+        "checkpoint mechanics"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "Uses a narrow Veil interface and cannot make an independent disclosure classification.",
+      "dataStorage": "Emits facts through injected ports; no Chronicle storage implementation."
+    },
+    {
+      "id": "package:@scry/veil",
+      "kind": "workspace-package",
+      "path": "packages/veil",
+      "reachability": "not-production-reached",
+      "disposition": "KEEP",
+      "consumers": ["legacy API runtime", "Praxis", "Executor", "Assurance"],
+      "rationale": "Canonical future protection authority. Existing shape already avoids Playwright and persistence and is the target for active protection, sanitizer, cipher, key custody, capture sealing, and publication admission behavior.",
+      "requiredTests": [
+        "classification tests",
+        "uncertainty fail-closed tests",
+        "sanitization tests",
+        "cipher scope binding",
+        "expiry and wrong-key tests",
+        "publication admission tests"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "Exactly one Veil verdict before a value, DOM, response, screenshot, recording, trace, or log crosses a disclosure boundary.",
+      "dataStorage": "May create opaque encrypted objects but does not own evidence persistence."
+    },
+    {
+      "id": "package:@scry/chronicle",
+      "kind": "workspace-package",
+      "path": "packages/chronicle",
+      "reachability": "not-production-reached",
+      "disposition": "KEEP",
+      "consumers": ["legacy API artifacts and mission reporting", "Executor", "Assurance"],
+      "rationale": "Canonical factual history and evidence owner. Legacy storage adapters should be canonicalized rather than retained as a parallel legacy namespace.",
+      "requiredTests": [
+        "append-only facts",
+        "artifact integrity",
+        "recording continuity",
+        "offline rendering",
+        "Mission evidence composition",
+        "tamper failure"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "May store opaque Veil-encrypted objects but cannot decrypt, classify, or disclose independently.",
+      "dataStorage": "Owns durable evidence, artifacts, recording chunks, manifests, provenance, replay materialization, and report evidence."
+    },
+    {
+      "id": "package:@scry/assurance",
+      "kind": "workspace-package",
+      "path": "packages/assurance",
+      "reachability": "not-production-reached",
+      "disposition": "KEEP",
+      "consumers": ["qualification workflows", "campaign scripts", "engineering and agent labs"],
+      "rationale": "Canonical independent evaluation, diagnostics, experiments, campaigns, oracles, and release-readiness owner.",
+      "requiredTests": [
+        "truth tests",
+        "negative controls",
+        "oracle tests",
+        "experiment isolation",
+        "qualification result aggregation"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "Consumes safe facts and controlled fixtures; never becomes a synchronous production protection gate.",
+      "dataStorage": "May persist experiment outputs outside production evidence authority; production packages must not import Assurance."
+    },
+    {
+      "id": "package:@scry/browser-runtime",
+      "kind": "workspace-package",
+      "path": "packages/browser-runtime",
+      "reachability": "production-reached",
+      "disposition": "DELETE_AFTER_CUTOVER",
+      "consumers": [
+        "active browser worker engine",
+        "active browser lifecycle repository",
+        "browser qualification"
+      ],
+      "rationale": "Current deployed package mixes browser ownership, protection, sanitization, evidence, recording, persistence, replay, and effect truth. Characterize and transfer each responsibility to Praxis, Veil, or Chronicle, then remove the package.",
+      "requiredTests": [
+        "current browser-runtime characterization",
+        "recording tests",
+        "protection-authority tests",
+        "runtime-core tests",
+        "replacement owner tests"
+      ],
+      "removalPhase": "3; verify physical absence again in Phase 5",
+      "privacySecurity": "Protection and sanitization behavior must move to Veil before package removal.",
+      "dataStorage": "Evidence store, recorder, replay, capture vault, and effect-ledger behavior must be reassigned before deletion."
+    },
+    {
+      "id": "package:@scry/executor",
+      "kind": "workspace-package",
+      "path": "packages/executor",
+      "reachability": "not-production-reached",
+      "disposition": "DELETE_AFTER_CUTOVER",
+      "consumers": ["legacy API runtime", "legacy calibration", "legacy workers"],
+      "rationale": "Large unreachable duplicate execution engine. Salvage only specifically characterized behavior required by the active baseline or target owners; never reactivate it as a runtime authority.",
+      "requiredTests": [
+        "characterization of any salvaged behavior",
+        "replacement owner tests",
+        "static no-consumer proof"
+      ],
+      "removalPhase": "5",
+      "privacySecurity": "Contains duplicate protection, browser, recording, and trace logic that must not survive as alternate authorities.",
+      "dataStorage": "Contains duplicate evidence and artifact behavior; durable evidence must be Chronicle-owned."
+    },
+    {
+      "id": "package:@scry/policy",
+      "kind": "workspace-package",
+      "path": "packages/policy",
+      "reachability": "not-production-reached",
+      "disposition": "DELETE_AFTER_CUTOVER",
+      "consumers": ["legacy Praxis", "Executor", "legacy protected-transaction API"],
+      "rationale": "Mixed authority package. Mechanical URL, origin, scheme, and private-network request gating belongs to Praxis; SecretRedactor belongs to Veil.",
+      "requiredTests": [
+        "request-gating characterization",
+        "redaction characterization",
+        "replacement Praxis tests",
+        "replacement Veil tests"
+      ],
+      "removalPhase": "3-5 after consumers are canonical",
+      "privacySecurity": "Secret redaction cannot remain as a second protection authority outside Veil.",
+      "dataStorage": "No durable storage ownership."
+    },
+    {
+      "id": "package:@scry/observability",
+      "kind": "workspace-package",
+      "path": "packages/observability",
+      "reachability": "not-production-reached",
+      "disposition": "DELETE_AFTER_CUTOVER",
+      "consumers": [
+        "inactive API operational-event surfaces",
+        "inactive MCP operational-event surface",
+        "Assurance"
+      ],
+      "rationale": "Neutral operational event facts move to Chronicle. Queries, aggregation, alerts, interpretation, and qualification move to Assurance.",
+      "requiredTests": [
+        "event truth characterization",
+        "Chronicle fact tests",
+        "Assurance negative control",
+        "static no-consumer proof"
+      ],
+      "removalPhase": "2; verify physical absence again in Phase 5",
+      "privacySecurity": "Operational facts must already be safe at emission; Assurance cannot sanitize unsafe production facts after exposure.",
+      "dataStorage": "Production operational facts become Chronicle evidence/fact records; analysis storage belongs to Assurance tooling."
+    },
+
+    {
+      "id": "api-domain:<root>",
+      "kind": "api-domain",
+      "path": "apps/api/src",
+      "reachability": "partially-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["deployment entrypoints"],
+      "rationale": "Contains both active browser baseline roots and obsolete legacy roots. Canonical entrypoints remain application composition while obsolete roots are removed during naming and legacy cleanup.",
+      "requiredTests": [
+        "entrypoint topology",
+        "deployment preflight",
+        "API and worker composition"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "Composition only.",
+      "dataStorage": "Composition may initialize DB and queue adapters but owns no subsystem evidence implementation."
+    },
+    {
+      "id": "api-domain:access",
+      "kind": "api-domain",
+      "path": "apps/api/src/access",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["legacy application domains"],
+      "rationale": "Projects, environments, credentials, and workspace-facing configuration are product composition responsibilities.",
+      "requiredTests": ["credential scope", "project configuration", "authorization"],
+      "removalPhase": null,
+      "privacySecurity": "Credential encryption/key material may be supplied by composition, while protection semantics and disclosure belong to Veil.",
+      "dataStorage": "Product entity persistence remains application-owned."
+    },
+    {
+      "id": "api-domain:adaptive-sessions",
+      "kind": "api-domain",
+      "path": "apps/api/src/adaptive-sessions",
+      "reachability": "not-production-reached",
+      "disposition": "DELETE_AFTER_CUTOVER",
+      "consumers": ["legacy runs", "legacy external-agent stack", "legacy root module"],
+      "rationale": "Large inactive mixed runtime containing executor, policy, Praxis, Veil, browser, semantic, reconciliation, and provider-specific machinery. Preserve only independently characterized capabilities required by target architecture.",
+      "requiredTests": [
+        "characterization before any salvage",
+        "Mission/Flow semantics",
+        "unknown mutation truth",
+        "replacement subsystem tests"
+      ],
+      "removalPhase": "5",
+      "privacySecurity": "Provider-specific and duplicate protection behavior must not be retained in runtime.",
+      "dataStorage": "Preproduction execution/session history is not migrated; required product identity semantics must be re-expressed canonically."
+    },
+    {
+      "id": "api-domain:artifacts",
+      "kind": "api-domain",
+      "path": "apps/api/src/artifacts",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["legacy mission reporting", "artifact API"],
+      "rationale": "API projection and retention orchestration may remain product composition, but storage, integrity, manifests, and materialization implementation must be Chronicle-owned.",
+      "requiredTests": ["artifact API tests", "retention tests", "Chronicle storage tests"],
+      "removalPhase": null,
+      "privacySecurity": "Artifact publication must require Veil admission where protected content is possible.",
+      "dataStorage": "Move durable artifact implementation into Chronicle; application retains product references and authorization."
+    },
+    {
+      "id": "api-domain:auth",
+      "kind": "api-domain",
+      "path": "apps/api/src/auth",
+      "reachability": "partially-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["active browser API", "active browser worker", "legacy application domains"],
+      "rationale": "Authentication, principals, MCP tokens, and identity persistence are product composition.",
+      "requiredTests": ["auth scope", "MCP token tests", "identity repository tests"],
+      "removalPhase": null,
+      "privacySecurity": "Authentication data is access-control state, not Veil's disclosure-classification authority.",
+      "dataStorage": "Identity and token metadata remain product persistence."
+    },
+    {
+      "id": "api-domain:authentication-authoring",
+      "kind": "api-domain",
+      "path": "apps/api/src/authentication-authoring",
+      "reachability": "not-production-reached",
+      "disposition": "DELETE_AFTER_CUTOVER",
+      "consumers": ["legacy authoring root"],
+      "rationale": "Inactive specialized authoring runtime. Any required authentication facts should be re-expressed through product composition, Praxis mechanics, and Veil protection rather than retaining a parallel runtime.",
+      "requiredTests": [
+        "authentication authoring characterization",
+        "replacement authentication journey tests"
+      ],
+      "removalPhase": "5",
+      "privacySecurity": "Protected authentication values must be Veil-governed.",
+      "dataStorage": "Do not migrate preproduction authoring attempts."
+    },
+    {
+      "id": "api-domain:authoring",
+      "kind": "api-domain",
+      "path": "apps/api/src/authoring",
+      "reachability": "not-production-reached",
+      "disposition": "DELETE_AFTER_CUTOVER",
+      "consumers": ["legacy workers", "legacy root module"],
+      "rationale": "Inactive legacy authoring runtime mixes queues, browser/runtime health, protected state, learned interactions, and persistence. Required Flow revision/product semantics should move to canonical product composition.",
+      "requiredTests": [
+        "authoring characterization",
+        "Flow revision semantics",
+        "replacement product composition tests"
+      ],
+      "removalPhase": "5",
+      "privacySecurity": "Cannot own independent protection or disclosure decisions.",
+      "dataStorage": "Legacy authoring runtime records are preproduction execution history and are not migration targets."
+    },
+    {
+      "id": "api-domain:browser-execution",
+      "kind": "api-domain",
+      "path": "apps/api/src/browser-execution",
+      "reachability": "production-reached",
+      "disposition": "DELETE_AFTER_CUTOVER",
+      "consumers": [
+        "active API root",
+        "active worker root",
+        "active web dashboard",
+        "active MCP API client"
+      ],
+      "rationale": "This is the authoritative deployed baseline but is a transitional mixed-authority domain. Move mechanics to Praxis, protection and crypto to Veil, evidence to Chronicle, retain only canonical application queue/product composition, then remove the browser-execution domain name and obsolete implementation.",
+      "requiredTests": [
+        "current browser worker characterization",
+        "failure truth matrix",
+        "Praxis replacement tests",
+        "Veil replacement tests",
+        "Chronicle replacement tests",
+        "API lifecycle tests"
+      ],
+      "removalPhase": "4 after Phase 3 authority cutover",
+      "privacySecurity": "Active cipher, keyring, protection, screenshots, recording, and publication paths must converge on Veil before old implementation is removed.",
+      "dataStorage": "Queue and product records remain application composition; factual evidence implementation moves to Chronicle."
+    },
+    {
+      "id": "api-domain:calibration",
+      "kind": "api-domain",
+      "path": "apps/api/src/calibration",
+      "reachability": "not-production-reached",
+      "disposition": "MOVE_TO_ASSURANCE",
+      "consumers": ["legacy workers", "legacy Flow stack"],
+      "rationale": "Inactive calibration and probe qualification behavior is evaluation machinery, not synchronous production runtime authority.",
+      "requiredTests": [
+        "calibration characterization",
+        "Assurance oracle tests",
+        "negative controls"
+      ],
+      "removalPhase": "2-5 after Assurance replacement exists",
+      "privacySecurity": "Evaluation must consume safe evidence and cannot become a runtime protection gate.",
+      "dataStorage": "Calibration results become Assurance experiment/qualification artifacts, not product execution authority."
+    },
+    {
+      "id": "api-domain:common",
+      "kind": "api-domain",
+      "path": "apps/api/src/common",
+      "reachability": "production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["active browser API", "legacy modules"],
+      "rationale": "Generic application validation plumbing.",
+      "requiredTests": ["validation pipe tests", "topology checks"],
+      "removalPhase": null,
+      "privacySecurity": "No subsystem authority.",
+      "dataStorage": "None."
+    },
+    {
+      "id": "api-domain:external-agents",
+      "kind": "api-domain",
+      "path": "apps/api/src/external-agents",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["legacy Missions", "legacy Runs"],
+      "rationale": "External agent session identity and product-session persistence are application composition responsibilities.",
+      "requiredTests": ["agent session lifecycle", "ownership and resume tests"],
+      "removalPhase": null,
+      "privacySecurity": "No browser/protection authority.",
+      "dataStorage": "Agent session product state remains application persistence."
+    },
+    {
+      "id": "api-domain:flows",
+      "kind": "api-domain",
+      "path": "apps/api/src/flows",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["legacy root module", "MCP Flow surfaces"],
+      "rationale": "Canonical Flow identity, revisions, selection, switching, combination, and Run association belong to product composition. Legacy Executor/Praxis coupling must be removed.",
+      "requiredTests": [
+        "multiple Flows per Mission",
+        "switch/combine/revisit semantics",
+        "no automatic Mission terminal transition"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "Flow state cannot bypass Veil or Praxis boundaries.",
+      "dataStorage": "Canonical Flow and revision persistence remains product-owned."
+    },
+    {
+      "id": "api-domain:infrastructure",
+      "kind": "api-domain",
+      "path": "apps/api/src/infrastructure",
+      "reachability": "partially-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["active API/worker DB and Redis", "legacy operational-event surfaces"],
+      "rationale": "Database and Redis adapters remain application composition. Operational-event implementation is a Phase 2 split: neutral facts to Chronicle and analysis/query behavior to Assurance.",
+      "requiredTests": [
+        "database and Redis tests",
+        "Chronicle operational fact tests",
+        "Assurance query tests"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "Operational events must be safe before emission; no cleanup-after-exposure design.",
+      "dataStorage": "Product DB/Redis infrastructure remains here; factual operational history moves behind Chronicle ownership."
+    },
+    {
+      "id": "api-domain:lifecycle",
+      "kind": "api-domain",
+      "path": "apps/api/src/lifecycle",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["legacy Runs", "legacy workers"],
+      "rationale": "Product entity lifecycle transitions remain application semantics when they concern Mission, Flow, Run, and session state rather than browser mechanics.",
+      "requiredTests": ["product lifecycle transition tests"],
+      "removalPhase": null,
+      "privacySecurity": "Must not redefine dispatch or protection truth.",
+      "dataStorage": "Product lifecycle state only."
+    },
+    {
+      "id": "api-domain:missions",
+      "kind": "api-domain",
+      "path": "apps/api/src/missions",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["MCP Mission tools", "legacy application"],
+      "rationale": "Mission objectives, relations, completion state, report orchestration, and selection are product semantics. Evidence composition itself must be Chronicle-backed.",
+      "requiredTests": [
+        "Mission completion safety",
+        "continuation semantics",
+        "recording selection",
+        "report publication"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "Mission completion cannot redefine Veil disclosure or Praxis dispatch facts.",
+      "dataStorage": "Mission/product state remains application-owned; evidence records remain Chronicle-owned."
+    },
+    {
+      "id": "api-domain:orchestration",
+      "kind": "api-domain",
+      "path": "apps/api/src/orchestration",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["legacy Missions"],
+      "rationale": "Product orchestration may coordinate Mission/Flow/Run work but cannot become a browser, protection, evidence, or qualification authority.",
+      "requiredTests": ["orchestration lifecycle", "authorization boundaries"],
+      "removalPhase": null,
+      "privacySecurity": "Protected operations require Veil/Praxis ports.",
+      "dataStorage": "Product orchestration state only."
+    },
+    {
+      "id": "api-domain:praxis",
+      "kind": "api-domain",
+      "path": "apps/api/src/praxis",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["legacy authentication authoring", "legacy workers"],
+      "rationale": "May remain only as API/product composition around Praxis sessions and queues. Browser mechanics must live in the Praxis package, not this application domain.",
+      "requiredTests": [
+        "API Praxis session tests",
+        "repository ownership tests",
+        "static no-Playwright checks"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "No independent protection decision.",
+      "dataStorage": "Application may persist product/session references; Praxis mechanical evidence flows through Chronicle ports."
+    },
+    {
+      "id": "api-domain:recovery",
+      "kind": "api-domain",
+      "path": "apps/api/src/recovery",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["legacy access", "legacy adaptive sessions", "legacy Missions"],
+      "rationale": "Cross-Run/Mission recovery registration is application composition. Mechanical post-dispatch uncertainty and browser recovery facts belong to Praxis.",
+      "requiredTests": ["conflict-scope tests", "unknown mutation recovery tests"],
+      "removalPhase": null,
+      "privacySecurity": "Recovery cannot downgrade unknown mutation truth or bypass Veil.",
+      "dataStorage": "Product recovery state remains application-owned."
+    },
+    {
+      "id": "api-domain:runs",
+      "kind": "api-domain",
+      "path": "apps/api/src/runs",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["MCP Run tools", "legacy Missions and external agents"],
+      "rationale": "Run identity, lifecycle, agent sessions, queue claims, and product associations belong to application composition. Browser effects are Praxis facts and evidence is Chronicle-owned.",
+      "requiredTests": [
+        "Run lifecycle",
+        "owner rotation",
+        "unknown mutation truth",
+        "finalization"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "Run observation must consume Veil-admitted values only.",
+      "dataStorage": "Canonical Run and product execution state remain application persistence."
+    },
+    {
+      "id": "api-domain:runtime",
+      "kind": "api-domain",
+      "path": "apps/api/src/runtime",
+      "reachability": "not-production-reached",
+      "disposition": "DELETE_AFTER_CUTOVER",
+      "consumers": [
+        "legacy adaptive sessions",
+        "legacy authoring",
+        "legacy calibration",
+        "legacy Runs",
+        "legacy workers"
+      ],
+      "rationale": "Inactive umbrella runtime duplicates browser mechanics, protection, execution, evidence, qualification, queues, persistence, and recovery. Characterize required behavior and move it to canonical owners instead of reviving this layer.",
+      "requiredTests": [
+        "characterization for any salvaged capability",
+        "post-dispatch uncertainty",
+        "protected operation tests",
+        "replacement owner tests"
+      ],
+      "removalPhase": "5",
+      "privacySecurity": "Contains direct Playwright and duplicate protected-transaction logic; neither may survive outside Praxis/Veil ownership.",
+      "dataStorage": "Preproduction runtime history is not migrated; canonical product state is rebuilt under the Phase 4 baseline."
+    },
+    {
+      "id": "api-domain:system",
+      "kind": "api-domain",
+      "path": "apps/api/src/system",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["health clients"],
+      "rationale": "Health and system projections are application composition.",
+      "requiredTests": ["health endpoint", "release/schema/capability identity tests"],
+      "removalPhase": null,
+      "privacySecurity": "Health output must contain only safe identity/status facts.",
+      "dataStorage": "No subsystem persistence."
+    },
+    {
+      "id": "api-domain:veil",
+      "kind": "api-domain",
+      "path": "apps/api/src/veil",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["legacy authoring", "legacy Flow and orchestration"],
+      "rationale": "Workspace/user Veil preferences and policy configuration are product composition. Classification, disclosure, sanitization, and key semantics remain in the Veil package.",
+      "requiredTests": ["preference authorization", "policy snapshot", "Veil package integration"],
+      "removalPhase": null,
+      "privacySecurity": "Cannot implement a second classifier.",
+      "dataStorage": "Preferences and policy references are product data; protected evidence remains elsewhere."
+    },
+    {
+      "id": "api-domain:workers",
+      "kind": "api-domain",
+      "path": "apps/api/src/workers",
+      "reachability": "not-production-reached",
+      "disposition": "DELETE_AFTER_CUTOVER",
+      "consumers": ["legacy worker root"],
+      "rationale": "Inactive legacy worker orchestration imports Executor, Praxis, Veil, Chronicle, and Observability. Desired worker is thin product composition that claims jobs, loads state, invokes subsystem ports, persists facts, and acknowledges or fails.",
+      "requiredTests": [
+        "worker ownership characterization",
+        "queue claim tests",
+        "replacement thin-worker tests"
+      ],
+      "removalPhase": "5 after canonical worker exists",
+      "privacySecurity": "Worker must not own browser or protection semantics.",
+      "dataStorage": "Worker coordinates product persistence and Chronicle ports but does not implement evidence storage."
+    },
+
+    {
+      "id": "mcp-domain:<root>",
+      "kind": "mcp-domain",
+      "path": "apps/mcp/src",
+      "reachability": "partially-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["external agents"],
+      "rationale": "Contains active browser MCP roots plus inactive historical server composition. Keep transport and projection composition while canonicalizing entrypoints and removing obsolete roots.",
+      "requiredTests": ["stdio transport", "HTTP transport", "server registry", "scope projection"],
+      "removalPhase": null,
+      "privacySecurity": "Must return only Veil-admitted public data and safe Chronicle evidence references.",
+      "dataStorage": "No authoritative subsystem persistence."
+    },
+    {
+      "id": "mcp-domain:qualification",
+      "kind": "mcp-domain",
+      "path": "apps/mcp/src/qualification",
+      "reachability": "not-production-reached",
+      "disposition": "MOVE_TO_ASSURANCE",
+      "consumers": ["qualification workflow"],
+      "rationale": "Qualification profiles, shadow clients, and evaluator-specific MCP composition are Assurance concerns and must stay out of production MCP runtime.",
+      "requiredTests": ["repo-blind evaluator", "negative control", "qualification profile tests"],
+      "removalPhase": "2 after Assurance replacement exists",
+      "privacySecurity": "Evaluator sees only public MCP and safe evidence.",
+      "dataStorage": "Qualification transcripts and reports are Assurance artifacts."
+    },
+    {
+      "id": "mcp-domain:tools/adaptive-sessions",
+      "kind": "mcp-domain",
+      "path": "apps/mcp/src/tools/adaptive-sessions",
+      "reachability": "not-production-reached",
+      "disposition": "DELETE_AFTER_CUTOVER",
+      "consumers": ["inactive legacy server composition", "qualification profile"],
+      "rationale": "Large inactive MCP projection of the superseded adaptive-session architecture. Required canonical capabilities should be rebuilt against Project/Mission/Flow/Run and subsystem ports rather than preserving this compatibility surface.",
+      "requiredTests": [
+        "characterize any retained public capability",
+        "canonical MCP replacement tests"
+      ],
+      "removalPhase": "5",
+      "privacySecurity": "Protected and Praxis projections must use canonical Veil/Praxis ownership.",
+      "dataStorage": "No durable storage implementation."
+    },
+    {
+      "id": "mcp-domain:tools/artifacts",
+      "kind": "mcp-domain",
+      "path": "apps/mcp/src/tools/artifacts",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["external agents through canonical MCP when enabled"],
+      "rationale": "Artifact search/read projection is a product-facing MCP concern backed by Chronicle.",
+      "requiredTests": ["artifact projection", "authorization", "safe materialization"],
+      "removalPhase": null,
+      "privacySecurity": "No raw protected artifact exposure.",
+      "dataStorage": "Chronicle owns artifact persistence."
+    },
+    {
+      "id": "mcp-domain:tools/authoring",
+      "kind": "mcp-domain",
+      "path": "apps/mcp/src/tools/authoring",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["external agents through canonical MCP when enabled"],
+      "rationale": "Flow draft/revision and authenticated-session product operations may remain as canonical product tools after old runtime coupling is removed.",
+      "requiredTests": ["Flow draft lifecycle", "authenticated-session authorization"],
+      "removalPhase": null,
+      "privacySecurity": "MCP cannot expose protected browser/session material.",
+      "dataStorage": "Product Flow/session state remains application-owned."
+    },
+    {
+      "id": "mcp-domain:tools/core",
+      "kind": "mcp-domain",
+      "path": "apps/mcp/src/tools/core",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["external agents through canonical MCP when enabled"],
+      "rationale": "Operating context, capabilities, and project discovery are product projections.",
+      "requiredTests": ["operating context", "capability projection", "project scope"],
+      "removalPhase": null,
+      "privacySecurity": "Capability output contains safe factual metadata only.",
+      "dataStorage": "No subsystem storage."
+    },
+    {
+      "id": "mcp-domain:tools/flows",
+      "kind": "mcp-domain",
+      "path": "apps/mcp/src/tools/flows",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["external agents through canonical MCP when enabled"],
+      "rationale": "Flow discovery and lifecycle are product-facing operations; calibration-specific legacy tools must be removed or redirected to Assurance rather than retained as production qualification gates.",
+      "requiredTests": [
+        "Flow semantics",
+        "no automatic Mission replacement",
+        "calibration surface removal"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "No direct protection authority.",
+      "dataStorage": "Flow state remains application persistence."
+    },
+    {
+      "id": "mcp-domain:tools/missions",
+      "kind": "mcp-domain",
+      "path": "apps/mcp/src/tools/missions",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["external agents through canonical MCP when enabled"],
+      "rationale": "Mission objective, lifecycle, relation, and report commands are canonical product composition.",
+      "requiredTests": ["Mission lifecycle", "completion safety", "report preview/publication"],
+      "removalPhase": null,
+      "privacySecurity": "Reports and evidence projections require Veil/Chronicle boundaries.",
+      "dataStorage": "Mission state remains product persistence."
+    },
+    {
+      "id": "mcp-domain:tools/projects",
+      "kind": "mcp-domain",
+      "path": "apps/mcp/src/tools/projects",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["external agents through canonical MCP when enabled"],
+      "rationale": "Projects, environments, and credential authorization are product-facing operations.",
+      "requiredTests": [
+        "workspace membership",
+        "viewer read-only behavior",
+        "environment credential scope"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "Credential values remain opaque references; no secret output.",
+      "dataStorage": "Project/environment/credential metadata remains product persistence."
+    },
+    {
+      "id": "mcp-domain:tools/runs",
+      "kind": "mcp-domain",
+      "path": "apps/mcp/src/tools/runs",
+      "reachability": "not-production-reached",
+      "disposition": "PRODUCT_COMPOSITION",
+      "consumers": ["external agents through canonical MCP when enabled"],
+      "rationale": "Run lifecycle and observation are product-facing projections around canonical subsystem facts.",
+      "requiredTests": [
+        "Run lifecycle",
+        "unknown mutation projection",
+        "Veil findings projection",
+        "finalization"
+      ],
+      "removalPhase": null,
+      "privacySecurity": "Run tools cannot reinterpret Veil disclosure or Praxis dispatch truth.",
+      "dataStorage": "Run state remains application persistence; evidence links point to Chronicle."
+    }
+  ]
+}
