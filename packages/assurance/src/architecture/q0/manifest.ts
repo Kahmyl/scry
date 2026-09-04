@@ -565,8 +565,8 @@ const machines: Machine[] = [
     durableOrLogicalOwner: "Praxis in-memory session authority",
     sourceEvidence: [
       source(
-        "docs/architecture/praxis-runtime-ownership.md",
-        "Current browser authority contract.",
+        "docs/rearchitecture/R0-ARCHITECTURE.md",
+        "Canonical Praxis browser lifecycle, lease, and fencing ownership.",
       ),
       source(
         "packages/praxis/src/lifecycle/browser-session.ts",
@@ -1157,7 +1157,7 @@ const ownership: OwnershipConcern[] = [
     ["Application runtime lease owner"],
     ["Executor", "External agent", "Chronicle", "Assurance"],
     [
-      source("docs/architecture/praxis-runtime-ownership.md", "Canonical browser ownership."),
+      source("docs/rearchitecture/R0-ARCHITECTURE.md", "Canonical browser ownership."),
       source("packages/praxis/src/lifecycle/browser-session.ts", "Runtime session."),
     ],
   ),
@@ -1187,7 +1187,7 @@ const ownership: OwnershipConcern[] = [
     ["Application validates operation scope"],
     ["External agent", "Request telemetry", "Chronicle", "Dashboard"],
     [
-      source("docs/architecture/praxis-runtime-ownership.md", "Reference scope and invalidation."),
+      source("docs/rearchitecture/R0-ARCHITECTURE.md", "Canonical reference freshness ownership."),
       contracts("execution-kernel.ts", "browserSensor.authority"),
     ],
   ),
@@ -2078,7 +2078,7 @@ const authorityDomains: AuthorityDomain[] = [
     owner: "Praxis",
     scope: "monotonic within page/frame",
     sourceEvidence: [
-      source("docs/architecture/praxis-runtime-ownership.md", "Document epoch contract."),
+      source("docs/rearchitecture/R0-ARCHITECTURE.md", "Canonical document epoch ownership."),
     ],
     mayEstablishDocumentAuthority: true,
   },
@@ -2717,11 +2717,11 @@ const risks: Risk[] = [
 ];
 
 const architectureSources: ArchitectureSource[] = [
-  { path: "docs/rearchitecture/README.md", status: "canonical" },
+  { path: "docs/rearchitecture/README.md", status: "current_supporting" },
   { path: "docs/rearchitecture/R0-ARCHITECTURE.md", status: "canonical" },
-  { path: "docs/rearchitecture/R0-ROADMAP.md", status: "canonical" },
+  { path: "docs/rearchitecture/R0-ROADMAP.md", status: "current_supporting" },
   { path: "docs/rearchitecture/R0-STATE.md", status: "current_supporting" },
-  { path: "docs/architecture/praxis-runtime-ownership.md", status: "current_supporting" },
+  { path: "docs/architecture/praxis-runtime-ownership.md", status: "superseded_or_historical" },
   { path: "docs/product/dashboard-authority.md", status: "current_supporting" },
   {
     path: "docs/runbooks/mission-first-live-convergence-prd.md",

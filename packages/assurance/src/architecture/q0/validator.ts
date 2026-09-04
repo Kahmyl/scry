@@ -25,11 +25,7 @@ import type {
   Q0ReasonId,
 } from "./types.js";
 
-const allowedCanonicalSources = new Set([
-  "docs/rearchitecture/README.md",
-  "docs/rearchitecture/R0-ARCHITECTURE.md",
-  "docs/rearchitecture/R0-ROADMAP.md",
-]);
+const canonicalArchitectureSource = "docs/rearchitecture/R0-ARCHITECTURE.md";
 
 const requiredLegacyOverlayNames = new Set([
   "execution_kernel_operations",
@@ -222,17 +218,19 @@ export async function validateQ0Manifest(
     }
   }
 
-  for (const architectureSource of manifest.architectureSources) {
-    if (
-      architectureSource.status === "canonical" &&
-      !allowedCanonicalSources.has(architectureSource.path)
-    ) {
-      findings.push({
-        reasonId: "Q0_STALE_ARCHITECTURE_CANONICAL",
-        subject: architectureSource.path,
-        message: "A superseded or supporting architecture source is marked canonical.",
-      });
-    }
+  const canonicalArchitectureSources = manifest.architectureSources.filter(
+    ({ status }) => status === "canonical",
+  );
+
+  if (
+    canonicalArchitectureSources.length !== 1 ||
+    canonicalArchitectureSources[0]?.path !== canonicalArchitectureSource
+  ) {
+    findings.push({
+      reasonId: "Q0_STALE_ARCHITECTURE_CANONICAL",
+      subject: canonicalArchitectureSources.map(({ path }) => path).join(",") || "<none>",
+      message: `Exactly one canonical architecture source is permitted: ${canonicalArchitectureSource}.`,
+    });
   }
 
   for (const boundary of manifest.boundaries) {

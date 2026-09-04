@@ -40,6 +40,14 @@ describe("Q0 system-correctness manifest", () => {
     );
   });
 
+  it("has exactly one canonical architecture source", () => {
+    expect(
+      correctnessManifest.architectureSources
+        .filter(({ status }) => status === "canonical")
+        .map(({ path }) => path),
+    ).toEqual(["docs/rearchitecture/R0-ARCHITECTURE.md"]);
+  });
+
   it("classifies every legacy overlay", () => {
     expect(
       correctnessManifest.legacyOverlays.filter(

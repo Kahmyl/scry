@@ -1,3 +1,12 @@
+> **Superseded architecture record.**
+>
+> This document is retained only for historical mechanical characterization.
+> It is not current architecture authority. Statements here about semantic
+> grounding, target choice, effect verification, or transaction ownership are
+> superseded where they conflict with
+> `docs/rearchitecture/R0-ARCHITECTURE.md`, the sole canonical architecture
+> document.
+
 # Praxis runtime ownership
 
 Praxis owns an interaction as one transaction, from admission through effect verification. Browser mutation, target identity, and document freshness are not caller responsibilities.
