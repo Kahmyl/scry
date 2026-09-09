@@ -75,7 +75,7 @@ export async function renderSanitizedReplay(options: {
   await mkdir(parentDirectory, { recursive: true, mode: 0o700 });
   const inputDigest = createHash("sha256")
     .update(
-      JSON.stringify({ rendererVersion: 2, events: options.events, framesPerSecond, playbackRate }),
+      JSON.stringify({ rendererFormat: 2, events: options.events, framesPerSecond, playbackRate }),
     )
     .digest("hex");
   try {

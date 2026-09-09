@@ -40,13 +40,20 @@ app_users ──< workspace_memberships >── workspaces ──< projects
 
 ## Compatibility and activation
 
-| Table                      | Purpose                                                                                                      | Important constraints                                                                               |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `schema_baseline`          | Records the expected migration set, catalog fingerprint, runtime compatibility marker, and application time. | Singleton row; fingerprints use fixed hexadecimal digests.                                          |
-| `identity_import_receipts` | Records rehearsal or permanent identity import and production activation.                                    | Identity digest is unique; only an activated permanent receipt satisfies production startup policy. |
+| Table                      | Purpose                                                                   | Important constraints                                                                               |
+| -------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `schema_baseline`          | Records the active browser-execution capability and application time.     | Singleton row; readiness is proven from required tables and columns rather than an exact hash.      |
+| `identity_import_receipts` | Records rehearsal or permanent identity import and production activation. | Identity digest is unique; only an activated permanent receipt satisfies production startup policy. |
 
-The API and worker compare migration content, the live database catalog, and
-runtime compatibility at startup. A mismatch fails closed.
+The API and worker verify the required tables and columns, then confirm that
+the database admits the browser-execution worker capability. Missing required
+capabilities fail closed; unrelated additive schema changes remain acceptable.
+
+Databases retained from the earlier browser rollout cross a one-time,
+transactional compatibility bridge. The bridge renames the same stored fields
+in place and removes obsolete fingerprint metadata; it does not delete product,
+identity, evidence, or encrypted-value rows. Deployment takes a fenced database
+backup before the bridge and restores it if candidate activation fails.
 
 ## Identity and tenancy tables
 

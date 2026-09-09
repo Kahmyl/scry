@@ -85,14 +85,7 @@ jobs:
             echo "Published image release label does not match the requested SHA"
             exit 1
           }
-          schema_fingerprint="$(node scripts/schema-fingerprint.mjs)"
-          image_schema="$(docker image inspect --format '{{index .Config.Labels "org.scry.schema-fingerprint"}}' "$image_ref")"
-          [[ "$image_schema" == "$schema_fingerprint" ]] || {
-            echo "Published image schema label does not match the qualified source"
-            exit 1
-          }
           printf 'SCRY_DEPLOY_IMAGE_REF=%s\n' "$image_ref" >>"$GITHUB_ENV"
-          printf 'SCRY_DEPLOY_SCHEMA_FINGERPRINT=%s\n' "$schema_fingerprint" >>"$GITHUB_ENV"
 
       - name: Render the self-contained release topology
         run: node scripts/render-compose-oci.mjs "$RUNNER_TEMP/scry-compose.yml"
@@ -146,7 +139,6 @@ jobs:
              '$DEPLOY_PATH' \
              '$QUALIFIED_SHA' \
              '$SCRY_DEPLOY_IMAGE_REF' \
-             '$SCRY_DEPLOY_SCHEMA_FINGERPRINT' \
              '$incoming/compose.yml'"
 
       - name: Verify public TLS and reverse-proxy routing
@@ -158,7 +150,7 @@ jobs:
           curl --fail --silent --show-error \
             --retry 8 --retry-delay 2 --retry-all-errors \
             --connect-timeout 5 --max-time 20 \
-            "$DEPLOY_URL/api/v2/health" >/dev/null
+            "$DEPLOY_URL/api/health" >/dev/null
           curl --fail --silent --show-error \
             --retry 8 --retry-delay 2 --retry-all-errors \
             --connect-timeout 5 --max-time 20 \
@@ -177,6 +169,5 @@ jobs:
             echo "- Target: \`$TARGET\`"
             echo "- Release: \`$QUALIFIED_SHA\`"
             echo "- Image: \`$SCRY_DEPLOY_IMAGE_REF\`"
-            echo "- Schema: \`$SCRY_DEPLOY_SCHEMA_FINGERPRINT\`"
             echo "- Result: healthy release activated"
           } >>"$GITHUB_STEP_SUMMARY"

@@ -2,12 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import type {
   BrowserProtectionSink,
-  CreateBrowserEnvironmentV2Input,
-  CreateBrowserFlowV2Input,
-  CreateBrowserObjectiveV2Input,
-  PublishBrowserMissionReportV2Input,
-  StartBrowserMissionV2Input,
-  StartBrowserRunV2Input,
+  CreateBrowserEnvironmentInput,
+  CreateBrowserFlowInput,
+  CreateBrowserObjectiveInput,
+  PublishBrowserMissionReportInput,
+  StartBrowserMissionInput,
+  StartBrowserRunInput,
 } from "@scry/contracts";
 import { browserProtectionSinkSchema } from "@scry/contracts";
 import { ProtectionAuthority } from "@scry/browser-runtime";
@@ -18,7 +18,7 @@ import {
   BrowserProtectedValueCipher,
   type EncryptedProtectedValue,
 } from "../protected-value-cipher.js";
-import { BROWSER_RUNTIME_CAPABILITY_VERSION } from "../browser-runtime-capability.js";
+import { BROWSER_RUNTIME_CAPABILITY_ID } from "../browser-runtime-capability.js";
 
 interface IdRow extends QueryResultRow {
   id: string;
@@ -49,7 +49,7 @@ export class BrowserLifecycleRepository {
     });
   }
 
-  async createEnvironment(workspaceId: string | undefined, input: CreateBrowserEnvironmentV2Input) {
+  async createEnvironment(workspaceId: string | undefined, input: CreateBrowserEnvironmentInput) {
     return this.database.transaction(async (client) => {
       await this.requireProject(client, workspaceId, input.projectId);
       const existing = await client.query<{
@@ -72,7 +72,7 @@ export class BrowserLifecycleRepository {
             JSON.stringify(input.allowedServiceOrigins) ||
           row.disclosure_mode !== input.disclosureMode
         )
-          throw new Error("BROWSER_V2_ENVIRONMENT_IDEMPOTENCY_CONFLICT");
+          throw new Error("SCRY_BROWSER_ENVIRONMENT_IDEMPOTENCY_CONFLICT");
         return { environmentId: row.id, replay: true };
       }
       const environmentId = randomUUID();
@@ -94,7 +94,7 @@ export class BrowserLifecycleRepository {
     });
   }
 
-  async startMission(workspaceId: string | undefined, input: StartBrowserMissionV2Input) {
+  async startMission(workspaceId: string | undefined, input: StartBrowserMissionInput) {
     return this.database.transaction(async (client) => {
       await this.requireProject(client, workspaceId, input.projectId);
       const existing = await client.query<{
@@ -141,7 +141,7 @@ export class BrowserLifecycleRepository {
   async createObjective(
     workspaceId: string | undefined,
     missionId: string,
-    input: CreateBrowserObjectiveV2Input,
+    input: CreateBrowserObjectiveInput,
   ) {
     return this.database.transaction(async (client) => {
       const mission = await this.requireMissionAgent(
@@ -177,7 +177,7 @@ export class BrowserLifecycleRepository {
   async createFlow(
     workspaceId: string | undefined,
     missionId: string,
-    input: CreateBrowserFlowV2Input,
+    input: CreateBrowserFlowInput,
   ) {
     return this.database.transaction(async (client) => {
       const mission = await this.requireMissionAgent(
@@ -224,7 +224,7 @@ export class BrowserLifecycleRepository {
     });
   }
 
-  async startRun(workspaceId: string | undefined, input: StartBrowserRunV2Input) {
+  async startRun(workspaceId: string | undefined, input: StartBrowserRunInput) {
     return this.database.transaction(async (client) => {
       await this.requireMissionAgent(
         client,
@@ -248,10 +248,10 @@ export class BrowserLifecycleRepository {
         "SELECT base_origin,allowed_service_origins,disclosure_mode FROM environments WHERE id=$1 AND project_id=$2 AND state='active'",
         [input.environmentId, input.projectId],
       );
-      if (!environment.rows[0]) throw new Error("BROWSER_V2_ENVIRONMENT_NOT_FOUND");
+      if (!environment.rows[0]) throw new Error("SCRY_BROWSER_ENVIRONMENT_NOT_FOUND");
       const protectedInputIds = [...new Set(input.protectedInputIds)];
       if (protectedInputIds.length !== input.protectedInputIds.length)
-        throw new Error("BROWSER_V2_PROTECTED_INPUT_DUPLICATE");
+        throw new Error("SCRY_BROWSER_PROTECTED_INPUT_DUPLICATE");
       if (protectedInputIds.length > 0) {
         const available = await client.query<{ id: string }>(
           `SELECT id FROM protected_values
@@ -260,7 +260,7 @@ export class BrowserLifecycleRepository {
           [protectedInputIds, input.projectId],
         );
         if (available.rowCount !== protectedInputIds.length)
-          throw new Error("BROWSER_V2_PROTECTED_INPUT_UNAVAILABLE");
+          throw new Error("SCRY_BROWSER_PROTECTED_INPUT_UNAVAILABLE");
       }
       const runId = randomUUID();
       const browserSessionId = randomUUID();
@@ -282,7 +282,7 @@ export class BrowserLifecycleRepository {
       await client.query(
         `INSERT INTO browser_execution_sessions(id,run_id,project_id,mission_id,objective_id,environment_id,agent_session_id,
            state,authentication_commit_limit,business_commit_limit,allowed_first_party_origins,allowed_service_origins,
-           runtime_capability_version,protection_key_version,disclosure_mode,idempotency_key)
+           runtime_capability_id,protection_key_id,disclosure_mode,idempotency_key)
          VALUES($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15)`,
         [
           browserSessionId,
@@ -296,15 +296,15 @@ export class BrowserLifecycleRepository {
           input.businessCommitLimit,
           JSON.stringify([environment.rows[0].base_origin]),
           JSON.stringify(environment.rows[0].allowed_service_origins),
-          BROWSER_RUNTIME_CAPABILITY_VERSION,
-          this.cipher.activeKeyVersion(),
+          BROWSER_RUNTIME_CAPABILITY_ID,
+          this.cipher.activeKeyId(),
           environment.rows[0].disclosure_mode,
           `browser:${input.idempotencyKey}`,
         ],
       );
       await client.query(
-        "INSERT INTO browser_execution_outbox(session_id,runtime_capability_version) VALUES($1,$2)",
-        [browserSessionId, BROWSER_RUNTIME_CAPABILITY_VERSION],
+        "INSERT INTO browser_execution_outbox(session_id,runtime_capability_id) VALUES($1,$2)",
+        [browserSessionId, BROWSER_RUNTIME_CAPABILITY_ID],
       );
       for (const protectedValueId of protectedInputIds) {
         await client.query(
@@ -333,7 +333,7 @@ export class BrowserLifecycleRepository {
        WHERE m.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)`,
       [missionId, workspaceId ?? null],
     );
-    if (!mission.rows[0]) throw new Error("BROWSER_V2_MISSION_NOT_FOUND");
+    if (!mission.rows[0]) throw new Error("SCRY_BROWSER_MISSION_NOT_FOUND");
     const [objectives, flows, runs] = await Promise.all([
       this.database.query(
         'SELECT id,title,description,state,completion_criteria AS "completionCriteria",objective_order AS "objectiveOrder",conclusion FROM mission_objectives WHERE mission_id=$1 ORDER BY objective_order',
@@ -387,7 +387,7 @@ export class BrowserLifecycleRepository {
         [runId, workspaceId ?? null],
       );
       const row = run.rows[0];
-      if (!row) throw new Error("BROWSER_V2_RUN_NOT_FOUND");
+      if (!row) throw new Error("SCRY_BROWSER_RUN_NOT_FOUND");
       if (["passed", "failed", "cancelled", "infrastructure_error"].includes(row.state))
         return { replay: true };
       const state =
@@ -413,14 +413,14 @@ export class BrowserLifecycleRepository {
        JOIN projects p ON p.id=r.project_id WHERE r.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)`,
       [runId, workspaceId ?? null],
     );
-    if (!result.rows[0]) throw new Error("BROWSER_V2_RUN_NOT_FOUND");
+    if (!result.rows[0]) throw new Error("SCRY_BROWSER_RUN_NOT_FOUND");
     return result.rows[0];
   }
 
   async publishReport(
     workspaceId: string | undefined,
     missionId: string,
-    input: PublishBrowserMissionReportV2Input,
+    input: PublishBrowserMissionReportInput,
   ) {
     return this.database.transaction(async (client) => {
       await this.requireMissionAgent(client, workspaceId, missionId, input.agentSessionId);
@@ -435,14 +435,14 @@ export class BrowserLifecycleRepository {
          UNION ALL SELECT 1 FROM browser_effects WHERE mission_id=$1 AND mutation_outcome='pending' LIMIT 1`,
         [missionId],
       );
-      if (incomplete.rowCount) throw new Error("BROWSER_V2_MISSION_NOT_REPORTABLE");
+      if (incomplete.rowCount) throw new Error("SCRY_BROWSER_MISSION_NOT_REPORTABLE");
       const evidence = await client.query<{ chain_head: string }>(
         `SELECT e.chain_head FROM browser_evidence_streams e JOIN runs r ON r.id=e.run_id
          WHERE r.mission_id=$1 AND e.state='complete' ORDER BY r.created_at,e.id`,
         [missionId],
       );
       if (evidence.rows.length === 0 || evidence.rows.some((row) => !row.chain_head))
-        throw new Error("BROWSER_V2_MISSION_EVIDENCE_INCOMPLETE");
+        throw new Error("SCRY_BROWSER_MISSION_EVIDENCE_INCOMPLETE");
       const evidenceDigest = createHash("sha256")
         .update(JSON.stringify(evidence.rows.map((row) => row.chain_head)))
         .digest("hex");
@@ -476,7 +476,7 @@ export class BrowserLifecycleRepository {
       [missionId],
     );
     const projectId = mission.rows[0]?.project_id;
-    if (!projectId) throw new Error("BROWSER_V2_MISSION_NOT_FOUND");
+    if (!projectId) throw new Error("SCRY_BROWSER_MISSION_NOT_FOUND");
     const generated = await client.query<{
       id: string;
       display_name: string;
@@ -484,11 +484,11 @@ export class BrowserLifecycleRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       value_digest: string;
-      key_version: string;
+      key_id: string;
       run_id: string;
       source_effect_id: string;
     }>(
-      `SELECT v.id,v.display_name,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_version,
+      `SELECT v.id,v.display_name,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_id,
               v.run_id,v.source_effect_id
        FROM protected_values v
        JOIN browser_outputs o ON o.protected_value_id=v.id
@@ -502,10 +502,10 @@ export class BrowserLifecycleRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       value_digest: string;
-      key_version: string;
+      key_id: string;
     }>(
       `SELECT DISTINCT v.id,v.display_name,v.ciphertext,v.nonce,v.authentication_tag,
-              v.value_digest,v.key_version
+              v.value_digest,v.key_id
        FROM protected_values v
        JOIN browser_session_protected_inputs i ON i.protected_value_id=v.id
        JOIN browser_execution_sessions s ON s.id=i.session_id
@@ -520,7 +520,7 @@ export class BrowserLifecycleRepository {
           nonce: row.nonce,
           authenticationTag: row.authentication_tag,
           valueDigest: row.value_digest,
-          keyVersion: row.key_version,
+          keyId: row.key_id,
         } satisfies EncryptedProtectedValue,
         {
           projectId,
@@ -538,7 +538,7 @@ export class BrowserLifecycleRepository {
           nonce: row.nonce,
           authenticationTag: row.authentication_tag,
           valueDigest: row.value_digest,
-          keyVersion: row.key_version,
+          keyId: row.key_id,
         } satisfies EncryptedProtectedValue,
         {
           projectId,
@@ -590,7 +590,7 @@ export class BrowserLifecycleRepository {
       "SELECT 1 FROM projects WHERE id=$1 AND ($2::uuid IS NULL OR workspace_id=$2)",
       [projectId, workspaceId ?? null],
     );
-    if (!result.rowCount) throw new Error("BROWSER_V2_PROJECT_NOT_FOUND");
+    if (!result.rowCount) throw new Error("SCRY_BROWSER_PROJECT_NOT_FOUND");
   }
 
   private async requireMissionAgent(
@@ -607,7 +607,7 @@ export class BrowserLifecycleRepository {
          AND ($4::uuid IS NULL OR m.project_id=$4)`,
       [missionId, agentSessionId, workspaceId ?? null, projectId ?? null],
     );
-    if (!result.rows[0]) throw new Error("BROWSER_V2_MISSION_AGENT_CONTEXT_INVALID");
+    if (!result.rows[0]) throw new Error("SCRY_BROWSER_MISSION_AGENT_CONTEXT_INVALID");
     return result.rows[0];
   }
 }

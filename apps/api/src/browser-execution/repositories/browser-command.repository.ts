@@ -2,11 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { Inject, Injectable } from "@nestjs/common";
 import type {
-  BrowserCommandV2,
+  BrowserCommand,
   BrowserDisclosureMode,
   BrowserProtectionSink,
-  CreateBrowserProtectedInputV2Input,
-  SubmitBrowserCommandV2Input,
+  CreateBrowserProtectedInputInput,
+  SubmitBrowserCommandInput,
 } from "@scry/contracts";
 import { browserProtectionSinkSchema } from "@scry/contracts";
 import type { QueryResultRow } from "pg";
@@ -22,8 +22,8 @@ interface CommandRow extends QueryResultRow {
   id: string;
   session_id: string;
   run_id: string;
-  kind: BrowserCommandV2["kind"];
-  safe_input: BrowserCommandV2;
+  kind: BrowserCommand["kind"];
+  safe_input: BrowserCommand;
   state: "queued" | "running" | "completed" | "failed";
   safe_result: Record<string, unknown> | null;
   error_code: string | null;
@@ -31,7 +31,7 @@ interface CommandRow extends QueryResultRow {
   protected_input_nonce: Buffer | null;
   protected_input_authentication_tag: Buffer | null;
   protected_input_digest: string | null;
-  protected_input_key_version: string | null;
+  protected_input_key_id: string | null;
   claim_token: string | null;
   claim_lease_expires_at: Date | null;
   attempt_count: number;
@@ -52,7 +52,7 @@ export class BrowserCommandRepository {
         "SELECT 1 FROM projects WHERE id=$1 AND ($2::uuid IS NULL OR workspace_id=$2)",
         [projectId, workspaceId ?? null],
       );
-      if (!project.rowCount) throw new Error("BROWSER_V2_PROJECT_NOT_FOUND");
+      if (!project.rowCount) throw new Error("SCRY_BROWSER_PROJECT_NOT_FOUND");
       const result = await client.query(
         `SELECT id,id AS "referenceId",project_id AS "projectId",display_name AS "displayName",
                 CASE WHEN state='active' AND expires_at IS NOT NULL AND expires_at<=now()
@@ -69,14 +69,14 @@ export class BrowserCommandRepository {
 
   async createProtectedInput(
     workspaceId: string | undefined,
-    input: CreateBrowserProtectedInputV2Input,
+    input: CreateBrowserProtectedInputInput,
   ): Promise<{ protectedValueId: string; replay: boolean }> {
     return this.database.transaction(async (client) => {
       const project = await client.query(
         "SELECT 1 FROM projects WHERE id=$1 AND ($2::uuid IS NULL OR workspace_id=$2)",
         [input.projectId, workspaceId ?? null],
       );
-      if (!project.rowCount) throw new Error("BROWSER_V2_PROJECT_NOT_FOUND");
+      if (!project.rowCount) throw new Error("SCRY_BROWSER_PROJECT_NOT_FOUND");
       const existing = await client.query<{
         id: string;
         display_name: string;
@@ -90,7 +90,7 @@ export class BrowserCommandRepository {
           existing.rows[0].display_name !== input.displayName ||
           existing.rows[0].value_digest !== digestText(input.value)
         ) {
-          throw new Error("BROWSER_V2_PROTECTED_INPUT_IDEMPOTENCY_CONFLICT");
+          throw new Error("SCRY_BROWSER_PROTECTED_INPUT_IDEMPOTENCY_CONFLICT");
         }
         return { protectedValueId: existing.rows[0].id, replay: true };
       }
@@ -103,19 +103,19 @@ export class BrowserCommandRepository {
       });
       await client.query(
         `INSERT INTO protected_values(id,project_id,source_kind,display_name,external_reference,ciphertext,nonce,
-           authentication_tag,value_digest,key_version,state,expires_at,idempotency_key)
+           authentication_tag,value_digest,key_id,state,expires_at,idempotency_key)
          VALUES($1,$2,'user_input',$3,$4,$5,$6,$7,$8,$9,'active',
                 CASE WHEN $10::int IS NULL THEN NULL ELSE now()+($10::int * interval '1 second') END,$11)`,
         [
           protectedValueId,
           input.projectId,
           input.displayName,
-          `protected://browser-v2/${protectedValueId}`,
+          `protected://browser/${protectedValueId}`,
           encrypted.ciphertext,
           encrypted.nonce,
           encrypted.authenticationTag,
           encrypted.valueDigest,
-          encrypted.keyVersion,
+          encrypted.keyId,
           input.expiresInSeconds,
           input.idempotencyKey,
         ],
@@ -132,7 +132,7 @@ export class BrowserCommandRepository {
     return this.database.transaction(async (client) => {
       const uniqueIds = [...new Set(protectedInputIds)];
       if (uniqueIds.length !== protectedInputIds.length)
-        throw new Error("BROWSER_V2_PROTECTED_INPUT_DUPLICATE");
+        throw new Error("SCRY_BROWSER_PROTECTED_INPUT_DUPLICATE");
       const session = await client.query<{ sessionId: string; projectId: string }>(
         `SELECT s.id AS "sessionId",s.project_id AS "projectId"
          FROM runs r
@@ -143,7 +143,7 @@ export class BrowserCommandRepository {
          FOR UPDATE OF s`,
         [runId, workspaceId ?? null],
       );
-      if (!session.rows[0]) throw new Error("BROWSER_V2_RUN_NOT_ACTIVE");
+      if (!session.rows[0]) throw new Error("SCRY_BROWSER_RUN_NOT_ACTIVE");
       const available = await client.query<{ id: string }>(
         `SELECT id FROM protected_values
          WHERE id=ANY($1::uuid[]) AND project_id=$2 AND source_kind='user_input' AND state='active'
@@ -152,7 +152,7 @@ export class BrowserCommandRepository {
         [uniqueIds, session.rows[0].projectId],
       );
       if (available.rowCount !== uniqueIds.length)
-        throw new Error("BROWSER_V2_PROTECTED_INPUT_UNAVAILABLE");
+        throw new Error("SCRY_BROWSER_PROTECTED_INPUT_UNAVAILABLE");
       let added = 0;
       for (const protectedValueId of uniqueIds) {
         const inserted = await client.query(
@@ -173,7 +173,7 @@ export class BrowserCommandRepository {
 
   async submit(
     sessionId: string,
-    input: SubmitBrowserCommandV2Input,
+    input: SubmitBrowserCommandInput,
   ): Promise<{ commandId: string; replay: boolean; state: string }> {
     return this.database.transaction(async (client) => {
       const session = await client.query<{ run_id: string; state: string }>(
@@ -181,7 +181,7 @@ export class BrowserCommandRepository {
         [sessionId],
       );
       if (!session.rows[0] || !["active", "starting", "finalizing"].includes(session.rows[0].state))
-        throw new Error("BROWSER_V2_SESSION_NOT_COMMANDABLE");
+        throw new Error("SCRY_BROWSER_SESSION_NOT_COMMANDABLE");
       const existing = await client.query<CommandRow>(
         "SELECT * FROM browser_commands WHERE session_id=$1 AND idempotency_key=$2 FOR UPDATE",
         [sessionId, input.idempotencyKey],
@@ -196,7 +196,7 @@ export class BrowserCommandRepository {
           !isDeepStrictEqual(existing.rows[0].safe_input, proposed) ||
           existing.rows[0].protected_input_digest !== proposedDigest
         )
-          throw new Error("BROWSER_V2_COMMAND_IDEMPOTENCY_CONFLICT");
+          throw new Error("SCRY_BROWSER_COMMAND_IDEMPOTENCY_CONFLICT");
         return { commandId: existing.rows[0].id, replay: true, state: existing.rows[0].state };
       }
       const ordinal = await client.query<{ next: string }>(
@@ -214,7 +214,7 @@ export class BrowserCommandRepository {
           : null;
       await client.query(
         `INSERT INTO browser_commands(id,session_id,run_id,command_ordinal,idempotency_key,kind,safe_input,
-           protected_input_ciphertext,protected_input_nonce,protected_input_authentication_tag,protected_input_digest,protected_input_key_version)
+           protected_input_ciphertext,protected_input_nonce,protected_input_authentication_tag,protected_input_digest,protected_input_key_id)
          VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12)`,
         [
           commandId,
@@ -228,7 +228,7 @@ export class BrowserCommandRepository {
           encrypted?.nonce ?? null,
           encrypted?.authenticationTag ?? null,
           encrypted?.valueDigest ?? null,
-          encrypted?.keyVersion ?? null,
+          encrypted?.keyId ?? null,
         ],
       );
       await client.query("INSERT INTO browser_command_outbox(command_id) VALUES($1)", [commandId]);
@@ -242,7 +242,7 @@ export class BrowserCommandRepository {
        WHERE s.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)`,
       [sessionId, workspaceId ?? null],
     );
-    if (!result.rowCount) throw new Error("BROWSER_V2_SESSION_NOT_FOUND");
+    if (!result.rowCount) throw new Error("SCRY_BROWSER_SESSION_NOT_FOUND");
   }
 
   async observe(commandId: string) {
@@ -251,7 +251,7 @@ export class BrowserCommandRepository {
          created_at AS "createdAt",started_at AS "startedAt",completed_at AS "completedAt" FROM browser_commands WHERE id=$1`,
       [commandId],
     );
-    if (!result.rows[0]) throw new Error("BROWSER_V2_COMMAND_NOT_FOUND");
+    if (!result.rows[0]) throw new Error("SCRY_BROWSER_COMMAND_NOT_FOUND");
     return result.rows[0];
   }
 
@@ -308,7 +308,7 @@ export class BrowserCommandRepository {
 
   async claim(commandId: string, leaseMs = 60_000): Promise<CommandRow | null> {
     if (!Number.isSafeInteger(leaseMs) || leaseMs < 30_000)
-      throw new Error("BROWSER_V2_COMMAND_LEASE_INVALID");
+      throw new Error("SCRY_BROWSER_COMMAND_LEASE_INVALID");
     return this.database.transaction(async (client) => {
       const result = await client.query<CommandRow>(
         "SELECT * FROM browser_commands WHERE id=$1 FOR UPDATE",
@@ -321,7 +321,7 @@ export class BrowserCommandRepository {
         row.claim_lease_expires_at &&
         new Date(row.claim_lease_expires_at).getTime() > Date.now()
       ) {
-        throw new Error("BROWSER_V2_COMMAND_ALREADY_RUNNING");
+        throw new Error("SCRY_BROWSER_COMMAND_ALREADY_RUNNING");
       }
       const claimToken = randomUUID();
       const claimed = await client.query<CommandRow>(
@@ -336,7 +336,7 @@ export class BrowserCommandRepository {
         claimedRow.protected_input_nonce &&
         claimedRow.protected_input_authentication_tag &&
         claimedRow.protected_input_digest &&
-        claimedRow.protected_input_key_version &&
+        claimedRow.protected_input_key_id &&
         claimedRow.safe_input.kind === "fill"
       ) {
         const publicValue = this.cipher.decrypt(
@@ -345,7 +345,7 @@ export class BrowserCommandRepository {
             nonce: claimedRow.protected_input_nonce,
             authenticationTag: claimedRow.protected_input_authentication_tag,
             valueDigest: claimedRow.protected_input_digest,
-            keyVersion: claimedRow.protected_input_key_version,
+            keyId: claimedRow.protected_input_key_id,
           },
           { sessionId: claimedRow.session_id, commandId: claimedRow.id, field: "publicValue" },
         );
@@ -361,7 +361,7 @@ export class BrowserCommandRepository {
        WHERE id=$1 AND state='running' AND claim_token=$2 AND claim_lease_expires_at>now()`,
       [commandId, claimToken, leaseMs],
     );
-    if (result.rowCount !== 1) throw new Error("BROWSER_V2_COMMAND_CLAIM_FENCED");
+    if (result.rowCount !== 1) throw new Error("SCRY_BROWSER_COMMAND_CLAIM_FENCED");
   }
 
   async complete(
@@ -374,7 +374,7 @@ export class BrowserCommandRepository {
          claim_token=NULL,claim_lease_expires_at=NULL WHERE id=$1 AND state='running' AND claim_token=$2`,
       [commandId, claimToken, JSON.stringify(safeResult)],
     );
-    if (result.rowCount !== 1) throw new Error("BROWSER_V2_COMMAND_COMPLETION_CONFLICT");
+    if (result.rowCount !== 1) throw new Error("SCRY_BROWSER_COMMAND_COMPLETION_CONFLICT");
   }
 
   async fail(commandId: string, claimToken: string, error: unknown): Promise<void> {
@@ -384,7 +384,7 @@ export class BrowserCommandRepository {
     await this.database.query(
       `UPDATE browser_commands SET state='failed',error_code=$3,completed_at=now(),claim_token=NULL,
          claim_lease_expires_at=NULL WHERE id=$1 AND state='running' AND claim_token=$2`,
-      [commandId, claimToken, code || "BROWSER_V2_COMMAND_FAILED"],
+      [commandId, claimToken, code || "SCRY_BROWSER_COMMAND_FAILED"],
     );
   }
 
@@ -396,7 +396,7 @@ export class BrowserCommandRepository {
     baseOrigin: string;
     ownerGeneration: number;
     disclosureMode: BrowserDisclosureMode;
-    protectionKeyVersion: string;
+    protectionKeyId: string;
   }> {
     const result = await this.database.query<{
       sessionId: string;
@@ -406,17 +406,17 @@ export class BrowserCommandRepository {
       baseOrigin: string;
       ownerGeneration: string;
       disclosureMode: BrowserDisclosureMode;
-      protectionKeyVersion: string;
+      protectionKeyId: string;
     }>(
       `SELECT s.id AS "sessionId",s.run_id AS "runId",s.project_id AS "projectId",s.mission_id AS "missionId",
          e.base_origin AS "baseOrigin",s.active_owner_generation AS "ownerGeneration",
-         s.disclosure_mode AS "disclosureMode",s.protection_key_version AS "protectionKeyVersion"
+         s.disclosure_mode AS "disclosureMode",s.protection_key_id AS "protectionKeyId"
        FROM browser_execution_sessions s JOIN environments e ON e.id=s.environment_id
        WHERE s.id=$1`,
       [sessionId],
     );
     const row = result.rows[0];
-    if (!row) throw new Error("BROWSER_V2_SESSION_NOT_FOUND");
+    if (!row) throw new Error("SCRY_BROWSER_SESSION_NOT_FOUND");
     return {
       ...row,
       ownerGeneration: Number(row.ownerGeneration),
@@ -431,7 +431,7 @@ export class BrowserCommandRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       value_digest: string;
-      key_version: string;
+      key_id: string;
       project_id: string;
       mission_id: string;
       run_id: string;
@@ -439,7 +439,7 @@ export class BrowserCommandRepository {
       field_path: Array<string | number>;
     }>(
       `SELECT v.id,v.display_name,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,
-              v.key_version,v.project_id,v.mission_id,v.run_id,v.source_effect_id,
+              v.key_id,v.project_id,v.mission_id,v.run_id,v.source_effect_id,
               lineage.field_path
        FROM protected_values v
        JOIN browser_execution_sessions s
@@ -462,11 +462,11 @@ export class BrowserCommandRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       value_digest: string;
-      key_version: string;
+      key_id: string;
       project_id: string;
     }>(
       `SELECT v.id,v.display_name,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,
-              v.key_version,v.project_id
+              v.key_id,v.project_id
        FROM protected_values v
        JOIN browser_session_protected_inputs i ON i.protected_value_id=v.id
        JOIN browser_execution_sessions s ON s.id=i.session_id AND s.project_id=v.project_id
@@ -485,7 +485,7 @@ export class BrowserCommandRepository {
           nonce: row.nonce,
           authenticationTag: row.authentication_tag,
           valueDigest: row.value_digest,
-          keyVersion: row.key_version,
+          keyId: row.key_id,
         } satisfies EncryptedProtectedValue,
         {
           projectId: row.project_id,
@@ -506,7 +506,7 @@ export class BrowserCommandRepository {
           nonce: row.nonce,
           authenticationTag: row.authentication_tag,
           valueDigest: row.value_digest,
-          keyVersion: row.key_version,
+          keyId: row.key_id,
         } satisfies EncryptedProtectedValue,
         {
           projectId: row.project_id,
@@ -558,7 +558,7 @@ export class BrowserCommandRepository {
     const plaintext = JSON.stringify({ version: 1, ...value });
     const byteSize = Buffer.byteLength(plaintext, "utf8");
     if (byteSize < 2 || byteSize > 2 * 1024 * 1024)
-      throw new Error("BROWSER_V2_CHECKPOINT_SIZE_INVALID");
+      throw new Error("SCRY_BROWSER_CHECKPOINT_SIZE_INVALID");
     return this.database.transaction(async (client) => {
       const scope = await client.query<{
         run_id: string;
@@ -574,18 +574,18 @@ export class BrowserCommandRepository {
         [sessionId],
       );
       const row = scope.rows[0];
-      if (!row || row.state !== "active") throw new Error("BROWSER_V2_SESSION_NOT_ACTIVE");
+      if (!row || row.state !== "active") throw new Error("SCRY_BROWSER_SESSION_NOT_ACTIVE");
       const resume = new URL(value.resumeUrl);
       if (resume.origin !== new URL(row.base_origin).origin)
-        throw new Error("BROWSER_V2_CHECKPOINT_ORIGIN_INVALID");
+        throw new Error("SCRY_BROWSER_CHECKPOINT_ORIGIN_INVALID");
       if (Number(row.active_owner_generation) !== ownerGeneration)
-        throw new Error("BROWSER_V2_OWNER_FENCED");
+        throw new Error("SCRY_BROWSER_OWNER_FENCED");
       const owner = await client.query(
         `SELECT 1 FROM browser_owner_generations
          WHERE session_id=$1 AND generation=$2 AND state='active' AND lease_expires_at>now()`,
         [sessionId, ownerGeneration],
       );
-      if (!owner.rowCount) throw new Error("BROWSER_V2_OWNER_FENCED");
+      if (!owner.rowCount) throw new Error("SCRY_BROWSER_OWNER_FENCED");
       const current = await client.query<{ checkpoint_revision: string }>(
         "SELECT checkpoint_revision FROM browser_session_checkpoints WHERE session_id=$1 FOR UPDATE",
         [sessionId],
@@ -603,7 +603,7 @@ export class BrowserCommandRepository {
       await client.query(
         `INSERT INTO browser_session_checkpoints(
            session_id,run_id,project_id,mission_id,checkpoint_revision,owner_generation,resume_origin,
-           resume_url_digest,ciphertext,nonce,authentication_tag,plaintext_digest,key_version,byte_size)
+           resume_url_digest,ciphertext,nonce,authentication_tag,plaintext_digest,key_id,byte_size)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          ON CONFLICT(session_id) DO UPDATE SET
            checkpoint_revision=excluded.checkpoint_revision,
@@ -614,7 +614,7 @@ export class BrowserCommandRepository {
            nonce=excluded.nonce,
            authentication_tag=excluded.authentication_tag,
            plaintext_digest=excluded.plaintext_digest,
-           key_version=excluded.key_version,
+           key_id=excluded.key_id,
            byte_size=excluded.byte_size,
            updated_at=now()`,
         [
@@ -630,7 +630,7 @@ export class BrowserCommandRepository {
           encrypted.nonce,
           encrypted.authenticationTag,
           encrypted.valueDigest,
-          encrypted.keyVersion,
+          encrypted.keyId,
           byteSize,
         ],
       );
@@ -660,12 +660,12 @@ export class BrowserCommandRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       plaintext_digest: string;
-      key_version: string;
+      key_id: string;
       byte_size: number;
     }>(
       `SELECT s.run_id,s.project_id,s.mission_id,s.state,s.active_owner_generation,e.base_origin,
               c.checkpoint_revision,c.owner_generation,c.ciphertext,c.nonce,c.authentication_tag,
-              c.plaintext_digest,c.key_version,c.byte_size
+              c.plaintext_digest,c.key_id,c.byte_size
        FROM browser_execution_sessions s
        JOIN environments e ON e.id=s.environment_id
        LEFT JOIN browser_session_checkpoints c ON c.session_id=s.id
@@ -673,9 +673,9 @@ export class BrowserCommandRepository {
       [sessionId],
     );
     const row = result.rows[0];
-    if (!row || row.state !== "active") throw new Error("BROWSER_V2_SESSION_NOT_ACTIVE");
+    if (!row || row.state !== "active") throw new Error("SCRY_BROWSER_SESSION_NOT_ACTIVE");
     if (Number(row.active_owner_generation) !== ownerGeneration)
-      throw new Error("BROWSER_V2_OWNER_FENCED");
+      throw new Error("SCRY_BROWSER_OWNER_FENCED");
     if (row.checkpoint_revision === null || row.checkpoint_revision === undefined) return null;
     try {
       const revision = Number(row.checkpoint_revision);
@@ -686,7 +686,7 @@ export class BrowserCommandRepository {
           nonce: row.nonce,
           authenticationTag: row.authentication_tag,
           valueDigest: row.plaintext_digest,
-          keyVersion: row.key_version,
+          keyId: row.key_id,
         },
         checkpointContext({
           sessionId,
@@ -718,7 +718,7 @@ export class BrowserCommandRepository {
         sessionStorage: parsed.sessionStorage,
       };
     } catch {
-      throw new Error("BROWSER_V2_CHECKPOINT_CORRUPT");
+      throw new Error("SCRY_BROWSER_CHECKPOINT_CORRUPT");
     }
   }
 
@@ -728,7 +728,7 @@ export class BrowserCommandRepository {
        WHERE c.session_id=$1 AND c.session_id=s.id AND s.active_owner_generation=$2`,
       [sessionId, ownerGeneration],
     );
-    if ((result.rowCount ?? 0) > 1) throw new Error("BROWSER_V2_CHECKPOINT_DELETE_INVALID");
+    if ((result.rowCount ?? 0) > 1) throw new Error("SCRY_BROWSER_CHECKPOINT_DELETE_INVALID");
   }
 
   async protectedValueForBrowser(sessionId: string, protectedValueId: string): Promise<string> {
@@ -737,14 +737,14 @@ export class BrowserCommandRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       value_digest: string;
-      key_version: string;
+      key_id: string;
       project_id: string;
       mission_id: string;
       run_id: string;
       source_effect_id: string;
       canonical_name: string;
     }>(
-      `SELECT v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_version,v.project_id,v.mission_id,v.run_id,
+      `SELECT v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_id,v.project_id,v.mission_id,v.run_id,
          v.source_effect_id,o.canonical_name FROM protected_values v JOIN browser_outputs o ON o.protected_value_id=v.id
        JOIN browser_execution_sessions s ON s.project_id=v.project_id AND s.mission_id=v.mission_id AND s.run_id=v.run_id
        WHERE s.id=$1 AND v.id=$2 AND v.state='active'`,
@@ -758,7 +758,7 @@ export class BrowserCommandRepository {
           nonce: row.nonce,
           authenticationTag: row.authentication_tag,
           valueDigest: row.value_digest,
-          keyVersion: row.key_version,
+          keyId: row.key_id,
         } satisfies EncryptedProtectedValue,
         {
           projectId: row.project_id,
@@ -775,11 +775,11 @@ export class BrowserCommandRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       value_digest: string;
-      key_version: string;
+      key_id: string;
       project_id: string;
       display_name: string;
     }>(
-      `SELECT v.id,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_version,v.project_id,v.display_name
+      `SELECT v.id,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_id,v.project_id,v.display_name
        FROM protected_values v JOIN browser_session_protected_inputs b ON b.protected_value_id=v.id
        JOIN browser_execution_sessions s ON s.id=b.session_id AND s.project_id=v.project_id
        WHERE s.id=$1 AND v.id=$2 AND v.source_kind='user_input' AND v.state='active'
@@ -787,14 +787,14 @@ export class BrowserCommandRepository {
       [sessionId, protectedValueId],
     );
     const input = userInput.rows[0];
-    if (!input) throw new Error("BROWSER_V2_PROTECTED_VALUE_UNAVAILABLE");
+    if (!input) throw new Error("SCRY_BROWSER_PROTECTED_VALUE_UNAVAILABLE");
     return this.cipher.decrypt(
       {
         ciphertext: input.ciphertext,
         nonce: input.nonce,
         authenticationTag: input.authentication_tag,
         valueDigest: input.value_digest,
-        keyVersion: input.key_version,
+        keyId: input.key_id,
       } satisfies EncryptedProtectedValue,
       {
         projectId: input.project_id,
@@ -862,7 +862,7 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return Object.values(value).every((item) => typeof item === "string");
 }
 
-function safeCommand(command: BrowserCommandV2): BrowserCommandV2 {
+function safeCommand(command: BrowserCommand): BrowserCommand {
   return command.kind === "fill" && command.publicValue !== undefined
     ? { ...command, publicValue: "[PROTECTED:COMMAND_INPUT]" }
     : command;

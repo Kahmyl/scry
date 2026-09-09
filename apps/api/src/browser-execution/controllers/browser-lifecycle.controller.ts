@@ -11,26 +11,26 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import {
-  createBrowserFlowV2Schema,
-  bindBrowserProtectedInputsV2Schema,
-  createBrowserEnvironmentV2Schema,
-  createBrowserProtectedInputV2Schema,
-  createBrowserObjectiveV2Schema,
-  finalizeBrowserRunV2Schema,
-  publishBrowserMissionReportV2Schema,
-  startBrowserMissionV2Schema,
-  startBrowserRunV2Schema,
-  submitBrowserCommandV2Schema,
-  type CreateBrowserFlowV2Input,
-  type BindBrowserProtectedInputsV2Input,
-  type CreateBrowserEnvironmentV2Input,
-  type CreateBrowserProtectedInputV2Input,
-  type CreateBrowserObjectiveV2Input,
-  type FinalizeBrowserRunV2Input,
-  type PublishBrowserMissionReportV2Input,
-  type StartBrowserMissionV2Input,
-  type StartBrowserRunV2Input,
-  type SubmitBrowserCommandV2Input,
+  createBrowserFlowSchema,
+  bindBrowserProtectedInputsSchema,
+  createBrowserEnvironmentSchema,
+  createBrowserProtectedInputSchema,
+  createBrowserObjectiveSchema,
+  finalizeBrowserRunSchema,
+  publishBrowserMissionReportSchema,
+  startBrowserMissionSchema,
+  startBrowserRunSchema,
+  submitBrowserCommandSchema,
+  type CreateBrowserFlowInput,
+  type BindBrowserProtectedInputsInput,
+  type CreateBrowserEnvironmentInput,
+  type CreateBrowserProtectedInputInput,
+  type CreateBrowserObjectiveInput,
+  type FinalizeBrowserRunInput,
+  type PublishBrowserMissionReportInput,
+  type StartBrowserMissionInput,
+  type StartBrowserRunInput,
+  type SubmitBrowserCommandInput,
 } from "@scry/contracts";
 
 import { CurrentPrincipal } from "../../auth/current-principal.decorator.js";
@@ -41,9 +41,9 @@ import { BrowserExecutionRepository } from "../repositories/browser-execution.re
 import { BrowserLifecycleRepository } from "../repositories/browser-lifecycle.repository.js";
 import { BrowserCommandRepository } from "../repositories/browser-command.repository.js";
 import { BrowserExecutionQueueService } from "../browser-execution-queue.service.js";
-import { BROWSER_RUNTIME_CAPABILITY_VERSION } from "../browser-runtime-capability.js";
+import { BROWSER_RUNTIME_CAPABILITY_ID } from "../browser-runtime-capability.js";
 
-@Controller("api/v2")
+@Controller("api")
 export class BrowserLifecycleController {
   constructor(
     @Inject(BrowserLifecycleRepository) private readonly lifecycle: BrowserLifecycleRepository,
@@ -57,13 +57,13 @@ export class BrowserLifecycleController {
   async health() {
     this.enabled();
     await this.execution.assertCompatibleBaseline();
-    return { ready: true, capabilityVersion: BROWSER_RUNTIME_CAPABILITY_VERSION };
+    return { ready: true, capabilityId: BROWSER_RUNTIME_CAPABILITY_ID };
   }
 
   @Post("missions")
   startMission(
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(startBrowserMissionV2Schema)) input: StartBrowserMissionV2Input,
+    @Body(new ZodValidationPipe(startBrowserMissionSchema)) input: StartBrowserMissionInput,
   ) {
     this.enabled();
     return this.lifecycle.startMission(workspace(principal), input);
@@ -75,16 +75,16 @@ export class BrowserLifecycleController {
     @CurrentPrincipal() principal: Principal,
     @Body(
       new ZodValidationPipe(
-        createBrowserEnvironmentV2Schema.omit({
+        createBrowserEnvironmentSchema.omit({
           projectId: true,
         }),
       ),
     )
-    input: Omit<CreateBrowserEnvironmentV2Input, "projectId">,
+    input: Omit<CreateBrowserEnvironmentInput, "projectId">,
   ) {
     this.enabled();
     if (principal.kind === "user" && principal.role === "viewer")
-      throw new ForbiddenException("BROWSER_V2_ENVIRONMENT_POLICY_FORBIDDEN");
+      throw new ForbiddenException("SCRY_BROWSER_ENVIRONMENT_POLICY_FORBIDDEN");
     return this.lifecycle.createEnvironment(workspace(principal), { ...input, projectId });
   }
 
@@ -101,8 +101,8 @@ export class BrowserLifecycleController {
   createProtectedInput(
     @Param("projectId") projectId: string,
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(createBrowserProtectedInputV2Schema.omit({ projectId: true })))
-    input: Omit<CreateBrowserProtectedInputV2Input, "projectId">,
+    @Body(new ZodValidationPipe(createBrowserProtectedInputSchema.omit({ projectId: true })))
+    input: Omit<CreateBrowserProtectedInputInput, "projectId">,
   ) {
     this.enabled();
     return this.commands.createProtectedInput(workspace(principal), { ...input, projectId });
@@ -121,8 +121,8 @@ export class BrowserLifecycleController {
   bindProtectedInputs(
     @Param("runId") runId: string,
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(bindBrowserProtectedInputsV2Schema))
-    input: BindBrowserProtectedInputsV2Input,
+    @Body(new ZodValidationPipe(bindBrowserProtectedInputsSchema))
+    input: BindBrowserProtectedInputsInput,
   ) {
     this.enabled();
     return this.commands.bindProtectedInputs(workspace(principal), runId, input.protectedInputIds);
@@ -132,7 +132,7 @@ export class BrowserLifecycleController {
   async submitCommand(
     @Param("sessionId") sessionId: string,
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(submitBrowserCommandV2Schema)) input: SubmitBrowserCommandV2Input,
+    @Body(new ZodValidationPipe(submitBrowserCommandSchema)) input: SubmitBrowserCommandInput,
   ) {
     this.enabled();
     await this.commands.assertSessionAccess(sessionId, workspace(principal));
@@ -168,8 +168,8 @@ export class BrowserLifecycleController {
   createObjective(
     @Param("missionId") missionId: string,
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(createBrowserObjectiveV2Schema))
-    input: CreateBrowserObjectiveV2Input,
+    @Body(new ZodValidationPipe(createBrowserObjectiveSchema))
+    input: CreateBrowserObjectiveInput,
   ) {
     this.enabled();
     return this.lifecycle.createObjective(workspace(principal), missionId, input);
@@ -179,7 +179,7 @@ export class BrowserLifecycleController {
   createFlow(
     @Param("missionId") missionId: string,
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(createBrowserFlowV2Schema)) input: CreateBrowserFlowV2Input,
+    @Body(new ZodValidationPipe(createBrowserFlowSchema)) input: CreateBrowserFlowInput,
   ) {
     this.enabled();
     return this.lifecycle.createFlow(workspace(principal), missionId, input);
@@ -188,7 +188,7 @@ export class BrowserLifecycleController {
   @Post("runs")
   startRun(
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(startBrowserRunV2Schema)) input: StartBrowserRunV2Input,
+    @Body(new ZodValidationPipe(startBrowserRunSchema)) input: StartBrowserRunInput,
   ) {
     this.enabled();
     return this.lifecycle.startRun(workspace(principal), input);
@@ -198,7 +198,7 @@ export class BrowserLifecycleController {
   async finalizeRun(
     @Param("runId") runId: string,
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(finalizeBrowserRunV2Schema)) input: FinalizeBrowserRunV2Input,
+    @Body(new ZodValidationPipe(finalizeBrowserRunSchema)) input: FinalizeBrowserRunInput,
   ) {
     this.enabled();
     const session = await this.lifecycle.executionSessionForRun(workspace(principal), runId);
@@ -212,7 +212,7 @@ export class BrowserLifecycleController {
       const closed = await waitForCommand(this.commands, submitted.commandId, 30_000);
       if (!closed || closed.state !== "completed") {
         throw new ConflictException({
-          code: closed?.errorCode ?? "BROWSER_V2_FINALIZATION_CLOSE_TIMEOUT",
+          code: closed?.errorCode ?? "SCRY_BROWSER_FINALIZATION_CLOSE_TIMEOUT",
           status: 409,
           safeActions: ["Resolve the reported pending effect or capture, then retry finalization."],
         });
@@ -238,16 +238,16 @@ export class BrowserLifecycleController {
   publishReport(
     @Param("missionId") missionId: string,
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodValidationPipe(publishBrowserMissionReportV2Schema))
-    input: PublishBrowserMissionReportV2Input,
+    @Body(new ZodValidationPipe(publishBrowserMissionReportSchema))
+    input: PublishBrowserMissionReportInput,
   ) {
     this.enabled();
     return this.lifecycle.publishReport(workspace(principal), missionId, input);
   }
 
   private enabled(): void {
-    if (process.env.BROWSER_V2_ENABLED !== "true")
-      throw new ServiceUnavailableException("BROWSER_V2_DISABLED");
+    if (process.env.SCRY_BROWSER_ENABLED !== "true")
+      throw new ServiceUnavailableException("SCRY_BROWSER_DISABLED");
   }
 }
 
@@ -274,7 +274,7 @@ async function waitForCommand(
 
 function safeBrowserCode(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
-  return /^BROWSER_V2_[A-Z0-9_]+(?::[A-Za-z0-9,_-]+)?$/u.test(raw)
+  return /^SCRY_BROWSER_[A-Z0-9_]+(?::[A-Za-z0-9,_-]+)?$/u.test(raw)
     ? raw
-    : "BROWSER_V2_FINALIZATION_FAILED";
+    : "SCRY_BROWSER_FINALIZATION_FAILED";
 }

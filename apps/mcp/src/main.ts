@@ -1,3 +1,7 @@
-throw new Error(
-  "LEGACY_MCP_RETIRED: use the default @scry/mcp start command, which launches browser-v2-main.ts",
-);
+#!/usr/bin/env node
+
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { createBrowserMcpServer } from "./server.js";
+
+const server = createBrowserMcpServer();
+await server.connect(new StdioServerTransport());

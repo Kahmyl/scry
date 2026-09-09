@@ -19,14 +19,12 @@ require_command() {
 deploy_dir=${1:-}
 release_id=${2:-}
 image_ref=${3:-}
-schema_fingerprint=${4:-}
-incoming_compose=${5:-}
+incoming_compose=${4:-}
 
 [[ "$deploy_dir" =~ ^/[A-Za-z0-9._/-]+$ ]] || fail "deployment directory must be an absolute simple path"
 [[ "$release_id" =~ ^[0-9a-f]{40}$ ]] || fail "release ID must be an exact lowercase commit SHA"
 [[ "$image_ref" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] ||
   fail "application image must be pinned by sha256 digest"
-[[ "$schema_fingerprint" =~ ^[0-9a-f]{64}$ ]] || fail "schema fingerprint must be sha256"
 [[ -f "$incoming_compose" ]] || fail "candidate Compose file does not exist"
 
 for command_name in docker flock awk sed stat; do
@@ -77,11 +75,10 @@ run_compose() {
   local compose_files=$1
   local selected_image=$2
   local selected_release=$3
-  local selected_schema=$4
   local compose_file
   local -a compose_arguments=()
   local -a selected_compose_files=()
-  shift 4
+  shift 3
   IFS=',' read -r -a selected_compose_files <<<"$compose_files"
   ((${#selected_compose_files[@]} > 0)) || fail "no Compose files were selected"
   for compose_file in "${selected_compose_files[@]}"; do
@@ -91,7 +88,6 @@ run_compose() {
   done
   SCRY_IMAGE_REF="$selected_image" \
     SCRY_RELEASE_ID="$selected_release" \
-    SCRY_SCHEMA_FINGERPRINT="$selected_schema" \
     docker compose \
       --project-name scry \
       --env-file "$env_file" \
@@ -100,7 +96,7 @@ run_compose() {
 }
 
 run_candidate() {
-  run_compose "$candidate_compose" "$image_ref" "$release_id" "$schema_fingerprint" "$@"
+  run_compose "$candidate_compose" "$image_ref" "$release_id" "$@"
 }
 
 container_env_value() {
@@ -113,13 +109,11 @@ container_env_value() {
 write_current_state() {
   local selected_release=$1
   local selected_image=$2
-  local selected_schema=$3
-  local selected_compose_files=$4
+  local selected_compose_files=$3
   local temporary_state="$current_state.tmp"
   {
     printf 'CURRENT_RELEASE_ID=%s\n' "$selected_release"
     printf 'CURRENT_IMAGE_REF=%s\n' "$selected_image"
-    printf 'CURRENT_SCHEMA_FINGERPRINT=%s\n' "$selected_schema"
     printf 'CURRENT_COMPOSE_FILES=%s\n' "$selected_compose_files"
   } >"$temporary_state"
   mv "$temporary_state" "$current_state"
@@ -177,7 +171,6 @@ discover_running_compose_files() {
 previous_available=false
 previous_release=''
 previous_image=''
-previous_schema=''
 previous_compose=''
 
 if [[ -f "$current_state" ]]; then
@@ -187,13 +180,11 @@ if [[ -f "$current_state" ]]; then
   }
   previous_release=$(state_value CURRENT_RELEASE_ID)
   previous_image=$(state_value CURRENT_IMAGE_REF)
-  previous_schema=$(state_value CURRENT_SCHEMA_FINGERPRINT)
   previous_compose=$(state_value CURRENT_COMPOSE_FILES)
   previous_compose=${previous_compose:-$(state_value CURRENT_COMPOSE_FILE)}
   [[ "$previous_release" =~ ^[0-9a-f]{40}$ ]] || fail "saved current release ID is invalid"
   [[ "$previous_image" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] ||
     fail "saved current image is not immutable"
-  [[ "$previous_schema" =~ ^[0-9a-f]{64}$ ]] || fail "saved current schema is invalid"
   validate_compose_files "$previous_compose" || fail "saved current Compose files are invalid"
   previous_available=true
 else
@@ -202,7 +193,6 @@ else
     --filter label=com.docker.compose.service=api | head -n 1)
   if [[ -n "$existing_api" ]]; then
     previous_release=$(container_env_value "$existing_api" SCRY_RELEASE_ID)
-    previous_schema=$(container_env_value "$existing_api" SCRY_SCHEMA_FINGERPRINT)
     previous_image=$(docker inspect --format '{{.Config.Image}}' "$existing_api")
     previous_compose=$(discover_running_compose_files "$existing_api") ||
       fail "a running release exists but its recorded Compose files are unavailable"
@@ -210,9 +200,7 @@ else
       fail "running API does not expose an immutable release ID"
     [[ "$previous_image" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] ||
       fail "running API image is not pinned by digest"
-    [[ "$previous_schema" =~ ^[0-9a-f]{64}$ ]] ||
-      fail "running API does not expose a schema fingerprint"
-    write_current_state "$previous_release" "$previous_image" "$previous_schema" "$previous_compose"
+    write_current_state "$previous_release" "$previous_image" "$previous_compose"
     previous_available=true
     log "Bootstrapped rollback metadata from running release $previous_release."
   fi
@@ -224,11 +212,8 @@ resolved_image=$(docker image inspect --format '{{index .RepoDigests 0}}' "$imag
 [[ "${resolved_image##*@}" == "${image_ref##*@}" ]] ||
   fail "pulled image digest does not match the requested digest"
 image_release=$(docker image inspect --format '{{index .Config.Labels "org.scry.release-id"}}' "$image_ref")
-image_schema=$(docker image inspect --format '{{index .Config.Labels "org.scry.schema-fingerprint"}}' "$image_ref")
 [[ "$image_release" == "$release_id" ]] ||
   fail "image release label does not match requested release"
-[[ "$image_schema" == "$schema_fingerprint" ]] ||
-  fail "image schema label does not match requested schema"
 
 log "Validating candidate configuration before touching running services."
 run_candidate config --quiet
@@ -236,7 +221,6 @@ docker run --rm \
   --env-file "$env_file" \
   -e SCRY_IMAGE_REF="$image_ref" \
   -e SCRY_RELEASE_ID="$release_id" \
-  -e SCRY_SCHEMA_FINGERPRINT="$schema_fingerprint" \
   "$image_ref" node scripts/verify-deployment-preflight.mjs
 run_candidate pull --quiet
 
@@ -252,22 +236,21 @@ deployment_env_value() {
 }
 
 database_name=$(deployment_env_value SCRY_DATABASE_NAME)
-database_name=${database_name:-scry_browser_v2}
+[[ -n "$database_name" ]] || fail "SCRY_DATABASE_NAME must explicitly identify the existing database"
 [[ "$database_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || fail "SCRY_DATABASE_NAME is invalid"
 
 health_check() {
   local compose_file=$1
   local selected_image=$2
   local selected_release=$3
-  local selected_schema=$4
-  run_compose "$compose_file" "$selected_image" "$selected_release" "$selected_schema" \
-    exec -T api wget -qO- http://127.0.0.1:4000/api/v2/health >/dev/null
-  run_compose "$compose_file" "$selected_image" "$selected_release" "$selected_schema" \
+  run_compose "$compose_file" "$selected_image" "$selected_release" \
+    exec -T api wget -qO- http://127.0.0.1:4000/api/health >/dev/null
+  run_compose "$compose_file" "$selected_image" "$selected_release" \
     exec -T mcp wget -qO- http://127.0.0.1:4100/health >/dev/null
-  run_compose "$compose_file" "$selected_image" "$selected_release" "$selected_schema" \
+  run_compose "$compose_file" "$selected_image" "$selected_release" \
     exec -T web wget -qO- http://127.0.0.1:3000/ >/dev/null
   for service in api worker mcp web; do
-    actual_release=$(run_compose "$compose_file" "$selected_image" "$selected_release" "$selected_schema" \
+    actual_release=$(run_compose "$compose_file" "$selected_image" "$selected_release" \
       exec -T "$service" printenv SCRY_RELEASE_ID)
     [[ "$actual_release" == "$selected_release" ]] ||
       fail "$service is running release $actual_release instead of $selected_release"
@@ -276,10 +259,9 @@ health_check() {
 
 if [[ "$previous_available" == true &&
   "$previous_release" == "$release_id" &&
-  "$previous_image" == "$image_ref" &&
-  "$previous_schema" == "$schema_fingerprint" ]]; then
-  if health_check "$previous_compose" "$previous_image" "$previous_release" "$previous_schema"; then
-    write_current_state "$release_id" "$image_ref" "$schema_fingerprint" "$candidate_compose"
+  "$previous_image" == "$image_ref" ]]; then
+  if health_check "$previous_compose" "$previous_image" "$previous_release"; then
+    write_current_state "$release_id" "$image_ref" "$candidate_compose"
     log "Release $release_id is already healthy; deployment replay completed without interruption."
     exit 0
   fi
@@ -313,10 +295,10 @@ rollback() {
 
   if [[ "$previous_available" == true && "$recovery_failed" == false ]]; then
     log "Restarting previous release $previous_release."
-    if ! run_compose "$previous_compose" "$previous_image" "$previous_release" "$previous_schema" \
+    if ! run_compose "$previous_compose" "$previous_image" "$previous_release" \
       up -d --no-deps --force-recreate --wait --wait-timeout "$health_timeout" api worker mcp web caddy; then
       recovery_failed=true
-    elif ! health_check "$previous_compose" "$previous_image" "$previous_release" "$previous_schema"; then
+    elif ! health_check "$previous_compose" "$previous_image" "$previous_release"; then
       recovery_failed=true
     fi
   fi
@@ -337,20 +319,20 @@ trap 'rollback $?' ERR
 
 if [[ "$previous_available" == true ]]; then
   phase=traffic_fence
-  run_compose "$previous_compose" "$previous_image" "$previous_release" "$previous_schema" stop -t 30 caddy
-  active_work=$(run_compose "$previous_compose" "$previous_image" "$previous_release" "$previous_schema" \
+  run_compose "$previous_compose" "$previous_image" "$previous_release" stop -t 30 caddy
+  active_work=$(run_compose "$previous_compose" "$previous_image" "$previous_release" \
     exec -T postgres psql -U scry -d "$database_name" -Atqc \
     "SELECT (SELECT count(*) FROM browser_execution_sessions WHERE state IN ('starting','active','finalizing')) + (SELECT count(*) FROM browser_commands WHERE state IN ('queued','running'))")
   if [[ "$active_work" != 0 ]]; then
-    run_compose "$previous_compose" "$previous_image" "$previous_release" "$previous_schema" start caddy
+    run_compose "$previous_compose" "$previous_image" "$previous_release" start caddy
     fail "deployment refused because $active_work browser work item(s) are nonterminal"
   fi
-  run_compose "$previous_compose" "$previous_image" "$previous_release" "$previous_schema" \
+  run_compose "$previous_compose" "$previous_image" "$previous_release" \
     stop -t 30 web mcp worker api
 
   phase=database_backup
   log "Capturing a fenced PostgreSQL snapshot."
-  run_compose "$previous_compose" "$previous_image" "$previous_release" "$previous_schema" \
+  run_compose "$previous_compose" "$previous_image" "$previous_release" \
     exec -T postgres pg_dump -U scry -d "$database_name" -Fc >"$backup_file"
   [[ -s "$backup_file" ]] || fail "pre-deployment database snapshot is empty"
 fi
@@ -379,14 +361,13 @@ run_candidate up -d --no-deps --force-recreate --wait --wait-timeout "$health_ti
 run_candidate up -d --no-deps --force-recreate --wait --wait-timeout "$health_timeout" mcp web
 
 phase=health_verification
-health_check "$candidate_compose" "$image_ref" "$release_id" "$schema_fingerprint"
+health_check "$candidate_compose" "$image_ref" "$release_id"
 run_candidate run --rm --no-deps --entrypoint caddy caddy validate --config /etc/caddy/Caddyfile
 
 phase=activation
 {
   printf 'CURRENT_RELEASE_ID=%s\n' "$release_id"
   printf 'CURRENT_IMAGE_REF=%s\n' "$image_ref"
-  printf 'CURRENT_SCHEMA_FINGERPRINT=%s\n' "$schema_fingerprint"
   printf 'CURRENT_COMPOSE_FILE=%s\n' "$candidate_compose"
 } >"$current_state.pending"
 run_candidate up -d --no-deps --force-recreate --wait --wait-timeout "$health_timeout" caddy
@@ -397,7 +378,6 @@ cat >"$release_dir/receipt.json" <<EOF
 {
   "releaseId": "$release_id",
   "imageRef": "$image_ref",
-  "schemaFingerprint": "$schema_fingerprint",
   "deployedAt": "$deployed_at",
   "databaseBackup": "pre-deploy.dump",
   "verdict": "pass"

@@ -198,6 +198,11 @@ owner generation. Origin mismatch, digest mismatch, malformed state, unavailable
 key material, or owner mismatch fails closed. The checkpoint is deleted after
 successful evidence closure.
 
+When persisted data predates the baseline naming reset, the worker may use an
+explicit historical decryption candidate after the canonical key fails. This is
+a read-only compatibility path; canonical encryption remains the sole write
+path and failed authentication never falls back to plaintext handling.
+
 ## Evidence closure
 
 The recorder masks inputs and sanitizes captured values before appending events.

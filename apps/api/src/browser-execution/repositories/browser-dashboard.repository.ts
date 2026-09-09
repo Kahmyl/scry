@@ -52,7 +52,7 @@ export class BrowserDashboardRepository {
        WHERE r.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)`,
       [runId, workspaceId ?? null],
     );
-    if (!run.rows[0]) throw new Error("BROWSER_V2_RUN_NOT_FOUND");
+    if (!run.rows[0]) throw new Error("SCRY_BROWSER_RUN_NOT_FOUND");
     const [effects, evidence, artifacts] = await Promise.all([
       this.database.query(
         `SELECT id,effect_class AS "effectClass",effect_ordinal AS "effectOrdinal",
@@ -109,7 +109,7 @@ export class BrowserDashboardRepository {
        WHERE mr.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)`,
       [reportId, workspaceId ?? null],
     );
-    if (!result.rows[0]) throw new Error("BROWSER_V2_REPORT_NOT_FOUND");
+    if (!result.rows[0]) throw new Error("SCRY_BROWSER_REPORT_NOT_FOUND");
     return result.rows[0];
   }
 }

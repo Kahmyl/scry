@@ -21,9 +21,9 @@ export class BrowserProjectRepository {
 
   async create(principal: Principal, input: { name: string; description: string }) {
     if (principal.kind !== "user" || principal.credentialKind === "mcp")
-      throw new ForbiddenException("BROWSER_V2_PROJECT_USER_BOUNDARY_REQUIRED");
+      throw new ForbiddenException("SCRY_BROWSER_PROJECT_USER_BOUNDARY_REQUIRED");
     if (!["owner", "admin"].includes(principal.role))
-      throw new ForbiddenException("BROWSER_V2_PROJECT_POLICY_FORBIDDEN");
+      throw new ForbiddenException("SCRY_BROWSER_PROJECT_POLICY_FORBIDDEN");
     try {
       const result = await this.database.query(
         `INSERT INTO projects(id,workspace_id,name,description)
@@ -33,7 +33,8 @@ export class BrowserProjectRepository {
       );
       return result.rows[0];
     } catch (error) {
-      if (isUniqueViolation(error)) throw new ConflictException("BROWSER_V2_PROJECT_NAME_CONFLICT");
+      if (isUniqueViolation(error))
+        throw new ConflictException("SCRY_BROWSER_PROJECT_NAME_CONFLICT");
       throw error;
     }
   }

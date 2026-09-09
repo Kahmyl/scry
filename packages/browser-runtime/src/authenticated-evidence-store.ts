@@ -10,7 +10,8 @@ interface EvidenceEnvelope<T> {
 }
 
 interface EvidenceAad {
-  evidenceVersion: 1;
+  evidenceFormat?: 1;
+  evidenceVersion?: 1;
   compression: "gzip";
   runId: string;
   scopeId: string;
@@ -78,12 +79,14 @@ export class AuthenticatedEvidenceStore<T> {
   #nextSequence = 0;
   #previousDigest = "GENESIS";
   readonly #key: Buffer;
+  readonly #legacyDecryptionKeys: readonly Buffer[];
 
   constructor(options: {
     directory: string;
     runId: string;
     scopeId: string;
     encryptionKey: Buffer;
+    legacyDecryptionKeys?: readonly Buffer[];
     maxChunkBytes?: number;
     maxSessionBytes?: number;
     maxRawEventBytes?: number;
@@ -93,6 +96,11 @@ export class AuthenticatedEvidenceStore<T> {
     this.#scopeId = options.scopeId;
     if (options.encryptionKey.length !== 32) throw new Error("evidence_key_invalid");
     this.#key = Buffer.from(options.encryptionKey);
+    if (options.legacyDecryptionKeys?.some((key) => key.length !== 32))
+      throw new Error("evidence_key_invalid");
+    this.#legacyDecryptionKeys = (options.legacyDecryptionKeys ?? []).map((key) =>
+      Buffer.from(key),
+    );
     this.#maxChunkBytes = options.maxChunkBytes ?? 64 * 1024;
     this.#maxSessionBytes = options.maxSessionBytes ?? 512 * 1024;
     this.#maxRawEventBytes = options.maxRawEventBytes ?? 4 * 1024 * 1024;
@@ -154,7 +162,7 @@ export class AuthenticatedEvidenceStore<T> {
       if (this.#totalBytes + compressed.length > this.#maxSessionBytes)
         throw new Error("evidence_session_capacity_exceeded");
       const aad: EvidenceAad = {
-        evidenceVersion: 1,
+        evidenceFormat: 1,
         compression: "gzip",
         runId: this.#runId,
         scopeId: this.#scopeId,
@@ -316,7 +324,7 @@ export class AuthenticatedEvidenceStore<T> {
       throw new Error("evidence_chunk_record_invalid");
     }
     if (
-      record.aad.evidenceVersion !== 1 ||
+      (record.aad.evidenceFormat !== 1 && record.aad.evidenceVersion !== 1) ||
       record.aad.runId !== this.#runId ||
       record.aad.scopeId !== this.#scopeId ||
       record.aad.chunk !== expectedChunk ||
@@ -334,15 +342,7 @@ export class AuthenticatedEvidenceStore<T> {
     ) {
       throw new Error("evidence_chunk_digest_invalid");
     }
-    let plaintext: Buffer;
-    try {
-      const decipher = createDecipheriv("aes-256-gcm", this.#requiredKey(), nonce);
-      decipher.setAAD(aad);
-      decipher.setAuthTag(tag);
-      plaintext = gunzipSync(Buffer.concat([decipher.update(ciphertext), decipher.final()]));
-    } catch {
-      throw new Error("evidence_chunk_authentication_invalid");
-    }
+    const plaintext = this.#decrypt(aad, nonce, ciphertext, tag);
     let events: Array<EvidenceEnvelope<T>>;
     try {
       const parsed = JSON.parse(plaintext.toString("utf8")) as {
@@ -364,6 +364,20 @@ export class AuthenticatedEvidenceStore<T> {
       plaintextBytes: plaintext.length,
       storedBytes: gunzipSafeStoredBytes(record),
     };
+  }
+
+  #decrypt(aad: Buffer, nonce: Buffer, ciphertext: Buffer, tag: Buffer): Buffer {
+    for (const key of [this.#requiredKey(), ...this.#legacyDecryptionKeys]) {
+      try {
+        const decipher = createDecipheriv("aes-256-gcm", key, nonce);
+        decipher.setAAD(aad);
+        decipher.setAuthTag(tag);
+        return gunzipSync(Buffer.concat([decipher.update(ciphertext), decipher.final()]));
+      } catch {
+        // Historical keys are read-only compatibility candidates.
+      }
+    }
+    throw new Error("evidence_chunk_authentication_invalid");
   }
 
   async #reconcileAuthenticatedOrphans(): Promise<void> {

@@ -185,6 +185,12 @@ Evidence confidentiality and evidence integrity are separate requirements. A
 chunk must be both unreadable without authorized keys and detectably changed if
 its bytes, order, or authenticated metadata are altered.
 
+The baseline writes one canonical evidence format. During the reset, workers may
+also read authenticated historical evidence through explicitly configured
+compatibility keys and metadata. Historical keys are read-only: new evidence is
+never written with them, and every historical record must still pass its
+original authentication and digest checks.
+
 ## Report security
 
 Before storage, report text and structured data are checked against bound

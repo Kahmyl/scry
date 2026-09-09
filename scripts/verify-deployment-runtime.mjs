@@ -6,10 +6,6 @@ import { join } from "node:path";
 const fixture = mkdtempSync(join(tmpdir(), "scry-deployment-runtime-"));
 const envFile = join(fixture, "deploy.env");
 const project = `scry-caddy-contract-${process.pid}-${Date.now()}`;
-const schemaFingerprint = execFileSync("node", ["scripts/schema-fingerprint.mjs"], {
-  encoding: "utf8",
-}).trim();
-
 writeFileSync(
   envFile,
   [
@@ -18,13 +14,13 @@ writeFileSync(
     `SCRY_IMAGE_REF=registry.invalid/scry@sha256:${"1".repeat(64)}`,
     "SCRY_DOMAIN=scry.invalid",
     `SCRY_RELEASE_ID=${"2".repeat(40)}`,
-    `SCRY_SCHEMA_FINGERPRINT=${schemaFingerprint}`,
+    "SCRY_DATABASE_NAME=scry_verification",
     "POSTGRES_PASSWORD=verification-only",
     "SUPABASE_URL=https://example.supabase.co",
     "SUPABASE_PUBLISHABLE_KEY=verification-only",
     "SCRY_SERVICE_TOKEN=verification-only",
-    "BROWSER_V2_PROTECTED_KEY_VERSION=verification-v1",
-    `BROWSER_V2_PROTECTED_KEYS_JSON={"verification-v1":"${Buffer.alloc(32, 7).toString("base64")}"}`,
+    "SCRY_BROWSER_PROTECTED_KEY_ID=verification-key",
+    `SCRY_BROWSER_PROTECTED_KEYS_JSON={"verification-key":"${Buffer.alloc(32, 7).toString("base64")}"}`,
   ].join("\n"),
   { mode: 0o600 },
 );

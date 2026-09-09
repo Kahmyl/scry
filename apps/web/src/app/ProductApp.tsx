@@ -4,7 +4,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import { Landing } from "../features/landing/index.js";
 import { isSupabaseConfigured, supabase } from "../infrastructure/auth/index.js";
-import { BrowserV2Dashboard as Dashboard } from "./BrowserV2Dashboard.js";
+import { Dashboard } from "./Dashboard.js";
 
 export function ProductApp() {
   const [session, setSession] = useState<Session | null>(null);

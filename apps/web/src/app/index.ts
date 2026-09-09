@@ -1,2 +1,2 @@
-export { BrowserV2Dashboard as App } from "./BrowserV2Dashboard.js";
+export { Dashboard as App } from "./Dashboard.js";
 export { ProductApp } from "./ProductApp.js";

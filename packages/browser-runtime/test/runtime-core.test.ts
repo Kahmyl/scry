@@ -1,8 +1,9 @@
 import { EventEmitter } from "node:events";
-import { randomBytes } from "node:crypto";
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import type { BrowserCommitIntent, BrowserOutputSelection } from "@scry/contracts";
 import {
@@ -302,6 +303,38 @@ describe("protected response capture", () => {
     await expect(corruptReplacement.restoreDurableCapture(corrupted)).rejects.toThrow(
       "capture_envelope_digest_invalid",
     );
+  });
+
+  it("decrypts a durable capture with an explicitly configured historical key", async () => {
+    const historicalKey = randomBytes(32);
+    const currentKey = randomBytes(32);
+    const source = await new ProtectedCaptureVault({
+      directory: await mkdtemp(path.join(os.tmpdir(), "browser-legacy-capture-source-")),
+      runId: RUN_ID,
+      scopeId: "fixture-scope",
+      authority: protectionAuthority(),
+      encryptionKey: historicalKey,
+    }).initialize();
+    const receipt = await capture(source, {
+      effectId: "00000000-0000-4000-8000-000000000117",
+      method: "POST",
+      url: "https://fixture.example/result",
+      status: 201,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({ credential: "historical-private-value" })),
+    });
+    const envelope = await source.exportDurableCapture(receipt.captureId);
+
+    const replacement = await new ProtectedCaptureVault({
+      directory: await mkdtemp(path.join(os.tmpdir(), "browser-legacy-capture-replacement-")),
+      runId: RUN_ID,
+      scopeId: "fixture-scope",
+      authority: protectionAuthority(),
+      encryptionKey: currentKey,
+      legacyEncryptionKeys: [historicalKey],
+    }).initialize();
+    await replacement.restoreDurableCapture(envelope);
+    expect(await replacement.receipt(receipt.captureId)).toEqual(receipt);
   });
 
   it("durably captures redirecting HTML without assuming JSON or exposing its body", async () => {
@@ -867,6 +900,75 @@ describe("browser owner recovery", () => {
 });
 
 describe("authenticated evidence", () => {
+  it("reads historical authenticated chunks without using the historical key for writes", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "browser-legacy-evidence-"));
+    const historicalKey = randomBytes(32);
+    const currentKey = randomBytes(32);
+    const aad = {
+      evidenceVersion: 1,
+      compression: "gzip",
+      runId: RUN_ID,
+      scopeId: "fixture-scope",
+      chunk: 0,
+      firstSequence: 0,
+      lastSequence: 0,
+      previousDigest: "GENESIS",
+    };
+    const plaintext = Buffer.from(
+      JSON.stringify({ events: [{ sequence: 0, payload: { phase: "historical" } }] }),
+    );
+    const compressed = gzipSync(plaintext, { level: 6 });
+    const aadBytes = Buffer.from(JSON.stringify(aad));
+    const nonce = Buffer.alloc(12, 3);
+    const cipher = createCipheriv("aes-256-gcm", historicalKey, nonce);
+    cipher.setAAD(aadBytes);
+    const ciphertext = Buffer.concat([cipher.update(compressed), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    const digest = createHash("sha256")
+      .update(aadBytes)
+      .update(nonce)
+      .update(ciphertext)
+      .update(tag)
+      .digest("hex");
+    const filename = "chunk-000000.json";
+    await writeFile(
+      path.join(directory, filename),
+      JSON.stringify({
+        aad,
+        nonce: nonce.toString("base64"),
+        ciphertext: ciphertext.toString("base64"),
+        tag: tag.toString("base64"),
+        digest,
+      }),
+    );
+    await writeFile(
+      path.join(directory, "manifest.jsonl"),
+      `${JSON.stringify({
+        filename,
+        ...aad,
+        digest,
+        plaintextBytes: plaintext.length,
+        storedBytes: compressed.length,
+      })}\n`,
+    );
+
+    const store = await new AuthenticatedEvidenceStore<{ phase: string }>({
+      directory,
+      runId: RUN_ID,
+      scopeId: "fixture-scope",
+      encryptionKey: currentKey,
+      legacyDecryptionKeys: [historicalKey],
+    }).initialize();
+    expect((await store.verify()).events).toEqual([{ phase: "historical" }]);
+    await store.append({ phase: "current" });
+    await store.flush();
+    const currentRecord = JSON.parse(
+      await readFile(path.join(directory, "chunk-000001.json"), "utf8"),
+    ) as { aad: Record<string, unknown> };
+    expect(currentRecord.aad).toMatchObject({ evidenceFormat: 1 });
+    expect(currentRecord.aad).not.toHaveProperty("evidenceVersion");
+  });
+
   it("resumes an authenticated chain across restart and detects ciphertext tampering", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "browser-evidence-"));
     const encryptionKey = randomBytes(32);
