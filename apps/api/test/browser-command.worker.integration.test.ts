@@ -59,11 +59,9 @@ run("browser baseline durable command worker", () => {
     queue = new BrowserExecutionQueueService(redis, effectRepository, commands);
     engine = new BrowserWorkerEngine(commands, effectRepository);
     events = new QueueEvents(BROWSER_COMMAND_QUEUE, { connection: redis.client });
-    sessionWorker = new Worker(
-      BROWSER_EXECUTION_QUEUE,
-      (job) => engine.open(job.data.sessionId),
-      { connection: redis.client },
-    );
+    sessionWorker = new Worker(BROWSER_EXECUTION_QUEUE, (job) => engine.open(job.data.sessionId), {
+      connection: redis.client,
+    });
     commandWorker = new Worker(
       BROWSER_COMMAND_QUEUE,
       async (job) => {

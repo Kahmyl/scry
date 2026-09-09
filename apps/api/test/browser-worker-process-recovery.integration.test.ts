@@ -143,9 +143,7 @@ run("browser baseline real worker-process recovery", () => {
     expect(recovered.url).toBe(`${origin}/authenticated`);
     expect(loginEffects).toBe(1);
     expect((await commands.sessionContext(sessionId)).ownerGeneration).toBe(2);
-    expect((await commands.sessionContext(sessionId)).protectionKeyId).toBe(
-      "qualification-v1",
-    );
+    expect((await commands.sessionContext(sessionId)).protectionKeyId).toBe("qualification-v1");
     await expect(
       commands.saveBrowserCheckpoint(sessionId, 1, {
         resumeUrl: `${origin}/authenticated`,

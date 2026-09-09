@@ -95,11 +95,7 @@ export type CreateBrowserEnvironmentInput = z.infer<typeof createBrowserEnvironm
 export type CreateBrowserObjectiveInput = z.infer<typeof createBrowserObjectiveSchema>;
 export type CreateBrowserFlowInput = z.infer<typeof createBrowserFlowSchema>;
 export type StartBrowserRunInput = z.infer<typeof startBrowserRunSchema>;
-export type CreateBrowserProtectedInputInput = z.infer<
-  typeof createBrowserProtectedInputSchema
->;
+export type CreateBrowserProtectedInputInput = z.infer<typeof createBrowserProtectedInputSchema>;
 export type BindBrowserProtectedInputsInput = z.infer<typeof bindBrowserProtectedInputsSchema>;
 export type FinalizeBrowserRunInput = z.infer<typeof finalizeBrowserRunSchema>;
-export type PublishBrowserMissionReportInput = z.infer<
-  typeof publishBrowserMissionReportSchema
->;
+export type PublishBrowserMissionReportInput = z.infer<typeof publishBrowserMissionReportSchema>;
