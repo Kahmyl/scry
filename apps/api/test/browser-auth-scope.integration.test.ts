@@ -9,6 +9,7 @@ import { BrowserCommandRepository } from "../src/browser-execution/repositories/
 import { BrowserLifecycleController } from "../src/browser-execution/controllers/browser-lifecycle.controller.js";
 import { BrowserLifecycleRepository } from "../src/browser-execution/repositories/browser-lifecycle.repository.js";
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
+import { BrowserRuntimeVeilReportProtection } from "../src/browser-execution/browser-boundary-composition.js";
 import { Database } from "../src/infrastructure/database.js";
 
 const databaseUrl = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
@@ -88,7 +89,10 @@ run("browser baseline customer MCP scope", () => {
       role: "owner",
     });
 
-    const lifecycle = new BrowserLifecycleRepository(database);
+    const lifecycle = new BrowserLifecycleRepository(
+      database,
+      new BrowserRuntimeVeilReportProtection(),
+    );
     const commands = new BrowserCommandRepository(database, new BrowserProtectedValueCipher());
     const controller = new BrowserLifecycleController(
       lifecycle,

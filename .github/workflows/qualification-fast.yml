@@ -43,6 +43,7 @@ jobs:
       - name: Run baseline architecture, security, and deployment gates
         run: |
           pnpm run verify:baseline-topology
+          pnpm run verify:boundary-ownership
           pnpm run verify:docker-publish-workflow
           pnpm run verify:server-deployment
           pnpm run verify:deployment-runtime

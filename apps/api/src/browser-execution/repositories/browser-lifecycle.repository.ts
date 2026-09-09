@@ -8,9 +8,9 @@ import type {
   PublishBrowserMissionReportInput,
   StartBrowserMissionInput,
   StartBrowserRunInput,
+  VeilReportSanitizer,
 } from "@scry/contracts";
-import { browserProtectionSinkSchema } from "@scry/contracts";
-import { ProtectionAuthority } from "@scry/browser-runtime";
+import { browserProtectionSinkSchema, VeilReportProtectionPort } from "@scry/contracts";
 import type { PoolClient, QueryResultRow } from "pg";
 
 import { Database } from "../../infrastructure/database.js";
@@ -28,6 +28,8 @@ interface IdRow extends QueryResultRow {
 export class BrowserLifecycleRepository {
   constructor(
     @Inject(Database) private readonly database: Database,
+    @Inject(VeilReportProtectionPort)
+    private readonly reportProtection: VeilReportProtectionPort,
     @Inject(BrowserProtectedValueCipher)
     private readonly cipher: BrowserProtectedValueCipher = new BrowserProtectedValueCipher(),
   ) {}
@@ -446,9 +448,9 @@ export class BrowserLifecycleRepository {
       const evidenceDigest = createHash("sha256")
         .update(JSON.stringify(evidence.rows.map((row) => row.chain_head)))
         .digest("hex");
-      const protection = await this.reportProtectionAuthority(client, missionId);
-      const summary = protection.sanitize(input.summary, "report");
-      const safeReport = protection.sanitizeValue(input.safeReport, "", "report");
+      const protection = await this.reportSanitizer(client, missionId);
+      const summary = protection.sanitizeText(input.summary, "report");
+      const safeReport = protection.sanitizeValue(input.safeReport, "report");
       const reportId = randomUUID();
       await client.query(
         `INSERT INTO mission_reports(id,mission_id,state,summary,safe_report,evidence_digest,finalized_at)
@@ -467,10 +469,10 @@ export class BrowserLifecycleRepository {
     });
   }
 
-  private async reportProtectionAuthority(
+  private async reportSanitizer(
     client: PoolClient,
     missionId: string,
-  ): Promise<ProtectionAuthority> {
+  ): Promise<VeilReportSanitizer> {
     const mission = await client.query<{ project_id: string }>(
       "SELECT project_id FROM missions WHERE id=$1",
       [missionId],
@@ -568,7 +570,7 @@ export class BrowserLifecycleRepository {
           browserProtectionSinkSchema.parse(sink),
         ) as BrowserProtectionSink[],
       }));
-    return new ProtectionAuthority({
+    return this.reportProtection.createReportSanitizer({
       scope: {
         projectId,
         missionId,

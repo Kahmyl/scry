@@ -1,6 +1,6 @@
 # Scry four-boundary baseline research
 
-Status: completed baseline research; boundary implementation has not started
+Status: completed pre-implementation baseline research
 
 This record establishes what the current Scry baseline actually builds,
 deploys, executes, stores, and verifies. It is the evidence required by

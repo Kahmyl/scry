@@ -93,6 +93,11 @@ production path that can operate a browser, handle a protected value, persist
 evidence, or gate release. Unknown or conflicting ownership remains an explicit
 blocker rather than being assigned by package name.
 
+Result: complete. The
+[four-boundary baseline research](four-boundary-baseline-research.md) records
+the reachability, ownership, state, failure, verification, disposition, and
+explicit treatment of baseline gaps used by later workstreams.
+
 ## Workstream 2: contracts and composition seam
 
 ### Objective

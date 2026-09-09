@@ -12,7 +12,7 @@ import {
   type BrowserExecutionJob,
 } from "./browser-execution/browser-execution-queue.service.js";
 import { BrowserExecutionRepository } from "./browser-execution/repositories/browser-execution.repository.js";
-import { BrowserWorkerEngine } from "./browser-execution/browser-worker-engine.js";
+import { composePraxisExecutionPort } from "./browser-execution/browser-boundary-composition.js";
 import { BROWSER_RUNTIME_CAPABILITY_ID } from "./browser-execution/browser-runtime-capability.js";
 import { RedisConnection } from "./infrastructure/redis.js";
 
@@ -24,14 +24,14 @@ const redis = app.get(RedisConnection);
 const commands = app.get(BrowserCommandRepository);
 const execution = app.get(BrowserExecutionRepository);
 await execution.assertCompatibleBaseline();
-const engine = new BrowserWorkerEngine(commands, execution);
+const praxis = composePraxisExecutionPort(commands, execution);
 
 const sessionWorker = new Worker<BrowserExecutionJob>(
   BROWSER_EXECUTION_QUEUE,
   async (job) => {
     if (job.data.runtimeCapabilityId !== BROWSER_RUNTIME_CAPABILITY_ID)
       throw new Error("SCRY_BROWSER_JOB_CAPABILITY_MISMATCH");
-    return engine.open(job.data.sessionId);
+    return praxis.openSession(job.data.sessionId);
   },
   {
     connection: redis.client,
@@ -50,7 +50,10 @@ const commandWorker = new Worker<{ commandId: string }>(
       20_000,
     );
     try {
-      const result = await engine.execute(command.session_id, command.safe_input as BrowserCommand);
+      const result = await praxis.executeCommand(
+        command.session_id,
+        command.safe_input as BrowserCommand,
+      );
       await commands.complete(command.id, claimToken, result);
       return result;
     } catch (error) {
@@ -68,7 +71,7 @@ const commandWorker = new Worker<{ commandId: string }>(
 
 const shutdown = async () => {
   await Promise.allSettled([sessionWorker.close(), commandWorker.close()]);
-  await engine.closeAll();
+  await praxis.shutdown();
   await app.close();
 };
 process.once("SIGINT", () => void shutdown().finally(() => process.exit(0)));

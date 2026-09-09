@@ -5,6 +5,7 @@ import { BrowserExecutionRepository } from "../src/browser-execution/repositorie
 import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
 import { BrowserLifecycleRepository } from "../src/browser-execution/repositories/browser-lifecycle.repository.js";
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
+import { BrowserRuntimeVeilReportProtection } from "../src/browser-execution/browser-boundary-composition.js";
 import { Database } from "../src/infrastructure/database.js";
 
 const databaseUrl = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
@@ -20,7 +21,7 @@ run("browser baseline Mission/Flow/Run lifecycle", () => {
     process.env.DATABASE_URL = databaseUrl;
     process.env.SCRY_BROWSER_PROTECTED_KEY_BASE64 = randomBytes(32).toString("base64");
     database = new Database();
-    lifecycle = new BrowserLifecycleRepository(database);
+    lifecycle = new BrowserLifecycleRepository(database, new BrowserRuntimeVeilReportProtection());
     execution = new BrowserExecutionRepository(database, new BrowserProtectedValueCipher());
     commands = new BrowserCommandRepository(database, new BrowserProtectedValueCipher());
   });

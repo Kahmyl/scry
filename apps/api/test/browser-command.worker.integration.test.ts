@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { QueueEvents, Worker } from "bullmq";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { BrowserCommand } from "@scry/contracts";
+import type { BrowserCommand, PraxisExecutionPort } from "@scry/contracts";
 
 import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
 import {
@@ -14,7 +14,10 @@ import { BrowserExecutionRepository } from "../src/browser-execution/repositorie
 import { BrowserLifecycleRepository } from "../src/browser-execution/repositories/browser-lifecycle.repository.js";
 import { BrowserLifecycleController } from "../src/browser-execution/controllers/browser-lifecycle.controller.js";
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
-import { BrowserWorkerEngine } from "../src/browser-execution/browser-worker-engine.js";
+import {
+  BrowserRuntimeVeilReportProtection,
+  composePraxisExecutionPort,
+} from "../src/browser-execution/browser-boundary-composition.js";
 import { Database } from "../src/infrastructure/database.js";
 import { RedisConnection } from "../src/infrastructure/redis.js";
 
@@ -35,7 +38,7 @@ run("browser baseline durable command worker", () => {
   let effectRepository: BrowserExecutionRepository;
   let commands: BrowserCommandRepository;
   let queue: BrowserExecutionQueueService;
-  let engine: BrowserWorkerEngine;
+  let praxis: PraxisExecutionPort;
   let sessionWorker: Worker;
   let commandWorker: Worker;
   let events: QueueEvents;
@@ -53,15 +56,17 @@ run("browser baseline durable command worker", () => {
     database = new Database();
     redis = new RedisConnection();
     const cipher = new BrowserProtectedValueCipher();
-    lifecycle = new BrowserLifecycleRepository(database);
+    lifecycle = new BrowserLifecycleRepository(database, new BrowserRuntimeVeilReportProtection());
     effectRepository = new BrowserExecutionRepository(database, cipher);
     commands = new BrowserCommandRepository(database, cipher);
     queue = new BrowserExecutionQueueService(redis, effectRepository, commands);
-    engine = new BrowserWorkerEngine(commands, effectRepository);
+    praxis = composePraxisExecutionPort(commands, effectRepository);
     events = new QueueEvents(BROWSER_COMMAND_QUEUE, { connection: redis.client });
-    sessionWorker = new Worker(BROWSER_EXECUTION_QUEUE, (job) => engine.open(job.data.sessionId), {
-      connection: redis.client,
-    });
+    sessionWorker = new Worker(
+      BROWSER_EXECUTION_QUEUE,
+      (job) => praxis.openSession(job.data.sessionId),
+      { connection: redis.client },
+    );
     commandWorker = new Worker(
       BROWSER_COMMAND_QUEUE,
       async (job) => {
@@ -70,7 +75,7 @@ run("browser baseline durable command worker", () => {
         const claimToken = command.claim_token;
         if (!claimToken) throw new Error("claim_token_missing");
         try {
-          const result = await engine.execute(command.session_id, command.safe_input);
+          const result = await praxis.executeCommand(command.session_id, command.safe_input);
           await commands.complete(command.id, claimToken, result);
           return result;
         } catch (error) {
@@ -84,7 +89,7 @@ run("browser baseline durable command worker", () => {
 
   afterAll(async () => {
     await Promise.allSettled([sessionWorker?.close(), commandWorker?.close(), events?.close()]);
-    if (engine) await engine.closeAll();
+    if (praxis) await praxis.shutdown();
     if (queue) await queue.onModuleDestroy();
     if (redis) await redis.onModuleDestroy();
     if (database) await database.onModuleDestroy();

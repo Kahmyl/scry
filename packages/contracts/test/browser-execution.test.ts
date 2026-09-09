@@ -12,8 +12,27 @@ import {
   startBrowserMissionSchema,
   startBrowserRunSchema,
 } from "../src/browser-lifecycle.js";
+import { praxisSessionReceiptSchema } from "../src/boundary-ports.js";
 
 describe("browser execution baseline contracts", () => {
+  it("requires a fenced owner generation when Praxis opens a session", () => {
+    expect(
+      praxisSessionReceiptSchema.parse({
+        sessionId: "00000000-0000-4000-8000-000000000001",
+        ownerGeneration: 3,
+      }),
+    ).toEqual({
+      sessionId: "00000000-0000-4000-8000-000000000001",
+      ownerGeneration: 3,
+    });
+    expect(() =>
+      praxisSessionReceiptSchema.parse({
+        sessionId: "00000000-0000-4000-8000-000000000001",
+        ownerGeneration: 0,
+      }),
+    ).toThrow();
+  });
+
   it("represents content-aware response evidence and safe redirect provenance", () => {
     const receipt = browserCaptureReceiptSchema.parse({
       captureId: "00000000-0000-4000-8000-000000000010",

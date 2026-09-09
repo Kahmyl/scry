@@ -1,13 +1,16 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { BrowserCommand } from "@scry/contracts";
+import type { BrowserCommand, PraxisExecutionPort } from "@scry/contracts";
 
 import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
 import { BrowserExecutionRepository } from "../src/browser-execution/repositories/browser-execution.repository.js";
 import { BrowserLifecycleRepository } from "../src/browser-execution/repositories/browser-lifecycle.repository.js";
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
-import { BrowserWorkerEngine } from "../src/browser-execution/browser-worker-engine.js";
+import {
+  BrowserRuntimeVeilReportProtection,
+  composePraxisExecutionPort,
+} from "../src/browser-execution/browser-boundary-composition.js";
 import { Database } from "../src/infrastructure/database.js";
 
 const databaseUrl = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
@@ -20,7 +23,7 @@ run("browser baseline failed Run finalization", () => {
   let lifecycle: BrowserLifecycleRepository;
   let effects: BrowserExecutionRepository;
   let commands: BrowserCommandRepository;
-  let engine: BrowserWorkerEngine;
+  let praxis: PraxisExecutionPort;
   let fixtureEffects = 0;
 
   beforeAll(async () => {
@@ -35,14 +38,14 @@ run("browser baseline failed Run finalization", () => {
     process.env.SCRY_BROWSER_ARTIFACT_ROOT = `/private/tmp/browser-failure-finalization-${randomUUID()}`;
     database = new Database();
     const cipher = new BrowserProtectedValueCipher();
-    lifecycle = new BrowserLifecycleRepository(database);
+    lifecycle = new BrowserLifecycleRepository(database, new BrowserRuntimeVeilReportProtection());
     effects = new BrowserExecutionRepository(database, cipher);
     commands = new BrowserCommandRepository(database, cipher);
-    engine = new BrowserWorkerEngine(commands, effects);
+    praxis = composePraxisExecutionPort(commands, effects);
   });
 
   afterAll(async () => {
-    await engine?.closeAll();
+    await praxis?.shutdown();
     await database?.onModuleDestroy();
     if (server)
       await new Promise<void>((resolve, reject) =>
@@ -114,7 +117,7 @@ run("browser baseline failed Run finalization", () => {
       businessCommitLimit: 1,
       protectedInputIds: [],
     });
-    const owner = await engine.open(started.browserSessionId);
+    const owner = await praxis.openSession(started.browserSessionId);
     const page = await command(
       started.browserSessionId,
       { kind: "navigate", url: origin },
@@ -190,7 +193,7 @@ run("browser baseline failed Run finalization", () => {
     const claimed = await commands.claim(submitted.commandId);
     if (!claimed?.claim_token) throw new Error("command_claim_failed");
     try {
-      const result = await engine.execute(sessionId, claimed.safe_input);
+      const result = await praxis.executeCommand(sessionId, claimed.safe_input);
       await commands.complete(claimed.id, claimed.claim_token, result);
       return result;
     } catch (error) {

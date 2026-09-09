@@ -73,7 +73,9 @@ jobs:
           --maxWorkers=1
 
       - name: Verify baseline topology
-        run: pnpm verify:baseline-topology
+        run: |
+          pnpm verify:baseline-topology
+          pnpm verify:boundary-ownership
 
       - name: Upload browser failure evidence
         if: failure()

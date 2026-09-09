@@ -12,6 +12,8 @@ import { BrowserProjectController } from "./controllers/browser-project.controll
 import { BrowserProjectRepository } from "./repositories/browser-project.repository.js";
 import { BrowserDashboardController } from "./controllers/browser-dashboard.controller.js";
 import { BrowserDashboardRepository } from "./repositories/browser-dashboard.repository.js";
+import { VeilReportProtectionPort } from "@scry/contracts";
+import { BrowserRuntimeVeilReportProtection } from "./browser-boundary-composition.js";
 
 @Module({
   controllers: [BrowserLifecycleController, BrowserProjectController, BrowserDashboardController],
@@ -19,6 +21,7 @@ import { BrowserDashboardRepository } from "./repositories/browser-dashboard.rep
     Database,
     RedisConnection,
     BrowserProtectedValueCipher,
+    { provide: VeilReportProtectionPort, useClass: BrowserRuntimeVeilReportProtection },
     BrowserExecutionRepository,
     BrowserCommandRepository,
     BrowserExecutionQueueService,
