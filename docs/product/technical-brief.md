@@ -218,7 +218,7 @@ application testing.
   ledger, and reporting boundary.
 - **Objective**: one independently assessable outcome within a Mission.
 - **Flow**: one executable browser journey used to test an Objective.
-- **Flow revision**: an immutable executable version of a Flow.
+- **Flow revision**: an immutable executable definition of a Flow.
 - **Run**: one execution of one Flow revision in one environment.
 - **Attempt**: one preserved execution attempt; retries do not overwrite prior
   outcomes.
@@ -233,7 +233,7 @@ The existing Chromium execution baseline, Missions, Flows, Runs, browser
 interaction, privacy controls, and evidence storage are foundations. They do
 not constitute the complete MVP.
 
-The intended MVP is the first useful version of the product described in this
+The intended MVP is the first useful form of the product described in this
 brief:
 
 > An agent can receive a meaningful application-testing assignment, execute
