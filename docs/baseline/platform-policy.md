@@ -66,6 +66,24 @@ Scry is authoritative for:
 Scry is not authoritative for whether the tested application is correct. The
 agent makes that judgment and records a conclusion supported by evidence.
 
+### Intended subsystem authority
+
+The platform will enforce four non-overlapping subsystem authorities:
+
+- Praxis is authoritative for browser execution mechanics and factual
+  dispatch state;
+- Veil is authoritative for protection, disclosure, and cryptographic handling;
+- Chronicle is authoritative for durable evidence history, provenance,
+  integrity, and completeness; and
+- Assurance is authoritative for diagnostic interpretation, experiments, and
+  qualification, but never for production lifecycle truth.
+
+Application composition remains authoritative for product admission,
+transactions, queues, and lifecycle state. It must request boundary decisions
+rather than duplicate them. This is the planned ownership model; present
+implementation gaps are governed by the
+[four-boundary implementation plan](four-boundary-implementation-plan.md).
+
 ## Workspace and Project isolation
 
 Every user-scoped resource belongs to a workspace, directly or through a

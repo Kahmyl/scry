@@ -127,6 +127,25 @@ Container health checks and startup ordering protect service dependencies.
 Backup and metrics services may be enabled as operational support, but they are
 not part of the browser-testing product path.
 
+## Planned package responsibilities
+
+The current shared runtime will be reorganized behind four package boundaries:
+
+- `@scry/praxis` for Playwright, browser protocol, browser lifecycle,
+  observation, action, ownership, and checkpoint mechanics;
+- `@scry/veil` for protection policy, sanitization, disclosure, protected
+  capture, and cryptographic handling;
+- `@scry/chronicle` for evidence facts, streams, chunks, artifacts, integrity,
+  retention, replay, and evidence composition; and
+- `@scry/assurance` for diagnostic analysis, experiments, test campaigns, and
+  qualification.
+
+The API and workers compose the three production packages through narrow
+contracts. Assurance may exercise their public surfaces, but production
+packages and services must build and run without it. Existing packages with
+these names are inputs to the baseline investigation, not proof that the
+separation already exists.
+
 ## Engineering assurance
 
 Vitest, TypeScript checks, Prettier, repository-boundary checks, contract checks,

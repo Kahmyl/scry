@@ -165,6 +165,19 @@ Scry does not promise global ordering across Projects, Missions, Runs, or
 workers. Internal queue delivery is at least once in effect; domain handling is
 idempotent and fenced so that observable state behaves as one durable operation.
 
+## Planned event ownership
+
+Praxis originates factual browser lifecycle, action, document, ownership, and
+dispatch observations. Veil originates protection and publication decisions.
+Chronicle admits and durably orders those facts, maintains their provenance and
+integrity, and exposes safe evidence projections.
+
+Assurance may derive diagnostics, findings, comparisons, and qualification
+results from safe facts and operational telemetry. Those derived events are not
+substitutes for Chronicle history and cannot change an Effect, capture,
+evidence-stream, or Run outcome. Missing or unavailable Assurance processing
+must not stop production command or evidence processing.
+
 ## Operational telemetry boundary
 
 Logs, metrics, traces, health checks, and infrastructure alerts support

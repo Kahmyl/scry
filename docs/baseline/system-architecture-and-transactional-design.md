@@ -104,6 +104,42 @@ heads, and retention metadata.
 | Evidence integrity                               | Encrypted chunk chain and database chain head      |
 | Final Mission conclusion                         | Sanitized final report in PostgreSQL               |
 
+## Planned subsystem architecture
+
+The current deployed components will be reconstructed around four
+responsibility owners:
+
+```text
+dashboard and agent integration
+              |
+              v
+   API and application composition
+       |          |          |
+       v          v          v
+    Praxis       Veil     Chronicle
+
+Assurance -> safe read models, public contracts, and deployed interfaces
+```
+
+- Praxis owns browser processes, contexts, pages, navigation, observation,
+  actions, document identity, owner fencing, and checkpoint mechanics.
+- Veil owns protection decisions, sanitization, disclosure, protected capture,
+  and cryptographic handling.
+- Chronicle owns durable execution facts, evidence streams, artifacts,
+  provenance, integrity, completeness, and replay construction.
+- Assurance owns diagnostic interpretation, experiments, failure injection,
+  qualification, and release-readiness evidence.
+
+The API and workers continue to own transactions, queue orchestration,
+idempotency, Run admission, budgets, and product lifecycle. They compose the
+three production boundaries through narrow ports and do not become another
+implementation of their rules. Production services must not depend on
+Assurance.
+
+This section describes the intended architecture, not the present package
+layout. The [four-boundary implementation plan](four-boundary-implementation-plan.md)
+begins by establishing the actual reachable dependency and ownership graph.
+
 ## Transactional creation flow
 
 Mission, Objective, Flow, Environment, protected-input, Run, command, Effect,

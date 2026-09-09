@@ -226,6 +226,21 @@ They must not contain:
 Unexpected client errors return generic text. Detailed database, browser, and
 cryptographic failures remain in protected operational telemetry.
 
+## Planned security ownership
+
+Veil will be the only subsystem authorized to decide whether sensitive
+material may be disclosed and the only owner of protection cryptography.
+Praxis may handle protected material transiently only through a Veil-controlled
+capability required for an admitted browser operation. Chronicle stores only
+Veil-admitted safe material or opaque protected ciphertext and cannot grant
+itself decryption or publication authority.
+
+Assurance receives safe telemetry, read models, and evidence appropriate to a
+specific diagnostic or qualification task. It is subject to the same workspace
+and disclosure boundaries and cannot become a privileged path around Veil.
+Application composition authenticates callers and wires these capabilities but
+must not implement a second protection policy.
+
 ## Security limitations
 
 The baseline does not provide independent malware isolation from the host,

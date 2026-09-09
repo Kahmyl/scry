@@ -224,6 +224,29 @@ The Mission's immutable, sanitized conclusion. It stores a human-readable
 summary, structured safe report data, and one digest derived from the complete
 evidence streams belonging to the Mission.
 
+## Planned ownership of domain behavior
+
+The domain entities remain product concepts even when a subsystem produces or
+manages some of their facts. Intended ownership is:
+
+| Concern                                                                                                                                       | Authoritative owner                        |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Workspace, Project, Environment, Mission, Objective, Flow, Run, budgets, admission, and finalization                                          | Application composition and product domain |
+| Live Browser session mechanics, document references, actions, dispatch facts, ownership, and checkpoint mechanics                             | Praxis                                     |
+| Protected values, protection decisions, capture confidentiality, sanitization, disclosure, and cryptographic handling                         | Veil                                       |
+| Action and Effect history, Captures as evidence records, evidence streams, chunks, artifacts, replay, provenance, integrity, and completeness | Chronicle                                  |
+| Diagnostics, findings, experiments, comparisons, qualification, and release-readiness analysis                                                | Assurance                                  |
+
+Physical persistence may remain in the shared PostgreSQL system of record. A
+table location does not transfer semantic authority: application transactions
+may persist facts supplied through a subsystem port without reimplementing the
+subsystem's decision.
+
+Assurance outputs are derived assessments. They may be attached to product
+review data, but they cannot alter the browser, protection, mutation, or
+evidence facts from which they were derived. The complete ownership rules are
+in the [four-boundary direction](four-boundary-direction.md).
+
 ## Domain invariants
 
 - Every Mission belongs to one Project.

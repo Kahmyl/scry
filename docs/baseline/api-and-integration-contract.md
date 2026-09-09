@@ -246,6 +246,23 @@ Logical operation names describe capability, not a promise about a particular
 source-code function name. Every operation delegates to the authenticated HTTP
 API and receives the same scope and policy enforcement.
 
+## Internal boundary contract
+
+The public HTTP and agent contracts remain stable while the implementation is
+reorganized. Internally, application composition will use narrow ports:
+
+- Praxis accepts admitted browser work and returns browser and dispatch facts;
+- Veil accepts material requiring protection and returns authoritative safe,
+  protected, publishable, or rejected decisions;
+- Chronicle accepts admitted facts and evidence and returns durable identities,
+  completeness, and safe review projections; and
+- Assurance consumes public interfaces and safe read models for diagnosis and
+  qualification, never for synchronous command execution.
+
+These ports expose data and results, not another subsystem's engine, keyring,
+repository, or mutable state. Internal relocation must not weaken workspace
+scope, idempotency, error safety, mutation uncertainty, or public compatibility.
+
 ## Error contract
 
 Expected domain errors use an appropriate HTTP status and a safe structured

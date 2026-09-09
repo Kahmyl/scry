@@ -213,6 +213,21 @@ effects.
 A final report cannot be published while required Runs, changes, captures, or
 evidence remain unfinished.
 
+## Planned responsibility boundaries
+
+The working baseline currently combines responsibilities that will be given
+clear owners as the platform is reconstructed:
+
+- Praxis will own browser execution;
+- Veil will own protection;
+- Chronicle will own evidence management; and
+- Assurance will own diagnostics, analysis, experiments, and qualification.
+
+This direction does not change what the implemented baseline can do today and
+must not be read as a claim that the separation is complete. See the
+[four-boundary direction](../baseline/four-boundary-direction.md) and its
+[implementation plan](../baseline/four-boundary-implementation-plan.md).
+
 ## Product boundaries
 
 This product:

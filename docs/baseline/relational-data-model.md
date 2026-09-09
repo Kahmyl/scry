@@ -165,6 +165,29 @@ Idempotency is enforced at the aggregate that owns the write:
 Idempotent replay must return the existing identity only when the material
 request fields match. A reused key with different intent is a conflict.
 
+## Planned data ownership across boundaries
+
+PostgreSQL remains the shared durable system of record during the boundary
+reset. Responsibility is assigned by the meaning of a fact, not by creating a
+database for every package:
+
+- application composition owns tenancy, product lifecycle, admission,
+  idempotency, budgets, queue, and transactional projection records;
+- Praxis supplies fenced browser ownership, document, action, and dispatch
+  facts;
+- Veil supplies protection, disclosure, cryptographic, and capture-settlement
+  decisions;
+- Chronicle owns append-only execution history, evidence metadata, artifact
+  identity, provenance, integrity, and completeness; and
+- Assurance reads safe facts and may persist derived diagnostic or
+  qualification records, but cannot update the underlying runtime facts.
+
+Repositories and transactions may persist facts on behalf of these owners
+through explicit ports. They must not recompute another owner's decision. The
+reset does not require table movement merely to demonstrate package ownership;
+schema changes are made only when a domain invariant or access boundary needs
+them.
+
 ## Deletion and retention behavior
 
 Workspace membership and tokens cascade with their Workspace. Mission-owned
