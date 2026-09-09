@@ -102,11 +102,14 @@ environment. Plaintext credentials are not stored in product tables.
 ## Evidence and artifact storage
 
 Encrypted evidence chunks and generated replay artifacts are written to a
-private durable filesystem mount. PostgreSQL stores their identifiers, sizes,
-digests, ordering, chain heads, and retention metadata.
+private durable filesystem mount. Its manifest stores per-chunk identifiers,
+sizes, digests, ordering, and chain links. PostgreSQL stores the completed
+stream summary, chain head, replay and video locations, and retention metadata.
+The active path does not populate relational evidence-chunk or artifact rows.
 
-The filesystem is an artifact store, not the authority for session state.
-Evidence is accepted only when its database metadata and integrity chain agree.
+The filesystem is an evidence and artifact store, not the authority for
+session state. Evidence is accepted only after the filesystem chain verifies
+and the completed stream summary is persisted.
 
 ## Deployment
 

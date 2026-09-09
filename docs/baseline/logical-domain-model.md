@@ -159,7 +159,9 @@ failed states. A command result contains safe data only.
 
 A factual execution-ledger entry recording a browser tool, sanitized
 arguments, result classification, owner generation, document epoch, and
-duration.
+duration. The active baseline derives this safe ledger from completed and
+failed Command records; its separate relational browser-action table is
+reserved and has no active writer.
 
 ## Controlled-change model
 
@@ -210,13 +212,16 @@ completion state, and retention boundary.
 ### Evidence chunk
 
 One ordered encrypted segment of recorded browser events. Each chunk points to
-the prior digest so removal, reordering, or substitution is detectable.
+the prior digest so removal, reordering, or substitution is detectable. The
+active baseline records the chunk chain in a filesystem manifest; its
+relational chunk table is reserved and has no active writer.
 
 ### Artifact
 
 A Run-associated stored object such as a recording, video, screenshot, trace,
-or report attachment. The relational record stores its kind, object key,
-digest, and safe metadata.
+or report attachment. The active baseline records replay and video locations
+on the evidence-stream summary. Its general relational artifact table is
+reserved and has no active writer.
 
 ### Final report
 

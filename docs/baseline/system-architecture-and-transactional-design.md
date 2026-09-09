@@ -85,8 +85,10 @@ be recoverable from PostgreSQL state.
 ### Protected artifact store
 
 Stores encrypted evidence chunks and rendered replay artifacts on a mounted
-durable volume. Database rows retain object locations, digests, evidence chain
-heads, and retention metadata.
+durable volume. A filesystem manifest retains per-chunk locations, digests,
+ordering, and chain links. PostgreSQL retains the completed stream summary,
+chain head, replay and video locations, and retention metadata. The active
+baseline does not write relational evidence-chunk or artifact rows.
 
 ## Authoritative ownership
 
@@ -101,7 +103,7 @@ heads, and retention metadata.
 | Mutation truth                                   | PostgreSQL Effect record and Effect events         |
 | Protected-value disclosure                       | Protection authority plus persisted decisions      |
 | Browser recording bytes                          | Protected artifact store                           |
-| Evidence integrity                               | Encrypted chunk chain and database chain head      |
+| Evidence integrity                               | Filesystem chunk chain and database stream summary |
 | Final Mission conclusion                         | Sanitized final report in PostgreSQL               |
 
 ## Planned subsystem architecture

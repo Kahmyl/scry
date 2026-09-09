@@ -49,6 +49,12 @@ The API and worker verify the required tables and columns, then confirm that
 the database admits the browser-execution worker capability. Missing required
 capabilities fail closed; unrelated additive schema changes remain acceptable.
 
+Production startup may additionally require an activated permanent receipt.
+The active command can activate an existing receipt but does not create the
+permanent import receipt needed by a fresh production database. Retained
+deployments may already satisfy this precondition; fresh-production bootstrap
+is an open operational gap rather than an implicit migration behavior.
+
 Databases retained from the earlier browser rollout cross a one-time,
 transactional compatibility bridge. The bridge renames the same stored fields
 in place and removes obsolete fingerprint metadata; it does not delete product,
@@ -86,15 +92,15 @@ classification; a non-terminal Run must not.
 
 ## Browser-session and queue tables
 
-| Table                         | Purpose                                                                                                                                   | Keys and relationships                                                                                                                                       |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `browser_execution_sessions`  | One protected Browser session for a Run, including policy snapshot, budgets, owner generation, checkpoint lifecycle, and disclosure mode. | One row per Run; composite foreign keys bind Run, Project, Mission, Objective, Environment, and Agent session. Used counts cannot exceed configured budgets. |
-| `browser_execution_outbox`    | Durable intent to start a Browser session.                                                                                                | One row per Browser session; remains pending until queue publication succeeds.                                                                               |
-| `browser_commands`            | Ordered agent commands, safe input and result, encrypted sensitive command input, claim lease, and failure code.                          | Unique ordinal and idempotency key within a Browser session; command and Run must refer to the same Browser session scope.                                   |
-| `browser_command_outbox`      | Durable intent to execute a command.                                                                                                      | One row per command; publication attempts and last error are retained.                                                                                       |
-| `browser_owner_generations`   | Fenced lease history for Browser-session owners.                                                                                          | Composite primary key of session and generation; only one active owner per session.                                                                          |
-| `browser_session_checkpoints` | Encrypted resumable browser state.                                                                                                        | One row per Browser session; bound to Run, Project, Mission, and owner generation.                                                                           |
-| `browser_actions`             | Ordered safe audit entries for executed browser actions.                                                                                  | Unique action ordinal within a Browser session; references the owner generation that executed it.                                                            |
+| Table                         | Purpose                                                                                                                                                   | Keys and relationships                                                                                                                                       |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `browser_execution_sessions`  | One protected Browser session for a Run, including policy snapshot, budgets, owner generation, checkpoint lifecycle, and disclosure mode.                 | One row per Run; composite foreign keys bind Run, Project, Mission, Objective, Environment, and Agent session. Used counts cannot exceed configured budgets. |
+| `browser_execution_outbox`    | Durable intent to start a Browser session.                                                                                                                | One row per Browser session; remains pending until queue publication succeeds.                                                                               |
+| `browser_commands`            | Ordered agent commands, safe input and result, encrypted sensitive command input, claim lease, and failure code.                                          | Unique ordinal and idempotency key within a Browser session; command and Run must refer to the same Browser session scope.                                   |
+| `browser_command_outbox`      | Durable intent to execute a command.                                                                                                                      | One row per command; publication attempts and last error are retained.                                                                                       |
+| `browser_owner_generations`   | Fenced lease history for Browser-session owners.                                                                                                          | Composite primary key of session and generation; only one active owner per session.                                                                          |
+| `browser_session_checkpoints` | Encrypted resumable browser state.                                                                                                                        | One row per Browser session; bound to Run, Project, Mission, and owner generation.                                                                           |
+| `browser_actions`             | Reserved schema for ordered safe audit entries. The active baseline derives its safe action ledger from `browser_commands` and does not write this table. | Unique action ordinal within a Browser session; references the owner generation that executed it.                                                            |
 
 ### Command consistency
 
@@ -139,11 +145,16 @@ Generated values require source Effect lineage; user inputs do not.
 
 ## Evidence and artifact tables
 
-| Table                      | Purpose                                                                        | Keys and relationships                                                                                                               |
-| -------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `browser_evidence_streams` | Completion and integrity summary for one Browser session recording.            | One stream per Browser session; complete state requires completion time, chain head, and at least one chunk.                         |
-| `browser_evidence_chunks`  | Ordered encrypted evidence segments.                                           | Composite primary key of stream and chunk index; object key and digest are unique; every noninitial chunk references a prior digest. |
-| `artifacts`                | Run-associated recordings, videos, screenshots, traces, or report attachments. | Object key is unique; each row carries a digest and safe metadata.                                                                   |
+| Table                      | Purpose                                                                                                                                                                                                                     | Keys and relationships                                                                                                               |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `browser_evidence_streams` | Completion and integrity summary for one Browser session recording.                                                                                                                                                         | One stream per Browser session; complete state requires completion time, chain head, and at least one chunk.                         |
+| `browser_evidence_chunks`  | Reserved relational metadata for ordered encrypted evidence segments. The active baseline stores this metadata in the filesystem manifest and does not write this table.                                                    | Composite primary key of stream and chunk index; object key and digest are unique; every noninitial chunk references a prior digest. |
+| `artifacts`                | Reserved relational metadata for Run-associated recordings, videos, screenshots, traces, or report attachments. The active baseline stores replay and video locations on the evidence stream and does not write this table. | Object key is unique; each row carries a digest and safe metadata.                                                                   |
+
+The presence of these reserved tables does not make them current runtime
+authorities. Adding writers or moving their metadata into PostgreSQL is a
+separate capability change, not part of behavior-preserving boundary
+relocation.
 
 ## Idempotency boundaries
 
