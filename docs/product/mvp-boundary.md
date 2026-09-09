@@ -1,5 +1,13 @@
 # MVP boundary
 
+Status: historical initial execution-slice boundary
+
+This document records the scope of Scry's original Chromium execution slice.
+It does not define the intended product MVP. See the canonical
+[Scry technical brief](technical-brief.md) for the product direction and MVP
+outcome. Capabilities listed as excluded below were excluded from this initial
+delivery slice and are not necessarily excluded from the intended MVP.
+
 ## Product statement
 
 Scry accepts a structured, versioned browser test plan from a human or agent,
