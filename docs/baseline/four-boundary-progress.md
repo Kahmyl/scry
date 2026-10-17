@@ -14,7 +14,7 @@ durable data. This record tracks implementation of the
 | Initial contracts and composition seams | Complete; the worker uses the Praxis execution port and report persistence uses the Veil report-protection port |
 | Veil protection ownership               | Complete; active baseline consumers use the extracted Veil implementation                                       |
 | Chronicle evidence ownership            | Baseline relocation complete; stale-owner closure proof requires the Praxis ownership seam                      |
-| Praxis browser ownership                | Next; browser adapters consume the established protection and evidence capabilities                             |
+| Praxis browser ownership                | Mechanics relocated; ownership correction and its regression proof are in progress                              |
 | Assurance diagnostics and qualification | Pending production-boundary cutover                                                                             |
 | Final cleanup and completion proof      | Pending                                                                                                         |
 
@@ -181,6 +181,25 @@ guarantees remain open for the Praxis ownership seam; the overall reset is not
 complete and must not be released on a claim that they are already proven.
 Existing activation bootstrap and inactive-table gaps remain deferred as recorded
 by baseline research.
+
+## Praxis structural cutover
+
+The active browser engine, recorder attachment, and replay browser adapter now
+live in `@scry/praxis`. Its only runtime dependencies are contracts, Playwright,
+and rrweb. Application composition supplies command/admission persistence,
+Veil browser-protection capabilities, and Chronicle evidence management through
+ports. Browser storage-state capture/restore stays in Praxis; the application
+retains encrypted checkpoint persistence and scope validation.
+
+The dormant Praxis implementation (including unused OCR and policy dependencies)
+and the displaced browser-runtime package were removed after consumer cutover.
+They remain recoverable in Git. Production manifests, container inputs,
+development synchronization, and qualification commands now select Praxis.
+Public browser commands, data formats, mutation budgets, and report behavior
+remain unchanged by this structural step. Types, 93 ordinary tests, real-browser
+recording/replay, and the durable worker journey pass through the new composition.
+This relocation does not by itself close the ownership limitation above; the
+intentional correction is a separate change.
 
 ## Next implementation slice
 

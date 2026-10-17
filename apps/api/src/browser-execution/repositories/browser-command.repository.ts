@@ -13,7 +13,7 @@ import type {
 import { browserProtectionSinkSchema } from "@scry/contracts";
 import { protectCommandInput, storedBrowserFailureCode } from "@scry/veil";
 import type { QueryResultRow } from "pg";
-import type { BrowserContextOptions } from "playwright";
+import type { PraxisStorageState } from "@scry/contracts";
 
 import { Database } from "../../infrastructure/database.js";
 import {
@@ -40,7 +40,7 @@ interface CommandRow extends QueryResultRow {
   attempt_count: number;
 }
 
-type InlineStorageState = Exclude<BrowserContextOptions["storageState"], string | undefined>;
+type InlineStorageState = PraxisStorageState;
 
 @Injectable()
 export class BrowserCommandRepository {

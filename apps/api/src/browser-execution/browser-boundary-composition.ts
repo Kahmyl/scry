@@ -1,16 +1,15 @@
 import { Injectable } from "@nestjs/common";
 import type { BrowserCommand } from "@scry/contracts";
 import { PraxisExecutionPort } from "@scry/contracts";
-import { VeilReportProtection } from "@scry/veil";
-import { BrowserReplayRenderer } from "@scry/browser-runtime";
+import { VeilReportProtection, VeilBrowserProtection } from "@scry/veil";
+import { BrowserReplayRenderer, PraxisBrowserEngine } from "@scry/praxis";
 import { ChronicleEvidenceService } from "@scry/chronicle";
 
-import { BrowserWorkerEngine } from "./browser-worker-engine.js";
 import { BrowserCommandRepository } from "./repositories/browser-command.repository.js";
 import { BrowserExecutionRepository } from "./repositories/browser-execution.repository.js";
 
 class BrowserWorkerPraxisAdapter extends PraxisExecutionPort {
-  constructor(private readonly engine: BrowserWorkerEngine) {
+  constructor(private readonly engine: PraxisBrowserEngine) {
     super();
   }
 
@@ -32,10 +31,11 @@ export function composePraxisExecutionPort(
   effects: BrowserExecutionRepository,
 ): PraxisExecutionPort {
   return new BrowserWorkerPraxisAdapter(
-    new BrowserWorkerEngine(
+    new PraxisBrowserEngine(
       commands,
       effects,
       new ChronicleEvidenceService(new BrowserReplayRenderer()),
+      new VeilBrowserProtection(),
     ),
   );
 }

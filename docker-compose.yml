@@ -118,8 +118,8 @@ services:
           path: packages/contracts/src
           target: /workspace/packages/contracts/src
         - action: sync
-          path: packages/browser-runtime/src
-          target: /workspace/packages/browser-runtime/src
+          path: packages/praxis/src
+          target: /workspace/packages/praxis/src
         - action: sync
           path: packages/veil/src
           target: /workspace/packages/veil/src
@@ -162,8 +162,8 @@ services:
           path: apps/api/src
           target: /workspace/apps/api/src
         - action: sync+restart
-          path: packages/browser-runtime/src
-          target: /workspace/packages/browser-runtime/src
+          path: packages/praxis/src
+          target: /workspace/packages/praxis/src
         - action: sync+restart
           path: packages/veil/src
           target: /workspace/packages/veil/src
@@ -176,7 +176,7 @@ services:
         - action: rebuild
           path: apps/api/package.json
         - action: rebuild
-          path: packages/browser-runtime/package.json
+          path: packages/praxis/package.json
         - action: rebuild
           path: packages/veil/package.json
         - action: rebuild

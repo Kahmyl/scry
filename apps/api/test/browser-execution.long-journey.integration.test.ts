@@ -6,7 +6,7 @@ import path from "node:path";
 import { QueueEvents, Worker } from "bullmq";
 import { chromium } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { SanitizedBrowserRecorder, BrowserReplayRenderer } from "@scry/browser-runtime";
+import { SanitizedBrowserRecorder, BrowserReplayRenderer } from "@scry/praxis";
 import {
   AuthenticatedEvidenceStore,
   ChronicleRecording,

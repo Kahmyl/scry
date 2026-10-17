@@ -8,7 +8,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/mcp/package.json apps/mcp/package.json
 COPY apps/web/package.json apps/web/package.json
-COPY packages/browser-runtime/package.json packages/browser-runtime/package.json
+COPY packages/praxis/package.json packages/praxis/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/veil/package.json packages/veil/package.json
 COPY packages/chronicle/package.json packages/chronicle/package.json
@@ -34,7 +34,7 @@ COPY --from=prod-deps /workspace/apps ./apps
 COPY --from=prod-deps /workspace/packages ./packages
 COPY apps/api apps/api
 COPY apps/mcp apps/mcp
-COPY packages/browser-runtime packages/browser-runtime
+COPY packages/praxis packages/praxis
 COPY packages/contracts packages/contracts
 COPY packages/veil packages/veil
 COPY packages/chronicle packages/chronicle
