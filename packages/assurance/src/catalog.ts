@@ -56,6 +56,17 @@ const componentMinimums: Readonly<Record<string, number>> = {
 export const checks: readonly CheckDefinition[] = [
   script("format", "Source and documentation remain formatted", "format:check"),
   script("types", "The active applications and all four boundaries compose", "typecheck"),
+  script(
+    "repository-closure",
+    "Every retained source belongs to the explicit baseline or its supported checks",
+    "verify:repository-closure",
+  ),
+  script(
+    "deployed-baseline",
+    "The production image executes an isolated public API/MCP browser journey without Assurance",
+    "verify:deployed-baseline",
+    900_000,
+  ),
   ...componentOwners.map((owner) =>
     tests(
       `component-${owner}`,
@@ -176,6 +187,7 @@ export const checks: readonly CheckDefinition[] = [
 const fast = [
   "format",
   "types",
+  "repository-closure",
   ...componentOwners.map((owner) => `component-${owner}`),
   "web-build",
   "playwright",
@@ -194,6 +206,7 @@ export const profiles: Readonly<Record<string, readonly string[]>> = {
     "deployment-tiers",
     "operations",
     "preflight",
+    "deployed-baseline",
   ],
   browser: [
     "playwright",
@@ -222,6 +235,7 @@ export const profiles: Readonly<Record<string, readonly string[]>> = {
     "preflight",
   ],
   "production-dependencies": ["production-dependencies"],
+  "deployed-smoke": ["deployed-baseline"],
   "production-recovery": ["production-recovery"],
 };
 

@@ -162,7 +162,9 @@ Qualification reports preserve selected scope and distinguish failed, blocked,
 cancelled, and unexecuted checks. Required integration suites must actually run
 their minimum passing cases without skips. The runner verifies explicit database
 identity and queue namespace before execution and never provisions or resets
-product state. Fixture scenarios may exercise isolated baseline applications;
+operator-supplied product state. The composed smoke owns a fresh disposable
+Docker project and populates it only through public interfaces. Fixture
+scenarios may exercise isolated baseline applications;
 the diagnostic library has no database or private-custody capability. Safe
 counters and outcomes are retained separately from Chronicle evidence and do not
 grant disclosure, overwrite facts, or authorize release. Operational deployment

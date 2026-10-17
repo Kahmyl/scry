@@ -5,25 +5,5 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true
   },
-  "include": [
-    "src/main.ts",
-    "src/worker.ts",
-    "src/app.module.ts",
-    "src/auth/auth.guard.ts",
-    "src/auth/auth.service.ts",
-    "src/auth/auth.types.ts",
-    "src/auth/current-principal.decorator.ts",
-    "src/auth/mcp-tokens.controller.ts",
-    "src/auth/repositories/**/*.ts",
-    "src/common/**/*.ts",
-    "src/infrastructure/database.ts",
-    "src/infrastructure/redis.ts",
-    "src/browser-execution/**/*.ts",
-    "scripts/migrate.ts",
-    "scripts/activate-schema.ts",
-    "test/auth.service.test.ts",
-    "test/browser-*.test.ts",
-    "test/browser-*.integration.test.ts",
-    "test/fixtures/browser-crash-phase.ts"
-  ]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
 }

@@ -1,6 +1,6 @@
 # Scry four-boundary reset progress
 
-Status: all four boundary cutovers locally qualified; final cleanup is next
+Status: four-boundary structural reset locally complete; not deployed
 
 The current baseline remains the authority for behavior, public contracts, and
 durable data. This record tracks implementation of the
@@ -16,7 +16,7 @@ durable data. This record tracks implementation of the
 | Chronicle evidence ownership            | Complete; recording and publication now consume owner-locked admission                                          |
 | Praxis browser ownership                | Complete; active browser mechanics, lifecycle, and local lease revocation belong to Praxis                      |
 | Assurance diagnostics and qualification | Complete; shared profiles, safe reports, public fixtures, and read-only diagnostic interpretation               |
-| Final cleanup and completion proof      | Pending                                                                                                         |
+| Final cleanup and completion proof      | Complete locally; reduced source graph, full-image browser journey, and isolated recovery drill qualify         |
 
 ## Veil ownership
 
@@ -317,10 +317,105 @@ deployment. The separate full backup/restore drill was syntax-checked but not
 rerun in this slice. Existing fresh-production activation bootstrap and inactive
 relational evidence-table limitations remain deferred.
 
-## Next implementation slice
+## Displacement cleanup and completion proof
 
-Complete the reachability-led cleanup of dormant application code, packages,
-scripts, and obsolete verification. Check static, workflow, operational, and test
-consumers before deletion; preserve active baseline contracts, stored data, and
-the now-qualified four-boundary composition. Then rerun completion proof across
-the reduced repository. The overall reset is not complete yet.
+The final source trace began at the API, browser worker, migration and activation
+commands, both MCP transports, and dashboard. It found 93 production-reachable
+files. None was deleted. Active API execution, Praxis, Veil, Chronicle, baseline
+schema, compatibility SQL, and auth/session implementations remain unchanged.
+Edits inside retained production modules remove only unused dashboard helpers,
+declarations, and imports, an unused dashboard alias, and unused MCP registry
+annotations/finalization helpers. Existing public tool behavior and UI remain
+the baseline.
+
+473 dormant tracked files were removed, including:
+
+- alternate API and MCP implementations and their old orchestration, authoring,
+  runtime, policy, evidence, and worker paths;
+- Executor, Policy, Observability, Agent Lab, and old standalone experiments;
+- 54 historical campaign/helper scripts and 54 inactive SQL migration files;
+- unused contracts and alternate dashboard features; and
+- unused OCR data, screenshot drafts, and a historical live-target fixture.
+
+These files remain recoverable from the preceding Git commits. Removing old SQL
+files does not execute SQL or alter any existing database. All nine active schema
+and compatibility files remain intact, including currently inactive relational
+evidence structures. Backup and metrics operations remain in `scripts/operations`
+and `ops`, not in the removed diagnostic package. The reachable non-authoritative
+Agent Lab HTTP compatibility acknowledgements remain in the MCP transport; they
+do not load an Agent Lab implementation or add supported agent tools.
+
+The workspace now explicitly selects three applications and five packages:
+API, MCP, dashboard, contracts, Praxis, Veil, Chronicle, and Assurance. The
+lockfile was pruned without upgrading dependencies; a frozen offline install
+passes. API and MCP typechecks cover their entire remaining source, scripts,
+and tests. The dashboard also rejects unused locals and parameters. Obsolete
+source-manifest metadata was removed from development Compose; runtime release
+identity and persisted cryptographic compatibility are preserved.
+
+`verify:repository-closure` traces syntax-aware imports, re-exports, type imports,
+literal lazy loads, and import-relative process fixtures. It rejects missing
+local imports, unaccounted computed loads, undeclared dependencies, displaced
+workspaces, and source outside the production or supported verification closure.
+It includes six negative/positive characterization cases and covers co-located
+dashboard tests as well as owner-local test directories. It is not an exact
+source-byte, schema-fingerprint, or hash-admission contract. The reduced graph
+has eight workspaces, 93 production files, 160 supported files, and no unresolved
+imports or orphaned implementation files.
+
+The new `deployed-smoke` profile builds the real production image and boots the
+existing deployment composition in a fresh, portless Docker project. A local
+fixture issuer supplies signed JWTs; the unchanged API verifies issuer, audience,
+signature, identity, and workspace scope. Public API/MCP calls create a Project,
+Environment, credential, Mission, Objective, Flow, and Run, then navigate real
+Chromium, fill the explicitly supplied protected credential, observe, close,
+finalize, and publish a protected report. It verifies evidence completion,
+zero-network sanitized replay publication, visible frames and WebM, report
+binding, protected-value exclusion, cross-workspace refusal, MCP session bearer
+binding, web serving, and absence of retired implementations or Assurance from
+the production image. It does not import application internals or seed tables.
+
+Initial smoke failures were fixture assumptions, not runtime repairs: the
+baseline publishes replay metadata and WebM, not an HTML replay; an empty
+historical-migration directory also remained in the local build context. The
+fixture now checks the actual publication contract. Empty displaced directories
+were removed, and old migrations and local qualification reports are excluded
+from Docker context. Failed reports remain alongside successful reruns. The
+smoke fixture removes only its generated Docker resources and image; existing
+databases, volumes, and external services are not its targets.
+
+### Proof portfolio
+
+The retained 26 integration tests pass without skips: lifecycle 13, protected
+recording/replay 2, worker 1, owner admission 5, failure finalization 1, process
+recovery 3, and long journey 1. Fresh migrations and second-run idempotence pass.
+The deployed image journey and the separate isolated encrypted backup, WAL,
+restore/promotion, and integrity-query drill also pass. The final combined
+CI-shaped profile passes all 24 selected checks: formatting, whole-source types,
+source closure, 137 ordinary tests, dashboard build, ownership/workflow/publication
+checks, deployment-controller scenarios, production-only dependencies, Caddy,
+tiers, operations, preflight, and the composed image journey. The 13 native
+ownership/source-graph cases pass as part of those gates. Ordinary integration
+skips remain explicit and are covered by the separate no-skip integration runs.
+
+One combined run timed out in the existing mocked deployment-controller check
+before its fake Docker log started. The unchanged check passed directly and
+through a separately bounded Assurance executor run (under 10 seconds). The
+timeout was not reproduced or assigned a speculative runtime cause; its failed
+report is retained, limits were not relaxed, and the whole profile must pass on
+rerun before completion is recorded. That rerun passed with no runtime or
+controller-test changes. Its retained report is
+`artifacts/assurance/99829238-be92-424a-984e-f0277d64777d.json`; the source graph
+still reports 93 production and 160 supported files, with no unresolved imports.
+
+This is local structural-reset proof, not a remote CI result, deployment, MVP
+completion, or fresh-production bootstrap qualification. The local deployed
+fixture explicitly disables the existing activated-cutover requirement, as the
+current beta smoke does; it does not weaken production defaults. The unsupported
+fresh-production identity-import bootstrap and inactive relational evidence
+writers remain separate, recorded limitations. Production rollout still requires
+the earlier owner-admission drain/stop guidance.
+
+The isolated reset branch is ready for review and a merge decision. Main has not
+been changed or deployed. The original product/MVP briefs remain unchanged;
+completion here means this structural reset, not the broader testing platform.

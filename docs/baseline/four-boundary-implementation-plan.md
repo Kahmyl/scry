@@ -1,6 +1,6 @@
 # Scry four-boundary implementation plan
 
-Status: canonical plan for research and implementation
+Status: canonical plan; all workstreams locally implemented and qualified
 
 This plan turns the [four-boundary direction](four-boundary-direction.md) into
 reviewable work. It begins from the current cleaned baseline and does not adopt
@@ -332,6 +332,12 @@ commands and wire CI to the same catalog. Do not revive historical campaigns or
 add product UI, browser coverage, performance promises, or a production telemetry
 service as part of this cutover.
 
+Result: complete locally. Assurance owns the shared check catalog, diagnostic
+interpretation, public fixtures, safe reports, and retained repository/deployment
+qualification. Production builds and executes without it. Owner-local
+characterizations stay with their components; dormant Assurance campaigns were
+removed. See the [progress record](four-boundary-progress.md).
+
 ## Workstream 7: displacement cleanup
 
 ### Objective
@@ -359,6 +365,31 @@ show no reachable displaced path. Every remaining verification maps to a
 current product promise, security invariant, compatibility obligation, or
 boundary rule.
 
+Implementation boundary for this slice: trace the deployed API, worker,
+migration/activation commands, both MCP transports, and dashboard, then include
+their retained tests, process fixtures, public package entries, configuration,
+and operational consumers. Delete only displaced source and historical tooling
+outside those closures. Replace broad workspace discovery and narrowed
+application typecheck lists with explicit baseline workspaces and whole retained
+source checks. Add a reproducible source-closure gate with negative fixtures;
+this is a dependency/reachability check, not a source hash or byte contract.
+
+Preserve all active baseline schema and compatibility SQL, persisted formats,
+auth/session handling, operational observability and backup/recovery tooling,
+and reachable HTTP compatibility responses. Removing historical migration files
+does not run a database migration or delete stored data. Remove unused symbols
+inside retained dashboard modules only where callers and tests prove they are
+unused; do not redesign the UI or prune its shared stylesheet by guesswork.
+Completion proof is local and isolated: no remote deployment or publication is
+authorized. Record fresh-production activation and inactive relational evidence
+writers as unchanged limitations, not cleanup failures to bypass.
+
+Result: complete locally. 473 dormant files were removed after tracing production,
+verification, and operational consumers. Eight explicit workspaces, whole-source
+typechecks, source-closure and negative dependency checks, pruned dependency
+resolution, and production-image qualification cover the reduced baseline. No
+active schema, persisted format, or baseline runtime behavior changed in cleanup.
+
 ## Workstream 8: completion proof
 
 ### Required proof portfolio
@@ -379,6 +410,17 @@ boundary rule.
 Any failing invariant returns the work to the owner responsible for the defect.
 Passing unit tests alone is not completion if the composed deployed path has
 not been exercised.
+
+Result: the local proof portfolio passes: frozen install, complete combined
+qualification, 137 ordinary tests, 13 native graph/ownership cases, 26 required
+integration tests without skips, fresh migration/idempotence, a real
+production-image API/MCP/Chromium/evidence/report journey, and an isolated
+encrypted backup/WAL restore-and-promotion drill. Safe passing and failed reports
+are retained. This is not a remote CI result, production deployment, fresh
+identity-import bootstrap proof, or MVP completion. The existing activation
+bootstrap and inactive relational evidence-writer gaps remain explicit; rollout
+must retain the earlier worker drain/stop guidance. See the
+[progress and limitations record](four-boundary-progress.md).
 
 ## Recommended sequence
 

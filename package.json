@@ -22,6 +22,8 @@
     "build": "pnpm --filter @scry/web build",
     "verify:playwright": "node packages/assurance/gates/verify-playwright-version.mjs",
     "verify:baseline-topology": "node packages/assurance/gates/verify-baseline-topology.mjs",
+    "verify:repository-closure": "node --test packages/assurance/gates/test/repository-graph.test.mjs && node packages/assurance/gates/verify-repository-closure.mjs",
+    "verify:deployed-baseline": "node packages/assurance/gates/verify-deployed-baseline.mjs",
     "verify:boundary-ownership": "node --test packages/assurance/gates/test/boundary-ownership.test.mjs && node packages/assurance/gates/verify-boundary-ownership.mjs",
     "verify:boundary-runtime": "node packages/assurance/gates/verify-boundary-runtime.mjs",
     "verify:workflow-manifests": "node packages/assurance/gates/verify-workflow-manifests.mjs",

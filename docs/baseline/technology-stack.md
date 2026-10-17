@@ -165,7 +165,9 @@ Praxis, Veil, and Chronicle implementations, Playwright, Vitest, and tsx are
 development-only fixture and qualification dependencies. It has no database
 driver or application-internal dependency.
 The dormant implementations of all four packages have been replaced by the
-proven baseline. Broader dormant-application cleanup remains separate.
+proven baseline. Dormant application implementations, historical campaigns and
+migrations, unused contracts, Executor, Policy, Observability, and Agent Lab have
+been removed after tracing production, verification, and operational consumers.
 Current completion is recorded in the
 [reset progress record](four-boundary-progress.md).
 
@@ -191,7 +193,25 @@ Database profiles require matching `DATABASE_URL`,
 `SCRY_BROWSER_TEST_DATABASE_URL`, and `SCRY_BROWSER_EXPECTED_DATABASE`; migration
 still requires its own explicit target and confirmation. Queue profiles also
 require `REDIS_URL` and a distinct `SCRY_BROWSER_QUEUE_NAMESPACE`. The runner
-does not provision, migrate, reset, or drop databases.
+does not provision, migrate, reset, or drop caller-supplied databases. The separate
+`deployed-smoke` profile creates its own disposable, portless Docker project and
+uses the existing migration task there; it never targets an operator's database.
+
+The workspace explicitly lists the eight baseline applications/packages. API
+and MCP typechecks cover all retained source and tests. The repository-closure
+gate rejects source outside production or supported qualification paths,
+unresolved local imports, computed module loads without disposition, undeclared
+dependencies, and displaced workspaces. Negative fixtures exercise the tracer;
+no exact-byte source or schema fingerprint is required.
+
+`pnpm qualify deployed-smoke` builds the production image and exercises public
+authenticated API/MCP calls through a real Chromium worker, protected fill,
+evidence and zero-network replay closure, safe report publication, workspace and
+session refusal, and web serving. Its issuer and target application are local
+fixtures; no real Supabase account or external application is contacted. The
+`ci-fast` profile includes this composed smoke in addition to production-only
+dependency and operational-manifest checks. Routine `fast` remains independent
+of those full-image checks.
 
 Each invocation retains an exclusive, private JSON report under
 `artifacts/assurance/`. Reports contain selected check IDs, guarantees, times,

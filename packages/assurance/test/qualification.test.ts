@@ -241,6 +241,8 @@ describe("qualification outcomes", () => {
     expect(profiles["ci-fast"]).toEqual(
       expect.arrayContaining([
         "types",
+        "repository-closure",
+        "deployed-baseline",
         "format",
         "component-contracts",
         "component-api",
