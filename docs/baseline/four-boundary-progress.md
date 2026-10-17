@@ -96,6 +96,21 @@ deployment to a running environment. The known fresh-production activation gap
 and inactive relational evidence tables recorded by baseline research remain
 separate from this relocation.
 
+## Protection correction found during the consumer audit
+
+The structural relocation was committed separately from one confirmed
+confidentiality correction. Browser observations previously sanitized the URL
+and page text but returned the page title directly. A real-browser regression
+put a known protected credential in the title and reproduced its disclosure
+through a completed durable command.
+
+The observation now passes the title through the same Veil policy used for
+other observation text. The regression verifies that ordinary title text
+remains readable while the credential is removed. The database qualification
+lane runs this durable-worker journey with Chromium, Redis, and its own fresh
+database. This is an intentional correction to the previous observable
+behavior, with no new protection policy or data format.
+
 ## Next implementation slice
 
 Chronicle will receive the current evidence store, accepted execution history,

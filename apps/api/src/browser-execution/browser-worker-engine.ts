@@ -443,7 +443,7 @@ export class BrowserWorkerEngine {
     );
     return {
       url: session.authority.sanitize(session.page.url(), "agent_observation"),
-      title: await session.page.title(),
+      title: session.authority.sanitize(await session.page.title(), "agent_observation"),
       documentEpoch: session.documentEpoch,
       controls,
       regions,
