@@ -1,6 +1,6 @@
 # Scry four-boundary reset progress
 
-Status: Praxis, Veil, and Chronicle cutovers locally qualified; Assurance is next
+Status: all four boundary cutovers locally qualified; final cleanup is next
 
 The current baseline remains the authority for behavior, public contracts, and
 durable data. This record tracks implementation of the
@@ -15,7 +15,7 @@ durable data. This record tracks implementation of the
 | Veil protection ownership               | Complete; active baseline consumers use the extracted Veil implementation                                       |
 | Chronicle evidence ownership            | Complete; recording and publication now consume owner-locked admission                                          |
 | Praxis browser ownership                | Complete; active browser mechanics, lifecycle, and local lease revocation belong to Praxis                      |
-| Assurance diagnostics and qualification | Next                                                                                                            |
+| Assurance diagnostics and qualification | Complete; shared profiles, safe reports, public fixtures, and read-only diagnostic interpretation               |
 | Final cleanup and completion proof      | Pending                                                                                                         |
 
 ## Veil ownership
@@ -262,9 +262,65 @@ drain/stop old workers before switching to the corrected worker set: an old
 binary does not acquire the new storage-admission gate. Existing activation
 bootstrap and inactive relational evidence-table limitations remain deferred.
 
+## Assurance diagnostic cutover
+
+The dormant Assurance labs, numbered campaigns, alternate runtime experiments,
+and obsolete qualification scripts were removed, not adopted as product
+authority. They remain recoverable in Git. The active repository and deployment
+gates now live in `packages/assurance/gates`; the unchanged protected
+recording/replay fixture moved from Praxis to Assurance and consumes public
+Praxis, Veil, and Chronicle entry points. Owner-local component and transaction
+characterizations remain beside their implementations. Assurance invokes them
+as processes rather than importing application internals or a database driver.
+
+The shared check catalog drives `pnpm verify`, `pnpm qualify <profile>`, and the
+three reusable CI qualification lanes. Reports under `artifacts/assurance/`
+retain selected IDs, guarantees, outcomes, timestamps, durations, and safe test
+counts. They exclude raw logs, exception text, environment values, and captured
+payloads. No report overwrites a previous invocation. Reports are diagnostic
+only: they neither rewrite Chronicle facts nor grant product/release admission.
+The pure recording/evidence diagnostic functions return fixed informational or
+warning codes without copying raw messages or concluding the application is
+defective. This does not introduce visual analysis, performance coverage, or a
+production observability service.
+
+Missing scope blocks execution; failed checks stop later checks. Required test
+profiles enforce minimum passing cases and reject unexpected skips, incomplete
+or missing reports, timeout, cancellation, and bounded-output violations.
+Ordinary profiles explicitly retain integration skip counts, not integration
+coverage claims. A real database-profile run exposed an environment-selection
+bug that skipped all 13 tests; the runner refused a pass. A failing regression
+was preserved, effective environment validation was corrected, and the original
+database profile passed all 13 cases afterward. The failed diagnostic report
+was retained alongside the successful rerun.
+
+Production deployment preflight and deployment/backup/recovery operations remain
+outside Assurance. Production import and authenticated evidence-reopen smoke
+tests still pass without Assurance or development dependencies. The opt-in
+isolated backup/restore drill remains separate from routine verification.
+
+### Assurance verification
+
+| Check                                 | Result                                                                                                                                                                                                                       |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ordinary characterization             | 137 tests pass, including 32 Assurance tests; integration skips are explicit                                                                                                                                                 |
+| Required browser/database journeys    | 26 tests pass without skips: recording/replay 2, lifecycle 13, worker 1, owner admission 5, failure finalization 1, process recovery 3, long journey 1                                                                       |
+| Runner failures and diagnostic safety | Missing/malformed counters, insufficient tests, skips, pending/error states, nonzero exits, process timeout/cancellation/output limits, fail-fast behavior, scope refusal, immutable reports, and raw-message exclusion pass |
+| Ownership                             | Seven negative boundary tests and production/fixture dependency scans pass                                                                                                                                                   |
+| Migration                             | Fresh creation and second-run idempotence pass; no schema/data migration introduced                                                                                                                                          |
+| Repository and deployment             | Types, formatting, web build, workflows, publication, deployment-controller refusal/rollback, real Caddy, tiers, operations, preflight, and production-only dependency checks pass                                           |
+
+Safe reports are retained locally for the browser, database, worker, owner,
+failure, recovery, journey, and CI-shaped profiles; CI uploads its safe reports
+on success or failure. This is local qualification, not a remote CI run or a
+deployment. The separate full backup/restore drill was syntax-checked but not
+rerun in this slice. Existing fresh-production activation bootstrap and inactive
+relational evidence-table limitations remain deferred.
+
 ## Next implementation slice
 
-Assurance will own diagnostics, experiments, fixtures, qualification campaigns,
-and their interpretation. It must consume public contracts and safe evidence
-without becoming a production dependency. Then complete the reachability-led
-cleanup of dormant application code and obsolete verification.
+Complete the reachability-led cleanup of dormant application code, packages,
+scripts, and obsolete verification. Check static, workflow, operational, and test
+consumers before deletion; preserve active baseline contracts, stored data, and
+the now-qualified four-boundary composition. Then rerun completion proof across
+the reduced repository. The overall reset is not complete yet.

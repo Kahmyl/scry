@@ -150,6 +150,25 @@ lease revocation belong to Praxis. It consumes protection and evidence through
 ports and has no Veil, Chronicle, application, or database-driver implementation
 dependency. Application adapters persist owner facts and supply locked admission.
 
+Assurance owns the baseline qualification catalog, repository/deployment checks,
+public cross-boundary browser fixture, bounded runner, and safe reports.
+Component characterizations remain owner-local and are invoked through check
+commands, not application-internal imports. Its recording/evidence diagnostic
+functions consume public summaries, emit only static informational or warning
+codes, and cannot complete evidence or classify the tested application as
+defective. There is no production call to Assurance and no new telemetry service.
+
+Qualification reports preserve selected scope and distinguish failed, blocked,
+cancelled, and unexecuted checks. Required integration suites must actually run
+their minimum passing cases without skips. The runner verifies explicit database
+identity and queue namespace before execution and never provisions or resets
+product state. Fixture scenarios may exercise isolated baseline applications;
+the diagnostic library has no database or private-custody capability. Safe
+counters and outcomes are retained separately from Chronicle evidence and do not
+grant disclosure, overwrite facts, or authorize release. Operational deployment
+preflight and backup/recovery actions remain independently runnable without
+Assurance.
+
 The diagram describes the completed target architecture. The
 [four-boundary implementation plan](four-boundary-implementation-plan.md) and
 [progress record](four-boundary-progress.md) distinguish completed cutovers

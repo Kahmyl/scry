@@ -313,6 +313,25 @@ and their public facts are stable.
 All retained diagnostic and qualification work has an explicit home in
 Assurance, and unrelated historical campaigns or checks have been deleted.
 
+Implementation boundary for this slice: replace the dormant Assurance package
+with the active baseline's qualification gates and public browser fixture.
+Component-local unit and transaction characterizations remain with their owners;
+Assurance invokes them as checks rather than importing application internals.
+Operational deployment preflight and recovery/backup actions remain outside
+Assurance because production must run without it. Assurance owns their diagnostic
+qualification, not their operational execution authority.
+
+Add a bounded, explicit check catalog and runner for the existing fast, browser,
+database, worker, ownership, recovery, and deployment checks. Reports must say
+which checks actually ran; missing prerequisites, zero tests, unexpected skips,
+timeouts, cancellation, and failed checks cannot become a pass. Retain only safe
+counts, stable check identifiers, and outcomes, never raw logs, errors, environment
+values, or protected payloads. Diagnostic interpretation is read-only and cannot
+change Chronicle facts or grant product/release admission. Preserve existing root
+commands and wire CI to the same catalog. Do not revive historical campaigns or
+add product UI, browser coverage, performance promises, or a production telemetry
+service as part of this cutover.
+
 ## Workstream 7: displacement cleanup
 
 ### Objective

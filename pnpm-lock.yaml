@@ -164,9 +164,6 @@ importers:
       '@scry/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@scry/observability':
-        specifier: workspace:*
-        version: link:../observability
     devDependencies:
       '@scry/chronicle':
         specifier: workspace:*
@@ -315,12 +312,6 @@ importers:
         specifier: 2.1.1
         version: 2.1.1
     devDependencies:
-      '@scry/chronicle':
-        specifier: workspace:*
-        version: link:../chronicle
-      '@scry/veil':
-        specifier: workspace:*
-        version: link:../veil
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1
