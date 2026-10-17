@@ -3,7 +3,7 @@ import path from "node:path";
 import type { BrowserCommitIntent, BrowserEffectTruth } from "@scry/contracts";
 import { browserCommitIntentSchema, browserEffectTruthSchema } from "@scry/contracts";
 import { durableAppend, ensurePrivateDirectory, readJsonLines } from "./durable-file.js";
-import { SensitiveValueClassifier } from "./classifier.js";
+import { SensitiveValueClassifier } from "@scry/veil";
 
 type EffectEventType =
   | "admitted"

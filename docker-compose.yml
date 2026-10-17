@@ -120,6 +120,9 @@ services:
         - action: sync
           path: packages/browser-runtime/src
           target: /workspace/packages/browser-runtime/src
+        - action: sync
+          path: packages/veil/src
+          target: /workspace/packages/veil/src
         - action: rebuild
           path: apps/api/package.json
         - action: rebuild
@@ -157,12 +160,17 @@ services:
           path: packages/browser-runtime/src
           target: /workspace/packages/browser-runtime/src
         - action: sync+restart
+          path: packages/veil/src
+          target: /workspace/packages/veil/src
+        - action: sync+restart
           path: packages/contracts/src
           target: /workspace/packages/contracts/src
         - action: rebuild
           path: apps/api/package.json
         - action: rebuild
           path: packages/browser-runtime/package.json
+        - action: rebuild
+          path: packages/veil/package.json
         - action: rebuild
           path: pnpm-lock.yaml
 

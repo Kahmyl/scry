@@ -130,9 +130,15 @@ Container health checks and startup ordering protect service dependencies.
 Backup and metrics services may be enabled as operational support, but they are
 not part of the browser-testing product path.
 
-## Planned package responsibilities
+## Package responsibilities
 
-The current shared runtime will be reorganized behind four package boundaries:
+Veil is now the active protection owner. The API and the consolidated browser
+runtime use its public package for classification, sanitization, quarantine,
+publication admission, recording privacy rules, and cryptographic operations.
+The API retains a small dependency-injection adapter for the Veil value cipher.
+Veil depends only on shared contracts and Node's built-in libraries.
+
+The remaining reset will complete these four package boundaries:
 
 - `@scry/praxis` for Playwright, browser protocol, browser lifecycle,
   observation, action, ownership, and checkpoint mechanics;
@@ -143,11 +149,14 @@ The current shared runtime will be reorganized behind four package boundaries:
 - `@scry/assurance` for diagnostic analysis, experiments, test campaigns, and
   qualification.
 
-The API and workers compose the three production packages through narrow
-contracts. Assurance may exercise their public surfaces, but production
-packages and services must build and run without it. Existing packages with
-these names are inputs to the baseline investigation, not proof that the
-separation already exists.
+The API and workers compose production capabilities through public contracts.
+The consolidated browser runtime still owns browser recording and evidence
+storage while the Chronicle and Praxis moves remain pending. Assurance may
+exercise public surfaces, but production services build and run without it.
+The old Veil implementation has been replaced by the extracted baseline;
+dormant Praxis, Chronicle, and Assurance contents are still subject to the
+research disposition ledger. Current completion is recorded in the
+[reset progress record](four-boundary-progress.md).
 
 ## Engineering assurance
 

@@ -2,6 +2,10 @@
 
 Status: completed pre-implementation baseline research
 
+This is the research snapshot preceding the protection cutover. See the
+[reset progress record](four-boundary-progress.md) for current package ownership
+and implementation status.
+
 This record establishes what the current Scry baseline actually builds,
 deploys, executes, stores, and verifies. It is the evidence required by
 [workstream 1](four-boundary-implementation-plan.md#workstream-1-fresh-baseline-research)

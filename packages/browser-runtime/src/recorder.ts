@@ -2,11 +2,12 @@ import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { BrowserContext, CDPSession, Frame, Page } from "playwright";
-import { sanitizeReplayValue } from "./sanitizer.js";
-import { SensitiveValueClassifier } from "./classifier.js";
-import { ProtectionAuthority } from "./protection-authority.js";
-
-const BLOCKED_SURFACES = "img,image,svg,video,audio,canvas,object,embed,picture,iframe";
+import {
+  sanitizeReplayValue,
+  SensitiveValueClassifier,
+  ProtectionAuthority,
+  recordingProtectionOptions,
+} from "@scry/veil";
 
 export interface ReplayEventStore {
   readonly nextSequence: number;
@@ -140,18 +141,8 @@ export class SanitizedBrowserRecorder {
         globalThis.__scryRecorderStarted = true;
         globalThis.__scryRecorderStop = globalThis.rrweb.record({
           emit,
-          maskAllInputs: true,
-          maskTextSelector: '[data-scry-protected], [data-private], [aria-label*="secret" i], [aria-label*="password" i]',
-          blockSelector: ${JSON.stringify(BLOCKED_SURFACES)},
-          recordCanvas: false,
-          collectFonts: false,
-          recordCrossOriginIframes: false,
-          checkoutEveryNms: 5000,
-          slimDOMOptions: {
-            script: true, comment: true, headFavicon: true, headWhitespace: true,
-            headMetaDescKeywords: true, headMetaSocial: true, headMetaRobots: true,
-            headMetaHttpEquiv: true, headMetaAuthorship: true, headMetaVerification: true
-          }
+          ...${JSON.stringify(recordingProtectionOptions)},
+          checkoutEveryNms: 5000
         });
       };
       globalThis.__scryRestartRecorder = start;

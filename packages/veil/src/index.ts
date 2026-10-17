@@ -1,12 +1,12 @@
-export * from "./authority.js";
-export * from "./policy.js";
-export * from "./runtime-session.js";
-export * from "./runtime-coordinator.js";
-export * from "./channel-collector.js";
-export * from "./clipboard-collector.js";
-export * from "./visual-capture.js";
-export * from "./video-segment.js";
-
-export * from "./evidence-admission.js";
-
-export * from "./public-value-admission.js";
+export * from "./classifier.js";
+export * from "./sanitizer.js";
+export * from "./protection-authority.js";
+export * from "./protected-capture-vault.js";
+export * from "./protected-keyring.js";
+export * from "./protected-value-cipher.js";
+export * from "./evidence-cipher.js";
+export * from "./report-protection.js";
+export * from "./publication-admission.js";
+export * from "./transport-protection.js";
+export * from "./recording-protection.js";
+export * from "./error-protection.js";

@@ -61,9 +61,11 @@ jobs:
         run: >-
           pnpm --filter @scry/api exec vitest run
           test/browser-schema-migration.test.ts
-          test/browser-protected-keyring.test.ts
           test/browser-exception.filter.test.ts
           --maxWorkers=1
+
+      - name: Verify Veil protection and encrypted-data compatibility
+        run: pnpm --filter @scry/veil test
 
       - name: Verify browser lifecycle, failure truth, authorization, and scope integrity
         run: >-

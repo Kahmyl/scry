@@ -26,7 +26,7 @@ import {
   type ProtectionDecision,
   type ProtectionProposal,
 } from "./protection-authority.js";
-import { durableWrite, ensurePrivateDirectory, isNodeError } from "./durable-file.js";
+import { durableWrite, ensurePrivateDirectory, isNodeError } from "./capture-storage.js";
 
 const DEFAULT_CAPTURE_LIMIT = 64 * 1024;
 const DEFAULT_OPERATION_LIMIT = 512 * 1024;

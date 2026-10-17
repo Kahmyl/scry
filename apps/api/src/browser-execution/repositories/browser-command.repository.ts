@@ -9,6 +9,7 @@ import type {
   SubmitBrowserCommandInput,
 } from "@scry/contracts";
 import { browserProtectionSinkSchema } from "@scry/contracts";
+import { protectCommandInput, storedBrowserFailureCode } from "@scry/veil";
 import type { QueryResultRow } from "pg";
 import type { BrowserContextOptions } from "playwright";
 
@@ -187,7 +188,7 @@ export class BrowserCommandRepository {
         [sessionId, input.idempotencyKey],
       );
       if (existing.rows[0]) {
-        const proposed = safeCommand(input.command);
+        const proposed = protectCommandInput(input.command);
         const proposedDigest =
           input.command.kind === "fill" && input.command.publicValue !== undefined
             ? digestText(input.command.publicValue)
@@ -223,7 +224,7 @@ export class BrowserCommandRepository {
           ordinal.rows[0]!.next,
           input.idempotencyKey,
           input.command.kind,
-          JSON.stringify(safeCommand(input.command)),
+          JSON.stringify(protectCommandInput(input.command)),
           encrypted?.ciphertext ?? null,
           encrypted?.nonce ?? null,
           encrypted?.authenticationTag ?? null,
@@ -378,9 +379,7 @@ export class BrowserCommandRepository {
   }
 
   async fail(commandId: string, claimToken: string, error: unknown): Promise<void> {
-    const code = (error instanceof Error ? error.message : String(error))
-      .replace(/[^A-Za-z0-9:_-]/gu, "_")
-      .slice(0, 500);
+    const code = storedBrowserFailureCode(error);
     await this.database.query(
       `UPDATE browser_commands SET state='failed',error_code=$3,completed_at=now(),claim_token=NULL,
          claim_lease_expires_at=NULL WHERE id=$1 AND state='running' AND claim_token=$2`,
@@ -860,12 +859,6 @@ function isStorageState(value: unknown): value is InlineStorageState {
 function isStringRecord(value: unknown): value is Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   return Object.values(value).every((item) => typeof item === "string");
-}
-
-function safeCommand(command: BrowserCommand): BrowserCommand {
-  return command.kind === "fill" && command.publicValue !== undefined
-    ? { ...command, publicValue: "[PROTECTED:COMMAND_INPUT]" }
-    : command;
 }
 
 function digestText(value: string): string {

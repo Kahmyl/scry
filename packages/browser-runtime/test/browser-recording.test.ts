@@ -6,11 +6,10 @@ import { chromium } from "playwright";
 import { describe, expect, it } from "vitest";
 import {
   AuthenticatedEvidenceStore,
-  ProtectionAuthority,
   SanitizedBrowserRecorder,
-  SensitiveValueClassifier,
   renderSanitizedReplay,
 } from "../src/index.js";
+import { ProtectionAuthority, SensitiveValueClassifier } from "@scry/veil";
 
 const browserTest = process.env.SCRY_BROWSER_E2E === "1" ? it : it.skip;
 

@@ -1,7 +1,8 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { open, readFile, readdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
-import { gzipSync, gunzipSync } from "node:zlib";
+import { gzipSync } from "node:zlib";
+import { EvidenceCipher } from "@scry/veil";
 import { durableWrite, ensurePrivateDirectory, isNodeError } from "./durable-file.js";
 
 interface EvidenceEnvelope<T> {
@@ -78,8 +79,7 @@ export class AuthenticatedEvidenceStore<T> {
   #nextChunk = 0;
   #nextSequence = 0;
   #previousDigest = "GENESIS";
-  readonly #key: Buffer;
-  readonly #legacyDecryptionKeys: readonly Buffer[];
+  readonly #cipher: EvidenceCipher;
 
   constructor(options: {
     directory: string;
@@ -94,13 +94,7 @@ export class AuthenticatedEvidenceStore<T> {
     this.#directory = options.directory;
     this.#runId = options.runId;
     this.#scopeId = options.scopeId;
-    if (options.encryptionKey.length !== 32) throw new Error("evidence_key_invalid");
-    this.#key = Buffer.from(options.encryptionKey);
-    if (options.legacyDecryptionKeys?.some((key) => key.length !== 32))
-      throw new Error("evidence_key_invalid");
-    this.#legacyDecryptionKeys = (options.legacyDecryptionKeys ?? []).map((key) =>
-      Buffer.from(key),
-    );
+    this.#cipher = new EvidenceCipher(options.encryptionKey, options.legacyDecryptionKeys);
     this.#maxChunkBytes = options.maxChunkBytes ?? 64 * 1024;
     this.#maxSessionBytes = options.maxSessionBytes ?? 512 * 1024;
     this.#maxRawEventBytes = options.maxRawEventBytes ?? 4 * 1024 * 1024;
@@ -172,11 +166,7 @@ export class AuthenticatedEvidenceStore<T> {
         previousDigest: this.#previousDigest,
       };
       const aadBytes = Buffer.from(JSON.stringify(aad));
-      const nonce = randomBytes(12);
-      const cipher = createCipheriv("aes-256-gcm", this.#requiredKey(), nonce);
-      cipher.setAAD(aadBytes);
-      const ciphertext = Buffer.concat([cipher.update(compressed), cipher.final()]);
-      const tag = cipher.getAuthTag();
+      const { nonce, ciphertext, tag } = this.#cipher.encrypt(compressed, aadBytes);
       const chunkDigest = digest([aadBytes, nonce, ciphertext, tag]);
       const record: EncryptedChunk = {
         aad,
@@ -342,7 +332,7 @@ export class AuthenticatedEvidenceStore<T> {
     ) {
       throw new Error("evidence_chunk_digest_invalid");
     }
-    const plaintext = this.#decrypt(aad, nonce, ciphertext, tag);
+    const plaintext = this.#cipher.decryptCompressed(aad, nonce, ciphertext, tag);
     let events: Array<EvidenceEnvelope<T>>;
     try {
       const parsed = JSON.parse(plaintext.toString("utf8")) as {
@@ -364,20 +354,6 @@ export class AuthenticatedEvidenceStore<T> {
       plaintextBytes: plaintext.length,
       storedBytes: gunzipSafeStoredBytes(record),
     };
-  }
-
-  #decrypt(aad: Buffer, nonce: Buffer, ciphertext: Buffer, tag: Buffer): Buffer {
-    for (const key of [this.#requiredKey(), ...this.#legacyDecryptionKeys]) {
-      try {
-        const decipher = createDecipheriv("aes-256-gcm", key, nonce);
-        decipher.setAAD(aad);
-        decipher.setAuthTag(tag);
-        return gunzipSync(Buffer.concat([decipher.update(ciphertext), decipher.final()]));
-      } catch {
-        // Historical keys are read-only compatibility candidates.
-      }
-    }
-    throw new Error("evidence_chunk_authentication_invalid");
   }
 
   async #reconcileAuthenticatedOrphans(): Promise<void> {
@@ -456,10 +432,6 @@ export class AuthenticatedEvidenceStore<T> {
       await handle.close().catch(() => undefined);
       await unlink(lockPath).catch(() => undefined);
     }
-  }
-
-  #requiredKey(): Buffer {
-    return this.#key;
   }
 }
 

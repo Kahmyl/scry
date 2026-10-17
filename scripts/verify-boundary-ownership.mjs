@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { boundaryViolations } from "./boundary-ownership-rules.mjs";
 
 const root = new URL("../", import.meta.url);
 const productionPackages = [
@@ -48,6 +49,37 @@ for (const sourcePath of productionSources) {
   }
 }
 
+const protectionConsumers = [
+  ...sourceFiles("apps/api/src/browser-execution"),
+  ...sourceFiles("packages/browser-runtime/src"),
+  ...sourceFiles("packages/veil/src"),
+];
+for (const sourcePath of protectionConsumers) {
+  const violations = boundaryViolations(sourcePath, read(sourcePath));
+  if (violations.length) fail(`${sourcePath}: ${violations.join("; ")}`);
+}
+for (const displaced of [
+  "packages/browser-runtime/src/classifier.ts",
+  "packages/browser-runtime/src/sanitizer.ts",
+  "packages/browser-runtime/src/protection-authority.ts",
+  "packages/browser-runtime/src/protected-capture-vault.ts",
+  "apps/api/src/browser-execution/browser-protected-keyring.ts",
+  "packages/veil/src/authority.ts",
+  "packages/veil/src/policy.ts",
+  "packages/veil/src/runtime-coordinator.ts",
+]) {
+  if (existsSync(new URL(displaced, root)))
+    fail(`displaced protection implementation remains: ${displaced}`);
+}
+const veilPackage = JSON.parse(read("packages/veil/package.json"));
+if (Object.keys(veilPackage.dependencies ?? {}).some((name) => name !== "@scry/contracts"))
+  fail("Veil has an implementation dependency outside its contracts");
+for (const consumer of ["apps/api", "packages/browser-runtime"]) {
+  const manifest = JSON.parse(read(`${consumer}/package.json`));
+  if (!manifest.dependencies?.["@scry/veil"])
+    fail(`${consumer} does not declare its Veil runtime dependency`);
+}
+
 const worker = read("apps/api/src/worker.ts");
 if (!worker.includes("composePraxisExecutionPort") || worker.includes("BrowserWorkerEngine")) {
   fail("worker does not consume browser execution through the Praxis port");
@@ -80,6 +112,7 @@ process.stdout.write(
     verdict: "pass",
     praxisEntry: "PraxisExecutionPort",
     reportProtection: "VeilReportProtectionPort",
+    protectionAuthority: "@scry/veil",
     productionAssuranceDependencies: 0,
   })}\n`,
 );

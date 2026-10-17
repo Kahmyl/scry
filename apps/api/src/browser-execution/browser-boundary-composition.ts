@@ -1,12 +1,7 @@
 import { Injectable } from "@nestjs/common";
-import type {
-  BrowserCommand,
-  BrowserProtectionSink,
-  VeilReportSanitizer,
-  VeilReportSanitizerInput,
-} from "@scry/contracts";
-import { PraxisExecutionPort, VeilReportProtectionPort } from "@scry/contracts";
-import { ProtectionAuthority } from "@scry/browser-runtime";
+import type { BrowserCommand } from "@scry/contracts";
+import { PraxisExecutionPort } from "@scry/contracts";
+import { VeilReportProtection } from "@scry/veil";
 
 import { BrowserWorkerEngine } from "./browser-worker-engine.js";
 import { BrowserCommandRepository } from "./repositories/browser-command.repository.js";
@@ -38,23 +33,4 @@ export function composePraxisExecutionPort(
 }
 
 @Injectable()
-export class BrowserRuntimeVeilReportProtection extends VeilReportProtectionPort {
-  createReportSanitizer(input: VeilReportSanitizerInput): VeilReportSanitizer {
-    const authority = new ProtectionAuthority({
-      scope: input.scope,
-      protectedValues: { ...input.protectedValues },
-      restoredPublicValues: input.restoredPublicValues.map((item) => ({
-        value: item.value,
-        allowedSinks: [...item.allowedSinks],
-      })),
-    });
-    return {
-      sanitizeText(value: string, sink: BrowserProtectionSink) {
-        return authority.sanitize(value, sink);
-      },
-      sanitizeValue(value: unknown, sink: BrowserProtectionSink) {
-        return authority.sanitizeValue(value, "", sink);
-      },
-    };
-  }
-}
+export class BrowserRuntimeVeilReportProtection extends VeilReportProtection {}
