@@ -222,12 +222,17 @@ the unchanged baseline limitations.
 Qualification limitation discovered during the cutover: the baseline's capture
 and effect writes enforce owner generation, but stream-summary completion and
 recording-file sequencing do not independently authenticate the browser lease.
-The structural relocation is complete; the stale-owner recording/closure gate
-above remains open. Its proof is carried into the immediately following Praxis
+The structural relocation left the stale-owner recording/closure gate open.
+Its proof was carried into the immediately following Praxis
 ownership seam, where browser lifecycle and evidence admission must meet. This
 is a sequencing dependency, not a waiver of that gate or permission to claim
 the overall reset complete. Preserve a failing characterization before any
 intentional correction and commit that correction separately from relocation.
+
+Resolved by the separately characterized Praxis ownership correction described
+in the [progress record](four-boundary-progress.md). Recording and publication
+now require owner-locked admission; no new storage format or lease model was
+introduced.
 
 ## Workstream 5: establish Praxis as browser authority
 
@@ -264,6 +269,16 @@ All production browser mechanics enter through Praxis. Application workers are
 reduced to queue handling, transactions, lifecycle orchestration, and adapter
 wiring. The displaced consolidated browser runtime and duplicated browser
 paths can then be removed.
+
+Result: complete and locally qualified. The active engine, recorder attachment,
+offline-rendering mechanics, browser lifecycle, and local lease revocation live
+in Praxis. Application composition supplies persistence/admission, Veil, and
+Chronicle through ports. The displaced browser-runtime package and dormant
+Praxis implementation were removed. The stale-owner recording/closure gap was
+reproduced and corrected separately from relocation; the retained browser,
+privacy, mutation-truth, checkpoint recovery, and product-state refusal paths
+pass. See the [progress record](four-boundary-progress.md) for proof and rollout
+limitations.
 
 ## Workstream 6: establish Assurance as diagnostic authority
 

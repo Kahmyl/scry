@@ -24,6 +24,12 @@ export interface PraxisSessionScope {
   protectionKeyId: string;
 }
 
+export interface PraxisOwnerIdentity {
+  sessionId: string;
+  generation: number;
+  leaseToken: string;
+}
+
 /** Serialized browser state, not a browser object or driver dependency. Additional
  * browser-provided fields (including IndexedDB) are preserved during persistence. */
 export interface PraxisStorageState {
@@ -113,9 +119,10 @@ export interface PraxisCommandsPort {
   ): Promise<{ revision: number }>;
   deleteBrowserCheckpoint(sessionId: string, generation: number): Promise<void>;
   safeActionLedger(sessionId: string): Promise<SafeActionLedgerEntry[]>;
-  completeEvidence(input: EvidenceCompletion): Promise<void>;
 }
 export interface PraxisEffectsPort {
+  withOwner<T>(owner: PraxisOwnerIdentity, work: () => Promise<T>): Promise<T>;
+  completeEvidence(owner: PraxisOwnerIdentity, input: EvidenceCompletion): Promise<void>;
   assertCompatibleBaseline(): Promise<void>;
   claimOwner(
     sessionId: string,

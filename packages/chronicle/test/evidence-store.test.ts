@@ -8,12 +8,15 @@ import { AuthenticatedEvidenceStore } from "../src/index.js";
 import { EvidenceCipher } from "@scry/veil";
 const RUN_ID = "00000000-0000-4000-8000-000000000101";
 
+const admission = { run: <T>(work: () => Promise<T>) => work() };
+
 describe("authenticated evidence", () => {
   for (const corruption of ["missing", "duplicated", "reordered", "scope"])
     it(`rejects ${corruption} evidence`, async () => {
       const directory = await mkdtemp(path.join(os.tmpdir(), "chronicle-integrity-"));
       const protection = new EvidenceCipher(randomBytes(32));
       const store = await new AuthenticatedEvidenceStore({
+        admission,
         directory,
         runId: RUN_ID,
         scopeId: "fixture-scope",
@@ -33,6 +36,7 @@ describe("authenticated evidence", () => {
       if (corruption === "scope") {
         await expect(
           new AuthenticatedEvidenceStore({
+            admission,
             directory,
             runId: RUN_ID,
             scopeId: "another-session",
@@ -99,6 +103,7 @@ describe("authenticated evidence", () => {
     );
 
     const store = await new AuthenticatedEvidenceStore<{ phase: string }>({
+      admission,
       directory,
       runId: RUN_ID,
       scopeId: "fixture-scope",
@@ -118,6 +123,7 @@ describe("authenticated evidence", () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "browser-evidence-"));
     const encryptionKey = randomBytes(32);
     const first = await new AuthenticatedEvidenceStore<{ phase: string }>({
+      admission,
       directory,
       runId: RUN_ID,
       scopeId: "fixture-scope",
@@ -128,6 +134,7 @@ describe("authenticated evidence", () => {
     await first.flush();
 
     const resumed = await new AuthenticatedEvidenceStore<{ phase: string }>({
+      admission,
       directory,
       runId: RUN_ID,
       scopeId: "fixture-scope",
@@ -144,6 +151,7 @@ describe("authenticated evidence", () => {
 
     await expect(
       new AuthenticatedEvidenceStore<{ phase: string }>({
+        admission,
         directory,
         runId: RUN_ID,
         scopeId: "fixture-scope",
@@ -164,6 +172,7 @@ describe("authenticated evidence", () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "browser-evidence-contention-"));
     const encryptionKey = randomBytes(32);
     const original = await new AuthenticatedEvidenceStore<{ owner: string }>({
+      admission,
       directory,
       runId: RUN_ID,
       scopeId: "fixture-scope",
@@ -173,12 +182,14 @@ describe("authenticated evidence", () => {
     await original.append({ owner: "original" });
     await original.flush();
     const ownerA = await new AuthenticatedEvidenceStore<{ owner: string }>({
+      admission,
       directory,
       runId: RUN_ID,
       scopeId: "fixture-scope",
       protection: new EvidenceCipher(encryptionKey),
     }).initialize();
     const ownerB = await new AuthenticatedEvidenceStore<{ owner: string }>({
+      admission,
       directory,
       runId: RUN_ID,
       scopeId: "fixture-scope",

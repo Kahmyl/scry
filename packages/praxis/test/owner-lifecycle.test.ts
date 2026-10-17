@@ -1,0 +1,255 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  ChronicleEvidencePort,
+  PraxisCommandsPort,
+  PraxisEffectsPort,
+  VeilBrowserProtectionPort,
+} from "@scry/contracts";
+import { PraxisBrowserEngine } from "../src/browser-engine.js";
+import { BrowserReplayRenderer } from "../src/replay-browser.js";
+import { PraxisOwnerLease } from "../src/owner-lease.js";
+
+const browserFixture = vi.hoisted(() => {
+  const page = { on: vi.fn(), setContent: vi.fn() };
+  const context = {
+    newPage: vi.fn(async () => page),
+    close: vi.fn(async () => undefined),
+    route: vi.fn(async () => undefined),
+  };
+  const browser = { newContext: vi.fn(async () => context), close: vi.fn(async () => undefined) };
+  const recorder = {
+    start: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+    abort: vi.fn(async () => undefined),
+  };
+  return { page, context, browser, recorder, launch: vi.fn(async () => browser) };
+});
+vi.mock("playwright", () => ({ chromium: { launch: browserFixture.launch } }));
+vi.mock("../src/recorder.js", () => ({
+  SanitizedBrowserRecorder: class {
+    start = browserFixture.recorder.start;
+    close = browserFixture.recorder.close;
+    abort = browserFixture.recorder.abort;
+  },
+}));
+
+function fixture() {
+  const commands = {
+    sessionContext: vi.fn(async () => ({
+      sessionId: "session",
+      runId: "run",
+      baseOrigin: "https://fixture.example",
+    })),
+    protectedValuesForSession: vi.fn(async () => ({})),
+    publicValuesForSession: vi.fn(async () => []),
+    loadBrowserCheckpoint: vi.fn(async () => null),
+    deleteBrowserCheckpoint: vi.fn(async () => undefined),
+  };
+  const effects = {
+    assertCompatibleBaseline: vi.fn(async () => undefined),
+    claimOwner: vi.fn(async () => ({ generation: 1, leaseToken: "token", fencingToken: 1 })),
+    heartbeatOwner: vi.fn(async () => undefined),
+    releaseOwner: vi.fn(async () => undefined),
+    durableCapturesForSession: vi.fn(async () => []),
+    withOwner: vi.fn(async <T>(_owner: unknown, work: () => Promise<T>) => work()),
+    assertNoPendingEffectOutcomes: vi.fn(async () => undefined),
+    unsettledCaptureIds: vi.fn(async () => []),
+    completeEvidence: vi.fn(async () => undefined),
+  };
+  const session = {
+    createRecording: vi.fn(),
+    prepareClosure: vi.fn(async () => undefined),
+    seal: vi.fn(async () => ({
+      sessionId: "session",
+      runId: "run",
+      chainHead: "head",
+      chunkCount: 1,
+      totalBytes: 1,
+      replayObjectKey: "local://fixture",
+    })),
+  };
+  const evidence = { openSession: vi.fn(async () => session) };
+  const protection = {
+    createSession: vi.fn(() => ({
+      authority: {},
+      vault: {},
+      restoreCaptures: vi.fn(async () => undefined),
+      evidenceProtection: {},
+      recordingProtection: {},
+      privacyOptions: {},
+      semanticHint: (value: string) => value,
+    })),
+  };
+  const engine = new PraxisBrowserEngine(
+    commands as unknown as PraxisCommandsPort,
+    effects as unknown as PraxisEffectsPort,
+    evidence as unknown as ChronicleEvidencePort,
+    protection as unknown as VeilBrowserProtectionPort,
+  );
+  return { engine, commands, effects, session, protection };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("browser owner lifecycle", () => {
+  it("disposes the browser on shutdown even when product closure is refused", async () => {
+    const { engine, effects } = fixture();
+    await engine.open("session");
+    effects.assertNoPendingEffectOutcomes.mockRejectedValueOnce(
+      new Error("SCRY_BROWSER_EFFECT_OUTCOME_PENDING"),
+    );
+    await engine.closeAll();
+    expect(browserFixture.browser.close).toHaveBeenCalled();
+    expect(effects.completeEvidence).not.toHaveBeenCalled();
+  });
+  it("preserves an owned browser when close is refused for unresolved product state", async () => {
+    const { engine, effects } = fixture();
+    await engine.open("session");
+    effects.assertNoPendingEffectOutcomes.mockRejectedValueOnce(
+      new Error("SCRY_BROWSER_EFFECT_OUTCOME_PENDING"),
+    );
+    await expect(engine.close("session")).rejects.toThrow("SCRY_BROWSER_EFFECT_OUTCOME_PENDING");
+    expect(browserFixture.browser.close).not.toHaveBeenCalled();
+    await engine.close("session");
+    expect(effects.claimOwner).toHaveBeenCalledTimes(1);
+    expect(effects.completeEvidence).toHaveBeenCalledTimes(1);
+  });
+  it("does not re-admit buffered work after a failed heartbeat even if database calls recover", async () => {
+    const { effects } = fixture();
+    const lease = new PraxisOwnerLease(
+      { sessionId: "session", generation: 1, leaseToken: "token" },
+      effects as unknown as PraxisEffectsPort,
+    );
+    effects.heartbeatOwner.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(lease.heartbeat(60_000)).rejects.toThrow("database unavailable");
+    const write = vi.fn(async () => undefined);
+    await expect(lease.run(write)).rejects.toThrow("SCRY_BROWSER_OWNER_FENCED");
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("rejects work revoked while its database admission was waiting", async () => {
+    const { effects } = fixture();
+    let admit!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      admit = resolve;
+    });
+    effects.withOwner.mockImplementationOnce(async (_owner, work) => {
+      await gate;
+      return work();
+    });
+    const lease = new PraxisOwnerLease(
+      { sessionId: "session", generation: 1, leaseToken: "token" },
+      effects as unknown as PraxisEffectsPort,
+    );
+    const write = vi.fn(async () => undefined);
+    const pending = lease.run(write);
+    lease.revoke();
+    admit();
+    await expect(pending).rejects.toThrow("SCRY_BROWSER_OWNER_FENCED");
+    expect(write).not.toHaveBeenCalled();
+  });
+  it("stops the local browser on heartbeat failure without flushing or publishing evidence", async () => {
+    const { engine, effects, session } = fixture();
+    await engine.open("session");
+    effects.heartbeatOwner.mockRejectedValueOnce(new Error("database unavailable"));
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(browserFixture.browser.close).toHaveBeenCalled();
+    expect(browserFixture.recorder.abort).toHaveBeenCalled();
+    expect(browserFixture.recorder.close).not.toHaveBeenCalled();
+    expect(session.seal).not.toHaveBeenCalled();
+    expect(effects.completeEvidence).not.toHaveBeenCalled();
+    await engine.closeAll();
+    expect(session.seal).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale command and evicts its browser without automatically claiming a new owner", async () => {
+    const { engine, effects } = fixture();
+    await engine.open("session");
+    effects.withOwner.mockRejectedValueOnce(new Error("SCRY_BROWSER_OWNER_FENCED"));
+    await expect(engine.execute("session", { kind: "observe" })).rejects.toThrow(
+      "SCRY_BROWSER_OWNER_FENCED",
+    );
+    expect(browserFixture.browser.close).toHaveBeenCalled();
+    expect(effects.claimOwner).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases its claim if protection initialization fails before browser launch", async () => {
+    const { engine, effects, protection } = fixture();
+    protection.createSession.mockImplementationOnce(() => {
+      throw new Error("protection unavailable");
+    });
+    await expect(engine.open("session")).rejects.toThrow("protection unavailable");
+    expect(effects.releaseOwner).toHaveBeenCalledWith("session", 1, "token");
+    expect(browserFixture.launch).not.toHaveBeenCalled();
+  });
+
+  it("cleans up a failed close without publishing a stream", async () => {
+    const { engine, effects, session } = fixture();
+    await engine.open("session");
+    session.prepareClosure.mockRejectedValueOnce(new Error("evidence incomplete"));
+    await expect(engine.close("session")).rejects.toThrow("evidence incomplete");
+    expect(browserFixture.browser.close).toHaveBeenCalled();
+    expect(effects.completeEvidence).not.toHaveBeenCalled();
+    await engine.closeAll();
+    expect(session.prepareClosure).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares an opening operation and maintains the lease while rendering before stream completion", async () => {
+    const { engine, effects, session } = fixture();
+    await Promise.all([engine.open("session"), engine.open("session")]);
+    expect(effects.claimOwner).toHaveBeenCalledTimes(1);
+    let rendered!: () => void;
+    const rendering = new Promise<void>((resolve) => {
+      rendered = resolve;
+    });
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    session.seal.mockImplementationOnce(async () => {
+      rendered();
+      await gate;
+      return {
+        sessionId: "session",
+        runId: "run",
+        chainHead: "head",
+        chunkCount: 1,
+        totalBytes: 1,
+        replayObjectKey: "local://fixture",
+      };
+    });
+    const close = engine.close("session");
+    await rendering;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(effects.heartbeatOwner).toHaveBeenCalled();
+    expect(effects.completeEvidence).not.toHaveBeenCalled();
+    await expect(engine.open("session")).rejects.toThrow("SCRY_BROWSER_SESSION_CLOSING");
+    finish();
+    await close;
+    expect(effects.completeEvidence).toHaveBeenCalledWith(
+      { sessionId: "session", generation: 1, leaseToken: "token" },
+      expect.objectContaining({ chainHead: "head" }),
+    );
+  });
+
+  it("closes the replay browser even when rendering setup fails", async () => {
+    browserFixture.page.setContent.mockRejectedValueOnce(new Error("render setup failed"));
+    await expect(
+      new BrowserReplayRenderer().render({
+        events: [],
+        stagingDirectory: "/tmp/unused",
+        framesDirectory: "/tmp/unused",
+        frames: [],
+        renderDurationMs: 1,
+        playbackRate: 1,
+      }),
+    ).rejects.toThrow("render setup failed");
+    expect(browserFixture.browser.close).toHaveBeenCalled();
+  });
+});

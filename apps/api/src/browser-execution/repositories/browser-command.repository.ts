@@ -1,5 +1,4 @@
 import { ChronicleRepository } from "@scry/chronicle";
-import type { EvidenceCompletion } from "@scry/contracts";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { Inject, Injectable } from "@nestjs/common";
@@ -778,10 +777,6 @@ export class BrowserCommandRepository {
         sourceKind: "user_input",
       },
     );
-  }
-
-  async completeEvidence(input: EvidenceCompletion): Promise<void> {
-    return new ChronicleRepository(this.database).completeEvidence(input);
   }
 }
 

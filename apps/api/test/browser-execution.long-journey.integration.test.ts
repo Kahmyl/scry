@@ -152,6 +152,14 @@ run("browser execution baseline queued long journey", () => {
     networkRequestsDuringReplay: number;
   }> {
     const owner = await repository.claimOwner(sessionId, "long-journey-worker", 60_000);
+    const admission = {
+      run: <T>(work: () => Promise<T>) =>
+        repository.withOwner(
+          { sessionId, generation: owner.generation, leaseToken: owner.leaseToken },
+          work,
+        ),
+    };
+
     const evidenceDirectory = path.join(root, "evidence");
     const captureDirectory = path.join(root, "captures");
     const outputDirectory = path.join(root, "rendered");
@@ -168,6 +176,7 @@ run("browser execution baseline queued long journey", () => {
       disclosureMode: "trusted_application_output",
     });
     const store = await new AuthenticatedEvidenceStore<Record<string, unknown>>({
+      admission,
       directory: evidenceDirectory,
       runId,
       scopeId: sessionId,
@@ -431,6 +440,7 @@ run("browser execution baseline queued long journey", () => {
     expect(JSON.stringify(verified.events)).not.toContain(loginPassword);
     expect(JSON.stringify(verified.events)).not.toContain(generatedSecret);
     const publication = await renderSanitizedReplay({
+      admission,
       renderer: new BrowserReplayRenderer(),
       events: verified.events,
       ledgerPath,

@@ -138,15 +138,17 @@ three production boundaries through narrow ports and do not become another
 implementation of their rules. Production services must not depend on
 Assurance.
 
-Veil and Chronicle have completed their production cutovers. Protection policy
+Praxis, Veil, and Chronicle have completed their production cutovers. Protection policy
 and cryptographic operations live in `@scry/veil`; application composition
 supplies its capabilities to consumers. Application repositories retain scope checks,
 locking, and transactions, and request Veil's publication-admission decision
 before writing outputs. Chronicle owns evidence storage, accepted history,
 capture custody, recording ordering and closure, replay publication, and evidence
 review. Its SQL capability reuses the application's existing transactions.
-Browser attachment and replay-rendering mechanics remain in the consolidated
-runtime behind contracts until Praxis is extracted.
+Browser execution, recorder attachment, replay rendering, lifecycle, and local
+lease revocation belong to Praxis. It consumes protection and evidence through
+ports and has no Veil, Chronicle, application, or database-driver implementation
+dependency. Application adapters persist owner facts and supply locked admission.
 
 The diagram describes the completed target architecture. The
 [four-boundary implementation plan](four-boundary-implementation-plan.md) and
@@ -263,6 +265,17 @@ Closing a session flushes the recorder, closes Chromium, verifies the complete
 chunk chain, renders a sanitized replay when enabled, records the evidence
 summary, and removes the checkpoint. Final database closure then requires the
 complete evidence row and the correct browser-owner generation.
+
+Initialization/reconciliation, durable chunk writes, ledger writes, and replay
+publication require an application-supplied owner admission capability. The
+application locks the session and current owner identity through each short
+storage operation, excluding replacement until that operation ends. Long browser
+rendering runs outside that transaction and rechecks admission before publication.
+Stream completion independently checks the current generation, token, expiry,
+and exact session/Run scope in its transaction. A failed ownership check or
+heartbeat permanently revokes the local Praxis lease and detaches its recorder
+without flushing stale buffered data. Expected product-state close refusals
+leave an otherwise owned browser available for outcome/capture settlement.
 
 ## Report publication transaction
 

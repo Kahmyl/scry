@@ -27,6 +27,7 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
   }
 
   async prepareClosure(): Promise<void> {
+    await this.scope.admission.run(async () => undefined);
     if (!this.#recording) throw new Error("SCRY_BROWSER_RECORDER_FAILED:recorder_missing");
     const diagnostics = await this.#recording.flush();
     if (diagnostics.errors.length)
@@ -34,18 +35,22 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
   }
 
   async seal(options: ChronicleSealOptions): Promise<EvidenceCompletion> {
-    const verified = await this.store.verify();
+    await this.prepareClosure();
+    const verified = await this.scope.admission.run(() => this.store.verify());
     if (!verified.complete || !verified.lastDigest || verified.chunks === 0)
       throw new Error("SCRY_BROWSER_EVIDENCE_INCOMPLETE");
     let videoObjectKey: string | undefined;
     if (options.renderVideo) {
       const ledgerPath = path.join(this.scope.root, "actions.jsonl");
       const ledger = await options.actionLedger();
-      await writeFile(ledgerPath, `${ledger.map((entry) => JSON.stringify(entry)).join("\n")}\n`, {
-        mode: 0o600,
-      });
+      await this.scope.admission.run(() =>
+        writeFile(ledgerPath, `${ledger.map((entry) => JSON.stringify(entry)).join("\n")}\n`, {
+          mode: 0o600,
+        }),
+      );
       const publication = await renderSanitizedReplay({
         renderer: this.renderer,
+        admission: this.scope.admission,
         events: verified.events,
         ledgerPath,
         outputDirectory: path.join(this.scope.root, "rendered"),
@@ -74,6 +79,7 @@ export class ChronicleEvidenceService implements ChronicleEvidencePort {
       runId: scope.runId,
       scopeId: scope.sessionId,
       protection: scope.protection,
+      admission: scope.admission,
       maxSessionBytes: scope.maxSessionBytes,
     }).initialize();
     return new ChronicleEvidenceSession(scope, store, this.renderer);

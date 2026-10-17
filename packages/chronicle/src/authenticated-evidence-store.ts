@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { open, readFile, readdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
-import type { EvidenceProtectionPort } from "@scry/contracts";
+import type { EvidenceProtectionPort, EvidenceWriteAdmission } from "@scry/contracts";
 import { durableWrite, ensurePrivateDirectory, isNodeError } from "./durable-file.js";
 
 interface EvidenceEnvelope<T> {
@@ -80,12 +80,14 @@ export class AuthenticatedEvidenceStore<T> {
   #nextSequence = 0;
   #previousDigest = "GENESIS";
   readonly #cipher: EvidenceProtectionPort;
+  readonly #admission: EvidenceWriteAdmission;
 
   constructor(options: {
     directory: string;
     runId: string;
     scopeId: string;
     protection: EvidenceProtectionPort;
+    admission: EvidenceWriteAdmission;
     maxChunkBytes?: number;
     maxSessionBytes?: number;
     maxRawEventBytes?: number;
@@ -94,16 +96,19 @@ export class AuthenticatedEvidenceStore<T> {
     this.#runId = options.runId;
     this.#scopeId = options.scopeId;
     this.#cipher = options.protection;
+    this.#admission = options.admission;
     this.#maxChunkBytes = options.maxChunkBytes ?? 64 * 1024;
     this.#maxSessionBytes = options.maxSessionBytes ?? 512 * 1024;
     this.#maxRawEventBytes = options.maxRawEventBytes ?? 4 * 1024 * 1024;
   }
 
   async initialize(): Promise<this> {
-    await ensurePrivateDirectory(this.#directory);
-    const durable = await this.#withWriteLock(async () => {
-      await this.#reconcileAuthenticatedOrphans();
-      return this.verify();
+    const durable = await this.#admission.run(async () => {
+      await ensurePrivateDirectory(this.#directory);
+      return this.#withWriteLock(async () => {
+        await this.#reconcileAuthenticatedOrphans();
+        return this.verify();
+      });
     });
     this.#nextChunk = durable.chunks;
     this.#previousDigest = durable.lastDigest ?? "GENESIS";
@@ -137,65 +142,67 @@ export class AuthenticatedEvidenceStore<T> {
     lastSequence: number;
   } | null> {
     if (this.#pending.length === 0) return null;
-    return this.#withWriteLock(async () => {
-      await this.#reconcileAuthenticatedOrphans();
-      const durable = await this.verify();
-      this.#nextChunk = durable.chunks;
-      this.#previousDigest = durable.lastDigest ?? "GENESIS";
-      this.#totalBytes = durable.storedBytes;
-      const expectedSequence = durable.lastSequence === null ? 0 : durable.lastSequence + 1;
-      const first = this.#pending[0];
-      const last = this.#pending.at(-1);
-      if (!first || !last || first.sequence !== expectedSequence)
-        throw new Error("evidence_sequence_conflict");
-      const plaintext = Buffer.from(JSON.stringify({ events: this.#pending }));
-      const compressed = gzipSync(plaintext, { level: 6 });
-      if (compressed.length > this.#maxChunkBytes)
-        throw new Error("evidence_chunk_capacity_exceeded");
-      if (this.#totalBytes + compressed.length > this.#maxSessionBytes)
-        throw new Error("evidence_session_capacity_exceeded");
-      const aad: EvidenceAad = {
-        evidenceFormat: 1,
-        compression: "gzip",
-        runId: this.#runId,
-        scopeId: this.#scopeId,
-        chunk: this.#nextChunk,
-        firstSequence: first.sequence,
-        lastSequence: last.sequence,
-        previousDigest: this.#previousDigest,
-      };
-      const aadBytes = Buffer.from(JSON.stringify(aad));
-      const { nonce, ciphertext, tag } = this.#cipher.encrypt(compressed, aadBytes);
-      const chunkDigest = digest([aadBytes, nonce, ciphertext, tag]);
-      const record: EncryptedChunk = {
-        aad,
-        nonce: nonce.toString("base64"),
-        ciphertext: ciphertext.toString("base64"),
-        tag: tag.toString("base64"),
-        digest: chunkDigest,
-      };
-      const filename = chunkFilename(this.#nextChunk);
-      await durableWrite(path.join(this.#directory, filename), JSON.stringify(record));
-      await this.#appendManifest({
-        filename,
-        ...aad,
-        digest: chunkDigest,
-        plaintextBytes: plaintext.length,
-        storedBytes: compressed.length,
-      });
-      this.#totalBytes += compressed.length;
-      this.#nextSequence = last.sequence + 1;
-      this.#previousDigest = chunkDigest;
-      this.#nextChunk += 1;
-      this.#pending = [];
-      this.#pendingBytes = 0;
-      return {
-        filename,
-        digest: chunkDigest,
-        firstSequence: first.sequence,
-        lastSequence: last.sequence,
-      };
-    });
+    return this.#admission.run(() =>
+      this.#withWriteLock(async () => {
+        await this.#reconcileAuthenticatedOrphans();
+        const durable = await this.verify();
+        this.#nextChunk = durable.chunks;
+        this.#previousDigest = durable.lastDigest ?? "GENESIS";
+        this.#totalBytes = durable.storedBytes;
+        const expectedSequence = durable.lastSequence === null ? 0 : durable.lastSequence + 1;
+        const first = this.#pending[0];
+        const last = this.#pending.at(-1);
+        if (!first || !last || first.sequence !== expectedSequence)
+          throw new Error("evidence_sequence_conflict");
+        const plaintext = Buffer.from(JSON.stringify({ events: this.#pending }));
+        const compressed = gzipSync(plaintext, { level: 6 });
+        if (compressed.length > this.#maxChunkBytes)
+          throw new Error("evidence_chunk_capacity_exceeded");
+        if (this.#totalBytes + compressed.length > this.#maxSessionBytes)
+          throw new Error("evidence_session_capacity_exceeded");
+        const aad: EvidenceAad = {
+          evidenceFormat: 1,
+          compression: "gzip",
+          runId: this.#runId,
+          scopeId: this.#scopeId,
+          chunk: this.#nextChunk,
+          firstSequence: first.sequence,
+          lastSequence: last.sequence,
+          previousDigest: this.#previousDigest,
+        };
+        const aadBytes = Buffer.from(JSON.stringify(aad));
+        const { nonce, ciphertext, tag } = this.#cipher.encrypt(compressed, aadBytes);
+        const chunkDigest = digest([aadBytes, nonce, ciphertext, tag]);
+        const record: EncryptedChunk = {
+          aad,
+          nonce: nonce.toString("base64"),
+          ciphertext: ciphertext.toString("base64"),
+          tag: tag.toString("base64"),
+          digest: chunkDigest,
+        };
+        const filename = chunkFilename(this.#nextChunk);
+        await durableWrite(path.join(this.#directory, filename), JSON.stringify(record));
+        await this.#appendManifest({
+          filename,
+          ...aad,
+          digest: chunkDigest,
+          plaintextBytes: plaintext.length,
+          storedBytes: compressed.length,
+        });
+        this.#totalBytes += compressed.length;
+        this.#nextSequence = last.sequence + 1;
+        this.#previousDigest = chunkDigest;
+        this.#nextChunk += 1;
+        this.#pending = [];
+        this.#pendingBytes = 0;
+        return {
+          filename,
+          digest: chunkDigest,
+          firstSequence: first.sequence,
+          lastSequence: last.sequence,
+        };
+      }),
+    );
   }
 
   async verify(): Promise<EvidenceVerification<T>> {

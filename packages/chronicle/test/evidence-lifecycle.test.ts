@@ -13,6 +13,7 @@ import {
 } from "../src/index.js";
 
 const scope = () => ({
+  admission: { run: <T>(work: () => Promise<T>) => work() },
   runId: "00000000-0000-4000-8000-000000000301",
   sessionId: "fixture-session",
   protection: new EvidenceCipher(randomBytes(32)),
@@ -20,6 +21,8 @@ const scope = () => ({
 });
 const passthrough = { snapshot: () => (value: unknown) => value };
 const unusedRenderer = { render: vi.fn<ChronicleReplayRendererPort["render"]>() };
+
+const admission = { run: <T>(work: () => Promise<T>) => work() };
 
 describe("recording custody and closure", () => {
   it("snapshots protection at receipt and serializes asynchronous append operations", async () => {
@@ -96,6 +99,7 @@ describe("recording custody and closure", () => {
     expect(result).not.toHaveProperty("videoObjectKey");
     expect(ledger).not.toHaveBeenCalled();
     const resumed = await new AuthenticatedEvidenceStore({
+      admission,
       directory: path.join(root, "evidence"),
       runId: sessionScope.runId,
       scopeId: sessionScope.sessionId,
@@ -119,11 +123,16 @@ describe("recording custody and closure", () => {
     await expect(session.prepareClosure()).rejects.toThrow(
       "SCRY_BROWSER_RECORDER_FAILED:recorder_payload_invalid",
     );
-    recording.receive('{"type":2}');
-    await recording.flush();
+    const partial = await new ChronicleEvidenceService(unusedRenderer).openSession({
+      ...scope(),
+      root,
+    });
+    const partialRecording = partial.createRecording(passthrough);
+    partialRecording.receive('{"type":2}');
+    await partialRecording.flush();
     await writeFile(path.join(root, "evidence", "chunk-000001.json.partial-interrupted"), "{");
     await expect(
-      session.seal({ renderVideo: false, actionLedger: async () => [] }),
+      partial.seal({ renderVideo: false, actionLedger: async () => [] }),
     ).rejects.toThrow("SCRY_BROWSER_EVIDENCE_INCOMPLETE");
   });
 });
@@ -146,6 +155,7 @@ describe("replay publication", () => {
         };
       });
       const options = {
+        admission: { run: <T>(work: () => Promise<T>) => work() },
         renderer: { render },
         events: [{ type: 2, timestamp: 1000 }],
         ledgerPath: path.join(root, "actions.jsonl"),

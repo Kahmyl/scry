@@ -1,7 +1,11 @@
 import { ChronicleRepository, type CaptureEvidenceInput } from "@scry/chronicle";
 import { createHash, randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
-import type { BrowserProtectionDecision } from "@scry/contracts";
+import type {
+  BrowserProtectionDecision,
+  EvidenceCompletion,
+  PraxisOwnerIdentity,
+} from "@scry/contracts";
 import { assertPublicationDecisionSet, assertPublicationDisclosure } from "@scry/veil";
 import type { PoolClient, QueryResultRow } from "pg";
 
@@ -105,6 +109,37 @@ export class BrowserExecutionRepository {
     @Inject(Database) private readonly database: Database,
     @Inject(BrowserProtectedValueCipher) private readonly cipher: BrowserProtectedValueCipher,
   ) {}
+
+  async withOwner<T>(owner: PraxisOwnerIdentity, work: () => Promise<T>): Promise<T> {
+    return this.ownedTransaction(owner, async () => work());
+  }
+
+  async completeEvidence(owner: PraxisOwnerIdentity, input: EvidenceCompletion): Promise<void> {
+    await this.ownedTransaction(owner, async (client, session) => {
+      if (input.sessionId !== owner.sessionId || input.runId !== session.run_id)
+        throw new Error("SCRY_BROWSER_EVIDENCE_SCOPE_MISMATCH");
+      await new ChronicleRepository(client).completeEvidence(input);
+    });
+  }
+
+  private async ownedTransaction<T>(
+    owner: PraxisOwnerIdentity,
+    work: (client: PoolClient, session: SessionRow) => Promise<T>,
+  ): Promise<T> {
+    return this.database.transaction(async (client) => {
+      const session = await this.lockSession(client, owner.sessionId);
+      if (session.state !== "active") throw new Error("SCRY_BROWSER_SESSION_NOT_ACTIVE");
+      if (Number(session.active_owner_generation) !== owner.generation)
+        throw new Error("SCRY_BROWSER_OWNER_FENCED");
+      const admitted = await client.query(
+        `SELECT 1 FROM browser_owner_generations WHERE session_id=$1 AND generation=$2
+         AND lease_token=$3 AND state='active' AND lease_expires_at>clock_timestamp() FOR UPDATE`,
+        [owner.sessionId, owner.generation, owner.leaseToken],
+      );
+      if (admitted.rowCount !== 1) throw new Error("SCRY_BROWSER_OWNER_FENCED");
+      return work(client, session);
+    });
+  }
 
   async assertCompatibleBaseline(): Promise<void> {
     await assertBrowserSchema(this.database.pool);
