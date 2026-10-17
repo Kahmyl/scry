@@ -49,12 +49,13 @@ for (const sourcePath of productionSources) {
   }
 }
 
-const protectionConsumers = [
+const boundaryConsumers = [
   ...sourceFiles("apps/api/src/browser-execution"),
   ...sourceFiles("packages/browser-runtime/src"),
   ...sourceFiles("packages/veil/src"),
+  ...sourceFiles("packages/chronicle/src"),
 ];
-for (const sourcePath of protectionConsumers) {
+for (const sourcePath of boundaryConsumers) {
   const violations = boundaryViolations(sourcePath, read(sourcePath));
   if (violations.length) fail(`${sourcePath}: ${violations.join("; ")}`);
 }
@@ -67,18 +68,31 @@ for (const displaced of [
   "packages/veil/src/authority.ts",
   "packages/veil/src/policy.ts",
   "packages/veil/src/runtime-coordinator.ts",
+  "packages/browser-runtime/src/authenticated-evidence-store.ts",
+  "packages/browser-runtime/src/offline-renderer.ts",
+  "packages/browser-runtime/src/effect-ledger.ts",
+  "packages/browser-runtime/src/browser-owner-supervisor.ts",
+  "packages/chronicle/src/legacy/index.ts",
 ]) {
   if (existsSync(new URL(displaced, root)))
-    fail(`displaced protection implementation remains: ${displaced}`);
+    fail(`displaced boundary implementation remains: ${displaced}`);
 }
 const veilPackage = JSON.parse(read("packages/veil/package.json"));
 if (Object.keys(veilPackage.dependencies ?? {}).some((name) => name !== "@scry/contracts"))
   fail("Veil has an implementation dependency outside its contracts");
-for (const consumer of ["apps/api", "packages/browser-runtime"]) {
+for (const consumer of ["apps/api"]) {
   const manifest = JSON.parse(read(`${consumer}/package.json`));
   if (!manifest.dependencies?.["@scry/veil"])
     fail(`${consumer} does not declare its Veil runtime dependency`);
 }
+const chroniclePackage = JSON.parse(read("packages/chronicle/package.json"));
+if (Object.keys(chroniclePackage.dependencies ?? {}).some((name) => name !== "@scry/contracts"))
+  fail("Chronicle has an implementation dependency outside its contracts");
+const runtimePackage = JSON.parse(read("packages/browser-runtime/package.json"));
+if (runtimePackage.dependencies?.["@scry/veil"] || runtimePackage.dependencies?.["@scry/chronicle"])
+  fail("browser mechanics depend directly on protection or evidence implementations");
+if (!JSON.parse(read("apps/api/package.json")).dependencies?.["@scry/chronicle"])
+  fail("application does not declare its Chronicle runtime dependency");
 
 const worker = read("apps/api/src/worker.ts");
 if (!worker.includes("composePraxisExecutionPort") || worker.includes("BrowserWorkerEngine")) {
@@ -101,6 +115,8 @@ const contracts = read("packages/contracts/src/index.ts");
 if (!contracts.includes('export * from "./boundary-ports.js"')) {
   fail("shared boundary ports are not exported");
 }
+if (!contracts.includes('export * from "./chronicle-ports.js"'))
+  fail("Chronicle capability ports are not exported");
 
 const forbiddenExample = 'import { unsafe } from "@scry/assurance";';
 if (!importSpecifiers(forbiddenExample).includes("@scry/assurance")) {
@@ -113,6 +129,7 @@ process.stdout.write(
     praxisEntry: "PraxisExecutionPort",
     reportProtection: "VeilReportProtectionPort",
     protectionAuthority: "@scry/veil",
+    evidenceAuthority: "@scry/chronicle",
     productionAssuranceDependencies: 0,
   })}\n`,
 );

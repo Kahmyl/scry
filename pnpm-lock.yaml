@@ -35,6 +35,9 @@ importers:
       '@scry/browser-runtime':
         specifier: workspace:*
         version: link:../../packages/browser-runtime
+      '@scry/chronicle':
+        specifier: workspace:*
+        version: link:../../packages/chronicle
       '@scry/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -195,9 +198,6 @@ importers:
       '@scry/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@scry/veil':
-        specifier: workspace:*
-        version: link:../veil
       playwright:
         specifier: 1.62.0
         version: 1.62.0
@@ -205,6 +205,12 @@ importers:
         specifier: 2.1.1
         version: 2.1.1
     devDependencies:
+      '@scry/chronicle':
+        specifier: workspace:*
+        version: link:../chronicle
+      '@scry/veil':
+        specifier: workspace:*
+        version: link:../veil
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1
@@ -217,19 +223,13 @@ importers:
 
   packages/chronicle:
     dependencies:
-      '@aws-sdk/client-s3':
-        specifier: ^3.1102.0
-        version: 3.1102.0
-      '@google-cloud/storage':
-        specifier: ^7.21.0
-        version: 7.21.0
       '@scry/contracts':
         specifier: workspace:*
         version: link:../contracts
-      cloudinary:
-        specifier: ^2.10.0
-        version: 2.10.0
     devDependencies:
+      '@scry/veil':
+        specifier: workspace:*
+        version: link:../veil
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1

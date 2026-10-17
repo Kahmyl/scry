@@ -1,3 +1,5 @@
+import { ChronicleRepository } from "@scry/chronicle";
+import type { EvidenceCompletion } from "@scry/contracts";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { Inject, Injectable } from "@nestjs/common";
@@ -257,37 +259,11 @@ export class BrowserCommandRepository {
   }
 
   async evidenceComplete(sessionId: string): Promise<boolean> {
-    const result = await this.database.query<{ state: string }>(
-      "SELECT state FROM browser_evidence_streams WHERE session_id=$1",
-      [sessionId],
-    );
-    return result.rows[0]?.state === "complete";
+    return new ChronicleRepository(this.database).evidenceComplete(sessionId);
   }
 
-  async safeActionLedger(
-    sessionId: string,
-  ): Promise<Array<{ at: string; tool: string; outcome: string; durationMs: number }>> {
-    const result = await this.database.query<{
-      kind: string;
-      state: string;
-      created_at: Date;
-      started_at: Date | null;
-      completed_at: Date | null;
-    }>(
-      `SELECT kind,state,created_at,started_at,completed_at
-       FROM browser_commands WHERE session_id=$1 ORDER BY command_ordinal`,
-      [sessionId],
-    );
-    return result.rows.map((row) => {
-      const started = row.started_at ?? row.created_at;
-      const completed = row.completed_at ?? started;
-      return {
-        at: started.toISOString(),
-        tool: row.kind,
-        outcome: row.state,
-        durationMs: Math.max(0, completed.getTime() - started.getTime()),
-      };
-    });
+  async safeActionLedger(sessionId: string) {
+    return new ChronicleRepository(this.database).safeActionLedger(sessionId);
   }
 
   async pending(limit = 100): Promise<Array<{ commandId: string }>> {
@@ -804,30 +780,8 @@ export class BrowserCommandRepository {
     );
   }
 
-  async completeEvidence(input: {
-    sessionId: string;
-    runId: string;
-    chainHead: string;
-    chunkCount: number;
-    totalBytes: number;
-    replayObjectKey: string;
-    videoObjectKey?: string;
-  }): Promise<void> {
-    await this.database.query(
-      `INSERT INTO browser_evidence_streams(id,session_id,run_id,state,chain_head,chunk_count,total_bytes,
-         replay_artifact_key,video_artifact_key,retention_expires_at,completed_at)
-       VALUES(gen_random_uuid(),$1,$2,'complete',$3,$4,$5,$6,$7,now()+interval '30 days',now())
-       ON CONFLICT(session_id) DO NOTHING`,
-      [
-        input.sessionId,
-        input.runId,
-        input.chainHead,
-        input.chunkCount,
-        input.totalBytes,
-        input.replayObjectKey,
-        input.videoObjectKey ?? null,
-      ],
-    );
+  async completeEvidence(input: EvidenceCompletion): Promise<void> {
+    return new ChronicleRepository(this.database).completeEvidence(input);
   }
 }
 

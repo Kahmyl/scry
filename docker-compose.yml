@@ -123,8 +123,13 @@ services:
         - action: sync
           path: packages/veil/src
           target: /workspace/packages/veil/src
+        - action: sync
+          path: packages/chronicle/src
+          target: /workspace/packages/chronicle/src
         - action: rebuild
           path: apps/api/package.json
+        - action: rebuild
+          path: packages/chronicle/package.json
         - action: rebuild
           path: pnpm-lock.yaml
 
@@ -163,6 +168,9 @@ services:
           path: packages/veil/src
           target: /workspace/packages/veil/src
         - action: sync+restart
+          path: packages/chronicle/src
+          target: /workspace/packages/chronicle/src
+        - action: sync+restart
           path: packages/contracts/src
           target: /workspace/packages/contracts/src
         - action: rebuild
@@ -171,6 +179,8 @@ services:
           path: packages/browser-runtime/package.json
         - action: rebuild
           path: packages/veil/package.json
+        - action: rebuild
+          path: packages/chronicle/package.json
         - action: rebuild
           path: pnpm-lock.yaml
 

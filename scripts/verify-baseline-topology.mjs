@@ -105,11 +105,11 @@ if (schemaCheck.includes("createHash") || schemaCheck.includes("pg_indexes")) {
 
 const protectedKeyring = read("packages/veil/src/protected-keyring.ts");
 const workerEngine = read("apps/api/src/browser-execution/browser-worker-engine.ts");
-const evidenceStore = read("packages/browser-runtime/src/authenticated-evidence-store.ts");
+const evidenceStore = read("packages/chronicle/src/authenticated-evidence-store.ts");
 if (
   !protectedKeyring.includes("deriveLegacy") ||
   !protectedKeyring.includes("scry/browser-v2") ||
-  !workerEngine.includes("legacyDecryptionKeys") ||
+  !workerEngine.includes('legacyDerivedSessionKey(scope.protectionKeyId, "evidence"') ||
   !workerEngine.includes("legacyEncryptionKeys") ||
   !evidenceStore.includes("evidenceVersion")
 ) {
@@ -135,6 +135,7 @@ const activeSourcePaths = [
   "apps/web/src/app/ProjectSettings.tsx",
   ...sourceFiles("packages/browser-runtime/src"),
   ...sourceFiles("packages/veil/src"),
+  ...sourceFiles("packages/chronicle/src"),
   "packages/contracts/src/index.ts",
   "packages/contracts/src/browser-execution.ts",
   "packages/contracts/src/browser-command.ts",
@@ -154,7 +155,7 @@ if (/schema_fingerprint|catalog_fingerprint/iu.test(activeSources + deployment))
 
 const browserLaunchOwners = new Set([
   "apps/api/src/browser-execution/browser-worker-engine.ts",
-  "packages/browser-runtime/src/offline-renderer.ts",
+  "packages/browser-runtime/src/replay-browser.ts",
 ]);
 for (const sourcePath of activeSourcePaths) {
   const source = read(sourcePath);

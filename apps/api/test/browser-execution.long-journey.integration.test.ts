@@ -6,12 +6,19 @@ import path from "node:path";
 import { QueueEvents, Worker } from "bullmq";
 import { chromium } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { SanitizedBrowserRecorder, BrowserReplayRenderer } from "@scry/browser-runtime";
 import {
   AuthenticatedEvidenceStore,
-  SanitizedBrowserRecorder,
+  ChronicleRecording,
   renderSanitizedReplay,
-} from "@scry/browser-runtime";
-import { ProtectedCaptureVault, ProtectionAuthority } from "@scry/veil";
+} from "@scry/chronicle";
+import {
+  ProtectedCaptureVault,
+  ProtectionAuthority,
+  EvidenceCipher,
+  createRecordingProtection,
+  recordingProtectionOptions,
+} from "@scry/veil";
 
 import {
   BrowserExecutionQueueService,
@@ -164,7 +171,7 @@ run("browser execution baseline queued long journey", () => {
       directory: evidenceDirectory,
       runId,
       scopeId: sessionId,
-      encryptionKey: randomBytes(32),
+      protection: new EvidenceCipher(randomBytes(32)),
       maxSessionBytes: 2 * 1024 * 1024,
     }).initialize();
     const vault = await new ProtectedCaptureVault({
@@ -173,12 +180,15 @@ run("browser execution baseline queued long journey", () => {
       scopeId: sessionId,
       authority,
     }).initialize();
-    const browser = await chromium.launch({ headless: true, channel: "chrome" });
+    const browser = await chromium.launch({
+      headless: true,
+      ...(process.env.SCRY_BROWSER_CHANNEL ? { channel: process.env.SCRY_BROWSER_CHANNEL } : {}),
+    });
     const context = await browser.newContext();
     const page = await context.newPage();
     const recorder = new SanitizedBrowserRecorder({
-      store,
-      authority,
+      recording: new ChronicleRecording(store, createRecordingProtection({ authority })),
+      privacyOptions: recordingProtectionOptions,
     });
     const actions: Array<Record<string, unknown>> = [];
     const recordAction = async (tool: string, element: string, perform: () => Promise<void>) => {
@@ -421,10 +431,13 @@ run("browser execution baseline queued long journey", () => {
     expect(JSON.stringify(verified.events)).not.toContain(loginPassword);
     expect(JSON.stringify(verified.events)).not.toContain(generatedSecret);
     const publication = await renderSanitizedReplay({
+      renderer: new BrowserReplayRenderer(),
       events: verified.events,
       ledgerPath,
       outputDirectory,
-      executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      ...(process.env.SCRY_BROWSER_CHROME_PATH
+        ? { executablePath: process.env.SCRY_BROWSER_CHROME_PATH }
+        : {}),
       framesPerSecond: 2,
     });
     await database.query(

@@ -1,6 +1,6 @@
 # Scry four-boundary reset progress
 
-Status: Veil cutover implemented and locally qualified
+Status: Veil and Chronicle baseline cutovers locally qualified; browser ownership proof remains open
 
 The current baseline remains the authority for behavior, public contracts, and
 durable data. This record tracks implementation of the
@@ -13,15 +13,15 @@ durable data. This record tracks implementation of the
 | Baseline research                       | Complete; reachability, state, failure, verification, and disposition recorded                                  |
 | Initial contracts and composition seams | Complete; the worker uses the Praxis execution port and report persistence uses the Veil report-protection port |
 | Veil protection ownership               | Complete; active baseline consumers use the extracted Veil implementation                                       |
-| Chronicle evidence ownership            | Next                                                                                                            |
-| Praxis browser ownership                | Pending Chronicle's evidence interface                                                                          |
+| Chronicle evidence ownership            | Baseline relocation complete; stale-owner closure proof requires the Praxis ownership seam                      |
+| Praxis browser ownership                | Next; browser adapters consume the established protection and evidence capabilities                             |
 | Assurance diagnostics and qualification | Pending production-boundary cutover                                                                             |
 | Final cleanup and completion proof      | Pending                                                                                                         |
 
 ## Veil ownership
 
-The production API and consolidated browser runtime now depend on
-`@scry/veil`. Veil owns:
+The production API composes `@scry/veil` protection capabilities for browser
+and evidence adapters. Veil owns:
 
 - sensitive-value classification, exact and encoded matching, and lineage;
 - observation, replay, and report sanitization;
@@ -38,8 +38,8 @@ The production API and consolidated browser runtime now depend on
 
 The API retains product admission, scope validation, database locking,
 transactions, and lifecycle coordination. Its cipher and report-protection
-adapters delegate to Veil. Browser execution and recording lifecycle remain in
-the existing runtime until their respective moves.
+adapters delegate to Veil. Browser mechanics remain in the existing engine and
+runtime until Praxis moves; Chronicle now owns recording custody and closure.
 
 Evidence ordering, compression for storage, manifests, chain validation,
 retention, and replay rendering remain outside Veil. The evidence cipher
@@ -89,7 +89,7 @@ path and its scope tests remain covered.
 
 Container definitions now install and copy Veil in the production image, and
 development sync includes Veil changes. Browser qualification explicitly enables
-the real-browser recording cases. `pnpm verify:veil-runtime` repeats the
+the real-browser recording cases. `pnpm verify:boundary-runtime` repeats the
 production dependency build and import smoke and is required by fast
 qualification. This proves production package availability; it is not a
 deployment to a running environment. The known fresh-production activation gap
@@ -111,9 +111,84 @@ lane runs this durable-worker journey with Chromium, Redis, and its own fresh
 database. This is an intentional correction to the previous observable
 behavior, with no new protection policy or data format.
 
+## Chronicle ownership
+
+Chronicle now owns the active baseline's evidence chain and manifest, ordered
+recording queue, recording diagnostics, completeness checks, session evidence
+closure, replay plan and publication, safe action ledger, accepted effect-event
+history, encrypted capture custody, Run review projections, and Mission evidence
+digest. Capture registration, publication settlement, and discard storage use
+the application's existing transaction client; product locks, owner checks,
+budget accounting, output admission, and Run lifecycle remain in the application.
+Veil still owns quarantine and disclosure authorization.
+
+Chronicle accepts encryption and recording-protection capabilities supplied by
+Veil through composition. It receives no master keys and does not import Veil,
+Playwright, a database driver, application code, or Assurance. Browser attachment,
+rrweb execution, frame capture, network blocking, and video recording remain in
+browser-runtime adapters for the Praxis move. Chronicle controls what is
+published; the browser adapter performs the render plan.
+
+No schema or persisted format changed. Filesystem chunks and manifests plus the
+PostgreSQL stream summary remain authoritative; inactive relational chunk and
+artifact tables were not activated. Retention timestamps, capture expiry checks,
+envelope deletion on settlement, and replay staging cleanup keep their baseline
+semantics. No new retention scheduler or cloud storage provider was introduced.
+
+The dormant Chronicle implementation and unused cloud-storage dependencies were
+removed. The export-only runtime effect ledger and owner supervisor, with no
+production callers, were also removed together with their five duplicate-model
+tests. Their removal and all displaced source are recoverable from Git history.
+The three active evidence-store characterizations moved into Chronicle.
+
+Dormant application consumers of the retired Chronicle API remain outside the
+production graph, like the retired Veil consumers. They are scheduled for the
+reachability-led cleanup, without compatibility facades or production imports.
+
+### Chronicle verification
+
+- Chronicle has 19 passing tests: historical reads, restart, tampering,
+  competing continuation, missing/duplicate/reordered chunks, scope mismatch,
+  receipt-order protection snapshots, diagnostics, closure, failed replay
+  publication and retry, safe ledger projection, and Mission digest binding.
+- The retained database integration suite passes 13 tests, including stale-owner
+  capture rejection, transaction rollback, publication, discard, scope isolation,
+  and failure truth. Added assertions prove repeated capture delivery adds no
+  duplicate history and conflicting capture identity is rejected.
+- Both real-Chromium recording/replay tests pass, including protection before
+  durability, zero-network replay, and publication reuse.
+- Worker journey, failure finalization, process recovery, and long journey pass
+  six tests across four fresh isolated databases.
+- Types, ordinary tests, web build, topology, negative ownership checks,
+  workflow validation, and deployment checks pass. The production dependency
+  image loads Chronicle, Veil, and browser adapters without development tooling
+  or Assurance. `pnpm verify:boundary-runtime` replaces the Veil-only smoke and
+  remains required in fast qualification.
+
+The ordinary suite now passes 93 tests. The production dependency smoke also
+records a Veil-protected event, seals it through Chronicle, and verifies the
+authenticated restart read under Node 22.
+
+This is local production-shaped qualification, not a deployment. Filesystem
+sequence conflict checks remain separate from the application's database owner
+generation checks; the move does not introduce a new browser lease protocol.
+The final audit identified an additional baseline limitation: stream-summary
+completion retains `ON CONFLICT(session_id) DO NOTHING` and does not independently
+revalidate owner generation. Recording-file sequencing likewise does not
+authenticate a browser lease. The stale-owner capture test proves capture and
+effect fencing, not stale-owner recording or stream closure. Those latter
+guarantees remain open for the Praxis ownership seam; the overall reset is not
+complete and must not be released on a claim that they are already proven.
+Existing activation bootstrap and inactive-table gaps remain deferred as recorded
+by baseline research.
+
 ## Next implementation slice
 
-Chronicle will receive the current evidence store, accepted execution history,
-manifest and integrity management, recording closure, and replay construction.
-Its interfaces will accept Veil-protected material and preserve the baseline's
-existing filesystem evidence plus PostgreSQL stream-summary behavior.
+Praxis will receive the active browser engine, browser ownership mechanics,
+checkpoint mechanics, recorder attachment, and replay browser adapter. It will
+consume Veil and Chronicle capabilities through ports while application
+composition retains product admission, transactions, queues, and lifecycle.
+Before calling that slice complete, characterize owner replacement during
+recording and closure, and ensure a replaced owner cannot admit authoritative
+recording or complete a stream. Any intentional correction must have its own
+regression proof and remain separate from structural relocation.

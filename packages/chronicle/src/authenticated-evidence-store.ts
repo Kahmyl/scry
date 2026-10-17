@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { open, readFile, readdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
-import { EvidenceCipher } from "@scry/veil";
+import type { EvidenceProtectionPort } from "@scry/contracts";
 import { durableWrite, ensurePrivateDirectory, isNodeError } from "./durable-file.js";
 
 interface EvidenceEnvelope<T> {
@@ -79,14 +79,13 @@ export class AuthenticatedEvidenceStore<T> {
   #nextChunk = 0;
   #nextSequence = 0;
   #previousDigest = "GENESIS";
-  readonly #cipher: EvidenceCipher;
+  readonly #cipher: EvidenceProtectionPort;
 
   constructor(options: {
     directory: string;
     runId: string;
     scopeId: string;
-    encryptionKey: Buffer;
-    legacyDecryptionKeys?: readonly Buffer[];
+    protection: EvidenceProtectionPort;
     maxChunkBytes?: number;
     maxSessionBytes?: number;
     maxRawEventBytes?: number;
@@ -94,7 +93,7 @@ export class AuthenticatedEvidenceStore<T> {
     this.#directory = options.directory;
     this.#runId = options.runId;
     this.#scopeId = options.scopeId;
-    this.#cipher = new EvidenceCipher(options.encryptionKey, options.legacyDecryptionKeys);
+    this.#cipher = options.protection;
     this.#maxChunkBytes = options.maxChunkBytes ?? 64 * 1024;
     this.#maxSessionBytes = options.maxSessionBytes ?? 512 * 1024;
     this.#maxRawEventBytes = options.maxRawEventBytes ?? 4 * 1024 * 1024;

@@ -138,17 +138,20 @@ three production boundaries through narrow ports and do not become another
 implementation of their rules. Production services must not depend on
 Assurance.
 
-Veil has completed its production cutover. Protection policy and cryptographic
-operations now live in `@scry/veil`; the API and consolidated browser runtime
-consume its public surface. Application repositories retain scope checks,
+Veil and Chronicle have completed their production cutovers. Protection policy
+and cryptographic operations live in `@scry/veil`; application composition
+supplies its capabilities to consumers. Application repositories retain scope checks,
 locking, and transactions, and request Veil's publication-admission decision
-before writing outputs. The renderer and recording lifecycle remain in the
-consolidated runtime until Chronicle and Praxis are extracted.
+before writing outputs. Chronicle owns evidence storage, accepted history,
+capture custody, recording ordering and closure, replay publication, and evidence
+review. Its SQL capability reuses the application's existing transactions.
+Browser attachment and replay-rendering mechanics remain in the consolidated
+runtime behind contracts until Praxis is extracted.
 
 The diagram describes the completed target architecture. The
 [four-boundary implementation plan](four-boundary-implementation-plan.md) and
-[progress record](four-boundary-progress.md) distinguish the completed Veil
-cutover from remaining work.
+[progress record](four-boundary-progress.md) distinguish completed cutovers
+from remaining work.
 
 ## Transactional creation flow
 

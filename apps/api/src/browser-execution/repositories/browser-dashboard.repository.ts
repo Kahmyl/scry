@@ -1,3 +1,4 @@
+import { ChronicleRepository } from "@scry/chronicle";
 import { Inject, Injectable } from "@nestjs/common";
 
 import { Database } from "../../infrastructure/database.js";
@@ -7,29 +8,7 @@ export class BrowserDashboardRepository {
   constructor(@Inject(Database) private readonly database: Database) {}
 
   async listRuns(workspaceId: string | undefined, projectId: string) {
-    const result = await this.database.query(
-      `SELECT r.id,r.project_id AS "projectId",r.mission_id AS "missionId",
-              r.objective_id AS "objectiveId",r.flow_id AS "flowId",f.name AS "flowName",
-              r.state,r.outcome_classification AS "outcomeClassification",
-              r.created_at AS "createdAt",r.updated_at AS "updatedAt",r.completed_at AS "completedAt",
-              e.name AS "environmentName",e.base_origin AS "baseOrigin",
-              s.id AS "browserSessionId",s.state AS "browserSessionState",
-              s.active_owner_generation AS "ownerGeneration",
-              count(DISTINCT a.id)::integer AS "artifactCount",
-              count(DISTINCT es.id) FILTER (WHERE es.state='complete')::integer AS "completeEvidenceStreams"
-       FROM runs r
-       JOIN projects p ON p.id=r.project_id
-       JOIN flows f ON f.id=r.flow_id
-       JOIN environments e ON e.id=r.environment_id
-       LEFT JOIN browser_execution_sessions s ON s.run_id=r.id
-       LEFT JOIN artifacts a ON a.run_id=r.id
-       LEFT JOIN browser_evidence_streams es ON es.run_id=r.id
-       WHERE r.project_id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)
-       GROUP BY r.id,f.name,e.name,e.base_origin,s.id
-       ORDER BY r.created_at DESC LIMIT 200`,
-      [projectId, workspaceId ?? null],
-    );
-    return result.rows;
+    return new ChronicleRepository(this.database).listRuns(workspaceId, projectId);
   }
 
   async getRun(workspaceId: string | undefined, runId: string) {
@@ -53,34 +32,7 @@ export class BrowserDashboardRepository {
       [runId, workspaceId ?? null],
     );
     if (!run.rows[0]) throw new Error("SCRY_BROWSER_RUN_NOT_FOUND");
-    const [effects, evidence, artifacts] = await Promise.all([
-      this.database.query(
-        `SELECT id,effect_class AS "effectClass",effect_ordinal AS "effectOrdinal",
-                dispatch_state AS "dispatchState",capture_state AS "captureState",
-                publication_state AS "publicationState",mutation_outcome AS "mutationOutcome",
-                determination_source AS "reasonCode",admitted_at AS "createdAt",updated_at AS "updatedAt"
-         FROM browser_effects WHERE run_id=$1 ORDER BY effect_class,effect_ordinal`,
-        [runId],
-      ),
-      this.database.query(
-        `SELECT id,state,chain_head AS "chainHead",chunk_count AS "chunkCount",
-                total_bytes AS "totalBytes",retention_expires_at AS "retentionExpiresAt",
-                completed_at AS "completedAt"
-         FROM browser_evidence_streams WHERE run_id=$1 ORDER BY created_at`,
-        [runId],
-      ),
-      this.database.query(
-        `SELECT id,kind,digest,safe_metadata AS "safeMetadata",created_at AS "createdAt"
-         FROM artifacts WHERE run_id=$1 ORDER BY created_at`,
-        [runId],
-      ),
-    ]);
-    return {
-      ...run.rows[0],
-      effects: effects.rows,
-      evidence: evidence.rows,
-      artifacts: artifacts.rows,
-    };
+    return { ...run.rows[0], ...(await new ChronicleRepository(this.database).runEvidence(runId)) };
   }
 
   async listReports(workspaceId: string | undefined, projectId: string) {

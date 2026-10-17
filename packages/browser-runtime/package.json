@@ -12,11 +12,12 @@
   },
   "dependencies": {
     "@scry/contracts": "workspace:*",
-    "@scry/veil": "workspace:*",
     "playwright": "1.62.0",
     "rrweb": "2.1.1"
   },
   "devDependencies": {
+    "@scry/chronicle": "workspace:*",
+    "@scry/veil": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.3",
     "vitest": "^4.0.15"

@@ -16,6 +16,7 @@
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-fastify": "^11.0.0",
     "@scry/browser-runtime": "workspace:*",
+    "@scry/chronicle": "workspace:*",
     "@scry/contracts": "workspace:*",
     "@scry/veil": "workspace:*",
     "bullmq": "^5.58.0",

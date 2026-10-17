@@ -208,6 +208,27 @@ evidence owner.
 All production evidence writes and reads use Chronicle's public boundary, and
 no alternate artifact or evidence ledger remains reachable.
 
+Result: the active baseline evidence implementation has moved to Chronicle.
+Its filesystem manifests, capture custody, stream summaries, accepted event
+history, review projections, replay publication, and Mission evidence digests
+retain their formats and application transaction boundaries. Browser rendering
+mechanics remain behind an injected port for the Praxis move; Veil supplies
+protection capabilities. Dormant Chronicle storage providers and export-only
+duplicate runtime ledgers were removed. No inactive relational evidence writers
+or new retention services were activated. See the
+[progress and verification record](four-boundary-progress.md) for proof and
+the unchanged baseline limitations.
+
+Qualification limitation discovered during the cutover: the baseline's capture
+and effect writes enforce owner generation, but stream-summary completion and
+recording-file sequencing do not independently authenticate the browser lease.
+The structural relocation is complete; the stale-owner recording/closure gate
+above remains open. Its proof is carried into the immediately following Praxis
+ownership seam, where browser lifecycle and evidence admission must meet. This
+is a sequencing dependency, not a waiver of that gate or permission to claim
+the overall reset complete. Preserve a failing characterization before any
+intentional correction and commit that correction separately from relocation.
+
 ## Workstream 5: establish Praxis as browser authority
 
 ### Objective

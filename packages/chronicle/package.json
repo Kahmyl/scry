@@ -1,23 +1,19 @@
 {
   "name": "@scry/chronicle",
-  "version": "0.0.0",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./legacy": "./src/legacy/index.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1102.0",
-    "@google-cloud/storage": "^7.21.0",
-    "@scry/contracts": "workspace:*",
-    "cloudinary": "^2.10.0"
+    "@scry/contracts": "workspace:*"
   },
   "devDependencies": {
+    "@scry/veil": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.3",
     "vitest": "^4.0.15"
