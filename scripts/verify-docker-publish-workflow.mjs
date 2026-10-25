@@ -16,6 +16,17 @@ const dockerignore = readFileSync(".dockerignore", "utf8");
 const deployCompose = readFileSync("compose.deploy.yml", "utf8");
 const apiPackage = JSON.parse(readFileSync("apps/api/package.json", "utf8"));
 
+// Validate each publication step's actual environment, not a synthetic Compose
+// environment that can hide an omitted required variable in the workflow.
+for (const name of [
+  "Boot and smoke-test the candidate beta topology",
+  "Publish the beta Compose application as an OCI artifact",
+]) {
+  const step = workflow.split(`      - name: ${name}\n`)[1]?.split("      - name:")[0];
+  if (!step || !/^          SCRY_DATABASE_NAME: scry_publication_smoke$/m.test(step))
+    fail(`${name} must supply the explicit disposable publication database name`);
+}
+
 for (const retiredWorkflow of [
   ".github/workflows/praxis-verification.yml",
   ".github/workflows/veil-verification.yml",

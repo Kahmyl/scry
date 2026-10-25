@@ -161,6 +161,7 @@ jobs:
 
       - name: Boot and smoke-test the candidate beta topology
         env:
+          SCRY_DATABASE_NAME: scry_publication_smoke
           SCRY_DOMAIN: scry.example.com
           POSTGRES_PASSWORD: integration-password
           SCRY_SERVICE_TOKEN: integration-service-token
@@ -257,6 +258,7 @@ jobs:
 
       - name: Publish the beta Compose application as an OCI artifact
         env:
+          SCRY_DATABASE_NAME: scry_publication_smoke
           SCRY_DOMAIN: scry.example.com
           POSTGRES_PASSWORD: publish-placeholder
           SCRY_SERVICE_TOKEN: publish-placeholder
