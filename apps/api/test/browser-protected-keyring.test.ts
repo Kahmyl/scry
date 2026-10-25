@@ -69,6 +69,28 @@ describe.sequential("browser protected keyring", () => {
     );
   });
 
+  it("preserves implicit historical key IDs without changing new-configuration defaults", () => {
+    const encoded = Buffer.alloc(32, 7).toString("base64");
+    for (const environment of [
+      { BROWSER_V2_PROTECTED_KEY_BASE64: encoded },
+      { BROWSER_V2_PROTECTED_KEYS_JSON: JSON.stringify({ "browser-v2-key-1": encoded }) },
+    ]) {
+      const keyring = BrowserProtectedKeyring.fromEnvironment(environment);
+      expect(keyring.activeKeyId).toBe("browser-v2-key-1");
+      expect(keyring.key("browser-v2-key-1").toString("base64")).toBe(encoded);
+    }
+    expect(
+      BrowserProtectedKeyring.fromEnvironment({ SCRY_BROWSER_PROTECTED_KEY_BASE64: encoded })
+        .activeKeyId,
+    ).toBe("browser-key-1");
+    expect(
+      BrowserProtectedKeyring.fromEnvironment({
+        SCRY_BROWSER_PROTECTED_KEY_BASE64: encoded,
+        BROWSER_V2_PROTECTED_KEY_BASE64: Buffer.alloc(32, 8).toString("base64"),
+      }).activeKeyId,
+    ).toBe("browser-key-1");
+  });
+
   it("rejects malformed, unavailable, and non-32-byte keys without echoing key material", () => {
     expect(() =>
       BrowserProtectedKeyring.fromEnvironment({

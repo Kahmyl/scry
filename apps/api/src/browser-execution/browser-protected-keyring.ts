@@ -1,6 +1,9 @@
 import { hkdfSync } from "node:crypto";
 
 const DEFAULT_KEY_ID = "browser-key-1";
+// Persisted ciphertext refers to this exact historical identifier. It is a
+// compatibility value, not a versioned name for the supported baseline.
+const LEGACY_DEFAULT_KEY_ID = "browser-v2-key-1";
 const KEY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,100}$/u;
 
 export class BrowserProtectedKeyring {
@@ -15,14 +18,19 @@ export class BrowserProtectedKeyring {
   static fromEnvironment(
     environment: Readonly<Record<string, string | undefined>> = process.env,
   ): BrowserProtectedKeyring {
+    const serializedKeyring =
+      environment.SCRY_BROWSER_PROTECTED_KEYS_JSON ?? environment.BROWSER_V2_PROTECTED_KEYS_JSON;
+    const encoded =
+      environment.SCRY_BROWSER_PROTECTED_KEY_BASE64 ?? environment.BROWSER_V2_PROTECTED_KEY_BASE64;
+    const usesLegacyConfiguration = serializedKeyring
+      ? environment.SCRY_BROWSER_PROTECTED_KEYS_JSON === undefined
+      : environment.SCRY_BROWSER_PROTECTED_KEY_BASE64 === undefined;
     const activeKeyId =
       environment.SCRY_BROWSER_PROTECTED_KEY_ID ??
       environment.BROWSER_V2_PROTECTED_KEY_VERSION ??
-      DEFAULT_KEY_ID;
+      (usesLegacyConfiguration ? LEGACY_DEFAULT_KEY_ID : DEFAULT_KEY_ID);
     if (!KEY_ID_PATTERN.test(activeKeyId)) throw new Error("SCRY_BROWSER_PROTECTED_KEY_ID_INVALID");
 
-    const serializedKeyring =
-      environment.SCRY_BROWSER_PROTECTED_KEYS_JSON ?? environment.BROWSER_V2_PROTECTED_KEYS_JSON;
     if (serializedKeyring) {
       let parsed: unknown;
       try {
@@ -43,8 +51,6 @@ export class BrowserProtectedKeyring {
       return new BrowserProtectedKeyring(activeKeyId, keys);
     }
 
-    const encoded =
-      environment.SCRY_BROWSER_PROTECTED_KEY_BASE64 ?? environment.BROWSER_V2_PROTECTED_KEY_BASE64;
     if (!encoded) throw new Error("SCRY_BROWSER_PROTECTED_KEY_REQUIRED");
     return new BrowserProtectedKeyring(
       activeKeyId,
