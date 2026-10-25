@@ -291,6 +291,9 @@ describe("qualification outcomes", () => {
     );
     expect(profiles.owner).toContain("owner-admission");
     expect(profiles.worker).toContain("worker-journey");
+    expect(
+      checks.find((entry) => entry.id === "deployed-baseline")?.terminationGraceMs,
+    ).toBeGreaterThanOrEqual(125000);
     const database = checks.find((entry) => entry.id === "database-lifecycle")!;
     expect(database.command).toEqual(
       expect.arrayContaining([

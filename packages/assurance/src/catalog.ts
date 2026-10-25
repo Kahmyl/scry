@@ -6,7 +6,14 @@ const script = (
   guarantee: string,
   command: string,
   timeoutMs = 180_000,
-): CheckDefinition => ({ id, guarantee, command: ["pnpm", command], timeoutMs });
+  terminationGraceMs = 5_000,
+): CheckDefinition => ({
+  id,
+  guarantee,
+  command: ["pnpm", command],
+  timeoutMs,
+  terminationGraceMs,
+});
 const tests = (
   id: string,
   guarantee: string,
@@ -66,6 +73,7 @@ export const checks: readonly CheckDefinition[] = [
     "The production image executes an isolated public API/MCP browser journey without Assurance",
     "verify:deployed-baseline",
     900_000,
+    135_000,
   ),
   ...componentOwners.map((owner) =>
     tests(
@@ -126,6 +134,7 @@ export const checks: readonly CheckDefinition[] = [
     "An isolated backup restores and promotes correctly",
     "verify:production-recovery",
     3_700_000,
+    135_000,
   ),
   tests(
     "browser-recording",

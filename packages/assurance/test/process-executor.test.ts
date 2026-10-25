@@ -1,4 +1,7 @@
 import { fileURLToPath } from "node:url";
+import { mkdtemp, readFile, rm, access } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createProcessExecutor } from "../src/process-executor.js";
 import { SAFE_TEST_MARKER, type CheckDefinition } from "../src/qualification.js";
@@ -56,5 +59,51 @@ describe("bounded child processes", () => {
     const result = execute(fixture("setInterval(() => {}, 1000)"), cancellation.signal);
     setTimeout(() => cancellation.abort(), 100);
     expect((await result).issue).toBe("cancelled");
+  });
+
+  it("allows a declared cleanup phase while retaining the cancellation verdict", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "scry-process-cleanup-")),
+      ready = path.join(directory, "ready"),
+      complete = path.join(directory, "complete"),
+      controller = new AbortController();
+    const source = `const fs=require('node:fs');process.once('SIGTERM',()=>setTimeout(()=>{fs.writeFileSync(${JSON.stringify(complete)},'clean');process.exit(0)},150));fs.writeFileSync(${JSON.stringify(ready)},'ready');setInterval(()=>{},1000)`;
+    try {
+      const result = execute(
+        fixture(source, { terminationGraceMs: 1000, timeoutMs: 5000 }),
+        controller.signal,
+      );
+      await expect
+        .poll(() =>
+          access(ready).then(
+            () => true,
+            () => false,
+          ),
+        )
+        .toBe(true);
+      controller.abort();
+      expect((await result).issue).toBe("cancelled");
+      expect(await readFile(complete, "utf8")).toBe("clean");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("still forcibly bounds an uncooperative process and rejects unbounded grace", async () => {
+    const start = Date.now();
+    expect(
+      (
+        await execute(
+          fixture("process.on('SIGTERM',()=>{});setInterval(()=>{},1000)", {
+            timeoutMs: 200,
+            terminationGraceMs: 50,
+          }),
+        )
+      ).issue,
+    ).toBe("timeout");
+    expect(Date.now() - start).toBeLessThan(2000);
+    for (const grace of [0, -1, NaN, Infinity, 180001])
+      expect((await execute(fixture("process.exit(0)", { terminationGraceMs: grace }))).issue).toBe(
+        "invalid_configuration",
+      );
   });
 });
