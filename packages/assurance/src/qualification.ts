@@ -15,11 +15,13 @@ export interface CheckDefinition {
   prerequisites?: readonly ("database" | "redis")[];
   tests?: { minimumPassed: number; allowSkipped: boolean };
   timeoutMs?: number;
+  /** Separate bounded time for a resource-owning check to stop and clean up. */
+  terminationGraceMs?: number;
 }
 
 export interface ExecutionResult {
   exitCode: number | null;
-  issue?: "timeout" | "cancelled" | "spawn_failed" | "output_limit";
+  issue?: "timeout" | "cancelled" | "spawn_failed" | "output_limit" | "invalid_configuration";
   counts?: TestCounts;
 }
 export type CheckReason =

@@ -14,6 +14,11 @@ export function createProcessExecutor(
         resolve({ exitCode: null, issue: "cancelled" });
         return;
       }
+      const graceMs = check.terminationGraceMs ?? 5_000;
+      if (!Number.isSafeInteger(graceMs) || graceMs <= 0 || graceMs > 180_000) {
+        resolve({ exitCode: null, issue: "invalid_configuration" });
+        return;
+      }
       const [command, ...args] = check.command;
       if (!command) {
         resolve({ exitCode: null, issue: "spawn_failed" });
@@ -46,7 +51,9 @@ export function createProcessExecutor(
         if (issue) return;
         issue = reason;
         kill("SIGTERM");
-        killTimer = setTimeout(() => kill("SIGKILL"), 5_000);
+        // The execution deadline has already failed. This separate clock lets
+        // owned-resource teardown finish without ever extending successful work.
+        killTimer = setTimeout(() => kill("SIGKILL"), graceMs);
         killTimer.unref();
       };
       const collect = (buffer: Buffer, stdout: boolean) => {
