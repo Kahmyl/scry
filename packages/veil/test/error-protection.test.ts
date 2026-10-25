@@ -6,6 +6,29 @@ import {
 } from "../src/error-protection.js";
 
 describe("value-free failure disclosure", () => {
+  it.each([
+    "SCRY_BROWSER_AUTHENTICATION_BUDGET_EXHAUSTED",
+    "SCRY_BROWSER_BUSINESS_BUDGET_EXHAUSTED",
+  ])("preserves the finite budget refusal %s", (code) => {
+    expect(storedBrowserFailureCode(new Error(code))).toBe(code);
+    expect(publicBrowserErrorCode(new Error(code))).toBe(code);
+    expect(finalizationBrowserErrorCode(new Error(code))).toBe(code);
+    expect(storedBrowserFailureCode(new Error(code + ":private"))).toBe(
+      "SCRY_BROWSER_COMMAND_FAILED",
+    );
+  });
+  it.each(["SCRY_BROWSER_EFFECT_UNRESOLVED", "SCRY_BROWSER_SESSION_INCOMPLETE"])(
+    "preserves typed recovery identifiers for %s but not arbitrary suffixes",
+    (prefix) => {
+      const code = prefix + ":00000000-0000-4000-8000-000000000001";
+      expect(storedBrowserFailureCode(new Error(code))).toBe(code);
+      expect(finalizationBrowserErrorCode(new Error(code))).toBe(code);
+      expect(publicBrowserErrorCode(new Error(code))).toBeUndefined();
+      expect(storedBrowserFailureCode(new Error(prefix + ":private"))).toBe(
+        "SCRY_BROWSER_COMMAND_FAILED",
+      );
+    },
+  );
   it("does not invoke arbitrary string conversion or a throwing error getter", () => {
     const untrusted = {
         toString() {

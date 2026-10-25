@@ -7,6 +7,8 @@ const identifierCodes = new Set([
   "SCRY_BROWSER_CAPTURES_UNSETTLED",
   "SCRY_BROWSER_CAPTURE_UNSETTLED",
   "SCRY_BROWSER_EFFECT_OUTCOME_PENDING",
+  "SCRY_BROWSER_EFFECT_UNRESOLVED",
+  "SCRY_BROWSER_SESSION_INCOMPLETE",
 ]);
 function admitted(error: unknown): string | undefined {
   let raw: unknown;

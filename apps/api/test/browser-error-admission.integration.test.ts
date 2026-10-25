@@ -46,6 +46,25 @@ run("database failure-disclosure boundary", () => {
         [submitted.commandId],
       );
       expect(unchanged.rows[0]?.error_code).toBe(legacy);
+      for (const code of [
+        "SCRY_BROWSER_AUTHENTICATION_BUDGET_EXHAUSTED",
+        "SCRY_BROWSER_BUSINESS_BUDGET_EXHAUSTED",
+        `SCRY_BROWSER_EFFECT_UNRESOLVED:${randomUUID()}`,
+        `SCRY_BROWSER_SESSION_INCOMPLETE:${randomUUID()}`,
+      ]) {
+        const next = await commands.submit(session, {
+          idempotencyKey: randomUUID(),
+          command: { kind: "observe" },
+        });
+        const nextClaim = await commands.claim(next.commandId);
+        await commands.fail(next.commandId, nextClaim!.claim_token!, new Error(code));
+        expect((await commands.observe(next.commandId)).errorCode).toBe(code);
+        const row = await database.query<{ error_code: string }>(
+          "SELECT error_code FROM browser_commands WHERE id=$1",
+          [next.commandId],
+        );
+        expect(row.rows[0]?.error_code).toBe(code);
+      }
     } finally {
       await database.onModuleDestroy();
     }
