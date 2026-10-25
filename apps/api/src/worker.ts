@@ -2,7 +2,6 @@ import "reflect-metadata";
 
 import { NestFactory } from "@nestjs/core";
 import { Worker } from "bullmq";
-import type { BrowserCommand } from "@scry/contracts";
 
 import { AppModule } from "./app.module.js";
 import { BrowserCommandRepository } from "./browser-execution/repositories/browser-command.repository.js";
@@ -15,6 +14,7 @@ import { BrowserExecutionRepository } from "./browser-execution/repositories/bro
 import { composePraxisExecutionPort } from "./browser-execution/browser-boundary-composition.js";
 import { BROWSER_RUNTIME_CAPABILITY_ID } from "./browser-execution/browser-runtime-capability.js";
 import { RedisConnection } from "./infrastructure/redis.js";
+import { processBrowserCommand } from "./browser-execution/browser-command-processor.js";
 
 if (process.env.SCRY_BROWSER_ENABLED !== "true") throw new Error("SCRY_BROWSER_DISABLED");
 if (process.env.SCRY_BROWSER_RENDER_VIDEO !== "true")
@@ -40,29 +40,7 @@ const sessionWorker = new Worker<BrowserExecutionJob>(
 );
 const commandWorker = new Worker<{ commandId: string }>(
   BROWSER_COMMAND_QUEUE,
-  async (job) => {
-    const command = await commands.claim(job.data.commandId);
-    if (!command) return { replay: true };
-    const claimToken = command.claim_token;
-    if (!claimToken) throw new Error("SCRY_BROWSER_COMMAND_CLAIM_TOKEN_MISSING");
-    const heartbeat = setInterval(
-      () => void commands.heartbeatClaim(command.id, claimToken).catch(() => undefined),
-      20_000,
-    );
-    try {
-      const result = await praxis.executeCommand(
-        command.session_id,
-        command.safe_input as BrowserCommand,
-      );
-      await commands.complete(command.id, claimToken, result);
-      return result;
-    } catch (error) {
-      await commands.fail(command.id, claimToken, error);
-      return { failed: true };
-    } finally {
-      clearInterval(heartbeat);
-    }
-  },
+  (job, token) => processBrowserCommand(commands, praxis, job, token),
   {
     connection: redis.client,
     concurrency: Number(process.env.SCRY_BROWSER_COMMAND_CONCURRENCY ?? 8),
