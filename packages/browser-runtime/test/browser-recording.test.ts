@@ -114,7 +114,6 @@ describe("browser recording and offline replay", () => {
         events: verified.events,
         ledgerPath,
         outputDirectory,
-        executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         framesPerSecond: 2,
       });
       expect(publication.networkRequests).toBe(0);
@@ -126,7 +125,6 @@ describe("browser recording and offline replay", () => {
         events: verified.events,
         ledgerPath,
         outputDirectory,
-        executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         framesPerSecond: 2,
       });
       expect(second.reusedPublication).toBe(true);
