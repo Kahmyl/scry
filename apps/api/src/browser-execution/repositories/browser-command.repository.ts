@@ -42,6 +42,19 @@ interface CommandRow extends QueryResultRow {
 
 type InlineStorageState = PraxisStorageState;
 
+interface ObservedCommandRow extends QueryResultRow {
+  id: string;
+  sessionId: string;
+  runId: string;
+  kind: BrowserCommand["kind"];
+  state: CommandRow["state"];
+  result: Record<string, unknown> | null;
+  errorCode: string | null;
+  createdAt: Date;
+  startedAt: Date | null;
+  completedAt: Date | null;
+}
+
 @Injectable()
 export class BrowserCommandRepository {
   constructor(
@@ -249,13 +262,22 @@ export class BrowserCommandRepository {
   }
 
   async observe(commandId: string) {
-    const result = await this.database.query<CommandRow>(
+    const result = await this.database.query<ObservedCommandRow>(
       `SELECT id,session_id AS "sessionId",run_id AS "runId",kind,state,safe_result AS result,error_code AS "errorCode",
          created_at AS "createdAt",started_at AS "startedAt",completed_at AS "completedAt" FROM browser_commands WHERE id=$1`,
       [commandId],
     );
     if (!result.rows[0]) throw new Error("SCRY_BROWSER_COMMAND_NOT_FOUND");
-    return result.rows[0];
+    const row = result.rows[0];
+    // Historical diagnostics are immutable, not automatically safe to disclose.
+    const errorCode = row.errorCode == null ? null : storedBrowserFailureCode(row.errorCode);
+    if (row.state === "failed")
+      return {
+        ...row,
+        state: "failed" as const,
+        errorCode: errorCode ?? "SCRY_BROWSER_COMMAND_FAILED",
+      };
+    return { ...row, state: row.state, errorCode };
   }
 
   async evidenceComplete(sessionId: string): Promise<boolean> {

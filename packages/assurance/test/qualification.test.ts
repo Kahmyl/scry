@@ -303,9 +303,10 @@ describe("qualification outcomes", () => {
         "test/browser-auth-scope.integration.test.ts",
         "test/browser-scope-integrity.integration.test.ts",
         "test/browser-command-order.integration.test.ts",
+        "test/browser-error-admission.integration.test.ts",
       ]),
     );
-    expect(database.tests).toEqual({ minimumPassed: 16, allowSkipped: false });
+    expect(database.tests).toEqual({ minimumPassed: 17, allowSkipped: false });
     expect(profiles.worker).toContain("command-queue");
     expect(checks.find((entry) => entry.id === "command-queue")?.prerequisites).toEqual([
       "database",

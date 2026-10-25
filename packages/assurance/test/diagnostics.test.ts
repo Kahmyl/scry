@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ChronicleRecordingDiagnostics } from "@scry/contracts";
 import { diagnoseEvidence, diagnoseRecording } from "../src/diagnostics.js";
 
 describe("read-only bounded diagnostics", () => {
@@ -12,7 +13,9 @@ describe("read-only bounded diagnostics", () => {
     Object.freeze(input.errors);
     Object.freeze(input.diagnostics);
     Object.freeze(input);
-    const findings = diagnoseRecording(input);
+    // Deliberately exercise untrusted historical data. New recording contracts
+    // cannot represent these free-form diagnostic values anymore.
+    const findings = diagnoseRecording(input as unknown as ChronicleRecordingDiagnostics);
     expect(findings.map((entry) => entry.code)).toEqual([
       "recording_error",
       "recording_owner_closed",
