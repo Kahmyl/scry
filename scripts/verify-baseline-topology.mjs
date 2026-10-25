@@ -48,6 +48,15 @@ for (const path of [
 }
 
 for (const removedPath of [
+  // These unused modules pulled a retired package into the baseline type graph.
+  // The active app composes the auth providers and database ports directly.
+  "apps/api/src/auth/auth.module.ts",
+  "apps/api/src/auth/index.ts",
+  "apps/api/src/infrastructure/index.ts",
+  "apps/api/src/infrastructure/infrastructure.module.ts",
+  "apps/api/src/infrastructure/operational-event-store.ts",
+  "apps/api/src/infrastructure/operational-events.controller.ts",
+  "apps/api/src/infrastructure/operational-events.ts",
   "apps/api/src/browser-v2-main.ts",
   "apps/api/src/browser-v2-worker.ts",
   "apps/api/src/browser-v2-app.module.ts",
@@ -57,7 +66,7 @@ for (const removedPath of [
   "apps/web/src/app/BrowserV2Dashboard.tsx",
 ]) {
   if (existsSync(new URL(`../${removedPath}`, import.meta.url))) {
-    fail(`numbered product path remains: ${removedPath}`);
+    fail(`retired product path remains: ${removedPath}`);
   }
 }
 
