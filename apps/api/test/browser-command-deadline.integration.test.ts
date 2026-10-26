@@ -34,8 +34,8 @@ live("durable command deadline facts", () => {
     const row = (await commands.claim(commandId))!;
     expect(row.execution_budget_ms).toBe(120000);
     expect(row.execution_deadline_at).toBeInstanceOf(Date);
-    expect(row.execution_remaining_ms).toBeGreaterThan(119000);
-    expect(row.execution_remaining_ms).toBeLessThanOrEqual(120000);
+    expect(row.executionRemainingMs).toBeGreaterThan(119000);
+    expect(row.executionRemainingMs).toBeLessThanOrEqual(120000);
   });
   it.each(["close", "close_for_failure"] as const)(
     "assigns the separately bounded legacy %s budget",
@@ -43,8 +43,8 @@ live("durable command deadline facts", () => {
       const { commandId } = await submit({ kind });
       const row = (await commands.claim(commandId))!;
       expect(row.execution_budget_ms).toBe(900000);
-      expect(row.execution_remaining_ms).toBeGreaterThan(899000);
-      expect(row.execution_remaining_ms).toBeLessThanOrEqual(900000);
+      expect(row.executionRemainingMs).toBeGreaterThan(899000);
+      expect(row.executionRemainingMs).toBeLessThanOrEqual(900000);
     },
   );
   it("preserves the first deadline and budget across an expired-lease retry", async () => {
@@ -58,7 +58,7 @@ live("durable command deadline facts", () => {
     const second = (await commands.claim(commandId))!;
     expect(second.execution_deadline_at).toEqual(first.execution_deadline_at);
     expect(second.execution_budget_ms).toBe(first.execution_budget_ms);
-    expect(second.execution_remaining_ms).toBeLessThan(first.execution_remaining_ms);
+    expect(second.executionRemainingMs).toBeLessThan(first.executionRemainingMs);
     expect(second.attempt_count).toBe(2);
     expect(second.claim_token).not.toBe(first.claim_token);
   });
@@ -75,7 +75,7 @@ live("durable command deadline facts", () => {
     ).rows[0];
     const row = (await commands.claim(commandId))!;
     expect(row.execution_deadline_at).toEqual(before!.execution_deadline_at);
-    expect(row.execution_remaining_ms).toBe(0);
+    expect(row.executionRemainingMs).toBe(0);
   });
   it("does not use the worker wall clock to decide whether another claim is still live", async () => {
     const { commandId } = await submit();

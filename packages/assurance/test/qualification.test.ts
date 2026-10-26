@@ -340,10 +340,11 @@ describe("qualification outcomes", () => {
         "test/browser-scope-integrity.integration.test.ts",
         "test/browser-command-order.integration.test.ts",
         "test/browser-command-deadline.integration.test.ts",
+        "test/browser-command-claim-fencing.integration.test.ts",
         "test/browser-error-admission.integration.test.ts",
       ]),
     );
-    expect(database.tests).toEqual({ minimumPassed: 24, allowSkipped: false });
+    expect(database.tests).toEqual({ minimumPassed: 33, allowSkipped: false });
     expect(profiles.worker).toContain("command-queue");
     expect(profiles.worker).toContain("worker-shutdown");
     expect(checks.find((entry) => entry.id === "worker-shutdown")?.tests).toEqual({

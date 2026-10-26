@@ -252,8 +252,21 @@ same transaction.
 The queue job identifier equals the durable command identifier. Queue retries
 therefore converge on the same command row. A worker claims a command with a
 lease token, heartbeats the lease while executing, and may complete or fail the
-row only while holding that token. An expired claim can be recovered without
-allowing the old claimant to complete afterward.
+row only while holding that still-live token. Command claim, heartbeat,
+pre-dispatch admission, completion, and failure admission acquire the command row
+lock before evaluating the current database clock. A clock projection inside the
+locking statement is insufficient: it can have been evaluated before the lock
+wait. No browser, network, or evidence file operation runs inside this admission
+transaction.
+
+Completion also requires a live durable execution deadline. An expired deadline
+may be recorded as failure only by its still-live claimant; an expired/replaced
+claimant cannot clear recovery facts by writing either success or failure.
+Heartbeats return database-relative command and claim lifetimes and never renew
+the immutable execution deadline. These application guards require coordinated
+worker replacement; they do not retrofit older binaries or prove that an old
+browser has stopped. Carried queue cancellation, independent process supervision,
+and durable uncertain-work recovery remain separate qualification requirements.
 
 ## Browser ownership and fencing
 
