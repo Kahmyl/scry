@@ -54,6 +54,21 @@ again. Durable facts alone do not stop a browser: carried monotonic execution,
 physical cancellation, claim-loss handling, and completion fencing remain required
 before command-lifecycle activation is considered complete.
 
+The isolated execution kernel uses one command lane per session. An attempt owns
+its exact resource bindings and unresolved acquisitions, not a late lookup by
+session name. Cancellation stops those resources and drains their pending work
+before another attempt is admitted. If termination or drain cannot be confirmed,
+that lane remains unavailable; a timer firing alone is not permission to retry.
+Late acquisitions remain owned even after an uncertain-drain report. Successful
+attempts detach old cancellation callbacks so they cannot kill a later browser.
+This kernel is qualified independently before engine and queue adoption; its
+existence is not evidence that all production dispatch paths already use it.
+Local callbacks cannot interrupt a blocked controller event loop. Synchronous
+pre-dispatch clock checks catch an elapsed budget before another dispatch, but
+independent worker/process supervision remains necessary for already running
+browser activity when the controller itself is unresponsive. Native custody,
+resource isolation, and the lane are complementary guarantees, not substitutes.
+
 Veil owns the protection policy and private processing of original frames.
 Semantic observations can identify sensitive content, but timestamps alone do
 not prove that a region belongs to a particular frame. Frame-local checks and

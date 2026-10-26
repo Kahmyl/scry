@@ -61,7 +61,7 @@ const componentMinimums: Readonly<Record<string, number>> = {
   contracts: 9,
   veil: 43,
   chronicle: 21,
-  praxis: 10,
+  praxis: 52,
   api: 12,
   mcp: 7,
   web: 3,
@@ -148,6 +148,13 @@ export const checks: readonly CheckDefinition[] = [
     "Actual browser process exit is confirmed for close, forced cancellation and failed connection",
     "@scry/praxis",
     ["test/owned-browser.integration.test.ts"],
+    { integrated: true, minimum: 4 },
+  ),
+  tests(
+    "command-cancellation",
+    "An exact command attempt drains native actions and late acquisition without killing later or independent browsers",
+    "@scry/praxis",
+    ["test/command-lane.integration.test.ts"],
     { integrated: true, minimum: 4 },
   ),
   tests(
@@ -258,6 +265,7 @@ export const profiles: Readonly<Record<string, readonly string[]>> = {
   browser: [
     "playwright",
     "browser-custody",
+    "command-cancellation",
     "component-veil",
     "component-praxis",
     "browser-recording",
