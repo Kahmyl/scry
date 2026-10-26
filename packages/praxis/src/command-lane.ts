@@ -211,6 +211,9 @@ export class CommandAttempt {
       this.#resources.clear();
       this.#acquired.clear();
       this.detach();
+      // Cancellation can be accepted after operation wins the race but before
+      // this continuation runs. Its physical stop cannot accompany success.
+      if (this.#reason) throw this.#reason;
     }
   }
 }
