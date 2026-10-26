@@ -42,6 +42,14 @@ export interface PraxisOwnerClaim extends PraxisOwnerLeaseSample {
   fencingToken: number;
 }
 
+/** Private runtime receipt, admitted only after exact custody and recording
+ * drain settle. This is not a customer-provided command or a timeout claim. */
+export interface PraxisOwnerRetirement {
+  owner: PraxisOwnerIdentity;
+  browserStopped: true;
+  recordingDrained: true;
+}
+
 /** Serialized browser state, not a browser object or driver dependency. Additional
  * browser-provided fields (including IndexedDB) are preserved during persistence. */
 export interface PraxisStorageState {
@@ -143,7 +151,7 @@ export interface PraxisEffectsPort {
     leaseToken: string,
     leaseMs: number,
   ): Promise<PraxisOwnerLeaseSample>;
-  releaseOwner(sessionId: string, generation: number, leaseToken: string): Promise<void>;
+  retireOwner(receipt: PraxisOwnerRetirement): Promise<void>;
   durableCapturesForSession(sessionId: string): Promise<DurableCaptureEnvelope[]>;
   prepareFailureFinalization(sessionId: string, generation: number): Promise<void>;
   assertNoPendingEffectOutcomes(sessionId: string): Promise<void>;

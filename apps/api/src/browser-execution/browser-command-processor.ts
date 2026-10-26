@@ -51,6 +51,7 @@ export async function processBrowserCommand(
       [
         "SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED",
         "SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED",
+        "SCRY_BROWSER_OWNER_RETIREMENT_UNCONFIRMED",
         "SCRY_BROWSER_RECORDER_STOP_TIMEOUT",
       ].includes(error.message)
     ) {

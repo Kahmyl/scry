@@ -8,6 +8,7 @@ import type {
   PraxisOwnerIdentity,
   PraxisOwnerClaim,
   PraxisOwnerLeaseSample,
+  PraxisOwnerRetirement,
 } from "@scry/contracts";
 import {
   assertPublicationDecisionSet,
@@ -268,44 +269,8 @@ export class BrowserExecutionRepository {
         [sessionId, now, reason],
       );
       const replacedGeneration = active.rows[0]?.generation;
-      if (replacedGeneration !== undefined) {
-        const interrupted = await client.query<EffectRow>(
-          `SELECT * FROM browser_effects
-           WHERE session_id=$1 AND owner_generation=$2 AND mutation_outcome='pending'
-           ORDER BY effect_ordinal FOR UPDATE`,
-          [sessionId, replacedGeneration],
-        );
-        for (const effect of interrupted.rows) {
-          if (effect.dispatch_state === "not_started") {
-            await client.query(
-              `UPDATE browser_effects SET mutation_outcome='not_applied',determination_source='owner_replaced_before_dispatch',
-                 terminal_at=$2,updated_at=$2 WHERE id=$1`,
-              [effect.id, now],
-            );
-            const countColumn =
-              effect.effect_class === "authentication"
-                ? "authentication_commits_used"
-                : "business_commits_used";
-            await client.query(
-              `UPDATE browser_execution_sessions SET ${countColumn}=GREATEST(${countColumn}-1,0),updated_at=$2 WHERE id=$1`,
-              [sessionId, now],
-            );
-            await this.appendEffectEvent(client, effect.id, sessionId, "not_applied", {
-              source: "owner_replaced_before_dispatch",
-            });
-          } else {
-            await client.query(
-              `UPDATE browser_effects SET mutation_outcome='unknown',determination_source='owner_replaced_after_dispatch',
-                 dispatch_state=CASE WHEN dispatch_state='started' THEN 'unknown' ELSE dispatch_state END,
-                 terminal_at=$2,updated_at=$2 WHERE id=$1`,
-              [effect.id, now],
-            );
-            await this.appendEffectEvent(client, effect.id, sessionId, "unknown", {
-              source: "owner_replaced_after_dispatch",
-            });
-          }
-        }
-      }
+      if (replacedGeneration !== undefined)
+        await this.reconcilePendingEffects(client, sessionId, replacedGeneration, "owner_replaced");
       const generation = Number(session.active_owner_generation) + 1;
       const leaseToken = randomUUID();
       const sampleStartedAt = performance.now();
@@ -355,13 +320,43 @@ export class BrowserExecutionRepository {
     });
   }
 
-  async releaseOwner(sessionId: string, generation: number, leaseToken: string): Promise<void> {
-    const result = await this.database.query(
-      `UPDATE browser_owner_generations SET state='released',terminal_at=now(),replacement_reason='session_closed'
-       WHERE session_id=$1 AND generation=$2 AND lease_token=$3 AND state='active'`,
-      [sessionId, generation, leaseToken],
-    );
-    if (result.rowCount !== 1) throw new Error("SCRY_BROWSER_OWNER_FENCED");
+  async retireOwner(receipt: PraxisOwnerRetirement): Promise<void> {
+    if (receipt?.browserStopped !== true || receipt?.recordingDrained !== true || !receipt.owner)
+      throw new Error("SCRY_BROWSER_OWNER_RETIREMENT_UNCONFIRMED");
+    const { owner } = receipt;
+    await this.database.transaction(async (client) => {
+      const session = await this.lockSession(client, owner.sessionId);
+      const result = await client.query<{ state: string; lease_token: string }>(
+        "SELECT state,lease_token FROM browser_owner_generations WHERE session_id=$1 AND generation=$2 FOR UPDATE",
+        [owner.sessionId, owner.generation],
+      );
+      const row = result.rows[0];
+      if (!row || row.lease_token !== owner.leaseToken)
+        throw new Error("SCRY_BROWSER_OWNER_FENCED");
+      // A terminal older generation has no authority to reduce or reconcile
+      // the newer owner. Repeated exact receipts are harmless no-ops.
+      if (row.state !== "active") return;
+      if (
+        session.state !== "active" ||
+        Number(session.active_owner_generation) !== owner.generation
+      )
+        throw new Error("SCRY_BROWSER_OWNER_FENCED");
+      // Expired authority may be reduced after confirmed containment; it is
+      // never renewed or used to dispatch work by this receipt.
+      await this.reconcilePendingEffects(
+        client,
+        owner.sessionId,
+        owner.generation,
+        "owner_retired",
+      );
+      const retired = await client.query(
+        `UPDATE browser_owner_generations SET state='released',terminal_at=clock_timestamp(),
+           replacement_reason='physical_retirement_confirmed'
+         WHERE session_id=$1 AND generation=$2 AND state='active'`,
+        [owner.sessionId, owner.generation],
+      );
+      if (retired.rowCount !== 1) throw new Error("SCRY_BROWSER_OWNER_FENCED");
+    });
   }
 
   async assertNoPendingEffectOutcomes(sessionId: string): Promise<void> {
@@ -387,41 +382,7 @@ export class BrowserExecutionRepository {
           `SCRY_BROWSER_CAPTURES_UNSETTLED:${unsettled.rows.map(({ id }) => id).join(",")}`,
         );
       }
-      const interrupted = await client.query<EffectRow>(
-        `SELECT * FROM browser_effects WHERE session_id=$1 AND mutation_outcome='pending'
-         ORDER BY effect_ordinal FOR UPDATE`,
-        [sessionId],
-      );
-      for (const effect of interrupted.rows) {
-        if (effect.dispatch_state === "not_started") {
-          await client.query(
-            `UPDATE browser_effects SET mutation_outcome='not_applied',determination_source='failure_finalized_before_dispatch',
-               terminal_at=now(),updated_at=now() WHERE id=$1`,
-            [effect.id],
-          );
-          const countColumn =
-            effect.effect_class === "authentication"
-              ? "authentication_commits_used"
-              : "business_commits_used";
-          await client.query(
-            `UPDATE browser_execution_sessions SET ${countColumn}=GREATEST(${countColumn}-1,0),updated_at=now() WHERE id=$1`,
-            [sessionId],
-          );
-          await this.appendEffectEvent(client, effect.id, sessionId, "not_applied", {
-            source: "failure_finalized_before_dispatch",
-          });
-        } else {
-          await client.query(
-            `UPDATE browser_effects SET mutation_outcome='unknown',determination_source='failure_finalized_after_dispatch',
-               dispatch_state=CASE WHEN dispatch_state='started' THEN 'unknown' ELSE dispatch_state END,
-               terminal_at=now(),updated_at=now() WHERE id=$1`,
-            [effect.id],
-          );
-          await this.appendEffectEvent(client, effect.id, sessionId, "unknown", {
-            source: "failure_finalized_after_dispatch",
-          });
-        }
-      }
+      await this.reconcilePendingEffects(client, sessionId, null, "failure_finalized");
     });
   }
 
@@ -898,6 +859,45 @@ export class BrowserExecutionRepository {
         [sessionId],
       );
     });
+  }
+
+  private async reconcilePendingEffects(
+    client: PoolClient,
+    sessionId: string,
+    generation: number | null,
+    source: "owner_replaced" | "owner_retired" | "failure_finalized",
+  ): Promise<void> {
+    const interrupted = await client.query<EffectRow>(
+      `SELECT * FROM browser_effects
+       WHERE session_id=$1 AND ($2::bigint IS NULL OR owner_generation=$2)
+       AND mutation_outcome='pending' ORDER BY effect_ordinal FOR UPDATE`,
+      [sessionId, generation],
+    );
+    for (const effect of interrupted.rows) {
+      const beforeDispatch = effect.dispatch_state === "not_started";
+      const outcome = beforeDispatch ? "not_applied" : "unknown";
+      const determination = source + (beforeDispatch ? "_before_dispatch" : "_after_dispatch");
+      await client.query(
+        `UPDATE browser_effects SET mutation_outcome=$2,determination_source=$3,
+           dispatch_state=CASE WHEN NOT $4::boolean AND dispatch_state='started' THEN 'unknown' ELSE dispatch_state END,
+           terminal_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1`,
+        [effect.id, outcome, determination, beforeDispatch],
+      );
+      if (beforeDispatch) {
+        const countColumn =
+          effect.effect_class === "authentication"
+            ? "authentication_commits_used"
+            : "business_commits_used";
+        await client.query(
+          `UPDATE browser_execution_sessions SET ${countColumn}=GREATEST(${countColumn}-1,0),
+             updated_at=clock_timestamp() WHERE id=$1`,
+          [sessionId],
+        );
+      }
+      await this.appendEffectEvent(client, effect.id, sessionId, outcome, {
+        source: determination,
+      });
+    }
   }
 
   private async transition<T>(

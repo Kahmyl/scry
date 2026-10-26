@@ -266,9 +266,6 @@ export class PraxisBrowserEngine {
       return { sessionId, ownerGeneration: owner.generation };
     } catch (error) {
       await this.retire(resources);
-      await this.effects
-        .releaseOwner(sessionId, owner.generation, owner.leaseToken)
-        .catch(() => undefined);
       throw error;
     }
   }
@@ -498,6 +495,15 @@ export class PraxisBrowserEngine {
     const outcomes = await Promise.allSettled(
       [...this.#resources.values()].map((resource) => this.retire(resource)),
     );
+    if (
+      outcomes.some(
+        (outcome) =>
+          outcome.status === "rejected" &&
+          outcome.reason instanceof Error &&
+          outcome.reason.message === "SCRY_BROWSER_OWNER_RETIREMENT_UNCONFIRMED",
+      )
+    )
+      throw new Error("SCRY_BROWSER_OWNER_RETIREMENT_UNCONFIRMED");
     if (outcomes.some((outcome) => outcome.status === "rejected"))
       throw new Error("SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED");
   }
@@ -557,9 +563,21 @@ export class PraxisBrowserEngine {
             throw error;
           return undefined;
         });
-        await custody?.terminate();
+        if (custody && (await custody.terminate()).exitConfirmed !== true)
+          throw new Error("SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED");
         if (!(await bounded(recording, 2000, "SCRY_BROWSER_RECORDER_STOP_TIMEOUT")))
           throw new Error("SCRY_BROWSER_RECORDER_STOP_TIMEOUT");
+        try {
+          await this.effects.retireOwner({
+            owner: resources.lease.identity,
+            browserStopped: true,
+            recordingDrained: true,
+          });
+        } catch {
+          // Physical stop alone is not permission to forget unfinished durable
+          // reconciliation. Retain the cell and require host recovery.
+          throw new Error("SCRY_BROWSER_OWNER_RETIREMENT_UNCONFIRMED");
+        }
         resources.state = "retired";
         if (this.#resources.get(resources.sessionId) === resources)
           this.#resources.delete(resources.sessionId);
