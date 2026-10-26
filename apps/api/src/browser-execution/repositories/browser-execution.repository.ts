@@ -17,6 +17,7 @@ import { Database } from "../../infrastructure/database.js";
 import { BrowserProtectedValueCipher } from "../protected-value-cipher.js";
 import { BROWSER_RUNTIME_CAPABILITY_ID } from "../browser-runtime-capability.js";
 import { assertBrowserSchema } from "../browser-schema.js";
+import { lockLiveBrowserOwner, validateBrowserOwnerLease } from "./browser-owner-admission.js";
 
 const CAPABILITY_ID = BROWSER_RUNTIME_CAPABILITY_ID;
 
@@ -135,12 +136,7 @@ export class BrowserExecutionRepository {
       if (session.state !== "active") throw new Error("SCRY_BROWSER_SESSION_NOT_ACTIVE");
       if (Number(session.active_owner_generation) !== owner.generation)
         throw new Error("SCRY_BROWSER_OWNER_FENCED");
-      const admitted = await client.query(
-        `SELECT 1 FROM browser_owner_generations WHERE session_id=$1 AND generation=$2
-         AND lease_token=$3 AND state='active' AND lease_expires_at>clock_timestamp() FOR UPDATE`,
-        [owner.sessionId, owner.generation, owner.leaseToken],
-      );
-      if (admitted.rowCount !== 1) throw new Error("SCRY_BROWSER_OWNER_FENCED");
+      await lockLiveBrowserOwner(client, owner.sessionId, owner.generation, owner.leaseToken);
       return work(client, session);
     });
   }
@@ -244,17 +240,23 @@ export class BrowserExecutionRepository {
     leaseMs: number,
     reason = "claim",
   ): Promise<{ generation: number; leaseToken: string; fencingToken: number }> {
-    if (!Number.isSafeInteger(leaseMs) || leaseMs < 1_000)
-      throw new Error("SCRY_BROWSER_OWNER_LEASE_INVALID");
+    validateBrowserOwnerLease(leaseMs);
     return this.database.transaction(async (client) => {
       const session = await this.lockSession(client, sessionId);
       if (session.state !== "active") throw new Error("SCRY_BROWSER_SESSION_NOT_ACTIVE");
-      const now = new Date();
-      const active = await client.query<{ generation: number; lease_expires_at: Date }>(
-        "SELECT generation,lease_expires_at FROM browser_owner_generations WHERE session_id=$1 AND state='active' FOR UPDATE",
+      const active = await client.query<{ generation: number }>(
+        "SELECT generation FROM browser_owner_generations WHERE session_id=$1 AND state='active' FOR UPDATE",
         [sessionId],
       );
-      if (active.rows[0] && new Date(active.rows[0].lease_expires_at).getTime() > now.getTime()) {
+      const clock = await client.query<{ now: Date; live: boolean }>(
+        `SELECT clock_timestamp() AS now, EXISTS(
+           SELECT 1 FROM browser_owner_generations WHERE session_id=$1
+           AND state='active' AND lease_expires_at>clock_timestamp()) AS live`,
+        [sessionId],
+      );
+      const current = required(clock.rows[0], "SCRY_BROWSER_OWNER_FENCED");
+      const now = current.now;
+      if (current.live) {
         throw new Error("SCRY_BROWSER_OWNER_ACTIVE");
       }
       await client.query(
@@ -307,15 +309,8 @@ export class BrowserExecutionRepository {
         `INSERT INTO browser_owner_generations(
            session_id,generation,worker_id,lease_token,fencing_token,state,lease_expires_at,
            runtime_capability_id)
-         VALUES($1,$2,$3,$4,$2,'active',$5,$6)`,
-        [
-          sessionId,
-          generation,
-          workerId,
-          leaseToken,
-          new Date(now.getTime() + leaseMs),
-          CAPABILITY_ID,
-        ],
+         VALUES($1,$2,$3,$4,$2,'active',clock_timestamp()+($5::int * interval '1 millisecond'),$6)`,
+        [sessionId, generation, workerId, leaseToken, leaseMs, CAPABILITY_ID],
       );
       await client.query(
         "UPDATE browser_execution_sessions SET active_owner_generation=$2,updated_at=now() WHERE id=$1",
@@ -331,12 +326,16 @@ export class BrowserExecutionRepository {
     leaseToken: string,
     leaseMs: number,
   ): Promise<void> {
-    const result = await this.database.query(
-      `UPDATE browser_owner_generations SET heartbeat_at=now(),lease_expires_at=now()+($4::int * interval '1 millisecond')
-       WHERE session_id=$1 AND generation=$2 AND lease_token=$3 AND state='active' AND lease_expires_at>now()`,
-      [sessionId, generation, leaseToken, leaseMs],
-    );
-    if (result.rowCount !== 1) throw new Error("SCRY_BROWSER_OWNER_FENCED");
+    validateBrowserOwnerLease(leaseMs);
+    await this.database.transaction(async (client) => {
+      await lockLiveBrowserOwner(client, sessionId, generation, leaseToken);
+      const renewed = await client.query(
+        `UPDATE browser_owner_generations SET heartbeat_at=clock_timestamp(),lease_expires_at=clock_timestamp()+($3::int * interval '1 millisecond')
+         WHERE session_id=$1 AND generation=$2 AND lease_expires_at>clock_timestamp()`,
+        [sessionId, generation, leaseMs],
+      );
+      if (renewed.rowCount !== 1) throw new Error("SCRY_BROWSER_OWNER_FENCED");
+    });
   }
 
   async releaseOwner(sessionId: string, generation: number, leaseToken: string): Promise<void> {
@@ -614,9 +613,7 @@ export class BrowserExecutionRepository {
   async publishOutputs(
     input: PublishBrowserOutputsInput,
   ): Promise<{ publicationId: string; protectedReferences: Record<string, string> }> {
-    return this.database.transaction(async (client) => {
-      const effect = await this.lockEffect(client, input.effectId);
-      await this.assertOwner(client, effect.session_id, input.ownerGeneration);
+    return this.transition(input.effectId, input.ownerGeneration, async (client, effect) => {
       if (effect.capture_state !== "durable") throw new Error("SCRY_BROWSER_CAPTURE_NOT_DURABLE");
       const decisionSetDigest = createHash("sha256")
         .update(JSON.stringify(input.decisions))
@@ -892,8 +889,16 @@ export class BrowserExecutionRepository {
     work: (client: PoolClient, effect: EffectRow) => Promise<T>,
   ): Promise<T> {
     return this.database.transaction(async (client) => {
+      // Read immutable scope without a row lock, then acquire all mutable
+      // resources in the same order as replacement: session -> owner -> effect.
+      const scope = await client.query<{ session_id: string }>(
+        "SELECT session_id FROM browser_effects WHERE id=$1",
+        [effectId],
+      );
+      const sessionId = required(scope.rows[0], "SCRY_BROWSER_EFFECT_NOT_FOUND").session_id;
+      await this.lockOwnedSession(client, sessionId, ownerGeneration);
       const effect = await this.lockEffect(client, effectId);
-      await this.assertOwner(client, effect.session_id, ownerGeneration);
+      if (effect.session_id !== sessionId) throw new Error("SCRY_BROWSER_EFFECT_SCOPE_MISMATCH");
       return work(client, effect);
     });
   }
@@ -912,21 +917,11 @@ export class BrowserExecutionRepository {
     generation: number,
   ): Promise<SessionRow> {
     const session = await this.lockSession(client, sessionId);
-    await this.assertOwner(client, sessionId, generation);
+    if (session.state !== "active") throw new Error("SCRY_BROWSER_SESSION_NOT_ACTIVE");
+    if (Number(session.active_owner_generation) !== generation)
+      throw new Error("SCRY_BROWSER_OWNER_FENCED");
+    await lockLiveBrowserOwner(client, sessionId, generation);
     return session;
-  }
-
-  private async assertOwner(
-    client: PoolClient,
-    sessionId: string,
-    generation: number,
-  ): Promise<void> {
-    const owner = await client.query<{ generation: string }>(
-      `SELECT generation FROM browser_owner_generations
-       WHERE session_id=$1 AND generation=$2 AND state='active' AND lease_expires_at>now() FOR UPDATE`,
-      [sessionId, generation],
-    );
-    if (!owner.rows[0]) throw new Error("SCRY_BROWSER_OWNER_FENCED");
   }
 
   private async lockEffect(client: PoolClient, effectId: string): Promise<EffectRow> {

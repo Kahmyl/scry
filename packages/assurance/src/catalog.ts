@@ -184,9 +184,10 @@ export const checks: readonly CheckDefinition[] = [
       "test/browser-command-order.integration.test.ts",
       "test/browser-command-deadline.integration.test.ts",
       "test/browser-command-claim-fencing.integration.test.ts",
+      "test/browser-owner-clock.integration.test.ts",
       "test/browser-error-admission.integration.test.ts",
     ],
-    { database: true, minimum: 34 },
+    { database: true, minimum: 51 },
   ),
   tests(
     "command-queue",
