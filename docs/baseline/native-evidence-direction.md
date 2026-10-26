@@ -61,8 +61,18 @@ before another attempt is admitted. If termination or drain cannot be confirmed,
 that lane remains unavailable; a timer firing alone is not permission to retry.
 Late acquisitions remain owned even after an uncertain-drain report. Successful
 attempts detach old cancellation callbacks so they cannot kill a later browser.
-This kernel is qualified independently before engine and queue adoption; its
-existence is not evidence that all production dispatch paths already use it.
+The isolated engine candidate now adopts that kernel across startup, actions,
+checkpointing, and closure. Startup receives a single-use incarnation identity
+before asynchronous admission; cancellation revokes that exact identity, including
+an older background startup still waiting on admission. A stopped incarnation
+cannot renew itself into a replacement. Driver and explicit phase timeouts retire
+the browser instead of assuming that returning an error stopped its work.
+
+Execution limits have one application-owned policy injected into Praxis. Private
+application-to-runtime control may carry a remaining duration and cancellation
+signal; these are not new customer command fields. Queue integration must still
+carry the durable deadline, cancel on claim loss, and fence completion and
+recovery. Engine adoption alone does not establish those queue guarantees.
 Local callbacks cannot interrupt a blocked controller event loop. Synchronous
 pre-dispatch clock checks catch an elapsed budget before another dispatch, but
 independent worker/process supervision remains necessary for already running

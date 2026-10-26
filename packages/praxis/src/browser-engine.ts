@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import path from "node:path";
 import type { BrowserContext, ElementHandle, Page, Request } from "playwright";
 import type {
@@ -13,13 +14,22 @@ import type {
   VeilBrowserAuthorityPort,
   VeilBrowserCapturePort,
   PraxisOwnerIdentity,
+  PraxisCommandOptions,
 } from "@scry/contracts";
 import { SanitizedBrowserRecorder } from "./recorder.js";
 import { PraxisOwnerLease } from "./owner-lease.js";
 import { OwnedBrowser } from "./owned-browser.js";
+import { CommandLane, type CommandAttempt } from "./command-lane.js";
+
+interface BrowserIncarnation {
+  sessionId: string;
+  state: "active" | "retired" | "command_cancelled";
+  resources?: BrowserResources;
+}
 
 interface BrowserResources {
   sessionId: string;
+  incarnation: BrowserIncarnation;
   lease: PraxisOwnerLease;
   state: "opening" | "active" | "retiring" | "retired" | "unconfirmed";
   expectedExit: boolean;
@@ -82,20 +92,34 @@ export class PraxisBrowserEngine {
   readonly #opening = new Map<string, Promise<{ sessionId: string; ownerGeneration: number }>>();
   readonly #closing = new Map<string, Promise<void>>();
   readonly #resources = new Map<string, BrowserResources>();
+  readonly #incarnations = new Map<string, BrowserIncarnation>();
+  readonly #commandLanes = new Map<string, CommandLane>();
   #stopping = false;
   constructor(
     private readonly commands: PraxisCommandsPort,
     private readonly effects: PraxisEffectsPort,
     private readonly evidenceService: ChronicleEvidencePort,
     private readonly protection: VeilBrowserProtectionPort,
+    private readonly executionBudgetMs: (kind: BrowserCommand["kind"]) => number,
   ) {}
 
-  async open(sessionId: string): Promise<{ sessionId: string; ownerGeneration: number }> {
+  async open(
+    sessionId: string,
+    commandIncarnation?: BrowserIncarnation,
+  ): Promise<{ sessionId: string; ownerGeneration: number }> {
+    if (this.#stopping) throw new Error("SCRY_BROWSER_SESSION_CLOSING");
+    const priorRetirement = this.#resources.get(sessionId)?.retirement;
+    let incarnation = commandIncarnation ?? this.incarnation(sessionId);
     if (this.#stopping) throw new Error("SCRY_BROWSER_SESSION_CLOSING");
     await this.effects.assertCompatibleBaseline();
     const resources = this.#resources.get(sessionId);
     if (resources?.retirement) await resources.retirement;
     if (this.#stopping) throw new Error("SCRY_BROWSER_SESSION_CLOSING");
+    // A standalone open explicitly waiting on a known retiring owner may renew
+    // after its confirmed exit. A cancelled/late startup must never do so.
+    if (priorRetirement && !commandIncarnation && incarnation.state === "retired")
+      incarnation = this.incarnation(sessionId);
+    this.assertIncarnation(incarnation);
     const existing = this.#sessions.get(sessionId);
     if (this.#closing.has(sessionId)) throw new Error("SCRY_BROWSER_SESSION_CLOSING");
     if (existing) {
@@ -104,7 +128,7 @@ export class PraxisBrowserEngine {
     }
     const opening = this.#opening.get(sessionId);
     if (opening) return opening;
-    const operation = this.#openNew(sessionId);
+    const operation = this.#openNew(sessionId, incarnation);
     this.#opening.set(sessionId, operation);
     try {
       return await operation;
@@ -113,13 +137,24 @@ export class PraxisBrowserEngine {
     }
   }
 
-  async #openNew(sessionId: string): Promise<{ sessionId: string; ownerGeneration: number }> {
+  async #openNew(
+    sessionId: string,
+    incarnation: BrowserIncarnation,
+  ): Promise<{ sessionId: string; ownerGeneration: number }> {
     const scope = await this.commands.sessionContext(sessionId);
+    this.assertIncarnation(incarnation);
     const ownerLeaseMs = 60_000;
     const owner = await this.effects.claimOwner(sessionId, `worker:${process.pid}`, ownerLeaseMs);
     const identity = { sessionId, generation: owner.generation, leaseToken: owner.leaseToken };
     const lease = new PraxisOwnerLease(identity, this.effects);
-    const resources: BrowserResources = { sessionId, lease, state: "opening", expectedExit: false };
+    const resources: BrowserResources = {
+      sessionId,
+      incarnation,
+      lease,
+      state: "opening",
+      expectedExit: false,
+    };
+    incarnation.resources = resources;
     this.#resources.set(sessionId, resources);
     try {
       this.assertOpening(resources);
@@ -239,30 +274,96 @@ export class PraxisBrowserEngine {
     }
   }
 
-  async execute(sessionId: string, command: BrowserCommand): Promise<Record<string, unknown>> {
-    const session = await this.requiredSession(sessionId);
+  async execute(
+    sessionId: string,
+    command: BrowserCommand,
+    options?: PraxisCommandOptions,
+  ): Promise<Record<string, unknown>> {
+    const lane = this.#commandLanes.get(sessionId) ?? new CommandLane();
+    this.#commandLanes.set(sessionId, lane);
+    let executedIncarnation: BrowserIncarnation | undefined;
     try {
-      const result = await this.executeInSession(session, command);
-      if (command.kind !== "close" && command.kind !== "close_for_failure") {
-        await this.persistCheckpoint(session);
-        await this.assertSessionOwner(session);
-      }
-      return result;
-    } catch (error) {
-      if (error instanceof Error && error.message === "SCRY_BROWSER_OWNER_FENCED")
-        await this.evict(session);
-      throw error;
+      return await lane.run(
+        options ?? { remainingMs: this.executionBudgetMs(command.kind) },
+        async (attempt) => {
+          const incarnation = this.incarnation(sessionId);
+          executedIncarnation = incarnation;
+          const revoke = () => {
+            incarnation.state = "command_cancelled";
+            incarnation.resources?.lease.revoke();
+          };
+          attempt.signal.addEventListener("abort", revoke, { once: true });
+          attempt.bind({
+            stop: async () => {
+              revoke();
+              if (incarnation.resources) await this.retire(incarnation.resources);
+            },
+          });
+          try {
+            const session = await this.requiredSession(sessionId, incarnation);
+            attempt.assertActive();
+            try {
+              const result = await this.executeInSession(session, command, attempt);
+              attempt.assertActive();
+              if (command.kind !== "close" && command.kind !== "close_for_failure") {
+                await this.persistCheckpoint(session, attempt);
+                await this.assertSessionOwner(session);
+              }
+              attempt.assertActive();
+              return result;
+            } catch (error) {
+              if (error instanceof Error && error.name === "TimeoutError") {
+                // Driver timeout is not proof that an in-flight action stopped.
+                await this.evict(session);
+                throw new Error("SCRY_BROWSER_ACTION_TIMEOUT");
+              }
+              if (
+                error instanceof Error &&
+                [
+                  "SCRY_BROWSER_PROVIDER_RESPONSE_TIMEOUT",
+                  "SCRY_BROWSER_RESPONSE_BODY_TIMEOUT",
+                  "SCRY_BROWSER_MUTATION_REQUEST_TIMEOUT",
+                  "SCRY_BROWSER_READ_ONLY_SETTLE_TIMEOUT",
+                ].includes(error.message)
+              )
+                await this.evict(session);
+              if (error instanceof Error && error.message === "SCRY_BROWSER_OWNER_FENCED")
+                await this.evict(session);
+              throw error;
+            }
+          } finally {
+            attempt.signal.removeEventListener("abort", revoke);
+          }
+        },
+      );
+    } finally {
+      if (
+        lane.available &&
+        !this.#resources.has(sessionId) &&
+        this.#commandLanes.get(sessionId) === lane
+      )
+        this.#commandLanes.delete(sessionId);
+      const incarnation = executedIncarnation;
+      if (
+        incarnation &&
+        incarnation.state !== "active" &&
+        !incarnation.resources &&
+        this.#incarnations.get(sessionId) === incarnation
+      )
+        this.#incarnations.delete(sessionId);
     }
   }
 
   private async executeInSession(
     session: ActiveSession,
     command: BrowserCommand,
+    attempt: CommandAttempt,
   ): Promise<Record<string, unknown>> {
+    attempt.assertActive();
     switch (command.kind) {
       case "navigate": {
         this.assertOrigin(session, command.url);
-        await session.page.goto(command.url);
+        await session.page.goto(command.url, { timeout: attempt.remainingMs() });
         return this.observe(session);
       }
       case "observe":
@@ -275,27 +376,35 @@ export class PraxisBrowserEngine {
             command.protectedValueId,
           );
           try {
-            await handle.fill(value);
+            attempt.assertActive();
+            await handle.fill(value, { timeout: attempt.remainingMs() });
           } finally {
             value = "";
           }
-        } else await handle.fill(command.publicValue ?? "");
+        } else await handle.fill(command.publicValue ?? "", { timeout: attempt.remainingMs() });
         return { documentEpoch: session.documentEpoch, filled: true };
       }
       case "click":
-        await this.readOnlyInteraction(session, () =>
-          this.handle(session, command.reference).click(),
+        await this.readOnlyInteraction(
+          session,
+          () => this.handle(session, command.reference).click({ timeout: attempt.remainingMs() }),
+          attempt,
         );
         return this.observe(session);
       case "press":
-        await this.readOnlyInteraction(session, () =>
-          this.handle(session, command.reference).press(command.key),
+        await this.readOnlyInteraction(
+          session,
+          () =>
+            this.handle(session, command.reference).press(command.key, {
+              timeout: attempt.remainingMs(),
+            }),
+          attempt,
         );
         return this.observe(session);
       case "capture_dom":
         return this.captureDom(session, command.effectId, command.reference);
       case "commit":
-        return this.commit(session, command);
+        return this.commit(session, command, attempt);
       case "publish_capture":
         return this.publish(session, command.effectId, command.captureId, command.selections);
       case "discard_capture":
@@ -402,6 +511,7 @@ export class PraxisBrowserEngine {
 
   private assertOpening(resources: BrowserResources): void {
     if (this.#stopping) throw new Error("SCRY_BROWSER_SESSION_CLOSING");
+    this.assertIncarnation(resources.incarnation);
     if (resources.state !== "opening") throw new Error("SCRY_BROWSER_OWNER_FENCED");
     resources.lease.assertActive();
   }
@@ -409,6 +519,7 @@ export class PraxisBrowserEngine {
   private retire(resources: BrowserResources): Promise<void> {
     if (resources.retirement) return resources.retirement;
     resources.state = "retiring";
+    if (resources.incarnation.state === "active") resources.incarnation.state = "retired";
     resources.lease.revoke();
     if (resources.heartbeat) clearInterval(resources.heartbeat);
     if (resources.session) {
@@ -442,6 +553,8 @@ export class PraxisBrowserEngine {
           this.#resources.delete(resources.sessionId);
         if (this.#sessions.get(resources.sessionId) === resources.session)
           this.#sessions.delete(resources.sessionId);
+        if (this.#incarnations.get(resources.sessionId) === resources.incarnation)
+          this.#incarnations.delete(resources.sessionId);
       })
       .catch((error) => {
         resources.state = "unconfirmed";
@@ -452,8 +565,27 @@ export class PraxisBrowserEngine {
     return resources.retirement;
   }
 
-  private async requiredSession(sessionId: string): Promise<ActiveSession> {
-    await this.open(sessionId);
+  private incarnation(sessionId: string): BrowserIncarnation {
+    let incarnation = this.#incarnations.get(sessionId);
+    if (!incarnation) {
+      incarnation = { sessionId, state: "active" };
+      this.#incarnations.set(sessionId, incarnation);
+    }
+    return incarnation;
+  }
+  private assertIncarnation(incarnation: BrowserIncarnation): void {
+    if (
+      incarnation.state !== "active" ||
+      this.#incarnations.get(incarnation.sessionId) !== incarnation
+    )
+      throw new Error("SCRY_BROWSER_OWNER_FENCED");
+  }
+  private async requiredSession(
+    sessionId: string,
+    incarnation: BrowserIncarnation,
+  ): Promise<ActiveSession> {
+    await this.open(sessionId, incarnation);
+    this.assertIncarnation(incarnation);
     return this.#sessions.get(sessionId)!;
   }
 
@@ -547,11 +679,13 @@ export class PraxisBrowserEngine {
       throw new Error("SCRY_BROWSER_ORIGIN_NOT_ALLOWED");
   }
 
-  private async persistCheckpoint(session: ActiveSession): Promise<void> {
+  private async persistCheckpoint(session: ActiveSession, attempt: CommandAttempt): Promise<void> {
+    attempt.assertActive();
     const resumeUrl = session.page.url();
     if (resumeUrl === "about:blank") return;
     this.assertOrigin(session, resumeUrl);
     const storageState = await session.context.storageState({ indexedDB: true });
+    attempt.assertActive();
     const sessionStorage = await session.page.evaluate(() =>
       Object.fromEntries(
         Array.from({ length: window.sessionStorage.length }, (_, index) => {
@@ -560,6 +694,7 @@ export class PraxisBrowserEngine {
         }).filter(([key]) => key.length > 0),
       ),
     );
+    attempt.assertActive();
     await this.commands.saveBrowserCheckpoint(session.sessionId, session.ownerGeneration, {
       resumeUrl,
       storageState,
@@ -570,6 +705,7 @@ export class PraxisBrowserEngine {
   private async commit(
     session: ActiveSession,
     command: Extract<BrowserCommand, { kind: "commit" }>,
+    attempt: CommandAttempt,
   ): Promise<Record<string, unknown>> {
     const existing = await this.effects.recoverAdmittedEffect({
       sessionId: session.sessionId,
@@ -625,6 +761,11 @@ export class PraxisBrowserEngine {
         settleOwned = resolve;
       });
       const gate = async (route: import("playwright").Route) => {
+        try {
+          attempt.assertActive();
+        } catch {
+          return route.abort("blockedbyclient");
+        }
         const request = route.request();
         const method = request.method();
         const sameOrigin = new URL(request.url()).origin === new URL(session.baseOrigin).origin;
@@ -637,19 +778,21 @@ export class PraxisBrowserEngine {
           writeCount += 1;
           try {
             await this.effects.markDispatchStarted(effect.effect.id, session.ownerGeneration);
+            attempt.assertActive();
             dispatchBegan = true;
             const fetched = await bounded(
-              route.fetch({ timeout: command.timeoutMs, maxRedirects: 0 }),
-              command.timeoutMs,
+              route.fetch({ timeout: attempt.remainingMs(command.timeoutMs), maxRedirects: 0 }),
+              attempt.remainingMs(command.timeoutMs),
               "SCRY_BROWSER_PROVIDER_RESPONSE_TIMEOUT",
             );
             const body = Buffer.from(
               await bounded(
                 fetched.body(),
-                command.timeoutMs,
+                attempt.remainingMs(command.timeoutMs),
                 "SCRY_BROWSER_RESPONSE_BODY_TIMEOUT",
               ),
             );
+            attempt.assertActive();
             const headers = fetched.headers();
             const redirectChain = safeRedirectChain(
               fetched.status(),
@@ -691,6 +834,7 @@ export class PraxisBrowserEngine {
               responseStatus: fetched.status(),
             });
             captureDurable = true;
+            attempt.assertActive();
             await route.fulfill({ response: fetched, body });
             settleOwned({ receipt });
           } catch (error) {
@@ -704,16 +848,19 @@ export class PraxisBrowserEngine {
       };
       try {
         await session.page.route("**/*", gate);
-        await target.click({ noWaitAfter: true, timeout: command.timeoutMs });
+        attempt.assertActive();
+        await target.click({ noWaitAfter: true, timeout: attempt.remainingMs(command.timeoutMs) });
         const owned = await bounded(
           ownedResult,
-          command.timeoutMs,
+          attempt.remainingMs(command.timeoutMs),
           "SCRY_BROWSER_MUTATION_REQUEST_TIMEOUT",
         );
         if ("error" in owned) throw owned.error;
         const { receipt } = owned;
         await session.page
-          .waitForLoadState("domcontentloaded", { timeout: Math.min(command.timeoutMs, 5_000) })
+          .waitForLoadState("domcontentloaded", {
+            timeout: attempt.remainingMs(Math.min(command.timeoutMs, 5_000)),
+          })
           .catch(() => undefined);
         await session.page.waitForTimeout(100);
         const successorObservation = await this.observe(session);
@@ -755,22 +902,28 @@ export class PraxisBrowserEngine {
   private async readOnlyInteraction(
     session: ActiveSession,
     action: () => Promise<void>,
+    attempt: CommandAttempt,
   ): Promise<void> {
     let blocked = false;
     let actionStarted = false;
-    let lastNetworkActivity = Date.now();
+    let lastNetworkActivity = performance.now();
     const pendingReads = new Set<Request>();
     const isRead = (request: Request) => ["GET", "HEAD", "OPTIONS"].includes(request.method());
     const onRequest = (request: Request) => {
       if (!actionStarted || !isRead(request)) return;
       pendingReads.add(request);
-      lastNetworkActivity = Date.now();
+      lastNetworkActivity = performance.now();
     };
     const onRequestSettled = (request: Request) => {
       if (!pendingReads.delete(request)) return;
-      lastNetworkActivity = Date.now();
+      lastNetworkActivity = performance.now();
     };
     const gate = async (route: import("playwright").Route) => {
+      try {
+        attempt.assertActive();
+      } catch {
+        return route.abort("blockedbyclient");
+      }
       if (["GET", "HEAD", "OPTIONS"].includes(route.request().method())) return route.continue();
       blocked = true;
       return route.abort("blockedbyclient");
@@ -780,12 +933,14 @@ export class PraxisBrowserEngine {
     session.page.on("requestfailed", onRequestSettled);
     await session.page.route("**/*", gate);
     try {
+      attempt.assertActive();
       actionStarted = true;
-      lastNetworkActivity = Date.now();
+      lastNetworkActivity = performance.now();
       await action();
-      const deadline = Date.now() + 10_000;
-      while (pendingReads.size > 0 || Date.now() - lastNetworkActivity < 100) {
-        if (Date.now() >= deadline) throw new Error("SCRY_BROWSER_READ_ONLY_SETTLE_TIMEOUT");
+      const deadline = performance.now() + Math.min(10000, attempt.remainingMs());
+      while (pendingReads.size > 0 || performance.now() - lastNetworkActivity < 100) {
+        attempt.assertActive();
+        if (performance.now() >= deadline) throw new Error("SCRY_BROWSER_READ_ONLY_SETTLE_TIMEOUT");
         await session.page.waitForTimeout(25);
       }
     } finally {
