@@ -130,6 +130,28 @@ assertInOrder(caddyValidationFailure.log, [
   `SCRY_RELEASE_ID=${previousRelease}`,
 ]);
 
+// Compose CLI -t overrides the manifest, including when stopping a previous
+// release whose retained manifest predates the current worker grace period.
+const workerGrace = Number(serviceSection("worker").match(/stop_grace_period:\s*(\d+)s/)?.[1]);
+assert.ok(Number.isSafeInteger(workerGrace) && workerGrace >= 60);
+for (const scenario of [
+  success,
+  bootstrap,
+  migrationFailure,
+  recoveryFailure,
+  caddyValidationFailure,
+]) {
+  const stops = scenario.log.split("\n").filter((line) => /\bstop\b.*\bworker\b/.test(line));
+  assert.ok(stops.length > 0, "scenario must actually exercise a worker stop");
+  for (const line of stops) {
+    const timeout = Number(line.match(/\bstop -t (\d+)\b/)?.[1]);
+    assert.ok(
+      timeout >= workerGrace,
+      "deployment and rollback must preserve the worker manifest grace",
+    );
+  }
+}
+
 process.stdout.write(
   "Server deployment controller verified: success, no-op replay, active-work refusal, migration rollback, Caddy-validation rollback, and recovery-failure fencing.\n",
 );
