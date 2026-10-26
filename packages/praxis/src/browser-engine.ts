@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import type { Browser, BrowserContext, ElementHandle, Page, Request } from "playwright";
-import { chromium } from "playwright";
+import type { BrowserContext, ElementHandle, Page, Request } from "playwright";
 import type {
   BrowserCaptureReceipt,
   BrowserCommand,
@@ -17,10 +16,23 @@ import type {
 } from "@scry/contracts";
 import { SanitizedBrowserRecorder } from "./recorder.js";
 import { PraxisOwnerLease } from "./owner-lease.js";
+import { OwnedBrowser } from "./owned-browser.js";
+
+interface BrowserResources {
+  sessionId: string;
+  lease: PraxisOwnerLease;
+  state: "opening" | "active" | "retiring" | "retired" | "unconfirmed";
+  expectedExit: boolean;
+  launch?: Promise<OwnedBrowser>;
+  recorder?: SanitizedBrowserRecorder;
+  session?: ActiveSession;
+  retirement?: Promise<void>;
+  heartbeat?: NodeJS.Timeout;
+}
 
 interface ActiveSession {
   lease: PraxisOwnerLease;
-  browser: Browser;
+  resources: BrowserResources;
   context: BrowserContext;
   page: Page;
   ownerGeneration: number;
@@ -36,7 +48,6 @@ interface ActiveSession {
   recorder: SanitizedBrowserRecorder;
   vault: VeilBrowserCapturePort;
   ownerLeaseToken: string;
-  ownerHeartbeat: NodeJS.Timeout;
 }
 
 const digest = (value: unknown) =>
@@ -70,6 +81,8 @@ export class PraxisBrowserEngine {
   readonly #sessions = new Map<string, ActiveSession>();
   readonly #opening = new Map<string, Promise<{ sessionId: string; ownerGeneration: number }>>();
   readonly #closing = new Map<string, Promise<void>>();
+  readonly #resources = new Map<string, BrowserResources>();
+  #stopping = false;
   constructor(
     private readonly commands: PraxisCommandsPort,
     private readonly effects: PraxisEffectsPort,
@@ -78,7 +91,11 @@ export class PraxisBrowserEngine {
   ) {}
 
   async open(sessionId: string): Promise<{ sessionId: string; ownerGeneration: number }> {
+    if (this.#stopping) throw new Error("SCRY_BROWSER_SESSION_CLOSING");
     await this.effects.assertCompatibleBaseline();
+    const resources = this.#resources.get(sessionId);
+    if (resources?.retirement) await resources.retirement;
+    if (this.#stopping) throw new Error("SCRY_BROWSER_SESSION_CLOSING");
     const existing = this.#sessions.get(sessionId);
     if (this.#closing.has(sessionId)) throw new Error("SCRY_BROWSER_SESSION_CLOSING");
     if (existing) {
@@ -102,10 +119,18 @@ export class PraxisBrowserEngine {
     const owner = await this.effects.claimOwner(sessionId, `worker:${process.pid}`, ownerLeaseMs);
     const identity = { sessionId, generation: owner.generation, leaseToken: owner.leaseToken };
     const lease = new PraxisOwnerLease(identity, this.effects);
-    let browser: Browser | undefined;
-    let context: BrowserContext | undefined;
-    let ownerHeartbeat: NodeJS.Timeout | undefined;
+    const resources: BrowserResources = { sessionId, lease, state: "opening", expectedExit: false };
+    this.#resources.set(sessionId, resources);
     try {
+      this.assertOpening(resources);
+      resources.heartbeat = setInterval(
+        () =>
+          void lease.heartbeat(ownerLeaseMs).catch(() => {
+            // Startup and active execution share the same revocation owner.
+            void this.retire(resources).catch(() => undefined);
+          }),
+        20_000,
+      );
       const root = path.resolve(
         process.env.SCRY_BROWSER_ARTIFACT_ROOT ?? "artifacts/browser",
         sessionId,
@@ -132,13 +157,22 @@ export class PraxisBrowserEngine {
       const durableCaptures = await this.effects.durableCapturesForSession(sessionId);
       await lease.run(() => protectedSession.restoreCaptures(durableCaptures));
       const checkpoint = await this.commands.loadBrowserCheckpoint(sessionId, owner.generation);
-      browser = await chromium.launch({
+      this.assertOpening(resources);
+      await lease.run(async () => undefined);
+      this.assertOpening(resources);
+      resources.launch = OwnedBrowser.launch({
         headless: process.env.SCRY_BROWSER_HEADLESS !== "false",
         channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
       });
-      context = await browser.newContext({
+      const custody = await resources.launch;
+      custody.browser.once("disconnected", () => {
+        if (!resources.expectedExit) void this.retire(resources).catch(() => undefined);
+      });
+      this.assertOpening(resources);
+      const context = await custody.browser.newContext({
         ...(checkpoint ? { storageState: checkpoint.storageState } : {}),
       });
+      this.assertOpening(resources);
       if (checkpoint && Object.keys(checkpoint.sessionStorage).length > 0) {
         await context.addInitScript(
           ({ origin, values }) => {
@@ -149,19 +183,19 @@ export class PraxisBrowserEngine {
           { origin: new URL(scope.baseOrigin).origin, values: checkpoint.sessionStorage },
         );
       }
+      this.assertOpening(resources);
       const page = await context.newPage();
+      this.assertOpening(resources);
       const recorder = new SanitizedBrowserRecorder({
         recording: evidence.createRecording(protectedSession.recordingProtection),
         privacyOptions: protectedSession.privacyOptions,
       });
+      resources.recorder = recorder;
       await recorder.start(context);
-      ownerHeartbeat = setInterval(
-        () => void lease.heartbeat(ownerLeaseMs).catch(() => this.evict(session)),
-        20_000,
-      );
+      this.assertOpening(resources);
       const session: ActiveSession = {
         lease,
-        browser,
+        resources,
         context,
         page,
         ownerGeneration: owner.generation,
@@ -177,8 +211,8 @@ export class PraxisBrowserEngine {
         recorder,
         vault,
         ownerLeaseToken: owner.leaseToken,
-        ownerHeartbeat,
       };
+      resources.session = session;
       page.on("framenavigated", (frame) => {
         if (frame === page.mainFrame()) {
           session.documentEpoch += 1;
@@ -186,17 +220,18 @@ export class PraxisBrowserEngine {
         }
       });
       if (checkpoint) {
+        await lease.run(async () => undefined);
+        this.assertOpening(resources);
         this.assertOrigin(session, checkpoint.resumeUrl);
         await page.goto(checkpoint.resumeUrl);
       }
       await lease.run(async () => undefined);
+      this.assertOpening(resources);
+      resources.state = "active";
       this.#sessions.set(sessionId, session);
       return { sessionId, ownerGeneration: owner.generation };
     } catch (error) {
-      lease.revoke();
-      if (ownerHeartbeat) clearInterval(ownerHeartbeat);
-      await context?.close().catch(() => undefined);
-      await browser?.close().catch(() => undefined);
+      await this.retire(resources);
       await this.effects
         .releaseOwner(sessionId, owner.generation, owner.leaseToken)
         .catch(() => undefined);
@@ -314,8 +349,9 @@ export class PraxisBrowserEngine {
     try {
       await session.evidence.prepareClosure();
       await session.recorder.close();
-      await session.context.close();
-      await session.browser.close();
+      session.resources.expectedExit = true;
+      await (await session.resources.launch!).close();
+      session.lease.assertActive();
       const completion = await session.evidence.seal({
         renderVideo: process.env.SCRY_BROWSER_RENDER_VIDEO === "true",
         actionLedger: () => this.commands.safeActionLedger(sessionId),
@@ -332,16 +368,15 @@ export class PraxisBrowserEngine {
   }
 
   async closeAll(): Promise<void> {
-    await Promise.allSettled([...this.#opening.values()]);
-    for (const [sessionId, session] of [...this.#sessions.entries()]) {
-      try {
-        await this.close(sessionId);
-      } catch {
-        /* Shutdown must not retain a browser when product closure is refused. */
-      } finally {
-        await this.evict(session);
-      }
-    }
+    this.#stopping = true;
+    // Host shutdown is interruption, not an implicit business/evidence close.
+    // Fence first, then stop every acquired/launching process independently.
+    // Startup waiting on a database call cannot launch after this flag is set.
+    const outcomes = await Promise.allSettled(
+      [...this.#resources.values()].map((resource) => this.retire(resource)),
+    );
+    if (outcomes.some((outcome) => outcome.status === "rejected"))
+      throw new Error("SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED");
   }
 
   private ownerIdentity(session: ActiveSession): PraxisOwnerIdentity {
@@ -362,15 +397,59 @@ export class PraxisBrowserEngine {
   }
 
   private async evict(session: ActiveSession): Promise<void> {
-    session.lease.revoke();
-    if (this.#sessions.get(session.sessionId) === session) this.#sessions.delete(session.sessionId);
-    clearInterval(session.ownerHeartbeat);
-    session.references.clear();
-    await Promise.allSettled([
-      session.recorder.abort(),
-      session.context.close(),
-      session.browser.close(),
-    ]);
+    return this.retire(session.resources);
+  }
+
+  private assertOpening(resources: BrowserResources): void {
+    if (this.#stopping) throw new Error("SCRY_BROWSER_SESSION_CLOSING");
+    if (resources.state !== "opening") throw new Error("SCRY_BROWSER_OWNER_FENCED");
+    resources.lease.assertActive();
+  }
+
+  private retire(resources: BrowserResources): Promise<void> {
+    if (resources.retirement) return resources.retirement;
+    resources.state = "retiring";
+    resources.lease.revoke();
+    if (resources.heartbeat) clearInterval(resources.heartbeat);
+    if (resources.session) {
+      resources.session.references.clear();
+    }
+    resources.retirement = Promise.resolve()
+      .then(async () => {
+        // Detach admission immediately, but never wait for a stalled protocol
+        // detach before physically terminating the process that owns it.
+        const recording = Promise.resolve()
+          .then(() => resources.recorder?.abort())
+          .then(
+            () => true,
+            () => false,
+          );
+        const custody = await resources.launch?.catch((error: unknown) => {
+          // A rejected acquisition may still own an unconfirmed child. Never
+          // turn its explicit cleanup failure into proof that nothing launched.
+          if (
+            error instanceof Error &&
+            error.message === "SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED"
+          )
+            throw error;
+          return undefined;
+        });
+        await custody?.terminate();
+        if (!(await bounded(recording, 2000, "SCRY_BROWSER_RECORDER_STOP_TIMEOUT")))
+          throw new Error("SCRY_BROWSER_RECORDER_STOP_TIMEOUT");
+        resources.state = "retired";
+        if (this.#resources.get(resources.sessionId) === resources)
+          this.#resources.delete(resources.sessionId);
+        if (this.#sessions.get(resources.sessionId) === resources.session)
+          this.#sessions.delete(resources.sessionId);
+      })
+      .catch((error) => {
+        resources.state = "unconfirmed";
+        // Retain the exact retirement promise. No later local open may mistake
+        // an unconfirmed process/recorder drain for a vacant session.
+        throw error;
+      });
+    return resources.retirement;
   }
 
   private async requiredSession(sessionId: string): Promise<ActiveSession> {
