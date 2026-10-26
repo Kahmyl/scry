@@ -50,9 +50,9 @@ renew that deadline. Initial routine-command limits are two minutes; retained
 synchronous replay closure has a separate fifteen-minute upper limit pending
 independent native encoding. These are operational ceilings, not response-time
 targets. Historical rows remain unchanged and receive a deadline only if claimed
-again. Durable facts alone do not stop a browser: carried monotonic execution,
-physical cancellation, claim-loss handling, and completion fencing remain required
-before command-lifecycle activation is considered complete.
+again. Durable facts alone do not stop a browser; the candidate's carried
+execution, cancellation and fencing mechanisms must be qualified together with
+owner recovery and independent process supervision before lifecycle activation.
 
 The isolated execution kernel uses one command lane per session. Praxis owns
 browser acquisition through an exact startup/session cell registered before any
@@ -75,9 +75,21 @@ the browser instead of assuming that returning an error stopped its work.
 
 Execution limits have one application-owned policy injected into Praxis. Private
 application-to-runtime control may carry a remaining duration and cancellation
-signal; these are not new customer command fields. Queue integration must still
-carry the durable deadline, cancel on claim loss, and fence completion and
-recovery. Engine adoption alone does not establish those queue guarantees.
+signal and a current-claim checkpoint; these are not new customer command fields.
+The isolated queue candidate mirrors database-relative lifetimes from a private
+process-local monotonic query anchor, deducting query, commit and transport time.
+Checkpoints never extend the execution deadline or renew a claim. Acknowledged
+heartbeats may renew claim authority, but never resurrect an expired local lease
+or extend the immutable command deadline. Renewals do not overlap, and frequent
+checks cannot postpone an already scheduled renewal.
+
+Expiry or claim failure cancels the exact active attempt. Native dispatch checks
+current command authority. Final success and failure writes remain post-lock
+database admissions. Unconfirmed native drain is not a terminal command failure:
+the host stops admission and begins failed-exit recovery before attempting any
+best-effort diagnostic write. An expired/replaced claimant cannot overwrite that
+command's recovery facts. These controls do not resolve an uncertain business
+effect as not applied, or prove automatic browser-owner retirement/recovery.
 Local callbacks cannot interrupt a blocked controller event loop. Synchronous
 pre-dispatch clock checks catch an elapsed budget before another dispatch, but
 independent worker/process supervision remains necessary for already running

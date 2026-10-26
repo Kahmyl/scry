@@ -1,4 +1,5 @@
 import { DelayedError } from "bullmq";
+import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PraxisExecutionPort } from "@scry/contracts";
 import type { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
@@ -11,8 +12,20 @@ function fixture() {
       session_id: "session",
       claim_token: "fixture-claim",
       safe_input: { kind: "observe" },
+      executionRemainingMs: 120000,
+      claimRemainingMs: 60000,
+      sampleStartedAt: performance.now(),
     })),
-    heartbeatClaim: vi.fn(async () => undefined),
+    assertClaim: vi.fn(async () => ({
+      executionRemainingMs: 120000,
+      claimRemainingMs: 60000,
+      sampleStartedAt: performance.now(),
+    })),
+    heartbeatClaim: vi.fn(async () => ({
+      executionRemainingMs: 120000,
+      claimRemainingMs: 60000,
+      sampleStartedAt: performance.now(),
+    })),
     complete: vi.fn(async () => undefined),
     fail: vi.fn(async () => undefined),
   };

@@ -14,6 +14,7 @@ export type PraxisSessionReceipt = z.infer<typeof praxisSessionReceiptSchema>;
 export interface PraxisCommandOptions {
   remainingMs: number;
   signal?: AbortSignal;
+  assertCurrent?: () => Promise<void>;
 }
 
 /** Application-facing browser execution capability. */

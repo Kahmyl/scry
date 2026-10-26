@@ -344,9 +344,14 @@ describe("qualification outcomes", () => {
         "test/browser-error-admission.integration.test.ts",
       ]),
     );
-    expect(database.tests).toEqual({ minimumPassed: 33, allowSkipped: false });
+    expect(database.tests).toEqual({ minimumPassed: 34, allowSkipped: false });
     expect(profiles.worker).toContain("command-queue");
     expect(profiles.worker).toContain("worker-shutdown");
+    expect(profiles.worker).toContain("command-lifetime");
+    expect(checks.find((entry) => entry.id === "command-lifetime")?.tests).toEqual({
+      minimumPassed: 3,
+      allowSkipped: false,
+    });
     expect(checks.find((entry) => entry.id === "worker-shutdown")?.tests).toEqual({
       minimumPassed: 1,
       allowSkipped: false,

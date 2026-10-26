@@ -300,10 +300,14 @@ export class PraxisBrowserEngine {
             },
           });
           try {
+            const current = async () => {
+              attempt.assertActive();
+              await options?.assertCurrent?.();
+              attempt.assertActive();
+            };
             const session = await this.requiredSession(sessionId, incarnation);
-            attempt.assertActive();
             try {
-              const result = await this.executeInSession(session, command, attempt);
+              const result = await this.executeInSession(session, command, attempt, current);
               attempt.assertActive();
               if (command.kind !== "close" && command.kind !== "close_for_failure") {
                 await this.persistCheckpoint(session, attempt);
@@ -327,7 +331,15 @@ export class PraxisBrowserEngine {
                 ].includes(error.message)
               )
                 await this.evict(session);
-              if (error instanceof Error && error.message === "SCRY_BROWSER_OWNER_FENCED")
+              if (
+                error instanceof Error &&
+                [
+                  "SCRY_BROWSER_OWNER_FENCED",
+                  "SCRY_BROWSER_COMMAND_CLAIM_FENCED",
+                  "SCRY_BROWSER_COMMAND_CLAIM_UNAVAILABLE",
+                  "SCRY_BROWSER_COMMAND_DEADLINE_EXCEEDED",
+                ].includes(error.message)
+              )
                 await this.evict(session);
               throw error;
             }
@@ -358,8 +370,9 @@ export class PraxisBrowserEngine {
     session: ActiveSession,
     command: BrowserCommand,
     attempt: CommandAttempt,
+    current: () => Promise<void>,
   ): Promise<Record<string, unknown>> {
-    attempt.assertActive();
+    await current();
     switch (command.kind) {
       case "navigate": {
         this.assertOrigin(session, command.url);
@@ -376,7 +389,7 @@ export class PraxisBrowserEngine {
             command.protectedValueId,
           );
           try {
-            attempt.assertActive();
+            await current();
             await handle.fill(value, { timeout: attempt.remainingMs() });
           } finally {
             value = "";
@@ -389,6 +402,7 @@ export class PraxisBrowserEngine {
           session,
           () => this.handle(session, command.reference).click({ timeout: attempt.remainingMs() }),
           attempt,
+          current,
         );
         return this.observe(session);
       case "press":
@@ -399,12 +413,13 @@ export class PraxisBrowserEngine {
               timeout: attempt.remainingMs(),
             }),
           attempt,
+          current,
         );
         return this.observe(session);
       case "capture_dom":
         return this.captureDom(session, command.effectId, command.reference);
       case "commit":
-        return this.commit(session, command, attempt);
+        return this.commit(session, command, attempt, current);
       case "publish_capture":
         return this.publish(session, command.effectId, command.captureId, command.selections);
       case "discard_capture":
@@ -706,6 +721,7 @@ export class PraxisBrowserEngine {
     session: ActiveSession,
     command: Extract<BrowserCommand, { kind: "commit" }>,
     attempt: CommandAttempt,
+    current: () => Promise<void>,
   ): Promise<Record<string, unknown>> {
     const existing = await this.effects.recoverAdmittedEffect({
       sessionId: session.sessionId,
@@ -777,8 +793,9 @@ export class PraxisBrowserEngine {
         if (sameOrigin && writeCount === 0) {
           writeCount += 1;
           try {
+            await current();
             await this.effects.markDispatchStarted(effect.effect.id, session.ownerGeneration);
-            attempt.assertActive();
+            await current();
             dispatchBegan = true;
             const fetched = await bounded(
               route.fetch({ timeout: attempt.remainingMs(command.timeoutMs), maxRedirects: 0 }),
@@ -834,7 +851,7 @@ export class PraxisBrowserEngine {
               responseStatus: fetched.status(),
             });
             captureDurable = true;
-            attempt.assertActive();
+            await current();
             await route.fulfill({ response: fetched, body });
             settleOwned({ receipt });
           } catch (error) {
@@ -848,7 +865,7 @@ export class PraxisBrowserEngine {
       };
       try {
         await session.page.route("**/*", gate);
-        attempt.assertActive();
+        await current();
         await target.click({ noWaitAfter: true, timeout: attempt.remainingMs(command.timeoutMs) });
         const owned = await bounded(
           ownedResult,
@@ -903,6 +920,7 @@ export class PraxisBrowserEngine {
     session: ActiveSession,
     action: () => Promise<void>,
     attempt: CommandAttempt,
+    current: () => Promise<void>,
   ): Promise<void> {
     let blocked = false;
     let actionStarted = false;
@@ -933,7 +951,7 @@ export class PraxisBrowserEngine {
     session.page.on("requestfailed", onRequestSettled);
     await session.page.route("**/*", gate);
     try {
-      attempt.assertActive();
+      await current();
       actionStarted = true;
       lastNetworkActivity = performance.now();
       await action();

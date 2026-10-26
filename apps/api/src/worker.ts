@@ -46,7 +46,15 @@ const sessionWorker = new Worker<BrowserExecutionJob>(
 );
 const commandWorker = new Worker<{ commandId: string }>(
   BROWSER_COMMAND_QUEUE,
-  (job, token) => work.run(job, token, () => processBrowserCommand(commands, praxis, job, token)),
+  (job, token) =>
+    work.run(job, token, () =>
+      processBrowserCommand(commands, praxis, job, token, {
+        onUnconfirmedDrain: () => {
+          work.failRuntime();
+          stop();
+        },
+      }),
+    ),
   {
     connection: redis.client,
     concurrency: Number(process.env.SCRY_BROWSER_COMMAND_CONCURRENCY ?? 8),

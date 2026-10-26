@@ -8,6 +8,24 @@ import { seedSession } from "./fixtures/browser-session.js";
 const url = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
 const live = url ? describe : describe.skip;
 live("post-lock command claim fencing", () => {
+  it("records recovery-required diagnostics without pretending that unknown runtime work is terminal", async () => {
+    const row = await claimed();
+    await commands.noteRecoveryRequired(row.id, row.claim_token!);
+    expect(await commands.observe(row.id)).toMatchObject({
+      state: "running",
+      errorCode: "SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED",
+    });
+    const stored = await database.query(
+      "SELECT claim_token,completed_at FROM browser_commands WHERE id=$1",
+      [row.id],
+    );
+    expect(stored.rows[0]!.claim_token).toBe(row.claim_token);
+    expect(stored.rows[0]!.completed_at).toBeNull();
+    await expire(row.id);
+    await expect(commands.noteRecoveryRequired(row.id, row.claim_token!)).rejects.toThrow(
+      "COMMAND_CLAIM_FENCED",
+    );
+  });
   let database: Database, commands: BrowserCommandRepository, effects: BrowserExecutionRepository;
   beforeAll(() => {
     process.env.DATABASE_URL = url;

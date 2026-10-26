@@ -1,5 +1,6 @@
 import { ChronicleRepository } from "@scry/chronicle";
 import { createHash, randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { isDeepStrictEqual } from "node:util";
 import { Inject, Injectable } from "@nestjs/common";
 import type {
@@ -43,13 +44,20 @@ interface CommandRow extends QueryResultRow {
   execution_budget_ms: number | null;
 }
 
-export interface CommandClaimSample extends QueryResultRow {
+interface CommandClaimDurations extends QueryResultRow {
   executionRemainingMs: number;
   claimRemainingMs: number;
 }
-interface ClaimedCommandRow extends CommandRow, CommandClaimSample {
+export interface CommandClaimSample extends CommandClaimDurations {
+  /** Private process-local monotonic query anchor; never a persisted clock. */
+  sampleStartedAt: number;
+}
+interface ClaimedDatabaseRow extends CommandRow, CommandClaimDurations {
   execution_deadline_at: Date;
   execution_budget_ms: number;
+}
+interface ClaimedCommandRow extends ClaimedDatabaseRow {
+  sampleStartedAt: number;
 }
 
 // Evaluate only after acquiring the command row lock. PostgreSQL may evaluate
@@ -360,7 +368,8 @@ export class BrowserCommandRepository {
         throw new Error("SCRY_BROWSER_COMMAND_ALREADY_RUNNING");
       }
       const claimToken = randomUUID();
-      const claimed = await client.query<ClaimedCommandRow>(
+      const sampleStartedAt = performance.now();
+      const claimed = await client.query<ClaimedDatabaseRow>(
         `WITH claim_clock AS MATERIALIZED (SELECT clock_timestamp() AS at)
          UPDATE browser_commands SET state='running',started_at=COALESCE(started_at,claim_clock.at),completed_at=NULL,
            error_code=NULL,claim_token=$2,claim_lease_expires_at=claim_clock.at+($3::int * interval '1 millisecond'),
@@ -369,7 +378,7 @@ export class BrowserCommandRepository {
          FROM claim_clock WHERE id=$1 RETURNING browser_commands.*,${claimClockProjection}`,
         [commandId, claimToken, leaseMs, commandExecutionBudgetMs(row.kind)],
       );
-      const claimedRow = claimed.rows[0]!;
+      const claimedRow = { ...claimed.rows[0]!, sampleStartedAt };
       if (
         claimedRow.protected_input_ciphertext &&
         claimedRow.protected_input_nonce &&
@@ -404,8 +413,9 @@ export class BrowserCommandRepository {
   ): Promise<T> {
     return this.database.transaction(async (client) => {
       await client.query("SELECT id FROM browser_commands WHERE id=$1 FOR UPDATE", [commandId]);
+      const sampleStartedAt = performance.now();
       const result = await client.query<
-        CommandClaimSample & { state: string; claim_token: string | null }
+        CommandClaimDurations & { state: string; claim_token: string | null }
       >(`SELECT state,claim_token,${claimClockProjection} FROM browser_commands WHERE id=$1`, [
         commandId,
       ]);
@@ -426,6 +436,7 @@ export class BrowserCommandRepository {
       return work(client, {
         executionRemainingMs: row.executionRemainingMs,
         claimRemainingMs: row.claimRemainingMs,
+        sampleStartedAt,
       });
     });
   }
@@ -441,12 +452,13 @@ export class BrowserCommandRepository {
   ): Promise<CommandClaimSample> {
     validateCommandLease(leaseMs);
     return this.withLiveClaim(commandId, claimToken, "heartbeat", async (client) => {
-      const result = await client.query<CommandClaimSample>(
+      const sampleStartedAt = performance.now();
+      const result = await client.query<CommandClaimDurations>(
         `UPDATE browser_commands SET claim_lease_expires_at=clock_timestamp()+($2::int * interval '1 millisecond')
          WHERE id=$1 RETURNING ${claimClockProjection}`,
         [commandId, leaseMs],
       );
-      return result.rows[0]!;
+      return { ...result.rows[0]!, sampleStartedAt };
     });
   }
 
@@ -474,6 +486,15 @@ export class BrowserCommandRepository {
         `UPDATE browser_commands SET state='failed',error_code=$2,completed_at=clock_timestamp(),claim_token=NULL,
            claim_lease_expires_at=NULL WHERE id=$1`,
         [commandId, code || "SCRY_BROWSER_COMMAND_FAILED"],
+      );
+    });
+  }
+
+  async noteRecoveryRequired(commandId: string, claimToken: string): Promise<void> {
+    await this.withLiveClaim(commandId, claimToken, "fail", async (client) => {
+      await client.query(
+        "UPDATE browser_commands SET error_code='SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED' WHERE id=$1",
+        [commandId],
       );
     });
   }

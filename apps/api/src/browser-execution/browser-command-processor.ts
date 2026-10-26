@@ -1,17 +1,19 @@
 import { DelayedError, type Job } from "bullmq";
 import type { PraxisExecutionPort } from "@scry/contracts";
 import type { BrowserCommandRepository } from "./repositories/browser-command.repository.js";
+import { CommandExecutionLease } from "./command-execution-lease.js";
 
 /** Ordered admission is not a failed browser action or an infrastructure retry.
  * Both production and integration workers use this processor, not copied logic.
- * Claim-loss cancellation and absolute dispatch deadlines are separate lifecycle
- * work; this prerequisite does not claim to solve them by changing queue order.
+ * Durable deadlines and claim-loss cancellation share one private lease control.
+ * Native unconfirmed drain never advances the durable command to terminal state.
  */
 export async function processBrowserCommand(
   commands: BrowserCommandRepository,
   praxis: PraxisExecutionPort,
   job: Pick<Job<{ commandId: string }>, "data" | "moveToDelayed">,
   token?: string,
+  options: { onUnconfirmedDrain?: () => void } = {},
 ): Promise<Record<string, unknown>> {
   let command;
   try {
@@ -31,18 +33,36 @@ export async function processBrowserCommand(
   if (!command) return { replay: true };
   const claimToken = command.claim_token;
   if (!claimToken) throw new Error("SCRY_BROWSER_COMMAND_CLAIM_TOKEN_MISSING");
-  const heartbeat = setInterval(
-    () => void commands.heartbeatClaim(command.id, claimToken).catch(() => undefined),
-    20_000,
-  );
+  const lease = new CommandExecutionLease(commands, command.id, claimToken, command);
   try {
-    const result = await praxis.executeCommand(command.session_id, command.safe_input);
+    lease.assertActive();
+    await lease.checkpoint();
+    const result = await praxis.executeCommand(command.session_id, command.safe_input, {
+      remainingMs: lease.remainingMs(),
+      signal: lease.signal,
+      assertCurrent: () => lease.checkpoint(),
+    });
+    lease.assertActive();
     await commands.complete(command.id, claimToken, result);
     return result;
   } catch (error) {
-    await commands.fail(command.id, claimToken, error);
+    if (
+      error instanceof Error &&
+      [
+        "SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED",
+        "SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED",
+        "SCRY_BROWSER_RECORDER_STOP_TIMEOUT",
+      ].includes(error.message)
+    ) {
+      // Diagnostic persistence is best effort; host containment never depends on
+      // a database still being available or this claimant still being current.
+      options.onUnconfirmedDrain?.();
+      await commands.noteRecoveryRequired(command.id, claimToken).catch(() => undefined);
+      throw new Error("SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED");
+    }
+    await commands.fail(command.id, claimToken, lease.failure ?? error);
     return { failed: true };
   } finally {
-    clearInterval(heartbeat);
+    lease.dispose();
   }
 }

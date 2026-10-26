@@ -37,6 +37,18 @@ function fixture() {
   return { registry, worker, praxis, application, events, shutdown };
 }
 describe("bounded worker shutdown lifecycle", () => {
+  it("requires a failed host exit after unconfirmed runtime containment even if later cleanup fulfills", async () => {
+    const f = fixture(),
+      work = vi.fn(async () => undefined);
+    f.registry.failRuntime();
+    await expect(f.registry.run(job(), "token", work)).rejects.toBeInstanceOf(DelayedError);
+    const result = await f.shutdown().catch((error: unknown) => error);
+    expect(result).toBeInstanceOf(BrowserWorkerShutdownError);
+    expect((result as BrowserWorkerShutdownError).phases).toContain("runtime");
+    expect(work).not.toHaveBeenCalled();
+    expect(f.application).toHaveBeenCalledTimes(1);
+    expect(f.registry.transportFailed).toBe(false);
+  });
   it("stops admission synchronously and shares a single shutdown across signals", async () => {
     const f = fixture(),
       j = job(),
