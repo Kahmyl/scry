@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
 import { BrowserExecutionRepository } from "../src/browser-execution/repositories/browser-execution.repository.js";
@@ -27,6 +28,58 @@ live("post-lock browser owner authority", () => {
     const sessionId = await session();
     return { sessionId, ...(await effects.claimOwner(sessionId, "clock-fixture", 60_000)) };
   };
+  it("returns private post-lock relative owner clocks for claim and renewal", async () => {
+    const started = performance.now(),
+      owner = await owned();
+    expect(owner.leaseRemainingMs).toBeGreaterThan(59000);
+    expect(owner.leaseRemainingMs).toBeLessThanOrEqual(60000);
+    expect(owner.sampleStartedAt).toBeGreaterThanOrEqual(started);
+    expect(owner.sampleStartedAt).toBeLessThanOrEqual(performance.now());
+    const renewed = await effects.heartbeatOwner(
+      owner.sessionId,
+      owner.generation,
+      owner.leaseToken,
+      60000,
+    );
+    expect(renewed.leaseRemainingMs).toBeGreaterThan(59000);
+    expect(renewed.sampleStartedAt).toBeGreaterThanOrEqual(owner.sampleStartedAt);
+  });
+  it.each(["claim", "renewal"] as const)(
+    "anchors the %s sample after its lock wait",
+    async (operation) => {
+      const id = await session(),
+        owner =
+          operation === "renewal" ? await effects.claimOwner(id, "original", 60000) : undefined;
+      const client = await database.pool.connect();
+      let pending: Promise<{ sampleStartedAt: number; leaseRemainingMs: number }> | undefined;
+      try {
+        await client.query("BEGIN");
+        if (operation === "claim")
+          await client.query("SELECT 1 FROM browser_execution_sessions WHERE id=$1 FOR UPDATE", [
+            id,
+          ]);
+        else
+          await client.query(
+            "SELECT 1 FROM browser_owner_generations WHERE session_id=$1 FOR UPDATE",
+            [id],
+          );
+        pending = owner
+          ? effects.heartbeatOwner(id, owner.generation, owner.leaseToken, 60000)
+          : effects.claimOwner(id, "claimant", 60000);
+        void pending.catch(() => undefined);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        const releasedAt = performance.now();
+        await client.query("COMMIT");
+        const sample = await pending;
+        expect(sample.sampleStartedAt).toBeGreaterThanOrEqual(releasedAt);
+        expect(sample.leaseRemainingMs).toBeGreaterThan(59000);
+      } finally {
+        await client.query("ROLLBACK");
+        client.release();
+        await pending?.catch(() => undefined);
+      }
+    },
+  );
   const admitted = async () => {
     const owner = await owned();
     const { effect } = await effects.admitEffect({
