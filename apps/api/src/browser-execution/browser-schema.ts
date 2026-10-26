@@ -52,7 +52,12 @@ const REQUIRED_SCHEMA: Readonly<Record<string, readonly string[]>> = {
 };
 
 export async function assertBrowserSchema(database: Queryable): Promise<void> {
-  return assertRetainedBrowserSchema(database);
+  await assertRetainedBrowserSchema(database);
+  const result = await database.query<{ column_name: string }>(
+    "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='browser_commands' AND column_name=ANY($1::text[])",
+    [["execution_deadline_at", "execution_budget_ms"]],
+  );
+  if (result.rowCount !== 2) throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:command_deadlines");
 }
 
 /** Frozen retained-baseline requirements for transactional adoption. New runtime

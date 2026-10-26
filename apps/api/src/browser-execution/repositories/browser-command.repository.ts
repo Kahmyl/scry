@@ -15,6 +15,7 @@ import type { QueryResultRow } from "pg";
 import type { PraxisStorageState } from "@scry/contracts";
 
 import { Database } from "../../infrastructure/database.js";
+import { commandExecutionBudgetMs } from "../command-budget.js";
 import {
   BrowserProtectedValueCipher,
   type EncryptedProtectedValue,
@@ -38,6 +39,15 @@ interface CommandRow extends QueryResultRow {
   claim_lease_expires_at: Date | null;
   attempt_count: number;
   command_ordinal: string;
+  execution_deadline_at: Date | null;
+  execution_budget_ms: number | null;
+}
+
+interface ClaimedCommandRow extends CommandRow {
+  execution_deadline_at: Date;
+  execution_budget_ms: number;
+  /** Database-relative duration, not a host-clock-derived timestamp delta. */
+  execution_remaining_ms: number;
 }
 
 type InlineStorageState = PraxisStorageState;
@@ -305,7 +315,7 @@ export class BrowserCommandRepository {
     );
   }
 
-  async claim(commandId: string, leaseMs = 60_000): Promise<CommandRow | null> {
+  async claim(commandId: string, leaseMs = 60_000): Promise<ClaimedCommandRow | null> {
     if (!Number.isSafeInteger(leaseMs) || leaseMs < 30_000)
       throw new Error("SCRY_BROWSER_COMMAND_LEASE_INVALID");
     return this.database.transaction(async (client) => {
@@ -319,8 +329,8 @@ export class BrowserCommandRepository {
       await client.query("SELECT id FROM browser_execution_sessions WHERE id=$1 FOR UPDATE", [
         scope.rows[0].session_id,
       ]);
-      const result = await client.query<CommandRow>(
-        "SELECT * FROM browser_commands WHERE id=$1 FOR UPDATE",
+      const result = await client.query<CommandRow & { claim_live: boolean | null }>(
+        "SELECT *,claim_lease_expires_at>clock_timestamp() AS claim_live FROM browser_commands WHERE id=$1 FOR UPDATE",
         [commandId],
       );
       const row = result.rows[0];
@@ -331,19 +341,19 @@ export class BrowserCommandRepository {
         [row.session_id, row.command_ordinal],
       );
       if (predecessor.rowCount) throw new Error("SCRY_BROWSER_COMMAND_PREDECESSOR_PENDING");
-      if (
-        row.state === "running" &&
-        row.claim_lease_expires_at &&
-        new Date(row.claim_lease_expires_at).getTime() > Date.now()
-      ) {
+      if (row.state === "running" && row.claim_live) {
         throw new Error("SCRY_BROWSER_COMMAND_ALREADY_RUNNING");
       }
       const claimToken = randomUUID();
-      const claimed = await client.query<CommandRow>(
-        `UPDATE browser_commands SET state='running',started_at=COALESCE(started_at,now()),completed_at=NULL,
-           error_code=NULL,claim_token=$2,claim_lease_expires_at=now()+($3::int * interval '1 millisecond'),
-           attempt_count=attempt_count+1 WHERE id=$1 RETURNING *`,
-        [commandId, claimToken, leaseMs],
+      const claimed = await client.query<ClaimedCommandRow>(
+        `WITH claim_clock AS MATERIALIZED (SELECT clock_timestamp() AS at)
+         UPDATE browser_commands SET state='running',started_at=COALESCE(started_at,claim_clock.at),completed_at=NULL,
+           error_code=NULL,claim_token=$2,claim_lease_expires_at=claim_clock.at+($3::int * interval '1 millisecond'),
+           execution_deadline_at=COALESCE(execution_deadline_at,claim_clock.at+($4::int * interval '1 millisecond')),
+           execution_budget_ms=COALESCE(execution_budget_ms,$4),attempt_count=attempt_count+1
+         FROM claim_clock WHERE id=$1 RETURNING browser_commands.*,
+           GREATEST(0,FLOOR(EXTRACT(EPOCH FROM(execution_deadline_at-clock_timestamp()))*1000))::int AS execution_remaining_ms`,
+        [commandId, claimToken, leaseMs, commandExecutionBudgetMs(row.kind)],
       );
       const claimedRow = claimed.rows[0]!;
       if (
