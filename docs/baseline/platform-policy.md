@@ -1,5 +1,11 @@
 # Scry platform policy
 
+The [native evidence direction](native-evidence-direction.md) specifies the
+selected automatic protection scope for the replacement visual producer: access
+secrets and financial details, not blanket personal or business-content masking.
+That producer is not activated, and historical evidence retains its original
+admission policy.
+
 Status: canonical baseline policy
 
 This document defines the operating rules for the product described in the

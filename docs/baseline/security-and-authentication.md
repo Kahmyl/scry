@@ -1,5 +1,10 @@
 # Scry security and authentication
 
+The [native evidence direction](native-evidence-direction.md) records the selected
+narrow protection policy and the proposed private frame-processing boundary.
+Temporary customer raw-frame retention is not activated or approved by this
+document; its explicit retention decision and privacy qualification remain gates.
+
 Status: canonical baseline security model
 
 This document defines authentication, authorization, protected-information
