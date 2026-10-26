@@ -379,7 +379,7 @@ describe("qualification outcomes", () => {
     expect(profiles.browser).toContain("browser-supervision");
     expect(supervision.command).toContain("test/supervised-browser.integration.test.ts");
     expect(supervision.environment).toEqual({ SCRY_BROWSER_E2E: "1" });
-    expect(supervision.tests).toEqual({ minimumPassed: 9, allowSkipped: false });
+    expect(supervision.tests).toEqual({ minimumPassed: 10, allowSkipped: false });
     const cancellation = checks.find((entry) => entry.id === "command-cancellation")!;
     expect(profiles.browser).toContain("command-cancellation");
     expect(cancellation.command).toContain("test/command-lane.integration.test.ts");

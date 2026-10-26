@@ -135,6 +135,8 @@ function fixture() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  browserFixture.custody.synchronize.mockReset().mockResolvedValue(undefined);
+  browserFixture.custody.terminationState = "active";
   browserFixture.custody.terminate.mockReset().mockImplementation(async () => {
     await browserFixture.browser.close();
     return { forced: true, exitConfirmed: true as const };
@@ -290,6 +292,47 @@ describe("browser owner lifecycle", () => {
     expect(browserFixture.page.goto).not.toHaveBeenCalled();
     expect(browserFixture.custody.terminate).toHaveBeenCalledTimes(1);
     await engine.closeAll();
+  });
+  it.each(["terminating", "exited", "unconfirmed"])(
+    "does not dispatch native work if custody becomes %s after synchronization",
+    async (state) => {
+      const { engine } = fixture();
+      await engine.open("session");
+      browserFixture.custody.synchronize
+        .mockResolvedValueOnce(undefined)
+        .mockImplementationOnce(async () => {
+          browserFixture.custody.terminationState = state;
+        });
+      try {
+        await expect(
+          engine.execute("session", { kind: "navigate", url: "https://fixture.example" }),
+        ).rejects.toThrow(
+          state === "unconfirmed" ? "PROCESS_TERMINATION_UNCONFIRMED" : "OWNER_FENCED",
+        );
+        expect(browserFixture.page.goto).not.toHaveBeenCalled();
+      } finally {
+        await engine.closeAll();
+      }
+    },
+  );
+  it("does not dispatch native work if retirement fences the incarnation after synchronization", async () => {
+    const { engine } = fixture();
+    await engine.open("session");
+    let closing: Promise<void> | undefined;
+    browserFixture.custody.synchronize
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(async () => {
+        closing = engine.closeAll();
+      });
+    try {
+      await expect(
+        engine.execute("session", { kind: "navigate", url: "https://fixture.example" }),
+      ).rejects.toThrow("OWNER_FENCED");
+      expect(browserFixture.page.goto).not.toHaveBeenCalled();
+    } finally {
+      await closing;
+      await engine.closeAll();
+    }
   });
   it("does not revive an older background startup when its command incarnation was cancelled", async () => {
     const { engine, effects } = fixture(),

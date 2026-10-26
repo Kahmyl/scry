@@ -124,6 +124,13 @@ authority sampler refused further work. Those waits reject as fenced after
 confirmed stop. A failed termination or missing native receipt remains unconfirmed
 and still requires host containment. No timeout budget is extended by this rule.
 
+Beginning retirement fences dispatch before any stop message is sent. An earlier
+acknowledgment may settle transport bookkeeping, but cannot admit a waiting action
+after that fence. Pending dispatch and subsequent synchronization join the bounded
+stop outcome; a former admission timer cannot preempt it with false uncertainty.
+Immediately before native invocation, Praxis synchronously rechecks custody,
+incarnation, owner and command authority after the acknowledgment wait.
+
 Missing, malformed, late or backpressured control traffic is a containment event.
 Startup, command execution, individual phases and controller liveness are bounded
 separately. Expiry is permanent for that custodian. A lost socket or dead custodian

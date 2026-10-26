@@ -678,6 +678,15 @@ export class PraxisBrowserEngine {
     const custody = await session.resources.launch!;
     try {
       await custody.synchronize();
+      // An acknowledged phase can be fenced while this continuation is queued.
+      // Keep the final checks and native invocation in one synchronous turn.
+      if (custody.terminationState === "unconfirmed")
+        throw new Error("SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED");
+      if (custody.terminationState !== "active" || session.resources.state !== "active")
+        throw new Error("SCRY_BROWSER_OWNER_FENCED");
+      this.assertIncarnation(session.resources.incarnation);
+      session.lease.assertActive();
+      control.sample();
       return await work();
     } finally {
       try {

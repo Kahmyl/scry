@@ -292,7 +292,7 @@ export class SupervisedBrowser {
       this.#livenessDeadline = performance.now() + 2000;
       this.armLiveness();
       this.#lastAcknowledgment = ack;
-      if (this.#barrier && matches(ack, this.#barrier.target)) {
+      if (this.#state === "active" && this.#barrier && matches(ack, this.#barrier.target)) {
         clearTimeout(this.#barrier.timer);
         this.#barrier.completion.resolve();
         this.#barrier = undefined;
@@ -332,6 +332,10 @@ export class SupervisedBrowser {
    * a send callback only proves transport progress, not custodian admission. */
   synchronize(): Promise<void> {
     this.checkLiveness();
+    if (this.#state === "terminating")
+      return this.close().then(() => {
+        throw new Error("SCRY_BROWSER_OWNER_FENCED");
+      });
     if (this.#state !== "active")
       return Promise.reject(
         this.#proofReceived ? new Error("SCRY_BROWSER_OWNER_FENCED") : failure(),
@@ -374,9 +378,12 @@ export class SupervisedBrowser {
     this.send({ kind: "setup_complete" });
     await this.#setup.promise;
   }
-  close(): Promise<BrowserTerminationReceipt> {
+  private dispose(force: boolean): Promise<BrowserTerminationReceipt> {
     if (!this.#disposal) {
       clearTimeout(this.#livenessWatch);
+      // Once admission is fenced, only the stop budget may classify missing
+      // native proof. A former dispatch timer must not preempt that outcome.
+      clearTimeout(this.#barrier?.timer);
       if (this.#state === "active") this.#state = "terminating";
       this.#disposal = (async () => {
         const timer = setTimeout(
@@ -387,7 +394,7 @@ export class SupervisedBrowser {
             2000,
         );
         try {
-          if (!this.#proofReceived) this.send({ kind: "stop", force: false });
+          if (!this.#proofReceived) this.send({ kind: "stop", force });
           const [receipt] = await Promise.all([this.#receipt.promise, this.#exit.promise]);
           if (this.#transportFailed) throw failure();
           this.#state = "exited";
@@ -397,11 +404,13 @@ export class SupervisedBrowser {
         }
       })();
       void this.#disposal.catch(() => undefined);
-    }
+    } else if (force && !this.#proofReceived) this.send({ kind: "stop", force: true });
     return this.#disposal;
   }
+  close(): Promise<BrowserTerminationReceipt> {
+    return this.dispose(false);
+  }
   terminate(): Promise<BrowserTerminationReceipt> {
-    if (!this.#proofReceived) this.send({ kind: "stop", force: true });
-    return this.close();
+    return this.dispose(true);
   }
 }

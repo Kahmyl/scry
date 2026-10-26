@@ -58,6 +58,46 @@ async function fixture() {
   };
 }
 live("independent native browser custodian", () => {
+  it("refuses a real phase acknowledgment delivered after retirement and before native stop proof", async () => {
+    const { owned, control, page, unconfirmed } = await fixture();
+    const helper = vi.mocked(fork).mock.results.at(-1)!.value;
+    const emit = helper.emit.bind(helper);
+    let stopping: ReturnType<SupervisedBrowser["terminate"]> | undefined;
+    let deliveredWhileTerminating = false;
+    vi.spyOn(helper, "emit").mockImplementation((event, ...args) => {
+      const value = args[0] as
+        { kind?: string; acknowledgment?: { phaseSequence?: number } } | undefined;
+      if (
+        event === "message" &&
+        value?.kind === "accepted" &&
+        value.acknowledgment?.phaseSequence === 1 &&
+        !stopping
+      ) {
+        // Retirement begins at actual message arrival, before the registered
+        // admission handler sees it. Do not suppress ACKs across new challenges.
+        stopping = owned.terminate();
+        deliveredWhileTerminating = owned.terminationState === "terminating";
+      }
+      return emit(event, ...args);
+    });
+    await new CommandAttempt({ remainingMs: 5000 }).run(async (attempt) => {
+      control.begin(attempt);
+      const phase = control.enterPhase(4000);
+      const dispatch = vi.fn(() => page.locator("button").click());
+      const result = owned
+        .synchronize()
+        .then(dispatch)
+        .catch((error: unknown) => error);
+      expect(await result).toMatchObject({ message: "SCRY_BROWSER_OWNER_FENCED" });
+      expect(stopping).toBeDefined();
+      expect((await stopping!).exitConfirmed).toBe(true);
+      expect(deliveredWhileTerminating).toBe(true);
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(unconfirmed).not.toHaveBeenCalled();
+      control.leavePhase(phase);
+      control.finish(true);
+    });
+  }, 15000);
   it("rejects a pending native dispatch as fenced when confirmed stop wins its acknowledgment", async () => {
     const { owned, control, unconfirmed } = await fixture();
     await new CommandAttempt({ remainingMs: 5000 }).run(async (attempt) => {

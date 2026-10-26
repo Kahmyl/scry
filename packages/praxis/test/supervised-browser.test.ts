@@ -229,6 +229,89 @@ describe("bounded parent custodian transport", () => {
     await Promise.resolve();
     expect(observer).toHaveBeenCalledTimes(1);
   });
+  it.each([
+    ["close", true],
+    ["terminate", true],
+    ["close", false],
+    ["terminate", false],
+  ] as const)(
+    "never admits an in-flight acknowledgment after %s starts (proof=%s)",
+    async (method, proof) => {
+      let snapshot = idle();
+      const owned = await SupervisedBrowser.launch({ sampleAuthority: () => snapshot });
+      helper.automatic = false;
+      snapshot = active(1);
+      const dispatch = vi.fn();
+      const barrier = owned.synchronize().then(dispatch, (error: unknown) => error);
+      const pending = helper.authorities.at(-1)!;
+      const stopped = helper.stopped.bind(helper);
+      helper.stopped = vi.fn();
+      const closing = owned[method]().catch((error: unknown) => error);
+      try {
+        expect(owned.terminationState).toBe("terminating");
+        helper.acknowledge(pending);
+        await Promise.resolve();
+        expect(dispatch).not.toHaveBeenCalled();
+      } finally {
+        if (proof) stopped();
+        else helper.exit();
+        await closing;
+      }
+      expect(await barrier).toMatchObject({
+        message: proof
+          ? "SCRY_BROWSER_OWNER_FENCED"
+          : "SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED",
+      });
+    },
+  );
+  it.each([true, false])(
+    "waits for the stop outcome rather than inventing uncertainty while terminating (proof=%s)",
+    async (proof) => {
+      const owned = await SupervisedBrowser.launch({ sampleAuthority: idle });
+      const stopped = helper.stopped.bind(helper);
+      helper.stopped = vi.fn();
+      const closing = owned.close().catch((error: unknown) => error);
+      let settled = false;
+      const refused = owned.synchronize().catch((error: unknown) => {
+        settled = true;
+        return error;
+      });
+      try {
+        await Promise.resolve();
+        expect(settled).toBe(false);
+      } finally {
+        if (proof) stopped();
+        else helper.exit();
+        await closing;
+      }
+      expect(await refused).toMatchObject({
+        message: proof
+          ? "SCRY_BROWSER_OWNER_FENCED"
+          : "SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED",
+      });
+    },
+  );
+  it("replaces a pending admission timeout with the bounded stop outcome during retirement", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let snapshot = idle();
+    const owned = await SupervisedBrowser.launch({ sampleAuthority: () => snapshot });
+    helper.automatic = false;
+    snapshot = active(1);
+    const refused = owned.synchronize().catch((error: unknown) => error);
+    const stopped = helper.stopped.bind(helper);
+    helper.stopped = vi.fn();
+    const closing = owned.close().catch((error: unknown) => error);
+    try {
+      await vi.advanceTimersByTimeAsync(5001);
+      expect(owned.terminationState).toBe("terminating");
+      expect(helper.kill).not.toHaveBeenCalled();
+    } finally {
+      stopped();
+      await closing;
+      vi.useRealTimers();
+    }
+    expect(await refused).toMatchObject({ message: "SCRY_BROWSER_OWNER_FENCED" });
+  });
   it("classifies refused authority as fenced after terminate returns confirmed native exit", async () => {
     let available = true;
     const observer = vi.fn();
