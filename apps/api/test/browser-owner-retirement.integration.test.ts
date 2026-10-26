@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { OwnedBrowser } from "@scry/praxis";
+import { AuthenticatedEvidenceStore } from "@scry/chronicle";
 import { composePraxisExecutionPort } from "../src/browser-execution/browser-boundary-composition.js";
 import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
 import { BrowserExecutionRepository } from "../src/browser-execution/repositories/browser-execution.repository.js";
@@ -29,6 +30,75 @@ live("confirmed native owner retirement", () => {
     launched.mockRestore();
     await database?.onModuleDestroy();
   });
+  it("does not release its durable owner while an actual Chronicle append is still unsettled", async () => {
+    const cipher = new BrowserProtectedValueCipher(),
+      effects = new BrowserExecutionRepository(database, cipher);
+    const praxis = composePraxisExecutionPort(
+      new BrowserCommandRepository(database, cipher),
+      effects,
+    );
+    let finish!: () => void, enter!: () => void;
+    const gate = new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+      entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+    const append = AuthenticatedEvidenceStore.prototype.append;
+    const held = vi
+      .spyOn(AuthenticatedEvidenceStore.prototype, "append")
+      .mockImplementationOnce(async function (
+        this: AuthenticatedEvidenceStore<unknown>,
+        payload: unknown,
+      ) {
+        enter();
+        await gate;
+        return append.call(this, payload);
+      });
+    const retirement = vi.spyOn(effects, "retireOwner");
+    const id = await seedSession(database, effects, "https://fixture.example");
+    let stopping: Promise<void> | undefined;
+    try {
+      const owner = await praxis.openSession(id);
+      await vi.waitFor(() => expect(held).toHaveBeenCalledTimes(1), { timeout: 3000 });
+      await entered;
+      const browser = await launched.mock.results.at(-1)!.value;
+      stopping = praxis.shutdown();
+      void stopping.catch(() => undefined);
+      await vi.waitFor(
+        () => {
+          expect(browser.exitConfirmed).toBe(true);
+          expect(browser.browser.isConnected()).toBe(false);
+        },
+        { timeout: 6000 },
+      );
+      // Drain the protocol-close microtasks, not a guessed recording delay.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(retirement).not.toHaveBeenCalled();
+      const before = await database.query(
+        "SELECT state FROM browser_owner_generations WHERE session_id=$1 AND generation=$2",
+        [id, owner.ownerGeneration],
+      );
+      expect(before.rows[0]!.state).toBe("active");
+      finish();
+      await stopping;
+      expect(retirement).toHaveBeenCalledTimes(1);
+      expect(
+        (
+          await database.query(
+            "SELECT state FROM browser_owner_generations WHERE session_id=$1 AND generation=$2",
+            [id, owner.ownerGeneration],
+          )
+        ).rows[0]!.state,
+      ).toBe("released");
+    } finally {
+      finish();
+      await stopping?.catch(() => undefined);
+      await praxis.shutdown();
+      held.mockRestore();
+      retirement.mockRestore();
+    }
+  }, 20000);
   it.each(["not_started", "started"] as const)(
     "reconciles %s work and permits immediate replacement only after actual browser exit",
     async (dispatch) => {
