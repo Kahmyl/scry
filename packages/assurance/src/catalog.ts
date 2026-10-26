@@ -244,7 +244,7 @@ export const checks: readonly CheckDefinition[] = [
     "Confirmed native exit admits durable pending-effect reconciliation and immediate fenced replacement",
     "@scry/api",
     ["test/browser-owner-retirement.integration.test.ts"],
-    { integrated: true, database: true, minimum: 2 },
+    { integrated: true, database: true, minimum: 3 },
   ),
   tests(
     "failure-finalization",

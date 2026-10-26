@@ -321,7 +321,7 @@ describe("qualification outcomes", () => {
     expect(profiles.owner).toContain("owner-watchdog");
     expect(profiles.owner).toContain("owner-retirement");
     expect(checks.find((entry) => entry.id === "owner-retirement")?.tests).toEqual({
-      minimumPassed: 2,
+      minimumPassed: 3,
       allowSkipped: false,
     });
     expect(checks.find((entry) => entry.id === "owner-watchdog")?.tests).toEqual({

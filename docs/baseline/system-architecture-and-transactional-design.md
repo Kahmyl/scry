@@ -273,6 +273,11 @@ best-effort diagnostic persistence. These guards require coordinated worker
 replacement; they do not retrofit older binaries. Independent process supervision
 and durable uncertain-work recovery remain separate qualification requirements.
 
+Nonterminal recovery facts retain a finite runtime stage cause, distinguishing
+execution drain, process stop, recorder stop and durable owner retirement.
+Unknown/private cause strings are never persisted. This does not turn an
+unconfirmed runtime result into a terminal command outcome.
+
 ## Browser ownership and fencing
 
 A Browser session has at most one active owner. Each new claim increments the

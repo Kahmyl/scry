@@ -21,6 +21,24 @@ live("post-lock command claim fencing", () => {
     );
     expect(stored.rows[0]!.claim_token).toBe(row.claim_token);
     expect(stored.rows[0]!.completed_at).toBeNull();
+    await commands.noteRecoveryRequired(
+      row.id,
+      row.claim_token!,
+      "SCRY_BROWSER_OWNER_RETIREMENT_UNCONFIRMED",
+    );
+    expect(await commands.observe(row.id)).toMatchObject({
+      state: "running",
+      errorCode: "SCRY_BROWSER_OWNER_RETIREMENT_UNCONFIRMED",
+    });
+    await commands.noteRecoveryRequired(
+      row.id,
+      row.claim_token!,
+      "untrusted_private_cause_canary" as never,
+    );
+    expect(await commands.observe(row.id)).toMatchObject({
+      state: "running",
+      errorCode: "SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED",
+    });
     await expire(row.id);
     await expect(commands.noteRecoveryRequired(row.id, row.claim_token!)).rejects.toThrow(
       "COMMAND_CLAIM_FENCED",

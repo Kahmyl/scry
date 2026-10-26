@@ -180,7 +180,7 @@ describe("carried command processor lifetime", () => {
     await expect(f.run()).rejects.toThrow("COMMAND_DRAIN_UNCONFIRMED");
     expect(f.commands.fail).not.toHaveBeenCalled();
     expect(f.commands.complete).not.toHaveBeenCalled();
-    expect(f.commands.noteRecoveryRequired).toHaveBeenCalledWith("command", "claim");
+    expect(f.commands.noteRecoveryRequired).toHaveBeenCalledWith("command", "claim", code);
     expect(f.onUnconfirmedDrain).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
   });
