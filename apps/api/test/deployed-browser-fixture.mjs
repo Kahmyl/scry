@@ -5,6 +5,8 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 
+// API-owned production-shaped fixture: database fault setup stays outside
+// Assurance analysis. This file is mounted only into the disposable test stack.
 // This issuer exists only inside the fresh, portless qualification network.
 // The real API still verifies issuer, audience, signature and scoped identity.
 if (process.argv[2] === "serve") {
@@ -482,6 +484,30 @@ async function unavailableDashboardJourney({
       await page
         .getByText(/evidence-storage issue, not a finding about your application/)
         .waitFor();
+      const layout = await page
+        .locator(".browser-fact")
+        .filter({ hasText: "Recording unavailable" })
+        .evaluate((row) => {
+          const title = row.querySelector("strong"),
+            detail = row.querySelector("div > span");
+          const state = document.querySelector(".metric.failure > strong"),
+            warning = row.querySelector(".status-incomplete");
+          return {
+            display: getComputedStyle(row).display,
+            titleBottom: title?.getBoundingClientRect().bottom,
+            detailTop: detail?.getBoundingClientRect().top,
+            stateColor: state ? getComputedStyle(state).color : null,
+            warningColor: warning ? getComputedStyle(warning).color : null,
+          };
+        });
+      assert.equal(layout.display, "flex", "EVIDENCE_ROW_STYLES_NOT_APPLIED");
+      assert.ok(layout.detailTop >= layout.titleBottom, "EVIDENCE_WARNING_COPY_OVERLAPS_TITLE");
+      assert.equal(layout.stateColor, "rgb(255, 116, 108)", "FAILED_RUN_USES_SUCCESS_COLOR");
+      assert.equal(
+        layout.warningColor,
+        "rgb(240, 189, 99)",
+        "INCOMPLETE_RECORDING_WARNING_NOT_DISTINCT",
+      );
       assert.equal(await page.locator("video").count(), 0);
       assert.ok(!(await page.locator("body").innerText()).includes(credential));
       const screenshots = "/evidence/qualification-ui";
@@ -492,6 +518,35 @@ async function unavailableDashboardJourney({
       });
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByText("Recording unavailable", { exact: true }).waitFor();
+      // Resize starts the actual off-canvas transition. Inspect its settled
+      // state rather than capturing a transient half-drawer as the mobile UI.
+      await page.waitForFunction(
+        () => document.querySelector(".sidebar")?.getBoundingClientRect().right <= 0,
+        undefined,
+        { timeout: 5000 },
+      );
+      await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+      await page.getByRole("dialog", { name: "Dashboard navigation" }).waitFor();
+      await page.waitForFunction(
+        () => document.querySelector(".sidebar")?.getBoundingClientRect().left >= 0,
+        undefined,
+        { timeout: 5000 },
+      );
+      await page
+        .getByRole("dialog", { name: "Dashboard navigation" })
+        .getByRole("button", { name: "Close navigation", exact: true })
+        .click();
+      await page.waitForFunction(
+        () => document.querySelector(".sidebar")?.getBoundingClientRect().right <= 0,
+        undefined,
+        { timeout: 5000 },
+      );
+      assert.equal(
+        await page
+          .getByRole("button", { name: "Open navigation", exact: true })
+          .getAttribute("aria-expanded"),
+        "false",
+      );
       assert.equal(
         await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
         false,

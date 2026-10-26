@@ -1147,6 +1147,9 @@ select:focus-visible {
 .metric.lime .metric-icon {
   color: var(--lime);
 }
+.metric.failure > strong {
+  color: var(--red);
+}
 .content-grid {
   display: grid;
   grid-template-columns: 2fr 1fr;
@@ -1161,7 +1164,7 @@ select:focus-visible {
   border-radius: 13px;
   overflow: hidden;
 }
-.browser-v2-fact {
+.browser-fact {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1169,23 +1172,23 @@ select:focus-visible {
   padding: 16px 20px;
   border-bottom: 1px solid var(--line-soft);
 }
-.browser-v2-fact:last-child {
+.browser-fact:last-child {
   border-bottom: 0;
 }
-.browser-v2-fact > div {
+.browser-fact > div {
   min-width: 0;
 }
-.browser-v2-fact strong,
-.browser-v2-fact span {
+.browser-fact strong,
+.browser-fact span {
   display: block;
 }
-.browser-v2-fact > div > span {
+.browser-fact > div > span {
   margin-top: 5px;
   color: var(--muted);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-.browser-v2-safe-report {
+.browser-safe-report {
   margin: 0;
   padding: 20px;
   overflow: auto;
@@ -1239,7 +1242,7 @@ select:focus-visible {
 .run-list > button:last-child {
   border-bottom: 0;
 }
-.run-list.browser-v2-list > button {
+.run-list.browser-list > button {
   grid-template-columns: minmax(0, 1fr) auto 15px;
 }
 .run-symbol {
@@ -1278,6 +1281,7 @@ select:focus-visible {
   gap: 6px;
 }
 .status-passed,
+.status-complete,
 .status-resolved {
   color: var(--lime);
   background: var(--lime-soft);
@@ -1287,6 +1291,10 @@ select:focus-visible {
 .status-timed_out {
   color: var(--red);
   background: rgba(255, 116, 108, 0.09);
+}
+.status-incomplete {
+  color: var(--amber);
+  background: rgba(240, 189, 99, 0.1);
 }
 .status-running,
 .status-preparing,

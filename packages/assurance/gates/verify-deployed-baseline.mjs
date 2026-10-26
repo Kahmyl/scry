@@ -12,7 +12,9 @@ const project = `scry-baseline-smoke-${suffix}`;
 const image = `scry-baseline-smoke:${suffix}`;
 const directory = mkdtempSync(path.join(os.tmpdir(), "scry-deployed-baseline-"));
 const override = path.join(directory, "fixture.json");
-const fixture = fileURLToPath(new URL("./fixtures/deployed-browser.mjs", import.meta.url));
+const fixture = fileURLToPath(
+  new URL("../../../apps/api/test/deployed-browser-fixture.mjs", import.meta.url),
+);
 const visualReview = process.env.SCRY_ASSURANCE_VISUAL_REVIEW === "true";
 // Read the fixture before provisioning anything; it is not shipped in the image.
 if (!readFileSync(fixture, "utf8").includes("DEPLOYED_BASELINE_BROWSER_PASS"))
