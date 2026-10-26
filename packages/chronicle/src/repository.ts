@@ -179,13 +179,17 @@ export class ChronicleRepository {
       captureStopped: boolean;
       interruptions: number;
       custodyMode: "legacy" | "admitted";
+      issue: EvidenceStatus["issue"] | null;
     }>(
       `SELECT state,(sealed_at IS NOT NULL OR (custody_mode='legacy' AND state='complete')) AS sealed,
       capture_started_at IS NOT NULL AS "captureStarted",capture_stopped_at IS NOT NULL AS "captureStopped",
-      interruptions,custody_mode AS "custodyMode" FROM browser_evidence_streams WHERE session_id=$1${lock ? " FOR UPDATE" : ""}`,
+      interruptions,custody_mode AS "custodyMode",closure_issue AS issue FROM browser_evidence_streams WHERE session_id=$1${lock ? " FOR UPDATE" : ""}`,
       [sessionId],
     );
-    return result.rows[0] ?? null;
+    const row = result.rows[0];
+    if (!row) return null;
+    const { issue, ...status } = row;
+    return { ...status, ...(issue ? { issue } : {}) };
   }
 
   async safeActionLedger(
@@ -342,7 +346,7 @@ export class ChronicleRepository {
         `SELECT id,state,chain_head AS "chainHead",chunk_count AS "chunkCount",
                 total_bytes AS "totalBytes",retention_expires_at AS "retentionExpiresAt",
                 completed_at AS "completedAt",sealed_at AS "sealedAt",interruptions,
-                custody_mode AS "custodyMode"
+                custody_mode AS "custodyMode",closure_issue AS "closureIssue"
          FROM browser_evidence_streams WHERE run_id=$1 ORDER BY created_at`,
         [runId],
       ),
@@ -362,7 +366,7 @@ export class ChronicleRepository {
   async missionEvidenceDigest(missionId: string): Promise<string> {
     const evidence = await this.sql.query<{ chain_head: string | null; state: string | null }>(
       `SELECT r.id AS run_id,e.id AS stream_id,e.state,e.chain_head,e.chunk_count,e.total_bytes,
-        e.sealed_at,e.interruptions FROM runs r LEFT JOIN browser_evidence_streams e ON e.run_id=r.id
+        e.sealed_at,e.interruptions,e.closure_issue FROM runs r LEFT JOIN browser_evidence_streams e ON e.run_id=r.id
          WHERE r.mission_id=$1 ORDER BY r.created_at,r.id`,
       [missionId],
     );
@@ -381,11 +385,13 @@ export class ChronicleRepository {
       incomplete: number;
       open: number;
       missing: number;
+      unavailable: number;
     }>(
       `SELECT count(*)::int AS runs,count(*) FILTER(WHERE e.state='complete')::int AS complete,
         count(*) FILTER(WHERE e.state IN ('incomplete','corrupt','expired'))::int AS incomplete,
         count(*) FILTER(WHERE e.state='open')::int AS open,
-        count(*) FILTER(WHERE e.id IS NULL)::int AS missing
+        count(*) FILTER(WHERE e.id IS NULL)::int AS missing,
+        count(*) FILTER(WHERE e.closure_issue IS NOT NULL)::int AS unavailable
         FROM runs r LEFT JOIN browser_evidence_streams e ON e.run_id=r.id WHERE r.mission_id=$1`,
       [missionId],
     );

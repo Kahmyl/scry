@@ -917,7 +917,35 @@ describe("browser owner lifecycle", () => {
         renderDurationMs: 1,
         playbackRate: 1,
       }),
-    ).rejects.toThrow("render setup failed");
+    ).resolves.toMatchObject({ replayFailed: true, visibleFrameCount: 0 });
     expect(browserFixture.browser.close).toHaveBeenCalled();
+  });
+  it("returns a finite artifact failure when replay browser acquisition fails", async () => {
+    browserFixture.launch.mockRejectedValueOnce(new Error("private_fixture_driver_diagnostic"));
+    await expect(
+      new BrowserReplayRenderer().render({
+        events: [],
+        stagingDirectory: "/tmp/unused",
+        framesDirectory: "/tmp/unused",
+        frames: [],
+        renderDurationMs: 1,
+        playbackRate: 1,
+      }),
+    ).resolves.toEqual({ replayFailed: true, networkRequests: 0, visibleFrameCount: 0 });
+    expect(browserFixture.browser.close).not.toHaveBeenCalled();
+  });
+  it("does not turn failed replay browser disposal into an available failure artifact", async () => {
+    browserFixture.page.setContent.mockRejectedValueOnce(new Error("fixture_render_failure"));
+    browserFixture.browser.close.mockRejectedValueOnce(new Error("fixture_close_unconfirmed"));
+    await expect(
+      new BrowserReplayRenderer().render({
+        events: [],
+        stagingDirectory: "/tmp/unused",
+        framesDirectory: "/tmp/unused",
+        frames: [],
+        renderDurationMs: 1,
+        playbackRate: 1,
+      }),
+    ).rejects.toThrow("fixture_close_unconfirmed");
   });
 });

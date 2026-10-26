@@ -410,9 +410,10 @@ live("protected evidence admission without file-held ownership locks", () => {
           await rename(filename, auditCopy);
           restore = () => rename(auditCopy, filename);
         }
-        await expect(f.store.verify()).rejects.toThrow(
-          failure === "tamper" ? "evidence_object_digest_invalid" : "ENOENT",
-        );
+        await expect(f.store.verify()).rejects.toMatchObject({
+          name: "EvidenceArtifactFailure",
+          issue: failure === "tamper" ? "integrity_mismatch" : "object_unavailable",
+        });
       } finally {
         await restore?.();
         await cleanup(f);

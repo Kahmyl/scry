@@ -78,7 +78,10 @@ describe("staged receipt-backed store before caller cutover", () => {
     const filename = path.join(f.root, receipt.objectKey);
     const bytes = await readFile(filename);
     await writeFile(filename, Buffer.concat([bytes, Buffer.from(" ")]));
-    await expect(f.store.verify()).rejects.toThrow("evidence_object_digest_invalid");
+    await expect(f.store.verify()).rejects.toMatchObject({
+      name: "EvidenceArtifactFailure",
+      issue: "integrity_mismatch",
+    });
   });
   it("refuses overlapping writer mutation rather than losing a pending event", async () => {
     const f = await fixture();

@@ -68,6 +68,11 @@ export async function assertBrowserSchema(database: Queryable): Promise<void> {
        (table_name='mission_reports' AND column_name='evidence_coverage'))`);
   if (admission.rowCount !== 13)
     throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:evidence_admission");
+  const availability = await database.query(
+    "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='browser_evidence_streams' AND column_name='closure_issue'",
+  );
+  if (availability.rowCount !== 1)
+    throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:evidence_availability");
 }
 
 /** Frozen retained-baseline requirements for transactional adoption. New runtime

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ChronicleReplayRendererPort, EvidenceWriteAdmission } from "@scry/contracts";
+import { EvidenceArtifactFailure } from "./evidence-artifact-failure.js";
 
 interface ActionLedgerEntry {
   at?: string;
@@ -149,9 +150,9 @@ export async function renderSanitizedReplay(options: {
   });
   const { networkRequests, visibleFrameCount } = rendered;
   if (rendered.replayFailed || visibleFrameCount < Math.ceil(frameCount / 2))
-    throw new Error("replay_execution_failed");
-  if (networkRequests !== 0) throw new Error(`replay_network_attempts:${networkRequests}`);
-  if (!rendered.videoPath) throw new Error("replay_video_unavailable");
+    throw new EvidenceArtifactFailure("video_unavailable");
+  if (networkRequests !== 0) throw new EvidenceArtifactFailure("video_unavailable");
+  if (!rendered.videoPath) throw new EvidenceArtifactFailure("video_unavailable");
   const videoPath = rendered.videoPath;
   admission.assertActive();
   const frameFiles = await (async () => {

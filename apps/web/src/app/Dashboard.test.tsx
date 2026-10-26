@@ -75,6 +75,75 @@ describe("browser baseline production dashboard", () => {
     ).toBeTruthy();
   });
 
+  it.each([
+    [
+      "object_unavailable",
+      "Recording unavailable",
+      /evidence-storage issue, not a finding about your application/,
+    ],
+    [
+      "integrity_mismatch",
+      "Recording unavailable",
+      /evidence-integrity issue, not a finding about your application/,
+    ],
+    [
+      "content_unverifiable",
+      "Recording unavailable",
+      /does not establish that your application is broken/,
+    ],
+    ["video_unavailable", "Video unavailable", /captured evidence was verified/],
+    [
+      "publication_unavailable",
+      "Recording unavailable",
+      /evidence-publication issue, not a finding about your application/,
+    ],
+  ] as const)(
+    "explains %s as an evidence problem without implying that the application is broken",
+    async (issue, title, copy) => {
+      vi.mocked(api).mockImplementation(async (path) => {
+        if (path === "/projects")
+          return [{ id: "project-1", name: "Fixture project", description: "", createdAt: "now" }];
+        if (path === "/runs/run-1")
+          return {
+            id: "run-1",
+            flowName: "Availability journey",
+            environmentName: "Isolated fixture",
+            baseOrigin: "https://fixture.example",
+            state: "failed",
+            flowDefinition: {},
+            flowPurpose: "Inspect evidence",
+            authenticationCommitsUsed: 0,
+            authenticationCommitLimit: 1,
+            businessCommitsUsed: 0,
+            businessCommitLimit: 1,
+            effects: [],
+            artifacts: [],
+            evidence: [
+              {
+                id: "evidence-1",
+                state: "incomplete",
+                chunkCount: 1,
+                totalBytes: "24",
+                interruptions: 0,
+                custodyMode: "admitted",
+                closureIssue: issue,
+              },
+            ],
+          };
+        return [];
+      });
+      render(
+        <MemoryRouter initialEntries={["/dashboard/runs/run-1"]}>
+          <Dashboard userEmail="owner@example.test" />
+        </MemoryRouter>,
+      );
+      expect(await screen.findByText(title)).toBeTruthy();
+      expect(screen.getByText(copy)).toBeTruthy();
+      expect(screen.queryByText(/decisions are pending/i)).toBeNull();
+      expect(document.querySelector("video")).toBeNull();
+    },
+  );
+
   it("opens and closes the mobile navigation drawer without changing the navigation set", async () => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === "/projects")

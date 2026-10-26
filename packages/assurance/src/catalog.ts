@@ -59,12 +59,12 @@ const componentOwners = [
 ];
 const componentMinimums: Readonly<Record<string, number>> = {
   contracts: 9,
-  veil: 64,
-  chronicle: 54,
-  praxis: 194,
+  veil: 69,
+  chronicle: 63,
+  praxis: 196,
   api: 85,
   mcp: 7,
-  web: 3,
+  web: 8,
   assurance: 32,
 };
 export const checks: readonly CheckDefinition[] = [
@@ -262,6 +262,13 @@ export const checks: readonly CheckDefinition[] = [
     { integrated: true, database: true, minimum: 3 },
   ),
   tests(
+    "evidence-availability",
+    "Unavailable recording artifacts seal only explicit failed-run closure without losing receipt or owner authority",
+    "@scry/api",
+    ["test/browser-evidence-unavailable.integration.test.ts"],
+    { integrated: true, database: true, minimum: 10 },
+  ),
+  tests(
     "failure-finalization",
     "Failure closure preserves UNKNOWN without redispatch",
     "@scry/api",
@@ -339,6 +346,7 @@ export const profiles: Readonly<Record<string, readonly string[]>> = {
     "owner-watchdog",
     "owner-retirement",
     "evidence-closure",
+    "evidence-availability",
   ],
   failure: ["failure-finalization"],
   recovery: ["worker-recovery"],

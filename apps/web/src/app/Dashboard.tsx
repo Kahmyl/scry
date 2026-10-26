@@ -99,6 +99,7 @@ type RunDetail = Run & {
     sealedAt?: string;
     interruptions: number;
     custodyMode: "legacy" | "admitted";
+    closureIssue?: string;
   }>;
   artifacts: Array<{
     id: string;
@@ -122,6 +123,7 @@ type Report = {
     incomplete: number;
     open: number;
     missing: number;
+    unavailable?: number;
   };
   evidenceDigest: string;
   createdAt: string;
@@ -391,6 +393,18 @@ function MissionDetailView({ missionId, onBack }: { missionId: string; onBack: (
   );
 }
 
+const evidenceIssueMessages: Readonly<Record<string, string>> = {
+  object_unavailable:
+    "Scry could not read the captured recording. No replay is available; this is an evidence-storage issue, not a finding about your application.",
+  integrity_mismatch:
+    "The captured recording did not match its admitted receipt. Scry has withheld the replay; this is an evidence-integrity issue, not a finding about your application.",
+  content_unverifiable:
+    "Scry could not verify the encrypted recording with the available read capability. No replay is available; this does not establish that your application is broken or that the recording was tampered with.",
+  video_unavailable:
+    "The captured evidence was verified, but Scry could not produce its video. No video is available; this is a recording-processing issue, not a finding about your application.",
+  publication_unavailable:
+    "Scry could not publish the recording artifacts. No replay is available; this is an evidence-publication issue, not a finding about your application.",
+};
 function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void }) {
   const state = useResource<RunDetail>(`/runs/${runId}`, 2_000);
   if (state.error) return <LoadFailure value={state.error} />;
@@ -438,8 +452,19 @@ function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void })
         {run.evidence.map((item) => (
           <Fact
             key={item.id}
-            title={`${item.chunkCount} durable chunk${item.chunkCount === 1 ? "" : "s"}`}
-            detail={`${item.totalBytes} bytes · chain ${item.chainHead?.slice(0, 12) ?? "unavailable"}${item.interruptions ? ` · ${item.interruptions} recording interruption${item.interruptions === 1 ? "" : "s"}; this is not a complete recording` : ""}${item.state === "incomplete" && !item.chunkCount ? " · Recording unavailable; no captured evidence was admitted" : ""}`}
+            title={
+              item.closureIssue
+                ? item.closureIssue === "video_unavailable"
+                  ? "Video unavailable"
+                  : "Recording unavailable"
+                : `${item.chunkCount} durable chunk${item.chunkCount === 1 ? "" : "s"}`
+            }
+            detail={
+              item.closureIssue
+                ? (evidenceIssueMessages[item.closureIssue] ??
+                  "This recording is unavailable. Scry has not published unverifiable evidence.")
+                : `${item.totalBytes} bytes · chain ${item.chainHead?.slice(0, 12) ?? "unavailable"}${item.interruptions ? ` · ${item.interruptions} recording interruption${item.interruptions === 1 ? "" : "s"}; this is not a complete recording` : ""}${item.state === "incomplete" && !item.chunkCount ? " · Recording unavailable; no captured evidence was admitted" : ""}`
+            }
             state={item.state}
           />
         ))}
@@ -472,6 +497,8 @@ function ReportDetail({ reportId, onBack }: { reportId: string; onBack: () => vo
             Evidence coverage: {report.evidenceCoverage.complete} complete,{" "}
             {report.evidenceCoverage.incomplete} incomplete, {report.evidenceCoverage.open} still
             open, {report.evidenceCoverage.missing} unavailable.
+            {!!report.evidenceCoverage.unavailable &&
+              ` ${report.evidenceCoverage.unavailable} of the incomplete attempts also have unavailable recording artifacts.`}
             {report.evidenceCoverage.complete < report.evidenceCoverage.runs &&
               " Some attempts do not have a complete recording. Review those attempts before relying on their visual evidence."}
           </p>
