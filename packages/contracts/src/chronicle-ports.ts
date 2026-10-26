@@ -38,6 +38,9 @@ export interface ChronicleRecordingPort {
   receive(payload: string): void;
   recordError(code: RecordingFailureCode, error: unknown): void;
   flush(): Promise<ChronicleRecordingDiagnostics>;
+  /** Permanently stop receipt, join admitted work and discard unflushed data.
+   * This must not flush new evidence or authorize stream completion. */
+  abort(): Promise<void>;
 }
 
 export interface ChronicleReplayPlan {

@@ -37,6 +37,7 @@ describe("recording custody and closure", () => {
           return events.length - 1;
         },
         async flush() {},
+        discardPending() {},
       },
       {
         snapshot() {
@@ -58,7 +59,7 @@ describe("recording custody and closure", () => {
       .mockRejectedValueOnce(new Error("disk unavailable"))
       .mockResolvedValue(0);
     const recording = new ChronicleRecording(
-      { nextSequence: 0, append, async flush() {} },
+      { nextSequence: 0, append, async flush() {}, discardPending() {} },
       passthrough,
     );
     recording.receive("{");

@@ -374,6 +374,17 @@ path and failed authentication never falls back to plaintext handling.
 
 ## Evidence closure
 
+The isolated recording-quiescence correction gives each evidence session one
+recording lifecycle and gives all recording appends and flushes one ordered
+queue. Normal closure detaches capture and flushes admitted data. Abandonment
+stops receipt permanently, skips queued work that has not begun, joins already
+active recording work, and discards only unflushed data without publishing it.
+Historical chunks remain unchanged. A failed abandonment is not a drained
+receipt. A late recorder startup cannot reattach after abandonment, and sealing
+cannot return a completion summary if abandonment was accepted while it waited.
+Independent encoding and short immutable evidence admission remain separate
+boundaries; draining this queue does not claim that encoding has finished.
+
 The recorder masks inputs and sanitizes captured values before appending events.
 Events are ordered, compressed, encrypted with authenticated metadata, and
 linked by digest. Durable writes use private directories and atomic file
