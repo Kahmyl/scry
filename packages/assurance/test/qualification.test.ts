@@ -268,6 +268,7 @@ describe("qualification outcomes", () => {
     expect(profiles.browser).toEqual(
       expect.arrayContaining([
         "browser-recording",
+        "browser-custody",
         "component-veil",
         "component-praxis",
         "component-contracts",
@@ -308,6 +309,10 @@ describe("qualification outcomes", () => {
     );
     expect(database.tests).toEqual({ minimumPassed: 17, allowSkipped: false });
     expect(profiles.worker).toContain("command-queue");
+    const custody = checks.find((entry) => entry.id === "browser-custody")!;
+    expect(custody.command).toContain("test/owned-browser.integration.test.ts");
+    expect(custody.environment).toEqual({ SCRY_BROWSER_E2E: "1" });
+    expect(custody.tests).toEqual({ minimumPassed: 4, allowSkipped: false });
     expect(checks.find((entry) => entry.id === "command-queue")?.prerequisites).toEqual([
       "database",
       "redis",

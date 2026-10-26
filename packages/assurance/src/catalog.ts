@@ -137,6 +137,13 @@ export const checks: readonly CheckDefinition[] = [
     135_000,
   ),
   tests(
+    "browser-custody",
+    "Actual browser process exit is confirmed for close, forced cancellation and failed connection",
+    "@scry/praxis",
+    ["test/owned-browser.integration.test.ts"],
+    { integrated: true, minimum: 4 },
+  ),
+  tests(
     "browser-recording",
     "Protected recording and zero-network replay through public boundaries",
     "@scry/assurance",
@@ -228,6 +235,7 @@ export const profiles: Readonly<Record<string, readonly string[]>> = {
   ],
   browser: [
     "playwright",
+    "browser-custody",
     "component-veil",
     "component-praxis",
     "browser-recording",
