@@ -157,11 +157,20 @@ export class CommandAttempt {
         this.assertActive();
         return value;
       } catch (error) {
+        // A delayed timer must not turn an expired failing action into ordinary
+        // error release. Trigger cancellation without bypassing owned cleanup.
+        try {
+          this.assertActive();
+        } catch {
+          /* Cancellation owns the verdict. */
+        }
         // Failed work cannot abandon an unresolved/new acquisition. Existing
         // bound session resources remain with their session on ordinary errors.
         await this.pending();
         for (const resource of this.#acquired) void this.stop(resource);
         await this.pending();
+        // Cleanup itself can block the timer or consume the remaining budget.
+        this.assertActive();
         throw error;
       }
     });
@@ -210,6 +219,9 @@ export class CommandAttempt {
  * of permitting a new browser/action to overlap it. Other lanes are independent. */
 export class CommandLane {
   #active: CommandAttempt | undefined;
+  get available(): boolean {
+    return this.#active === undefined;
+  }
   async run<T>(
     options: CommandAttemptOptions,
     work: (attempt: CommandAttempt) => Promise<T>,
