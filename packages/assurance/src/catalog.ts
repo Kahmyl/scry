@@ -60,7 +60,7 @@ const componentOwners = [
 const componentMinimums: Readonly<Record<string, number>> = {
   contracts: 9,
   veil: 69,
-  chronicle: 63,
+  chronicle: 73,
   praxis: 196,
   api: 85,
   mcp: 7,

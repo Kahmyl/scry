@@ -2,7 +2,22 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ChronicleReplayRendererPort, EvidenceWriteAdmission } from "@scry/contracts";
-import { EvidenceArtifactFailure } from "./evidence-artifact-failure.js";
+import {
+  EvidenceArtifactFailure,
+  isArtifactFilesystemFailure,
+} from "./evidence-artifact-failure.js";
+
+// Call only around the named filesystem operation, never renderer, ownership,
+// cancellation or database capabilities. An errno on an arbitrary error is not
+// enough to classify it as an artifact failure.
+async function replayFile<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (isArtifactFilesystemFailure(error)) throw new EvidenceArtifactFailure("video_unavailable");
+    throw error;
+  }
+}
 
 interface ActionLedgerEntry {
   at?: string;
@@ -30,8 +45,11 @@ async function readLedger(ledgerPath: string): Promise<ActionLedgerEntry[]> {
       .split("\n")
       .filter(Boolean)
       .map((line) => JSON.parse(line) as ActionLedgerEntry);
-  } catch {
-    return [];
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+    if (error instanceof SyntaxError || isArtifactFilesystemFailure(error))
+      throw new EvidenceArtifactFailure("video_unavailable");
+    throw error;
   }
 }
 
@@ -76,7 +94,7 @@ export async function renderSanitizedReplay(options: {
     throw new Error("replay_playback_rate_invalid");
   const parentDirectory = path.dirname(options.outputDirectory);
   const outputName = path.basename(options.outputDirectory);
-  await mkdir(parentDirectory, { recursive: true, mode: 0o700 });
+  await replayFile(() => mkdir(parentDirectory, { recursive: true, mode: 0o700 }));
   const inputDigest = createHash("sha256")
     .update(
       JSON.stringify({ rendererFormat: 2, events: options.events, framesPerSecond, playbackRate }),
@@ -108,8 +126,13 @@ export async function renderSanitizedReplay(options: {
         reusedPublication: true,
       };
     }
-  } catch {
-    // No complete matching publication exists.
+  } catch (error) {
+    const absent = error instanceof Error && "code" in error && error.code === "ENOENT";
+    if (isArtifactFilesystemFailure(error) && !absent)
+      throw new EvidenceArtifactFailure("video_unavailable");
+    if (!(error instanceof SyntaxError) && !absent) throw error;
+    // An absent or incomplete cache does not authorize reuse. Other read errors
+    // are unavailable artifacts, not a promise that a clean cache miss occurred.
   }
   // Never clean another owner's staging directory or replace a publication.
   // The controller supplies a unique generation-scoped destination.
@@ -118,7 +141,7 @@ export async function renderSanitizedReplay(options: {
     `${outputName}.partial-${process.pid}-${randomUUID()}`,
   );
   const framesDirectory = path.join(staging, "frames");
-  await mkdir(framesDirectory, { recursive: true, mode: 0o700 });
+  await replayFile(() => mkdir(framesDirectory, { recursive: true, mode: 0o700 }));
   const ledger = await readLedger(options.ledgerPath);
   const firstTimestamp =
     typeof options.events[0]?.timestamp === "number" ? options.events[0].timestamp : Date.now();
@@ -156,8 +179,10 @@ export async function renderSanitizedReplay(options: {
   const videoPath = rendered.videoPath;
   admission.assertActive();
   const frameFiles = await (async () => {
-    await rename(videoPath, path.join(staging, "sanitized-replay.webm"));
-    const frameFiles = (await readdir(framesDirectory)).filter((name) => name.endsWith(".png"));
+    await replayFile(() => rename(videoPath, path.join(staging, "sanitized-replay.webm")));
+    const frameFiles = (await replayFile(() => readdir(framesDirectory))).filter((name) =>
+      name.endsWith(".png"),
+    );
     const publication = {
       complete: true,
       inputDigest,
@@ -168,10 +193,12 @@ export async function renderSanitizedReplay(options: {
       playbackRate,
       visibleFrameCount,
     };
-    await writeFile(path.join(staging, "publication.json"), JSON.stringify(publication, null, 2), {
-      mode: 0o600,
-    });
-    await rename(staging, options.outputDirectory);
+    await replayFile(() =>
+      writeFile(path.join(staging, "publication.json"), JSON.stringify(publication, null, 2), {
+        mode: 0o600,
+      }),
+    );
+    await replayFile(() => rename(staging, options.outputDirectory));
     return frameFiles;
   })();
   admission.assertActive();
