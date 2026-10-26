@@ -15,6 +15,8 @@ export class CommandExecutionLease {
   readonly #controller = new AbortController();
   #executionDeadline = Infinity;
   #claimDeadline = Infinity;
+  #renewalSampleAt = -Infinity;
+  #latestCheck: { at: number; deadline: number } | undefined;
   #failure: Error | undefined;
   #disposed = false;
   #renewing = false;
@@ -82,8 +84,22 @@ export class CommandExecutionLease {
       now + Math.max(0, sample.executionRemainingMs - elapsed),
     );
     const claimDeadline = now + Math.max(0, sample.claimRemainingMs - elapsed);
-    this.#claimDeadline =
-      mode === "check" ? Math.min(this.#claimDeadline, claimDeadline) : claimDeadline;
+    if (mode === "check") {
+      if (!this.#latestCheck || sample.sampleStartedAt >= this.#latestCheck.at)
+        this.#latestCheck = { at: sample.sampleStartedAt, deadline: claimDeadline };
+      // Database row-lock samples are ordered by their post-lock monotonic
+      // anchors, not response delivery. A pre-renewal read cannot revoke a
+      // subsequently acknowledged renewal merely by arriving late.
+      if (sample.sampleStartedAt >= this.#renewalSampleAt)
+        this.#claimDeadline = Math.min(this.#claimDeadline, claimDeadline);
+    } else {
+      this.#renewalSampleAt = sample.sampleStartedAt;
+      this.#claimDeadline = claimDeadline;
+      // A checkpoint sampled after this renewal still constrains it, even
+      // when the renewal acknowledgement itself was delivered later.
+      if (this.#latestCheck && this.#latestCheck.at >= sample.sampleStartedAt)
+        this.#claimDeadline = Math.min(this.#claimDeadline, this.#latestCheck.deadline);
+    }
     this.expire();
   }
   private armWatch(): void {

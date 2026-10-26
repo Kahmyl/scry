@@ -39,6 +39,81 @@ function fixture(initial = sample()) {
   return { lease, commands };
 }
 describe("carried command execution and claim clocks", () => {
+  it("does not roll back an acknowledged renewal when a pre-renewal checkpoint arrives late", async () => {
+    const { lease, commands } = fixture();
+    let deliver!: (value: CommandClaimSample) => void;
+    commands.assertClaim.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          deliver = resolve;
+        }),
+    );
+    commands.heartbeatClaim.mockImplementationOnce(async () => sample(100000, 60000));
+    commands.heartbeatClaim.mockImplementationOnce(() => new Promise(() => {}));
+    try {
+      await vi.advanceTimersByTimeAsync(19000);
+      const old = sample(101000, 41000);
+      const check = lease.checkpoint();
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(19000);
+      deliver(old);
+      await check;
+      await vi.advanceTimersByTimeAsync(21001);
+      expect(lease.signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(20000);
+      expect(lease.failure?.message).toBe("SCRY_BROWSER_COMMAND_CLAIM_FENCED");
+    } finally {
+      lease.dispose();
+    }
+  });
+  it("accepts a delayed renewal acknowledgement consistently with a newer checkpoint", async () => {
+    const { lease, commands } = fixture();
+    let deliver!: (value: CommandClaimSample) => void;
+    commands.heartbeatClaim.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          deliver = resolve;
+        }),
+    );
+    commands.heartbeatClaim.mockImplementationOnce(() => new Promise(() => {}));
+    try {
+      await vi.advanceTimersByTimeAsync(20000);
+      const renewal = sample(100000, 60000);
+      await vi.advanceTimersByTimeAsync(1000);
+      commands.assertClaim.mockResolvedValueOnce(sample(99000, 59000));
+      await lease.checkpoint();
+      deliver(renewal);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(39001);
+      expect(lease.signal.aborted).toBe(false);
+    } finally {
+      lease.dispose();
+    }
+  });
+  it("does not overwrite a newer shortening checkpoint with an older renewal acknowledgement", async () => {
+    const { lease, commands } = fixture();
+    let deliver!: (value: CommandClaimSample) => void;
+    commands.heartbeatClaim.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          deliver = resolve;
+        }),
+    );
+    commands.heartbeatClaim.mockImplementationOnce(() => new Promise(() => {}));
+    try {
+      await vi.advanceTimersByTimeAsync(20000);
+      const renewal = sample(100000, 60000);
+      await vi.advanceTimersByTimeAsync(1000);
+      commands.assertClaim.mockResolvedValueOnce(sample(99000, 1000));
+      await lease.checkpoint();
+      deliver(renewal);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(lease.signal.aborted).toBe(true);
+    } finally {
+      lease.dispose();
+    }
+  });
   it("deducts query/commit/transport elapsed time from a process-local monotonic anchor", async () => {
     const { lease } = fixture(sample(1000, 60000, 200));
     try {
