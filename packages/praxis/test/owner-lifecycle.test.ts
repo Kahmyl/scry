@@ -92,6 +92,7 @@ function fixture() {
       sampleStartedAt: performance.now(),
     })),
     retireOwner: vi.fn(async (_receipt: unknown): Promise<void> => undefined),
+    prepareFailureFinalization: vi.fn(async () => undefined),
     durableCapturesForSession: vi.fn(async () => []),
     assertOwner: vi.fn(async (_owner: unknown): Promise<void> => undefined),
     assertNoPendingEffectOutcomes: vi.fn(async () => undefined),
@@ -151,6 +152,42 @@ afterEach(() => {
 });
 
 describe("browser owner lifecycle", () => {
+  it.each([
+    ["close", "complete", undefined],
+    ["close_for_failure", "incomplete", "video_unavailable"],
+    ["close_for_failure", "complete", undefined],
+  ] as const)(
+    "reports %s evidence state %s from live closure without changing business outcome",
+    async (kind, state, issue) => {
+      const { engine, session, effects } = fixture();
+      await engine.open("session");
+      session.seal.mockImplementationOnce(async () => ({
+        sessionId: "session",
+        runId: "run",
+        state,
+        chainHead: "head",
+        chunkCount: 1,
+        totalBytes: 1,
+        replayObjectKey: "local://fixture",
+        ...(issue ? { issue } : {}),
+      }));
+      try {
+        const result = await engine.execute("session", { kind });
+        expect(result).toEqual({
+          closed: true,
+          evidenceState: state,
+          ...(issue ? { evidenceIssue: issue } : {}),
+          ...(kind === "close_for_failure" ? { unresolvedEffectsPreserved: true } : {}),
+        });
+        expect(effects.completeEvidence).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ state, ...(issue ? { issue } : {}) }),
+        );
+      } finally {
+        await engine.closeAll();
+      }
+    },
+  );
   it("stops host admission and sibling browsers immediately on an idle custodian failure", async () => {
     const { engine, effects, hostFailure } = fixture();
     await engine.open("session");
