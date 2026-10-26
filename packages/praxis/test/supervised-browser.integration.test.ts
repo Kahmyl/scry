@@ -22,17 +22,21 @@ async function fixture() {
   const unconfirmed = vi.fn();
   let ownerDeadline = performance.now() + 60000,
     ownerRevision = 0;
+  let authorityAvailable = true;
   const owned = await SupervisedBrowser.launch({
     headless: true,
     channel: process.env.SCRY_BROWSER_CHANNEL ?? "chromium",
     onUnconfirmedStop: unconfirmed,
-    sampleAuthority: () => ({
-      owner: {
-        revision: ownerRevision,
-        remainingMs: Math.max(0, Math.floor(ownerDeadline - performance.now())),
-      },
-      command: control.sample(),
-    }),
+    sampleAuthority: () => {
+      if (!authorityAvailable) throw new Error("SCRY_BROWSER_OWNER_FENCED");
+      return {
+        owner: {
+          revision: ownerRevision,
+          remainingMs: Math.max(0, Math.floor(ownerDeadline - performance.now())),
+        },
+        command: control.sample(),
+      };
+    },
   });
   cleanup.add(owned);
   const context = await owned.browser.newContext(),
@@ -44,6 +48,9 @@ async function fixture() {
     control,
     page,
     unconfirmed,
+    refuseAuthority: () => {
+      authorityAvailable = false;
+    },
     renew: (ms: number, revision = true) => {
       ownerDeadline = performance.now() + ms;
       if (revision) ownerRevision++;
@@ -51,6 +58,25 @@ async function fixture() {
   };
 }
 live("independent native browser custodian", () => {
+  it("rejects a pending native dispatch as fenced when confirmed stop wins its acknowledgment", async () => {
+    const { owned, control, unconfirmed } = await fixture();
+    await new CommandAttempt({ remainingMs: 5000 }).run(async (attempt) => {
+      control.begin(attempt);
+      const outcome = owned.synchronize().catch((error: unknown) => error);
+      const stopped = owned.terminate();
+      expect(await outcome).toMatchObject({ message: "SCRY_BROWSER_OWNER_FENCED" });
+      expect((await stopped).exitConfirmed).toBe(true);
+      expect(unconfirmed).not.toHaveBeenCalled();
+      control.finish(true);
+    });
+  }, 15000);
+  it("preserves confirmed native exit when its local authority sampler refuses further dispatch", async () => {
+    const { owned, refuseAuthority, unconfirmed } = await fixture();
+    refuseAuthority();
+    await expect(owned.synchronize()).rejects.toThrow("SCRY_BROWSER_OWNER_FENCED");
+    expect((await owned.close()).exitConfirmed).toBe(true);
+    expect(unconfirmed).not.toHaveBeenCalled();
+  }, 15000);
   it("stops native activity at the phase deadline while the controller loop is blocked, unlike the healthy control", async () => {
     const results: Array<{ gap: number; stopped: boolean }> = [];
     for (const shortPhase of [false, true]) {

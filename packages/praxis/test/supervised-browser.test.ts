@@ -198,6 +198,67 @@ describe("bounded parent custodian transport", () => {
     await expect(owned.synchronize()).rejects.toThrow("OWNER_FENCED");
     expect((await owned.close()).exitConfirmed).toBe(true);
   });
+  it("rejects a pending dispatch as fenced, not unconfirmed, when positive native stop arrives", async () => {
+    let snapshot = idle();
+    const observer = vi.fn();
+    const owned = await SupervisedBrowser.launch({
+      sampleAuthority: () => snapshot,
+      onUnconfirmedStop: observer,
+    });
+    helper.automatic = false;
+    snapshot = active(1);
+    const barrier = owned.synchronize();
+    helper.stopped();
+    await expect(barrier).rejects.toThrow("SCRY_BROWSER_OWNER_FENCED");
+    expect((await owned.close()).exitConfirmed).toBe(true);
+    expect(observer).not.toHaveBeenCalled();
+  });
+  it("preserves unconfirmed classification when a pending dispatch loses the helper without native proof", async () => {
+    let snapshot = idle();
+    const observer = vi.fn();
+    const owned = await SupervisedBrowser.launch({
+      sampleAuthority: () => snapshot,
+      onUnconfirmedStop: observer,
+    });
+    helper.automatic = false;
+    snapshot = active(1);
+    const barrier = owned.synchronize();
+    helper.exit();
+    await expect(barrier).rejects.toThrow("SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED");
+    await expect(owned.close()).rejects.toThrow("SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED");
+    await Promise.resolve();
+    expect(observer).toHaveBeenCalledTimes(1);
+  });
+  it("classifies refused authority as fenced after terminate returns confirmed native exit", async () => {
+    let available = true;
+    const observer = vi.fn();
+    const owned = await SupervisedBrowser.launch({
+      sampleAuthority: () => {
+        if (!available) throw new Error("SCRY_BROWSER_COMMAND_DEADLINE_EXCEEDED");
+        return idle();
+      },
+      onUnconfirmedStop: observer,
+    });
+    available = false;
+    await expect(owned.synchronize()).rejects.toThrow("SCRY_BROWSER_OWNER_FENCED");
+    expect((await owned.close()).exitConfirmed).toBe(true);
+    expect(observer).not.toHaveBeenCalled();
+  });
+  it("does not manufacture proof when authority refusal is followed by helper loss", async () => {
+    let available = true;
+    const owned = await SupervisedBrowser.launch({
+      sampleAuthority: () => {
+        if (!available) throw new Error("SCRY_BROWSER_COMMAND_DEADLINE_EXCEEDED");
+        return idle();
+      },
+    });
+    available = false;
+    helper.stopped = () => helper.exit();
+    await expect(owned.synchronize()).rejects.toThrow(
+      "SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED",
+    );
+    expect(owned.exitConfirmed).toBe(false);
+  });
   it.each(["challenge", "commandSequence", "ownerRevision", "phaseSequence", "claimRevision"])(
     "refuses an acknowledgment that misstates the sent %s",
     async (field) => {

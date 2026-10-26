@@ -61,7 +61,7 @@ const componentMinimums: Readonly<Record<string, number>> = {
   contracts: 9,
   veil: 43,
   chronicle: 21,
-  praxis: 178,
+  praxis: 182,
   api: 85,
   mcp: 7,
   web: 3,
@@ -155,7 +155,7 @@ export const checks: readonly CheckDefinition[] = [
     "Independent native custody enforces phase and authority deadlines during controller stalls, transport loss and helper death",
     "@scry/praxis",
     ["test/supervised-browser.integration.test.ts"],
-    { integrated: true, minimum: 7 },
+    { integrated: true, minimum: 9 },
   ),
   tests(
     "command-cancellation",

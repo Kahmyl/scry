@@ -232,10 +232,10 @@ export class SupervisedBrowser {
     // Its death is containment, not a fabricated native-exit confirmation.
     this.#child.kill("SIGKILL");
   }
-  private rejectBarrier(): void {
+  private rejectBarrier(reason: Error = failure()): void {
     if (!this.#barrier) return;
     clearTimeout(this.#barrier.timer);
-    this.#barrier.completion.reject(failure());
+    this.#barrier.completion.reject(reason);
     this.#barrier = undefined;
   }
   private message(value: unknown): void {
@@ -319,7 +319,9 @@ export class SupervisedBrowser {
       this.#receipt.resolve(Object.freeze({ exitConfirmed: true, forced: input.forced }));
       this.#ready.reject(new Error("SCRY_BROWSER_PROCESS_LAUNCH_FAILED"));
       this.#setup.reject(new Error("SCRY_BROWSER_PROCESS_LAUNCH_FAILED"));
-      this.rejectBarrier();
+      // The dispatch was refused, but custody is positively stopped. Do not
+      // turn a pending phase barrier into a false host-recovery requirement.
+      this.rejectBarrier(new Error("SCRY_BROWSER_OWNER_FENCED"));
       this.send({ kind: "receipt_acknowledged" });
     } else {
       this.failTransport();
@@ -339,7 +341,9 @@ export class SupervisedBrowser {
       target = this.options.sampleAuthority();
     } catch {
       return this.terminate().then(() => {
-        throw failure();
+        // A rejected terminate still propagates its unconfirmed failure. This
+        // continuation runs only after positive native-exit/owned-helper proof.
+        throw new Error("SCRY_BROWSER_OWNER_FENCED");
       });
     }
     if (this.#lastAcknowledgment && matches(this.#lastAcknowledgment, target))

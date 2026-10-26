@@ -118,6 +118,12 @@ command deadline never extends. Exact command sequences and monotonic phase
 sequences prevent stale completion, overlap or command reuse. An action must wait
 for the matching authority acknowledgment before native dispatch.
 
+A positive native-exit receipt ends dispatch authority; it is not reclassified as
+unknown merely because a phase acknowledgment was still pending or the local
+authority sampler refused further work. Those waits reject as fenced after
+confirmed stop. A failed termination or missing native receipt remains unconfirmed
+and still requires host containment. No timeout budget is extended by this rule.
+
 Missing, malformed, late or backpressured control traffic is a containment event.
 Startup, command execution, individual phases and controller liveness are bounded
 separately. Expiry is permanent for that custodian. A lost socket or dead custodian

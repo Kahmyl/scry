@@ -160,9 +160,14 @@ live("actual queue carried command lifetime", () => {
       expect(browser.browser.isConnected()).toBe(false);
       const result = await f.commands.observe(commandId);
       expect(result.state).toBe("failed");
-      expect(["SCRY_BROWSER_COMMAND_DEADLINE_EXCEEDED", "SCRY_BROWSER_ACTION_TIMEOUT"]).toContain(
-        result.errorCode,
-      );
+      // Custodian budgets conservatively include transport time. It may fence
+      // dispatch just before the controller's timer; positive stop is still
+      // required, and unconfirmed termination is never an accepted outcome.
+      expect([
+        "SCRY_BROWSER_COMMAND_DEADLINE_EXCEEDED",
+        "SCRY_BROWSER_ACTION_TIMEOUT",
+        "SCRY_BROWSER_OWNER_FENCED",
+      ]).toContain(result.errorCode);
     } finally {
       requested = undefined;
       await f.close();
