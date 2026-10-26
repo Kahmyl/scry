@@ -149,7 +149,7 @@ services:
     volumes:
       - scry-artifacts:/workspace/apps/api/artifacts/browser
     restart: unless-stopped
-    stop_grace_period: 30s
+    stop_grace_period: 60s
     init: true
     shm_size: 1gb
     develop:
