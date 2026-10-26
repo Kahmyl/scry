@@ -96,6 +96,24 @@ baseline does not write relational evidence-chunk or artifact rows.
 
 ## Authoritative ownership
 
+The migration task serializes schema work on a dedicated bounded connection.
+The established SQL runner commits each pending batch and its history together;
+retained baselines acknowledge their original operations only after the retained
+capability checks pass, in one adoption transaction. SQL files keep stable
+operation identities and are not rewritten after application. No complete-schema
+or SQL byte fingerprint becomes deployment authority.
+
+Schema readiness is a separate short transaction after DDL/history commit.
+Interruption before the readiness marker is recoverable by rerunning the task.
+Readiness failure must not admit traffic: use a reviewed additive correction or
+the deployment controller's fenced restore path, not an edited applied operation.
+Historical evidence and business rows are not rebuilt for bookkeeping adoption.
+
+The schema-upgrade qualification check needs both an explicitly scoped test
+database and `SCRY_BROWSER_ALLOW_DATABASE_CREATION=1`. It creates fresh uniquely
+named fixture databases and removes only those generated databases afterward.
+Without that scope it is blocked, not silently counted as passing.
+
 | Concern                                          | Authority                                          |
 | ------------------------------------------------ | -------------------------------------------------- |
 | Identity and workspace role                      | Authenticated principal plus PostgreSQL membership |

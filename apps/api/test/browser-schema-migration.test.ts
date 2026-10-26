@@ -113,10 +113,11 @@ describe("browser execution baseline schema", () => {
         new URL("../baseline-schema/compatibility/legacy-browser-generation.sql", import.meta.url),
         "utf8",
       ),
-      readFile(new URL("../scripts/migrate.ts", import.meta.url), "utf8"),
+      readFile(new URL("../scripts/baseline-migration.ts", import.meta.url), "utf8"),
     ]);
     expect(runner).toContain("runtime_capability_version");
     expect(runner).toContain("compatibilityApplied");
+    expect(runner).toContain("node-pg-migrate");
     expect(bridge).toContain("RENAME COLUMN runtime_capability_version");
     expect(bridge).toContain("RENAME COLUMN protection_key_version");
     expect(bridge).toContain("RENAME COLUMN key_version TO key_id");

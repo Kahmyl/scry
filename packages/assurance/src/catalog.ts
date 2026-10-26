@@ -19,7 +19,13 @@ const tests = (
   guarantee: string,
   owner: string,
   files: string[] = [],
-  options: { integrated?: boolean; database?: boolean; redis?: boolean; minimum?: number } = {},
+  options: {
+    integrated?: boolean;
+    database?: boolean;
+    databaseCreation?: boolean;
+    redis?: boolean;
+    minimum?: number;
+  } = {},
 ): CheckDefinition => ({
   id,
   guarantee,
@@ -32,6 +38,7 @@ const tests = (
   prerequisites: [
     ...(options.database ? ["database" as const] : []),
     ...(options.redis ? ["redis" as const] : []),
+    ...(options.databaseCreation ? ["database_creation" as const] : []),
   ],
   tests: {
     minimumPassed: options.minimum ?? 1,
@@ -151,6 +158,13 @@ export const checks: readonly CheckDefinition[] = [
     { integrated: true, minimum: 2 },
   ),
   tests(
+    "schema-upgrades",
+    "Retained baselines upgrade transactionally with guarded history, rollback and recovery",
+    "@scry/api",
+    ["test/baseline-migration.integration.test.ts"],
+    { database: true, databaseCreation: true, minimum: 8 },
+  ),
+  tests(
     "database-lifecycle",
     "Scope, lifecycle, capture atomicity and uncertain mutation truth",
     "@scry/api",
@@ -254,7 +268,14 @@ export const profiles: Readonly<Record<string, readonly string[]>> = {
     "topology",
     "boundaries",
   ],
-  database: ["component-api", "component-veil", "database-lifecycle", "topology", "boundaries"],
+  database: [
+    "component-api",
+    "component-veil",
+    "schema-upgrades",
+    "database-lifecycle",
+    "topology",
+    "boundaries",
+  ],
   worker: ["command-queue", "worker-shutdown", "worker-journey"],
   owner: ["owner-admission"],
   failure: ["failure-finalization"],
