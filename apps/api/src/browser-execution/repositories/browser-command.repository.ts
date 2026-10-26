@@ -455,11 +455,14 @@ export class BrowserCommandRepository {
     claimToken: string,
     safeResult: Record<string, unknown>,
   ): Promise<void> {
+    // Serialization is not coordination work; revalidate the claim only after
+    // it finishes, without holding its database lock during local CPU work.
+    const serialized = JSON.stringify(safeResult);
     await this.withLiveClaim(commandId, claimToken, "complete", async (client) => {
       await client.query(
         `UPDATE browser_commands SET state='completed',safe_result=$2::jsonb,completed_at=clock_timestamp(),
            claim_token=NULL,claim_lease_expires_at=NULL WHERE id=$1`,
-        [commandId, JSON.stringify(safeResult)],
+        [commandId, serialized],
       );
     });
   }
