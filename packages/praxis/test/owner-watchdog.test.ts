@@ -29,6 +29,30 @@ function fixture(initial = sample()) {
   return { effects, lease };
 }
 describe("monotonic browser owner watchdog", () => {
+  it("exports only relative remaining authority and acknowledged owner renewal revision", async () => {
+    const { lease, effects } = fixture(sample(60000, 200));
+    try {
+      expect(lease.authoritySample()).toEqual({ revision: 0, remainingMs: 59800 });
+      await lease.run(async () => undefined);
+      expect(lease.authoritySample().revision).toBe(0);
+      let deliver!: (value: ReturnType<typeof sample>) => void;
+      effects.heartbeatOwner.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            deliver = resolve;
+          }),
+      );
+      const pending = lease.heartbeat(60000);
+      await Promise.resolve();
+      expect(lease.authoritySample().revision).toBe(0);
+      deliver(sample());
+      await pending;
+      expect(lease.authoritySample().revision).toBe(1);
+    } finally {
+      lease.revoke();
+    }
+    expect(() => lease.authoritySample()).toThrow("OWNER_FENCED");
+  });
   it("clears periodic renewal and expiry timers together on revocation", async () => {
     const { lease, effects } = fixture();
     lease.startHeartbeat(60000);

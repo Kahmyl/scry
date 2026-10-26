@@ -6,7 +6,7 @@ import path from "node:path";
 import { Queue, QueueEvents, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { OwnedBrowser } from "@scry/praxis";
+import { SupervisedBrowser } from "@scry/praxis";
 import { composePraxisExecutionPort } from "../src/browser-execution/browser-boundary-composition.js";
 import { processBrowserCommand } from "../src/browser-execution/browser-command-processor.js";
 import {
@@ -71,7 +71,7 @@ live("actual queue carried command lifetime", () => {
       name = "command-lifetime-" + randomUUID();
     const queue = new Queue<{ commandId: string }>(name, { connection }),
       events = new QueueEvents(name, { connection });
-    const launch = vi.spyOn(OwnedBrowser, "launch");
+    const launch = vi.spyOn(SupervisedBrowser, "launch");
     let shutdown!: () => Promise<void>;
     const worker = new Worker<{ commandId: string }>(
       name,

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { PraxisExecutionPort } from "@scry/contracts";
-import { OwnedBrowser } from "@scry/praxis";
+import { SupervisedBrowser } from "@scry/praxis";
 import { composePraxisExecutionPort } from "../src/browser-execution/browser-boundary-composition.js";
 import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
 import { BrowserExecutionRepository } from "../src/browser-execution/repositories/browser-execution.repository.js";
@@ -20,7 +20,7 @@ live("composed engine command lifetimes", () => {
     praxis: PraxisExecutionPort,
     origin: string;
   let requested: (() => void) | undefined, held: ServerResponse | undefined;
-  const launched = vi.spyOn(OwnedBrowser, "launch");
+  const launched = vi.spyOn(SupervisedBrowser, "launch");
   const server = createServer((request, response) => {
     if (request.url === "/hold") {
       held = response;

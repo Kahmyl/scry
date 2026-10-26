@@ -1,8 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { boundaryViolations } from "../boundary-ownership-rules.mjs";
+import { boundaryViolations, unsupportedPraxisDependencies } from "../boundary-ownership-rules.mjs";
 
 const consumer = "apps/api/src/browser-execution/example.ts";
+
+test("admits the explicit private custodian TS loader without admitting other runtime owners", () => {
+  assert.deepEqual(
+    unsupportedPraxisDependencies({
+      "@scry/contracts": "workspace:*",
+      playwright: "locked",
+      rrweb: "locked",
+      tsx: "locked",
+    }),
+    [],
+  );
+  for (const name of [
+    "@scry/veil",
+    "@scry/chronicle",
+    "@scry/assurance",
+    "pg",
+    "@nestjs/common",
+    "unreviewed-runtime",
+  ])
+    assert.deepEqual(unsupportedPraxisDependencies({ tsx: "locked", [name]: "fixture" }), [name]);
+});
 
 test("Praxis is the only browser driver owner and consumes only boundary contracts", () => {
   const praxis = "packages/praxis/src/browser-engine.ts";

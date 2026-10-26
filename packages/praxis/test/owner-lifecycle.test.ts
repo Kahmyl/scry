@@ -25,6 +25,9 @@ const browserFixture = vi.hoisted(() => {
   };
   const custody = {
     browser,
+    synchronize: vi.fn(async () => undefined),
+    completeSetup: vi.fn(async () => undefined),
+    terminationState: "active",
     close: vi.fn(async () => {
       await browser.close();
       return { forced: false, exitConfirmed: true as const };
@@ -45,12 +48,12 @@ const browserFixture = vi.hoisted(() => {
     browser,
     recorder,
     custody,
-    ownedLaunch: vi.fn(async () => custody),
+    ownedLaunch: vi.fn(async (_options: { onUnconfirmedStop?: () => void }) => custody),
     launch: vi.fn(async () => browser),
   };
 });
-vi.mock("../src/owned-browser.js", () => ({
-  OwnedBrowser: { launch: browserFixture.ownedLaunch },
+vi.mock("../src/supervised-browser.js", () => ({
+  SupervisedBrowser: { launch: browserFixture.ownedLaunch },
 }));
 vi.mock("playwright", () => ({ chromium: { launch: browserFixture.launch } }));
 vi.mock("../src/recorder.js", () => ({
@@ -118,14 +121,16 @@ function fixture() {
       semanticHint: (value: string) => value,
     })),
   };
+  const hostFailure = vi.fn();
   const engine = new PraxisBrowserEngine(
     commands as unknown as PraxisCommandsPort,
     effects as unknown as PraxisEffectsPort,
     evidence as unknown as ChronicleEvidencePort,
     protection as unknown as VeilBrowserProtectionPort,
     () => 120000,
+    { onUnconfirmedRuntime: hostFailure },
   );
-  return { engine, commands, effects, session, protection };
+  return { engine, commands, effects, session, protection, hostFailure };
 }
 
 beforeEach(() => {
@@ -141,6 +146,19 @@ afterEach(() => {
 });
 
 describe("browser owner lifecycle", () => {
+  it("stops host admission and sibling browsers immediately on an idle custodian failure", async () => {
+    const { engine, effects, hostFailure } = fixture();
+    await engine.open("session");
+    await engine.open("sibling");
+    const fail = browserFixture.ownedLaunch.mock.calls.at(-1)![0].onUnconfirmedStop!;
+    fail();
+    fail();
+    await expect(engine.open("new-session")).rejects.toThrow("SESSION_CLOSING");
+    await engine.closeAll();
+    expect(hostFailure).toHaveBeenCalledTimes(1);
+    expect(browserFixture.custody.terminate).toHaveBeenCalledTimes(2);
+    expect(effects.claimOwner).toHaveBeenCalledTimes(2);
+  });
   it("waits for durable retirement admission before making the stopped incarnation vacant", async () => {
     const { engine, effects } = fixture();
     await engine.open("session");
@@ -167,16 +185,17 @@ describe("browser owner lifecycle", () => {
     }
   });
   it("retains failed durable retirement after physical stop and requires host recovery", async () => {
-    const { engine, effects } = fixture();
+    const { engine, effects, hostFailure } = fixture();
     await engine.open("session");
     effects.retireOwner.mockRejectedValueOnce(new Error("private_database_failure"));
     effects.heartbeatOwner.mockRejectedValueOnce(new Error("database unavailable"));
     await vi.advanceTimersByTimeAsync(20000);
     expect(browserFixture.custody.terminate).toHaveBeenCalledTimes(1);
-    await expect(engine.open("session")).rejects.toThrow("OWNER_RETIREMENT_UNCONFIRMED");
+    await expect(engine.open("session")).rejects.toThrow("SESSION_CLOSING");
     await expect(engine.closeAll()).rejects.toThrow("OWNER_RETIREMENT_UNCONFIRMED");
     expect(effects.claimOwner).toHaveBeenCalledTimes(1);
     expect(effects.retireOwner).toHaveBeenCalledTimes(1);
+    expect(hostFailure).toHaveBeenCalledTimes(1);
   });
   async function clocked(work: () => Promise<void>): Promise<void> {
     vi.useFakeTimers();
@@ -525,7 +544,7 @@ describe("browser owner lifecycle", () => {
     );
     effects.heartbeatOwner.mockRejectedValueOnce(new Error("database unavailable"));
     await vi.advanceTimersByTimeAsync(20000);
-    await expect(engine.open("session")).rejects.toThrow("PROCESS_TERMINATION_UNCONFIRMED");
+    await expect(engine.open("session")).rejects.toThrow("SESSION_CLOSING");
     await expect(engine.closeAll()).rejects.toThrow("PROCESS_TERMINATION_UNCONFIRMED");
     expect(effects.claimOwner).toHaveBeenCalledTimes(1);
     expect(effects.retireOwner).not.toHaveBeenCalled();
@@ -536,7 +555,7 @@ describe("browser owner lifecycle", () => {
       new Error("SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED"),
     );
     await expect(engine.open("session")).rejects.toThrow("PROCESS_TERMINATION_UNCONFIRMED");
-    await expect(engine.open("session")).rejects.toThrow("PROCESS_TERMINATION_UNCONFIRMED");
+    await expect(engine.open("session")).rejects.toThrow("SESSION_CLOSING");
     expect(effects.claimOwner).toHaveBeenCalledTimes(1);
     expect(effects.retireOwner).not.toHaveBeenCalled();
   });

@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { OwnedBrowser } from "@scry/praxis";
+import { SupervisedBrowser } from "@scry/praxis";
 import { AuthenticatedEvidenceStore } from "@scry/chronicle";
 import { composePraxisExecutionPort } from "../src/browser-execution/browser-boundary-composition.js";
 import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
@@ -16,7 +16,7 @@ const url = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
 const live = url && process.env.SCRY_BROWSER_E2E === "1" ? describe : describe.skip;
 live("confirmed native owner retirement", () => {
   let database: Database;
-  const launched = vi.spyOn(OwnedBrowser, "launch");
+  const launched = vi.spyOn(SupervisedBrowser, "launch");
   beforeAll(async () => {
     process.env.DATABASE_URL = url;
     process.env.SCRY_BROWSER_PROTECTED_KEY_BASE64 = randomBytes(32).toString("base64");

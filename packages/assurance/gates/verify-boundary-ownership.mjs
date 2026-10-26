@@ -2,7 +2,7 @@ import { fileURLToPath as qualificationFilePath } from "node:url";
 process.chdir(qualificationFilePath(new URL("../../../", import.meta.url)));
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { boundaryViolations } from "./boundary-ownership-rules.mjs";
+import { boundaryViolations, unsupportedPraxisDependencies } from "./boundary-ownership-rules.mjs";
 
 const root = new URL("../../../", import.meta.url);
 const productionPackages = [
@@ -132,12 +132,8 @@ const chroniclePackage = JSON.parse(read("packages/chronicle/package.json"));
 if (Object.keys(chroniclePackage.dependencies ?? {}).some((name) => name !== "@scry/contracts"))
   fail("Chronicle has an implementation dependency outside its contracts");
 const runtimePackage = JSON.parse(read("packages/praxis/package.json"));
-if (
-  Object.keys(runtimePackage.dependencies ?? {}).some(
-    (name) => !["@scry/contracts", "playwright", "rrweb"].includes(name),
-  )
-)
-  fail("browser mechanics depend directly on protection or evidence implementations");
+if (unsupportedPraxisDependencies(runtimePackage.dependencies).length)
+  fail("browser mechanics declare unsupported runtime implementation dependencies");
 if (!JSON.parse(read("apps/api/package.json")).dependencies?.["@scry/chronicle"])
   fail("application does not declare its Chronicle runtime dependency");
 if (!JSON.parse(read("apps/api/package.json")).dependencies?.["@scry/praxis"])

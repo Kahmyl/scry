@@ -183,6 +183,29 @@ closure remains the separate path for evidence sealing. Worker transport drainin
 and crash supervision have their own qualification requirements; process custody
 alone does not establish those guarantees.
 
+The isolated execution candidate now moves native process custody into a separate
+private custodian. Only finite relative owner/claim/execution budgets cross its
+bounded IPC channel; database and protection credentials do not. A custodian-clock
+challenge anchors transport conservatively. Repeated revisions cannot extend
+authority, and acknowledged renewal never extends an absolute command deadline.
+Each native dispatch waits for the matching command and phase acknowledgment.
+Concurrent phases retain the earliest unfinished deadline rather than replacing
+each other. Browser setup has an independent fifteen-second bound after launch;
+routine native interactions/observations and checkpoint reads have separate
+fifteen-/ten-second limits inside the overall command budget. Provider phases use
+the explicitly selected command timeout. Controller liveness is independently
+bounded to two seconds. These are ceilings, not response-time targets.
+The responsive application independently watches custodian acknowledgment liveness
+as well. Only one exact challenge is outstanding; its acknowledgment must match
+the actual sent owner, command, claim and phase revisions. A stalled custodian
+selects unconfirmed failed-host containment instead of an unmonitored browser.
+
+The custodian's positive stop receipt confirms supported native custody before
+the application retires the owner. Helper death, IPC failure or unconfirmed native
+stop remains a recovery-required failure, not evidence of successful cleanup or
+an unapplied business effect. This is process/control isolation, not a claim of
+Chromium sandboxing, full resource isolation or native-producer release readiness.
+
 Worker shutdown stops local admission before waiting for processors. It pauses
 queue consumption, interrupts owned browser resources, drains tracked work,
 allows queue acknowledgement, then closes application resources. Each phase has

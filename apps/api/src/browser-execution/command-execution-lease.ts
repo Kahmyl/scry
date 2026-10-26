@@ -16,6 +16,7 @@ export class CommandExecutionLease {
   #executionDeadline = Infinity;
   #claimDeadline = Infinity;
   #renewalSampleAt = -Infinity;
+  #claimRevision = 0;
   #latestCheck: { at: number; deadline: number } | undefined;
   #failure: Error | undefined;
   #disposed = false;
@@ -61,6 +62,19 @@ export class CommandExecutionLease {
   remainingMs(): number {
     this.assertActive();
     return Math.max(0, Math.floor(this.#executionDeadline - this.now()));
+  }
+  authoritySample(): {
+    executionRemainingMs: number;
+    claimRemainingMs: number;
+    claimRevision: number;
+  } {
+    this.assertActive();
+    const now = this.now();
+    return {
+      executionRemainingMs: Math.max(0, Math.floor(this.#executionDeadline - now)),
+      claimRemainingMs: Math.max(0, Math.floor(this.#claimDeadline - now)),
+      claimRevision: this.#claimRevision,
+    };
   }
   private apply(sample: CommandClaimSample, mode: "initial" | "check" | "heartbeat"): void {
     const now = this.now();
@@ -148,6 +162,8 @@ export class CommandExecutionLease {
       if (this.#disposed || this.#failure) return;
       this.assertActive(); // A late response cannot resurrect an expired lease.
       this.apply(sample, "heartbeat");
+      this.assertActive();
+      this.#claimRevision += 1;
       this.armWatch();
     } catch (error) {
       this.admissionFailure(error);

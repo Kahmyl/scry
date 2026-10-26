@@ -169,7 +169,8 @@ projections, and Mission evidence digests. It depends only on contracts and Node
 built-ins; composition supplies Veil protection, SQL, and browser-rendering
 capabilities. Praxis owns the active browser engine, recorder attachment,
 replay rendering, browser lifecycle, and local owner revocation. It depends only
-on contracts, Playwright, and rrweb; Veil and Chronicle are injected capabilities,
+on contracts, Playwright, rrweb and the existing tsx runtime loader for its private
+browser custodian; Veil and Chronicle are injected capabilities,
 not Praxis implementation dependencies. The application supplies transactional
 owner admission for durable evidence and retains encrypted checkpoint storage.
 Assurance exercises public surfaces, but production services build and run without

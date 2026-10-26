@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { OwnedBrowser } from "@scry/praxis";
+import { SupervisedBrowser } from "@scry/praxis";
 import { composePraxisExecutionPort } from "../src/browser-execution/browser-boundary-composition.js";
 import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
 import { BrowserExecutionRepository } from "../src/browser-execution/repositories/browser-execution.repository.js";
@@ -16,8 +16,8 @@ const url = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
 const live = url && process.env.SCRY_BROWSER_E2E === "1" ? describe : describe.skip;
 live("native owner lifetime during database delay", () => {
   let database: Database, origin: string, seenBusy: (() => void) | undefined;
-  const actualLaunch = OwnedBrowser.launch;
-  const launched = vi.spyOn(OwnedBrowser, "launch");
+  const actualLaunch = SupervisedBrowser.launch;
+  const launched = vi.spyOn(SupervisedBrowser, "launch");
   const server = createServer((request, response) => {
     response
       .writeHead(200, { "content-type": "text/html" })

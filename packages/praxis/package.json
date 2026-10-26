@@ -12,7 +12,8 @@
   "dependencies": {
     "@scry/contracts": "workspace:*",
     "playwright": "1.62.0",
-    "rrweb": "2.1.1"
+    "rrweb": "2.1.1",
+    "tsx": "^4.20.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

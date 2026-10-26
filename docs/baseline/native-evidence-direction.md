@@ -96,6 +96,63 @@ independent worker/process supervision remains necessary for already running
 browser activity when the controller itself is unresponsive. Native custody,
 resource isolation, and the lane are complementary guarantees, not substitutes.
 
+### Independent browser supervision direction
+
+The selected isolated candidate puts each native browser's supported Playwright
+BrowserServer custody in a separate, bounded control process. The application
+keeps database, protection and evidence authority; the custodian's control channel
+receives only private execution budgets and minimal browser-launch configuration.
+The separate private browser-protocol connection can carry values intentionally
+provided to the browser, including access secrets; it is not a public delivery path.
+Recognition,
+encoding and other CPU-heavy work do not run in the custodian. A dedicated remote
+browser service remains an alternative if measured isolation requires it; adding
+another network service is not necessary for the reproduced controller-loop stall.
+
+Authority crosses the process boundary through a bounded challenge/response, not
+by treating a ping as permission to keep acting. The custodian anchors each
+challenge on its own monotonic clock and subtracts transport conservatively.
+Repeated owner or claim revisions may only tighten their deadlines. Only a new
+acknowledged database-renewal revision may extend renewable authority. The absolute
+command deadline never extends. Exact command sequences and monotonic phase
+sequences prevent stale completion, overlap or command reuse. An action must wait
+for the matching authority acknowledgment before native dispatch.
+
+Missing, malformed, late or backpressured control traffic is a containment event.
+Startup, command execution, individual phases and controller liveness are bounded
+separately. Expiry is permanent for that custodian. A lost socket or dead custodian
+is not an exit-confirmed native receipt. Unexpected custodian death requires
+failed-host containment and qualified namespace cleanup; no guessed native PID is
+killed and no unknown business effect is replayed automatically.
+
+Liveness monitoring is reciprocal: the application also bounds absence of exact
+custodian acknowledgments. A paused or blocked custodian cannot leave the
+application assuming that its watchdog is still running. Losing that monitor
+triggers unconfirmed containment through the actual owned helper capability;
+it does not manufacture a native-exit receipt. This safety monitor cannot renew
+an owner, claim, command or phase budget.
+
+The mechanism experiments used the actual production image and seeded pages.
+Six custodian-death cases observed Chromium exit across idle, busy and before-unload
+states in both browser modes. Eight authority-protocol cases proved delayed-start
+refusal, independent phase stop during a blocked controller, immutable command
+deadlines, revision-controlled renewal, overlap refusal, ended-command fencing and
+late-message refusal. These are mechanism proofs, not full runtime integration or
+ten-product acceptance. The isolated implementation now wires the private
+authority state machine through a separate custodian and matching dispatch
+acknowledgments. Native phase, setup, transport and helper-death tests remain
+mandatory. Deployment/crash containment, resource-shaped soak and full product
+acceptance are still required before release. The helper is not an operating-system
+security sandbox; browser sandboxing and namespace/resource policies require their
+own production-shaped qualification.
+
+The protocol uses supported [Playwright BrowserServer custody](https://playwright.dev/docs/api/class-browserserver)
+and [Node child-process IPC](https://nodejs.org/docs/latest-v24.x/api/child_process.html).
+Node send completion does not prove remote admission, so Scry waits for the exact
+custodian acknowledgment. [Playwright's Docker guidance](https://playwright.dev/docs/docker)
+also distinguishes process/container placement from Chromium sandboxing; running
+the browser as root is not treated as a secure browser sandbox.
+
 Veil owns the protection policy and private processing of original frames.
 Semantic observations can identify sensitive content, but timestamps alone do
 not prove that a region belongs to a particular frame. Frame-local checks and

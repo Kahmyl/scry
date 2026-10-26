@@ -375,6 +375,11 @@ describe("qualification outcomes", () => {
     expect(custody.command).toContain("test/owned-browser.integration.test.ts");
     expect(custody.environment).toEqual({ SCRY_BROWSER_E2E: "1" });
     expect(custody.tests).toEqual({ minimumPassed: 4, allowSkipped: false });
+    const supervision = checks.find((entry) => entry.id === "browser-supervision")!;
+    expect(profiles.browser).toContain("browser-supervision");
+    expect(supervision.command).toContain("test/supervised-browser.integration.test.ts");
+    expect(supervision.environment).toEqual({ SCRY_BROWSER_E2E: "1" });
+    expect(supervision.tests).toEqual({ minimumPassed: 7, allowSkipped: false });
     const cancellation = checks.find((entry) => entry.id === "command-cancellation")!;
     expect(profiles.browser).toContain("command-cancellation");
     expect(cancellation.command).toContain("test/command-lane.integration.test.ts");
