@@ -20,6 +20,7 @@ export class SanitizedBrowserRecorder {
   async start(context: BrowserContext): Promise<void> {
     if (this.#closed) throw new Error("SCRY_BROWSER_RECORDER_CLOSED");
     await this.#loadSource();
+    if (this.#closed) throw new Error("SCRY_BROWSER_RECORDER_CLOSED");
     if (this.#contexts.has(context)) return;
     this.#contexts.add(context);
     context.on("page", (page) => {
@@ -74,12 +75,17 @@ export class SanitizedBrowserRecorder {
   }
 
   async close(): Promise<void> {
-    await this.abort();
+    await this.#detach();
     await this.flush();
   }
 
   /** Detach without publishing buffered evidence after ownership loss. */
   async abort(): Promise<void> {
+    this.#closed = true;
+    await Promise.all([this.options.recording.abort(), this.#detach()]);
+  }
+
+  async #detach(): Promise<void> {
     this.#closed = true;
     await Promise.allSettled([...this.#sessions.values()].map((session) => session.detach()));
     this.#sessions.clear();
