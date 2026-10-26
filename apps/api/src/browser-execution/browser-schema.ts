@@ -58,6 +58,16 @@ export async function assertBrowserSchema(database: Queryable): Promise<void> {
     [["execution_deadline_at", "execution_budget_ms"]],
   );
   if (result.rowCount !== 2) throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:command_deadlines");
+  const admission = await database.query<{
+    present: string;
+  }>(`SELECT table_name||'.'||column_name AS present
+    FROM information_schema.columns WHERE table_schema='public' AND
+      ((table_name='browser_owner_generations' AND column_name='evidence_admission_mode') OR
+       (table_name='browser_evidence_streams' AND column_name IN ('custody_mode','writer_generation','sealed_at','capture_started_at','capture_stopped_at','capture_complete','interruptions')) OR
+       (table_name='browser_evidence_chunks' AND column_name IN ('owner_generation','object_digest','object_bytes','plaintext_bytes')) OR
+       (table_name='mission_reports' AND column_name='evidence_coverage'))`);
+  if (admission.rowCount !== 13)
+    throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:evidence_admission");
 }
 
 /** Frozen retained-baseline requirements for transactional adoption. New runtime

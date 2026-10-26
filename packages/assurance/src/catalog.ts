@@ -59,9 +59,9 @@ const componentOwners = [
 ];
 const componentMinimums: Readonly<Record<string, number>> = {
   contracts: 9,
-  veil: 43,
-  chronicle: 21,
-  praxis: 193,
+  veil: 64,
+  chronicle: 54,
+  praxis: 194,
   api: 85,
   mcp: 7,
   web: 3,
@@ -176,7 +176,7 @@ export const checks: readonly CheckDefinition[] = [
     "Retained baselines upgrade transactionally with guarded history, rollback and recovery",
     "@scry/api",
     ["test/baseline-migration.integration.test.ts"],
-    { database: true, databaseCreation: true, minimum: 9 },
+    { database: true, databaseCreation: true, minimum: 10 },
   ),
   tests(
     "database-lifecycle",
@@ -194,8 +194,9 @@ export const checks: readonly CheckDefinition[] = [
       "test/browser-owner-clock.integration.test.ts",
       "test/browser-owner-retirement.repository.integration.test.ts",
       "test/browser-error-admission.integration.test.ts",
+      "test/browser-evidence-admission.integration.test.ts",
     ],
-    { database: true, minimum: 72 },
+    { database: true, minimum: 86 },
   ),
   tests(
     "command-queue",
@@ -245,6 +246,13 @@ export const checks: readonly CheckDefinition[] = [
     "@scry/api",
     ["test/browser-owner-watchdog.integration.test.ts"],
     { integrated: true, database: true, minimum: 3 },
+  ),
+  tests(
+    "evidence-closure",
+    "Native-stop and seal acknowledgment recovery never reopen application browsers or promote interrupted evidence",
+    "@scry/api",
+    ["test/browser-evidence-closure.integration.test.ts"],
+    { integrated: true, database: true, minimum: 5 },
   ),
   tests(
     "owner-retirement",
@@ -325,7 +333,13 @@ export const profiles: Readonly<Record<string, readonly string[]>> = {
     "boundaries",
   ],
   worker: ["command-queue", "worker-shutdown", "worker-journey", "command-lifetime"],
-  owner: ["owner-admission", "engine-command-lifetime", "owner-watchdog", "owner-retirement"],
+  owner: [
+    "owner-admission",
+    "engine-command-lifetime",
+    "owner-watchdog",
+    "owner-retirement",
+    "evidence-closure",
+  ],
   failure: ["failure-finalization"],
   recovery: ["worker-recovery"],
   journey: ["long-journey"],

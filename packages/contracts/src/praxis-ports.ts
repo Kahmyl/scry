@@ -139,9 +139,26 @@ export interface PraxisCommandsPort {
   ): Promise<{ revision: number }>;
   deleteBrowserCheckpoint(sessionId: string, generation: number): Promise<void>;
   safeActionLedger(sessionId: string): Promise<SafeActionLedgerEntry[]>;
+  evidenceStatus(sessionId: string): Promise<import("./chronicle-ports.js").EvidenceStatus | null>;
 }
 export interface PraxisEffectsPort {
-  withOwner<T>(owner: PraxisOwnerIdentity, work: () => Promise<T>): Promise<T>;
+  assertOwner(owner: PraxisOwnerIdentity): Promise<void>;
+  openEvidenceStream(
+    owner: PraxisOwnerIdentity,
+    runId: string,
+  ): Promise<import("./chronicle-ports.js").EvidenceStreamSnapshot>;
+  readEvidenceStream(
+    owner: PraxisOwnerIdentity,
+  ): Promise<import("./chronicle-ports.js").EvidenceStreamSnapshot>;
+  admitEvidenceChunk(
+    owner: PraxisOwnerIdentity,
+    chunk: import("./chronicle-ports.js").EvidenceChunkReceipt,
+  ): Promise<void>;
+  startEvidenceCapture(owner: PraxisOwnerIdentity): Promise<void>;
+  stopEvidenceCapture(
+    owner: PraxisOwnerIdentity,
+    receipt: { browserStopped: true; recordingDrained: true; recordingComplete: boolean },
+  ): Promise<void>;
   completeEvidence(owner: PraxisOwnerIdentity, input: EvidenceCompletion): Promise<void>;
   assertCompatibleBaseline(): Promise<void>;
   claimOwner(sessionId: string, workerId: string, leaseMs: number): Promise<PraxisOwnerClaim>;

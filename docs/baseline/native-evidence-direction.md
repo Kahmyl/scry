@@ -182,6 +182,80 @@ privacy controls, pixel comparisons, timing checks, and live application journey
 It cannot waive protection or complete evidence on behalf of the production
 owners.
 
+## Evidence admission direction
+
+The custody correction separates slow byte preparation/durability from short
+current-owner admission. The actual-source reproduction showed that the generic
+admission callback held ownership locks around file work; checking the lease
+afterward could not undo bytes already written. An authentic file is not, by
+itself, proof that its write was admitted by the current owner.
+
+Isolated comparisons exercised the actual store, PostgreSQL blocking and ownership
+expiry. The selected candidate stages
+immutable, generation-scoped protected objects outside coordination locks, then
+admits their exact sequence/head receipts in a short guarded database transaction.
+Reads, sealing and recovery follow admitted receipts rather than directory
+discovery. Protected-payload PostgreSQL staging also passed the isolated cases.
+File staging retains the baseline artifact backend without moving native-media
+payloads into relational storage and its backup workload; a separate artifact
+service is not required by the evidence so far.
+
+The experiment must cover slow storage with continued renewal, stale and replaced
+writers, duplicate/conflicting receipts, rollback, crashes before/after admission,
+missing/tampered admitted objects and unchanged historical readers. File/network
+work and arbitrary callbacks must not remain inside the new SQL admission gate.
+The existing Evidence stream and chunk entities remain authoritative. The
+correction adds explicit provenance and short receipt admission, not another
+parallel evidence system. A guarded additive migration must preserve retained
+history, refuse live-owner cutover and prevent older workers from granting new
+receipt-less authority. Authenticated old files cannot be relabeled as new
+admissions. Sealed heads and artifact references are immutable.
+
+Owner authority is checked after stream coordination locks and again at the
+serialized database admission decision. Waiting for relational work cannot admit
+an expired owner's candidate. Recorder completeness is retained with the actual
+stopped-capture fact, including errors discovered during shutdown; closure retry
+cannot erase a known recording failure. Report coverage is stored separately from
+caller-provided report JSON. Historical reports keep their original contents and
+have no newly inferred coverage claim.
+
+Capture stop and media publication are distinct facts. Only actual native-stop
+and recording-drain receipts authorize the controller's stopped-capture fact.
+Recovery can finish an already captured closure without opening a new application browser or
+repeating a business action. Publication and action-ledger paths are immutable and
+generation-scoped, not shared directories overwritten by a replacement.
+
+Mutable capture restoration caches are also scoped to their owner generation;
+restoration must not delete or replace a newer owner's files after fencing.
+This does not authorize longer retention of private captures. Quiescent cache
+disposal and existing expiry enforcement remain mandatory release qualification;
+isolated fixtures do not authorize customer activation of unfinished cleanup.
+
+The retained offline renderer may still launch its isolated, network-refusing
+rendering browser; that is not a reopened application session. It remains a legacy
+projection until the native producer is qualified and replaces it. Receipt-backed
+custody does not itself establish native-pixel fidelity.
+
+An interrupted recording is incomplete evidence, even when its admitted prefix is
+valid. A passed Run still requires complete evidence. Failure finalization may
+close an explicitly incomplete recording; API and dashboard must show that fact.
+An unavailable zero-chunk recording is not a complete stream. Abort alone never
+authorizes completion or publication. Reports keep the baseline minimum of
+complete accepted evidence and gain authoritative coverage metadata so other
+partial or missing attempts are not silently hidden. Existing reports stay
+unchanged.
+
+Unavailable-file and encoding failure closure remain required release work. A
+missing or damaged admitted object currently refuses verification, without an
+orphan fallback. The next failure-lifecycle slice must allow an honest unavailable
+terminal outcome without promoting it to complete evidence or rewriting a sealed
+historical stream. Passing the admission checks alone is not release readiness.
+
+The isolated candidate implements this experiment-supported admission direction;
+that is not release activation or full product qualification. Temporary raw-frame
+retention has separate bounded approval, as specified below; it is not activated
+by this correction.
+
 ## Private frame processing
 
 An isolated experiment supports bounded encrypted quarantine as a candidate for
@@ -190,10 +264,13 @@ Veil's private processing scope, not Chronicle's evidence store or dashboard.
 Encryption, explicit ownership, byte and age limits, cleanup, crash behavior,
 and key custody are required parts of that capability.
 
-Customer activation of temporary raw-frame retention remains unapproved. The
-candidate retention policy is a maximum of fifteen minutes with a bounded quota;
-it is not an active customer default. Isolated tests use fictional seeded data.
-No customer raw-frame persistence may be enabled implicitly by a recording flag.
+The owner approved temporary encrypted raw-frame quarantine with a maximum
+retention of fifteen minutes and a bounded quota. This approval covers the data
+handling direction, not release activation. Raw frames remain private to Veil;
+only protected output may reach Chronicle or the dashboard. Cleanup, crash
+handling, key custody and privacy qualification remain mandatory. It is not an
+active customer default. Isolated tests use fictional seeded data. No customer
+raw-frame persistence may be enabled implicitly by a recording flag.
 
 If capacity, protection, ownership, or processing fails, the system reports the
 specific incomplete interval or unavailable artifact. It must not publish raw

@@ -10,6 +10,7 @@ import { SanitizedBrowserRecorder, BrowserReplayRenderer } from "@scry/praxis";
 import {
   AuthenticatedEvidenceStore,
   ChronicleRecording,
+  ChronicleEvidenceSession,
   renderSanitizedReplay,
 } from "@scry/chronicle";
 import {
@@ -29,6 +30,7 @@ import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-
 import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
 import { BROWSER_RUNTIME_CAPABILITY_ID } from "../src/browser-execution/browser-runtime-capability.js";
 import { Database } from "../src/infrastructure/database.js";
+import { PraxisOwnerLease } from "../../../packages/praxis/src/owner-lease.js";
 import { RedisConnection } from "../src/infrastructure/redis.js";
 
 const databaseUrl = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
@@ -152,13 +154,12 @@ run("browser execution baseline queued long journey", () => {
     networkRequestsDuringReplay: number;
   }> {
     const owner = await repository.claimOwner(sessionId, "long-journey-worker", 60_000);
-    const admission = {
-      run: <T>(work: () => Promise<T>) =>
-        repository.withOwner(
-          { sessionId, generation: owner.generation, leaseToken: owner.leaseToken },
-          work,
-        ),
-    };
+    const admission = new PraxisOwnerLease(
+      { sessionId, generation: owner.generation, leaseToken: owner.leaseToken },
+      repository,
+      owner,
+    );
+    admission.startHeartbeat(60000);
 
     const evidenceDirectory = path.join(root, "evidence");
     const captureDirectory = path.join(root, "captures");
@@ -175,12 +176,13 @@ run("browser execution baseline queued long journey", () => {
       protectedValues: { LOGIN_PASSWORD: loginPassword, GENERATED_SECRET: generatedSecret },
       disclosureMode: "trusted_application_output",
     });
+    const evidenceProtection = new EvidenceCipher(randomBytes(32));
     const store = await new AuthenticatedEvidenceStore<Record<string, unknown>>({
       admission,
       directory: evidenceDirectory,
       runId,
       scopeId: sessionId,
-      protection: new EvidenceCipher(randomBytes(32)),
+      protection: evidenceProtection,
       maxSessionBytes: 2 * 1024 * 1024,
     }).initialize();
     const vault = await new ProtectedCaptureVault({
@@ -195,8 +197,20 @@ run("browser execution baseline queued long journey", () => {
     });
     const context = await browser.newContext();
     const page = await context.newPage();
+    const evidenceSession = new ChronicleEvidenceSession(
+      {
+        root,
+        runId,
+        sessionId,
+        admission,
+        protection: evidenceProtection,
+        maxSessionBytes: 2 * 1024 * 1024,
+      },
+      store,
+      new BrowserReplayRenderer(),
+    );
     const recorder = new SanitizedBrowserRecorder({
-      recording: new ChronicleRecording(store, createRecordingProtection({ authority })),
+      recording: evidenceSession.createRecording(createRecordingProtection({ authority })),
       privacyOptions: recordingProtectionOptions,
     });
     const actions: Array<Record<string, unknown>> = [];
@@ -212,6 +226,7 @@ run("browser execution baseline queued long journey", () => {
       });
     };
     await recorder.start(context);
+    await evidenceSession.startCapture();
     try {
       await page.goto(`${origin}/login`);
       await recordAction("fill", "email", () =>
@@ -432,6 +447,7 @@ run("browser execution baseline queued long journey", () => {
       await context.close();
       await browser.close();
     }
+    await evidenceSession.stopCapture({ browserStopped: true, recordingDrained: true });
 
     await writeFile(ledgerPath, `${actions.map((action) => JSON.stringify(action)).join("\n")}\n`, {
       mode: 0o600,
@@ -450,21 +466,15 @@ run("browser execution baseline queued long journey", () => {
         : {}),
       framesPerSecond: 2,
     });
-    await database.query(
-      `INSERT INTO browser_evidence_streams(id,session_id,run_id,state,chain_head,chunk_count,total_bytes,
-         replay_artifact_key,video_artifact_key,retention_expires_at,completed_at)
-       VALUES($1,$2,$3,'complete',$4,$5,$6,$7,$8,now()+interval '30 days',now())`,
-      [
-        randomUUID(),
-        sessionId,
-        runId,
-        verified.lastDigest,
-        verified.chunks,
-        verified.storedBytes,
-        `local://${evidenceDirectory}`,
-        `local://${publication.videoPath}`,
-      ],
-    );
+    const completion = await evidenceSession.seal({
+      renderVideo: false,
+      actionLedger: async () => [],
+    });
+    await repository.completeEvidence(admission.identity, {
+      ...completion,
+      videoObjectKey: `local://${publication.videoPath}`,
+    });
+    admission.revoke();
     await repository.finalizeSession(sessionId, owner.generation);
     return { completed: true, networkRequestsDuringReplay: publication.networkRequests };
   }

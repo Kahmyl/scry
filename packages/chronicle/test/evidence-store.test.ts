@@ -4,17 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { AuthenticatedEvidenceStore } from "../src/index.js";
+import { AuthenticatedEvidenceStore, LegacyEvidenceReader } from "../src/index.js";
 import { EvidenceCipher } from "@scry/veil";
+import { memoryAdmission } from "./fixtures/evidence-admission.js";
 const RUN_ID = "00000000-0000-4000-8000-000000000101";
-
-const admission = { run: <T>(work: () => Promise<T>) => work() };
 
 describe("authenticated evidence", () => {
   for (const corruption of ["missing", "duplicated", "reordered", "scope"])
     it(`rejects ${corruption} evidence`, async () => {
       const directory = await mkdtemp(path.join(os.tmpdir(), "chronicle-integrity-"));
       const protection = new EvidenceCipher(randomBytes(32));
+      const { admission, stream } = memoryAdmission("fixture-scope", RUN_ID);
       const store = await new AuthenticatedEvidenceStore({
         admission,
         directory,
@@ -26,13 +26,9 @@ describe("authenticated evidence", () => {
       await store.flush();
       await store.append({ second: true });
       await store.flush();
-      const manifestPath = path.join(directory, "manifest.jsonl");
-      const entries = (await readFile(manifestPath, "utf8")).trim().split("\n");
-      if (corruption === "missing") await unlink(path.join(directory, "chunk-000000.json"));
-      if (corruption === "duplicated")
-        await writeFile(manifestPath, `${entries[0]}\n${entries[0]}\n${entries[1]}\n`);
-      if (corruption === "reordered")
-        await writeFile(manifestPath, `${entries[1]}\n${entries[0]}\n`);
+      if (corruption === "missing") await unlink(path.join(directory, stream.chunks[0]!.objectKey));
+      if (corruption === "duplicated") stream.chunks.splice(1, 0, { ...stream.chunks[0]! });
+      if (corruption === "reordered") stream.chunks.reverse();
       if (corruption === "scope") {
         await expect(
           new AuthenticatedEvidenceStore({
@@ -42,12 +38,10 @@ describe("authenticated evidence", () => {
             scopeId: "another-session",
             protection,
           }).initialize(),
-        ).rejects.toThrow("evidence_manifest_invalid");
+        ).rejects.toThrow("evidence_admission_scope_invalid");
       } else
         await expect(store.verify()).rejects.toThrow(
-          corruption === "missing"
-            ? "evidence_manifest_chunk_set_mismatch"
-            : "evidence_manifest_invalid",
+          corruption === "missing" ? "ENOENT" : "evidence_receipt_invalid",
         );
     });
   it("reads historical authenticated chunks without using the historical key for writes", async () => {
@@ -102,18 +96,29 @@ describe("authenticated evidence", () => {
       })}\n`,
     );
 
-    const store = await new AuthenticatedEvidenceStore<{ phase: string }>({
-      admission,
+    const before = await readFile(path.join(directory, "manifest.jsonl"));
+    const store = new LegacyEvidenceReader<{ phase: string }>({
       directory,
       runId: RUN_ID,
       scopeId: "fixture-scope",
       protection: new EvidenceCipher(currentKey, [historicalKey]),
-    }).initialize();
+    });
     expect((await store.verify()).events).toEqual([{ phase: "historical" }]);
-    await store.append({ phase: "current" });
-    await store.flush();
+    expect(store).not.toHaveProperty("append");
+    expect(await readFile(path.join(directory, "manifest.jsonl"))).toEqual(before);
+    const { admission, stream } = memoryAdmission("fixture-scope", RUN_ID);
+    const currentDirectory = await mkdtemp(path.join(os.tmpdir(), "browser-current-evidence-"));
+    const current = await new AuthenticatedEvidenceStore<{ phase: string }>({
+      admission,
+      directory: currentDirectory,
+      runId: RUN_ID,
+      scopeId: "fixture-scope",
+      protection: new EvidenceCipher(currentKey, [historicalKey]),
+    }).initialize();
+    await current.append({ phase: "current" });
+    await current.flush();
     const currentRecord = JSON.parse(
-      await readFile(path.join(directory, "chunk-000001.json"), "utf8"),
+      await readFile(path.join(currentDirectory, stream.chunks[0]!.objectKey), "utf8"),
     ) as { aad: Record<string, unknown> };
     expect(currentRecord.aad).toMatchObject({ evidenceFormat: 1 });
     expect(currentRecord.aad).not.toHaveProperty("evidenceVersion");
@@ -122,6 +127,7 @@ describe("authenticated evidence", () => {
   it("resumes an authenticated chain across restart and detects ciphertext tampering", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "browser-evidence-"));
     const encryptionKey = randomBytes(32);
+    const { admission, stream } = memoryAdmission("fixture-scope", RUN_ID);
     const first = await new AuthenticatedEvidenceStore<{ phase: string }>({
       admission,
       directory,
@@ -159,18 +165,19 @@ describe("authenticated evidence", () => {
       }).initialize(),
     ).rejects.toThrow(/evidence_chunk_authentication_invalid/);
 
-    const chunkPath = path.join(directory, "chunk-000001.json");
+    const chunkPath = path.join(directory, stream.chunks[1]!.objectKey);
     const record = JSON.parse(await readFile(chunkPath, "utf8")) as { ciphertext: string };
     const ciphertext = Buffer.from(record.ciphertext, "base64");
     ciphertext[0] = (ciphertext[0] ?? 0) ^ 0xff;
     record.ciphertext = ciphertext.toString("base64");
     await writeFile(chunkPath, JSON.stringify(record));
-    await expect(resumed.verify()).rejects.toThrow(/evidence_chunk_digest_invalid/);
+    await expect(resumed.verify()).rejects.toThrow(/evidence_object_digest_invalid/);
   });
 
-  it("fences duplicate continuations and reports interrupted partial writes", async () => {
+  it("fences duplicate continuations and never imports stray partial files", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "browser-evidence-contention-"));
     const encryptionKey = randomBytes(32);
+    const { admission } = memoryAdmission("fixture-scope", RUN_ID);
     const original = await new AuthenticatedEvidenceStore<{ owner: string }>({
       admission,
       directory,
@@ -203,14 +210,13 @@ describe("authenticated evidence", () => {
       attempts.filter(
         (attempt) =>
           attempt.status === "rejected" &&
-          /evidence_sequence_conflict/.test(String(attempt.reason)),
+          /evidence_sequence_conflict|receipt_conflict/.test(String(attempt.reason)),
       ),
     ).toHaveLength(1);
     await writeFile(path.join(directory, "chunk-000002.json.partial-interrupted"), "{");
     const verified = await ownerA.verify();
-    expect(verified.complete).toBe(false);
-    expect(verified.gaps).toEqual([
-      { type: "partial_chunk", name: "chunk-000002.json.partial-interrupted" },
-    ]);
+    expect(verified.chunks).toBe(2);
+    expect(verified.complete).toBe(true); // authenticated admitted prefix only, not journey coverage
+    expect(verified.gaps).toEqual([]);
   });
 });

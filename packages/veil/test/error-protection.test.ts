@@ -7,6 +7,24 @@ import {
 
 describe("value-free failure disclosure", () => {
   it.each([
+    "SCRY_BROWSER_EVIDENCE_STREAM_MISSING",
+    "SCRY_BROWSER_EVIDENCE_READ_ONLY",
+    "SCRY_BROWSER_EVIDENCE_RECEIPT_INVALID",
+    "SCRY_BROWSER_EVIDENCE_RECEIPT_CONFLICT",
+    "SCRY_BROWSER_EVIDENCE_CAPTURE_CLOSED",
+    "SCRY_BROWSER_EVIDENCE_STOP_UNCONFIRMED",
+    "SCRY_BROWSER_EVIDENCE_STOP_CONFLICT",
+    "SCRY_BROWSER_EVIDENCE_COMPLETION_INVALID",
+    "SCRY_BROWSER_EVIDENCE_COMPLETION_CONFLICT",
+  ])("admits the finite receipt failure %s without admitting diagnostic suffixes", (code) => {
+    expect(storedBrowserFailureCode(new Error(code))).toBe(code);
+    expect(publicBrowserErrorCode(new Error(code))).toBe(code);
+    expect(finalizationBrowserErrorCode(new Error(code))).toBe(code);
+    const raw = new Error(code + ":fixture-private-token");
+    expect(storedBrowserFailureCode(raw)).toBe("SCRY_BROWSER_COMMAND_FAILED");
+    expect(publicBrowserErrorCode(raw)).toBeUndefined();
+  });
+  it.each([
     "SCRY_BROWSER_AUTHENTICATION_BUDGET_EXHAUSTED",
     "SCRY_BROWSER_BUSINESS_BUDGET_EXHAUSTED",
   ])("preserves the finite budget refusal %s", (code) => {

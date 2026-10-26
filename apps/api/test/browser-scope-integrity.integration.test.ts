@@ -54,8 +54,8 @@ run("browser baseline database scope integrity", () => {
     );
     await expectForeignKeyViolation(
       database.query(
-        `INSERT INTO browser_evidence_streams(id,session_id,run_id,state,retention_expires_at)
-         VALUES($1,$2,$3,'open',now()+interval '1 hour')`,
+        `INSERT INTO browser_evidence_streams(id,session_id,run_id,state,retention_expires_at,writer_generation)
+         VALUES($1,$2,$3,'open',now()+interval '1 hour',1)`,
         [randomUUID(), left.sessionId, right.runId],
       ),
     );

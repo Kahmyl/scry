@@ -204,7 +204,7 @@ export class BrowserLifecycleController {
     this.enabled();
     const session = await this.lifecycle.executionSessionForRun(workspace(principal), runId);
     const failureFinalization = input.outcome !== "passed";
-    if (!(await this.commands.evidenceComplete(session.id))) {
+    if (!(await this.commands.evidenceStatus(session.id))?.sealed) {
       const submitted = await this.commands.submit(session.id, {
         idempotencyKey: `finalize-close-${randomUUID()}`,
         command: { kind: failureFinalization ? "close_for_failure" : "close" },
@@ -225,7 +225,17 @@ export class BrowserLifecycleController {
       else await this.execution.finalizeSession(session.id, input.ownerGeneration);
     } catch (error) {
       const code = finalizationBrowserErrorCode(error);
-      throw new ConflictException({ code, status: 409, safeActions: [] });
+      const safeActions =
+        code === "SCRY_BROWSER_EVIDENCE_INCOMPLETE"
+          ? [
+              "Review this Run's recording coverage. A passed Run requires complete evidence; incomplete evidence cannot be promoted by retrying finalization.",
+            ]
+          : code === "SCRY_BROWSER_OWNER_FENCED"
+            ? [
+                "Refresh the Run details and review the current attempt before retrying finalization.",
+              ]
+            : [];
+      throw new ConflictException({ code, status: 409, safeActions });
     }
     return this.lifecycle.markRunTerminal(
       workspace(principal),

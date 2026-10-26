@@ -36,6 +36,7 @@ const safeErrors = new Set([
   "SCRY_BROWSER_EXISTING_SCHEMA_MISMATCH",
   "SCRY_BROWSER_SCHEMA_INCOMPLETE",
   "SCRY_BROWSER_MIGRATION_CATALOG_UNAVAILABLE",
+  "SCRY_BROWSER_EVIDENCE_LIVE_OWNER",
 ]);
 export interface BaselineMigrationInput {
   confirmation?: string | undefined;

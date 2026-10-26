@@ -179,8 +179,8 @@ export class PraxisBrowserEngine {
         this.commands.publicValuesForSession(sessionId),
       ]);
       const protectedSession = this.protection.createSession({
-        scope,
-        captureDirectory: path.join(root, "captures"),
+        scope: { ...scope, ownerGeneration: owner.generation },
+        captureDirectory: path.join(root, "captures", String(owner.generation)),
         protectedValues,
         restoredPublicValues,
       });
@@ -194,10 +194,12 @@ export class PraxisBrowserEngine {
         admission: lease,
       });
       const durableCaptures = await this.effects.durableCapturesForSession(sessionId);
-      await lease.run(() => protectedSession.restoreCaptures(durableCaptures));
+      await lease.checkpoint();
+      await protectedSession.restoreCaptures(durableCaptures);
+      lease.assertActive();
       const checkpoint = await this.commands.loadBrowserCheckpoint(sessionId, owner.generation);
       this.assertOpening(resources);
-      await lease.run(async () => undefined);
+      await lease.checkpoint();
       this.assertOpening(resources);
       resources.launch = SupervisedBrowser.launch({
         headless: process.env.SCRY_BROWSER_HEADLESS !== "false",
@@ -236,6 +238,7 @@ export class PraxisBrowserEngine {
       });
       resources.recorder = recorder;
       await recorder.start(context);
+      await evidence.startCapture();
       this.assertOpening(resources);
       const session: ActiveSession = {
         lease,
@@ -264,12 +267,12 @@ export class PraxisBrowserEngine {
         }
       });
       if (checkpoint) {
-        await lease.run(async () => undefined);
+        await lease.checkpoint();
         this.assertOpening(resources);
         this.assertOrigin(session, checkpoint.resumeUrl);
         await page.goto(checkpoint.resumeUrl);
       }
-      await lease.run(async () => undefined);
+      await lease.checkpoint();
       this.assertOpening(resources);
       await custody.completeSetup();
       this.assertOpening(resources);
@@ -314,6 +317,34 @@ export class PraxisBrowserEngine {
               await options?.assertCurrent?.();
               attempt.assertActive();
             };
+            if (
+              (command.kind === "close" || command.kind === "close_for_failure") &&
+              !this.#resources.has(sessionId) &&
+              !this.#opening.has(sessionId)
+            ) {
+              await current();
+              if (this.#stopping) throw new Error("SCRY_BROWSER_SESSION_CLOSING");
+              const status = await this.commands.evidenceStatus(sessionId);
+              await current();
+              if (this.#stopping) throw new Error("SCRY_BROWSER_SESSION_CLOSING");
+              this.assertIncarnation(incarnation);
+              if (status?.sealed) {
+                incarnation.state = "retired";
+                return {
+                  closed: true,
+                  evidenceState: status.state,
+                  ...(command.kind === "close_for_failure"
+                    ? { unresolvedEffectsPreserved: true }
+                    : {}),
+                };
+              }
+              return await this.finishCapturedPrefix(
+                sessionId,
+                incarnation,
+                command.kind === "close_for_failure",
+                current,
+              );
+            }
             const session = await this.requiredSession(sessionId, incarnation);
             await (await session.resources.launch!).synchronize();
             try {
@@ -503,6 +534,7 @@ export class PraxisBrowserEngine {
       session.resources.expectedExit = true;
       await (await session.resources.launch!).close();
       session.lease.assertActive();
+      await session.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
       const completion = await session.evidence.seal({
         renderVideo: process.env.SCRY_BROWSER_RENDER_VIDEO === "true",
         actionLedger: () => this.commands.safeActionLedger(sessionId),
@@ -515,6 +547,96 @@ export class PraxisBrowserEngine {
       await this.commands.deleteBrowserCheckpoint(sessionId, session.ownerGeneration);
     } finally {
       await this.evict(session);
+    }
+  }
+
+  /** Recover admitted capture facts, not browser actions. No application context, page,
+   * recorder or checkpoint restoration is created by this path. */
+  private async finishCapturedPrefix(
+    sessionId: string,
+    incarnation: BrowserIncarnation,
+    forFailure: boolean,
+    current: () => Promise<void>,
+  ): Promise<Record<string, unknown>> {
+    if (this.#stopping) throw new Error("SCRY_BROWSER_SESSION_CLOSING");
+    await this.effects.assertCompatibleBaseline();
+    await current();
+    this.assertIncarnation(incarnation);
+    const scope = await this.commands.sessionContext(sessionId);
+    await current();
+    this.assertIncarnation(incarnation);
+    const claim = await this.effects.claimOwner(sessionId, `worker:${process.pid}`, 60000);
+    const lease = new PraxisOwnerLease(
+      { sessionId, generation: claim.generation, leaseToken: claim.leaseToken },
+      this.effects,
+      claim,
+    );
+    const resources: BrowserResources = {
+      sessionId,
+      incarnation,
+      lease,
+      state: "opening",
+      expectedExit: true,
+    };
+    incarnation.resources = resources;
+    this.#resources.set(sessionId, resources);
+    lease.signal.addEventListener(
+      "abort",
+      () => {
+        void this.retire(resources).catch(() => undefined);
+      },
+      { once: true },
+    );
+    try {
+      this.assertOpening(resources);
+      lease.startHeartbeat(60000);
+      if (forFailure) await this.effects.prepareFailureFinalization(sessionId, claim.generation);
+      else await this.effects.assertNoPendingEffectOutcomes(sessionId);
+      const unsettled = await this.effects.unsettledCaptureIds(sessionId);
+      if (unsettled.length)
+        throw new Error(`SCRY_BROWSER_CAPTURES_UNSETTLED:${unsettled.join(",")}`);
+      const root = path.resolve(
+        process.env.SCRY_BROWSER_ARTIFACT_ROOT ?? "artifacts/browser",
+        sessionId,
+      );
+      const [protectedValues, restoredPublicValues] = await Promise.all([
+        this.commands.protectedValuesForSession(sessionId),
+        this.commands.publicValuesForSession(sessionId),
+      ]);
+      await current();
+      this.assertOpening(resources);
+      const protectedSession = this.protection.createSession({
+        scope: { ...scope, ownerGeneration: claim.generation },
+        captureDirectory: path.join(root, "captures", String(claim.generation)),
+        protectedValues,
+        restoredPublicValues,
+      });
+      const evidence = await this.evidenceService.openSession({
+        purpose: "closure",
+        root,
+        sessionId,
+        runId: scope.runId,
+        protection: protectedSession.evidenceProtection,
+        maxSessionBytes: 20 * 1024 * 1024,
+        admission: lease,
+      });
+      const completion = await evidence.seal({
+        renderVideo: process.env.SCRY_BROWSER_RENDER_VIDEO === "true",
+        actionLedger: () => this.commands.safeActionLedger(sessionId),
+        ...(process.env.SCRY_BROWSER_CHROME_PATH
+          ? { executablePath: process.env.SCRY_BROWSER_CHROME_PATH }
+          : {}),
+      });
+      await current();
+      this.assertOpening(resources);
+      await this.effects.completeEvidence(lease.identity, completion);
+      return {
+        closed: true,
+        evidenceState: completion.state,
+        ...(forFailure ? { unresolvedEffectsPreserved: true } : {}),
+      };
+    } finally {
+      await this.retire(resources);
     }
   }
 
@@ -549,7 +671,7 @@ export class PraxisBrowserEngine {
 
   private async assertSessionOwner(session: ActiveSession): Promise<void> {
     try {
-      await session.lease.run(async () => undefined);
+      await session.lease.checkpoint();
     } catch (error) {
       await this.evict(session);
       throw error;

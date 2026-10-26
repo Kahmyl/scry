@@ -340,7 +340,7 @@ describe("qualification outcomes", () => {
     const database = checks.find((entry) => entry.id === "database-lifecycle")!;
     const upgrades = checks.find((entry) => entry.id === "schema-upgrades")!;
     expect(upgrades.prerequisites).toEqual(["database", "database_creation"]);
-    expect(upgrades.tests).toEqual({ minimumPassed: 9, allowSkipped: false });
+    expect(upgrades.tests).toEqual({ minimumPassed: 10, allowSkipped: false });
     expect(database.command).toEqual(
       expect.arrayContaining([
         "test/browser-execution.repository.integration.test.ts",
@@ -354,9 +354,15 @@ describe("qualification outcomes", () => {
         "test/browser-owner-clock.integration.test.ts",
         "test/browser-owner-retirement.repository.integration.test.ts",
         "test/browser-error-admission.integration.test.ts",
+        "test/browser-evidence-admission.integration.test.ts",
       ]),
     );
-    expect(database.tests).toEqual({ minimumPassed: 72, allowSkipped: false });
+    expect(database.tests).toEqual({ minimumPassed: 86, allowSkipped: false });
+    expect(profiles.owner).toContain("evidence-closure");
+    expect(checks.find((entry) => entry.id === "evidence-closure")?.tests).toEqual({
+      minimumPassed: 5,
+      allowSkipped: false,
+    });
     expect(profiles.worker).toContain("command-queue");
     expect(profiles.worker).toContain("worker-shutdown");
     expect(profiles.worker).toContain("command-lifetime");

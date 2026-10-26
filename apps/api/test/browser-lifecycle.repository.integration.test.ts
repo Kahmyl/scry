@@ -7,6 +7,8 @@ import { BrowserLifecycleRepository } from "../src/browser-execution/repositorie
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
 import { BrowserRuntimeVeilReportProtection } from "../src/browser-execution/browser-boundary-composition.js";
 import { Database } from "../src/infrastructure/database.js";
+import { publishFixtureEvidence } from "./fixtures/evidence-recording.js";
+import { ChronicleRepository } from "@scry/chronicle";
 
 const databaseUrl = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
 const run = databaseUrl ? describe : describe.skip;
@@ -131,13 +133,7 @@ run("browser baseline Mission/Flow/Run lifecycle", () => {
       commands.bindProtectedInputs(workspaceId, started.runId, [credential.protectedValueId]),
     ).resolves.toMatchObject({ added: 0, replay: true });
     const owner = await execution.claimOwner(started.browserSessionId, "lifecycle-worker", 60_000);
-    const chainHead = createHash("sha256").update("authenticated-evidence-chain").digest("hex");
-    await database.query(
-      `INSERT INTO browser_evidence_streams(id,session_id,run_id,state,chain_head,chunk_count,total_bytes,
-         replay_artifact_key,video_artifact_key,retention_expires_at,completed_at)
-       VALUES($1,$2,$3,'complete',$4,1,128,'object://replay','object://video',now()+interval '30 days',now())`,
-      [randomUUID(), started.browserSessionId, started.runId, chainHead],
-    );
+    await publishFixtureEvidence(database, execution, started.browserSessionId, owner.generation);
     await execution.finalizeSession(started.browserSessionId, owner.generation);
     await lifecycle.markRunTerminal(
       workspaceId,
@@ -148,7 +144,11 @@ run("browser baseline Mission/Flow/Run lifecycle", () => {
     const report = await lifecycle.publishReport(workspaceId, mission.missionId, {
       agentSessionId: mission.agentSessionId,
       summary: "Mission completed",
-      safeReport: { result: "passed", flowsUsed: 1 },
+      safeReport: {
+        result: "passed",
+        flowsUsed: 1,
+        evidenceCoverage: { complete: 999, runs: 999 },
+      },
     });
     expect(report.replay).toBe(false);
     const observed = (await lifecycle.observeMission(
@@ -164,15 +164,19 @@ run("browser baseline Mission/Flow/Run lifecycle", () => {
     expect(observed.runs).toEqual([
       expect.objectContaining({ flowId: resumed.flowId, state: "passed" }),
     ]);
-    const storedReport = await database.query<{ evidence_digest: string }>(
-      "SELECT evidence_digest FROM mission_reports WHERE id=$1",
-      [report.reportId],
-    );
+    const storedReport = await database.query<{
+      evidence_digest: string;
+      evidence_coverage: unknown;
+      safe_report: { evidenceCoverage: unknown };
+    }>("SELECT evidence_digest,evidence_coverage,safe_report FROM mission_reports WHERE id=$1", [
+      report.reportId,
+    ]);
     expect(storedReport.rows[0]?.evidence_digest).toBe(
-      createHash("sha256")
-        .update(JSON.stringify([chainHead]))
-        .digest("hex"),
+      await new ChronicleRepository(database).missionEvidenceDigest(mission.missionId),
     );
+    const authoritative = { runs: 1, complete: 1, incomplete: 0, open: 0, missing: 0 };
+    expect(storedReport.rows[0]?.evidence_coverage).toEqual(authoritative);
+    expect(storedReport.rows[0]?.safe_report.evidenceCoverage).toEqual(authoritative);
   });
 
   it("publishes a terminal cancellation report without erasing an unrecoverable UNKNOWN", async () => {
@@ -257,12 +261,7 @@ run("browser baseline Mission/Flow/Run lifecycle", () => {
       owner.generation,
       "response_lost_after_dispatch",
     );
-    const chainHead = createHash("sha256").update("cancel-evidence-chain").digest("hex");
-    await database.query(
-      `INSERT INTO browser_evidence_streams(id,session_id,run_id,state,chain_head,chunk_count,total_bytes,replay_artifact_key,retention_expires_at,completed_at)
-       VALUES($1,$2,$3,'complete',$4,1,64,'local://cancel-evidence',now()+interval '30 days',now())`,
-      [randomUUID(), started.browserSessionId, started.runId, chainHead],
-    );
+    await publishFixtureEvidence(database, execution, started.browserSessionId, owner.generation);
     await execution.finalizeFailedSession(started.browserSessionId, owner.generation);
     await lifecycle.markRunTerminal(
       workspaceId,
