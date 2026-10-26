@@ -61,7 +61,7 @@ const componentMinimums: Readonly<Record<string, number>> = {
   contracts: 9,
   veil: 43,
   chronicle: 21,
-  praxis: 52,
+  praxis: 58,
   api: 12,
   mcp: 7,
   web: 3,

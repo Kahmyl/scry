@@ -1,8 +1,9 @@
 import { performance } from "node:perf_hooks";
 
 export interface CommandResource {
-  /** Resolve only after physical ownership is stopped. A rejected stop is not
-   * permission to start another attempt. Never resolve merely on disconnect. */
+  /** Exact session-owned stop capability, registered before asynchronous startup.
+   * Resolve only after physical ownership is stopped, not merely disconnected.
+   * The awaited work and this cell retain ownership of any late acquisition. */
   stop(): Promise<void>;
 }
 export interface CommandAttemptOptions {
@@ -10,17 +11,16 @@ export interface CommandAttemptOptions {
   signal?: AbortSignal;
   drainTimeoutMs?: number;
 }
-type AttemptState = "active" | "cancelling" | "completed" | "unconfirmed";
+type AttemptState = "active" | "finishing" | "cancelling" | "completed" | "unconfirmed";
 const failure = (code: string) => new Error(`SCRY_BROWSER_${code}`);
 
-/** One carried monotonic lifetime. This object, not a mutable session lookup,
- * owns each acquired resource and every late acquisition cleanup operation. */
+/** Owns command lifetime and drain, not browser acquisition. Praxis registers its
+ * exact startup/session cell before awaiting work. Factories/background work are
+ * deliberately not admitted by this scope: acquisition has one owner, Praxis. */
 export class CommandAttempt {
   readonly #controller = new AbortController();
   readonly #deadline: number;
   readonly #resources = new Map<CommandResource, Promise<void> | undefined>();
-  readonly #acquired = new Set<CommandResource>();
-  readonly #pending = new Set<Promise<unknown>>();
   readonly #cancelled: Promise<never>;
   readonly #drainTimeoutMs: number;
   #rejectCancellation!: (reason: Error) => void;
@@ -47,7 +47,6 @@ export class CommandAttempt {
     this.#cancelled = new Promise<never>((_resolve, reject) => {
       this.#rejectCancellation = reject;
     });
-    // A signal may already be aborted before run installs its race observer.
     void this.#cancelled.catch(() => undefined);
     this.#externalSignal = options.signal;
     this.#externalAbort = () => this.cancel("COMMAND_CANCELLED");
@@ -68,9 +67,15 @@ export class CommandAttempt {
     return this.#state === "completed";
   }
 
-  assertActive(): void {
-    if (this.#state === "active" && performance.now() >= this.#deadline)
+  private checkDeadline(): void {
+    if (
+      (this.#state === "active" || this.#state === "finishing") &&
+      performance.now() >= this.#deadline
+    )
       this.cancel("COMMAND_DEADLINE_EXCEEDED");
+  }
+  assertActive(): void {
+    this.checkDeadline();
     if (this.#reason) throw this.#reason;
     if (this.#state !== "active") throw failure("COMMAND_ATTEMPT_ENDED");
   }
@@ -78,65 +83,37 @@ export class CommandAttempt {
     if (!Number.isSafeInteger(phaseLimitMs) || phaseLimitMs < 1 || phaseLimitMs > 900000)
       throw failure("COMMAND_PHASE_BUDGET_INVALID");
     this.assertActive();
-    // Driver timeout=0 disables its timeout. Never emit that sentinel.
     return Math.max(1, Math.min(phaseLimitMs, Math.ceil(this.#deadline - performance.now())));
   }
 
-  /** Bind an already acquired exact resource, not a future resource by session ID.
-   * Startup should use acquire so the lane also owns unresolved acquisition. */
   bind(resource: CommandResource): void {
-    if (this.#state === "completed") throw failure("COMMAND_ATTEMPT_ENDED");
-    if (!this.#resources.has(resource)) this.#resources.set(resource, undefined);
-    if (this.#reason) void this.stop(resource);
-    this.assertActive();
-  }
-
-  async acquire<T extends CommandResource>(factory: () => Promise<T>): Promise<T> {
-    this.assertActive();
-    const operation = Promise.resolve().then(async () => {
-      this.assertActive();
-      const resource = await factory();
-      this.#resources.set(resource, this.#resources.get(resource));
-      this.#acquired.add(resource);
-      if (this.#reason) await this.stop(resource);
-      this.assertActive();
-      return resource;
-    });
-    this.track(operation);
-    return operation;
-  }
-
-  private track(operation: Promise<unknown>): void {
-    const settled = operation.then(
-      () => undefined,
-      () => undefined,
-    );
-    this.#pending.add(settled);
-    void settled.then(() => this.#pending.delete(settled));
-  }
-  private stop(resource: CommandResource): Promise<void> {
-    let stopping = this.#resources.get(resource);
-    if (!stopping) {
-      stopping = Promise.resolve()
-        .then(() => resource.stop())
-        .catch(() => {
-          this.#stopFailed = true;
-        });
-      this.#resources.set(resource, stopping);
-      this.track(stopping);
+    // Admission closes in the same continuation that observes work settlement,
+    // before the final race continuation. No factory or late binding can enter.
+    if (this.#state !== "active") {
+      if (this.#reason) throw this.#reason;
+      throw failure("COMMAND_ATTEMPT_ENDED");
     }
-    return stopping;
+    if (!this.#resources.has(resource)) this.#resources.set(resource, undefined);
+    // Register before checking elapsed time: detecting expiry here must also
+    // physically stop this just-admitted exact cell, not merely throw.
+    this.assertActive();
+  }
+  private stop(resource: CommandResource): void {
+    if (this.#resources.get(resource)) return;
+    const stopping = Promise.resolve()
+      .then(() => resource.stop())
+      .catch(() => {
+        this.#stopFailed = true;
+      });
+    this.#resources.set(resource, stopping);
   }
   private cancel(code: "COMMAND_CANCELLED" | "COMMAND_DEADLINE_EXCEEDED"): void {
-    if (this.#state !== "active") return;
+    if (this.#state !== "active" && this.#state !== "finishing") return;
     this.#state = "cancelling";
     this.#reason = failure(code);
     this.#controller.abort(this.#reason);
-    for (const resource of this.#resources.keys()) void this.stop(resource);
+    for (const resource of this.#resources.keys()) this.stop(resource);
     this.#rejectCancellation(this.#reason);
-  }
-  private async pending(): Promise<void> {
-    while (this.#pending.size) await Promise.all([...this.#pending]);
   }
   private detach(): void {
     clearTimeout(this.#timer);
@@ -152,26 +129,9 @@ export class CommandAttempt {
     const operation = Promise.resolve().then(async () => {
       this.assertActive();
       try {
-        const value = await work(this);
-        await this.pending();
-        this.assertActive();
-        return value;
-      } catch (error) {
-        // A delayed timer must not turn an expired failing action into ordinary
-        // error release. Trigger cancellation without bypassing owned cleanup.
-        try {
-          this.assertActive();
-        } catch {
-          /* Cancellation owns the verdict. */
-        }
-        // Failed work cannot abandon an unresolved/new acquisition. Existing
-        // bound session resources remain with their session on ordinary errors.
-        await this.pending();
-        for (const resource of this.#acquired) void this.stop(resource);
-        await this.pending();
-        // Cleanup itself can block the timer or consume the remaining budget.
-        this.assertActive();
-        throw error;
+        return await work(this);
+      } finally {
+        if (this.#state === "active") this.#state = "finishing";
       }
     });
     const settled = operation.then(
@@ -181,11 +141,14 @@ export class CommandAttempt {
     try {
       return await Promise.race([operation, this.#cancelled]);
     } finally {
+      // This is the final synchronous decision boundary. A timer delayed by
+      // queued microtasks cannot waive elapsed time on success OR failure.
+      this.checkDeadline();
       if (this.#reason) {
         let timer: NodeJS.Timeout | undefined;
         try {
           await Promise.race([
-            settled.then(() => this.pending()),
+            Promise.all([settled, ...this.#resources.values()]),
             new Promise<never>((_resolve, reject) => {
               timer = setTimeout(
                 () => reject(failure("COMMAND_DRAIN_UNCONFIRMED")),
@@ -202,17 +165,9 @@ export class CommandAttempt {
           clearTimeout(timer);
         }
       }
-      if (this.#stopFailed) {
-        this.#state = "unconfirmed";
-        this.detach();
-        throw failure("COMMAND_DRAIN_UNCONFIRMED");
-      }
       this.#state = "completed";
       this.#resources.clear();
-      this.#acquired.clear();
       this.detach();
-      // Cancellation can be accepted after operation wins the race but before
-      // this continuation runs. Its physical stop cannot accompany success.
       if (this.#reason) throw this.#reason;
     }
   }

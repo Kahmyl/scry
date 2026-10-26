@@ -47,6 +47,7 @@ describe("native command-attempt cancellation", () => {
       let start!: () => void,
         entered!: () => void,
         browser: OwnedBrowser | undefined,
+        acquisition: Promise<OwnedBrowser> | undefined,
         dispatched = false;
       const release = new Promise<void>((resolve) => {
           start = resolve;
@@ -55,16 +56,19 @@ describe("native command-attempt cancellation", () => {
           entered = resolve;
         });
       const running = lane.run({ remainingMs: 10000, signal: cancel.signal }, async (scope) => {
-        await scope.acquire(async () => {
+        scope.bind({
+          stop: async () => {
+            if (acquisition) await (await acquisition).terminate();
+          },
+        });
+        acquisition = (async () => {
           entered();
           await release;
           browser = await OwnedBrowser.launch(options);
-          return {
-            stop: async () => {
-              await browser!.terminate();
-            },
-          };
-        });
+          return browser;
+        })();
+        await acquisition;
+        scope.assertActive();
         dispatched = true;
       });
       const rejection = expect(running).rejects.toThrow("COMMAND_CANCELLED");

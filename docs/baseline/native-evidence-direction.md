@@ -54,13 +54,18 @@ again. Durable facts alone do not stop a browser: carried monotonic execution,
 physical cancellation, claim-loss handling, and completion fencing remain required
 before command-lifecycle activation is considered complete.
 
-The isolated execution kernel uses one command lane per session. An attempt owns
-its exact resource bindings and unresolved acquisitions, not a late lookup by
-session name. Cancellation stops those resources and drains their pending work
+The isolated execution kernel uses one command lane per session. Praxis owns
+browser acquisition through an exact startup/session cell registered before any
+asynchronous startup work. The kernel owns command admission, lifetime, and drain,
+not a second resource-factory API or a late lookup by session name. Cancellation
+stops the registered cells and drains the awaited work
 before another attempt is admitted. If termination or drain cannot be confirmed,
 that lane remains unavailable; a timer firing alone is not permission to retry.
-Late acquisitions remain owned even after an uncertain-drain report. Successful
-attempts detach old cancellation callbacks so they cannot kill a later browser.
+The cells retain late acquisitions even after an uncertain-drain report.
+Observing callback completion closes binding admission before the final outcome
+transition. That transition checks the monotonic clock again on success and
+failure, and an accepted cancellation cannot return success after physical stop.
+Successful attempts detach old callbacks so they cannot kill a later browser.
 This kernel is qualified independently before engine and queue adoption; its
 existence is not evidence that all production dispatch paths already use it.
 Local callbacks cannot interrupt a blocked controller event loop. Synchronous

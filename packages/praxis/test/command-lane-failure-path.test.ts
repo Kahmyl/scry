@@ -24,20 +24,23 @@ describe("monotonic deadline on failed work", () => {
     expect(stop).toHaveBeenCalledTimes(1);
     expect(await lane.run({ remainingMs: 1000 }, async () => "drained")).toBe("drained");
   });
-  it("also checks lifetime after ordinary-failure acquisition cleanup delays the timer", async () => {
+  it("also checks lifetime when the owner's ordinary-failure cleanup delays the timer", async () => {
     const lane = new CommandLane(),
       stopExisting = vi.fn(async () => undefined),
-      stopNew = vi.fn(async () => {
+      cleanup = vi.fn(async () => {
         block(30);
       });
     await expect(
       lane.run({ remainingMs: 10 }, async (scope) => {
         scope.bind({ stop: stopExisting });
-        await scope.acquire(async () => ({ stop: stopNew }));
-        throw new Error("fixture_work_failed");
+        try {
+          throw new Error("fixture_work_failed");
+        } finally {
+          await cleanup();
+        }
       }),
     ).rejects.toThrow("COMMAND_DEADLINE_EXCEEDED");
     expect(stopExisting).toHaveBeenCalledTimes(1);
-    expect(stopNew).toHaveBeenCalledTimes(1);
+    expect(cleanup).toHaveBeenCalledTimes(1);
   });
 });

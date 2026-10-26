@@ -18,43 +18,25 @@ describe("attempt-bound monotonic command lane", () => {
     expect(await scope.run(async () => "first")).toBe("first");
     await expect(scope.run(async () => "second")).rejects.toThrow("COMMAND_ATTEMPT_ENDED");
   });
-  it("cleans a newly acquired process on ordinary failure but keeps an existing session binding", async () => {
-    const fresh = vi.fn(async () => undefined),
-      existing = vi.fn(async () => undefined);
+  it("keeps the session-owned binding with its owner after ordinary settled failure", async () => {
+    const existing = vi.fn(async () => undefined);
     await expect(
       new CommandLane().run({ remainingMs: 1000 }, async (scope) => {
         scope.bind({ stop: existing });
-        await scope.acquire(async () => ({ stop: fresh }));
         throw new Error("fixture_failure");
       }),
     ).rejects.toThrow("fixture_failure");
-    expect(fresh).toHaveBeenCalledTimes(1);
     expect(existing).not.toHaveBeenCalled();
   });
-  it("drains an unresolved acquisition even when work fails without awaiting it", async () => {
-    const lane = new CommandLane(),
-      late = gate<{ stop(): Promise<void> }>(),
-      entered = gate(),
-      stop = vi.fn(async () => undefined);
-    const running = lane.run({ remainingMs: 1000 }, async (scope) => {
-      void scope
-        .acquire(async () => {
-          entered.resolve();
-          return late.promise;
-        })
-        .catch(() => undefined);
-      await entered.promise;
-      throw new Error("fixture_failure");
+  it("does not expose a competing resource-factory authority or accept bindings after completion", async () => {
+    let previous!: CommandAttempt;
+    await new CommandLane().run({ remainingMs: 1000 }, async (scope) => {
+      previous = scope;
+      expect("acquire" in scope).toBe(false);
     });
-    const rejection = expect(running).rejects.toThrow("fixture_failure");
-    await entered.promise;
-    await expect(lane.run({ remainingMs: 1000 }, async () => undefined)).rejects.toThrow(
-      "COMMAND_CONCURRENT",
-    );
-    late.resolve({ stop });
-    await rejection;
-    expect(stop).toHaveBeenCalledTimes(1);
-    expect(await lane.run({ remainingMs: 1000 }, async () => "next")).toBe("next");
+    const stop = vi.fn(async () => undefined);
+    expect(() => previous.bind({ stop })).toThrow("COMMAND_ATTEMPT_ENDED");
+    expect(stop).not.toHaveBeenCalled();
   });
   it("does not overlap commands and admits the next only after the first settles", async () => {
     const lane = new CommandLane(),
@@ -126,7 +108,13 @@ describe("attempt-bound monotonic command lane", () => {
     const stop = vi.fn(async () => undefined),
       dispatch = vi.fn();
     const running = lane.run({ remainingMs: 1000, signal: signal.signal }, async (scope) => {
-      await scope.acquire(() => acquisition.promise);
+      scope.bind({
+        stop: async () => {
+          await (await acquisition.promise).stop();
+        },
+      });
+      await acquisition.promise;
+      scope.assertActive();
       dispatch();
     });
     const rejection = expect(running).rejects.toThrow("COMMAND_CANCELLED");
@@ -212,7 +200,13 @@ describe("attempt-bound monotonic command lane", () => {
     const running = lane.run(
       { remainingMs: 1000, drainTimeoutMs: 25, signal: signal.signal },
       async (scope) => {
-        await scope.acquire(() => acquisition.promise);
+        scope.bind({
+          stop: async () => {
+            await (await acquisition.promise).stop();
+          },
+        });
+        await acquisition.promise;
+        scope.assertActive();
       },
     );
     const rejection = expect(running).rejects.toThrow("COMMAND_DRAIN_UNCONFIRMED");
