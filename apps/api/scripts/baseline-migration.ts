@@ -188,6 +188,10 @@ export async function migrateBrowserBaseline(input: BaselineMigrationInput) {
     let compatibilityApplied = false,
       adoptedBaseline = false;
     if (existing) {
+      // A partial retained receipt prefix is not adoptable. Refuse before the
+      // compatibility bridge can commit any rename, data update or metadata drop.
+      if (applied.length > 0 && applied.length < retainedBaselineMigrationNames.length)
+        throw new Error("SCRY_BROWSER_MIGRATION_HISTORY_INVALID");
       const legacy = await client.query(
         "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='schema_baseline' AND column_name='runtime_capability_version'",
       );

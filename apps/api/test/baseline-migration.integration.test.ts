@@ -279,4 +279,58 @@ live("guarded existing-baseline schema upgrades", () => {
       expect(await receipts(context.client)).toHaveLength(currentCount - 1);
       expect(await probe(context.client)).toBe(0);
     }));
+  it("refuses partial legacy history before changing any legacy columns or metadata", () =>
+    withDatabase(async (context) => {
+      await rawBaseline(context);
+      const id = await witness(context.client);
+      // Model the complete retained layout before the compatibility bridge.
+      await context.client.query(`
+        ALTER TABLE schema_baseline DROP CONSTRAINT schema_baseline_runtime_capability_id_check;
+        ALTER TABLE browser_execution_sessions DROP CONSTRAINT browser_execution_sessions_runtime_capability;
+        ALTER TABLE browser_owner_generations DROP CONSTRAINT browser_owner_generations_runtime_capability_id_check;
+        ALTER TABLE schema_baseline RENAME COLUMN runtime_capability_id TO runtime_capability_version;
+        ALTER TABLE browser_execution_sessions RENAME COLUMN runtime_capability_id TO runtime_capability_version;
+        ALTER TABLE browser_execution_outbox RENAME COLUMN runtime_capability_id TO runtime_capability_version;
+        ALTER TABLE browser_owner_generations RENAME COLUMN runtime_capability_id TO runtime_capability_version;
+        ALTER TABLE browser_execution_sessions RENAME COLUMN protection_key_id TO protection_key_version;
+        ALTER TABLE browser_commands RENAME COLUMN protected_input_key_id TO protected_input_key_version;
+        ALTER TABLE browser_captures RENAME COLUMN evidence_format TO evidence_version;
+        ALTER TABLE protected_values RENAME COLUMN key_id TO key_version;
+        ALTER TABLE browser_session_checkpoints RENAME COLUMN key_id TO key_version;
+        ALTER TABLE schema_baseline ADD COLUMN schema_version text DEFAULT 'retained',
+          ADD COLUMN schema_fingerprint text DEFAULT 'fixture-original',
+          ADD COLUMN catalog_fingerprint text DEFAULT 'fixture-original';
+        UPDATE schema_baseline SET runtime_capability_version='fixture-legacy';
+      `);
+      await runner({
+        dbClient: context.client,
+        dir: context.directory,
+        migrationsTable: "scry_migration_history",
+        direction: "up",
+        fake: true,
+        count: 3,
+        logger: quiet,
+      });
+      const before = await context.client.query(
+        "SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public' ORDER BY table_name,ordinal_position",
+      );
+      await expect(migrateBrowserBaseline(context.input)).rejects.toThrow(
+        "MIGRATION_HISTORY_INVALID",
+      );
+      expect(
+        (
+          await context.client.query(
+            "SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public' ORDER BY table_name,ordinal_position",
+          )
+        ).rows,
+      ).toEqual(before.rows);
+      expect((await context.client.query("SELECT * FROM schema_baseline")).rows[0]).toMatchObject({
+        runtime_capability_version: "fixture-legacy",
+        schema_version: "retained",
+        schema_fingerprint: "fixture-original",
+        catalog_fingerprint: "fixture-original",
+      });
+      expect(await receipts(context.client)).toHaveLength(3);
+      await assertWitness(context.client, id);
+    }));
 });

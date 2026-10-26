@@ -325,7 +325,7 @@ describe("qualification outcomes", () => {
     const database = checks.find((entry) => entry.id === "database-lifecycle")!;
     const upgrades = checks.find((entry) => entry.id === "schema-upgrades")!;
     expect(upgrades.prerequisites).toEqual(["database", "database_creation"]);
-    expect(upgrades.tests).toEqual({ minimumPassed: 8, allowSkipped: false });
+    expect(upgrades.tests).toEqual({ minimumPassed: 9, allowSkipped: false });
     expect(database.command).toEqual(
       expect.arrayContaining([
         "test/browser-execution.repository.integration.test.ts",

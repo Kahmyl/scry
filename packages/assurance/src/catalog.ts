@@ -162,7 +162,7 @@ export const checks: readonly CheckDefinition[] = [
     "Retained baselines upgrade transactionally with guarded history, rollback and recovery",
     "@scry/api",
     ["test/baseline-migration.integration.test.ts"],
-    { database: true, databaseCreation: true, minimum: 8 },
+    { database: true, databaseCreation: true, minimum: 9 },
   ),
   tests(
     "database-lifecycle",
