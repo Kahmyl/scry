@@ -11,7 +11,7 @@ import type {
 } from "@scry/contracts";
 import { browserProtectionSinkSchema } from "@scry/contracts";
 import { protectCommandInput, storedBrowserFailureCode } from "@scry/veil";
-import type { QueryResultRow } from "pg";
+import type { PoolClient, QueryResultRow } from "pg";
 import type { PraxisStorageState } from "@scry/contracts";
 
 import { Database } from "../../infrastructure/database.js";
@@ -43,11 +43,23 @@ interface CommandRow extends QueryResultRow {
   execution_budget_ms: number | null;
 }
 
-interface ClaimedCommandRow extends CommandRow {
+export interface CommandClaimSample extends QueryResultRow {
+  executionRemainingMs: number;
+  claimRemainingMs: number;
+}
+interface ClaimedCommandRow extends CommandRow, CommandClaimSample {
   execution_deadline_at: Date;
   execution_budget_ms: number;
-  /** Database-relative duration, not a host-clock-derived timestamp delta. */
-  execution_remaining_ms: number;
+}
+
+// Evaluate only after acquiring the command row lock. PostgreSQL may evaluate
+// projected/WHERE clock expressions before a LockRows or UPDATE lock wait.
+const claimClockProjection = `
+  GREATEST(0,FLOOR(EXTRACT(EPOCH FROM(execution_deadline_at-clock_timestamp()))*1000))::int AS "executionRemainingMs",
+  GREATEST(0,FLOOR(EXTRACT(EPOCH FROM(claim_lease_expires_at-clock_timestamp()))*1000))::int AS "claimRemainingMs"`;
+function validateCommandLease(leaseMs: number): void {
+  if (!Number.isSafeInteger(leaseMs) || leaseMs < 30000 || leaseMs > 300000)
+    throw new Error("SCRY_BROWSER_COMMAND_LEASE_INVALID");
 }
 
 type InlineStorageState = PraxisStorageState;
@@ -316,8 +328,7 @@ export class BrowserCommandRepository {
   }
 
   async claim(commandId: string, leaseMs = 60_000): Promise<ClaimedCommandRow | null> {
-    if (!Number.isSafeInteger(leaseMs) || leaseMs < 30_000)
-      throw new Error("SCRY_BROWSER_COMMAND_LEASE_INVALID");
+    validateCommandLease(leaseMs);
     return this.database.transaction(async (client) => {
       // Match submit's session-first lock order. The lock covers only the claim
       // transaction, never browser execution, network waits or evidence file I/O.
@@ -329,8 +340,8 @@ export class BrowserCommandRepository {
       await client.query("SELECT id FROM browser_execution_sessions WHERE id=$1 FOR UPDATE", [
         scope.rows[0].session_id,
       ]);
-      const result = await client.query<CommandRow & { claim_live: boolean | null }>(
-        "SELECT *,claim_lease_expires_at>clock_timestamp() AS claim_live FROM browser_commands WHERE id=$1 FOR UPDATE",
+      const result = await client.query<CommandRow>(
+        "SELECT * FROM browser_commands WHERE id=$1 FOR UPDATE",
         [commandId],
       );
       const row = result.rows[0];
@@ -341,7 +352,11 @@ export class BrowserCommandRepository {
         [row.session_id, row.command_ordinal],
       );
       if (predecessor.rowCount) throw new Error("SCRY_BROWSER_COMMAND_PREDECESSOR_PENDING");
-      if (row.state === "running" && row.claim_live) {
+      const live = await client.query<{ live: boolean }>(
+        "SELECT claim_lease_expires_at>clock_timestamp() AS live FROM browser_commands WHERE id=$1",
+        [commandId],
+      );
+      if (row.state === "running" && live.rows[0]?.live) {
         throw new Error("SCRY_BROWSER_COMMAND_ALREADY_RUNNING");
       }
       const claimToken = randomUUID();
@@ -351,8 +366,7 @@ export class BrowserCommandRepository {
            error_code=NULL,claim_token=$2,claim_lease_expires_at=claim_clock.at+($3::int * interval '1 millisecond'),
            execution_deadline_at=COALESCE(execution_deadline_at,claim_clock.at+($4::int * interval '1 millisecond')),
            execution_budget_ms=COALESCE(execution_budget_ms,$4),attempt_count=attempt_count+1
-         FROM claim_clock WHERE id=$1 RETURNING browser_commands.*,
-           GREATEST(0,FLOOR(EXTRACT(EPOCH FROM(execution_deadline_at-clock_timestamp()))*1000))::int AS execution_remaining_ms`,
+         FROM claim_clock WHERE id=$1 RETURNING browser_commands.*,${claimClockProjection}`,
         [commandId, claimToken, leaseMs, commandExecutionBudgetMs(row.kind)],
       );
       const claimedRow = claimed.rows[0]!;
@@ -380,13 +394,60 @@ export class BrowserCommandRepository {
     });
   }
 
-  async heartbeatClaim(commandId: string, claimToken: string, leaseMs = 60_000): Promise<void> {
-    const result = await this.database.query(
-      `UPDATE browser_commands SET claim_lease_expires_at=now()+($3::int * interval '1 millisecond')
-       WHERE id=$1 AND state='running' AND claim_token=$2 AND claim_lease_expires_at>now()`,
-      [commandId, claimToken, leaseMs],
-    );
-    if (result.rowCount !== 1) throw new Error("SCRY_BROWSER_COMMAND_CLAIM_FENCED");
+  /** No browser/file work is accepted here. The lock, current clock check and
+   * exact claim's SQL admission form one short transaction. */
+  private async withLiveClaim<T>(
+    commandId: string,
+    claimToken: string,
+    mode: "heartbeat" | "dispatch" | "complete" | "fail",
+    work: (client: PoolClient, sample: CommandClaimSample) => Promise<T>,
+  ): Promise<T> {
+    return this.database.transaction(async (client) => {
+      await client.query("SELECT id FROM browser_commands WHERE id=$1 FOR UPDATE", [commandId]);
+      const result = await client.query<
+        CommandClaimSample & { state: string; claim_token: string | null }
+      >(`SELECT state,claim_token,${claimClockProjection} FROM browser_commands WHERE id=$1`, [
+        commandId,
+      ]);
+      const row = result.rows[0];
+      const fenced =
+        mode === "complete"
+          ? "SCRY_BROWSER_COMMAND_COMPLETION_CONFLICT"
+          : "SCRY_BROWSER_COMMAND_CLAIM_FENCED";
+      if (
+        !row ||
+        row.state !== "running" ||
+        row.claim_token !== claimToken ||
+        row.claimRemainingMs <= 0
+      )
+        throw new Error(fenced);
+      if ((mode === "dispatch" || mode === "complete") && row.executionRemainingMs <= 0)
+        throw new Error(mode === "dispatch" ? "SCRY_BROWSER_COMMAND_DEADLINE_EXCEEDED" : fenced);
+      return work(client, {
+        executionRemainingMs: row.executionRemainingMs,
+        claimRemainingMs: row.claimRemainingMs,
+      });
+    });
+  }
+
+  assertClaim(commandId: string, claimToken: string): Promise<CommandClaimSample> {
+    return this.withLiveClaim(commandId, claimToken, "dispatch", async (_client, sample) => sample);
+  }
+
+  async heartbeatClaim(
+    commandId: string,
+    claimToken: string,
+    leaseMs = 60_000,
+  ): Promise<CommandClaimSample> {
+    validateCommandLease(leaseMs);
+    return this.withLiveClaim(commandId, claimToken, "heartbeat", async (client) => {
+      const result = await client.query<CommandClaimSample>(
+        `UPDATE browser_commands SET claim_lease_expires_at=clock_timestamp()+($2::int * interval '1 millisecond')
+         WHERE id=$1 RETURNING ${claimClockProjection}`,
+        [commandId, leaseMs],
+      );
+      return result.rows[0]!;
+    });
   }
 
   async complete(
@@ -394,21 +455,27 @@ export class BrowserCommandRepository {
     claimToken: string,
     safeResult: Record<string, unknown>,
   ): Promise<void> {
-    const result = await this.database.query(
-      `UPDATE browser_commands SET state='completed',safe_result=$3::jsonb,completed_at=now(),
-         claim_token=NULL,claim_lease_expires_at=NULL WHERE id=$1 AND state='running' AND claim_token=$2`,
-      [commandId, claimToken, JSON.stringify(safeResult)],
-    );
-    if (result.rowCount !== 1) throw new Error("SCRY_BROWSER_COMMAND_COMPLETION_CONFLICT");
+    // Serialization is not coordination work; revalidate the claim only after
+    // it finishes, without holding its database lock during local CPU work.
+    const serialized = JSON.stringify(safeResult);
+    await this.withLiveClaim(commandId, claimToken, "complete", async (client) => {
+      await client.query(
+        `UPDATE browser_commands SET state='completed',safe_result=$2::jsonb,completed_at=clock_timestamp(),
+           claim_token=NULL,claim_lease_expires_at=NULL WHERE id=$1`,
+        [commandId, serialized],
+      );
+    });
   }
 
   async fail(commandId: string, claimToken: string, error: unknown): Promise<void> {
     const code = storedBrowserFailureCode(error);
-    await this.database.query(
-      `UPDATE browser_commands SET state='failed',error_code=$3,completed_at=now(),claim_token=NULL,
-         claim_lease_expires_at=NULL WHERE id=$1 AND state='running' AND claim_token=$2`,
-      [commandId, claimToken, code || "SCRY_BROWSER_COMMAND_FAILED"],
-    );
+    await this.withLiveClaim(commandId, claimToken, "fail", async (client) => {
+      await client.query(
+        `UPDATE browser_commands SET state='failed',error_code=$2,completed_at=clock_timestamp(),claim_token=NULL,
+           claim_lease_expires_at=NULL WHERE id=$1`,
+        [commandId, code || "SCRY_BROWSER_COMMAND_FAILED"],
+      );
+    });
   }
 
   async sessionContext(sessionId: string): Promise<{

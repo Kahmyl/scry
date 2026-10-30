@@ -183,9 +183,10 @@ export const checks: readonly CheckDefinition[] = [
       "test/browser-scope-integrity.integration.test.ts",
       "test/browser-command-order.integration.test.ts",
       "test/browser-command-deadline.integration.test.ts",
+      "test/browser-command-claim-fencing.integration.test.ts",
       "test/browser-error-admission.integration.test.ts",
     ],
-    { database: true, minimum: 24 },
+    { database: true, minimum: 33 },
   ),
   tests(
     "command-queue",

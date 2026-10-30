@@ -25,20 +25,38 @@ describe("durable and public failure admission", () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
   it("never stores driver values in failure/outbox codes", async () => {
-    const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }),
-      db = { query } as unknown as Database,
+    const query = vi
+        .fn()
+        .mockResolvedValue({ rows: [], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ id: "command" }], rowCount: 1 })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              state: "running",
+              claim_token: "claim",
+              executionRemainingMs: 1000,
+              claimRemainingMs: 1000,
+            },
+          ],
+          rowCount: 1,
+        }),
+      db = {
+        query,
+        transaction: async <T>(work: (client: { query: typeof query }) => Promise<T>) =>
+          work({ query }),
+      } as unknown as Database,
       cipher = {} as BrowserProtectedValueCipher;
     await new BrowserCommandRepository(db, cipher).fail(
       "command",
       "claim",
       new Error('elementHandle.fill: filling "fixture-only-password-a1b2c3"'),
     );
-    expect(query.mock.calls[0]?.[1]).toEqual(["command", "claim", "SCRY_BROWSER_COMMAND_FAILED"]);
+    expect(query.mock.calls[2]?.[1]).toEqual(["command", "SCRY_BROWSER_COMMAND_FAILED"]);
     await new BrowserExecutionRepository(db, cipher).markSessionPublishFailed(
       "session",
       "fixture-only-token-a1b2c3",
     );
-    expect(query.mock.calls[1]?.[1]).toEqual(["session", "SCRY_BROWSER_COMMAND_FAILED"]);
+    expect(query.mock.calls[3]?.[1]).toEqual(["session", "SCRY_BROWSER_COMMAND_FAILED"]);
   });
   it("does not accept an arbitrary uppercase browser prefix as HTTP-safe metadata", () => {
     const reply = { status: vi.fn(), send: vi.fn() };
