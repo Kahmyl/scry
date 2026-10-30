@@ -318,6 +318,11 @@ describe("qualification outcomes", () => {
       ]),
     );
     expect(profiles.owner).toContain("owner-admission");
+    expect(profiles.owner).toContain("owner-watchdog");
+    expect(checks.find((entry) => entry.id === "owner-watchdog")?.tests).toEqual({
+      minimumPassed: 3,
+      allowSkipped: false,
+    });
     expect(profiles.owner).toContain("engine-command-lifetime");
     expect(checks.find((entry) => entry.id === "engine-command-lifetime")?.tests).toEqual({
       minimumPassed: 3,
@@ -345,7 +350,7 @@ describe("qualification outcomes", () => {
         "test/browser-error-admission.integration.test.ts",
       ]),
     );
-    expect(database.tests).toEqual({ minimumPassed: 51, allowSkipped: false });
+    expect(database.tests).toEqual({ minimumPassed: 54, allowSkipped: false });
     expect(profiles.worker).toContain("command-queue");
     expect(profiles.worker).toContain("worker-shutdown");
     expect(profiles.worker).toContain("command-lifetime");

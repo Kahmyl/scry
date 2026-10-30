@@ -665,11 +665,9 @@ run("browser execution baseline repository", () => {
       const winners = ownerRace.filter(
         (
           result,
-        ): result is PromiseFulfilledResult<{
-          generation: number;
-          leaseToken: string;
-          fencingToken: number;
-        }> => result.status === "fulfilled",
+        ): result is PromiseFulfilledResult<
+          Awaited<ReturnType<BrowserExecutionRepository["claimOwner"]>>
+        > => result.status === "fulfilled",
       );
       expect(winners).toHaveLength(1);
       const recoveredOwner = winners[0]!.value;

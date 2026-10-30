@@ -187,7 +187,7 @@ export const checks: readonly CheckDefinition[] = [
       "test/browser-owner-clock.integration.test.ts",
       "test/browser-error-admission.integration.test.ts",
     ],
-    { database: true, minimum: 51 },
+    { database: true, minimum: 54 },
   ),
   tests(
     "command-queue",
@@ -230,6 +230,13 @@ export const checks: readonly CheckDefinition[] = [
     "@scry/api",
     ["test/browser-owner-fencing.integration.test.ts"],
     { integrated: true, database: true, minimum: 5 },
+  ),
+  tests(
+    "owner-watchdog",
+    "Native browser stops during a real blocked owner renewal without late startup or premature valid-owner retirement",
+    "@scry/api",
+    ["test/browser-owner-watchdog.integration.test.ts"],
+    { integrated: true, database: true, minimum: 3 },
   ),
   tests(
     "failure-finalization",
@@ -302,7 +309,7 @@ export const profiles: Readonly<Record<string, readonly string[]>> = {
     "boundaries",
   ],
   worker: ["command-queue", "worker-shutdown", "worker-journey", "command-lifetime"],
-  owner: ["owner-admission", "engine-command-lifetime"],
+  owner: ["owner-admission", "engine-command-lifetime", "owner-watchdog"],
   failure: ["failure-finalization"],
   recovery: ["worker-recovery"],
   journey: ["long-journey"],

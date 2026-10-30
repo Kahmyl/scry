@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { performance } from "node:perf_hooks";
 import type {
   ChronicleEvidencePort,
   PraxisCommandsPort,
   PraxisEffectsPort,
+  PraxisOwnerClaim,
   VeilBrowserProtectionPort,
 } from "@scry/contracts";
 import { PraxisBrowserEngine } from "../src/browser-engine.js";
@@ -59,6 +61,13 @@ vi.mock("../src/recorder.js", () => ({
   },
 }));
 
+const ownerClaim = (): PraxisOwnerClaim => ({
+  generation: 1,
+  leaseToken: "token",
+  fencingToken: 1,
+  leaseRemainingMs: 60000,
+  sampleStartedAt: performance.now(),
+});
 function fixture() {
   const commands = {
     sessionContext: vi.fn(async () => ({
@@ -73,8 +82,11 @@ function fixture() {
   };
   const effects = {
     assertCompatibleBaseline: vi.fn(async () => undefined),
-    claimOwner: vi.fn(async () => ({ generation: 1, leaseToken: "token", fencingToken: 1 })),
-    heartbeatOwner: vi.fn(async () => undefined),
+    claimOwner: vi.fn(async () => ownerClaim()),
+    heartbeatOwner: vi.fn(async () => ({
+      leaseRemainingMs: 60000,
+      sampleStartedAt: performance.now(),
+    })),
     releaseOwner: vi.fn(async () => undefined),
     durableCapturesForSession: vi.fn(async () => []),
     withOwner: vi.fn(async <T>(_owner: unknown, work: () => Promise<T>) => work()),
@@ -122,13 +134,89 @@ beforeEach(() => {
     await browserFixture.browser.close();
     return { forced: true, exitConfirmed: true as const };
   });
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
 });
 afterEach(() => {
   vi.useRealTimers();
 });
 
 describe("browser owner lifecycle", () => {
+  async function clocked(work: () => Promise<void>): Promise<void> {
+    vi.useFakeTimers();
+    const origin = Date.now();
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => Date.now() - origin);
+    try {
+      await work();
+    } finally {
+      clock.mockRestore();
+    }
+  }
+  it("physically retires on local owner expiry even while the heartbeat never returns", async () =>
+    clocked(async () => {
+      const { engine, effects, session } = fixture();
+      await engine.open("session");
+      let finish!: (value: { leaseRemainingMs: number; sampleStartedAt: number }) => void;
+      effects.heartbeatOwner.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      try {
+        await vi.advanceTimersByTimeAsync(60000);
+        expect(effects.heartbeatOwner).toHaveBeenCalledTimes(1);
+        expect(browserFixture.custody.terminate).toHaveBeenCalledTimes(1);
+        expect(browserFixture.recorder.abort).toHaveBeenCalledTimes(1);
+        expect(session.seal).not.toHaveBeenCalled();
+        expect(effects.completeEvidence).not.toHaveBeenCalled();
+        finish({ leaseRemainingMs: 60000, sampleStartedAt: performance.now() });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(browserFixture.custody.terminate).toHaveBeenCalledTimes(1);
+      } finally {
+        finish?.({ leaseRemainingMs: 60000, sampleStartedAt: performance.now() });
+        await engine.closeAll();
+      }
+    }));
+  it("does not let an old late heartbeat terminate a replacement incarnation", async () =>
+    clocked(async () => {
+      const { engine, effects } = fixture();
+      await engine.open("session");
+      let finish!: (value: { leaseRemainingMs: number; sampleStartedAt: number }) => void;
+      effects.heartbeatOwner.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      try {
+        await vi.advanceTimersByTimeAsync(60000);
+        effects.claimOwner.mockResolvedValueOnce({
+          ...ownerClaim(),
+          generation: 2,
+          fencingToken: 2,
+          leaseToken: "next",
+        });
+        expect(await engine.open("session")).toMatchObject({ ownerGeneration: 2 });
+        finish({ leaseRemainingMs: 60000, sampleStartedAt: performance.now() });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(browserFixture.custody.terminate).toHaveBeenCalledTimes(1);
+        expect(await engine.open("session")).toMatchObject({ ownerGeneration: 2 });
+      } finally {
+        finish?.({ leaseRemainingMs: 60000, sampleStartedAt: performance.now() });
+        await engine.closeAll();
+      }
+    }));
+  it("refuses startup whose owner acknowledgement already consumed its lease", async () =>
+    clocked(async () => {
+      const { engine, effects } = fixture();
+      effects.claimOwner.mockResolvedValueOnce({ ...ownerClaim(), leaseRemainingMs: 0 });
+      try {
+        await expect(engine.open("session")).rejects.toThrow("OWNER_FENCED");
+        expect(browserFixture.ownedLaunch).not.toHaveBeenCalled();
+      } finally {
+        await engine.closeAll();
+      }
+    }));
   it("checks current command authority after startup and before native dispatch", async () => {
     const { engine } = fixture();
     await engine.open("session");
@@ -152,11 +240,7 @@ describe("browser owner lifecycle", () => {
       cancel = new AbortController();
     let releaseSchema!: () => void,
       schemaEntered!: () => void,
-      releaseClaim!: (value: {
-        generation: number;
-        leaseToken: string;
-        fencingToken: number;
-      }) => void,
+      releaseClaim!: (value: PraxisOwnerClaim) => void,
       claimEntered!: () => void;
     const schema = new Promise<void>((resolve) => {
         releaseSchema = resolve;
@@ -189,7 +273,7 @@ describe("browser owner lifecycle", () => {
     try {
       await seenClaim;
       cancel.abort();
-      releaseClaim({ generation: 1, leaseToken: "token", fencingToken: 1 });
+      releaseClaim(ownerClaim());
       expect(await result).toMatchObject({ message: "SCRY_BROWSER_COMMAND_CANCELLED" });
       releaseSchema();
       expect(await backgroundResult).toMatchObject({ message: "SCRY_BROWSER_OWNER_FENCED" });
@@ -348,8 +432,7 @@ describe("browser owner lifecycle", () => {
   it("does not launch a browser after cancellation while its owner claim was pending", async () => {
     const { engine, effects } = fixture();
     const cancel = new AbortController();
-    let finish!: (value: { generation: number; leaseToken: string; fencingToken: number }) => void,
-      enter!: () => void;
+    let finish!: (value: PraxisOwnerClaim) => void, enter!: () => void;
     const entered = new Promise<void>((resolve) => {
       enter = resolve;
     });
@@ -367,7 +450,7 @@ describe("browser owner lifecycle", () => {
     const observed = running.catch((error: unknown) => error);
     await entered;
     cancel.abort();
-    finish({ generation: 1, leaseToken: "token", fencingToken: 1 });
+    finish(ownerClaim());
     try {
       await observed;
       expect(browserFixture.ownedLaunch).not.toHaveBeenCalled();
@@ -470,16 +553,13 @@ describe("browser owner lifecycle", () => {
   });
   it("never launches after a pending owner claim returns to a stopped host", async () => {
     const { engine, effects } = fixture();
-    let entered!: () => void,
-      release!: (value: { generation: number; leaseToken: string; fencingToken: number }) => void;
+    let entered!: () => void, release!: (value: PraxisOwnerClaim) => void;
     const started = new Promise<void>((resolve) => {
       entered = resolve;
     });
-    const gate = new Promise<{ generation: number; leaseToken: string; fencingToken: number }>(
-      (resolve) => {
-        release = resolve;
-      },
-    );
+    const gate = new Promise<PraxisOwnerClaim>((resolve) => {
+      release = resolve;
+    });
     effects.claimOwner.mockImplementationOnce(async () => {
       entered();
       return gate;
@@ -487,7 +567,7 @@ describe("browser owner lifecycle", () => {
     const opening = engine.open("session");
     await started;
     await engine.closeAll();
-    release({ generation: 1, leaseToken: "token", fencingToken: 1 });
+    release(ownerClaim());
     await expect(opening).rejects.toThrow("SESSION_CLOSING");
     expect(browserFixture.ownedLaunch).not.toHaveBeenCalled();
     expect(effects.releaseOwner).toHaveBeenCalledTimes(1);
@@ -539,11 +619,13 @@ describe("browser owner lifecycle", () => {
     await engine.open("session");
     browserFixture.recorder.abort.mockImplementationOnce(() => new Promise(() => {}));
     const stopping = engine.closeAll();
+    const refused = expect(stopping).rejects.toThrow("PROCESS_TERMINATION_UNCONFIRMED");
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
     expect(browserFixture.custody.terminate).toHaveBeenCalledTimes(1);
-    await expect(stopping).rejects.toThrow("PROCESS_TERMINATION_UNCONFIRMED");
+    await vi.advanceTimersByTimeAsync(2001);
+    await refused;
     await expect(engine.closeAll()).rejects.toThrow("PROCESS_TERMINATION_UNCONFIRMED");
   });
   it("retires unexpected browser disconnection without sealing or releasing product truth", async () => {
@@ -583,6 +665,7 @@ describe("browser owner lifecycle", () => {
     const lease = new PraxisOwnerLease(
       { sessionId: "session", generation: 1, leaseToken: "token" },
       effects as unknown as PraxisEffectsPort,
+      ownerClaim(),
     );
     effects.heartbeatOwner.mockRejectedValueOnce(new Error("database unavailable"));
     await expect(lease.heartbeat(60_000)).rejects.toThrow("database unavailable");
@@ -604,6 +687,7 @@ describe("browser owner lifecycle", () => {
     const lease = new PraxisOwnerLease(
       { sessionId: "session", generation: 1, leaseToken: "token" },
       effects as unknown as PraxisEffectsPort,
+      ownerClaim(),
     );
     const write = vi.fn(async () => undefined);
     const pending = lease.run(write);

@@ -286,6 +286,20 @@ replacement. A replacement lease starts after reconciliation, so lock waiting
 cannot consume its lifetime before the replacement is admitted. Owner leases
 are bounded to one second through five minutes.
 
+The isolated worker carries an acknowledged database-relative owner lifetime
+from a post-lock monotonic query anchor. Query, commit and transport time consume
+that lifetime. A local watchdog revokes the exact browser incarnation even if a
+renewal is still waiting on the database. Concurrent renewal calls share one
+request; only an acknowledged renewal received while locally valid may extend
+authority. Revocation cannot be reversed by a late response.
+Owner validity, expiry and periodic renewal have one local owner. Renewal timing
+uses the authority actually remaining after transport, then recomputes the normal
+cadence after acknowledgement; it is not a fixed interval based on the original
+sample. Revocation cancels both timers. It immediately
+starts physical browser retirement, with the shared retirement latch installed
+before synchronous revocation listeners run. This local control does not replace
+the independent supervisor needed when the controller event loop itself stalls.
+
 When an owner is replaced:
 
 - an admitted Effect that never dispatched becomes `not_applied` and returns

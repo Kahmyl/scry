@@ -37,7 +37,6 @@ interface BrowserResources {
   recorder?: SanitizedBrowserRecorder;
   session?: ActiveSession;
   retirement?: Promise<void>;
-  heartbeat?: NodeJS.Timeout;
 }
 
 interface ActiveSession {
@@ -146,7 +145,7 @@ export class PraxisBrowserEngine {
     const ownerLeaseMs = 60_000;
     const owner = await this.effects.claimOwner(sessionId, `worker:${process.pid}`, ownerLeaseMs);
     const identity = { sessionId, generation: owner.generation, leaseToken: owner.leaseToken };
-    const lease = new PraxisOwnerLease(identity, this.effects);
+    const lease = new PraxisOwnerLease(identity, this.effects, owner);
     const resources: BrowserResources = {
       sessionId,
       incarnation,
@@ -156,16 +155,16 @@ export class PraxisBrowserEngine {
     };
     incarnation.resources = resources;
     this.#resources.set(sessionId, resources);
+    lease.signal.addEventListener(
+      "abort",
+      () => {
+        void this.retire(resources).catch(() => undefined);
+      },
+      { once: true },
+    );
     try {
       this.assertOpening(resources);
-      resources.heartbeat = setInterval(
-        () =>
-          void lease.heartbeat(ownerLeaseMs).catch(() => {
-            // Startup and active execution share the same revocation owner.
-            void this.retire(resources).catch(() => undefined);
-          }),
-        20_000,
-      );
+      lease.startHeartbeat(ownerLeaseMs);
       const root = path.resolve(
         process.env.SCRY_BROWSER_ARTIFACT_ROOT ?? "artifacts/browser",
         sessionId,
@@ -535,8 +534,6 @@ export class PraxisBrowserEngine {
     if (resources.retirement) return resources.retirement;
     resources.state = "retiring";
     if (resources.incarnation.state === "active") resources.incarnation.state = "retired";
-    resources.lease.revoke();
-    if (resources.heartbeat) clearInterval(resources.heartbeat);
     if (resources.session) {
       resources.session.references.clear();
     }
@@ -577,6 +574,9 @@ export class PraxisBrowserEngine {
         // an unconfirmed process/recorder drain for a vacant session.
         throw error;
       });
+    // Install the shared latch before revocation notifies its synchronous
+    // listeners. Revocation and physical retirement have one exact owner.
+    resources.lease.revoke();
     return resources.retirement;
   }
 

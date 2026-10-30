@@ -1,10 +1,13 @@
 import { ChronicleRepository, type CaptureEvidenceInput } from "@scry/chronicle";
 import { createHash, randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { Inject, Injectable } from "@nestjs/common";
 import type {
   BrowserProtectionDecision,
   EvidenceCompletion,
   PraxisOwnerIdentity,
+  PraxisOwnerClaim,
+  PraxisOwnerLeaseSample,
 } from "@scry/contracts";
 import {
   assertPublicationDecisionSet,
@@ -239,7 +242,7 @@ export class BrowserExecutionRepository {
     workerId: string,
     leaseMs: number,
     reason = "claim",
-  ): Promise<{ generation: number; leaseToken: string; fencingToken: number }> {
+  ): Promise<PraxisOwnerClaim> {
     validateBrowserOwnerLease(leaseMs);
     return this.database.transaction(async (client) => {
       const session = await this.lockSession(client, sessionId);
@@ -305,18 +308,26 @@ export class BrowserExecutionRepository {
       }
       const generation = Number(session.active_owner_generation) + 1;
       const leaseToken = randomUUID();
-      await client.query(
+      const sampleStartedAt = performance.now();
+      const inserted = await client.query<{ leaseRemainingMs: number }>(
         `INSERT INTO browser_owner_generations(
            session_id,generation,worker_id,lease_token,fencing_token,state,lease_expires_at,
            runtime_capability_id)
-         VALUES($1,$2,$3,$4,$2,'active',clock_timestamp()+($5::int * interval '1 millisecond'),$6)`,
+         VALUES($1,$2,$3,$4,$2,'active',clock_timestamp()+($5::int * interval '1 millisecond'),$6)
+         RETURNING GREATEST(0,FLOOR(EXTRACT(EPOCH FROM(lease_expires_at-clock_timestamp()))*1000))::int AS "leaseRemainingMs"`,
         [sessionId, generation, workerId, leaseToken, leaseMs, CAPABILITY_ID],
       );
       await client.query(
         "UPDATE browser_execution_sessions SET active_owner_generation=$2,updated_at=now() WHERE id=$1",
         [sessionId, generation],
       );
-      return { generation, leaseToken, fencingToken: generation };
+      return {
+        generation,
+        leaseToken,
+        fencingToken: generation,
+        sampleStartedAt,
+        leaseRemainingMs: required(inserted.rows[0], "SCRY_BROWSER_OWNER_FENCED").leaseRemainingMs,
+      };
     });
   }
 
@@ -325,16 +336,22 @@ export class BrowserExecutionRepository {
     generation: number,
     leaseToken: string,
     leaseMs: number,
-  ): Promise<void> {
+  ): Promise<PraxisOwnerLeaseSample> {
     validateBrowserOwnerLease(leaseMs);
-    await this.database.transaction(async (client) => {
+    return this.database.transaction(async (client) => {
       await lockLiveBrowserOwner(client, sessionId, generation, leaseToken);
-      const renewed = await client.query(
+      const sampleStartedAt = performance.now();
+      const renewed = await client.query<{ leaseRemainingMs: number }>(
         `UPDATE browser_owner_generations SET heartbeat_at=clock_timestamp(),lease_expires_at=clock_timestamp()+($3::int * interval '1 millisecond')
-         WHERE session_id=$1 AND generation=$2 AND lease_expires_at>clock_timestamp()`,
+         WHERE session_id=$1 AND generation=$2 AND lease_expires_at>clock_timestamp()
+         RETURNING GREATEST(0,FLOOR(EXTRACT(EPOCH FROM(lease_expires_at-clock_timestamp()))*1000))::int AS "leaseRemainingMs"`,
         [sessionId, generation, leaseMs],
       );
       if (renewed.rowCount !== 1) throw new Error("SCRY_BROWSER_OWNER_FENCED");
+      return {
+        sampleStartedAt,
+        leaseRemainingMs: required(renewed.rows[0], "SCRY_BROWSER_OWNER_FENCED").leaseRemainingMs,
+      };
     });
   }
 

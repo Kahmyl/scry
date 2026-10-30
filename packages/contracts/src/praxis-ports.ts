@@ -30,6 +30,18 @@ export interface PraxisOwnerIdentity {
   leaseToken: string;
 }
 
+export interface PraxisOwnerLeaseSample {
+  /** Database-relative authority, sampled only after coordination locks. */
+  leaseRemainingMs: number;
+  /** Private process-local monotonic query anchor, never persisted or public. */
+  sampleStartedAt: number;
+}
+export interface PraxisOwnerClaim extends PraxisOwnerLeaseSample {
+  generation: number;
+  leaseToken: string;
+  fencingToken: number;
+}
+
 /** Serialized browser state, not a browser object or driver dependency. Additional
  * browser-provided fields (including IndexedDB) are preserved during persistence. */
 export interface PraxisStorageState {
@@ -124,17 +136,13 @@ export interface PraxisEffectsPort {
   withOwner<T>(owner: PraxisOwnerIdentity, work: () => Promise<T>): Promise<T>;
   completeEvidence(owner: PraxisOwnerIdentity, input: EvidenceCompletion): Promise<void>;
   assertCompatibleBaseline(): Promise<void>;
-  claimOwner(
-    sessionId: string,
-    workerId: string,
-    leaseMs: number,
-  ): Promise<{ generation: number; leaseToken: string; fencingToken: number }>;
+  claimOwner(sessionId: string, workerId: string, leaseMs: number): Promise<PraxisOwnerClaim>;
   heartbeatOwner(
     sessionId: string,
     generation: number,
     leaseToken: string,
     leaseMs: number,
-  ): Promise<void>;
+  ): Promise<PraxisOwnerLeaseSample>;
   releaseOwner(sessionId: string, generation: number, leaseToken: string): Promise<void>;
   durableCapturesForSession(sessionId: string): Promise<DurableCaptureEnvelope[]>;
   prepareFailureFinalization(sessionId: string, generation: number): Promise<void>;
