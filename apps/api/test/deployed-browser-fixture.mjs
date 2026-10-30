@@ -533,6 +533,12 @@ async function unavailableDashboardJourney({
         fullPage: true,
       });
       await page.setViewportSize({ width: 390, height: 844 });
+      // Capture the settled layout, not the drawer's resize animation.
+      await page.waitForFunction(
+        () => document.querySelector(".sidebar")?.getBoundingClientRect().right <= 0,
+        undefined,
+        { timeout: 5000 },
+      );
       assert.equal(
         await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
         false,
