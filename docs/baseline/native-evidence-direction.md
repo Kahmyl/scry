@@ -44,6 +44,16 @@ read-only discovery of relevant controls and regions. Recording work must not
 block normal browser commands. Commands retain ordered admission, bounded
 execution, cancellation, and explicit recovery semantics.
 
+The isolated deadline foundation records the first claim's database deadline and
+selected budget. Queue waiting does not consume execution time, and retries never
+renew that deadline. Initial routine-command limits are two minutes; retained
+synchronous replay closure has a separate fifteen-minute upper limit pending
+independent native encoding. These are operational ceilings, not response-time
+targets. Historical rows remain unchanged and receive a deadline only if claimed
+again. Durable facts alone do not stop a browser: carried monotonic execution,
+physical cancellation, claim-loss handling, and completion fencing remain required
+before command-lifecycle activation is considered complete.
+
 Veil owns the protection policy and private processing of original frames.
 Semantic observations can identify sensitive content, but timestamps alone do
 not prove that a region belongs to a particular frame. Frame-local checks and
