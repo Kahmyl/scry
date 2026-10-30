@@ -132,8 +132,8 @@ not part of the browser-testing product path.
 
 ## Package responsibilities
 
-Veil is now the active protection owner. The API and the consolidated browser
-runtime use its public package for classification, sanitization, quarantine,
+Veil is now the active protection owner. The API composes its public
+capabilities for classification, sanitization, quarantine,
 publication admission, recording privacy rules, and cryptographic operations.
 The API retains a small dependency-injection adapter for the Veil value cipher.
 Veil depends only on shared contracts and Node's built-in libraries.
@@ -150,11 +150,15 @@ The remaining reset will complete these four package boundaries:
   qualification.
 
 The API and workers compose production capabilities through public contracts.
-The consolidated browser runtime still owns browser recording and evidence
-storage while the Chronicle and Praxis moves remain pending. Assurance may
+Chronicle owns evidence storage, ordered recording custody, capture-envelope
+storage, accepted event history, completeness, replay publication, review
+projections, and Mission evidence digests. It depends only on contracts and Node
+built-ins; composition supplies Veil protection, SQL, and browser-rendering
+capabilities. Browser attachment and rendering mechanics remain in the
+consolidated browser runtime pending the Praxis move. Assurance may
 exercise public surfaces, but production services build and run without it.
-The old Veil implementation has been replaced by the extracted baseline;
-dormant Praxis, Chronicle, and Assurance contents are still subject to the
+The old Veil and Chronicle implementations have been replaced by the extracted
+baseline; dormant Praxis and Assurance contents are still subject to the
 research disposition ledger. Current completion is recorded in the
 [reset progress record](four-boundary-progress.md).
 

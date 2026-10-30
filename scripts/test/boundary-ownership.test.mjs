@@ -4,6 +4,47 @@ import { boundaryViolations } from "../boundary-ownership-rules.mjs";
 
 const consumer = "apps/api/src/browser-execution/example.ts";
 
+test("rejects duplicate evidence custody and evidence writes outside Chronicle", () => {
+  for (const source of [
+    "class AuthenticatedEvidenceStore {}",
+    "const statement = `INSERT INTO browser_effect_events(effect_id) VALUES($1)`;",
+    'const statement = "UPDATE browser_captures SET state=$1";',
+  ]) {
+    assert.notEqual(boundaryViolations(consumer, source).length, 0);
+    assert.deepEqual(boundaryViolations("packages/chronicle/src/repository.ts", source), []);
+  }
+});
+
+test("Chronicle accepts capabilities without depending on their implementations", () => {
+  for (const dependency of ["@scry/veil", "@scry/chronicle"])
+    assert.notEqual(
+      boundaryViolations(
+        "packages/browser-runtime/src/recorder.ts",
+        `import { implementation } from "${dependency}";`,
+      ).length,
+      0,
+    );
+  const owner = "packages/chronicle/src/example.ts";
+  assert.deepEqual(
+    boundaryViolations(owner, 'import type { EvidenceProtectionPort } from "@scry/contracts";'),
+    [],
+  );
+  for (const dependency of [
+    "@scry/veil",
+    "@scry/browser-runtime",
+    "playwright",
+    "rrweb",
+    "pg",
+    "@scry/assurance",
+    "../../veil/src/index.js",
+  ])
+    assert.notEqual(boundaryViolations(owner, `await import("${dependency}");`).length, 0);
+  assert.notEqual(
+    boundaryViolations(consumer, 'import { store } from "@scry/chronicle/src/index.js";').length,
+    0,
+  );
+});
+
 test("rejects cryptographic protection outside Veil, including aliased and namespace calls", () => {
   for (const source of [
     'import { createCipheriv as encrypt } from "node:crypto"; encrypt("aes-256-gcm", key, nonce);',

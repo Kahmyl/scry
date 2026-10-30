@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { ChronicleRepository } from "@scry/chronicle";
 import { Inject, Injectable } from "@nestjs/common";
 import type {
   BrowserProtectionSink,
@@ -438,16 +439,7 @@ export class BrowserLifecycleRepository {
         [missionId],
       );
       if (incomplete.rowCount) throw new Error("SCRY_BROWSER_MISSION_NOT_REPORTABLE");
-      const evidence = await client.query<{ chain_head: string }>(
-        `SELECT e.chain_head FROM browser_evidence_streams e JOIN runs r ON r.id=e.run_id
-         WHERE r.mission_id=$1 AND e.state='complete' ORDER BY r.created_at,e.id`,
-        [missionId],
-      );
-      if (evidence.rows.length === 0 || evidence.rows.some((row) => !row.chain_head))
-        throw new Error("SCRY_BROWSER_MISSION_EVIDENCE_INCOMPLETE");
-      const evidenceDigest = createHash("sha256")
-        .update(JSON.stringify(evidence.rows.map((row) => row.chain_head)))
-        .digest("hex");
+      const evidenceDigest = await new ChronicleRepository(client).missionEvidenceDigest(missionId);
       const protection = await this.reportSanitizer(client, missionId);
       const summary = protection.sanitizeText(input.summary, "report");
       const safeReport = protection.sanitizeValue(input.safeReport, "report");

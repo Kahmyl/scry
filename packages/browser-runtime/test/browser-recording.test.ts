@@ -4,12 +4,19 @@ import os from "node:os";
 import path from "node:path";
 import { chromium } from "playwright";
 import { describe, expect, it } from "vitest";
+import { SanitizedBrowserRecorder, BrowserReplayRenderer } from "../src/index.js";
 import {
   AuthenticatedEvidenceStore,
-  SanitizedBrowserRecorder,
+  ChronicleRecording,
   renderSanitizedReplay,
-} from "../src/index.js";
-import { ProtectionAuthority, SensitiveValueClassifier } from "@scry/veil";
+} from "@scry/chronicle";
+import {
+  ProtectionAuthority,
+  SensitiveValueClassifier,
+  EvidenceCipher,
+  createRecordingProtection,
+  recordingProtectionOptions,
+} from "@scry/veil";
 
 const browserTest = process.env.SCRY_BROWSER_E2E === "1" ? it : it.skip;
 
@@ -23,7 +30,7 @@ describe("browser recording and offline replay", () => {
         directory: path.join(root, "evidence"),
         runId: "00000000-0000-4000-8000-000000000202",
         scopeId: "browser-recording-barrier",
-        encryptionKey: randomBytes(32),
+        protection: new EvidenceCipher(randomBytes(32)),
       }).initialize();
       const authority = new ProtectionAuthority({
         scope: {
@@ -34,10 +41,16 @@ describe("browser recording and offline replay", () => {
           origin: "https://fixture.example",
         },
       });
-      const browser = await chromium.launch({ headless: true, channel: "chrome" });
+      const browser = await chromium.launch({
+        headless: true,
+        ...(process.env.SCRY_BROWSER_CHANNEL ? { channel: process.env.SCRY_BROWSER_CHANNEL } : {}),
+      });
       const context = await browser.newContext();
       const page = await context.newPage();
-      const recorder = new SanitizedBrowserRecorder({ store, authority });
+      const recorder = new SanitizedBrowserRecorder({
+        recording: new ChronicleRecording(store, createRecordingProtection({ authority })),
+        privacyOptions: recordingProtectionOptions,
+      });
       await recorder.start(context);
       const token = authority.begin("effect-short-secret");
       await page.setContent(`<main><div role="dialog">Activation: ${secret}</div></main>`);
@@ -75,18 +88,20 @@ describe("browser recording and offline replay", () => {
         directory: evidenceDirectory,
         runId: "00000000-0000-4000-8000-000000000201",
         scopeId: "browser-recording-fixture",
-        encryptionKey: randomBytes(32),
+        protection: new EvidenceCipher(randomBytes(32)),
       }).initialize();
       const classifier = new SensitiveValueClassifier({
         protectedValues: { GENERATED_SECRET: secret },
       });
-      const browser = await chromium.launch({ headless: true, channel: "chrome" });
+      const browser = await chromium.launch({
+        headless: true,
+        ...(process.env.SCRY_BROWSER_CHANNEL ? { channel: process.env.SCRY_BROWSER_CHANNEL } : {}),
+      });
       const context = await browser.newContext();
       const page = await context.newPage();
       const recorder = new SanitizedBrowserRecorder({
-        store,
-        classifier,
-        protectedValues: { GENERATED_SECRET: secret },
+        recording: new ChronicleRecording(store, createRecordingProtection({ classifier })),
+        privacyOptions: recordingProtectionOptions,
       });
       await recorder.start(context);
       await page.setContent(
@@ -111,9 +126,13 @@ describe("browser recording and offline replay", () => {
       expect(persisted).not.toContain(secret);
 
       const publication = await renderSanitizedReplay({
+        renderer: new BrowserReplayRenderer(),
         events: verified.events,
         ledgerPath,
         outputDirectory,
+        ...(process.env.SCRY_BROWSER_CHROME_PATH
+          ? { executablePath: process.env.SCRY_BROWSER_CHROME_PATH }
+          : {}),
         framesPerSecond: 2,
       });
       expect(publication.networkRequests).toBe(0);
@@ -122,9 +141,13 @@ describe("browser recording and offline replay", () => {
       expect(publication.renderDurationMs).toBeLessThanOrEqual(publication.durationMs);
       await expect(access(publication.videoPath)).resolves.toBeUndefined();
       const second = await renderSanitizedReplay({
+        renderer: new BrowserReplayRenderer(),
         events: verified.events,
         ledgerPath,
         outputDirectory,
+        ...(process.env.SCRY_BROWSER_CHROME_PATH
+          ? { executablePath: process.env.SCRY_BROWSER_CHROME_PATH }
+          : {}),
         framesPerSecond: 2,
       });
       expect(second.reusedPublication).toBe(true);

@@ -9,11 +9,19 @@ const protectionClasses = new Set([
   "EvidenceCipher",
 ]);
 const cryptographicOperations = new Set(["createCipheriv", "createDecipheriv", "hkdfSync"]);
+const evidenceClasses = new Set([
+  "AuthenticatedEvidenceStore",
+  "ChronicleRecording",
+  "ChronicleEvidenceSession",
+  "ChronicleRepository",
+]);
 
 /** Checks the actual syntax, including aliased imports and dynamic imports. */
 export function boundaryViolations(sourcePath, source) {
   const file = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true);
   const inVeil = sourcePath.startsWith("packages/veil/src/");
+  const inChronicle = sourcePath.startsWith("packages/chronicle/src/");
+  const inBrowserRuntime = sourcePath.startsWith("packages/browser-runtime/src/");
   const violations = [];
   const cryptoAliases = new Set(cryptographicOperations);
   const specifiers = [];
@@ -47,10 +55,22 @@ export function boundaryViolations(sourcePath, source) {
     }
     if (!inVeil && ts.isClassDeclaration(node) && protectionClasses.has(node.name?.text))
       violations.push("protection authority is reimplemented outside Veil");
+    if (!inChronicle && ts.isClassDeclaration(node) && evidenceClasses.has(node.name?.text))
+      violations.push("evidence custody is reimplemented outside Chronicle");
+    if (
+      !inChronicle &&
+      (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+      /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:browser_evidence_streams|browser_effect_events|browser_captures)\b/iu.test(
+        node.text,
+      )
+    )
+      violations.push("evidence custody SQL is implemented outside Chronicle");
     ts.forEachChild(node, visit);
   };
   visit(file);
   for (const specifier of specifiers) {
+    if (inBrowserRuntime && /^@scry\/(?!contracts$)/u.test(specifier))
+      violations.push("browser mechanics depend on another boundary implementation");
     if (specifier === "@scry/assurance" || specifier.startsWith("@scry/assurance/"))
       violations.push("production source depends on Assurance");
     if (specifier.startsWith("@scry/veil/"))
@@ -63,7 +83,20 @@ export function boundaryViolations(sourcePath, source) {
         violations.push("consumer reaches Veil through a relative internal path");
       if (inVeil && !resolved.startsWith("packages/veil/src/"))
         violations.push("Veil reaches outside its package through a relative path");
+      if (inChronicle && !resolved.startsWith("packages/chronicle/src/"))
+        violations.push("Chronicle reaches outside its package through a relative path");
+      if (!inChronicle && resolved.startsWith("packages/chronicle/"))
+        violations.push("consumer reaches Chronicle through a relative internal path");
     }
+    if (specifier.startsWith("@scry/chronicle/"))
+      violations.push("consumer imports a Chronicle internal module");
+    if (
+      inChronicle &&
+      /^(?:@scry\/(?!contracts$)|playwright(?:\/|$)|rrweb(?:\/|$)|pg$|@nestjs\/)/u.test(specifier)
+    )
+      violations.push(
+        "Chronicle depends on protection, browser, application, or database-driver implementation",
+      );
     if (inVeil && /^(?:@scry\/(?!contracts$)|playwright(?:\/|$)|@nestjs\/)/u.test(specifier))
       violations.push(
         "Veil depends on browser, application, evidence, or diagnostic implementation",

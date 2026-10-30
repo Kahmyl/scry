@@ -16,6 +16,7 @@ COPY apps/web/package.json apps/web/package.json
 COPY packages/browser-runtime/package.json packages/browser-runtime/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/veil/package.json packages/veil/package.json
+COPY packages/chronicle/package.json packages/chronicle/package.json
 
 RUN --mount=type=cache,id=scry-pnpm-worker,target=/pnpm/store \
     pnpm install --frozen-lockfile

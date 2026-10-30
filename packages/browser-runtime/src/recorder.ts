@@ -2,48 +2,19 @@ import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { BrowserContext, CDPSession, Frame, Page } from "playwright";
-import {
-  sanitizeReplayValue,
-  SensitiveValueClassifier,
-  ProtectionAuthority,
-  recordingProtectionOptions,
-} from "@scry/veil";
-
-export interface ReplayEventStore {
-  readonly nextSequence: number;
-  append(event: unknown): Promise<number>;
-  flush(): Promise<unknown>;
-}
-
-function isOwnerClosure(error: unknown): boolean {
-  return /Target page, context or browser has been closed|Session closed|Page crashed|Browser closed|Connection closed/iu.test(
-    error instanceof Error ? error.message : "",
-  );
-}
+import type { ChronicleRecordingPort } from "@scry/contracts";
 
 export class SanitizedBrowserRecorder {
-  readonly #store: ReplayEventStore;
-  readonly #classifier: SensitiveValueClassifier;
-  readonly #authority: ProtectionAuthority | undefined;
   readonly #sessions = new Map<Page, CDPSession>();
   readonly #contexts = new Set<BrowserContext>();
-  readonly #errors: Array<{ code: string; message?: string }> = [];
-  readonly #diagnostics: Array<{ code: string }> = [];
   #source: string | null = null;
-  #queue: Promise<void> = Promise.resolve();
-  #receivedEvents: number;
 
-  constructor(options: {
-    store: ReplayEventStore;
-    classifier?: SensitiveValueClassifier;
-    authority?: ProtectionAuthority;
-    protectedValues?: Readonly<Record<string, string>>;
-  }) {
-    this.#store = options.store;
-    this.#classifier = options.classifier ?? new SensitiveValueClassifier();
-    this.#authority = options.authority;
-    this.#receivedEvents = options.store.nextSequence;
-  }
+  constructor(
+    private readonly options: {
+      recording: ChronicleRecordingPort;
+      privacyOptions: Readonly<Record<string, unknown>>;
+    },
+  ) {}
 
   async start(context: BrowserContext): Promise<void> {
     await this.#loadSource();
@@ -58,18 +29,8 @@ export class SanitizedBrowserRecorder {
     for (const page of context.pages()) await this.#attach(context, page);
   }
 
-  async flush(): Promise<{
-    receivedEvents: number;
-    errors: Array<{ code: string; message?: string }>;
-    diagnostics: Array<{ code: string }>;
-  }> {
-    await this.#queue;
-    await this.#store.flush();
-    return {
-      receivedEvents: this.#receivedEvents,
-      errors: structuredClone(this.#errors),
-      diagnostics: structuredClone(this.#diagnostics),
-    };
+  flush() {
+    return this.options.recording.flush();
   }
 
   /** Emit a complete rrweb snapshot after Veil closes a quarantine barrier. */
@@ -141,7 +102,7 @@ export class SanitizedBrowserRecorder {
         globalThis.__scryRecorderStarted = true;
         globalThis.__scryRecorderStop = globalThis.rrweb.record({
           emit,
-          ...${JSON.stringify(recordingProtectionOptions)},
+          ...${JSON.stringify(this.options.privacyOptions)},
           checkoutEveryNms: 5000
         });
       };
@@ -161,26 +122,7 @@ export class SanitizedBrowserRecorder {
     });
     session.on("Runtime.bindingCalled", (event) => {
       if (event.name !== "__scry_emit") return;
-      const forceQuarantine = this.#authority?.hasActiveBarrier ?? false;
-      this.#queue = this.#queue
-        .then(async () => {
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(event.payload) as unknown;
-          } catch {
-            this.#errors.push({ code: "recorder_payload_invalid" });
-            return;
-          }
-          const structurallySanitized = sanitizeReplayValue(parsed, {
-            sanitize: (input) =>
-              this.#authority
-                ? this.#authority.sanitize(input, "recording", forceQuarantine)
-                : this.#classifier.sanitize(input),
-          });
-          await this.#store.append(structurallySanitized);
-          this.#receivedEvents += 1;
-        })
-        .catch((error: unknown) => this.#recordError("recorder_write_failed", error));
+      this.options.recording.receive(event.payload);
     });
     await session.send("Page.addScriptToEvaluateOnNewDocument", {
       source: this.#requiredSource(),
@@ -214,11 +156,7 @@ export class SanitizedBrowserRecorder {
   }
 
   #recordError(code: string, error: unknown): void {
-    if (isOwnerClosure(error)) {
-      this.#diagnostics.push({ code: "owner_closed_during_capture" });
-      return;
-    }
-    this.#errors.push({ code, ...(error instanceof Error ? { message: error.message } : {}) });
+    this.options.recording.recordError(code, error);
   }
 
   #requiredSource(): string {

@@ -9,4 +9,5 @@ export * from "./report-protection.js";
 export * from "./publication-admission.js";
 export * from "./transport-protection.js";
 export * from "./recording-protection.js";
+export * from "./recording-admission.js";
 export * from "./error-protection.js";

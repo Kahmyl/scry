@@ -2,6 +2,8 @@ import { Injectable } from "@nestjs/common";
 import type { BrowserCommand } from "@scry/contracts";
 import { PraxisExecutionPort } from "@scry/contracts";
 import { VeilReportProtection } from "@scry/veil";
+import { BrowserReplayRenderer } from "@scry/browser-runtime";
+import { ChronicleEvidenceService } from "@scry/chronicle";
 
 import { BrowserWorkerEngine } from "./browser-worker-engine.js";
 import { BrowserCommandRepository } from "./repositories/browser-command.repository.js";
@@ -29,7 +31,13 @@ export function composePraxisExecutionPort(
   commands: BrowserCommandRepository,
   effects: BrowserExecutionRepository,
 ): PraxisExecutionPort {
-  return new BrowserWorkerPraxisAdapter(new BrowserWorkerEngine(commands, effects));
+  return new BrowserWorkerPraxisAdapter(
+    new BrowserWorkerEngine(
+      commands,
+      effects,
+      new ChronicleEvidenceService(new BrowserReplayRenderer()),
+    ),
+  );
 }
 
 @Injectable()

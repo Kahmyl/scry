@@ -44,7 +44,7 @@ jobs:
         run: |
           pnpm run verify:baseline-topology
           pnpm run verify:boundary-ownership
-          pnpm run verify:veil-runtime
+          pnpm run verify:boundary-runtime
           pnpm run verify:docker-publish-workflow
           pnpm run verify:server-deployment
           pnpm run verify:deployment-runtime

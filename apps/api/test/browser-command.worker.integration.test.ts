@@ -417,6 +417,8 @@ run("browser baseline durable command worker", () => {
       { kind: "navigate", url: `${origin}/orders` },
       "navigate-orders",
     );
+    expect(orderPage.title).toContain("Orders");
+    expect(orderPage.title).not.toContain(secret);
     await command(
       started.browserSessionId,
       { kind: "fill", reference: control(orderPage, "Client ID"), publicValue: clientId },
@@ -634,7 +636,7 @@ run("browser baseline durable command worker", () => {
     if (request.method === "GET" && url.pathname === "/orders")
       return html(
         response,
-        `<!doctype html><label>Client ID<input aria-label="Client ID" id="client"></label><label>Client secret<input aria-label="Client secret" id="secret" type="password"></label><button id="order">Create order</button><script>order.onclick=async()=>{await fetch('/api/orders',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({clientId:client.value,clientSecret:secret.value})})}</script>`,
+        `<!doctype html><title>Orders ${secret}</title><label>Client ID<input aria-label="Client ID" id="client"></label><label>Client secret<input aria-label="Client secret" id="secret" type="password"></label><button id="order">Create order</button><script>order.onclick=async()=>{await fetch('/api/orders',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({clientId:client.value,clientSecret:secret.value})})}</script>`,
       );
     if (request.method === "POST" && url.pathname === "/api/orders") {
       const body = JSON.parse(await bodyText(request)) as {

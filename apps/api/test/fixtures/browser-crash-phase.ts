@@ -34,7 +34,7 @@ if (phase === "before_dispatch") {
     capture.encryptedPayload = Buffer.from(serializedPayload.data);
   }
   await effects.registerCapture(
-    capture as Parameters<BrowserExecutionRepository["registerCapture"]>[0],
+    capture as unknown as Parameters<BrowserExecutionRepository["registerCapture"]>[0],
   );
 } else if (phase === "during_publication") {
   const client = await database.pool.connect();

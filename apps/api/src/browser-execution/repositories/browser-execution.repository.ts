@@ -1,3 +1,4 @@
+import { ChronicleRepository, type CaptureEvidenceInput } from "@scry/chronicle";
 import { createHash, randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import type { BrowserProtectionDecision } from "@scry/contracts";
@@ -325,10 +326,7 @@ export class BrowserExecutionRepository {
   async prepareFailureFinalization(sessionId: string, ownerGeneration: number): Promise<void> {
     await this.database.transaction(async (client) => {
       await this.lockOwnedSession(client, sessionId, ownerGeneration);
-      const unsettled = await client.query<{ id: string }>(
-        "SELECT id FROM browser_captures WHERE session_id=$1 AND state='durable' ORDER BY captured_at FOR UPDATE",
-        [sessionId],
-      );
+      const unsettled = await new ChronicleRepository(client).lockUnsettledCaptures(sessionId);
       if (unsettled.rows.length > 0) {
         throw new Error(
           `SCRY_BROWSER_CAPTURES_UNSETTLED:${unsettled.rows.map(({ id }) => id).join(",")}`,
@@ -511,30 +509,9 @@ export class BrowserExecutionRepository {
     });
   }
 
-  async registerCapture(input: {
-    effectId: string;
-    ownerGeneration: number;
-    captureId: string;
-    evidenceFormat: number;
-    objectKey: string;
-    ciphertextDigest: string;
-    authenticatedMetadata: Record<string, unknown>;
-    contentClass: "http_json" | "http_text" | "http_empty" | "http_binary" | "dom_region";
-    byteSize: number;
-    structuralIndex: unknown[];
-    capturedAt: Date;
-    expiresAt: Date;
-    encryptedPayload: Buffer;
-    encryptedPayloadDigest: string;
-    responseStatus?: number;
-  }): Promise<void> {
+  async registerCapture(input: CaptureEvidenceInput): Promise<void> {
     await this.transition(input.effectId, input.ownerGeneration, async (client, effect) => {
-      if (
-        input.encryptedPayload.length === 0 ||
-        createHash("sha256").update(input.encryptedPayload).digest("hex") !==
-          input.encryptedPayloadDigest
-      )
-        throw new Error("SCRY_BROWSER_CAPTURE_ENVELOPE_INVALID");
+      new ChronicleRepository(client).validateCaptureEnvelope(input);
       const ownsHttpResponse = input.responseStatus !== undefined;
       if (ownsHttpResponse) {
         if (
@@ -552,44 +529,8 @@ export class BrowserExecutionRepository {
       } else if (effect.dispatch_state !== "acknowledged") {
         throw new Error("SCRY_BROWSER_CAPTURE_BEFORE_RESPONSE");
       }
-      const existing = await client.query<{
-        id: string;
-        ciphertext_digest: string;
-        encrypted_payload_digest: string;
-      }>(
-        "SELECT id,ciphertext_digest,encrypted_payload_digest FROM browser_captures WHERE id=$1 FOR UPDATE",
-        [input.captureId],
-      );
-      if (existing.rows[0]) {
-        if (
-          existing.rows[0].ciphertext_digest !== input.ciphertextDigest ||
-          existing.rows[0].encrypted_payload_digest !== input.encryptedPayloadDigest
-        )
-          throw new Error("SCRY_BROWSER_CAPTURE_CONFLICT");
+      if (!(await new ChronicleRepository(client).registerCapture(input, effect.session_id)))
         return effect;
-      }
-      await client.query(
-        `INSERT INTO browser_captures(id,effect_id,session_id,evidence_format,object_key,ciphertext_digest,
-           authenticated_metadata,content_class,byte_size,state,structural_index,captured_at,expires_at,
-           encrypted_payload,encrypted_payload_digest)
-         VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,'durable',$10::jsonb,$11,$12,$13,$14)`,
-        [
-          input.captureId,
-          input.effectId,
-          effect.session_id,
-          input.evidenceFormat,
-          input.objectKey,
-          input.ciphertextDigest,
-          JSON.stringify(input.authenticatedMetadata),
-          input.contentClass,
-          input.byteSize,
-          JSON.stringify(input.structuralIndex),
-          input.capturedAt,
-          input.expiresAt,
-          input.encryptedPayload,
-          input.encryptedPayloadDigest,
-        ],
-      );
       if (ownsHttpResponse && effect.dispatch_state !== "acknowledged") {
         await client.query(
           `UPDATE browser_effects
@@ -628,28 +569,7 @@ export class BrowserExecutionRepository {
       storedReceipt: Record<string, unknown>;
     }>
   > {
-    const result = await this.database.query<{
-      capture_id: string;
-      encrypted_payload: Buffer;
-      encrypted_payload_digest: string;
-      authenticated_metadata: { storedReceipt?: Record<string, unknown> };
-    }>(
-      `SELECT id AS capture_id,encrypted_payload,encrypted_payload_digest,authenticated_metadata
-         FROM browser_captures
-        WHERE session_id=$1 AND state='durable'
-        ORDER BY captured_at,id`,
-      [sessionId],
-    );
-    return result.rows.map((row) => {
-      if (!row.authenticated_metadata.storedReceipt)
-        throw new Error("SCRY_BROWSER_CAPTURE_RECEIPT_MISSING");
-      return {
-        captureId: row.capture_id,
-        encryptedPayload: row.encrypted_payload,
-        encryptedPayloadDigest: row.encrypted_payload_digest,
-        storedReceipt: row.authenticated_metadata.storedReceipt,
-      };
-    });
+    return new ChronicleRepository(this.database).durableCapturesForSession(sessionId);
   }
 
   async publishOutputs(
@@ -682,13 +602,9 @@ export class BrowserExecutionRepository {
         };
       }
       const outputCount = assertPublicationDecisionSet(input);
-      const capture = await client.query<{
-        id: string;
-        structural_index: Array<{ path: unknown }>;
-      }>(
-        `SELECT id,structural_index FROM browser_captures
-         WHERE id=$1 AND effect_id=$2 AND state='durable' AND expires_at>now() FOR UPDATE`,
-        [input.captureId, input.effectId],
+      const capture = await new ChronicleRepository(client).captureForPublication(
+        input.captureId,
+        input.effectId,
       );
       if (!capture.rows[0]) throw new Error("SCRY_BROWSER_CAPTURE_UNAVAILABLE");
       const disclosure = await client.query<{ disclosure_mode: string }>(
@@ -784,10 +700,7 @@ export class BrowserExecutionRepository {
         );
         protectedReferences[canonicalName] = protectedValueId;
       }
-      await client.query(
-        "UPDATE browser_captures SET state='published',structural_index='[]'::jsonb,encrypted_payload=NULL,encrypted_payload_digest=NULL WHERE id=$1",
-        [input.captureId],
-      );
+      await new ChronicleRepository(client).settleCapture(input.captureId, "published");
       await client.query(
         "UPDATE browser_effects SET publication_state='published',updated_at=now() WHERE id=$1",
         [input.effectId],
@@ -806,12 +719,9 @@ export class BrowserExecutionRepository {
   }): Promise<void> {
     await this.transition(input.effectId, input.ownerGeneration, async (client, effect) => {
       if (effect.capture_state !== "durable") throw new Error("SCRY_BROWSER_CAPTURE_NOT_DURABLE");
-      const capture = await client.query<{
-        state: string;
-        structural_index: Array<{ path: unknown; kind?: string; length?: number }>;
-      }>(
-        "SELECT state,structural_index FROM browser_captures WHERE id=$1 AND effect_id=$2 FOR UPDATE",
-        [input.captureId, input.effectId],
+      const capture = await new ChronicleRepository(client).captureForDiscard(
+        input.captureId,
+        input.effectId,
       );
       const row = capture.rows[0];
       if (!row) throw new Error("SCRY_BROWSER_CAPTURE_UNAVAILABLE");
@@ -822,10 +732,7 @@ export class BrowserExecutionRepository {
         [input.captureId],
       );
       if (publication.rowCount) throw new Error("SCRY_BROWSER_CAPTURE_ALREADY_PUBLISHED");
-      await client.query(
-        "UPDATE browser_captures SET state='deleted',deleted_at=now(),structural_index='[]'::jsonb,encrypted_payload=NULL,encrypted_payload_digest=NULL WHERE id=$1",
-        [input.captureId],
-      );
+      await new ChronicleRepository(client).settleCapture(input.captureId, "deleted");
       if (effect.publication_state !== "published") {
         await client.query(
           "UPDATE browser_effects SET publication_state='discarded',updated_at=now() WHERE id=$1",
@@ -840,20 +747,11 @@ export class BrowserExecutionRepository {
   }
 
   async assertCaptureSlotAvailable(effectId: string, sessionId: string): Promise<void> {
-    const result = await this.database.query<{ id: string }>(
-      "SELECT id FROM browser_captures WHERE effect_id=$1 AND session_id=$2 AND state='durable' ORDER BY captured_at LIMIT 1",
-      [effectId, sessionId],
-    );
-    if (result.rows[0]) throw new Error(`SCRY_BROWSER_CAPTURE_UNSETTLED:${result.rows[0].id}`);
+    return new ChronicleRepository(this.database).assertCaptureSlotAvailable(effectId, sessionId);
   }
 
   async unsettledCaptureIds(sessionId: string): Promise<string[]> {
-    return (
-      await this.database.query<{ id: string }>(
-        "SELECT id FROM browser_captures WHERE session_id=$1 AND state='durable' ORDER BY captured_at",
-        [sessionId],
-      )
-    ).rows.map(({ id }) => id);
+    return new ChronicleRepository(this.database).unsettledCaptureIds(sessionId);
   }
 
   async observeEffect(effectId: string): Promise<EffectRow> {
@@ -865,67 +763,10 @@ export class BrowserExecutionRepository {
   }
 
   async recoverEffect(effectId: string): Promise<Record<string, unknown>> {
-    const effect = await this.observeEffect(effectId);
-    const captures = await this.database.query<{
-      id: string;
-      content_class: "http_json" | "http_text" | "http_empty" | "http_binary" | "dom_region";
-      byte_size: number;
-      state: "durable" | "published" | "expired" | "corrupt" | "deleted";
-      structural_index: unknown[];
-      captured_at: Date;
-      expires_at: Date;
-    }>(
-      `SELECT id,content_class,byte_size,state,structural_index,captured_at,expires_at
-       FROM browser_captures WHERE effect_id=$1 ORDER BY (content_class='dom_region'),captured_at,id`,
-      [effectId],
-    );
-    const outputs = await this.database.query<{
-      canonical_name: string;
-      classification: "public" | "protected";
-      public_value: unknown;
-      protected_value_id: string | null;
-    }>(
-      `SELECT canonical_name,classification,public_value,protected_value_id
-       FROM browser_outputs WHERE effect_id=$1 ORDER BY canonical_name`,
-      [effectId],
-    );
-    const publicOutputs: Record<string, unknown> = {};
-    const protectedReferences: Record<string, string> = {};
-    for (const output of outputs.rows) {
-      if (output.classification === "public")
-        publicOutputs[output.canonical_name] = output.public_value;
-      else if (output.protected_value_id)
-        protectedReferences[output.canonical_name] = output.protected_value_id;
-    }
-    const receipts = captures.rows.map((capture) => ({
-      captureId: capture.id,
-      runId: effect.run_id,
+    return new ChronicleRepository(this.database).recoverEffect(
       effectId,
-      phase:
-        capture.state === "durable"
-          ? "captured"
-          : capture.state === "deleted"
-            ? "discarded"
-            : capture.state,
-      status: effect.response_status ?? 200,
-      contentType:
-        capture.content_class === "dom_region"
-          ? "application/vnd.scry.dom+json"
-          : capture.content_class === "http_json"
-            ? "application/json"
-            : "text/plain",
-      bodyBytes: capture.byte_size,
-      capturedAt: capture.captured_at.toISOString(),
-      expiresAt: capture.expires_at.toISOString(),
-      structuralIndex: capture.state === "durable" ? capture.structural_index : [],
-    }));
-    return {
-      truth: effect,
-      captures: receipts,
-      ...(receipts[0] ? { capture: receipts[0] } : {}),
-      ...(Object.keys(publicOutputs).length ? { publicOutputs } : {}),
-      ...(Object.keys(protectedReferences).length ? { protectedReferences } : {}),
-    };
+      await this.observeEffect(effectId),
+    );
   }
 
   async pendingSessions(
@@ -992,11 +833,7 @@ export class BrowserExecutionRepository {
       );
       if (incomplete.rows[0])
         throw new Error(`SCRY_BROWSER_SESSION_INCOMPLETE:${incomplete.rows[0].id}`);
-      const evidence = await client.query<{ state: string }>(
-        "SELECT state FROM browser_evidence_streams WHERE session_id=$1 FOR UPDATE",
-        [sessionId],
-      );
-      if (evidence.rows[0]?.state !== "complete")
+      if (!(await new ChronicleRepository(client).evidenceComplete(sessionId, true)))
         throw new Error("SCRY_BROWSER_EVIDENCE_INCOMPLETE");
       await client.query(
         `UPDATE browser_owner_generations SET state='released',terminal_at=now(),replacement_reason='session_finalized'
@@ -1068,20 +905,7 @@ export class BrowserExecutionRepository {
     type: string,
     details: Record<string, unknown>,
   ): Promise<void> {
-    const sequence = await client.query<{ next: string }>(
-      "SELECT COALESCE(MAX(sequence),0)+1 AS next FROM browser_effect_events WHERE effect_id=$1",
-      [effectId],
-    );
-    await client.query(
-      "INSERT INTO browser_effect_events(effect_id,session_id,sequence,type,safe_details) VALUES($1,$2,$3,$4,$5::jsonb)",
-      [
-        effectId,
-        sessionId,
-        required(sequence.rows[0], "SCRY_BROWSER_EVENT_SEQUENCE_FAILED").next,
-        type,
-        JSON.stringify(details),
-      ],
-    );
+    return new ChronicleRepository(client).appendEffectEvent(effectId, sessionId, type, details);
   }
 
   private async protectedReferences(

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { rm, writeFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { Browser, BrowserContext, ElementHandle, Page, Request } from "playwright";
 import { chromium } from "playwright";
@@ -7,17 +7,18 @@ import type {
   BrowserCaptureReceipt,
   BrowserCommand,
   BrowserOutputSelection,
+  ChronicleEvidencePort,
+  ChronicleEvidenceSessionPort,
 } from "@scry/contracts";
-import {
-  AuthenticatedEvidenceStore,
-  SanitizedBrowserRecorder,
-  renderSanitizedReplay,
-} from "@scry/browser-runtime";
+import { SanitizedBrowserRecorder } from "@scry/browser-runtime";
 import {
   ProtectedCaptureVault,
   ProtectionAuthority,
   BrowserProtectedKeyring,
   safeDomSemanticHint,
+  EvidenceCipher,
+  createRecordingProtection,
+  recordingProtectionOptions,
 } from "@scry/veil";
 
 import { BrowserCommandRepository } from "./repositories/browser-command.repository.js";
@@ -35,7 +36,7 @@ interface ActiveSession {
   root: string;
   references: Map<string, { epoch: number; handle: ElementHandle<HTMLElement> }>;
   authority: ProtectionAuthority;
-  evidence: AuthenticatedEvidenceStore<Record<string, unknown>>;
+  evidence: ChronicleEvidenceSessionPort;
   recorder: SanitizedBrowserRecorder;
   vault: ProtectedCaptureVault;
   ownerLeaseToken: string;
@@ -97,6 +98,7 @@ export class BrowserWorkerEngine {
   constructor(
     private readonly commands: BrowserCommandRepository,
     private readonly effects: BrowserExecutionRepository,
+    private readonly evidenceService: ChronicleEvidencePort,
   ) {}
 
   async open(sessionId: string): Promise<{ sessionId: string; ownerGeneration: number }> {
@@ -122,16 +124,16 @@ export class BrowserWorkerEngine {
       process.env.SCRY_BROWSER_ARTIFACT_ROOT ?? "artifacts/browser",
       sessionId,
     );
-    const evidence = await new AuthenticatedEvidenceStore<Record<string, unknown>>({
-      directory: path.join(root, "evidence"),
+    const evidence = await this.evidenceService.openSession({
+      root,
       runId: scope.runId,
-      scopeId: sessionId,
-      encryptionKey: derivedSessionKey(scope.protectionKeyId, "evidence", scope.runId, sessionId),
-      legacyDecryptionKeys: [
-        legacyDerivedSessionKey(scope.protectionKeyId, "evidence", scope.runId, sessionId),
-      ],
+      sessionId,
+      protection: new EvidenceCipher(
+        derivedSessionKey(scope.protectionKeyId, "evidence", scope.runId, sessionId),
+        [legacyDerivedSessionKey(scope.protectionKeyId, "evidence", scope.runId, sessionId)],
+      ),
       maxSessionBytes: 20 * 1024 * 1024,
-    }).initialize();
+    });
     const [protectedValues, restoredPublicValues] = await Promise.all([
       this.commands.protectedValuesForSession(sessionId),
       this.commands.publicValuesForSession(sessionId),
@@ -188,7 +190,10 @@ export class BrowserWorkerEngine {
         );
       }
       const page = await context.newPage();
-      const recorder = new SanitizedBrowserRecorder({ store: evidence, authority });
+      const recorder = new SanitizedBrowserRecorder({
+        recording: evidence.createRecording(createRecordingProtection({ authority })),
+        privacyOptions: recordingProtectionOptions,
+      });
       await recorder.start(context);
       ownerHeartbeat = setInterval(
         () =>
@@ -326,41 +331,18 @@ export class BrowserWorkerEngine {
       throw new Error(`SCRY_BROWSER_CAPTURES_UNSETTLED:${unsettled.join(",")}`);
     this.#sessions.delete(sessionId);
     clearInterval(session.ownerHeartbeat);
-    const diagnostics = await session.recorder.flush();
-    if (diagnostics.errors.length)
-      throw new Error(`SCRY_BROWSER_RECORDER_FAILED:${diagnostics.errors[0]?.code ?? "unknown"}`);
+    await session.evidence.prepareClosure();
     await session.recorder.close();
     await session.context.close();
     await session.browser.close();
-    const verified = await session.evidence.verify();
-    if (!verified.complete || !verified.lastDigest || verified.chunks === 0)
-      throw new Error("SCRY_BROWSER_EVIDENCE_INCOMPLETE");
-    let videoObjectKey: string | undefined;
-    if (process.env.SCRY_BROWSER_RENDER_VIDEO === "true") {
-      const ledgerPath = path.join(session.root, "actions.jsonl");
-      const ledger = await this.commands.safeActionLedger(sessionId);
-      await writeFile(ledgerPath, `${ledger.map((entry) => JSON.stringify(entry)).join("\n")}\n`, {
-        mode: 0o600,
-      });
-      const publication = await renderSanitizedReplay({
-        events: verified.events,
-        ledgerPath,
-        outputDirectory: path.join(session.root, "rendered"),
-        ...(process.env.SCRY_BROWSER_CHROME_PATH
-          ? { executablePath: process.env.SCRY_BROWSER_CHROME_PATH }
-          : {}),
-      });
-      videoObjectKey = `local://${publication.videoPath}`;
-    }
-    await this.commands.completeEvidence({
-      sessionId,
-      runId: session.runId,
-      chainHead: verified.lastDigest,
-      chunkCount: verified.chunks,
-      totalBytes: verified.storedBytes,
-      replayObjectKey: `local://${path.join(session.root, "evidence")}`,
-      ...(videoObjectKey ? { videoObjectKey } : {}),
+    const completion = await session.evidence.seal({
+      renderVideo: process.env.SCRY_BROWSER_RENDER_VIDEO === "true",
+      actionLedger: () => this.commands.safeActionLedger(sessionId),
+      ...(process.env.SCRY_BROWSER_CHROME_PATH
+        ? { executablePath: process.env.SCRY_BROWSER_CHROME_PATH }
+        : {}),
     });
+    await this.commands.completeEvidence(completion);
     await this.commands.deleteBrowserCheckpoint(sessionId, session.ownerGeneration);
   }
 
@@ -443,7 +425,7 @@ export class BrowserWorkerEngine {
     );
     return {
       url: session.authority.sanitize(session.page.url(), "agent_observation"),
-      title: await session.page.title(),
+      title: session.authority.sanitize(await session.page.title(), "agent_observation"),
       documentEpoch: session.documentEpoch,
       controls,
       regions,

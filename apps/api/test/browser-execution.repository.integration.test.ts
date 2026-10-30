@@ -258,6 +258,13 @@ run("browser execution baseline repository", () => {
     await expect(repository.registerCapture(recoveredCapture)).rejects.toThrow(
       "SCRY_BROWSER_OWNER_FENCED",
     );
+    expect(
+      (
+        await database.query("SELECT id FROM browser_captures WHERE id=$1", [
+          recoveredCapture.captureId,
+        ])
+      ).rows,
+    ).toEqual([]);
     ownerGeneration = replacement.generation;
     expect(await repository.observeEffect(admitted.effect.id)).toMatchObject({
       mutation_outcome: "unknown",
@@ -267,6 +274,26 @@ run("browser execution baseline repository", () => {
       (await repository.admitEffect({ ...input, ownerGeneration, documentEpoch: 9 })).replay,
     ).toBe(true);
     await repository.registerCapture({ ...recoveredCapture, ownerGeneration });
+    const eventsBeforeRepeat = await database.query(
+      "SELECT sequence,type,safe_details FROM browser_effect_events WHERE effect_id=$1 ORDER BY sequence",
+      [admitted.effect.id],
+    );
+    await repository.registerCapture({ ...recoveredCapture, ownerGeneration });
+    expect(
+      (
+        await database.query(
+          "SELECT sequence,type,safe_details FROM browser_effect_events WHERE effect_id=$1 ORDER BY sequence",
+          [admitted.effect.id],
+        )
+      ).rows,
+    ).toEqual(eventsBeforeRepeat.rows);
+    await expect(
+      repository.registerCapture({
+        ...recoveredCapture,
+        ownerGeneration,
+        ciphertextDigest: digest("conflicting-capture"),
+      }),
+    ).rejects.toThrow("SCRY_BROWSER_CAPTURE_CONFLICT");
     primaryEffectId = admitted.effect.id;
     primaryCaptureId = recoveredCapture.captureId;
     await expect(repository.assertNoPendingEffectOutcomes(sessionId)).rejects.toThrow(
