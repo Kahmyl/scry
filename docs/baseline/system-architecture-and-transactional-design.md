@@ -154,6 +154,17 @@ lease revocation belong to Praxis. It consumes protection and evidence through
 ports and has no Veil, Chronicle, application, or database-driver implementation
 dependency. Application adapters persist owner facts and supply locked admission.
 
+Praxis owns each live browser through a loopback-only local process controller,
+not merely a disposable client connection. Retirement permanently revokes local
+admission, stops recording, and confirms physical process exit before allowing
+local replacement. Failed process or recorder drain remains an explicit retained
+failure; it is not treated as an empty session. Startup cannot launch or resume a
+page after host shutdown begins. Host shutdown interrupts sessions without
+silently determining business outcomes or completing evidence. Explicit session
+closure remains the separate path for evidence sealing. Worker transport draining
+and crash supervision have their own qualification requirements; process custody
+alone does not establish those guarantees.
+
 Assurance owns the baseline qualification catalog, repository/deployment checks,
 public cross-boundary browser fixture, bounded runner, and safe reports.
 Component characterizations remain owner-local and are invoked through check
