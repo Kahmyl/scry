@@ -10,6 +10,22 @@ import { safeDomSemanticHint } from "./transport-protection.js";
 
 /** Supplies policy capabilities without exposing key material to browser execution. */
 export class VeilBrowserProtection implements VeilBrowserProtectionPort {
+  readEvidence(scope: Parameters<VeilBrowserProtectionPort["readEvidence"]>[0]) {
+    const context = `${scope.runId}:${scope.sessionId}`,
+      keyId = scope.protectionKeyId;
+    let cipher: EvidenceCipher | undefined;
+    return {
+      decryptCompressed(aad: Buffer, nonce: Buffer, ciphertext: Buffer, tag: Buffer): Buffer {
+        if (!cipher) {
+          const keyring = BrowserProtectedKeyring.fromEnvironment();
+          cipher = new EvidenceCipher(keyring.derive(keyId, "evidence", context), [
+            keyring.deriveLegacy(keyId, "evidence", context),
+          ]);
+        }
+        return cipher.decryptCompressed(aad, nonce, ciphertext, tag);
+      },
+    };
+  }
   createSession(
     input: Parameters<VeilBrowserProtectionPort["createSession"]>[0],
   ): VeilBrowserSessionPort {

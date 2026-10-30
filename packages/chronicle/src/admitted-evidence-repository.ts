@@ -1,3 +1,4 @@
+import { evidenceClosureIssues } from "@scry/contracts";
 import type {
   ChronicleSqlPort,
   EvidenceChunkReceipt,
@@ -213,8 +214,17 @@ export class AdmittedEvidenceRepository {
       s.chunkCount !== input.chunkCount ||
       s.totalBytes !== input.totalBytes ||
       (input.state !== "complete" && input.state !== "incomplete") ||
+      (!s.captureStoppedAt && s.captureStartedAt && s.interruptions === 0) ||
+      (input.issue !== undefined && !evidenceClosureIssues.includes(input.issue)) ||
+      (input.issue !== undefined &&
+        (input.state !== "incomplete" ||
+          input.videoObjectKey !== undefined ||
+          (input.issue !== "video_unavailable" && input.replayObjectKey !== undefined))) ||
+      (input.issue === "video_unavailable" && !input.replayObjectKey) ||
       (input.state === "complete" &&
-        (!s.captureStoppedAt ||
+        (!input.replayObjectKey ||
+          input.issue !== undefined ||
+          !s.captureStoppedAt ||
           s.captureComplete !== true ||
           s.interruptions !== 0 ||
           !s.captureStartedAt ||
@@ -224,15 +234,17 @@ export class AdmittedEvidenceRepository {
       throw new Error("SCRY_BROWSER_EVIDENCE_COMPLETION_INVALID");
     if (s.sealedAt) {
       const result = await this.sql.query<{
-        replay_artifact_key: string;
+        replay_artifact_key: string | null;
         video_artifact_key: string | null;
+        closure_issue: EvidenceCompletion["issue"] | null;
       }>(
-        "SELECT replay_artifact_key,video_artifact_key FROM browser_evidence_streams WHERE id=$1",
+        "SELECT replay_artifact_key,video_artifact_key,closure_issue FROM browser_evidence_streams WHERE id=$1",
         [s.id],
       );
       if (
         s.state !== input.state ||
-        result.rows[0]?.replay_artifact_key !== input.replayObjectKey ||
+        result.rows[0]?.replay_artifact_key !== (input.replayObjectKey ?? null) ||
+        (result.rows[0]?.closure_issue ?? null) !== (input.issue ?? null) ||
         result.rows[0]?.video_artifact_key !== (input.videoObjectKey ?? null)
       )
         throw new Error("SCRY_BROWSER_EVIDENCE_COMPLETION_CONFLICT");
@@ -241,8 +253,14 @@ export class AdmittedEvidenceRepository {
     await this.sql.query(
       `UPDATE browser_evidence_streams SET state=$2,sealed_at=clock_timestamp(),
       completed_at=CASE WHEN $2='complete' THEN clock_timestamp() ELSE NULL END,
-      replay_artifact_key=$3,video_artifact_key=$4,updated_at=clock_timestamp() WHERE id=$1`,
-      [s.id, input.state, input.replayObjectKey, input.videoObjectKey ?? null],
+      replay_artifact_key=$3,video_artifact_key=$4,closure_issue=$5,updated_at=clock_timestamp() WHERE id=$1`,
+      [
+        s.id,
+        input.state,
+        input.replayObjectKey ?? null,
+        input.videoObjectKey ?? null,
+        input.issue ?? null,
+      ],
     );
   }
 }

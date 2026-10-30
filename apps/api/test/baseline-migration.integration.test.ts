@@ -203,6 +203,7 @@ live("guarded existing-baseline schema upgrades", () => {
           before,
         );
         expect(after.custody_mode).toBe("legacy");
+        expect(after.closure_issue).toBeNull();
         await expect(
           database.query(
             "UPDATE browser_evidence_streams SET custody_mode='admitted',writer_generation=1 WHERE session_id=$1",
@@ -250,7 +251,7 @@ live("guarded existing-baseline schema upgrades", () => {
         await expect(
           database.query(
             `UPDATE browser_evidence_streams SET state='complete',completed_at=clock_timestamp(),sealed_at=clock_timestamp(),
-          capture_started_at=clock_timestamp(),capture_stopped_at=clock_timestamp(),capture_complete=true,chain_head=$2,chunk_count=1,total_bytes=64 WHERE session_id=$1`,
+          capture_started_at=clock_timestamp(),capture_stopped_at=clock_timestamp(),capture_complete=true,replay_artifact_key='local://fixture-rejected',chain_head=$2,chunk_count=1,total_bytes=64 WHERE session_id=$1`,
             [second, "c".repeat(64)],
           ),
         ).rejects.toThrow("evidence_receipt_summary_mismatch");

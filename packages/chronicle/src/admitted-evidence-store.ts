@@ -10,23 +10,14 @@ import type {
 } from "@scry/contracts";
 import { ensurePrivateDirectory } from "./durable-file.js";
 import {
-  decodeEvidenceChunk,
   evidenceDigest,
   type EvidenceAad,
   type EvidenceEnvelope,
   type EncryptedChunk,
 } from "./evidence-codec.js";
 
-export interface EvidenceVerification<T> {
-  events: T[];
-  chunks: number;
-  complete: boolean;
-  gaps: Array<{ type: "partial_chunk"; name: string }>;
-  lastDigest: string | null;
-  lastSequence: number | null;
-  plaintextBytes: number;
-  storedBytes: number;
-}
+import { AdmittedEvidenceReader, type EvidenceVerification } from "./admitted-evidence-reader.js";
+export type { EvidenceVerification } from "./admitted-evidence-reader.js";
 
 /** Files are candidates, not authority. Slow filesystem/codec work never holds
  * ownership locks. Only exact admitted SQL receipts are read or recovered. */
@@ -208,81 +199,7 @@ export class AdmittedEvidenceStore<T> {
       lastSequence: last.sequence,
     };
   }
-  async verify(): Promise<EvidenceVerification<T>> {
-    const { admission, protection, runId, scopeId } = this.options;
-    const snapshot = await admission.readStream();
-    if (
-      snapshot.custodyMode !== "admitted" ||
-      snapshot.sessionId !== scopeId ||
-      snapshot.runId !== runId
-    )
-      throw new Error("evidence_admission_scope_invalid");
-    const events: T[] = [];
-    let sequence = 0,
-      previousDigest = "GENESIS",
-      plaintextBytes = 0,
-      storedBytes = 0;
-    for (const [index, receipt] of snapshot.chunks.entries()) {
-      if (
-        receipt.chunkIndex !== index ||
-        receipt.streamId !== snapshot.id ||
-        receipt.previousDigest !== previousDigest ||
-        !new RegExp(`^objects/${receipt.ownerGeneration}/[a-f0-9-]{36}\\.json$`).test(
-          receipt.objectKey,
-        )
-      )
-        throw new Error("evidence_receipt_invalid");
-      const filename = path.join(this.#directory, receipt.objectKey);
-      for (const directory of [path.dirname(filename), path.dirname(path.dirname(filename))])
-        if (!(await lstat(directory)).isDirectory()) throw new Error("evidence_directory_invalid");
-      const handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW);
-      let bytes: Buffer;
-      try {
-        bytes = await handle.readFile();
-      } finally {
-        await handle.close();
-      }
-      if (bytes.length !== receipt.objectBytes || evidenceDigest([bytes]) !== receipt.objectDigest)
-        throw new Error("evidence_object_digest_invalid");
-      const decoded = decodeEvidenceChunk<T>(bytes, protection, {
-        runId,
-        sessionId: scopeId,
-        streamId: snapshot.id,
-        ownerGeneration: receipt.ownerGeneration,
-        chunk: index,
-        previousDigest,
-      });
-      if (
-        decoded.record.digest !== receipt.digest ||
-        decoded.plaintextBytes !== receipt.plaintextBytes ||
-        decoded.storedBytes !== receipt.storedBytes ||
-        decoded.record.aad.firstSequence !== receipt.firstSequence ||
-        decoded.record.aad.lastSequence !== receipt.lastSequence
-      )
-        throw new Error("evidence_receipt_mismatch");
-      for (const event of decoded.events) {
-        if (event.sequence !== sequence++) throw new Error("evidence_sequence_gap");
-        events.push(event.payload);
-      }
-      previousDigest = receipt.digest;
-      plaintextBytes += decoded.plaintextBytes;
-      storedBytes += decoded.storedBytes;
-    }
-    if (
-      snapshot.chunkCount !== snapshot.chunks.length ||
-      snapshot.totalBytes !== storedBytes ||
-      snapshot.chainHead !== (snapshot.chunks.length ? previousDigest : null)
-    )
-      throw new Error("evidence_receipt_summary_mismatch");
-    return {
-      events,
-      chunks: snapshot.chunks.length,
-      complete: true,
-      gaps: [],
-      lastDigest: snapshot.chainHead,
-      lastSequence: sequence ? sequence - 1 : null,
-      plaintextBytes,
-      storedBytes,
-    };
+  verify(): Promise<EvidenceVerification<T>> {
+    return new AdmittedEvidenceReader<T>({ ...this.options, directory: this.#directory }).verify();
   }
 }

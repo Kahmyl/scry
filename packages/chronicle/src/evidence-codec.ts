@@ -32,7 +32,7 @@ export function evidenceDigest(parts: readonly Buffer[]): string {
 }
 export function decodeEvidenceChunk<T>(
   bytes: Buffer,
-  protection: EvidenceProtectionPort,
+  protection: Pick<EvidenceProtectionPort, "decryptCompressed">,
   scope: {
     runId: string;
     sessionId: string;

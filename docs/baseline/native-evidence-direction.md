@@ -96,6 +96,32 @@ independent worker/process supervision remains necessary for already running
 browser activity when the controller itself is unresponsive. Native custody,
 resource isolation, and the lane are complementary guarantees, not substitutes.
 
+### Evidence availability and failure closure
+
+Capture completeness, artifact availability and business outcome are distinct.
+An explicit failed-run closure may seal unavailable evidence as incomplete with a
+finite reason, after current-owner and stopped/interrupted-capture checks. It must
+retain the admitted receipt head and counts, never import orphan files, restart
+application actions, publish unverifiable events, or manufacture a video. A
+successful run still requires complete verified evidence. Read-only closure
+verification must not initialize another writer or require creating directories.
+
+Missing/unreadable storage, proven digest mismatch, unverifiable encrypted content,
+failed video rendering and failed publication have separate value-free reasons.
+Inability to decrypt is not automatically evidence of malicious tampering.
+Authority loss, cancellation and unknown control failures are not artifact issues
+and cannot be swallowed to admit a seal. A failure seal and its artifact references
+are immutable; repeated close observes the same facts. Historical seals/reports
+are never rewritten to add a new availability judgment.
+
+This follows established artifact-handling principles, not a new cloud dependency:
+[GitHub artifact handling](https://github.com/actions/upload-artifact) makes missing
+artifacts explicit, and [S3 object-read semantics](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html)
+distinguish object access from whether a caller can establish absence. For local
+storage, classify stable [Node error codes](https://nodejs.org/api/errors.html#errorcode)
+at the actual filesystem operation, not arbitrary exception text. The Scry state
+model and ownership rules above are our design inference from those patterns.
+
 ### Independent browser supervision direction
 
 The selected isolated candidate puts each native browser's supported Playwright

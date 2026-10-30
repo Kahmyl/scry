@@ -196,7 +196,10 @@ describe("replay publication", () => {
         ledgerPath: path.join(root, "actions.jsonl"),
         outputDirectory: path.join(root, "rendered"),
       };
-      await expect(renderSanitizedReplay(options)).rejects.toThrow(/replay_/);
+      await expect(renderSanitizedReplay(options)).rejects.toMatchObject({
+        name: "EvidenceArtifactFailure",
+        issue: "video_unavailable",
+      });
       await expect(
         access(path.join(options.outputDirectory, "publication.json")),
       ).rejects.toThrow();

@@ -39,10 +39,12 @@ describe("authenticated evidence", () => {
             protection,
           }).initialize(),
         ).rejects.toThrow("evidence_admission_scope_invalid");
-      } else
-        await expect(store.verify()).rejects.toThrow(
-          corruption === "missing" ? "ENOENT" : "evidence_receipt_invalid",
-        );
+      } else if (corruption === "missing")
+        await expect(store.verify()).rejects.toMatchObject({
+          name: "EvidenceArtifactFailure",
+          issue: "object_unavailable",
+        });
+      else await expect(store.verify()).rejects.toThrow("evidence_receipt_invalid");
     });
   it("reads historical authenticated chunks without using the historical key for writes", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "browser-legacy-evidence-"));
@@ -163,7 +165,7 @@ describe("authenticated evidence", () => {
         scopeId: "fixture-scope",
         protection: new EvidenceCipher(randomBytes(32)),
       }).initialize(),
-    ).rejects.toThrow(/evidence_chunk_authentication_invalid/);
+    ).rejects.toMatchObject({ name: "EvidenceArtifactFailure", issue: "content_unverifiable" });
 
     const chunkPath = path.join(directory, stream.chunks[1]!.objectKey);
     const record = JSON.parse(await readFile(chunkPath, "utf8")) as { ciphertext: string };
@@ -171,7 +173,10 @@ describe("authenticated evidence", () => {
     ciphertext[0] = (ciphertext[0] ?? 0) ^ 0xff;
     record.ciphertext = ciphertext.toString("base64");
     await writeFile(chunkPath, JSON.stringify(record));
-    await expect(resumed.verify()).rejects.toThrow(/evidence_object_digest_invalid/);
+    await expect(resumed.verify()).rejects.toMatchObject({
+      name: "EvidenceArtifactFailure",
+      issue: "integrity_mismatch",
+    });
   });
 
   it("fences duplicate continuations and never imports stray partial files", async () => {

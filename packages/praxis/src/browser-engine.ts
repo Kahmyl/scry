@@ -333,6 +333,7 @@ export class PraxisBrowserEngine {
                 return {
                   closed: true,
                   evidenceState: status.state,
+                  ...(status.issue ? { evidenceIssue: status.issue } : {}),
                   ...(command.kind === "close_for_failure"
                     ? { unresolvedEffectsPreserved: true }
                     : {}),
@@ -536,6 +537,7 @@ export class PraxisBrowserEngine {
       session.lease.assertActive();
       await session.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
       const completion = await session.evidence.seal({
+        failureClosure: forFailure,
         renderVideo: process.env.SCRY_BROWSER_RENDER_VIDEO === "true",
         actionLedger: () => this.commands.safeActionLedger(sessionId),
         ...(process.env.SCRY_BROWSER_CHROME_PATH
@@ -599,28 +601,17 @@ export class PraxisBrowserEngine {
         process.env.SCRY_BROWSER_ARTIFACT_ROOT ?? "artifacts/browser",
         sessionId,
       );
-      const [protectedValues, restoredPublicValues] = await Promise.all([
-        this.commands.protectedValuesForSession(sessionId),
-        this.commands.publicValuesForSession(sessionId),
-      ]);
-      await current();
-      this.assertOpening(resources);
-      const protectedSession = this.protection.createSession({
-        scope: { ...scope, ownerGeneration: claim.generation },
-        captureDirectory: path.join(root, "captures", String(claim.generation)),
-        protectedValues,
-        restoredPublicValues,
-      });
       const evidence = await this.evidenceService.openSession({
         purpose: "closure",
         root,
         sessionId,
         runId: scope.runId,
-        protection: protectedSession.evidenceProtection,
+        protection: this.protection.readEvidence(scope),
         maxSessionBytes: 20 * 1024 * 1024,
         admission: lease,
       });
       const completion = await evidence.seal({
+        failureClosure: forFailure,
         renderVideo: process.env.SCRY_BROWSER_RENDER_VIDEO === "true",
         actionLedger: () => this.commands.safeActionLedger(sessionId),
         ...(process.env.SCRY_BROWSER_CHROME_PATH
@@ -633,6 +624,7 @@ export class PraxisBrowserEngine {
       return {
         closed: true,
         evidenceState: completion.state,
+        ...(completion.issue ? { evidenceIssue: completion.issue } : {}),
         ...(forFailure ? { unresolvedEffectsPreserved: true } : {}),
       };
     } finally {

@@ -359,6 +359,11 @@ describe("qualification outcomes", () => {
     );
     expect(database.tests).toEqual({ minimumPassed: 86, allowSkipped: false });
     expect(profiles.owner).toContain("evidence-closure");
+    expect(profiles.owner).toContain("evidence-availability");
+    expect(checks.find((entry) => entry.id === "evidence-availability")?.tests).toEqual({
+      minimumPassed: 10,
+      allowSkipped: false,
+    });
     expect(checks.find((entry) => entry.id === "evidence-closure")?.tests).toEqual({
       minimumPassed: 5,
       allowSkipped: false,

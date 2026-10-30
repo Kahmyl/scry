@@ -39,7 +39,17 @@ export interface EvidenceStatus {
   captureStopped: boolean;
   interruptions: number;
   custodyMode: "legacy" | "admitted";
+  issue?: EvidenceClosureIssue;
 }
+
+export const evidenceClosureIssues = [
+  "object_unavailable",
+  "integrity_mismatch",
+  "content_unverifiable",
+  "video_unavailable",
+  "publication_unavailable",
+] as const;
+export type EvidenceClosureIssue = (typeof evidenceClosureIssues)[number];
 
 /** Fixed metadata operations only. No file, network, renderer or arbitrary
  * callback may execute while application ownership locks are held. */
@@ -63,6 +73,7 @@ export interface EvidenceProtectionPort {
   encrypt(compressed: Buffer, aad: Buffer): { nonce: Buffer; ciphertext: Buffer; tag: Buffer };
   decryptCompressed(aad: Buffer, nonce: Buffer, ciphertext: Buffer, tag: Buffer): Buffer;
 }
+export type EvidenceReadProtectionPort = Pick<EvidenceProtectionPort, "decryptCompressed">;
 
 export interface RecordingProtectionPort {
   /** Snapshot quarantine at receipt, before asynchronous processing can change it. */
@@ -114,16 +125,19 @@ export interface ChronicleReplayRendererPort {
   }>;
 }
 
-export interface EvidenceCompletion {
+interface EvidenceCompletionFacts {
   sessionId: string;
   runId: string;
-  state: "complete" | "incomplete";
   chainHead: string | null;
   chunkCount: number;
   totalBytes: number;
-  replayObjectKey: string;
   videoObjectKey?: string;
 }
+export type EvidenceCompletion = EvidenceCompletionFacts &
+  (
+    | { state: "complete"; replayObjectKey: string; issue?: never }
+    | { state: "incomplete"; replayObjectKey?: string; issue?: EvidenceClosureIssue }
+  );
 
 export interface SafeActionLedgerEntry {
   at: string;
@@ -132,17 +146,23 @@ export interface SafeActionLedgerEntry {
   durationMs: number;
 }
 
-export interface ChronicleEvidenceScope {
+interface ChronicleEvidenceScopeFacts {
   admission: EvidenceWriteAdmission;
   root: string;
   runId: string;
   sessionId: string;
-  protection: EvidenceProtectionPort;
   maxSessionBytes: number;
-  purpose?: "capture" | "closure";
 }
+export type ChronicleEvidenceScope = ChronicleEvidenceScopeFacts &
+  (
+    | { purpose: "closure"; protection: EvidenceReadProtectionPort }
+    | { purpose?: "capture"; protection: EvidenceProtectionPort }
+  );
 
 export interface ChronicleSealOptions {
+  /** Only an explicit failed-run close may acknowledge missing derived evidence.
+   * This never waives current-owner, capture-stop or admitted-receipt checks. */
+  failureClosure?: boolean;
   renderVideo: boolean;
   actionLedger: () => Promise<SafeActionLedgerEntry[]>;
   executablePath?: string;

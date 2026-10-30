@@ -5,4 +5,6 @@ export * from "./offline-replay.js";
 export * from "./evidence-session.js";
 export * from "./repository.js";
 export * from "./admitted-evidence-repository.js";
+export * from "./admitted-evidence-reader.js";
+export * from "./evidence-artifact-failure.js";
 export * from "./native-timeline.js";

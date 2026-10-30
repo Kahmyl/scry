@@ -1,23 +1,25 @@
 import path from "node:path";
 import { createRequire } from "node:module";
-import { chromium } from "playwright";
+import { chromium, type Browser } from "playwright";
 import type { ChronicleReplayPlan, ChronicleReplayRendererPort } from "@scry/contracts";
 
 /** Browser mechanics for a replay plan whose artifacts are owned by Chronicle. */
 export class BrowserReplayRenderer implements ChronicleReplayRendererPort {
   async render(plan: ChronicleReplayPlan) {
-    const browser = await chromium.launch({
-      headless: true,
-      ...(plan.executablePath ? { executablePath: plan.executablePath } : {}),
-    });
+    let browser: Browser | undefined;
+    let networkRequests = 0,
+      visibleFrameCount = 0;
     try {
+      browser = await chromium.launch({
+        headless: true,
+        ...(plan.executablePath ? { executablePath: plan.executablePath } : {}),
+      });
       const context = await browser.newContext({
         viewport: { width: 1_280, height: 720 },
         serviceWorkers: "block",
         recordVideo: { dir: plan.stagingDirectory, size: { width: 1_280, height: 720 } },
       });
       let replayFailed = false;
-      let networkRequests = 0;
       await context.route("**/*", async (route) => {
         networkRequests += 1;
         await route.abort("blockedbyclient");
@@ -62,7 +64,6 @@ export class BrowserReplayRenderer implements ChronicleReplayRendererPort {
         { recordedEvents: plan.events, replaySpeed: plan.playbackRate },
       );
       let elapsed = 0;
-      let visibleFrameCount = 0;
       for (const [index, frame] of plan.frames.entries()) {
         await page.evaluate((caption) => {
           const element = document.querySelector("#caption");
@@ -90,8 +91,14 @@ export class BrowserReplayRenderer implements ChronicleReplayRendererPort {
         networkRequests,
         visibleFrameCount,
       };
+    } catch {
+      // This component owns native rendering only: no database or command
+      // authority operation is inside this catch. Never export driver details.
+      return { replayFailed: true, networkRequests, visibleFrameCount };
     } finally {
-      await browser.close();
+      // Disposal failure is not a derived-artifact failure. Let it propagate;
+      // do not acknowledge a successful stop or an unavailable evidence seal.
+      await browser?.close();
     }
   }
 }

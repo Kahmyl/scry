@@ -246,6 +246,9 @@ export interface VeilBrowserSessionPort {
   restoreCaptures(captures: DurableCaptureEnvelope[]): Promise<void>;
 }
 export interface VeilBrowserProtectionPort {
+  readEvidence(
+    scope: Pick<PraxisSessionScope, "runId" | "sessionId" | "protectionKeyId">,
+  ): Pick<EvidenceProtectionPort, "decryptCompressed">;
   createSession(input: {
     scope: PraxisSessionScope;
     captureDirectory: string;

@@ -174,7 +174,14 @@ run("browser baseline Mission/Flow/Run lifecycle", () => {
     expect(storedReport.rows[0]?.evidence_digest).toBe(
       await new ChronicleRepository(database).missionEvidenceDigest(mission.missionId),
     );
-    const authoritative = { runs: 1, complete: 1, incomplete: 0, open: 0, missing: 0 };
+    const authoritative = {
+      runs: 1,
+      complete: 1,
+      incomplete: 0,
+      open: 0,
+      missing: 0,
+      unavailable: 0,
+    };
     expect(storedReport.rows[0]?.evidence_coverage).toEqual(authoritative);
     expect(storedReport.rows[0]?.safe_report.evidenceCoverage).toEqual(authoritative);
   });
