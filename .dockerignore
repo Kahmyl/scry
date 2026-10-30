@@ -8,6 +8,8 @@
 **/.vite
 **/*.tsbuildinfo
 apps/api/artifacts
+apps/api/migrations
+artifacts
 coverage
 test-results
 playwright-report

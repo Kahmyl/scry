@@ -138,8 +138,7 @@ publication admission, recording privacy rules, and cryptographic operations.
 The API retains a small dependency-injection adapter for the Veil value cipher.
 Veil depends only on shared contracts and Node's built-in libraries.
 
-The production cutover has established the first three boundaries below;
-Assurance consolidation remains next:
+The baseline now uses these four responsibility boundaries:
 
 - `@scry/praxis` for Playwright, browser protocol, browser lifecycle,
   observation, action, ownership, and checkpoint mechanics;
@@ -160,11 +159,16 @@ replay rendering, browser lifecycle, and local owner revocation. It depends only
 on contracts, Playwright, and rrweb; Veil and Chronicle are injected capabilities,
 not Praxis implementation dependencies. The application supplies transactional
 owner admission for durable evidence and retains encrypted checkpoint storage.
-Assurance may
-exercise public surfaces, but production services build and run without it.
-The old Praxis, Veil, and Chronicle implementations have been replaced by the
-extracted baseline; dormant Assurance contents are still subject to the
-research disposition ledger. Current completion is recorded in the
+Assurance exercises public surfaces, but production services build and run without
+it. Its analysis depends only on shared contracts and Node built-ins. Public
+Praxis, Veil, and Chronicle implementations, Playwright, Vitest, and tsx are
+development-only fixture and qualification dependencies. It has no database
+driver or application-internal dependency.
+The dormant implementations of all four packages have been replaced by the
+proven baseline. Dormant application implementations, historical campaigns and
+migrations, unused contracts, Executor, Policy, Observability, and Agent Lab have
+been removed after tracing production, verification, and operational consumers.
+Current completion is recorded in the
 [reset progress record](four-boundary-progress.md).
 
 ## Engineering assurance
@@ -174,6 +178,55 @@ container checks, and browser-shaped tests protect the baseline. Verification
 must exercise both successful behavior and the failure paths that preserve
 mutation truth, protected information, evidence integrity, and workspace
 isolation.
+
+`pnpm verify` runs the Assurance `fast` profile. `pnpm qualify list` lists the
+explicit profiles in `packages/assurance/src/catalog.ts`; the reusable CI lanes
+invoke that same catalog rather than maintaining separate test selections.
+Owner-local unit and transactional tests remain beside their components.
+Assurance runs them as subprocess checks and owns the cross-boundary browser
+fixture, repository gates, safe outcome reporter, and qualification runner.
+
+Profiles cover ordinary characterization, real Chromium recording/replay,
+database lifecycle, durable worker execution, owner admission, failure
+finalization, process recovery, long journeys, and deployment qualification.
+Database profiles require matching `DATABASE_URL`,
+`SCRY_BROWSER_TEST_DATABASE_URL`, and `SCRY_BROWSER_EXPECTED_DATABASE`; migration
+still requires its own explicit target and confirmation. Queue profiles also
+require `REDIS_URL` and a distinct `SCRY_BROWSER_QUEUE_NAMESPACE`. The runner
+does not provision, migrate, reset, or drop caller-supplied databases. The separate
+`deployed-smoke` profile creates its own disposable, portless Docker project and
+uses the existing migration task there; it never targets an operator's database.
+
+The workspace explicitly lists the eight baseline applications/packages. API
+and MCP typechecks cover all retained source and tests. The repository-closure
+gate rejects source outside production or supported qualification paths,
+unresolved local imports, computed module loads without disposition, undeclared
+dependencies, and displaced workspaces. Negative fixtures exercise the tracer;
+no exact-byte source or schema fingerprint is required.
+
+`pnpm qualify deployed-smoke` builds the production image and exercises public
+authenticated API/MCP calls through a real Chromium worker, protected fill,
+evidence and zero-network replay closure, safe report publication, workspace and
+session refusal, and web serving. Its issuer and target application are local
+fixtures; no real Supabase account or external application is contacted. The
+`ci-fast` profile includes this composed smoke in addition to production-only
+dependency and operational-manifest checks. Routine `fast` remains independent
+of those full-image checks.
+
+Each invocation retains an exclusive, private JSON report under
+`artifacts/assurance/`. Reports contain selected check IDs, guarantees, times,
+outcomes, and bounded test counts, not raw stdout, stderr, exception text,
+environment values, or captured payloads. Child output is bounded in memory;
+timeouts, cancellation, missing prerequisites, missing test reports, insufficient
+passing tests, and unexpected integration skips cannot pass. Ordinary profiles
+explicitly expose their browser/database skips; they do not substitute for the
+integration profiles. A passing report covers selected checks only and is
+diagnostic evidence, not a product verdict or release-admission authority.
+
+Runtime deployment preflight, deployment actions, backup scripts, and recovery
+operations remain outside Assurance. Their checks live in Assurance; the
+`production-recovery` profile is a separate opt-in isolated recovery drill, not
+part of routine verification or a claim that production was restored.
 
 ## Deliberate exclusions
 

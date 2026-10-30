@@ -12,11 +12,7 @@ x-app-environment: &app-environment
   SCRY_BROWSER_PROTECTED_KEY_ID: "${SCRY_BROWSER_PROTECTED_KEY_ID:-local-v1}"
 
 x-release-environment: &release-environment
-  SCRY_RELEASE_ID: "${SCRY_RELEASE_ID:-local-20260806-compiled-plan}"
-  SCRY_GIT_COMMIT: "${SCRY_GIT_COMMIT:-development}"
-  SCRY_RUNTIME_VERSION: "${SCRY_RUNTIME_VERSION:-development}"
-  SCRY_SOURCE_DIRTY: "${SCRY_SOURCE_DIRTY:-unknown}"
-  SCRY_SOURCE_MANIFEST_SHA256: "${SCRY_SOURCE_MANIFEST_SHA256:-unknown}"
+  SCRY_RELEASE_ID: "${SCRY_RELEASE_ID:-local-baseline}"
 
 x-node-build: &node-build
   context: .

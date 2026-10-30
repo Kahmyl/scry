@@ -1,3 +1,9 @@
 packages:
-  - "apps/*"
-  - "packages/*"
+  - "apps/api"
+  - "apps/mcp"
+  - "apps/web"
+  - "packages/contracts"
+  - "packages/praxis"
+  - "packages/veil"
+  - "packages/chronicle"
+  - "packages/assurance"

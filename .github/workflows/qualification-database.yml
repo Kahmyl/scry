@@ -68,30 +68,8 @@ jobs:
       - name: Prove migration second-run idempotence
         run: pnpm run db:migrate
 
-      - name: Verify migration, key custody, and safe error contracts
-        run: >-
-          pnpm --filter @scry/api exec vitest run
-          test/browser-schema-migration.test.ts
-          test/browser-exception.filter.test.ts
-          --maxWorkers=1
-
-      - name: Verify Veil protection and encrypted-data compatibility
-        run: pnpm --filter @scry/veil test
-
-      - name: Verify browser lifecycle, failure truth, authorization, and scope integrity
-        run: >-
-          pnpm --filter @scry/api exec vitest run
-          test/browser-execution.repository.integration.test.ts
-          test/browser-execution.process-failure.integration.test.ts
-          test/browser-lifecycle.repository.integration.test.ts
-          test/browser-auth-scope.integration.test.ts
-          test/browser-scope-integrity.integration.test.ts
-          --maxWorkers=1
-
-      - name: Verify baseline topology
-        run: |
-          pnpm verify:baseline-topology
-          pnpm verify:boundary-ownership
+      - name: Qualify database lifecycle and safe failure contracts
+        run: pnpm qualify database
 
       - name: Install Chromium for the durable-worker protection regression
         run: pnpm --filter @scry/praxis exec playwright install --with-deps chromium
@@ -111,7 +89,7 @@ jobs:
           SCRY_BROWSER_QUEUE_NAMESPACE: ci-protected-worker
         run: |
           pnpm db:migrate
-          pnpm --filter @scry/api exec vitest run test/browser-command.worker.integration.test.ts --maxWorkers=1
+          pnpm qualify worker
 
       - name: Qualify live owner replacement and evidence admission
         env:
@@ -122,7 +100,16 @@ jobs:
           SCRY_BROWSER_E2E: "1"
         run: |
           pnpm db:migrate
-          pnpm --filter @scry/api exec vitest run test/browser-owner-fencing.integration.test.ts --maxWorkers=1
+          pnpm qualify owner
+
+      - name: Retain safe qualification outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assurance-database-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/assurance/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload database failure evidence
         if: failure()

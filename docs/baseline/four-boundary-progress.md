@@ -1,6 +1,6 @@
 # Scry four-boundary reset progress
 
-Status: Praxis, Veil, and Chronicle cutovers locally qualified; Assurance is next
+Status: four-boundary structural reset locally complete; not deployed
 
 The current baseline remains the authority for behavior, public contracts, and
 durable data. This record tracks implementation of the
@@ -15,8 +15,8 @@ durable data. This record tracks implementation of the
 | Veil protection ownership               | Complete; active baseline consumers use the extracted Veil implementation                                       |
 | Chronicle evidence ownership            | Complete; recording and publication now consume owner-locked admission                                          |
 | Praxis browser ownership                | Complete; active browser mechanics, lifecycle, and local lease revocation belong to Praxis                      |
-| Assurance diagnostics and qualification | Next                                                                                                            |
-| Final cleanup and completion proof      | Pending                                                                                                         |
+| Assurance diagnostics and qualification | Complete; shared profiles, safe reports, public fixtures, and read-only diagnostic interpretation               |
+| Final cleanup and completion proof      | Complete locally; reduced source graph, full-image browser journey, and isolated recovery drill qualify         |
 
 ## Veil ownership
 
@@ -262,9 +262,160 @@ drain/stop old workers before switching to the corrected worker set: an old
 binary does not acquire the new storage-admission gate. Existing activation
 bootstrap and inactive relational evidence-table limitations remain deferred.
 
-## Next implementation slice
+## Assurance diagnostic cutover
 
-Assurance will own diagnostics, experiments, fixtures, qualification campaigns,
-and their interpretation. It must consume public contracts and safe evidence
-without becoming a production dependency. Then complete the reachability-led
-cleanup of dormant application code and obsolete verification.
+The dormant Assurance labs, numbered campaigns, alternate runtime experiments,
+and obsolete qualification scripts were removed, not adopted as product
+authority. They remain recoverable in Git. The active repository and deployment
+gates now live in `packages/assurance/gates`; the unchanged protected
+recording/replay fixture moved from Praxis to Assurance and consumes public
+Praxis, Veil, and Chronicle entry points. Owner-local component and transaction
+characterizations remain beside their implementations. Assurance invokes them
+as processes rather than importing application internals or a database driver.
+
+The shared check catalog drives `pnpm verify`, `pnpm qualify <profile>`, and the
+three reusable CI qualification lanes. Reports under `artifacts/assurance/`
+retain selected IDs, guarantees, outcomes, timestamps, durations, and safe test
+counts. They exclude raw logs, exception text, environment values, and captured
+payloads. No report overwrites a previous invocation. Reports are diagnostic
+only: they neither rewrite Chronicle facts nor grant product/release admission.
+The pure recording/evidence diagnostic functions return fixed informational or
+warning codes without copying raw messages or concluding the application is
+defective. This does not introduce visual analysis, performance coverage, or a
+production observability service.
+
+Missing scope blocks execution; failed checks stop later checks. Required test
+profiles enforce minimum passing cases and reject unexpected skips, incomplete
+or missing reports, timeout, cancellation, and bounded-output violations.
+Ordinary profiles explicitly retain integration skip counts, not integration
+coverage claims. A real database-profile run exposed an environment-selection
+bug that skipped all 13 tests; the runner refused a pass. A failing regression
+was preserved, effective environment validation was corrected, and the original
+database profile passed all 13 cases afterward. The failed diagnostic report
+was retained alongside the successful rerun.
+
+Production deployment preflight and deployment/backup/recovery operations remain
+outside Assurance. Production import and authenticated evidence-reopen smoke
+tests still pass without Assurance or development dependencies. The opt-in
+isolated backup/restore drill remains separate from routine verification.
+
+### Assurance verification
+
+| Check                                 | Result                                                                                                                                                                                                                       |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ordinary characterization             | 137 tests pass, including 32 Assurance tests; integration skips are explicit                                                                                                                                                 |
+| Required browser/database journeys    | 26 tests pass without skips: recording/replay 2, lifecycle 13, worker 1, owner admission 5, failure finalization 1, process recovery 3, long journey 1                                                                       |
+| Runner failures and diagnostic safety | Missing/malformed counters, insufficient tests, skips, pending/error states, nonzero exits, process timeout/cancellation/output limits, fail-fast behavior, scope refusal, immutable reports, and raw-message exclusion pass |
+| Ownership                             | Seven negative boundary tests and production/fixture dependency scans pass                                                                                                                                                   |
+| Migration                             | Fresh creation and second-run idempotence pass; no schema/data migration introduced                                                                                                                                          |
+| Repository and deployment             | Types, formatting, web build, workflows, publication, deployment-controller refusal/rollback, real Caddy, tiers, operations, preflight, and production-only dependency checks pass                                           |
+
+Safe reports are retained locally for the browser, database, worker, owner,
+failure, recovery, journey, and CI-shaped profiles; CI uploads its safe reports
+on success or failure. This is local qualification, not a remote CI run or a
+deployment. The separate full backup/restore drill was syntax-checked but not
+rerun in this slice. Existing fresh-production activation bootstrap and inactive
+relational evidence-table limitations remain deferred.
+
+## Displacement cleanup and completion proof
+
+The final source trace began at the API, browser worker, migration and activation
+commands, both MCP transports, and dashboard. It found 93 production-reachable
+files. None was deleted. Active API execution, Praxis, Veil, Chronicle, baseline
+schema, compatibility SQL, and auth/session implementations remain unchanged.
+Edits inside retained production modules remove only unused dashboard helpers,
+declarations, and imports, an unused dashboard alias, and unused MCP registry
+annotations/finalization helpers. Existing public tool behavior and UI remain
+the baseline.
+
+473 dormant tracked files were removed, including:
+
+- alternate API and MCP implementations and their old orchestration, authoring,
+  runtime, policy, evidence, and worker paths;
+- Executor, Policy, Observability, Agent Lab, and old standalone experiments;
+- 54 historical campaign/helper scripts and 54 inactive SQL migration files;
+- unused contracts and alternate dashboard features; and
+- unused OCR data, screenshot drafts, and a historical live-target fixture.
+
+These files remain recoverable from the preceding Git commits. Removing old SQL
+files does not execute SQL or alter any existing database. All nine active schema
+and compatibility files remain intact, including currently inactive relational
+evidence structures. Backup and metrics operations remain in `scripts/operations`
+and `ops`, not in the removed diagnostic package. The reachable non-authoritative
+Agent Lab HTTP compatibility acknowledgements remain in the MCP transport; they
+do not load an Agent Lab implementation or add supported agent tools.
+
+The workspace now explicitly selects three applications and five packages:
+API, MCP, dashboard, contracts, Praxis, Veil, Chronicle, and Assurance. The
+lockfile was pruned without upgrading dependencies; a frozen offline install
+passes. API and MCP typechecks cover their entire remaining source, scripts,
+and tests. The dashboard also rejects unused locals and parameters. Obsolete
+source-manifest metadata was removed from development Compose; runtime release
+identity and persisted cryptographic compatibility are preserved.
+
+`verify:repository-closure` traces syntax-aware imports, re-exports, type imports,
+literal lazy loads, and import-relative process fixtures. It rejects missing
+local imports, unaccounted computed loads, undeclared dependencies, displaced
+workspaces, and source outside the production or supported verification closure.
+It includes six negative/positive characterization cases and covers co-located
+dashboard tests as well as owner-local test directories. It is not an exact
+source-byte, schema-fingerprint, or hash-admission contract. The reduced graph
+has eight workspaces, 93 production files, 160 supported files, and no unresolved
+imports or orphaned implementation files.
+
+The new `deployed-smoke` profile builds the real production image and boots the
+existing deployment composition in a fresh, portless Docker project. A local
+fixture issuer supplies signed JWTs; the unchanged API verifies issuer, audience,
+signature, identity, and workspace scope. Public API/MCP calls create a Project,
+Environment, credential, Mission, Objective, Flow, and Run, then navigate real
+Chromium, fill the explicitly supplied protected credential, observe, close,
+finalize, and publish a protected report. It verifies evidence completion,
+zero-network sanitized replay publication, visible frames and WebM, report
+binding, protected-value exclusion, cross-workspace refusal, MCP session bearer
+binding, web serving, and absence of retired implementations or Assurance from
+the production image. It does not import application internals or seed tables.
+
+Initial smoke failures were fixture assumptions, not runtime repairs: the
+baseline publishes replay metadata and WebM, not an HTML replay; an empty
+historical-migration directory also remained in the local build context. The
+fixture now checks the actual publication contract. Empty displaced directories
+were removed, and old migrations and local qualification reports are excluded
+from Docker context. Failed reports remain alongside successful reruns. The
+smoke fixture removes only its generated Docker resources and image; existing
+databases, volumes, and external services are not its targets.
+
+### Proof portfolio
+
+The retained 26 integration tests pass without skips: lifecycle 13, protected
+recording/replay 2, worker 1, owner admission 5, failure finalization 1, process
+recovery 3, and long journey 1. Fresh migrations and second-run idempotence pass.
+The deployed image journey and the separate isolated encrypted backup, WAL,
+restore/promotion, and integrity-query drill also pass. The final combined
+CI-shaped profile passes all 24 selected checks: formatting, whole-source types,
+source closure, 137 ordinary tests, dashboard build, ownership/workflow/publication
+checks, deployment-controller scenarios, production-only dependencies, Caddy,
+tiers, operations, preflight, and the composed image journey. The 13 native
+ownership/source-graph cases pass as part of those gates. Ordinary integration
+skips remain explicit and are covered by the separate no-skip integration runs.
+
+One combined run timed out in the existing mocked deployment-controller check
+before its fake Docker log started. The unchanged check passed directly and
+through a separately bounded Assurance executor run (under 10 seconds). The
+timeout was not reproduced or assigned a speculative runtime cause; its failed
+report is retained, limits were not relaxed, and the whole profile must pass on
+rerun before completion is recorded. That rerun passed with no runtime or
+controller-test changes. Its retained report is
+`artifacts/assurance/99829238-be92-424a-984e-f0277d64777d.json`; the source graph
+still reports 93 production and 160 supported files, with no unresolved imports.
+
+This is local structural-reset proof, not a remote CI result, deployment, MVP
+completion, or fresh-production bootstrap qualification. The local deployed
+fixture explicitly disables the existing activated-cutover requirement, as the
+current beta smoke does; it does not weaken production defaults. The unsupported
+fresh-production identity-import bootstrap and inactive relational evidence
+writers remain separate, recorded limitations. Production rollout still requires
+the earlier owner-admission drain/stop guidance.
+
+The isolated reset branch is ready for review and a merge decision. Main has not
+been changed or deployed. The original product/MVP briefs remain unchanged;
+completion here means this structural reset, not the broader testing platform.

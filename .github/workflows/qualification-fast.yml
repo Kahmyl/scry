@@ -31,31 +31,14 @@ jobs:
       - name: Install exact workspace dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify workflow commands exist
-        run: pnpm run verify:workflow-manifests
+      - name: Qualify the baseline through Assurance
+        run: pnpm qualify ci-fast
 
-      - name: Verify formatting
-        run: pnpm run format:check
-
-      - name: Typecheck workspaces
-        run: pnpm run typecheck
-
-      - name: Run baseline architecture, security, and deployment gates
-        run: |
-          pnpm run verify:baseline-topology
-          pnpm run verify:boundary-ownership
-          pnpm run verify:boundary-runtime
-          pnpm run verify:docker-publish-workflow
-          pnpm run verify:server-deployment
-          pnpm run verify:deployment-runtime
-          pnpm run verify:deployment-tiers
-          pnpm run verify:production-operations
-          pnpm run verify:deployment-preflight
-          pnpm --filter @scry/api exec vitest run test/auth.service.test.ts
-          pnpm --filter @scry/veil test
-          pnpm --filter @scry/praxis test
-
-      - name: Run baseline tests and build
-        run: |
-          pnpm test
-          pnpm build
+      - name: Retain safe qualification outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assurance-fast-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/assurance/
+          if-no-files-found: warn
+          retention-days: 14

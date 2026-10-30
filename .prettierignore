@@ -6,4 +6,3 @@ artifacts
 test-results
 playwright-report
 pnpm-lock.yaml
-apps/api/migrations/*.sql
