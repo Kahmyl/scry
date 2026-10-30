@@ -22,20 +22,21 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
   ) {}
 
   createRecording(protection: RecordingProtectionPort): ChronicleRecording {
+    if (this.#recording) throw new Error("SCRY_BROWSER_RECORDER_ALREADY_EXISTS");
     this.#recording = new ChronicleRecording(this.store, protection);
     return this.#recording;
   }
 
   async prepareClosure(): Promise<void> {
     await this.scope.admission.run(async () => undefined);
-    if (!this.#recording) throw new Error("SCRY_BROWSER_RECORDER_FAILED:recorder_missing");
-    const diagnostics = await this.#recording.flush();
+    const diagnostics = await this.requiredRecording().flush();
     if (diagnostics.errors.length)
       throw new Error(`SCRY_BROWSER_RECORDER_FAILED:${diagnostics.errors[0]?.code ?? "unknown"}`);
   }
 
   async seal(options: ChronicleSealOptions): Promise<EvidenceCompletion> {
     await this.prepareClosure();
+    const recording = this.requiredRecording();
     const verified = await this.scope.admission.run(() => this.store.verify());
     if (!verified.complete || !verified.lastDigest || verified.chunks === 0)
       throw new Error("SCRY_BROWSER_EVIDENCE_INCOMPLETE");
@@ -58,6 +59,7 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
       });
       videoObjectKey = `local://${publication.videoPath}`;
     }
+    recording.assertActive();
     return {
       sessionId: this.scope.sessionId,
       runId: this.scope.runId,
@@ -67,6 +69,11 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
       replayObjectKey: `local://${path.join(this.scope.root, "evidence")}`,
       ...(videoObjectKey ? { videoObjectKey } : {}),
     };
+  }
+
+  private requiredRecording(): ChronicleRecording {
+    if (!this.#recording) throw new Error("SCRY_BROWSER_RECORDER_FAILED:recorder_missing");
+    return this.#recording;
   }
 }
 

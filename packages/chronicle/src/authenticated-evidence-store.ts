@@ -121,6 +121,14 @@ export class AuthenticatedEvidenceStore<T> {
     return this.#nextSequence + this.#pending.length;
   }
 
+  /** Recording's owner must stop receipt and join all append/flush work first.
+   * Drop only non-durable pending references; do not publish, rewind durable
+   * sequence/custody, or rewrite historical chunks and manifests. */
+  discardPending(): void {
+    this.#pending = [];
+    this.#pendingBytes = 0;
+  }
+
   async append(payload: T): Promise<number> {
     const envelope: EvidenceEnvelope<T> = {
       sequence: this.#nextSequence + this.#pending.length,
