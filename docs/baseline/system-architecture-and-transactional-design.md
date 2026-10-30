@@ -278,6 +278,13 @@ and durable uncertain-work recovery remain separate qualification requirements.
 A Browser session has at most one active owner. Each new claim increments the
 owner generation and receives a unique lease token. All Effect transitions,
 checkpoint writes, and finalization operations verify the active generation.
+Creation and renewal use the database clock, not an application wall clock.
+Evidence admission, checkpoint writes and effect transitions lock the exact
+owner before checking current expiry. All multi-resource effect paths acquire
+the session, owner and effect in that order, including publication and owner
+replacement. A replacement lease starts after reconciliation, so lock waiting
+cannot consume its lifetime before the replacement is admitted. Owner leases
+are bounded to one second through five minutes.
 
 When an owner is replaced:
 
@@ -287,6 +294,17 @@ When an owner is replaced:
   automatically.
 
 This preserves external-side-effect truth across worker crashes and lease loss.
+
+The selected isolated owner-lifecycle correction extends that same rule to
+confirmed process retirement, rather than waiting for an abandoned lease to
+expire. Database owner clocks are evaluated after their locks; local owner
+validity uses acknowledged database-relative samples and a monotonic watchdog.
+An owner cannot renew or act after local revocation. Physical process exit and
+recording drain must be confirmed before admitting retirement. Pending effects
+are reconciled by one shared rule for both retirement and replacement, before
+authority is released. Retirement of an older generation cannot release a newer
+owner. Unconfirmed containment remains fenced and requires failed host recovery.
+This is the next candidate correction, not an assertion of current activation.
 
 ## Controlled mutation transaction
 

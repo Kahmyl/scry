@@ -17,6 +17,7 @@ import type { PraxisStorageState } from "@scry/contracts";
 
 import { Database } from "../../infrastructure/database.js";
 import { commandExecutionBudgetMs } from "../command-budget.js";
+import { lockLiveBrowserOwner } from "./browser-owner-admission.js";
 import {
   BrowserProtectedValueCipher,
   type EncryptedProtectedValue,
@@ -691,12 +692,7 @@ export class BrowserCommandRepository {
         throw new Error("SCRY_BROWSER_CHECKPOINT_ORIGIN_INVALID");
       if (Number(row.active_owner_generation) !== ownerGeneration)
         throw new Error("SCRY_BROWSER_OWNER_FENCED");
-      const owner = await client.query(
-        `SELECT 1 FROM browser_owner_generations
-         WHERE session_id=$1 AND generation=$2 AND state='active' AND lease_expires_at>now()`,
-        [sessionId, ownerGeneration],
-      );
-      if (!owner.rowCount) throw new Error("SCRY_BROWSER_OWNER_FENCED");
+      await lockLiveBrowserOwner(client, sessionId, ownerGeneration);
       const current = await client.query<{ checkpoint_revision: string }>(
         "SELECT checkpoint_revision FROM browser_session_checkpoints WHERE session_id=$1 FOR UPDATE",
         [sessionId],

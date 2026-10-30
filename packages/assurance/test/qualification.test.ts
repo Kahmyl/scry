@@ -341,10 +341,11 @@ describe("qualification outcomes", () => {
         "test/browser-command-order.integration.test.ts",
         "test/browser-command-deadline.integration.test.ts",
         "test/browser-command-claim-fencing.integration.test.ts",
+        "test/browser-owner-clock.integration.test.ts",
         "test/browser-error-admission.integration.test.ts",
       ]),
     );
-    expect(database.tests).toEqual({ minimumPassed: 34, allowSkipped: false });
+    expect(database.tests).toEqual({ minimumPassed: 51, allowSkipped: false });
     expect(profiles.worker).toContain("command-queue");
     expect(profiles.worker).toContain("worker-shutdown");
     expect(profiles.worker).toContain("command-lifetime");
