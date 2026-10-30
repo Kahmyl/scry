@@ -8,6 +8,10 @@ baseline path.
 
 ## Architecture overview
 
+The [native evidence direction](native-evidence-direction.md) records the selected
+replacement for new visual evidence. It is not yet activated; recording and
+rendering descriptions below continue to describe the compatibility producer.
+
 ```text
 User browser
     │

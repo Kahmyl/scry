@@ -79,6 +79,12 @@ rrweb records browser events for sanitized replay. Input masking, protected
 value handling, event sanitization, authenticated encryption, and hash chaining
 are applied before evidence becomes durable.
 
+This is the current compatibility producer, not the selected long-term visual
+capture approach. The [native evidence direction](native-evidence-direction.md)
+requires original browser pixels, localized black masks, isolated protection,
+and independently encoded, true-paced recordings. Its customer activation gates
+remain outstanding.
+
 ## Agent integration
 
 The agent integration uses the Model Context Protocol SDK over Streamable HTTP.
