@@ -318,6 +318,11 @@ describe("qualification outcomes", () => {
       ]),
     );
     expect(profiles.owner).toContain("owner-admission");
+    expect(profiles.owner).toContain("engine-command-lifetime");
+    expect(checks.find((entry) => entry.id === "engine-command-lifetime")?.tests).toEqual({
+      minimumPassed: 3,
+      allowSkipped: false,
+    });
     expect(profiles.worker).toContain("worker-journey");
     expect(
       checks.find((entry) => entry.id === "deployed-baseline")?.terminationGraceMs,

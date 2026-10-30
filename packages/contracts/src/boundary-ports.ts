@@ -10,12 +10,19 @@ export const praxisSessionReceiptSchema = z.object({
 
 export type PraxisSessionReceipt = z.infer<typeof praxisSessionReceiptSchema>;
 
+/** Private application-to-runtime control, never accepted from an HTTP command. */
+export interface PraxisCommandOptions {
+  remainingMs: number;
+  signal?: AbortSignal;
+}
+
 /** Application-facing browser execution capability. */
 export abstract class PraxisExecutionPort {
   abstract openSession(sessionId: string): Promise<PraxisSessionReceipt>;
   abstract executeCommand(
     sessionId: string,
     command: BrowserCommand,
+    options?: PraxisCommandOptions,
   ): Promise<Record<string, unknown>>;
   abstract shutdown(): Promise<void>;
 }
