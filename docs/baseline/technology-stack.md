@@ -65,6 +65,13 @@ Redis and BullMQ provide asynchronous delivery for Browser-session startup and
 browser commands. Queue delivery is recoverable transport; the database and its
 outbox records determine whether work exists and whether it completed.
 
+The migration task uses node-pg-migrate for ordered SQL execution and applied
+operation history. Scry supplies explicit database-identity guards, verified
+transactional adoption of retained baselines, bounded migration coordination,
+and a separate readiness check. Operation names are not SQL byte hashes or
+product versions; additive schema changes do not require a complete-catalog
+fingerprint match.
+
 ## Browser execution
 
 Playwright controls a headless or visible Chromium browser. The worker uses the

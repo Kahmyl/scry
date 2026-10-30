@@ -199,6 +199,32 @@ describe("qualification outcomes", () => {
     expect(cancelled.verdict).toBe("cancelled");
     expect(execute).not.toHaveBeenCalled();
   });
+  it("does not create disposable databases without explicit creation scope", async () => {
+    const target = "postgres://fixture:private-token@localhost/isolated_fixture";
+    const environment = {
+      DATABASE_URL: target,
+      SCRY_BROWSER_TEST_DATABASE_URL: target,
+      SCRY_BROWSER_EXPECTED_DATABASE: "isolated_fixture",
+    };
+    const candidate = {
+      ...check,
+      prerequisites: ["database" as const, "database_creation" as const],
+    };
+    const execute = vi.fn();
+    expect(await run({ checks: [candidate], environment, execute })).toMatchObject({
+      verdict: "blocked",
+      checks: [{ reason: "database_creation_scope_required" }],
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(
+      (
+        await run({
+          checks: [candidate],
+          environment: { ...environment, SCRY_BROWSER_ALLOW_DATABASE_CREATION: "1" },
+        })
+      ).verdict,
+    ).toBe("passed");
+  });
 
   it("rejects empty and duplicate profiles", async () => {
     await expect(run({ checks: [] })).rejects.toThrow("SCRY_ASSURANCE_EMPTY_PROFILE");
@@ -286,6 +312,7 @@ describe("qualification outcomes", () => {
         "component-api",
         "component-veil",
         "database-lifecycle",
+        "schema-upgrades",
         "boundaries",
         "topology",
       ]),
@@ -296,6 +323,9 @@ describe("qualification outcomes", () => {
       checks.find((entry) => entry.id === "deployed-baseline")?.terminationGraceMs,
     ).toBeGreaterThanOrEqual(125000);
     const database = checks.find((entry) => entry.id === "database-lifecycle")!;
+    const upgrades = checks.find((entry) => entry.id === "schema-upgrades")!;
+    expect(upgrades.prerequisites).toEqual(["database", "database_creation"]);
+    expect(upgrades.tests).toEqual({ minimumPassed: 9, allowSkipped: false });
     expect(database.command).toEqual(
       expect.arrayContaining([
         "test/browser-execution.repository.integration.test.ts",

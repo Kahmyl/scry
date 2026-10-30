@@ -12,7 +12,7 @@ export interface CheckDefinition {
   guarantee: string;
   command: readonly string[];
   environment?: Readonly<Record<string, string>>;
-  prerequisites?: readonly ("database" | "redis")[];
+  prerequisites?: readonly ("database" | "redis" | "database_creation")[];
   tests?: { minimumPassed: number; allowSkipped: boolean };
   timeoutMs?: number;
   /** Separate bounded time for a resource-owning check to stop and clean up. */
@@ -34,6 +34,7 @@ export type CheckReason =
   | "unexpected_skips"
   | "database_scope_required"
   | "redis_scope_required"
+  | "database_creation_scope_required"
   | "prior_check_failed"
   | NonNullable<ExecutionResult["issue"]>;
 export interface CheckResult {
@@ -103,6 +104,11 @@ function prerequisite(
       return "database_scope_required";
     }
   }
+  if (
+    check.prerequisites?.includes("database_creation") &&
+    environment.SCRY_BROWSER_ALLOW_DATABASE_CREATION !== "1"
+  )
+    return "database_creation_scope_required";
   if (
     check.prerequisites?.includes("redis") &&
     (!environment.REDIS_URL || !environment.SCRY_BROWSER_QUEUE_NAMESPACE?.trim())

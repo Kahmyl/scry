@@ -52,6 +52,12 @@ const REQUIRED_SCHEMA: Readonly<Record<string, readonly string[]>> = {
 };
 
 export async function assertBrowserSchema(database: Queryable): Promise<void> {
+  return assertRetainedBrowserSchema(database);
+}
+
+/** Frozen retained-baseline requirements for transactional adoption. New runtime
+ * capabilities belong in assertBrowserSchema, not in this bootstrap contract. */
+export async function assertRetainedBrowserSchema(database: Queryable): Promise<void> {
   const result = await database.query<SchemaColumnRow>(
     `SELECT table_name AS "tableName",column_name AS "columnName"
      FROM information_schema.columns
