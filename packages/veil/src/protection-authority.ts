@@ -141,11 +141,15 @@ function requiresProtection(candidate: ProtectionCandidate, proposalKey: string)
     candidate.semanticHint ?? "",
   ]);
   return (
-    /\b(secret|password|passwd|passphrase|token|bearer|private|protected|sensitive)\b/u.test(
-      semantic,
-    ) ||
+    /\b(secret|password|passwd|passphrase|token|bearer)\b/u.test(semantic) ||
     /\b(api|access|client|signing|encryption|session)\s+(key|secret|token)\b/u.test(semantic) ||
     /\b(recovery|activation|verification|one\s+time)\s+(code|key|token)\b/u.test(semantic) ||
+    /\bprivate\s+key\b/u.test(semantic) ||
+    /\b(?:card|credit card|debit card|bank account|account|routing)\s+(?:number|security code|cvv|cvc)\b/u.test(
+      semantic,
+    ) ||
+    /\b(?:card|credit card|debit card)\s+(?:expiry|expiration)\b/u.test(semantic) ||
+    /\b(?:iban|cvv|cvc)\b/u.test(semantic) ||
     /\b(otp|pin)\b/u.test(semantic)
   );
 }
@@ -154,17 +158,6 @@ function isDetectedSensitive(candidate: ProtectionCandidate): boolean {
   if (requiresProtection(candidate, "")) return true;
   if (typeof candidate.value !== "string" || candidate.value.length === 0) return false;
   return new SensitiveValueClassifier().findings(candidate.value).length > 0;
-}
-
-function isHighConfidenceSensitive(candidate: ProtectionCandidate): boolean {
-  if (requiresProtection(candidate, "")) return true;
-  if (typeof candidate.value !== "string" || candidate.value.length === 0) return false;
-  // Entropy alone is deliberately a conservative quarantine signal for
-  // unselected values, but it cannot distinguish opaque resource identifiers
-  // from secrets. Exact secret/PII patterns remain a declassification veto.
-  return new SensitiveValueClassifier()
-    .findings(candidate.value)
-    .some((finding) => finding.category !== "high-entropy");
 }
 
 /**
@@ -362,7 +355,7 @@ export class ProtectionAuthority {
           candidate.protectedLineage ||
           this.#isKnownProtected(candidate) ||
           requiresProtection(candidate, semantic) ||
-          isHighConfidenceSensitive(candidate)
+          isDetectedSensitive(candidate)
         ) {
           throw new Error("protection_declassification_forbidden");
         }

@@ -1,12 +1,9 @@
 # Scry security and authentication
 
-The [native evidence direction](native-evidence-direction.md) records the selected
-narrow protection policy and the private frame-processing direction. The owner
-approved Veil-private, encrypted, quota-limited raw-frame retention for at most
-fifteen minutes. Customer retention remains inactive pending implementation and
-privacy qualification; this data-handling approval does not activate a producer,
-merge, or deployment. Evidence reaches Chronicle and the dashboard under the
-best-effort visual masking contract below, not a guarantee of complete redaction.
+The [native evidence baseline](native-evidence-direction.md) records the selected
+narrow protection policy. It does not introduce a raw-frame quarantine service.
+Evidence reaches the dashboard under the best-effort visual masking contract
+below, not a guarantee of complete redaction.
 
 Status: canonical baseline security model
 
@@ -25,9 +22,17 @@ may remain. Evidence must be reviewed before sharing. This accepted visual risk
 does not relax saved-credential encryption, scoped access, private key custody or
 known-secret exclusions from ordinary logs and credential API responses. Private
 quarantine files are not exposed directly as a fallback. See the
-[native evidence direction](native-evidence-direction.md#current-masking-contract)
+[native evidence baseline](native-evidence-direction.md#best-effort-protection)
 for the current delivery contract; its visual policy supersedes stronger legacy
 replay-masking assumptions in the retained implementation described below.
+
+Automatic textual recognition is also limited to access secrets and financial
+details. Email, phone, identity-number and entropy-based masking defaults are
+not part of this baseline. Explicitly registered protected values and their
+encoded variants remain protected; removing automatic personal-data patterns
+does not disclose saved credentials. Financial field semantics remain protected,
+and unlabelled card-number recognition uses a checksum to avoid masking every
+long business identifier.
 
 This document defines authentication, authorization, protected-information
 handling, and security boundaries for the product described in the

@@ -64,7 +64,7 @@ async function allFileText(directory: string): Promise<string> {
 }
 
 describe("privacy surfaces", () => {
-  it("removes exact, encoded, credential, and PII variants", () => {
+  it("removes explicitly protected values, encoded variants and access credentials", () => {
     const protectedValues = { LOGIN: "person@example.test", TOKEN: "tok_fixture_1234567890" };
     const classifier = new SensitiveValueClassifier({ protectedValues });
     const input = `person@example.test ${encodeURIComponent("person@example.test")} Bearer abcdefghijklmnop password=hunter22`;
@@ -82,6 +82,20 @@ describe("privacy surfaces", () => {
     const uuid = "a9d665c9-db83-4101-9259-5b157646b59f";
     expect(classifier.sanitize(url)).toBe(url);
     expect(classifier.sanitize(uuid)).toBe(uuid);
+  });
+
+  it("does not automatically hide ordinary contact/business content or opaque identifiers", () => {
+    const classifier = new SensitiveValueClassifier();
+    const content =
+      "person@example.test +2348012345678 12345678901 customer_7Qp9Zx4Lm2N8Rc6V22 Inventory private workspace note";
+    expect(classifier.sanitize(content)).toBe(content);
+    expect(classifier.findings(content)).toEqual([]);
+  });
+
+  it("protects recognizable payment-card numbers without treating every long number as a card", () => {
+    const classifier = new SensitiveValueClassifier();
+    expect(classifier.sanitize("Card: 4242 4242 4242 4242")).toContain("PROTECTED:PAYMENT-CARD");
+    expect(classifier.sanitize("Order: 1234567890123456")).toBe("Order: 1234567890123456");
   });
 
   it("masks replay content and strips unsafe attributes without dropping the event", () => {

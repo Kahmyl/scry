@@ -33,6 +33,10 @@ identifiers. Start with recognizable controls and known secret values. Email,
 phone, general personal content and business content are not visual targets.
 Customer-specific content rules are future work.
 
+Text recognition follows the same narrow scope: no default email/phone/identity
+masking or random-looking-identifier heuristic. Explicitly registered protected
+values remain protected across safe textual sinks.
+
 Veil supplies a targeted overlay policy. Praxis installs it in an isolated
 browser world, keeping the known-secret registry out of application JavaScript.
 Masks follow the current controls and text ranges without replacing their
