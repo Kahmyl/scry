@@ -1,0 +1,20 @@
+{
+  "name": "scry-browser-foundation-experiment",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "start": "node src/server.mjs"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@playwright/mcp": "0.0.83",
+    "playwright": "1.64.0-alpha-1790635538000",
+    "proxy-chain": "3.0.1",
+    "zod": "4.6.7"
+  },
+  "overrides": {
+    "@hono/node-server": "2.1.3"
+  }
+}
