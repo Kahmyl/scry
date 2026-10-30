@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { Browser, BrowserContext, ElementHandle, Page, Request } from "playwright";
 import { chromium } from "playwright";
@@ -9,20 +8,13 @@ import type {
   BrowserOutputSelection,
   ChronicleEvidencePort,
   ChronicleEvidenceSessionPort,
+  PraxisCommandsPort,
+  PraxisEffectsPort,
+  VeilBrowserProtectionPort,
+  VeilBrowserAuthorityPort,
+  VeilBrowserCapturePort,
 } from "@scry/contracts";
-import { SanitizedBrowserRecorder } from "@scry/browser-runtime";
-import {
-  ProtectedCaptureVault,
-  ProtectionAuthority,
-  BrowserProtectedKeyring,
-  safeDomSemanticHint,
-  EvidenceCipher,
-  createRecordingProtection,
-  recordingProtectionOptions,
-} from "@scry/veil";
-
-import { BrowserCommandRepository } from "./repositories/browser-command.repository.js";
-import { BrowserExecutionRepository } from "./repositories/browser-execution.repository.js";
+import { SanitizedBrowserRecorder } from "./recorder.js";
 
 interface ActiveSession {
   browser: Browser;
@@ -35,10 +27,11 @@ interface ActiveSession {
   baseOrigin: string;
   root: string;
   references: Map<string, { epoch: number; handle: ElementHandle<HTMLElement> }>;
-  authority: ProtectionAuthority;
+  authority: VeilBrowserAuthorityPort;
+  semanticHint: (value: string) => string;
   evidence: ChronicleEvidenceSessionPort;
   recorder: SanitizedBrowserRecorder;
-  vault: ProtectedCaptureVault;
+  vault: VeilBrowserCapturePort;
   ownerLeaseToken: string;
   ownerHeartbeat: NodeJS.Timeout;
 }
@@ -47,28 +40,6 @@ const digest = (value: unknown) =>
   createHash("sha256")
     .update(typeof value === "string" ? value : JSON.stringify(value))
     .digest("hex");
-
-function derivedSessionKey(
-  keyId: string,
-  purpose: "evidence" | "capture",
-  runId: string,
-  sessionId: string,
-): Buffer {
-  return BrowserProtectedKeyring.fromEnvironment().derive(keyId, purpose, `${runId}:${sessionId}`);
-}
-
-function legacyDerivedSessionKey(
-  keyId: string,
-  purpose: "evidence" | "capture",
-  runId: string,
-  sessionId: string,
-): Buffer {
-  return BrowserProtectedKeyring.fromEnvironment().deriveLegacy(
-    keyId,
-    purpose,
-    `${runId}:${sessionId}`,
-  );
-}
 
 function safeRedirectChain(
   status: number,
@@ -92,13 +63,14 @@ function safeRedirectChain(
   ];
 }
 
-export class BrowserWorkerEngine {
+export class PraxisBrowserEngine {
   readonly #sessions = new Map<string, ActiveSession>();
   readonly #opening = new Map<string, Promise<{ sessionId: string; ownerGeneration: number }>>();
   constructor(
-    private readonly commands: BrowserCommandRepository,
-    private readonly effects: BrowserExecutionRepository,
+    private readonly commands: PraxisCommandsPort,
+    private readonly effects: PraxisEffectsPort,
     private readonly evidenceService: ChronicleEvidencePort,
+    private readonly protection: VeilBrowserProtectionPort,
   ) {}
 
   async open(sessionId: string): Promise<{ sessionId: string; ownerGeneration: number }> {
@@ -124,49 +96,25 @@ export class BrowserWorkerEngine {
       process.env.SCRY_BROWSER_ARTIFACT_ROOT ?? "artifacts/browser",
       sessionId,
     );
-    const evidence = await this.evidenceService.openSession({
-      root,
-      runId: scope.runId,
-      sessionId,
-      protection: new EvidenceCipher(
-        derivedSessionKey(scope.protectionKeyId, "evidence", scope.runId, sessionId),
-        [legacyDerivedSessionKey(scope.protectionKeyId, "evidence", scope.runId, sessionId)],
-      ),
-      maxSessionBytes: 20 * 1024 * 1024,
-    });
     const [protectedValues, restoredPublicValues] = await Promise.all([
       this.commands.protectedValuesForSession(sessionId),
       this.commands.publicValuesForSession(sessionId),
     ]);
-    const authority = new ProtectionAuthority({
-      scope: {
-        projectId: scope.projectId,
-        missionId: scope.missionId,
-        runId: scope.runId,
-        sessionId,
-        origin: new URL(scope.baseOrigin).origin,
-      },
-      disclosureMode: scope.disclosureMode,
+    const protectedSession = this.protection.createSession({
+      scope,
+      captureDirectory: path.join(root, "captures"),
       protectedValues,
       restoredPublicValues,
     });
-    const captureCache = path.join(root, "captures");
-    // PostgreSQL is authoritative. Never let files left by a dead worker
-    // resurrect a capture that the database already settled or deleted.
-    await rm(captureCache, { recursive: true, force: true });
-    const vault = await new ProtectedCaptureVault({
-      directory: captureCache,
+    const { authority, vault } = protectedSession;
+    const evidence = await this.evidenceService.openSession({
+      root,
       runId: scope.runId,
-      scopeId: sessionId,
-      authority,
-      encryptionKey: derivedSessionKey(scope.protectionKeyId, "capture", scope.runId, sessionId),
-      legacyEncryptionKeys: [
-        legacyDerivedSessionKey(scope.protectionKeyId, "capture", scope.runId, sessionId),
-      ],
-    }).initialize();
-    for (const capture of await this.effects.durableCapturesForSession(sessionId))
-      await vault.restoreDurableCapture(capture);
-    await vault.resumeUnsettledProtection();
+      sessionId,
+      protection: protectedSession.evidenceProtection,
+      maxSessionBytes: 20 * 1024 * 1024,
+    });
+    await protectedSession.restoreCaptures(await this.effects.durableCapturesForSession(sessionId));
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
     let ownerHeartbeat: NodeJS.Timeout | undefined;
@@ -191,8 +139,8 @@ export class BrowserWorkerEngine {
       }
       const page = await context.newPage();
       const recorder = new SanitizedBrowserRecorder({
-        recording: evidence.createRecording(createRecordingProtection({ authority })),
-        privacyOptions: recordingProtectionOptions,
+        recording: evidence.createRecording(protectedSession.recordingProtection),
+        privacyOptions: protectedSession.privacyOptions,
       });
       await recorder.start(context);
       ownerHeartbeat = setInterval(
@@ -214,6 +162,7 @@ export class BrowserWorkerEngine {
         root,
         references: new Map(),
         authority,
+        semanticHint: protectedSession.semanticHint,
         evidence,
         recorder,
         vault,
@@ -754,7 +703,7 @@ export class BrowserWorkerEngine {
         }
         return result;
       });
-      sanitizeDomSemanticHints(structured, session.authority);
+      sanitizeDomSemanticHints(structured, session.semanticHint);
       const body = Buffer.from(JSON.stringify(structured));
       const receipt = await session.vault.captureHttpResponse({
         effectId,
@@ -850,14 +799,14 @@ export class BrowserWorkerEngine {
 
 function sanitizeDomSemanticHints(
   root: Record<string, unknown>,
-  authority: ProtectionAuthority,
+  semanticHint: (value: string) => string,
 ): void {
   const stack: Record<string, unknown>[] = [root];
   while (stack.length > 0) {
     const current = stack.pop()!;
     const label = current.label;
     delete current.label;
-    if (typeof label === "string") current.semanticHint = safeDomSemanticHint(label, authority);
+    if (typeof label === "string") current.semanticHint = semanticHint(label);
     const children = current.children;
     if (Array.isArray(children)) {
       for (const child of children)

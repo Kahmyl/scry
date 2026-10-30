@@ -101,13 +101,13 @@ for (const required of [
   "pnpm run verify:baseline-topology",
   "test/auth.service.test.ts",
   "pnpm --filter @scry/veil test",
-  "pnpm --filter @scry/browser-runtime test",
+  "pnpm --filter @scry/praxis test",
 ]) {
   if (!fastQualification.includes(required))
     fail(`fast qualification baseline safety contract missing: ${required}`);
 }
 
-const runtimePackages = ["browser-runtime", "contracts", "veil"];
+const runtimePackages = ["praxis", "contracts", "veil", "chronicle"];
 
 const workspaceManifests = [
   "apps/api/package.json",
@@ -241,7 +241,7 @@ if (
 )
   fail("Docker default runtime command must invoke app-local tsx directly");
 
-if (!dockerfile.includes("COPY packages/browser-runtime packages/browser-runtime"))
+if (!dockerfile.includes("COPY packages/praxis packages/praxis"))
   fail("Docker runtime must include the browser execution package");
 
 const runnerSection = dockerfile.slice(dockerfile.indexOf(" AS runner"));

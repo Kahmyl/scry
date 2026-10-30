@@ -1,14 +1,12 @@
 import { readFile } from "node:fs/promises";
 
 const browserRuntimePackage = JSON.parse(
-  await readFile(new URL("../packages/browser-runtime/package.json", import.meta.url), "utf8"),
+  await readFile(new URL("../packages/praxis/package.json", import.meta.url), "utf8"),
 );
 const expected = browserRuntimePackage.dependencies?.playwright;
 
 if (!/^\d+\.\d+\.\d+$/.test(expected ?? "")) {
-  throw new Error(
-    `@scry/browser-runtime must pin Playwright exactly; received ${JSON.stringify(expected)}`,
-  );
+  throw new Error(`@scry/praxis must pin Playwright exactly; received ${JSON.stringify(expected)}`);
 }
 
 const files = ["Dockerfile", "docker/Dockerfile.worker"];
@@ -22,7 +20,7 @@ for (const file of files) {
 
 const lockfile = await readFile(new URL("../pnpm-lock.yaml", import.meta.url), "utf8");
 const browserRuntimeImporter =
-  lockfile.match(/  packages\/browser-runtime:\n([\s\S]*?)(?=\n  \S|\npackages:)/)?.[1] ?? "";
+  lockfile.match(/  packages\/praxis:\n([\s\S]*?)(?=\n  \S|\npackages:)/)?.[1] ?? "";
 const lockedSpecifier = browserRuntimeImporter.match(
   /      playwright:\n        specifier: ([^\n]+)/,
 )?.[1];

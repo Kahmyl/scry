@@ -19,7 +19,7 @@ test("Chronicle accepts capabilities without depending on their implementations"
   for (const dependency of ["@scry/veil", "@scry/chronicle"])
     assert.notEqual(
       boundaryViolations(
-        "packages/browser-runtime/src/recorder.ts",
+        "packages/praxis/src/recorder.ts",
         `import { implementation } from "${dependency}";`,
       ).length,
       0,

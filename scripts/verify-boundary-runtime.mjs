@@ -13,7 +13,7 @@ const mounts = [
   "packages/veil/src",
   "packages/chronicle/src",
   "packages/contracts/src",
-  "packages/browser-runtime/src",
+  "packages/praxis/src",
   "apps/api/src",
   "apps/api/tsconfig.json",
 ].flatMap((relativePath) => [
@@ -30,7 +30,7 @@ import path from "node:path";
 import { BrowserProtectedValueCipher } from "./src/browser-execution/protected-value-cipher.ts";
 import { BrowserRuntimeVeilReportProtection } from "./src/browser-execution/browser-boundary-composition.ts";
 import { AuthenticatedEvidenceStore, ChronicleEvidenceService, ChronicleRepository } from "@scry/chronicle";
-import { BrowserReplayRenderer } from "@scry/browser-runtime";
+import { BrowserReplayRenderer } from "@scry/praxis";
 import { EvidenceCipher, SensitiveValueClassifier, createRecordingProtection } from "@scry/veil";
 process.env.SCRY_BROWSER_PROTECTED_KEY_BASE64 = Buffer.alloc(32, 7).toString("base64");
 const cipher = new BrowserProtectedValueCipher();

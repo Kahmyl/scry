@@ -35,7 +35,7 @@ jobs:
         run: pnpm run verify:playwright
 
       - name: Install the pinned Chromium runtime
-        run: pnpm --filter @scry/browser-runtime exec playwright install --with-deps chromium
+        run: pnpm --filter @scry/praxis exec playwright install --with-deps chromium
 
       - name: Select bounded runner-aware concurrency
         run: |
@@ -47,7 +47,7 @@ jobs:
           SCRY_BROWSER_E2E: "1"
         run: |
           pnpm --filter @scry/veil test
-          pnpm --filter @scry/browser-runtime run test
+          pnpm --filter @scry/praxis run test
 
       - name: Qualify browser contracts and MCP surface
         run: >-

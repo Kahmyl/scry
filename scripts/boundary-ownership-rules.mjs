@@ -21,7 +21,7 @@ export function boundaryViolations(sourcePath, source) {
   const file = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true);
   const inVeil = sourcePath.startsWith("packages/veil/src/");
   const inChronicle = sourcePath.startsWith("packages/chronicle/src/");
-  const inBrowserRuntime = sourcePath.startsWith("packages/browser-runtime/src/");
+  const inPraxis = sourcePath.startsWith("packages/praxis/src/");
   const violations = [];
   const cryptoAliases = new Set(cryptographicOperations);
   const specifiers = [];
@@ -69,8 +69,12 @@ export function boundaryViolations(sourcePath, source) {
   };
   visit(file);
   for (const specifier of specifiers) {
-    if (inBrowserRuntime && /^@scry\/(?!contracts$)/u.test(specifier))
+    if (inPraxis && /^(?:@scry\/(?!contracts$)|pg$|@nestjs\/)/u.test(specifier))
       violations.push("browser mechanics depend on another boundary implementation");
+    if (!inPraxis && /^(?:playwright|rrweb)(?:\/|$)/u.test(specifier))
+      violations.push("browser driver is imported outside Praxis");
+    if (specifier.startsWith("@scry/praxis/"))
+      violations.push("consumer imports a Praxis internal module");
     if (specifier === "@scry/assurance" || specifier.startsWith("@scry/assurance/"))
       violations.push("production source depends on Assurance");
     if (specifier.startsWith("@scry/veil/"))
@@ -87,6 +91,10 @@ export function boundaryViolations(sourcePath, source) {
         violations.push("Chronicle reaches outside its package through a relative path");
       if (!inChronicle && resolved.startsWith("packages/chronicle/"))
         violations.push("consumer reaches Chronicle through a relative internal path");
+      if (inPraxis && !resolved.startsWith("packages/praxis/src/"))
+        violations.push("Praxis reaches outside its package through a relative path");
+      if (!inPraxis && resolved.startsWith("packages/praxis/"))
+        violations.push("consumer reaches Praxis through a relative internal path");
     }
     if (specifier.startsWith("@scry/chronicle/"))
       violations.push("consumer imports a Chronicle internal module");

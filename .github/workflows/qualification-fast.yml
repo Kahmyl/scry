@@ -53,7 +53,7 @@ jobs:
           pnpm run verify:deployment-preflight
           pnpm --filter @scry/api exec vitest run test/auth.service.test.ts
           pnpm --filter @scry/veil test
-          pnpm --filter @scry/browser-runtime test
+          pnpm --filter @scry/praxis test
 
       - name: Run baseline tests and build
         run: |

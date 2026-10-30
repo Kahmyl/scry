@@ -104,13 +104,13 @@ if (schemaCheck.includes("createHash") || schemaCheck.includes("pg_indexes")) {
 }
 
 const protectedKeyring = read("packages/veil/src/protected-keyring.ts");
-const workerEngine = read("apps/api/src/browser-execution/browser-worker-engine.ts");
+const browserProtection = read("packages/veil/src/browser-protection.ts");
 const evidenceStore = read("packages/chronicle/src/authenticated-evidence-store.ts");
 if (
   !protectedKeyring.includes("deriveLegacy") ||
   !protectedKeyring.includes("scry/browser-v2") ||
-  !workerEngine.includes('legacyDerivedSessionKey(scope.protectionKeyId, "evidence"') ||
-  !workerEngine.includes("legacyEncryptionKeys") ||
+  !browserProtection.includes('deriveLegacy(scope.protectionKeyId, "evidence"') ||
+  !browserProtection.includes("legacyEncryptionKeys") ||
   !evidenceStore.includes("evidenceVersion")
 ) {
   fail("historical encrypted-data read compatibility is incomplete");
@@ -133,7 +133,7 @@ const activeSourcePaths = [
   "apps/web/src/app/ProductApp.tsx",
   "apps/web/src/app/Dashboard.tsx",
   "apps/web/src/app/ProjectSettings.tsx",
-  ...sourceFiles("packages/browser-runtime/src"),
+  ...sourceFiles("packages/praxis/src"),
   ...sourceFiles("packages/veil/src"),
   ...sourceFiles("packages/chronicle/src"),
   "packages/contracts/src/index.ts",
@@ -154,8 +154,8 @@ if (/schema_fingerprint|catalog_fingerprint/iu.test(activeSources + deployment))
 }
 
 const browserLaunchOwners = new Set([
-  "apps/api/src/browser-execution/browser-worker-engine.ts",
-  "packages/browser-runtime/src/replay-browser.ts",
+  "packages/praxis/src/browser-engine.ts",
+  "packages/praxis/src/replay-browser.ts",
 ]);
 for (const sourcePath of activeSourcePaths) {
   const source = read(sourcePath);
@@ -166,12 +166,11 @@ for (const sourcePath of activeSourcePaths) {
   }
   if (
     sourcePath.startsWith("apps/api/src/") &&
-    sourcePath !== "apps/api/src/browser-execution/browser-worker-engine.ts" &&
     /\.(?:click|dblclick|fill|type|selectOption|setChecked|check|uncheck|press|hover|dragTo|setInputFiles|newContext|newPage|goto|reload|waitForURL|waitForLoadState)\s*\(/u.test(
       source,
     )
   ) {
-    fail(`browser mechanics are outside the worker engine: ${sourcePath}`);
+    fail(`browser mechanics are outside Praxis: ${sourcePath}`);
   }
 }
 

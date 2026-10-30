@@ -1,6 +1,5 @@
 {
   "name": "@scry/praxis",
-  "version": "0.0.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -12,13 +11,12 @@
   },
   "dependencies": {
     "@scry/contracts": "workspace:*",
-    "@scry/veil": "workspace:*",
-    "@tesseract.js-data/eng": "^1.0.0",
     "playwright": "1.62.0",
-    "tesseract.js": "^6.0.1",
-    "@scry/policy": "workspace:*"
+    "rrweb": "2.1.1"
   },
   "devDependencies": {
+    "@scry/chronicle": "workspace:*",
+    "@scry/veil": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.3",
     "vitest": "^4.0.15"

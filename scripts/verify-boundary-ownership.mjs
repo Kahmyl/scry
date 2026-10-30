@@ -7,7 +7,6 @@ const productionPackages = [
   "apps/api",
   "apps/mcp",
   "apps/web",
-  "packages/browser-runtime",
   "packages/contracts",
   "packages/praxis",
   "packages/veil",
@@ -33,16 +32,13 @@ for (const sourcePath of productionSources) {
   }
   if (
     sourcePath !== "apps/api/src/browser-execution/browser-boundary-composition.ts" &&
-    importSpecifiers(source).some((specifier) => specifier.endsWith("browser-worker-engine.js"))
+    /\bnew\s+PraxisBrowserEngine\s*\(/u.test(source)
   ) {
     fail(`browser worker engine bypasses application composition: ${sourcePath}`);
   }
   if (
     sourcePath.startsWith("apps/api/src/") &&
-    ![
-      "apps/api/src/browser-execution/browser-boundary-composition.ts",
-      "apps/api/src/browser-execution/browser-worker-engine.ts",
-    ].includes(sourcePath) &&
+    !["apps/api/src/browser-execution/browser-boundary-composition.ts"].includes(sourcePath) &&
     /\bnew\s+ProtectionAuthority\s*\(/u.test(source)
   ) {
     fail(`protection authority is constructed outside an admitted adapter: ${sourcePath}`);
@@ -51,7 +47,7 @@ for (const sourcePath of productionSources) {
 
 const boundaryConsumers = [
   ...sourceFiles("apps/api/src/browser-execution"),
-  ...sourceFiles("packages/browser-runtime/src"),
+  ...sourceFiles("packages/praxis/src"),
   ...sourceFiles("packages/veil/src"),
   ...sourceFiles("packages/chronicle/src"),
 ];
@@ -73,6 +69,10 @@ for (const displaced of [
   "packages/browser-runtime/src/effect-ledger.ts",
   "packages/browser-runtime/src/browser-owner-supervisor.ts",
   "packages/chronicle/src/legacy/index.ts",
+  "packages/browser-runtime/package.json",
+  "apps/api/src/browser-execution/browser-worker-engine.ts",
+  "packages/praxis/src/adapter.ts",
+  "packages/praxis/src/runtime.ts",
 ]) {
   if (existsSync(new URL(displaced, root)))
     fail(`displaced boundary implementation remains: ${displaced}`);
@@ -88,11 +88,17 @@ for (const consumer of ["apps/api"]) {
 const chroniclePackage = JSON.parse(read("packages/chronicle/package.json"));
 if (Object.keys(chroniclePackage.dependencies ?? {}).some((name) => name !== "@scry/contracts"))
   fail("Chronicle has an implementation dependency outside its contracts");
-const runtimePackage = JSON.parse(read("packages/browser-runtime/package.json"));
-if (runtimePackage.dependencies?.["@scry/veil"] || runtimePackage.dependencies?.["@scry/chronicle"])
+const runtimePackage = JSON.parse(read("packages/praxis/package.json"));
+if (
+  Object.keys(runtimePackage.dependencies ?? {}).some(
+    (name) => !["@scry/contracts", "playwright", "rrweb"].includes(name),
+  )
+)
   fail("browser mechanics depend directly on protection or evidence implementations");
 if (!JSON.parse(read("apps/api/package.json")).dependencies?.["@scry/chronicle"])
   fail("application does not declare its Chronicle runtime dependency");
+if (!JSON.parse(read("apps/api/package.json")).dependencies?.["@scry/praxis"])
+  fail("application does not declare its Praxis runtime dependency");
 
 const worker = read("apps/api/src/worker.ts");
 if (!worker.includes("composePraxisExecutionPort") || worker.includes("BrowserWorkerEngine")) {
@@ -117,6 +123,8 @@ if (!contracts.includes('export * from "./boundary-ports.js"')) {
 }
 if (!contracts.includes('export * from "./chronicle-ports.js"'))
   fail("Chronicle capability ports are not exported");
+if (!contracts.includes('export * from "./praxis-ports.js"'))
+  fail("Praxis capability ports are not exported");
 
 const forbiddenExample = 'import { unsafe } from "@scry/assurance";';
 if (!importSpecifiers(forbiddenExample).includes("@scry/assurance")) {

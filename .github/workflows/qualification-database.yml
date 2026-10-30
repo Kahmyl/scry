@@ -94,7 +94,7 @@ jobs:
           pnpm verify:boundary-ownership
 
       - name: Install Chromium for the durable-worker protection regression
-        run: pnpm --filter @scry/browser-runtime exec playwright install --with-deps chromium
+        run: pnpm --filter @scry/praxis exec playwright install --with-deps chromium
 
       - name: Create isolated worker qualification database
         run: >-
