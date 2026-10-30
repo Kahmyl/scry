@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +7,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { PraxisExecutionPort } from "@scry/contracts";
 import { EvidenceCipher } from "@scry/veil";
 import { AdmittedEvidenceReader, ChronicleRepository } from "@scry/chronicle";
-import { BrowserReplayRenderer } from "@scry/praxis";
 import { SupervisedBrowser } from "../../../packages/praxis/src/supervised-browser.js";
 import { composePraxisExecutionPort } from "../src/browser-execution/browser-boundary-composition.js";
 import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
@@ -146,16 +145,16 @@ live("honest unavailable stopped evidence closure", () => {
     },
     30000,
   );
-  it("retains a verified protected capture but labels a repeatedly failing video as unavailable", async () => {
+  it("retains admitted metadata but terminalizes a missing native video as unavailable", async () => {
     const { id, before } = await stoppedJourney();
-    process.env.SCRY_BROWSER_RENDER_VIDEO = "true";
-    vi.spyOn(BrowserReplayRenderer.prototype, "render").mockResolvedValue({
-      replayFailed: true,
-      networkRequests: 0,
-      visibleFrameCount: 0,
-    });
-    const after = await assertFailedClosure(id, before, "video_unavailable");
-    expect(after.replay_artifact_key).toMatch(/^local:\/\//);
+    const directory = path.join(root, id, "native");
+    const files = await readdir(directory, { recursive: true });
+    const video = files.find((file) => file.endsWith(".webm"));
+    expect(video).toBeTruthy();
+    const filename = path.join(directory, video!);
+    await rename(filename, `${filename}.fixture-held`);
+    const after = await assertFailedClosure(id, before, "object_unavailable");
+    expect(after.replay_artifact_key).toBeNull();
     expect(after.video_artifact_key).toBeNull();
   }, 30000);
   it("unavailable SQL metadata cannot substitute for stopped or interrupted capture proof", async () => {
@@ -242,16 +241,24 @@ live("honest unavailable stopped evidence closure", () => {
       try {
         return await original.call(this);
       } finally {
-        vi.spyOn(effects, "assertOwner").mockRejectedValueOnce(
-          new Error("SCRY_BROWSER_OWNER_FENCED"),
-        );
+        // Replace the actual durable authority, not an incidental verifier
+        // callback formerly called by the retired DOM-rendering path.
+        const current = (
+          await database.query<{ generation: string; lease_token: string }>(
+            "SELECT generation,lease_token FROM browser_owner_generations WHERE session_id=$1 AND state='active' ORDER BY generation DESC LIMIT 1",
+            [id],
+          )
+        ).rows[0]!;
+        await effects.retireOwner({
+          owner: {
+            sessionId: id,
+            generation: Number(current.generation),
+            leaseToken: current.lease_token,
+          },
+          browserStopped: true,
+          recordingDrained: true,
+        });
       }
-    });
-    process.env.SCRY_BROWSER_RENDER_VIDEO = "true";
-    vi.spyOn(BrowserReplayRenderer.prototype, "render").mockResolvedValue({
-      replayFailed: true,
-      networkRequests: 0,
-      visibleFrameCount: 0,
     });
     await expect(praxis.executeCommand(id, { kind: "close_for_failure" })).rejects.toThrow(
       "SCRY_BROWSER_OWNER_FENCED",

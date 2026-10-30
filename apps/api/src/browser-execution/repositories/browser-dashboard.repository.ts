@@ -23,7 +23,8 @@ export class BrowserDashboardRepository {
        JOIN browser_execution_sessions s ON s.id=es.session_id
        JOIN projects p ON p.id=r.project_id WHERE r.id=$1
        AND ($2::uuid IS NULL OR p.workspace_id=$2) AND es.sealed_at IS NOT NULL
-       AND es.replay_artifact_key IS NOT NULL ORDER BY es.created_at DESC LIMIT 1`,
+       AND es.state IN ('complete','incomplete') AND es.retention_expires_at>now()
+       ORDER BY es.created_at DESC LIMIT 1`,
       [runId, workspaceId ?? null],
     );
     const publication = result.rows[0];

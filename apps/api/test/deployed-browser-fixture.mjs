@@ -509,7 +509,7 @@ async function unavailableDashboardJourney({
         }));
       assert.notEqual(contrast.foreground, contrast.background, "EVIDENCE_CONTROLS_INVISIBLE");
       assert.equal(contrast.background, "rgb(25, 29, 35)", "EVIDENCE_CONTROLS_NOT_THEMED");
-      await page.getByRole("button", { name: /Screenshot.*navigate/u }).click();
+      await page.getByRole("button", { name: /Screenshot.*fill/u }).click();
       await page.waitForFunction(
         () => document.querySelector(".native-evidence img")?.naturalWidth > 0,
       );

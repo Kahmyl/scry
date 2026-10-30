@@ -17,6 +17,8 @@ function installNativeMasks(initial) {
       if (!root) return;
       const boxes = [];
       for (const element of Array.from(document.querySelectorAll("input,textarea")).slice(0, 500)) {
+        // An empty secret control contains no secret to cover.
+        if (!element.value) continue;
         const semantic =
           `${element.type ?? ""} ${element.name ?? ""} ${element.id} ${element.getAttribute("autocomplete") ?? ""} ${element.getAttribute("aria-label") ?? ""}`.replace(
             /[^a-z]/giu,
